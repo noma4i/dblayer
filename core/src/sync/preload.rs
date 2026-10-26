@@ -18,6 +18,8 @@ struct State {
     due: bool,
     running: bool,
     session: Option<String>,
+    listening_denied: bool,
+    listened: bool,
     power_saving: bool,
     low_ram: bool,
     suppressed: bool,
@@ -27,6 +29,10 @@ struct State {
 }
 
 impl State {
+    fn wants_listen(&self) -> bool {
+        self.session.is_some() && !self.listening_denied
+    }
+
     fn held(&self) -> bool {
         self.suppressed || self.power_saving || self.low_ram
     }
@@ -218,6 +224,12 @@ impl Inner {
         FirstScreenHold { inner: Arc::downgrade(self), delivered: false }
     }
 
+    fn apply_listen(self: &Arc<Self>, state: &mut State) {
+        let wanted = state.wants_listen();
+        if std::mem::replace(&mut state.listened, wanted) == wanted { return; }
+        if wanted { self.listen_all(); } else { self.unlisten_all(); }
+    }
+
     pub(crate) fn preload_on_session(self: &Arc<Self>) -> bool {
         match self.transport.session() {
             Ok(current) => {
@@ -225,13 +237,11 @@ impl Inner {
                     let mut state = locked(&self.preload.state);
                     let changed = std::mem::replace(&mut state.session, current.clone()) != current;
                     if changed { state.first_snapshot = false; }
+                    self.apply_listen(&mut state);
                     changed
                 };
                 let committed = changed && current.is_some();
-                if committed {
-                    self.preload_on_event();
-                    self.listen_all();
-                }
+                if committed { self.preload_on_event(); }
                 committed
             }
             Err(error) => {
@@ -301,8 +311,15 @@ impl Sync {
     }
 
     pub fn session_ended(&self) {
-        locked(&self.inner.preload.state).session = None;
-        self.inner.unlisten_all();
+        let mut state = locked(&self.inner.preload.state);
+        state.session = None;
+        self.inner.apply_listen(&mut state);
+    }
+
+    pub fn set_listening(&self, allowed: bool) {
+        let mut state = locked(&self.inner.preload.state);
+        state.listening_denied = !allowed;
+        self.inner.apply_listen(&mut state);
     }
 
     pub fn session_committed(&self) {

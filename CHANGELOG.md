@@ -4,6 +4,7 @@
 
 ### Added
 - `Entity.waitForInitialLoad()` waits for the read the entity started and sends no request.
+- `open(listening: false)` and `DB.setListening(_:)` / `DBlayer.setListening(allowed)` hold the model subscriptions that a committed credential starts until the app allows them.
 
 ### Changed
 - `Entity.refreshError` becomes `Entity.read`: `notLoaded`, `loaded` or `failed(error)`.

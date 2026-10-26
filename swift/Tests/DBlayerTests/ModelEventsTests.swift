@@ -43,4 +43,29 @@ extension BridgeProbeTests {
     #expect(transport.calls.map(\.operationName) == ["RecordEvents"])
     events.cancel()
   }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aDeniedListeningOpensNoSubscriptionFromAStoredCredentialUntilTheAppAllowsIt() async throws {
+    let transport = MockTransport()
+    let operations = #"[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"}]"#
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: operations, listening: false)
+    try await DB.resume()
+    #expect(transport.calls.isEmpty)
+    try DB.setListening(true)
+    await eventually("the subscriptions start") { transport.calls.count == 1 }
+    try DB.setListening(true)
+    try await DB.resume()
+    #expect(transport.calls.map(\.operationName) == ["RecordEvents"])
+    let events = Container.events
+    let cursor = Cursor(events)
+    try DB.setListening(false)
+    try transport.emit("RecordEvents", json: #"{"data":{"recordEvents":{"entries":[{"topic":"CONTAINER","action":"DELETED","recordId":"c1"}]}}}"#)
+    guard case .event(let seen)? = await cursor.next("the event after the listening is denied") else {
+      Issue.record("the collector stopped with the listening")
+      return
+    }
+    #expect(seen.id == "c1")
+    #expect(transport.calls.map(\.operationName) == ["RecordEvents"])
+    events.cancel()
+  }
 }

@@ -276,3 +276,24 @@ async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_i
     let seen = expect_event(within(&events).await);
     assert_eq!((seen.kind.as_str(), seen.id.as_str()), ("DELETED", "c1"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listening() {
+    let rig = chat_rig();
+    put(&rig, "chats", json!({"id": "c1", "title": "t"}));
+    let events = rig.sync.model_events("chats").unwrap();
+    rig.transport.await_calls("Changes", 1).await;
+    rig.sync.set_listening(false);
+    rig.transport.set_session(Some("first"));
+    rig.sync.session_committed();
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    rig.sync.set_listening(true);
+    rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "one"}})));
+    emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
+    assert_eq!(expect_event(within(&events).await).id, "c1");
+    rig.sync.set_listening(false);
+    tokio::time::sleep(std::time::Duration::from_secs(31)).await;
+    emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
+    assert_eq!(expect_event(within(&events).await).kind, "DELETED");
+    assert_eq!(rig.transport.call_count("Changes"), 1, "one stream for the whole cycle");
+}

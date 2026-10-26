@@ -1,7 +1,7 @@
 use super::*;
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
-fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), uploads: None, power_saving: false, low_ram: false, preload: true } }
+fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), uploads: None, power_saving: false, low_ram: false, preload: true, listening: true } }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
     slot.open(config(), "[]".into(), options(), None, None, None, None, None).await
 }
@@ -36,7 +36,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     let blob = |name: &str| WireUploadOperations { create_blob: Some(WireUploadOperation { name: name.into(), root_path: None }), multipart: None };
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), uploads: Some(blob(name)), power_saving: false, low_ram: false, preload: true };
+        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), uploads: Some(blob(name)), power_saving: false, low_ram: false, preload: true, listening: true };
         let opened = slot.open(config(), "[]".into(), options, Some(Arc::new(Plain)), None, None, None, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
@@ -75,7 +75,7 @@ async fn the_power_and_memory_facts_given_to_open_hold_the_first_preload() {
     for (power_saving, low_ram, loads_at_open) in [(true, false, false), (false, true, false), (false, false, true)] {
         let requests = Arc::new(AtomicUsize::new(0));
         let slot = OpenDatabase::new();
-        let options = OpenOptions { operations: operations.into(), uploads: None, power_saving, low_ram, preload: true };
+        let options = OpenOptions { operations: operations.into(), uploads: None, power_saving, low_ram, preload: true, listening: true };
         let database = slot.open(config(), models.clone(), options, Some(Arc::new(CountingFeed(requests.clone()))), None, None, None, None).await.unwrap();
         let sync = database.sync().unwrap();
         if loads_at_open {
@@ -114,7 +114,7 @@ async fn the_preload_waits_until_the_listener_has_taken_its_first_snapshot() {
     let models = serde_json::to_string(&vec![users_spec(), moments]).unwrap();
     let operations = r#"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id } pageInfo { hasNextPage endCursor } } }"}]"#;
     let requests = Arc::new(AtomicUsize::new(0));
-    let options = OpenOptions { operations: operations.into(), uploads: None, power_saving: true, low_ram: false, preload: true };
+    let options = OpenOptions { operations: operations.into(), uploads: None, power_saving: true, low_ram: false, preload: true, listening: true };
     let database = OpenDatabase::new().open(config(), models, options, Some(Arc::new(CountingFeed(requests.clone()))), None, None, None, None).await.unwrap();
     let (entered, inside) = std::sync::mpsc::channel();
     let (release, waiting) = std::sync::mpsc::channel();
@@ -149,7 +149,7 @@ async fn preload_off_sends_no_request_on_any_event_and_on_loads() {
             database.register_operations(operations.into()).unwrap();
             database
         } else {
-            let options = OpenOptions { operations: operations.into(), uploads: None, power_saving: false, low_ram: false, preload };
+            let options = OpenOptions { operations: operations.into(), uploads: None, power_saving: false, low_ram: false, preload, listening: true };
             slot.open(config(), models.clone(), options, Some(transport), None, None, None, None).await.unwrap()
         };
         let sync = database.sync().unwrap();

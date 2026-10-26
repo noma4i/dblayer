@@ -283,3 +283,45 @@ async fn a_committed_credential_starts_the_model_subscriptions_and_the_end_of_th
     rig.transport.await_calls("MomentListen", 2).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 2, "next sign-in");
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_denied_listening_keeps_a_committed_credential_from_opening_subscriptions_until_allowed() {
+    let rig = rig();
+    rig.sync.set_listening(false);
+    rig.transport.set_session(Some("stored"));
+    rig.sync.check_session();
+    rig.transport.set_session(Some("signed-in"));
+    rig.sync.session_committed();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(rig.transport.call_count("MomentListen"), 0, "stored credential and sign-in while denied");
+    rig.sync.set_listening(true);
+    rig.sync.set_listening(true);
+    rig.transport.await_calls("MomentListen", 1).await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(rig.transport.call_count("MomentListen"), 1, "allowed twice starts them once");
+    rig.sync.set_listening(false);
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(rig.transport.cancellations("MomentListen"), 1, "denied again");
+    rig.sync.set_listening(true);
+    rig.transport.await_calls("MomentListen", 2).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn allowing_listening_without_a_credential_opens_nothing_and_logout_stops_the_allowed_listen() {
+    let rig = rig();
+    rig.transport.set_session(None);
+    rig.sync.check_session();
+    rig.sync.set_listening(false);
+    rig.sync.set_listening(true);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(rig.transport.call_count("MomentListen"), 0, "no credential");
+    rig.transport.set_session(Some("first"));
+    rig.sync.session_committed();
+    rig.transport.await_calls("MomentListen", 1).await;
+    rig.sync.session_ended();
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(rig.transport.cancellations("MomentListen"), 1, "logout");
+    rig.sync.set_listening(true);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(rig.transport.call_count("MomentListen"), 1, "allowed after logout needs a new credential");
+}

@@ -456,6 +456,13 @@ impl Database {
         Ok(())
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
+    pub fn set_listening(&self, allowed: bool) -> Result<(), DbError> {
+        if let Some(sync) = &self.sync {
+            let _entered = executor()?.enter();
+            sync.set_listening(allowed);
+        }
+        Ok(())
+    }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), online: self.db.connectivity() })) }
     pub async fn upload(&self, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<(), DbError> {
         let sync = self.sync()?.clone();

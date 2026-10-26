@@ -65,6 +65,9 @@ public enum DB {
 
   public static func sessionReset() throws { try database.sessionReset() }
 
+  /// Tells the library whether the app lets the model subscriptions run. `open(listening: false)` starts none from a committed credential until `setListening(true)`. Allowed with a committed credential, they start once. `setListening(false)`, `logout()` and `sessionReset()` stop them. Call it from the app state that gates subscriptions, for example registration complete.
+  public static func setListening(_ allowed: Bool) throws { try database.setListening(allowed: allowed) }
+
   /// Reloads every `preload` scope now, fresh or not, and returns when all have settled. Offline it throws without a request. When some scopes fail the error names them. Call it for pull to refresh instead of refreshing each reference list.
   @concurrent public static func refreshPreloads() async throws { try await database.refreshPreloads() }
 
@@ -78,11 +81,11 @@ public enum DB {
     try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retries: retries, connectivity: reachability.start())
   }
 
-  @MainActor public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], uploads: UploadOperations? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws {
+  @MainActor public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], uploads: UploadOperations? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil, listening: Bool = true) async throws {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     let origin = encrypted.flatMap { URL(string: $0.origin) }
     let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
-    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, uploads: uploads?.wire, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled, lowRam: false, preload: true), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) }, retries: retries)
+    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, uploads: uploads?.wire, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled, lowRam: false, preload: true, listening: listening), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) }, retries: retries)
     let sink = try opened.onlineSink()
     reachability.start(sink)
     ForegroundEvents.shared.start { sink.enterForeground() }

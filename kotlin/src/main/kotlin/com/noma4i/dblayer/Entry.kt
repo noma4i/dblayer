@@ -27,6 +27,9 @@ object DBlayer {
         EntityRegistries.resumeAll()
     }
 
+    /** Tells the library whether the app lets the model subscriptions run. `open(listening = false)` starts none from a committed credential until `setListening(true)`. Allowed with a committed credential, they start once. `setListening(false)`, `logout()` and `sessionReset()` stop them. Call it from the app state that gates subscriptions, for example registration complete. */
+    fun setListening(allowed: Boolean) = database.setListening(allowed)
+
     suspend fun logout() {
         offCaller { database.logout() }
         EntityRegistries.resetAll()
@@ -97,9 +100,10 @@ object DBlayer {
         http: EncryptedHttp? = null,
         retries: RetryProgress? = null,
         uploadNotification: UploadNotification,
+        listening: Boolean = true,
     ) = opening.withLock {
         try {
-            openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, uploads, http, retries, uploadNotification)
+            openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, uploads, http, retries, uploadNotification, listening)
         } catch (error: Throwable) {
             ready.completeExceptionally(error)
             ready = CompletableDeferred()
@@ -121,10 +125,11 @@ object DBlayer {
         http: EncryptedHttp?,
         retries: RetryProgress?,
         uploadNotification: UploadNotification,
+        listening: Boolean,
     ) {
         UploadNotifications.store(context, uploadNotification)
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire(), PowerSaving.saving(context), PowerSaving.lowRam(context), true)
+        val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire(), PowerSaving.saving(context), PowerSaving.lowRam(context), true, listening)
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }, retries)

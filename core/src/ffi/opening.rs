@@ -10,6 +10,7 @@ pub struct OpenOptions {
     pub power_saving: bool,
     pub low_ram: bool,
     pub preload: bool,
+    pub listening: bool,
 }
 
 #[derive(uniffi::Object)]
@@ -34,6 +35,8 @@ impl OpenDatabase {
                 sync.set_preload(options.preload);
                 sync.set_low_ram(options.low_ram);
                 sync.set_power_saving(options.power_saving);
+                let _entered = super::database::executor()?.enter();
+                sync.set_listening(options.listening);
             }
             if let Err(error) = database.register_operations(options.operations).and_then(|()| Ok(database.sync()?.check_uploads()?)) {
                 database.shutdown();
