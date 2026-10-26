@@ -148,6 +148,7 @@ class Entities<Model : DBModel> internal constructor(
     private val source: EntitySource = source ?: core
 
     internal val decodedRows: Int get() = core.decodedRows
+    internal val peekedRows: Int get() = core.peekedRows
     internal val leaseFailures: Int get() = core.leaseFailures
 
     fun entity(id: String): Entity<Model> = synchronized(lock) {
@@ -290,11 +291,16 @@ internal class CoreEntitySource<Model : DBModel>(
     private var observer: LiveEntities? = null
     private val decoded = AtomicInteger()
     private val failures = AtomicInteger()
+    private val peeks = AtomicInteger()
 
     val decodedRows: Int get() = decoded.get()
+    val peekedRows: Int get() = peeks.get()
     val leaseFailures: Int get() = failures.get()
 
-    override fun cachedRow(id: String): WireRow? = DBlayer.database.peekRow(modelName, id)
+    override fun cachedRow(id: String): WireRow? {
+        peeks.incrementAndGet()
+        return DBlayer.database.peekRow(modelName, id)
+    }
 
     @Synchronized
     override fun retain(ids: List<String>) {

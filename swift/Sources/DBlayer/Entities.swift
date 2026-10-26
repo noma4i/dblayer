@@ -196,6 +196,7 @@ public final class Entities<Model: DBModel> {
   }
 
   var decodedRows: Int { core.decodedRows }
+  var peekedRows: Int { core.peekedRows }
   var leaseFailures: Int { core.leaseFailures }
 
   public func entity(_ id: String) -> Entity<Model> {
@@ -375,9 +376,11 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
   private let lock = NSLock()
   private var total = 0
   private var failures = 0
+  private var peeks = 0
   var deliver: (@Sendable (EntityDecoding.Decoded<Model>) -> Void)?
 
   var decodedRows: Int { lock.withLock { total } }
+  var peekedRows: Int { lock.withLock { peeks } }
   var leaseFailures: Int { lock.withLock { failures } }
 
   private func refused(_ ids: [String], _ call: () throws -> Void) {
@@ -389,7 +392,8 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
   }
 
   func cachedRow(_ id: String) throws -> WireRow? {
-    try DB.database.peekRow(model: Model.modelName, rowId: id)
+    lock.withLock { peeks += 1 }
+    return try DB.database.peekRow(model: Model.modelName, rowId: id)
   }
 
   func retain(_ ids: [String]) {
