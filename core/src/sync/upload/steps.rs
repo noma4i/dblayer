@@ -239,10 +239,13 @@ impl Runner {
         if self.inner.connectivity.is_online() {
             return Ok(());
         }
-        tokio::select! {
+        self.save(UploadEvent::WentOffline)?;
+        let arrived = tokio::select! {
             () = self.inner.connectivity.online() => Ok(()),
             () = self.token.cancelled() => Err(Stop::Cancelled),
-        }
+        };
+        let cleared = self.save(UploadEvent::CameOnline);
+        arrived.and(cleared)
     }
 }
 

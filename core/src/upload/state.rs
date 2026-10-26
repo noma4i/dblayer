@@ -21,6 +21,7 @@ pub enum UploadStatus {
 #[serde(rename_all = "snake_case")]
 pub enum WaitReason {
     CreateUnconfirmed,
+    Offline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -83,6 +84,8 @@ pub struct UploadState {
     pub error: Option<OperationFailure>,
     #[serde(default)]
     pub background_refused: Option<String>,
+    #[serde(default)]
+    pub offline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +125,7 @@ impl UploadState {
             headers: Vec::new(),
             error: None,
             background_refused: None,
+            offline: false,
         }
     }
 
@@ -156,6 +160,7 @@ pub struct UploadInfo {
 
 impl UploadInfo {
     pub fn of(status: OperationStatus, transport_started: bool, state: &UploadState, wait_reason: Option<WaitReason>, error: Option<OperationFailure>) -> Self {
+        let wait_reason = wait_reason.or(state.offline.then_some(WaitReason::Offline));
         let shown = match (status, transport_started) {
             (OperationStatus::Failed, _) => UploadStatus::Failed,
             (OperationStatus::DeliveryUnknown, _) => UploadStatus::DeliveryUnknown,

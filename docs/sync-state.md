@@ -20,7 +20,7 @@ Every record knows whether the server has seen it. The state is live like everyt
 | State | When |
 | ----- | ---- |
 | `synced` | nothing is waiting for the server |
-| `pending` | a change is queued and sending has not started |
+| `pending` | a change is queued and sending has not started, or an upload of the record waits for the network (`uploads[action].waitReason == offline`) |
 | `sending` | the request is on its way and no answer has arrived |
 | `failed` | the server refused the change and the record is kept for you to decide |
 | `deliveryUnknown` | the request was sent and no answer was seen: the connection broke, the server returned an error status, or the answer could not be understood |

@@ -35,6 +35,8 @@ pub(crate) enum UploadEvent {
     Failed { failure: OperationFailure, at: u64, batch: bool, resume_at: Option<UploadStage> },
     Cancel,
     Retried,
+    WentOffline,
+    CameOnline,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +67,7 @@ impl Flow {
     fn begin(&mut self) {
         self.state.stage = UploadStage::Prepare;
         self.state.error = None;
+        self.state.offline = false;
     }
 
     fn staged(&mut self, stage: UploadStage) -> Outcome<State> {
@@ -74,6 +77,7 @@ impl Flow {
 
     fn mutate(&mut self, request: &UploadRequest) {
         self.state.stage = UploadStage::Mutation;
+        self.state.offline = false;
         self.state.request = Some(request.clone());
     }
 
@@ -126,6 +130,14 @@ impl UploadFlow {
                 context.state.request = None;
                 Handled
             }
+            UploadEvent::WentOffline => {
+                context.state.offline = true;
+                Handled
+            }
+            UploadEvent::CameOnline => {
+                context.state.offline = false;
+                Handled
+            }
             UploadEvent::ErrorNoted { failure } => {
                 context.state.error = Some(failure.clone());
                 Handled
@@ -135,10 +147,14 @@ impl UploadFlow {
                     context.state.stage = *stage;
                 }
                 context.state.error = Some(failure.clone());
+                context.state.offline = false;
                 context.state.failed_at = Some(*at);
                 if *batch { Transition(State::failed()) } else { Handled }
             }
-            UploadEvent::Cancel => Transition(State::cancelled()),
+            UploadEvent::Cancel => {
+                context.state.offline = false;
+                Transition(State::cancelled())
+            }
             _ => {
                 context.refused = true;
                 Handled

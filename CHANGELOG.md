@@ -30,6 +30,7 @@
 - `LiveWindow` connects its scope like `LiveList` instead of reading the local database only.
 - `preload` waits for the first snapshot of the app and runs behind loads the app asked for.
 - A committed credential starts the model subscriptions, and `logout()` and `sessionReset()` stop them.
+- An upload that waits for the network reports `waiting` with `waitReason` `offline`, and its record stays `pending`.
 
 ### Fixed
 - A freed owner of entities returns `subscriptionCensus` to its base: the core drops the entity observer when its last id is released and creates it again on the next retain.

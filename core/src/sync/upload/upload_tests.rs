@@ -11,7 +11,7 @@ use crate::identity::RowId;
 use crate::pacing::Backoff;
 use crate::syncstate::{FailureKind, OperationFailure, SyncState};
 use crate::transport::{PutReply, Reply, TransportError};
-use crate::upload::{UploadConfig, UploadFile, UploadOperation, UploadOperations, UploadPart, UploadScenario, UploadStage, UploadState, UploadStatus};
+use crate::upload::{UploadConfig, UploadFile, UploadOperation, UploadOperations, UploadPart, UploadScenario, UploadStage, UploadState, UploadStatus, WaitReason};
 
 use super::super::rig::*;
 use super::super::{OperationDef, SyncConfig};
@@ -563,10 +563,31 @@ async fn inv_upload_09_offline_waits_without_spending_attempts() {
     tokio::time::sleep(Duration::from_secs(100)).await;
     assert_eq!(rig.transport.call_count("CreateBlob"), 0);
     let waiting = upload_of(&rig, "m1").unwrap();
-    assert_eq!((waiting.status, waiting.attempts), (UploadStatus::Uploading, 0));
+    assert_eq!((waiting.status, waiting.wait_reason, waiting.attempts), (UploadStatus::Waiting, Some(WaitReason::Offline), 0));
+    assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().state, SyncState::Pending);
     rig.sync.set_online(true);
     rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("CreateBlob"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_offline_wait_ends_with_the_network_and_the_upload_shows_sending() {
+    let rig = upload_rig(small());
+    single_replies(&rig);
+    rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(8)));
+    rig.sync.set_online(false);
+    let source = file(b"abcdef");
+    rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(rig.transport.call_count("CreateBlob"), 0);
+    rig.sync.set_online(true);
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let running = upload_of(&rig, "m1").unwrap();
+    assert_eq!((running.status, running.wait_reason), (UploadStatus::Uploading, None));
+    assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().state, SyncState::Sending);
+    rig.sync.wait_uploads().await;
+    assert_eq!(rig.transport.call_count("CreateBlob"), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -581,7 +602,7 @@ async fn inv_upload_09_a_network_error_while_offline_is_not_an_attempt() {
     rig.sync.set_online(false);
     tokio::time::sleep(Duration::from_secs(60)).await;
     let waiting = upload_of(&rig, "m1").unwrap();
-    assert_eq!((waiting.status, waiting.attempts), (UploadStatus::Uploading, 0));
+    assert_eq!((waiting.status, waiting.attempts), (UploadStatus::Waiting, 0));
     rig.sync.set_online(true);
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.put_count("https://s3/single"), 2);

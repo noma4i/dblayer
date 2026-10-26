@@ -121,6 +121,7 @@ const CORE_STATEMENTS: [&str; 40] = [
   url_issued_at INTEGER,
   failed_at INTEGER,
   background_refused TEXT,
+  offline INTEGER,
   PRIMARY KEY (seq, position)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS op_item_retry (

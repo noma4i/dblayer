@@ -95,3 +95,16 @@ fn inv_upload_14_an_upload_behind_an_open_create_folds_to_waiting_and_stops_wait
     let alone = fold_entries(&[upload]).unwrap().uploads.get("upload").cloned().unwrap();
     assert_eq!((alone.status, alone.wait_reason), (UploadStatus::Queued, None));
 }
+
+#[test]
+fn an_offline_upload_folds_to_waiting_offline_and_the_row_stays_pending() {
+    use crate::upload::{UploadState, UploadStage, UploadStatus, WaitReason};
+    let state = UploadState { phase: UploadStatus::Uploading, stage: UploadStage::Create, offline: true, ..UploadState::queued() };
+    let upload = SyncEntry { upload: Some(state.clone()), ..entry("upload:upload", OperationStatus::Pending, false, 1) };
+    let info = fold_entries(&[upload]).unwrap();
+    let shown = info.uploads.get("upload").cloned().unwrap();
+    assert_eq!((info.state, shown.status, shown.wait_reason), (SyncState::Pending, UploadStatus::Waiting, Some(WaitReason::Offline)));
+    let online = SyncEntry { upload: Some(UploadState { offline: false, ..state }), ..entry("upload:upload", OperationStatus::Pending, false, 1) };
+    let info = fold_entries(&[online]).unwrap();
+    assert_eq!((info.state, info.uploads.get("upload").unwrap().status), (SyncState::Sending, UploadStatus::Uploading));
+}
