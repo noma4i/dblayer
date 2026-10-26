@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.10.0 - 2026-10-27
 
 ### Added
 - Kotlin `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope of a live list in Compose.
@@ -30,6 +30,9 @@
 - `preload` waits for the first snapshot of the app and runs behind loads the app asked for.
 - A committed credential starts the model subscriptions, and `logout()` and `sessionReset()` stop them.
 
+### Fixed
+- A freed owner of entities returns `subscriptionCensus` to its base: the core drops the entity observer when its last id is released and creates it again on the next retain.
+
 ### Removed
 - `DB.listen()`, `DB.unlisten()`, `DBlayer.listen()` and `DBlayer.unlisten()`.
 
@@ -42,7 +45,6 @@
 - `expires_in` of a memory model counts from the last write, and a write of equal values renews it.
 
 ### Fixed
-- A freed owner of entities returns `subscriptionCensus` to its base: the core drops the entity observer when its last id is released and creates it again on the next retain.
 - `entity(id)` of a record whose reader was freed no longer calls the core again while its value or absence is retained.
 - `confirmed` returns the server id to a waiter that the closing commit of a create wakes.
 
