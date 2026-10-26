@@ -34,8 +34,6 @@ public enum DB {
 
   public static func openReport() throws -> OpenReport { try database.openReport() }
 
-  public static func listen() throws { try database.listen() }
-  public static func unlisten() throws { try database.unlisten() }
   /// Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions and singleton entities.
   @concurrent public static func resume() async throws {
     try await database.resume()

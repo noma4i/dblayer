@@ -97,7 +97,7 @@ fn activity_model() -> crate::schema::ModelSpec {
 async fn events_with_one_chat_and_user_are_one_row_and_an_inactive_event_deletes_it() {
     let rig = rig_on(Db::open_in_memory(vec![activity_model()], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(super::OperationDef::new("ActionSignal", "subscription ActionSignal { actionSignal { chatId userId kind active } }", "actionSignal"));
-    rig.sync.listen();
+    rig.sync.inner.listen_all();
     rig.transport.await_calls("ActionSignal", 1).await;
     let send = |chat: &str, user: &str, kind: &str, active: bool| rig.transport.emit("ActionSignal", SubscriptionEvent::Next(crate::transport::Response::data(json!({"actionSignal":{"chatId":chat, "userId":user, "kind":kind, "active":active}}))));
     let rows = || rig.db.query(&crate::query::Query::new("activity")).unwrap();

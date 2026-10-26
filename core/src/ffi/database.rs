@@ -332,7 +332,7 @@ impl Database {
             sync.register(operation);
         }
         let _entered = executor()?.enter();
-        sync.preload_on_session();
+        sync.check_session();
         Ok(())
     }
     pub async fn run(&self, operation: String, variables_json: String) -> Result<String, DbError> {
@@ -401,16 +401,6 @@ impl Database {
         let wire = self.wire(&model)?;
         let rows = on_executor(async move { sync.nodes(&model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
         Ok(rows.iter().map(|row| wire.row(row)).collect())
-    }
-    pub fn listen(&self) -> Result<(), DbError> {
-        let _entered = executor()?.enter();
-        if let Some(sync) = &self.sync { sync.listen(); }
-        Ok(())
-    }
-    pub fn unlisten(&self) -> Result<(), DbError> {
-        let _entered = executor()?.enter();
-        if let Some(sync) = &self.sync { sync.unlisten(); }
-        Ok(())
     }
     pub async fn flush(&self) -> Result<(), DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(()) };
@@ -527,6 +517,10 @@ impl Database {
     }
     pub fn shutdown(&self) { if let Some(lease) = self.lease.get() { lease.release(); } }
     pub async fn logout(&self) -> Result<(), DbError> {
+        if let Some(sync) = &self.sync {
+            let _entered = executor()?.enter();
+            sync.session_ended();
+        }
         let database = self.clone();
         blocking(move || {
             database.db.reset_all()?;

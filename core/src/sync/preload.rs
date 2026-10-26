@@ -228,7 +228,10 @@ impl Inner {
                     changed
                 };
                 let committed = changed && current.is_some();
-                if committed { self.preload_on_event(); }
+                if committed {
+                    self.preload_on_event();
+                    self.listen_all();
+                }
                 committed
             }
             Err(error) => {
@@ -293,8 +296,13 @@ impl Sync {
         locked(&self.inner.preload.state).low_ram = low_ram;
     }
 
-    pub fn preload_on_session(&self) {
+    pub fn check_session(&self) {
         self.inner.preload_on_session();
+    }
+
+    pub fn session_ended(&self) {
+        locked(&self.inner.preload.state).session = None;
+        self.inner.unlisten_all();
     }
 
     pub fn session_committed(&self) {

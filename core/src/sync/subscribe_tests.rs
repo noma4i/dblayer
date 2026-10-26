@@ -210,7 +210,7 @@ async fn declared_subscription_rereads_or_ignores_without_copying_event_fields()
         put(&rig, "users", json!({"id":"u1", "name":"before"}));
         rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":"fetched"}})));
         rig.sync.register(super::OperationDef::new("RecordSignal", "subscription RecordSignal { recordSignal { id name } }", "recordSignal"));
-        rig.sync.listen();
+        rig.sync.inner.listen_all();
         rig.transport.await_calls("RecordSignal", 1).await;
         rig.transport.emit("RecordSignal", SubscriptionEvent::Next(Response::data(json!({"recordSignal":{"id":"u1", "name":"untrusted"}}))));
         rig.transport.await_consumed("RecordSignal").await;
@@ -226,7 +226,7 @@ async fn declared_activity_changes_only_ephemeral_typing_and_expires() {
     let rig = rig_on(Db::open_in_memory(vec![model], None).unwrap(), MockTransport::new(), SyncConfig::default());
     put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
     rig.sync.register(super::OperationDef::new("PresenceSignal", "subscription PresenceSignal { presenceSignal { memberId active kind } }", "presenceSignal"));
-    rig.sync.listen();
+    rig.sync.inner.listen_all();
     rig.transport.await_calls("PresenceSignal", 1).await;
     let row = || rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     for (kind, active, expected) in [("ACTIVE", true, true), ("OTHER", false, true), ("ACTIVE", false, false), ("ACTIVE", true, true)] {

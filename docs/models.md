@@ -722,12 +722,10 @@ Missing entry fields and undeclared areas are rejected.
 
 ```swift
 try await DB.open(endpoint: endpoint, modelsJSON: modelsJSON, operations: [RecordEvents.self])
-try DB.listen()
 ```
 
 ```kotlin
 DBlayer.open(context, endpoint = endpoint, modelsJson = modelsJSON, operations = listOf(RecordEvents), uploadNotification = notification)
-DBlayer.listen()
 ```
 
 The generated Swift and Kotlin model declarations carry identical subscription data.

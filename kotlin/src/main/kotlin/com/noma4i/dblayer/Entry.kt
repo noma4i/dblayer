@@ -21,8 +21,6 @@ object DBlayer {
 
     internal fun openedDatabase(): Database? = opened
 
-    fun listen() = database.listen()
-    fun unlisten() = database.unlisten()
     /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions and singleton entities. */
     suspend fun resume() {
         offCaller { database.resume() }

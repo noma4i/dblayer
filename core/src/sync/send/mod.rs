@@ -110,16 +110,6 @@ impl Sync {
         }
     }
 
-    pub fn listen(&self) {
-        self.inner.transport.resume_subscriptions();
-        self.inner.restart_live(super::resume_machine::Cause::Explicit);
-        self.inner.listen_all();
-    }
-
-    pub fn unlisten(&self) {
-        self.inner.unlisten_all();
-    }
-
     pub async fn flush(&self) -> Result<FlushReport, SyncError> {
         self.inner.flush_pending().await
     }

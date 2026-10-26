@@ -175,7 +175,7 @@ The client validates code shapes without copying the server's vocabulary.
 | `t` and field names | Closed message grammar. Unknown message types and fields remain invalid |
 
 An `error` for a subscription contains its `id`, `code` and `retryable`, without a message or reason field.
-With `retryable=false`, the feed records `SubscriptionStatus.failure` and stops until explicit `resume` or `listen`.
+With `retryable=false`, the feed records `SubscriptionStatus.failure` and stops until explicit `resume` or the next committed credential.
 Explicit resume restarts every stopped live subscription with a saved failure, including GraphQL refusals. The foreground event and the return of the network restart only stopped subscriptions whose saved failure is not a session refusal, and they send no cable resume command. A session refusal (`SessionCode` or a terminal close) stays stopped until explicit resume or `listen`.
 With `retryable=true`, the feed retains the GraphQL error and retries after backoff.
 Code spelling never selects retry behavior. For example, `REFUSED` can stop or retry according to the flag.
@@ -225,16 +225,16 @@ The last cancellation, offline transition or transport drop interrupts a pending
 
 | Close | Result |
 | --- | --- |
-| HTTP 401 during open | `SessionCode::Unauthenticated`, stop until explicit listen or resume |
-| HTTP 403 during open or channel `reject_subscription` | `SessionCode::AccountUnavailable`, stop until explicit listen or resume |
-| 4401, including session_unknown | `SessionCode::Unauthenticated`, stop until explicit listen or resume |
-| 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, stop until explicit listen or resume |
-| LOGGED_OUT | `SessionCode::SessionEnded`, stop until explicit listen or resume |
+| HTTP 401 during open | `SessionCode::Unauthenticated`, stop until the next committed credential or explicit resume |
+| HTTP 403 during open or channel `reject_subscription` | `SessionCode::AccountUnavailable`, stop until the next committed credential or explicit resume |
+| 4401, including session_unknown | `SessionCode::Unauthenticated`, stop until the next committed credential or explicit resume |
+| 4403 or ACCOUNT_LOCKED | `SessionCode::AccountUnavailable`, stop until the next committed credential or explicit resume |
+| LOGGED_OUT | `SessionCode::SessionEnded`, stop until the next committed credential or explicit resume |
 | 1003, 1006, 4400, 4408, 4409, 4429, 4430, 4500, 4503 | Reopen with backoff. A close before the first server frame after ready keeps growing the delay |
 
 No close deletes the credential. Cable receives only the function that reads the credential.
 Terminal refusals also reject later subscriptions without opening sockets or triggering rereads.
-After sign-in, call `listen` or `resume` to clear the refusal and restart stopped subscriptions.
+A committed credential or `resume()` clears the refusal and restarts stopped subscriptions.
 Each watched query receives one `LiveChange.error` with the typed session failure until that explicit restart.
 `SubscriptionStatus.failure` retains the typed subscription error. User-initiated configuration requests and queries remain available.
 `DbError` keeps socket close codes and GraphQL extensions. Kotlin exposes the same data through `DbException`.

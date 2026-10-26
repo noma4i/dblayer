@@ -170,6 +170,10 @@ impl Database {
     }
 
     pub fn session_reset(&self) -> Result<(), DbError> {
+        if let Some(sync) = &self.sync {
+            let _entered = super::database::executor()?.enter();
+            sync.session_ended();
+        }
         self.session()?.reset().map_err(typed)
     }
 }

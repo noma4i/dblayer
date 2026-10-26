@@ -27,6 +27,10 @@
 ### Changed
 - `LiveWindow` connects its scope like `LiveList` instead of reading the local database only.
 - `preload` waits for the first snapshot of the app and runs behind loads the app asked for.
+- A committed credential starts the model subscriptions, and `logout()` and `sessionReset()` stop them.
+
+### Removed
+- `DB.listen()`, `DB.unlisten()`, `DBlayer.listen()` and `DBlayer.unlisten()`.
 
 ## 6.9.2 - 2026-10-26
 

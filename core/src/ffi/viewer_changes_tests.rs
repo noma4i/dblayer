@@ -82,13 +82,13 @@ async fn switching_the_observed_list_from_a_foreign_thread_keeps_the_one_viewer_
     feed.wait_for_initial_load().await.unwrap();
     let live = || database.sync().unwrap().inner.live_status("ChangeNotice|DblayerViewerChanges");
     within(transport.subscribed_event.notified()).await;
-    yield_until("the viewer changes live status settled", || live() == Some((1, true))).await;
+    yield_until("the viewer changes live status settled", || live() == Some((2, true))).await;
     assert_eq!(transport.subscriptions("DblayerViewerChanges"), 1);
 
     join_within(std::thread::spawn(move || feed.cancel()));
     let vibe = database.live_query(r#"{"model":"Moment","relation":"vibeFeed","params":{"vibeId":"3"}}"#.into(), Arc::new(Silent));
     vibe.wait_for_initial_load().await.unwrap();
-    yield_until("the viewer changes live status settled", || live() == Some((1, true))).await;
+    yield_until("the viewer changes live status settled", || live() == Some((2, true))).await;
 
     assert_eq!(transport.subscriptions("DblayerViewerChanges"), 1);
 }

@@ -85,8 +85,8 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     assert!(matches!(error, DbError::Session { code: super::SessionCode::Unauthenticated, detail } if detail == "session_unknown"));
     assert!(subscriptions.try_recv().is_err());
     assert_eq!(transport.queries.load(Ordering::SeqCst), initial_reads);
-    database.listen().unwrap();
-    let resumed = subscriptions.recv_timeout(Duration::from_secs(2)).expect("listen restarts the stopped subscription");
+    database.resume().await.unwrap();
+    let resumed = subscriptions.recv_timeout(Duration::from_secs(2)).expect("resume restarts the stopped subscription");
     resumed.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "second_session".into() });
     assert!(matches!(received.recv_timeout(Duration::from_secs(2)).expect("observer receives the next session failure"), DbError::Session { detail, .. } if detail == "second_session"));
     live.cancel();

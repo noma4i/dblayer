@@ -161,7 +161,7 @@ async fn preload_off_sends_no_request_on_any_event_and_on_loads() {
             sync.set_online(true);
             sync.set_power_saving(true);
             sync.set_power_saving(false);
-            sync.preload_on_session();
+            sync.check_session();
             sync.inner.preload_on_event();
             assert!(requests.load(Ordering::SeqCst) == 0 && !sync.preload_running(), "clocked={clocked} preload off started a request");
         }

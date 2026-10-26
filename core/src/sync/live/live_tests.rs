@@ -74,11 +74,11 @@ async fn dropping_sync_stops_subscriptions_at_every_lifetime_stage() {
         let _direct = if stage == "direct" {
             Some(rig.sync.subscribe(super::SubscriptionDef::new(crate::transport::EventSpec::new("listen"), "MomentListen", "moments", super::EventEffect::Upsert)).await.unwrap())
         } else {
-            rig.sync.listen();
+            rig.sync.inner.listen_all();
             None
         };
         if stage != "starting" { rig.transport.await_calls("MomentListen", 1).await; }
-        if stage == "lingering" { rig.sync.unlisten(); }
+        if stage == "lingering" { rig.sync.inner.unlisten_all(); }
         let survivor = (stage == "clone").then(|| rig.sync.clone());
         let inner = std::sync::Arc::downgrade(&rig.sync.inner);
         drop(rig.sync);
@@ -195,13 +195,13 @@ async fn a_relation_with_two_subscriptions_starts_both_and_a_removing_one_delete
 #[tokio::test(start_paused = true)]
 async fn listen_opens_the_model_subscriptions_without_a_reader_and_unlisten_closes_them() {
     let rig = rig();
-    rig.sync.listen();
+    rig.sync.inner.listen_all();
     rig.transport.await_calls("MomentListen", 1).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 1);
     rig.transport.emit("MomentListen", SubscriptionEvent::Next(Response::data(json!({"momentListen": {"id": "m9", "text": "pushed", "userId": null}}))));
     rig.transport.await_consumed("MomentListen").await;
     assert_eq!(text_of(&rig, "moments", "m9"), Some("pushed".to_string()));
-    rig.sync.unlisten();
+    rig.sync.inner.unlisten_all();
     tokio::time::sleep(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1);
 }
@@ -210,7 +210,7 @@ async fn listen_opens_the_model_subscriptions_without_a_reader_and_unlisten_clos
 async fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
-    rig.sync.listen();
+    rig.sync.inner.listen_all();
     rig.transport.await_calls("MomentWrapped", 1).await;
     rig.transport.emit("MomentWrapped", SubscriptionEvent::Next(Response::data(json!({"momentWrapped": {"wrapped": {"key": "m1", "text": "from wrapper"}}}))));
     rig.transport.await_consumed("MomentWrapped").await;
@@ -220,7 +220,7 @@ async fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() {
 #[tokio::test(start_paused = true)]
 async fn a_debounced_listen_subscribes_and_lands_its_frame_after_the_interval() {
     let rig = rig();
-    rig.sync.listen();
+    rig.sync.inner.listen_all();
     rig.transport.await_calls("MomentDebounced", 1).await;
     assert_eq!(rig.transport.call_count("MomentDebounced"), 1);
     rig.transport.emit("MomentDebounced", SubscriptionEvent::Next(Response::data(json!({"momentDebounced": {"id": "m7", "text": "later", "userId": null}}))));
@@ -263,4 +263,23 @@ async fn last_reader_of_a_param_set_closes_only_its_subscription_and_the_event_l
     rig.transport.await_consumed("VibeEvents").await;
     assert_eq!(rig.db.query(&crate::query::Query::new("moments")).unwrap().iter().filter(|row| row.text("text") == Some("from b")).count(), 1);
     drop(b);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_committed_credential_starts_the_model_subscriptions_and_the_end_of_the_session_stops_them() {
+    let rig = rig();
+    rig.transport.set_session(None);
+    rig.sync.check_session();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(rig.transport.call_count("MomentListen"), 0, "no credential");
+    rig.transport.set_session(Some("first"));
+    rig.sync.session_committed();
+    rig.transport.await_calls("MomentListen", 1).await;
+    rig.sync.session_ended();
+    tokio::time::sleep(Duration::from_secs(31)).await;
+    assert_eq!(rig.transport.cancellations("MomentListen"), 1, "logout");
+    rig.transport.set_session(Some("second"));
+    rig.sync.session_committed();
+    rig.transport.await_calls("MomentListen", 2).await;
+    assert_eq!(rig.transport.call_count("MomentListen"), 2, "next sign-in");
 }

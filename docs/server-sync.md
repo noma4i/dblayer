@@ -834,15 +834,7 @@ model User do
 end
 ```
 
-```swift
-try DB.listen()      // after sign-in
-try DB.unlisten()    // on sign-out
-```
-
-```kotlin
-DBlayer.listen()
-DBlayer.unlisten()
-```
+The core starts these subscriptions when a session credential is committed (a session call that changes the session, or a session that is already stored at start) and stops them at `logout()` and `sessionReset()`. The app calls nothing. A `Model.events` stream stays open across sign-out and the next sign-in and never sends a closing element. Subscriptions that a refusal stopped restart with the next committed credential or with `resume()`.
 
 ## Automatic refetching
 
