@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.9.0 - 2026-10-26
 
 ### Added
 - `preload` parameter on `DB.openTesting` and `DBlayer.openTesting`, default false, keeps scope preloads quiet in tests.
