@@ -198,7 +198,7 @@ let thread = LiveList(try Note.thread(groupId))   // thread.rows, thread.replace
 val thread = LiveList(Note.thread(groupId), viewModelScope)   // thread.rows, thread.replaced, thread.ids are StateFlow
 ```
 
-In a Compose screen without a view model, `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope: the subscription ends when the screen leaves the composition or the query changes. Swift needs no helper, `@Live` owns its subscription.
+In a Compose screen without a view model, `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope: the subscription ends when the screen leaves the composition or the query changes. Swift needs no extra call, `@Live` owns its subscription.
 
 ```swift
 @Live var thread: [Note]   // ends with the view
