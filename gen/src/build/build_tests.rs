@@ -375,6 +375,12 @@ fn stable_order_marks_the_relation() {
 }
 
 #[test]
+fn refresh_on_foreground_marks_the_relation() {
+    let model = build_one("  scope :feed, refresh_on_foreground: true do\n    query \"Feed\"\n  end\n  scope :plain do\n    query \"Plain\"\n  end");
+    assert_eq!((model.relations[0].refresh_on_foreground, model.relations[1].refresh_on_foreground), (true, false));
+}
+
+#[test]
 fn a_node_scope_reads_one_object_by_the_node_parameter() {
     let model = build_one("  scope :node, node: :one do\n    parameter :id, :id\n    query \"SampleNode\"\n    variables sampleId: :id\n    freshness expires_in: 1.minute\n  end\n  scope :nodes, node: :many do\n    query \"SampleNodes\"\n  end");
     let one = &model.relations[0];

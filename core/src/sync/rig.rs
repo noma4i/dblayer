@@ -50,6 +50,10 @@ pub fn moments_spec() -> ModelSpec {
     let mut feed = RelationSpec::global("feed");
     feed.remote = Some(remote("MomentsFeed", forward, "5.minutes"));
     feed.edge_fields = edge_fields();
+    let mut foreground_feed = RelationSpec::global("foreground_feed");
+    foreground_feed.remote = Some(remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes"));
+    foreground_feed.edge_fields = edge_fields();
+    foreground_feed.refresh_on_foreground = true;
     let mut vibe_feed = RelationSpec::new("vibe_feed", &[]);
     vibe_feed.text_params = vec!["vibeId".to_string()];
     vibe_feed.remote = Some(remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: Some(2), cursor: None }, "5.minutes"));
@@ -88,7 +92,7 @@ pub fn moments_spec() -> ModelSpec {
         UpdatesSpec { apply: None, subscription: "MomentRemoved".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: true, debounce: None, root: None, id: Vec::new() },
     ];
     pulse.remote = Some(pulse_remote);
-    spec.relations.extend([feed, vibe_feed, since, tail, user_since, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
+    spec.relations.extend([feed, foreground_feed, vibe_feed, since, tail, user_since, history, by_user, by_mood, search, empty_aware, pulse, RelationSpec::global("recent")]);
     spec.listens = vec![UpdatesSpec { apply: None, subscription: "MomentListen".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() },
         UpdatesSpec { apply: None, subscription: "MomentWrapped".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: Some("momentWrapped.wrapped".to_string()), id: vec!["key".to_string()] },
         UpdatesSpec { apply: None, subscription: "MomentDebounced".to_string(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: Some("300.milliseconds".to_string()), root: None, id: Vec::new() },

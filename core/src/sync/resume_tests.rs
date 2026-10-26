@@ -293,3 +293,17 @@ async fn a_committed_credential_resumes_once_and_the_same_credential_does_not() 
     within(rig.sync.resume_settled()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2, "same credential");
 }
+
+#[tokio::test(start_paused = true)]
+async fn refresh_on_foreground_reloads_a_fresh_window_once_per_foreground_event() {
+    for (relation, reloads) in [("foreground_feed", 1), ("feed", 0)] {
+        let rig = rig();
+        rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
+        let _watch = rig.sync.watch("moments", relation, &none()).unwrap();
+        rig.sync.load("moments", relation, &none(), LoadOptions::default()).await.unwrap();
+        rig.clock.advance(Duration::from_secs(5));
+        rig.sync.enter_foreground();
+        within(rig.sync.resume_settled()).await;
+        assert_eq!(rig.transport.call_count("MomentsFeed"), 1 + reloads, "{relation}");
+    }
+}

@@ -167,6 +167,16 @@ fn insert_on_is_a_closed_set_of_sources() {
 }
 
 #[test]
+fn refresh_on_foreground_needs_a_scope_with_query() {
+    run(&[
+        ("remote", &scope(", refresh_on_foreground: true", "    query \"S\"\n"), None),
+        ("local", &scope(", refresh_on_foreground: true", "    order createdAt: :desc\n"), Some("needs a scope with `query`")),
+        ("false", &scope(", refresh_on_foreground: false", "    order createdAt: :desc\n"), None),
+        ("symbol", &scope(", refresh_on_foreground: :yes", "    order createdAt: :desc\n"), Some("`refresh_on_foreground` must be true or false")),
+    ]);
+}
+
+#[test]
 fn stable_order_keeps_the_shown_order_of_the_rows_where_selects() {
     let stable = |options: &str, lines: &str| scope(options, &format!("{lines}    query \"S\"\n"));
     run(&[

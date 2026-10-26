@@ -779,10 +779,11 @@ fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
     });
     let insert = line.opt(cx, "insert_on").and_then(|pair| insert_on(cx, pair));
     let stable = line.opt(cx, "stable_order").and_then(|pair| boolean(cx, &pair.value, "`stable_order`").filter(|flag| *flag).map(|_| pair_pos(pair)));
+    let foreground = line.opt(cx, "refresh_on_foreground").and_then(|pair| boolean(cx, &pair.value, "`refresh_on_foreground`").filter(|flag| *flag).map(|_| pair_pos(pair)));
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = ScopeDecl {
-        pos: line.pos, name, node, insert_on: insert, stable_order: stable, parameters: Vec::new(), where_: None, order: None, query: None, variables: None,
+        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, parameters: Vec::new(), where_: None, order: None, query: None, variables: None,
         response: None, paginate: None, freshness: None, preload: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
     };
     let remote = lines.iter().any(|candidate| candidate.word == "query");

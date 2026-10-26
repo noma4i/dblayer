@@ -205,7 +205,9 @@ impl Inner {
         let mut stale = Vec::with_capacity(watched.len());
         for key in watched.keys() {
             if cause == Cause::Event && self.owner.session_refused(key) { continue; }
-            if !self.db.shared.store.window_freshness(key)?.is_some_and(|freshness| freshness.is_fresh(now_ms, stale_ms)) {
+            let (model, relation, _) = &watched[key];
+            let on_foreground = cause == Cause::Event && self.db.spec(model).is_ok_and(|spec| spec.relations.iter().any(|declared| &declared.name == relation && declared.refresh_on_foreground));
+            if on_foreground || !self.db.shared.store.window_freshness(key)?.is_some_and(|freshness| freshness.is_fresh(now_ms, stale_ms)) {
                 stale.push(key.clone());
             }
         }

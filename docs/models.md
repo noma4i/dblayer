@@ -539,6 +539,7 @@ end
 | `freshness expires_in: 5.minutes` | how long a response counts as fresh | `5.minutes` |
 | `freshness expires_in: 5.minutes, empty_in: 30.seconds` | shorter freshness for an empty response | same |
 | `preload` or `preload channel: ["lobby", "stage"]` | the library loads the scope once the app has a session: after open, sign-in and reset, after the network returns and after power saving ends. A parameter lists its values, several parameters load every combination. `preload vibeId: { from: "Vibe.list" }` takes the values of a parameter from the row ids of another scope without parameters: each row gets one scope, and a row that a later load of the source adds gets its scope at once. A fresh answer sends nothing. Errors show in the state of the scope | not loaded until read |
+| `refresh_on_foreground: true` (on the `scope` line, needs `query`) | a window that has a reader reloads on every foreground event, fresh or not | reloads only when stale |
 | `stable_order: true` (on the `scope` line) | the list keeps the order the rows were shown in, see [stable order](#scopes) | sorted by the `order` values on every read |
 | `variables statusFilter: :status, includeRewards: false` | name the GraphQL variables: a symbol takes the value of a scope parameter, any other value is sent as written | every parameter under its own name |
 | `edge do attribute :impressionUuid, :string, null: true end` | values of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |

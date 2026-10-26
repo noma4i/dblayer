@@ -222,6 +222,11 @@ fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl, report: &
     if let Some(preload) = &scope.preload {
         check_preload(scope, preload, all, report);
     }
+    if let Some(pos) = scope.refresh_on_foreground {
+        if !scope.is_remote() {
+            report(pos, format!("scope `{name}`: `refresh_on_foreground: true` needs a scope with `query`"));
+        }
+    }
     if !scope.is_remote() {
         return;
     }

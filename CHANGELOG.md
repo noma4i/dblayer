@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `refresh_on_foreground: true` on a scope reloads its read windows at every foreground event.
 - A window over a scope loads it, and `expand(before:)` loads an older page.
 - `window(tail: 60, max: 240)` shrinks the window to `tail` rows past `max`.
 - `window(tail:).related(Relations.x)` reads the targets of window rows.
