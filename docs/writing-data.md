@@ -201,6 +201,8 @@ end
 
 The element replaces the stored element with the same `by` value, or is appended when there is none. When every attribute of the element except the key is empty (`null`, `""`, `[]`, `{}`), the stored element is removed instead. A refused mutation restores the whole row like any other optimistic change.
 
+When the element declares a nested object (`user`), the model has a `belongs_to` association of the same name, and the element holds the id (`userId`), the optimistic element carries that object built from the local row of the target model. Each attribute of the nested object takes the value of the same-named attribute of that row, and `id` takes the key. Without a local row the object stays absent. The server answer replaces the element as before.
+
 `by` and `element` name declared attributes. An attribute such as `userId` with `from: "user.id"` reads that nested response path and keeps the same key for optimistic replacement and removal.
 
 ```swift

@@ -9,6 +9,7 @@ model Record do
     attribute :userId, :id, null: true, from: "user.id"
     attribute :user, RecordReactionUser, null: true do
       attribute :id, :id, null: true
+      attribute :name, :string, null: true
     end
   end
   attribute :attachment, RecordAttachment, null: true do
@@ -37,6 +38,7 @@ model Record do
     attribute :transcoded, :bool, null: true
     attribute :fileUrl, :string, null: true
   end
+  belongs_to :user, foreign_key: :authorId
   belongs_to :container, sets: { lastRecordId: :id, lastRecordAt: :createdAt }, newer: { createdAt: :lastRecordAt }
   scope :by_container do
     parameter :containerId, :id

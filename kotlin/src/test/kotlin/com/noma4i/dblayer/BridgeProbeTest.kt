@@ -4,6 +4,7 @@ import com.noma4i.dblayer.models.Container
 import com.noma4i.dblayer.models.Record
 import com.noma4i.dblayer.models.RecordReactionNode
 import com.noma4i.dblayer.models.Moment
+import com.noma4i.dblayer.models.User
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -26,6 +27,17 @@ class BridgeProbeTest {
         val changed = row.react(reactionBody = "C", userId = "u1")
         assertEquals(listOf("u1"), changed.reactions.map { it.userId })
         assertEquals(listOf("C"), changed.reactions.map { it.body })
+    }
+
+    @Test
+    fun anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() = bounded {
+        reopen(Config(null, null, 32u), modelsJSON, null)
+        val ann = User.create(name = "Ann")
+        val record = Record.create(containerId = "c1", authorId = ann.id, text = "hello")
+        val withUser = record.react(reactionBody = "A", userId = ann.id)
+        assertEquals("Ann", withUser.reactions.first().user?.name)
+        val withoutUser = record.react(reactionBody = "B", userId = "nobody")
+        assertNull(withoutUser.reactions.first { it.userId == "nobody" }.user)
     }
 
     @Test

@@ -282,6 +282,17 @@ struct BridgeProbeTests {
     #expect(changed.reactions.map(\.body) == ["C"])
   }
 
+  @Test
+  func anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() async throws {
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let ann = try await User.create(name: "Ann")
+    let record = try await Record.create(containerId: "c1", authorId: ann.id, text: "hello")
+    let withUser = try await record.react(reactionBody: "A", userId: ann.id)
+    #expect(withUser.reactions.first?.user?.name == "Ann")
+    let withoutUser = try await record.react(reactionBody: "B", userId: "nobody")
+    #expect(withoutUser.reactions.first { $0.userId == "nobody" }?.user == nil)
+  }
+
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() async throws {
