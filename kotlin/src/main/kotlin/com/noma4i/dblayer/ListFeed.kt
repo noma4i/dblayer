@@ -150,8 +150,8 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
     }
 }
 
-internal class ListHandle(val cancel: () -> Unit, val reportDesync: () -> Unit) {
-    constructor(subscription: LiveSubscription) : this({ subscription.cancel() }, { subscription.reportDesync() })
+internal class ListHandle(val cancel: () -> Unit, val reportDesync: () -> Unit, val initialLoad: suspend () -> Unit = {}) {
+    constructor(subscription: LiveSubscription) : this({ subscription.cancel() }, { subscription.reportDesync() }, { subscription.waitForInitialLoad() })
 }
 
 internal class ListSession<Model : DBModel, Value>(
@@ -172,6 +172,8 @@ internal class ListSession<Model : DBModel, Value>(
         val pending = synchronized(this) { if (cancelled) null else { handle = made; desyncPending } }
         if (pending == null) made.cancel() else if (pending) made.reportDesync()
     }
+
+    suspend fun waitForInitialLoad() = synchronized(this) { handle }?.let { it.initialLoad() }
 
     fun cancel() {
         val current = synchronized(this) { cancelled = true; handle.also { handle = null } }

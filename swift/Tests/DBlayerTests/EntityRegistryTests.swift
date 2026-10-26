@@ -125,13 +125,34 @@ struct EntityRegistryTests {
   }
 
   @Test
-  func aRefreshOutcomeShowsAsRefreshErrorNextToThePhase() {
+  func theReadOutcomeMovesFromNotLoadedToFailedAndLoadedNextToThePhase() {
     let registry = Entities<Moment>(source: CountingSource())
     let entity = registry.entity("1", fetch: .force)
+    #expect(entity.read == .notLoaded)
     registry.apply(EntityDecoding.Decoded(revision: Int64.min, rows: [], removed: [], refreshes: [EntityRefresh(id: "1", error: .offline)]))
-    #expect(entity.refreshError == .offline && entity.phase == .opening)
+    #expect(entity.read == .failed(error: .offline) && entity.phase == .opening)
     registry.apply(EntityDecoding.Decoded(revision: Int64.min, rows: [], removed: [], refreshes: [EntityRefresh(id: "1", error: nil)]))
-    #expect(entity.refreshError == nil)
+    #expect(entity.read == .loaded)
+  }
+
+  @Test
+  func theFirstLoadWaitReusesTheReadAndReturnsItsOutcome() async throws {
+    let source = CountingSource()
+    let registry = Entities<Moment>(source: source)
+    let entity = registry.entity("1", fetch: .force)
+    let waiting = Task { @MainActor in try await entity.waitForInitialLoad() }
+    await settle()
+    #expect(source.retained == ["1"])
+    registry.apply(EntityDecoding.Decoded(revision: Int64.min, rows: [], removed: [], refreshes: [EntityRefresh(id: "1", error: .failed(message: "down"))]))
+    await #expect(throws: EntityRefreshError.failed(message: "down")) { try await waiting.value }
+    registry.apply(delivery(1, [moment("1", "A")]))
+    registry.apply(EntityDecoding.Decoded(revision: 1, rows: [], removed: [], refreshes: [EntityRefresh(id: "1", error: nil)]))
+    try await entity.waitForInitialLoad()
+    let plain = registry.entity("2")
+    try await plain.waitForInitialLoad()
+    await settle()
+    withExtendedLifetime(plain) {}
+    #expect(source.retained.sorted() == ["1", "2"])
   }
 
   /// REL-10

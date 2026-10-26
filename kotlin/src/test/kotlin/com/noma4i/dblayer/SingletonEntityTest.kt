@@ -57,6 +57,30 @@ class SingletonEntityTest {
         assertEquals("Ann", loaded(User.entity())?.name)
     }
 
+    /** The wait reuses the load the singleton started: one request, then it returns at once. */
+    @Test
+    fun theFirstLoadWaitOfASingletonSendsNoRequestOfItsOwn() = bounded {
+        open()
+        transport.enqueue("UserProfile", reply = """{"data":{"me":{"__typename":"User","id":"1","name":"Ann"}}}""")
+        val entity = User.entity()
+        withTimeout(5000) { entity.waitForInitialLoad() }
+        assertEquals("Ann", entity.value.value?.name)
+        eventually("the read of the singleton ends") { entity.read.value == EntityRead.Loaded }
+        entity.waitForInitialLoad()
+        assertEquals(1, transport.calls.size)
+    }
+
+    /** A failed first load reaches the waiter from the snapshot. */
+    @Test
+    fun aFailedFirstLoadOfASingletonReachesTheWaiter() = bounded {
+        open()
+        transport.enqueue("UserProfile", reply = """{"errors":[{"message":"denied"}]}""")
+        val entity = User.entity()
+        val failure = runCatching { withTimeout(5000) { entity.waitForInitialLoad() } }.exceptionOrNull()
+        assertTrue(failure is EntityReadException)
+        assertTrue(entity.read.value is EntityRead.Failed)
+    }
+
     /** REL-01 for the singleton and REL-08: 10 readers share 1 object, 1 value and 1 core subscription. */
     @Test
     fun tenReadersCostOneSubscriptionAndSeeOneValue() = bounded {

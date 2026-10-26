@@ -4,6 +4,7 @@ import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -177,14 +178,34 @@ class EntityRegistryTest {
     }
 
     @Test
-    fun aRefreshOutcomeShowsAsRefreshErrorNextToThePhase() {
+    fun theReadOutcomeMovesFromNotLoadedToFailedAndLoadedNextToThePhase() {
         val registry = registry()
         val entity = registry.entity("1", EntityFetch.FORCE)
+        assertEquals(EntityRead.NotLoaded, entity.read.value)
         registry.apply(EntityDeliveryRows(Long.MIN_VALUE, emptyList(), emptyList(), refreshes = listOf(EntityRefresh("1", EntityRefreshError.Offline))))
-        assertEquals(EntityRefreshError.Offline, entity.refreshError.value)
+        assertEquals(EntityRead.Failed(EntityRefreshError.Offline), entity.read.value)
         assertEquals(EntityPhase.Opening, entity.phase.value)
         registry.apply(EntityDeliveryRows(Long.MIN_VALUE, emptyList(), emptyList(), refreshes = listOf(EntityRefresh("1", null))))
-        assertNull(entity.refreshError.value)
+        assertEquals(EntityRead.Loaded, entity.read.value)
+    }
+
+    @Test
+    fun theFirstLoadWaitReusesTheReadAndReturnsItsOutcome() = bounded {
+        val source = CountingSource()
+        val registry = registry(source)
+        val entity = registry.entity("1", EntityFetch.FORCE)
+        val waiting = async(Dispatchers.Default) { runCatching { entity.waitForInitialLoad() } }
+        eventually("the entity is retained once") { source.retained.toList() == listOf("1") }
+        registry.apply(EntityDeliveryRows(Long.MIN_VALUE, emptyList(), emptyList(), refreshes = listOf(EntityRefresh("1", EntityRefreshError.Failed("down")))))
+        assertEquals(EntityRefreshError.Failed("down"), (waiting.await().exceptionOrNull() as EntityReadException).error)
+        registry.apply(delivery(1, listOf(moment("1", "A"))))
+        registry.apply(EntityDeliveryRows(1, emptyList(), emptyList(), refreshes = listOf(EntityRefresh("1", null))))
+        entity.waitForInitialLoad()
+        val plain = registry.entity("2")
+        plain.waitForInitialLoad()
+        eventually("the second id is retained") { "2" in source.retained }
+        assertEquals(listOf("1", "2"), source.retained.toList().sorted())
+        java.lang.ref.Reference.reachabilityFence(plain)
     }
 
     @Test

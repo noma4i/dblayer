@@ -1,6 +1,11 @@
 package com.noma4i.dblayer
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +32,8 @@ internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
     private val machine = EntityMachine(singleton)
     val value = MutableStateFlow<Model?>(null)
     val phase = MutableStateFlow<EntityPhase>(EntityPhase.Opening)
-    val refreshError = MutableStateFlow<EntityRefreshError?>(null)
+    val read = MutableStateFlow<EntityRead>(EntityRead.NotLoaded)
+    val settled = MutableStateFlow(true)
     @Volatile var stale = false
     @Volatile var revision = Long.MIN_VALUE
     @Volatile var bytes = 0uL
@@ -42,6 +48,8 @@ internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
             is EntityStage.Failed -> EntityPhase.Failed(stage.message)
             is EntityStage.Closed -> EntityPhase.Closed
         }
+        read.value = verdict.read
+        settled.value = verdict.settled
     }
 
     private fun emptied(verdict: EntityVerdict) {
@@ -68,9 +76,11 @@ internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
         value.value = next
     }
 
-    fun refreshed(error: EntityRefreshError?) {
-        refreshError.value = error
-    }
+    @Synchronized
+    fun readStarted() = show(machine.readStarted())
+
+    @Synchronized
+    fun readEnded(error: EntityRefreshError?, feed: ULong? = null) = show(machine.readEnded(error, feed))
 
     @Synchronized
     fun fail(message: String, feed: ULong? = null) = show(machine.fail(message, feed))
@@ -92,7 +102,7 @@ internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
     }
 
     @Synchronized
-    fun beginFeed(): ULong = machine.beginFeed().feed
+    fun beginFeed(): ULong = machine.beginFeed().also { show(it) }.feed
 }
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
@@ -109,9 +119,18 @@ class Entity<Model : DBModel> internal constructor(private val fixedId: String?,
     val value: StateFlow<Model?> = HeldState(this, cell.value)
     val isStale: Boolean get() = cell.stale
     val phase: StateFlow<EntityPhase> = HeldState(this, cell.phase)
-    val refreshError: StateFlow<EntityRefreshError?> = HeldState(this, cell.refreshError)
+    val read: StateFlow<EntityRead> = HeldState(this, cell.read)
+
+    /** Returns when the first read has ended or a value is already there, throws [EntityReadException] for a failed read, and sends no request of its own: it waits for the read the entity started. */
+    suspend fun waitForInitialLoad() {
+        cell.settled.first { it }
+        if (cell.phase.value == EntityPhase.Closed) throw DbException.Interrupted("entity closed")
+        (cell.read.value as? EntityRead.Failed)?.let { throw EntityReadException(it.error) }
+    }
     val isClosed: Boolean get() = cell.phase.value == EntityPhase.Closed
 }
+
+class EntityReadException(val error: EntityRefreshError) : Exception(error.toString())
 
 internal interface EntitySource {
     fun cachedRow(id: String): WireRow?
@@ -170,6 +189,7 @@ class Entities<Model : DBModel> internal constructor(
         } catch (error: Exception) {
             cell.fail(error.toString())
         }
+        if (fetch != EntityFetch.NONE) cell.readStarted()
         val made = Entity(id, cell)
         live[id] = LiveRef(made, id, cell, ::collected)
         steps[id] = if (retained != null || steps[id] == Step.Release) Step.Refresh else Step.Retain
@@ -193,13 +213,17 @@ class Entities<Model : DBModel> internal constructor(
         val query = singleQuery ?: return
         val cell = single?.cell ?: return
         singleFeed?.cancel()
-        val feed = SingletonFeed(query, decoder, cell.beginFeed(), { from, revision, row -> receive(from, revision, row) }, ::unopened, ::singletonFailed)
+        val feed = SingletonFeed(query, decoder, cell.beginFeed(), { from, revision, row -> receive(from, revision, row) }, ::unopened, ::singletonRead, ::singletonFailed)
         singleFeed = feed
         flusher.execute { feed.attach() }
     }
 
     internal fun receive(feed: SingletonFeed<Model>, revision: Long, row: Model?) = synchronized(lock) {
         single?.cell?.accept(row, revision, feed = feed.generation)
+    }
+
+    private fun singletonRead(feed: SingletonFeed<Model>, error: EntityRefreshError?) = synchronized(lock) {
+        single?.cell?.readEnded(error, feed.generation)
     }
 
     private fun singletonFailed(feed: SingletonFeed<Model>, message: String) = synchronized(lock) {
@@ -250,7 +274,7 @@ class Entities<Model : DBModel> internal constructor(
             delivery.rows.forEach { (model, bytes) -> liveCell(model.id)?.let { writes += { it.accept(model, delivery.revision, bytes) } } }
             delivery.removed.forEach { id -> liveCell(id)?.let { writes += { it.accept(null, delivery.revision) } } }
             delivery.failure?.let { message -> live.values.forEach { ref -> if (ref.get() != null) writes += { ref.cell.fail(message) } } }
-            delivery.refreshes.forEach { refresh -> liveCell(refresh.id)?.let { writes += { it.refreshed(refresh.error) } } }
+            delivery.refreshes.forEach { refresh -> liveCell(refresh.id)?.let { writes += { it.readEnded(refresh.error) } } }
             delivery.failedIds.forEach { (id, message) -> liveCell(id)?.let { writes += { it.fail(message) } } }
         }
         writes.forEach { it() }
@@ -355,6 +379,7 @@ internal class SingletonFeed<Model : DBModel>(
     val generation: ULong,
     private val deliver: (SingletonFeed<Model>, Long, Model?) -> Unit,
     private val unopened: (SingletonFeed<Model>) -> Unit,
+    private val read: (SingletonFeed<Model>, EntityRefreshError?) -> Unit,
     private val failed: (SingletonFeed<Model>, String) -> Unit,
 ) {
     private var session: ListSession<Model, Pair<Long, Model?>>? = null
@@ -362,6 +387,10 @@ internal class SingletonFeed<Model : DBModel>(
     private val count = AtomicInteger()
 
     val delivered: Int get() = count.get()
+
+    private companion object {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    }
 
     fun attach() {
         val database = try { DBlayer.database } catch (_: IllegalStateException) { unopened(this); return }
@@ -372,7 +401,11 @@ internal class SingletonFeed<Model : DBModel>(
             { applied, change -> change.revision to applied.rows.firstOrNull() },
         )
         val keep = synchronized(this) { if (cancelled) false else { session = made; true } }
-        if (keep) try { made.start() } catch (error: Exception) { failed(this, error.toString()) }
+        if (!keep) return
+        try { made.start() } catch (error: Exception) { failed(this, error.toString()); return }
+        scope.launch {
+            try { made.waitForInitialLoad(); read(this@SingletonFeed, null) } catch (error: kotlinx.coroutines.CancellationException) {} catch (error: Exception) { read(this@SingletonFeed, EntityRefreshError.Failed(error.toString())) }
+        }
     }
 
     fun cancel() {

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `Entity.waitForInitialLoad()` waits for the read the entity started and sends no request.
+
+### Changed
+- `Entity.refreshError` becomes `Entity.read`: `notLoaded`, `loaded` or `failed(error)`.
+
 ## 6.10.1 - 2026-10-27
 
 ### Added

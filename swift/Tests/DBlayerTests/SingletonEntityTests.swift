@@ -39,6 +39,31 @@ extension BridgeProbeTests {
     try await User.profile.refresh()
   }
 
+  /// The wait reuses the load the singleton started: one request, then it returns at once.
+  @MainActor
+  @Test
+  func theFirstLoadWaitOfASingletonSendsNoRequestOfItsOwn() async throws {
+    let transport = try await Self.openSingletonRig()
+    transport.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"Ann"}}}"#)
+    let entity = User.entity()
+    try await entity.waitForInitialLoad()
+    #expect(entity.value?.name == "Ann")
+    await eventually("the read of the singleton ends") { entity.read == .loaded }
+    try await entity.waitForInitialLoad()
+    #expect(transport.calls.filter { $0.operationName == "UserProfile" }.count == 1)
+  }
+
+  /// A failed first load reaches the waiter from the snapshot.
+  @MainActor
+  @Test
+  func aFailedFirstLoadOfASingletonReachesTheWaiter() async throws {
+    let transport = try await Self.openSingletonRig()
+    transport.enqueue("UserProfile", reply: #"{"errors":[{"message":"denied"}]}"#)
+    let entity = User.entity()
+    await #expect(throws: EntityRefreshError.self) { try await entity.waitForInitialLoad() }
+    guard case .failed = entity.read else { Issue.record("read is \(entity.read)"); return }
+  }
+
   /// REL-01 for the singleton and REL-08: 10 readers share 1 object, 1 value and 1 core subscription.
   @MainActor
   @Test

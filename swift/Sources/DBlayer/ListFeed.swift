@@ -163,13 +163,14 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
 struct ListHandle: Sendable {
   let cancel: @Sendable () -> Void
   let reportDesync: @Sendable () -> Void
+  let initialLoad: @Sendable () async throws -> Void
 
-  init(cancel: @escaping @Sendable () -> Void, reportDesync: @escaping @Sendable () -> Void) {
-    self.cancel = cancel; self.reportDesync = reportDesync
+  init(cancel: @escaping @Sendable () -> Void, reportDesync: @escaping @Sendable () -> Void, initialLoad: @escaping @Sendable () async throws -> Void = {}) {
+    self.cancel = cancel; self.reportDesync = reportDesync; self.initialLoad = initialLoad
   }
 
   init(_ subscription: LiveSubscription) {
-    self.init(cancel: { subscription.cancel() }, reportDesync: { subscription.reportDesync() })
+    self.init(cancel: { subscription.cancel() }, reportDesync: { subscription.reportDesync() }, initialLoad: { try await subscription.waitForInitialLoad() })
   }
 }
 
@@ -202,6 +203,10 @@ final class ListSession<Model: DBModel, Value: Sendable>: @unchecked Sendable {
     }
     guard let pending else { made.cancel(); return }
     if pending { made.reportDesync() }
+  }
+
+  func waitForInitialLoad() async throws {
+    try await lock.withLock { handle }?.initialLoad()
   }
 
   func cancel() {

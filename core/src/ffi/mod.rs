@@ -42,7 +42,7 @@ pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, Encrypt
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use entities::{EntityDelivery, EntityFetch, EntityListener, EntityRefresh, EntityRefreshError, LiveEntities};
-pub use entity_machine::{EntityMachine, EntityStage, EntityVerdict};
+pub use entity_machine::{EntityMachine, EntityRead, EntityStage, EntityVerdict};
 pub use live::{LiveChange, LoadMoreResult, LivePhase, LiveSubscription, QueryListener};
 pub use retention::{RetentionChange, RetentionPool};
 pub use state::StateSubscription;

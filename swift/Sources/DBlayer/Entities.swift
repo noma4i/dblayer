@@ -13,7 +13,7 @@ public final class Entity<Model: DBModel> {
   public private(set) var value: Model?
   public private(set) var isStale: Bool
   public private(set) var phase: EntityPhase = .opening
-  public private(set) var refreshError: EntityRefreshError?
+  public private(set) var read: EntityRead = .notLoaded
   public var isClosed: Bool { phase == .closed }
   @ObservationIgnored private(set) var revision: Int64 = Int64.min
   @ObservationIgnored private var bytes: UInt64 = 0
@@ -21,6 +21,9 @@ public final class Entity<Model: DBModel> {
   @ObservationIgnored private let isSingleton: Bool
   @ObservationIgnored private let machine: EntityMachine
   @ObservationIgnored private let readers = EntityReaders<Model>()
+  @ObservationIgnored private var settled = true
+  @ObservationIgnored private var waiters: [Int: CheckedContinuation<Void, Never>] = [:]
+  @ObservationIgnored private var nextWaiter = 0
 
   fileprivate init(id: String, registry: Entities<Model>) {
     self.id = id
@@ -52,6 +55,33 @@ public final class Entity<Model: DBModel> {
     }
     if phase != next { phase = next }
     if isStale != verdict.stale { isStale = verdict.stale }
+    if read != verdict.read { read = verdict.read }
+    settled = verdict.settled
+    if settled { wake() }
+  }
+
+  private func wake() {
+    let ready = waiters
+    waiters = [:]
+    ready.values.forEach { $0.resume() }
+  }
+
+  /// Returns when the first read has ended or a value is already there, throws the error of a failed read, and sends no request of its own: it waits for the read the entity started.
+  public func waitForInitialLoad() async throws {
+    if !settled {
+      let key = nextWaiter
+      nextWaiter += 1
+      await withTaskCancellationHandler {
+        await withCheckedContinuation { continuation in
+          if Task.isCancelled || settled { continuation.resume() } else { waiters[key] = continuation }
+        }
+      } onCancel: {
+        Task { @MainActor [self] in waiters.removeValue(forKey: key)?.resume() }
+      }
+    }
+    try Task.checkCancellation()
+    if phase == .closed { throw DbError.Interrupted(detail: "entity closed") }
+    if case let .failed(error) = read { throw error }
   }
 
   fileprivate func seed(revision incoming: Int64, bytes: UInt64, _ make: () throws -> Model?) {
@@ -71,8 +101,12 @@ public final class Entity<Model: DBModel> {
     if isSingleton, id != (next?.id ?? "") { id = next?.id ?? "" }
   }
 
-  fileprivate func refreshed(_ error: EntityRefreshError?) {
-    if refreshError != error { refreshError = error }
+  fileprivate func readStarted() {
+    show(machine.readStarted())
+  }
+
+  fileprivate func readEnded(_ error: EntityRefreshError?, feed: UInt64? = nil) {
+    show(machine.readEnded(error: error, feed: feed))
   }
 
   fileprivate func fail(_ message: String, feed: UInt64? = nil) {
@@ -99,7 +133,11 @@ public final class Entity<Model: DBModel> {
     emptied(verdict)
   }
 
-  fileprivate func beginFeed() -> UInt64 { machine.beginFeed().feed }
+  fileprivate func beginFeed() -> UInt64 {
+    let verdict = machine.beginFeed()
+    show(verdict)
+    return verdict.feed
+  }
 
   private func emptied(_ verdict: EntityVerdict) {
     value = nil
@@ -217,6 +255,7 @@ public final class Entities<Model: DBModel> {
         if let cached = try source.cachedRow(id) { made.seed(revision: cached.revision, bytes: cached.estimatedBytes) { try Model.decode(cached) } }
       } catch { made.fail(String(describing: error)) }
     }
+    if fetch != .none { made.readStarted() }
     live[id] = Weak(entity: made)
     steps[id] = (retained != nil || steps[id] == .release) ? .refresh : .retain
     fetches[id] = fetch
@@ -245,9 +284,15 @@ public final class Entities<Model: DBModel> {
       DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.receive(from: feed, revision: revision, row: row) } } }
     }, unopened: { [weak self, weak feed] in
       DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.unopened(feed) } } }
+    }, read: { [weak self, weak feed] error in
+      DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.readEnded(from: feed, error: error) } } }
     }, failed: { [weak self, weak feed] message in
       DispatchQueue.main.async { MainActor.assumeIsolated { if let self, let feed { self.single?.fail(message, feed: feed.generation) } } }
     })
+  }
+
+  func readEnded(from feed: SingletonFeed<Model>, error: EntityRefreshError?) {
+    single?.readEnded(error, feed: feed.generation)
   }
 
   func receive(from feed: SingletonFeed<Model>, revision: Int64, row: Model?) {
@@ -304,7 +349,7 @@ public final class Entities<Model: DBModel> {
     for (model, bytes) in delivery.rows { live[model.id]?.entity?.accept(model, revision: delivery.revision, bytes: bytes) }
     for id in delivery.removed { live[id]?.entity?.accept(nil, revision: delivery.revision) }
     if let message = delivery.failure { live.values.forEach { $0.entity?.fail(message) } }
-    for refresh in delivery.refreshes { live[refresh.id]?.entity?.refreshed(refresh.error) }
+    for refresh in delivery.refreshes { live[refresh.id]?.entity?.readEnded(refresh.error) }
     for (id, message) in delivery.failedIds { live[id]?.entity?.fail(message) }
   }
 
@@ -463,7 +508,7 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
     self.generation = generation
   }
 
-  func start(deliver: @escaping @Sendable (Int64, Model?) -> Void, unopened: @escaping @Sendable () -> Void, failed: @escaping @Sendable (String) -> Void) {
+  func start(deliver: @escaping @Sendable (Int64, Model?) -> Void, unopened: @escaping @Sendable () -> Void, read: @escaping @Sendable (EntityRefreshError?) -> Void, failed: @escaping @Sendable (String) -> Void) {
     Task.detached(priority: .userInitiated) { [self] in
       let made = ListSession<Model, (Int64, Model?)>(
         open: { [query] listener in ListHandle(try DB.database.liveQuery(queryJson: query.json, listener: listener)) },
@@ -479,7 +524,8 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
         return true
       }
       if keep {
-        do { try made.start() } catch is DatabaseNotOpen { unopened() } catch { failed(String(describing: error)) }
+        do { try made.start() } catch is DatabaseNotOpen { unopened(); return } catch { failed(String(describing: error)); return }
+        do { try await made.waitForInitialLoad(); read(nil) } catch is CancellationError {} catch { read(.failed(message: String(describing: error))) }
       }
     }
   }
@@ -493,3 +539,5 @@ final class SingletonFeed<Model: DBModel>: @unchecked Sendable {
     current?.cancel()
   }
 }
+
+extension EntityRefreshError: Error {}

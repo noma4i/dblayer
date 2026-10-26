@@ -5,6 +5,8 @@ use statig::prelude::*;
 
 use crate::db::locked;
 
+use super::EntityRefreshError;
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum EntityStage {
     Opening,
@@ -12,6 +14,14 @@ pub enum EntityStage {
     Absent,
     Failed { message: String },
     Closed,
+}
+
+/// The outcome of the remote read of an entity: not finished yet, finished, or finished with the error.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum EntityRead {
+    NotLoaded,
+    Loaded,
+    Failed { error: EntityRefreshError },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -22,6 +32,9 @@ pub struct EntityVerdict {
     pub stale: bool,
     pub revision: i64,
     pub feed: u64,
+    pub read: EntityRead,
+    /// A first-load wait may return: no read is in flight, or the value is already there.
+    pub settled: bool,
 }
 
 static NEXT_FEED: AtomicU64 = AtomicU64::new(1);
@@ -30,6 +43,8 @@ enum Event {
     Seed { revision: i64 },
     Accept { revision: i64, present: bool, feed: Option<u64> },
     Fail { message: String, feed: Option<u64> },
+    ReadStarted,
+    ReadEnded { error: Option<EntityRefreshError>, feed: Option<u64> },
     Reset,
     BeginFeed,
     Unopened { feed: u64 },
@@ -42,6 +57,8 @@ struct Flow {
     stale: bool,
     delivered: bool,
     active: u64,
+    reading: bool,
+    read: EntityRead,
 }
 
 #[derive(Default)]
@@ -52,7 +69,7 @@ struct Effect {
 
 impl Flow {
     fn new(singleton: bool) -> Self {
-        Self { singleton, revision: i64::MIN, stale: false, delivered: false, active: 0 }
+        Self { singleton, revision: i64::MIN, stale: false, delivered: false, active: 0, reading: false, read: EntityRead::NotLoaded }
     }
 
     fn admits(&self, feed: Option<u64>) -> bool {
@@ -67,6 +84,8 @@ impl Flow {
         self.revision = i64::MIN;
         self.stale = false;
         self.delivered = false;
+        self.reading = false;
+        self.read = EntityRead::NotLoaded;
         effect.cleared = true;
     }
 }
@@ -91,8 +110,25 @@ impl Flow {
                 Transition(if *present { State::present() } else { State::absent() })
             }
             Event::Accept { .. } => Handled,
-            Event::Fail { message, feed } if self.admits(*feed) => Transition(State::failed(message.clone())),
+            Event::Fail { message, feed } if self.admits(*feed) => {
+                if self.reading {
+                    self.reading = false;
+                    self.read = EntityRead::Failed { error: EntityRefreshError::Failed { message: message.clone() } };
+                }
+                Transition(State::failed(message.clone()))
+            }
             Event::Fail { .. } => Handled,
+            Event::ReadStarted if !self.singleton => {
+                self.reading = true;
+                Handled
+            }
+            Event::ReadStarted => Handled,
+            Event::ReadEnded { error, feed } if self.admits(*feed) => {
+                self.reading = false;
+                self.read = error.clone().map_or(EntityRead::Loaded, |error| EntityRead::Failed { error });
+                Handled
+            }
+            Event::ReadEnded { .. } => Handled,
             Event::Reset if self.singleton => {
                 self.drop_value(context);
                 self.active = 0;
@@ -101,6 +137,7 @@ impl Flow {
             Event::Reset => Handled,
             Event::BeginFeed => {
                 self.active = NEXT_FEED.fetch_add(1, Ordering::Relaxed);
+                self.reading = self.singleton;
                 Handled
             }
             Event::Unopened { feed } if self.admits(Some(*feed)) => {
@@ -161,7 +198,8 @@ impl EntityMachine {
             State::Closed {} => EntityStage::Closed,
         };
         let inner = flow.inner();
-        EntityVerdict { applied: effect.applied, cleared: effect.cleared, stage, stale: inner.stale, revision: inner.revision, feed: inner.active }
+        let settled = !inner.reading || matches!(stage, EntityStage::Present);
+        EntityVerdict { applied: effect.applied, cleared: effect.cleared, stage, stale: inner.stale, revision: inner.revision, feed: inner.active, read: inner.read.clone(), settled }
     }
 }
 
@@ -177,6 +215,12 @@ impl EntityMachine {
     pub fn accept(&self, revision: i64, present: bool, feed: Option<u64>) -> EntityVerdict { self.send(Event::Accept { revision, present, feed }) }
 
     pub fn fail(&self, message: String, feed: Option<u64>) -> EntityVerdict { self.send(Event::Fail { message, feed }) }
+
+    /// A remote read of this id entity went out.
+    pub fn read_started(&self) -> EntityVerdict { self.send(Event::ReadStarted) }
+
+    /// The remote read ended: `None` for a landed record, else the error. A singleton passes the feed whose load ended.
+    pub fn read_ended(&self, error: Option<EntityRefreshError>, feed: Option<u64>) -> EntityVerdict { self.send(Event::ReadEnded { error, feed }) }
 
     pub fn reset(&self) -> EntityVerdict { self.send(Event::Reset) }
 

@@ -18,16 +18,28 @@ val name by author.value.collectAsState()
 
 `value` is the newest known state of the record. The first reader receives a cached row immediately when it is in memory. A second reader of a live id receives the same object and opens no new subscription.
 
-A model with a `node: :one` scope can ask the core to read the record when a reader appears. `fetch:` takes `none` (the default), `stale` and `force`. `stale` reads the node only when the row is missing or its freshness ran out. `force` reads it for every new first reader, so opening a screen again sends a new request. A second reader of a live id sends nothing, and overlapping reads of one id share one request. The row lands like any server row. A read that fails shows in `refreshError` (`offline` or `failed(message)`) next to `phase`, and a read that found no network repeats once when the network returns. A model without a node scope has no `fetch:` overload.
+A model with a `node: :one` scope can ask the core to read the record when a reader appears. `fetch:` takes `none` (the default), `stale` and `force`. `stale` reads the node only when the row is missing or its freshness ran out. `force` reads it for every new first reader, so opening a screen again sends a new request. A second reader of a live id sends nothing, and overlapping reads of one id share one request. The row lands like any server row. The outcome of the read shows in `read` next to `phase`: `notLoaded` until the read ends, then `loaded`, or `failed` with `offline` or `failed(message)`. A read that found no network repeats once when the network returns and then moves `read` to `loaded`. A model without a node scope has no `fetch:` overload.
 
 ```swift
 let group = Group.entity(id, fetch: .force)   // one node read per new first reader
-Text(group.refreshError == nil ? "" : "Could not refresh")
+Text(group.read == .notLoaded ? "Loading" : "Loaded")
 ```
 
 ```kotlin
 val group = Group.entity(id, fetch = EntityFetch.FORCE)   // one node read per new first reader
-val failed by group.refreshError.collectAsState()
+val read by group.read.collectAsState()
+```
+
+`waitForInitialLoad()` waits for the first load of an entity. It reuses the read the entity already started and sends no request of its own, which is the first read of `fetch:` for an id entity and the live read of the relation for a singleton. It returns when the read has ended or when a value is already there, so a loaded entity returns at once. It throws the error of a failed read (Swift: `EntityRefreshError`, Kotlin: `EntityReadException` with `error`) and an interrupted error when the database closes. An entity without `fetch:` has no read to wait for and returns at once.
+
+```swift
+let me = CurrentUser.entity()
+try await me.waitForInitialLoad()   // no second request next to the load of the entity
+```
+
+```kotlin
+val me = CurrentUser.entity()
+me.waitForInitialLoad()   // no second request next to the load of the entity
 ```
 
 To read the changes of an entity in code, not in a view, use `changes()` in Swift and collect `value` in Kotlin. Both hold the entity while they read, so no other reference is needed.
@@ -85,7 +97,7 @@ Requesting a retained id returns its value with `isStale` set and reads the reco
 
 ## Order
 
-The core owns every transition of an entity in one state machine (`EntityMachine`): seed, revision order, stale, failure, reset and close. Swift and Kotlin keep the typed value and show the verdict of the core. A closed entity never changes again. A failure keeps the accepted value. A reset of a singleton starts a new feed, and a delivery or a failure of an older feed changes nothing.
+The core owns every transition of an entity in one state machine (`EntityMachine`): seed, revision order, stale, failure, the outcome of the remote read (`read`), reset and close. Swift and Kotlin keep the typed value and show the verdict of the core. A closed entity never changes again. A failure keeps the accepted value. A reset of a singleton starts a new feed, and a delivery or a failure of an older feed changes nothing.
 
 Every delivery carries the revision of the database. An entity ignores a delivery with a lower revision than the one it shows, whatever the order in which they arrive. A record that was deleted arrives as an empty value. A reset of the data (logout, `reset`) tells every leased entity that its record is gone. The entities keep their leases and receive the rows of the next account.
 

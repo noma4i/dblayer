@@ -97,3 +97,31 @@ fn a_feed_of_one_machine_changes_nothing_in_another() {
     assert_eq!(second.unopened(old).stage, EntityStage::Opening);
     assert!(second.accept(1, true, Some(current)).applied);
 }
+
+#[test]
+fn the_read_outcome_moves_from_not_loaded_to_loaded_or_failed_and_a_wait_settles_with_it() {
+    let plain = EntityMachine::new(false);
+    let idle = plain.accept(1, true, None);
+    assert!(idle.read == EntityRead::NotLoaded && idle.settled);
+    let other = EntityMachine::new(false);
+    assert!(other.read_started().read == EntityRead::NotLoaded && !other.read_started().settled);
+    let offline = other.read_ended(Some(EntityRefreshError::Offline), None);
+    assert!(offline.read == EntityRead::Failed { error: EntityRefreshError::Offline } && offline.settled);
+    other.read_started();
+    let landed = other.read_ended(None, None);
+    assert!(landed.read == EntityRead::Loaded && landed.settled);
+    let cached = EntityMachine::new(false);
+    cached.read_started();
+    assert!(cached.seed(2).settled, "a value already there ends the wait");
+
+    let singleton = EntityMachine::new(true);
+    let feed = singleton.begin_feed().feed;
+    assert!(!singleton.accept(1, false, Some(feed)).settled);
+    assert!(!singleton.read_ended(None, Some(feed + 1)).settled, "another feed ends nothing");
+    assert!(singleton.read_ended(None, Some(feed)).read == EntityRead::Loaded);
+    let reset = singleton.reset();
+    assert!(reset.read == EntityRead::NotLoaded && reset.settled);
+    let again = singleton.begin_feed().feed;
+    let failed = singleton.fail("boom".into(), Some(again));
+    assert!(failed.settled && failed.read == EntityRead::Failed { error: EntityRefreshError::Failed { message: "boom".into() } });
+}
