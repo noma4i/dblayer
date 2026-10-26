@@ -381,6 +381,14 @@ fn refresh_on_foreground_marks_the_relation() {
 }
 
 #[test]
+fn stable_list_merges_an_id_list_and_is_refused_on_a_scalar() {
+    let model = build_one("  attribute :momentIds, [:id], merge: :stable_list");
+    assert_eq!(model.fields.iter().find(|field| field.name == "momentIds").unwrap().merge, Some(dblayer::schema::MergeRule::StableList));
+    let source = "model Sample do\n  attribute :name, :string, merge: :stable_list\nend\n";
+    assert!(check_source(source).is_err());
+}
+
+#[test]
 fn a_node_scope_reads_one_object_by_the_node_parameter() {
     let model = build_one("  scope :node, node: :one do\n    parameter :id, :id\n    query \"SampleNode\"\n    variables sampleId: :id\n    freshness expires_in: 1.minute\n  end\n  scope :nodes, node: :many do\n    query \"SampleNodes\"\n  end");
     let one = &model.relations[0];

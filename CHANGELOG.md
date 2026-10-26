@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `merge: :stable_list` keeps the places of a stored id list, appends new ids and drops vanished ones.
 - `refresh_on_foreground: true` on a scope reloads its read windows at every foreground event.
 - A window over a scope loads it, and `expand(before:)` loads an older page.
 - `window(tail: 60, max: 240)` shrinks the window to `tail` rows past `max`.

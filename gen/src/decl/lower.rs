@@ -572,6 +572,7 @@ fn merge_rule(value: &Value) -> Option<MergeRule> {
             "non_empty" => Some(MergeRule::NonEmpty),
             "positive" => Some(MergeRule::Positive),
             "monotonic" => Some(MergeRule::Monotonic),
+            "stable_list" => Some(MergeRule::StableList),
             _ => None,
         },
         Value::Array(tiers) if !tiers.is_empty() => {

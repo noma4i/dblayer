@@ -55,3 +55,25 @@ fn a_server_row_merges_by_the_rule_of_each_field() {
     let merged = spec.merged(Some(&stored), &patch).unwrap();
     assert_eq!(Value::Object(merged), json!({"id": "1", "body": null, "media": {"transcodeProgress": 80}, "avatarUrl": "a"}));
 }
+
+#[test]
+fn stable_list_keeps_the_stored_places_adds_new_ids_at_the_tail_and_drops_the_vanished() {
+    use crate::schema::{FieldSpec, ModelSpec};
+    use crate::value::ScalarKind;
+    let mut ids = FieldSpec::list("momentIds", ScalarKind::Id).nullable().optional();
+    ids.merge = Some(StableList);
+    let spec = ModelSpec::new("results", vec![FieldSpec::scalar("id", ScalarKind::Id), ids]);
+    assert!(spec.validate(&[]).is_ok());
+    let stored = json!({"id": "r", "momentIds": ["a", "b", "c"]}).as_object().unwrap().clone();
+    let cases = [
+        ("reordered and new", json!(["d", "c", "a", "e"]), json!(["a", "c", "d", "e"])),
+        ("vanished", json!(["c"]), json!(["c"])),
+        ("duplicates", json!(["b", "b", "x", "x"]), json!(["b", "x"])),
+        ("null keeps the stored list", Value::Null, json!(["a", "b", "c"])),
+    ];
+    for (name, incoming, expected) in cases {
+        let patch = spec.patch(json!({"id": "r", "momentIds": incoming}).as_object().unwrap());
+        let merged = spec.merged(Some(&stored), &patch).unwrap();
+        assert_eq!(merged["momentIds"], expected, "{name}");
+    }
+}

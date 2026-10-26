@@ -218,12 +218,16 @@ A row from the server (page, event, mutation answer, replace) replaces the field
 | `:positive` | it is not a number above 0 and a positive number is stored (`int`, `num`, `date`) |
 | `:monotonic` | it is null or lower than the stored number or date (`int`, `num`, `date`) |
 | `[[:PENDING, :PROGRESSING], [:COMPLETED, :FAILED]]` | its tier is below the tier of the stored value, values inside a tier replace each other (`enum` or `string`) |
+| `:stable_list` | never: the stored ids keep their places, ids that the server no longer lists are dropped and new ids follow in the order they arrived (`[:id]` or another list of scalars) |
 | `{ key: rule, ... }` | `:json`: the object is merged key by key, a key without a rule ignores null, a null object keeps the stored one |
 
 ```ruby
 attribute :media, MomentMedia, null: true, merge: { fileUrl: :non_empty, width: :positive, transcodeStep: [[:PENDING, :SUBMITTED, :PROGRESSING], [:COMPLETED, :FAILED]], transcodeProgress: :monotonic }
 attribute :avatarUrl, :string, null: true, merge: :non_empty
+attribute :momentIds, [:id], merge: :stable_list
 ```
+
+`merge: :stable_list` on the id list of a `references` parent keeps the order the user has seen: a reloaded result shows the same rows in the same places and appends the new ones. The list lives in a column, so the order survives a restart. The work grows with the size of the arriving list.
 
 A local edit that is not confirmed yet is never replaced, with or without a rule. A rule that does not fit the field type rejects the model.
 
