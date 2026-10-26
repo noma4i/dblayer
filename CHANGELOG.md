@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.10.2 - 2026-10-27
 
 ### Added
 - `Entity.waitForInitialLoad()` waits for the read the entity started and sends no request.
