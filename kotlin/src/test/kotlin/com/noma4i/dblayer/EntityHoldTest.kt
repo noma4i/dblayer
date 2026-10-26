@@ -13,7 +13,7 @@ import org.junit.Test
 class EntityHoldTest {
     private object NoSource : EntitySource {
         override fun cachedRow(id: String): WireRow? = null
-        override fun retain(ids: List<String>) {}
+        override fun retain(ids: List<String>, fetch: EntityFetch) {}
         override fun release(ids: List<String>) {}
     }
 

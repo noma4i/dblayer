@@ -237,7 +237,7 @@ impl Database {
         EntityCensus { facts_told: counters.entity_facts_told as u64, position_skips: counters.entity_position_skips as u64, reads_failed: counters.entity_reads_failed as u64 }
     }
     pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
-        entities::open(&self.db, &model, self.wire(&model)?.clone(), listener)
+        entities::open(&self.db, self.sync.clone(), &model, self.wire(&model)?.clone(), listener)
     }
     pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| self.connect_json(&query_json, false, None, feed))

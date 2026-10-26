@@ -18,6 +18,18 @@ val name by author.value.collectAsState()
 
 `value` is the newest known state of the record. The first reader receives a cached row immediately when it is in memory. A second reader of a live id receives the same object and opens no new subscription.
 
+A model with a `node: :one` scope can ask the core to read the record when a reader appears. `fetch:` takes `none` (the default), `stale` and `force`. `stale` reads the node only when the row is missing or its freshness ran out. `force` reads it for every new first reader, so opening a screen again sends a new request. A second reader of a live id sends nothing, and overlapping reads of one id share one request. The row lands like any server row. A read that fails shows in `refreshError` (`offline` or `failed(message)`) next to `phase`, and a read that found no network repeats once when the network returns. A model without a node scope has no `fetch:` overload.
+
+```swift
+let group = Group.entity(id, fetch: .force)   // one node read per new first reader
+Text(group.refreshError == nil ? "" : "Could not refresh")
+```
+
+```kotlin
+val group = Group.entity(id, fetch = EntityFetch.FORCE)   // one node read per new first reader
+val failed by group.refreshError.collectAsState()
+```
+
 To read the changes of an entity in code, not in a view, use `changes()` in Swift and collect `value` in Kotlin. Both hold the entity while they read, so no other reference is needed.
 
 ```swift

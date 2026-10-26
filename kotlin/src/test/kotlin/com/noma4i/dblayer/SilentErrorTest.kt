@@ -52,7 +52,7 @@ class SilentErrorTest {
     fun aSeedThatDoesNotDecodeFailsTheEntityPhase() {
         val source = object : EntitySource {
             override fun cachedRow(id: String): WireRow? = broken(id)
-            override fun retain(ids: List<String>) {}
+            override fun retain(ids: List<String>, fetch: EntityFetch) {}
             override fun release(ids: List<String>) {}
         }
         val entity = Entities("Moment", Moment, { 0 }, source).entity("1")
@@ -64,7 +64,7 @@ class SilentErrorTest {
     fun aSeedReadThatThrowsFailsTheEntityPhase() {
         val source = object : EntitySource {
             override fun cachedRow(id: String): WireRow? = throw DbException.Invalid("peek failed")
-            override fun retain(ids: List<String>) {}
+            override fun retain(ids: List<String>, fetch: EntityFetch) {}
             override fun release(ids: List<String>) {}
         }
         val entity = Entities("Moment", Moment, { 0 }, source).entity("1")

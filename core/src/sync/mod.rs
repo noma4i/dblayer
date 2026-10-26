@@ -1,3 +1,4 @@
+mod entity_fetch;
 mod error;
 #[cfg(test)]
 mod effects_tests;
@@ -45,6 +46,7 @@ mod subscribe;
 mod upload;
 mod variables;
 
+pub use entity_fetch::{RefreshError, RefreshSink};
 pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
@@ -138,6 +140,7 @@ pub(crate) struct Inner {
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
     pub(crate) resume: resume::ResumeOwner,
     pub(crate) preload: preload::PreloadOwner,
+    pub(crate) entity_due: Mutex<Vec<entity_fetch::DueRefresh>>,
     pub outcomes: Mutex<send::Outcomes>,
     #[cfg(test)]
     pub(crate) landed_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
@@ -222,6 +225,7 @@ impl Sync {
             wake: Mutex::new(None),
             resume: resume::ResumeOwner::new(),
             preload: preload::PreloadOwner::default(),
+            entity_due: Mutex::new(Vec::new()),
             outcomes: Mutex::new(send::Outcomes::default()),
             #[cfg(test)]
             landed_probe: Mutex::new(None),
@@ -291,6 +295,8 @@ mod total_from_tests;
 mod enum_scope_tests;
 #[cfg(test)]
 mod node_tests;
+#[cfg(test)]
+mod entity_fetch_tests;
 #[cfg(test)]
 mod generation_tests;
 #[cfg(test)]

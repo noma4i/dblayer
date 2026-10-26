@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `Model.entity(id, fetch: .force|.stale|.none)` reads the node when a reader appears, and `refreshError` shows a failed read.
 - `merge: :stable_list` keeps the places of a stored id list, appends new ids and drops vanished ones.
 - `refresh_on_foreground: true` on a scope reloads its read windows at every foreground event.
 - A window over a scope loads it, and `expand(before:)` loads an older page.

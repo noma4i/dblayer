@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 class EntityApplyTest {
     private class SilentSource : EntitySource {
         override fun cachedRow(id: String): WireRow? = null
-        override fun retain(ids: List<String>) {}
+        override fun retain(ids: List<String>, fetch: EntityFetch) {}
         override fun release(ids: List<String>) {}
     }
 

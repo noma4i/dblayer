@@ -27,6 +27,7 @@ internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
     private val machine = EntityMachine(singleton)
     val value = MutableStateFlow<Model?>(null)
     val phase = MutableStateFlow<EntityPhase>(EntityPhase.Opening)
+    val refreshError = MutableStateFlow<EntityRefreshError?>(null)
     @Volatile var stale = false
     @Volatile var revision = Long.MIN_VALUE
     @Volatile var bytes = 0uL
@@ -67,6 +68,10 @@ internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
         value.value = next
     }
 
+    fun refreshed(error: EntityRefreshError?) {
+        refreshError.value = error
+    }
+
     @Synchronized
     fun fail(message: String, feed: ULong? = null) = show(machine.fail(message, feed))
 
@@ -104,16 +109,17 @@ class Entity<Model : DBModel> internal constructor(private val fixedId: String?,
     val value: StateFlow<Model?> = HeldState(this, cell.value)
     val isStale: Boolean get() = cell.stale
     val phase: StateFlow<EntityPhase> = HeldState(this, cell.phase)
+    val refreshError: StateFlow<EntityRefreshError?> = HeldState(this, cell.refreshError)
     val isClosed: Boolean get() = cell.phase.value == EntityPhase.Closed
 }
 
 internal interface EntitySource {
     fun cachedRow(id: String): WireRow?
-    fun retain(ids: List<String>)
+    fun retain(ids: List<String>, fetch: EntityFetch)
     fun release(ids: List<String>)
 }
 
-internal class EntityDeliveryRows<Model>(val revision: Long, val rows: List<Pair<Model, ULong>>, val removed: List<String>, val failure: String? = null, val failedIds: Map<String, String> = emptyMap())
+internal class EntityDeliveryRows<Model>(val revision: Long, val rows: List<Pair<Model, ULong>>, val removed: List<String>, val failure: String? = null, val failedIds: Map<String, String> = emptyMap(), val refreshes: List<EntityRefresh> = emptyList())
 
 private class LiveRef<Model : DBModel>(entity: Entity<Model>, val id: String, val cell: EntityCell<Model>, private val collect: (LiveRef<Model>) -> Unit) :
     WeakReference<Entity<Model>>(entity, EntityReferences.queue) {
@@ -140,6 +146,7 @@ class Entities<Model : DBModel> internal constructor(
     private val live = HashMap<String, LiveRef<Model>>()
     private val kept = if (source == null) EntityRegistries.retained else RetainedValues()
     private val steps = HashMap<String, Step>()
+    private val fetches = HashMap<String, EntityFetch>()
     private var flushScheduled = false
     private var single: Entity<Model>? = null
     private var singleQuery: Query<Model>? = null
@@ -151,7 +158,7 @@ class Entities<Model : DBModel> internal constructor(
     internal val peekedRows: Int get() = core.peekedRows
     internal val leaseFailures: Int get() = core.leaseFailures
 
-    fun entity(id: String): Entity<Model> = synchronized(lock) {
+    fun entity(id: String, fetch: EntityFetch = EntityFetch.NONE): Entity<Model> = synchronized(lock) {
         val previous = live[id]
         previous?.get()?.let { return it }
         if (previous != null) collected(previous)
@@ -166,11 +173,12 @@ class Entities<Model : DBModel> internal constructor(
         val made = Entity(id, cell)
         live[id] = LiveRef(made, id, cell, ::collected)
         steps[id] = if (retained != null || steps[id] == Step.Release) Step.Refresh else Step.Retain
+        fetches[id] = fetch
         scheduleFlush()
         made
     }
 
-    fun entities(ids: List<String>): List<Entity<Model>> = ids.map(::entity)
+    fun entities(ids: List<String>): List<Entity<Model>> = ids.map { entity(it) }
 
     fun singleton(query: Query<Model>): Entity<Model> = synchronized(lock) {
         single?.let { return it }
@@ -218,6 +226,7 @@ class Entities<Model : DBModel> internal constructor(
         live.values.forEach { ref -> ref.get()?.cell?.let { it.close() } }
         live.clear()
         steps.clear()
+        fetches.clear()
         kept.clear(modelName)
         singleFeed?.cancel()
         singleFeed = null
@@ -241,6 +250,7 @@ class Entities<Model : DBModel> internal constructor(
             delivery.rows.forEach { (model, bytes) -> liveCell(model.id)?.let { writes += { it.accept(model, delivery.revision, bytes) } } }
             delivery.removed.forEach { id -> liveCell(id)?.let { writes += { it.accept(null, delivery.revision) } } }
             delivery.failure?.let { message -> live.values.forEach { ref -> if (ref.get() != null) writes += { ref.cell.fail(message) } } }
+            delivery.refreshes.forEach { refresh -> liveCell(refresh.id)?.let { writes += { it.refreshed(refresh.error) } } }
             delivery.failedIds.forEach { (id, message) -> liveCell(id)?.let { writes += { it.fail(message) } } }
         }
         writes.forEach { it() }
@@ -262,14 +272,14 @@ class Entities<Model : DBModel> internal constructor(
     }
 
     private fun flush() {
-        val pending = synchronized(lock) {
+        val (pending, wanted) = synchronized(lock) {
             flushScheduled = false
-            HashMap(steps).also { steps.clear() }
+            HashMap(steps).also { steps.clear() } to HashMap(fetches).also { fetches.clear() }
         }
         val release = pending.filterValues { it != Step.Retain }.keys.toList()
-        val retain = pending.filterValues { it != Step.Release }.keys.toList()
+        val retain = pending.filterValues { it != Step.Release }.keys.groupBy { wanted[it] ?: EntityFetch.NONE }
         if (release.isNotEmpty()) source.release(release)
-        if (retain.isNotEmpty()) source.retain(retain)
+        retain.forEach { (fetch, ids) -> source.retain(ids, fetch) }
     }
 
     companion object {
@@ -304,8 +314,8 @@ internal class CoreEntitySource<Model : DBModel>(
     }
 
     @Synchronized
-    override fun retain(ids: List<String>) {
-        try { open().retain(ids) } catch (error: Exception) { failed("retain", ids, error) }
+    override fun retain(ids: List<String>, fetch: EntityFetch) {
+        try { open().retain(ids, fetch) } catch (error: Exception) { failed("retain", ids, error) }
     }
 
     @Synchronized
@@ -335,7 +345,7 @@ internal class CoreEntitySource<Model : DBModel>(
                 .getOrNull()
         }
         decoded.addAndGet(rows.size)
-        deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed, delivery.failure, failedIds))
+        deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed, delivery.failure, failedIds, delivery.refreshes))
     }
 }
 
@@ -385,8 +395,8 @@ internal object EntityRegistries {
     fun resumeAll() = registries.values.forEach { it.resume() }
 }
 
-fun <Model : DBModel> entityOf(modelName: String, decoder: ModelDecoder<Model>, id: String): Entity<Model> =
-    EntityRegistries.of(modelName, decoder).entity(id)
+fun <Model : DBModel> entityOf(modelName: String, decoder: ModelDecoder<Model>, id: String, fetch: EntityFetch = EntityFetch.NONE): Entity<Model> =
+    EntityRegistries.of(modelName, decoder).entity(id, fetch)
 
 fun <Model : DBModel> singletonEntityOf(modelName: String, decoder: ModelDecoder<Model>, query: Query<Model>): Entity<Model> =
     EntityRegistries.of(modelName, decoder).singleton(query)

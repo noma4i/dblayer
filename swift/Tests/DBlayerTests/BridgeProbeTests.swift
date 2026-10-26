@@ -370,7 +370,7 @@ extension BridgeProbeTests {
     let second = try await Moment.create(text: "two")
     let collector = EntityCollector()
     let entities = try DB.database.liveEntities(model: Moment.modelName, listener: collector)
-    try entities.retain(ids: [first.id, second.id])
+    try entities.retain(ids: [first.id, second.id], fetch: .none)
     #expect(await collector.wait(for: 1).first?.rows.count == 2)
 
     _ = try await first.update(text: "edited")

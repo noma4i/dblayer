@@ -241,6 +241,7 @@ data class Container(
         fun ids(ids: List<String>) = idsQuery("Container", this, ids)
         fun entity(id: String) = entityOf("Container", this, id)
         suspend fun node(id: String, force: Boolean = false): Container? = offCaller { DBlayer.database.node("Container", "node", id, force)?.let { read(it) } }
+        fun entity(id: String, fetch: EntityFetch) = entityOf("Container", this, id, fetch)
         suspend fun nodes(ids: List<String>): List<Container> = offCaller { DBlayer.database.nodes("Container", "nodes", ids).map { read(it) } }
         val recent: Query<Container> get() {
             var built = Query("Container", this, relation = "recent", params = buildJsonObject {  })
@@ -570,6 +571,7 @@ data class InterfaceRecord(
         fun ids(ids: List<String>) = idsQuery("InterfaceRecord", this, ids)
         fun entity(id: String) = entityOf("InterfaceRecord", this, id)
         suspend fun node(id: String, force: Boolean = false): InterfaceRecord? = offCaller { DBlayer.database.node("InterfaceRecord", "node", id, force)?.let { read(it) } }
+        fun entity(id: String, fetch: EntityFetch) = entityOf("InterfaceRecord", this, id, fetch)
         suspend fun create(slug: String, spec: SampleSpec? = null): InterfaceRecord = offCaller {
             val values = buildJsonObject {
                 put("slug", jsonValue(slug))
@@ -688,6 +690,7 @@ data class Moment(
         fun ids(ids: List<String>) = idsQuery("Moment", this, ids)
         fun entity(id: String) = entityOf("Moment", this, id)
         suspend fun transcodeStatus(id: String, force: Boolean = false): Moment? = offCaller { DBlayer.database.node("Moment", "transcode_status", id, force)?.let { read(it) } }
+        fun entity(id: String, fetch: EntityFetch) = entityOf("Moment", this, id, fetch)
         val recent: Query<Moment> get() {
             var built = Query("Moment", this, relation = "recent", params = buildJsonObject {  })
             built = built.order(Order("createdAt", "desc"))
@@ -1138,6 +1141,7 @@ data class Record(
             return built
         }
         suspend fun transcodeStatus(id: String, force: Boolean = false): Record? = offCaller { DBlayer.database.node("Record", "transcode_status", id, force)?.let { read(it) } }
+        fun entity(id: String, fetch: EntityFetch) = entityOf("Record", this, id, fetch)
         fun containerMedia(containerId: String): Query<Record> {
             var built = Query("Record", this, relation = "container_media", params = buildJsonObject { put("containerId", jsonValue(containerId)) })
             return built
@@ -1261,6 +1265,7 @@ data class CustomScreen(
         fun ids(ids: List<String>) = idsQuery("CustomScreen", this, ids)
         fun entity(id: String) = entityOf("CustomScreen", this, id)
         suspend fun node(id: String, force: Boolean = false): CustomScreen? = offCaller { DBlayer.database.node("CustomScreen", "node", id, force)?.let { read(it) } }
+        fun entity(id: String, fetch: EntityFetch) = entityOf("CustomScreen", this, id, fetch)
         suspend fun create(slug: String, version: Long, requires: ScreenRequires, spec: ScreenSpec? = null): CustomScreen = offCaller {
             val values = buildJsonObject {
                 put("slug", jsonValue(slug))

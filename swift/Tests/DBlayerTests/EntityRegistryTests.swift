@@ -14,11 +14,13 @@ final class CountingSource: EntitySource, @unchecked Sendable {
   private var peekCount = 0
   var peeks: Int { lock.withLock { peekCount } }
   private var retains: [[String]] = []
+  private var modes: [String: EntityFetch] = [:]
   private var releases: [[String]] = []
   /// Each lease call in order, as "retain <ids>" or "release <ids>".
   let events: AsyncStream<String>
   private let eventSink: AsyncStream<String>.Continuation
-  func retain(_ ids: [String]) { lock.withLock { retains.append(ids) }; eventSink.yield("retain \(ids.joined(separator: ","))") }
+  var fetches: [String: EntityFetch] { lock.withLock { modes } }
+  func retain(_ ids: [String], fetch: EntityFetch) { lock.withLock { retains.append(ids); ids.forEach { modes[$0] = fetch } }; eventSink.yield("retain \(ids.joined(separator: ","))") }
   func release(_ ids: [String]) { lock.withLock { releases.append(ids) }; eventSink.yield("release \(ids.joined(separator: ","))") }
   var retained: [String] { lock.withLock { retains.flatMap { $0 } } }
   var released: [String] { lock.withLock { releases.flatMap { $0 } } }
@@ -105,6 +107,31 @@ struct EntityRegistryTests {
     for index in 0 ..< 50 { read(entities[index % 10]) }
     registry.apply(delivery(2, [moment("3", "second")]))
     #expect(invalidated.value == 5)
+  }
+
+  @Test
+  func entityFetchAsksTheCoreOncePerNewReaderAndNeverForNone() async {
+    let source = CountingSource()
+    let registry = Entities<Moment>(source: source)
+    let first = registry.entity("1", fetch: .force)
+    let second = registry.entity("1", fetch: .force)
+    let third = registry.entity("2")
+    let fourth = registry.entity("3", fetch: .stale)
+    await settle()
+    withExtendedLifetime((third, fourth)) {}
+    #expect(first === second)
+    #expect(source.fetches == ["1": .force, "2": .none, "3": .stale])
+    #expect(source.retained.sorted() == ["1", "2", "3"])
+  }
+
+  @Test
+  func aRefreshOutcomeShowsAsRefreshErrorNextToThePhase() {
+    let registry = Entities<Moment>(source: CountingSource())
+    let entity = registry.entity("1", fetch: .force)
+    registry.apply(EntityDecoding.Decoded(revision: Int64.min, rows: [], removed: [], refreshes: [EntityRefresh(id: "1", error: .offline)]))
+    #expect(entity.refreshError == .offline && entity.phase == .opening)
+    registry.apply(EntityDecoding.Decoded(revision: Int64.min, rows: [], removed: [], refreshes: [EntityRefresh(id: "1", error: nil)]))
+    #expect(entity.refreshError == nil)
   }
 
   /// REL-10

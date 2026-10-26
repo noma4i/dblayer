@@ -11,7 +11,7 @@ extension BridgeProbeTests {
     var source: CoreEntitySource<Moment>? = CoreEntitySource()
     source?.deliver = { _ in delivered.add() }
     weak let released = source
-    source?.retain([row.id])
+    source?.retain([row.id], fetch: .none)
     await eventually("the entity source delivers its row") { delivered.value > 0 }
     source = nil
     await eventually("the entity source releases its observer") { released == nil && (try? DB.subscriptionCensus().subscriptions) == 0 }

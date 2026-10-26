@@ -263,7 +263,7 @@ class EntityBridgeTest {
         val delivered = java.util.concurrent.atomic.AtomicInteger()
         var source: CoreEntitySource<Moment>? = CoreEntitySource("Moment", Moment) { delivered.incrementAndGet() }
         val released = java.lang.ref.WeakReference(source)
-        source!!.retain(listOf(row.id))
+        source!!.retain(listOf(row.id), EntityFetch.NONE)
         eventually("the entity source delivers its row") { delivered.get() > 0 }
         source = null
         eventually("the entity source releases its observer") { System.gc(); released.get() == null && DBlayer.subscriptionCensus().subscriptions == 0uL }
@@ -285,7 +285,7 @@ class EntityBridgeTest {
         val second = Moment.create(text = "two")
         val collector = Collector()
         DBlayer.database.liveEntities(first.modelName, collector).use { entities ->
-            entities.retain(listOf(first.id, second.id))
+            entities.retain(listOf(first.id, second.id), EntityFetch.NONE)
             assertEquals(2, collector.wait(1)[0].rows.size)
 
             first.update(text = GraphQLNullable.Value("edited"))

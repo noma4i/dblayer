@@ -20,7 +20,8 @@ private class CountingSource(private val cached: WireRow? = null) : EntitySource
     override fun cachedRow(id: String): WireRow? { peeks.incrementAndGet(); return cached?.takeIf { it.id == id } }
     val retained = java.util.concurrent.CopyOnWriteArrayList<String>()
     val released = java.util.concurrent.CopyOnWriteArrayList<String>()
-    override fun retain(ids: List<String>) { retained.addAll(ids) }
+    val fetches = java.util.concurrent.CopyOnWriteArrayList<Pair<String, EntityFetch>>()
+    override fun retain(ids: List<String>, fetch: EntityFetch) { retained.addAll(ids); ids.forEach { fetches.add(it to fetch) } }
     override fun release(ids: List<String>) { released.addAll(ids) }
 }
 
@@ -146,6 +147,30 @@ class EntityRegistryTest {
         registry.apply(delivery(2, listOf(moment("3", "second"))))
         assertEquals(5, emissions.get() - before)
         jobs.forEach { it.cancel() }
+    }
+
+    @Test
+    fun entityFetchAsksTheCoreOncePerNewReaderAndNeverForNone() {
+        val source = CountingSource()
+        val registry = registry(source)
+        val first = registry.entity("1", EntityFetch.FORCE)
+        val second = registry.entity("1", EntityFetch.FORCE)
+        val third = registry.entity("2")
+        val fourth = registry.entity("3", EntityFetch.STALE)
+        eventuallyBlocking("every new reader is retained") { source.fetches.size == 3 }
+        assertTrue(first === second && third !== fourth)
+        assertEquals(setOf("1" to EntityFetch.FORCE, "2" to EntityFetch.NONE, "3" to EntityFetch.STALE), source.fetches.toSet())
+    }
+
+    @Test
+    fun aRefreshOutcomeShowsAsRefreshErrorNextToThePhase() {
+        val registry = registry()
+        val entity = registry.entity("1", EntityFetch.FORCE)
+        registry.apply(EntityDeliveryRows(Long.MIN_VALUE, emptyList(), emptyList(), refreshes = listOf(EntityRefresh("1", EntityRefreshError.Offline))))
+        assertEquals(EntityRefreshError.Offline, entity.refreshError.value)
+        assertEquals(EntityPhase.Opening, entity.phase.value)
+        registry.apply(EntityDeliveryRows(Long.MIN_VALUE, emptyList(), emptyList(), refreshes = listOf(EntityRefresh("1", null))))
+        assertNull(entity.refreshError.value)
     }
 
     @Test

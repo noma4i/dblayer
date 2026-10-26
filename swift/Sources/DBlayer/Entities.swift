@@ -13,6 +13,7 @@ public final class Entity<Model: DBModel> {
   public private(set) var value: Model?
   public private(set) var isStale: Bool
   public private(set) var phase: EntityPhase = .opening
+  public private(set) var refreshError: EntityRefreshError?
   public var isClosed: Bool { phase == .closed }
   @ObservationIgnored private(set) var revision: Int64 = Int64.min
   @ObservationIgnored private var bytes: UInt64 = 0
@@ -68,6 +69,10 @@ public final class Entity<Model: DBModel> {
     show(verdict)
     if next != value { value = next; readers.put(next) }
     if isSingleton, id != (next?.id ?? "") { id = next?.id ?? "" }
+  }
+
+  fileprivate func refreshed(_ error: EntityRefreshError?) {
+    if refreshError != error { refreshError = error }
   }
 
   fileprivate func fail(_ message: String, feed: UInt64? = nil) {
@@ -160,7 +165,7 @@ struct Retained<Model: DBModel> {
 
 protocol EntitySource: AnyObject, Sendable {
   func cachedRow(_ id: String) throws -> WireRow?
-  func retain(_ ids: [String])
+  func retain(_ ids: [String], fetch: EntityFetch)
   func release(_ ids: [String])
 }
 
@@ -175,6 +180,7 @@ public final class Entities<Model: DBModel> {
   private var live: [String: Weak] = [:]
   private let kept: RetainedValues
   private var steps: [String: Step] = [:]
+  private var fetches: [String: EntityFetch] = [:]
   private var flushScheduled = false
   private let source: any EntitySource
   private let now: @Sendable () -> TimeInterval
@@ -199,7 +205,7 @@ public final class Entities<Model: DBModel> {
   var peekedRows: Int { core.peekedRows }
   var leaseFailures: Int { core.leaseFailures }
 
-  public func entity(_ id: String) -> Entity<Model> {
+  public func entity(_ id: String, fetch: EntityFetch = .none) -> Entity<Model> {
     if let existing = live[id]?.entity { return existing }
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
     let made = Entity<Model>(id: id, registry: self)
@@ -213,11 +219,12 @@ public final class Entities<Model: DBModel> {
     }
     live[id] = Weak(entity: made)
     steps[id] = (retained != nil || steps[id] == .release) ? .refresh : .retain
+    fetches[id] = fetch
     scheduleFlush()
     return made
   }
 
-  public func entities(_ ids: [String]) -> [Entity<Model>] { ids.map(entity) }
+  public func entities(_ ids: [String]) -> [Entity<Model>] { ids.map { entity($0) } }
 
   public func singleton(_ query: Query<Model>) -> Entity<Model> {
     if let single { return single }
@@ -265,6 +272,7 @@ public final class Entities<Model: DBModel> {
     live.values.forEach { $0.entity?.close() }
     live = [:]
     steps = [:]
+    fetches = [:]
     kept.clear(Model.modelName)
     singleFeed?.cancel()
     singleFeed = nil
@@ -296,6 +304,7 @@ public final class Entities<Model: DBModel> {
     for (model, bytes) in delivery.rows { live[model.id]?.entity?.accept(model, revision: delivery.revision, bytes: bytes) }
     for id in delivery.removed { live[id]?.entity?.accept(nil, revision: delivery.revision) }
     if let message = delivery.failure { live.values.forEach { $0.entity?.fail(message) } }
+    for refresh in delivery.refreshes { live[refresh.id]?.entity?.refreshed(refresh.error) }
     for (id, message) in delivery.failedIds { live[id]?.entity?.fail(message) }
   }
 
@@ -308,11 +317,13 @@ public final class Entities<Model: DBModel> {
   private func flush() {
     flushScheduled = false
     let pending = steps
+    let wanted = fetches
     steps = [:]
+    fetches = [:]
     let release = pending.filter { $0.value != .retain }.map(\.key)
-    let retain = pending.filter { $0.value != .release }.map(\.key)
+    let retain = Dictionary(grouping: pending.filter { $0.value != .release }.map(\.key)) { wanted[$0] ?? .none }
     if !release.isEmpty { source.release(release) }
-    if !retain.isEmpty { source.retain(retain) }
+    for (fetch, ids) in retain { source.retain(ids, fetch: fetch) }
   }
 }
 
@@ -363,6 +374,7 @@ enum EntityDecoding {
     let removed: [String]
     var failure: String?
     var failedIds: [String: String] = [:]
+    var refreshes: [EntityRefresh] = []
   }
 }
 
@@ -398,8 +410,8 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
     return try DB.database.peekRow(model: Model.modelName, rowId: id)
   }
 
-  func retain(_ ids: [String]) {
-    queue.async { self.refused(ids) { try self.open().retain(ids: ids) } }
+  func retain(_ ids: [String], fetch: EntityFetch) {
+    queue.async { self.refused(ids) { try self.open().retain(ids: ids, fetch: fetch) } }
   }
 
   func release(_ ids: [String]) {
@@ -432,7 +444,7 @@ final class CoreEntitySource<Model: DBModel>: EntitySource, @unchecked Sendable 
       }
     }
     lock.withLock { total += rows.count }
-    deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed, failure: delivery.failure, failedIds: failedIds))
+    deliver?(EntityDecoding.Decoded(revision: delivery.revision, rows: rows, removed: delivery.removed, failure: delivery.failure, failedIds: failedIds, refreshes: delivery.refreshes))
   }
 }
 

@@ -242,6 +242,7 @@ public struct Container: DBModel {
     @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force)
     }
+    @MainActor public static func entity(_ id: String, fetch: EntityFetch) -> Entity<Self> { Entities<Self>.shared.entity(id, fetch: fetch) }
     @concurrent public static func nodes(_ ids: [String]) async throws -> [Self] {
         try await readNodes(relation: "nodes", ids: ids)
     }
@@ -593,6 +594,7 @@ public struct InterfaceRecord: DBModel {
     @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force)
     }
+    @MainActor public static func entity(_ id: String, fetch: EntityFetch) -> Entity<Self> { Entities<Self>.shared.entity(id, fetch: fetch) }
     @concurrent public static func create(slug: String, spec: SampleSpec? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["slug"] = try JSONValue.encode(slug)
@@ -717,6 +719,7 @@ public struct Moment: DBModel {
     @concurrent public static func transcodeStatus(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "transcode_status", id: id, force: force)
     }
+    @MainActor public static func entity(_ id: String, fetch: EntityFetch) -> Entity<Self> { Entities<Self>.shared.entity(id, fetch: fetch) }
     public static var recent: Query<Self> {
         var built = Query<Self>(relation: "recent", params: [:])
         built = built.order(Order(field: "createdAt", direction: "desc"))
@@ -1180,6 +1183,7 @@ public struct Record: DBModel {
     @concurrent public static func transcodeStatus(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "transcode_status", id: id, force: force)
     }
+    @MainActor public static func entity(_ id: String, fetch: EntityFetch) -> Entity<Self> { Entities<Self>.shared.entity(id, fetch: fetch) }
     public static func containerMedia(_ containerId: String) throws -> Query<Self> {
         let built = Query<Self>(relation: "container_media", params: ["containerId": try JSONValue.encode(containerId)])
         return built
@@ -1306,6 +1310,7 @@ public struct CustomScreen: DBModel {
     @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force)
     }
+    @MainActor public static func entity(_ id: String, fetch: EntityFetch) -> Entity<Self> { Entities<Self>.shared.entity(id, fetch: fetch) }
     @concurrent public static func create(slug: String, version: Int, requires: ScreenRequires, spec: ScreenSpec? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["slug"] = try JSONValue.encode(slug)

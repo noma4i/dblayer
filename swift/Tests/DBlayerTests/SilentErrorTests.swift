@@ -6,13 +6,13 @@ private struct PeekFailed: Error {}
 
 private final class ThrowingSource: EntitySource, @unchecked Sendable {
   func cachedRow(_ id: String) throws -> WireRow? { throw PeekFailed() }
-  func retain(_ ids: [String]) {}
+  func retain(_ ids: [String], fetch: EntityFetch) {}
   func release(_ ids: [String]) {}
 }
 
 private final class BrokenRowSource: EntitySource, @unchecked Sendable {
   func cachedRow(_ id: String) throws -> WireRow? { var row = SilentErrorTests.wire(id); row.layout = "other"; return row }
-  func retain(_ ids: [String]) {}
+  func retain(_ ids: [String], fetch: EntityFetch) {}
   func release(_ ids: [String]) {}
 }
 
