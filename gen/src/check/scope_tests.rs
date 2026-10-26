@@ -211,6 +211,10 @@ fn scope_names_are_unique_within_the_model() {
     ]);
 }
 
+fn derived(lines: &str) -> String {
+    format!("  scope :list do\n    query \"L\"\n  end\n  scope :on_channel do\n    parameter :channel, :string\n    query \"S\"\n{lines}  end")
+}
+
 #[test]
 fn preload_lists_the_values_of_every_parameter_of_a_remote_scope() {
     let remote = |lines: &str| scope("", &format!("    query \"S\"\n{lines}"));
@@ -227,5 +231,12 @@ fn preload_lists_the_values_of_every_parameter_of_a_remote_scope() {
         ("duplicate value", &with_channel("    preload channel: [\"a\", \"a\"]\n"), Some("lists a value twice")),
         ("not a list", &with_channel("    preload channel: \"a\"\n"), Some("takes a list of values")),
         ("twice", &remote("    preload\n    preload\n"), Some("`preload` is declared twice")),
+        ("rows of another scope", &derived("    preload channel: { from: \"Sample.list\" }\n"), None),
+        ("rows of an unknown model", &derived("    preload channel: { from: \"Ghost.list\" }\n"), Some("unknown model `Ghost`")),
+        ("rows of an unknown scope", &derived("    preload channel: { from: \"Sample.ghost\" }\n"), Some("has no scope `ghost`")),
+        ("rows of a scope with parameters", &derived("    preload channel: { from: \"Sample.on_channel\" }\n"), Some("must be a list without parameters")),
+        ("rows for a number parameter", &derived("    parameter :limit, :int\n    preload channel: { from: \"Sample.list\" }, limit: { from: \"Sample.list\" }\n"), Some("takes row ids")),
+        ("source without a model", &derived("    preload channel: { from: \"list\" }\n"), Some("takes `\"Model.scope\"`")),
+        ("source with another key", &derived("    preload channel: { of: \"Sample.list\" }\n"), Some("takes a list of values or `{ from:")),
     ]);
 }

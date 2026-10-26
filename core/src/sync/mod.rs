@@ -50,6 +50,8 @@ pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
 pub use load_machine::{LoadError, LoadPhase, RelationState};
 pub use load_owner::RelationWatch;
+pub use preload::PreloadFailure;
+pub(crate) use preload::FirstScreenHold;
 pub(crate) use load_machine::snapshot_phase;
 pub use model_event::{ModelEvent, ModelEventItem, ModelEvents};
 pub use resume::{ResumeReport, Watch};
@@ -227,6 +229,7 @@ impl Sync {
         };
         let this = Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) };
         let preloads = Arc::downgrade(&this.inner);
+        this.inner.preload.attach(preloads.clone());
         this.inner.db.on_reset(Arc::new(move |_| {
             if let Some(inner) = preloads.upgrade() {
                 inner.preload_on_event();

@@ -14,6 +14,7 @@ use super::Sync;
 
 impl Sync {
     pub async fn node(&self, model: &str, relation: &str, id: &str, force: bool) -> Result<Option<Row>, SyncError> {
+        let _app = self.app_load();
         let row_id = RowId::new(id).map_err(|error| SyncError::Params(error.to_string()))?;
         let resolved = self.resolve_node(model, relation, NodeRead::One, Map::from_iter([(NODE_PARAM.to_string(), json!(id))]))?;
         self.inner.fetch(&resolved, None, force).await?;
@@ -22,6 +23,7 @@ impl Sync {
     }
 
     pub async fn nodes(&self, model: &str, relation: &str, ids: &[&str]) -> Result<Vec<Row>, SyncError> {
+        let _app = self.app_load();
         let resolved = self.resolve_node(model, relation, NodeRead::Many, Map::new())?;
         let attempt = self.inner.begin_attempt(&resolved.window_key)?;
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, json!({ "ids": ids }));

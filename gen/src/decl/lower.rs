@@ -866,8 +866,8 @@ fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
             line.no_args(cx);
             line.used.iter_mut().for_each(|used| *used = true);
             let values = call.options.iter().map(|pair| {
-                let items = match &pair.value.item {
-                    Value::Array(nodes) => nodes.iter().filter_map(|node| match &node.item {
+                let choice = match &pair.value.item {
+                    Value::Array(nodes) => PreloadChoice::Listed(nodes.iter().filter_map(|node| match &node.item {
                         Value::Str(text) => Some(Spanned::new(Json::String(text.clone()), at(node))),
                         Value::Int(number) => Some(Spanned::new(Json::from(*number), at(node))),
                         Value::Bool(flag) => Some(Spanned::new(Json::Bool(*flag), at(node))),
@@ -875,13 +875,26 @@ fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
                             cx.fail(at(node), "a `preload` value is a string, a number or true or false");
                             None
                         }
-                    }).collect(),
+                    }).collect()),
+                    Value::Hash(parts) => match parts.as_slice() {
+                        [part] if part.key == "from" => match &part.value.item {
+                            Value::Str(text) => PreloadChoice::RowsOf(Spanned::new(text.clone(), at(&part.value))),
+                            _ => {
+                                cx.fail(at(&part.value), "`preload ...: { from: }` takes a string like `\"Vibe.list\"`");
+                                PreloadChoice::Listed(Vec::new())
+                            }
+                        },
+                        _ => {
+                            cx.fail(at(&pair.value), "`preload` takes a list of values or `{ from: \"Model.scope\" }`");
+                            PreloadChoice::Listed(Vec::new())
+                        }
+                    },
                     _ => {
-                        cx.fail(at(&pair.value), "`preload` takes a list of values like `preload list: [\"primary\", \"secondary\"]`");
-                        Vec::new()
+                        cx.fail(at(&pair.value), "`preload` takes a list of values like `preload list: [\"primary\", \"secondary\"]` or `{ from: \"Model.scope\" }`");
+                        PreloadChoice::Listed(Vec::new())
                     }
                 };
-                (Spanned::new(pair.key.clone(), pair_pos(pair)), items)
+                (Spanned::new(pair.key.clone(), pair_pos(pair)), choice)
             }).collect();
             decl.preload = Some(PreloadDecl { pos: line.pos, values });
         }

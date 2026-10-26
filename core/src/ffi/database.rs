@@ -372,6 +372,13 @@ impl Database {
         .await?;
         Ok(())
     }
+    pub async fn refresh_preloads(&self) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        let failures = on_executor(async move { sync.refresh_preloads().await }).await?;
+        if failures.is_empty() { return Ok(()); }
+        let scopes: Vec<String> = failures.iter().map(|failure| format!("{}.{} {}: {}", failure.model, failure.relation, serde_json::Value::Object(failure.params.clone()), failure.error)).collect();
+        Err(DbError::Sync { detail: format!("{} preload scopes failed to refresh: {}", scopes.len(), scopes.join("; ")) })
+    }
     pub async fn load_all(&self, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         cancellable(async move {
@@ -565,6 +572,7 @@ impl Database {
     }
     fn subscribed(&self, listener: Arc<dyn QueryListener>, open: impl FnOnce(Arc<LiveFeed>) -> Result<LiveHandles, DbError>) -> Arc<LiveSubscription> {
         let feed = LiveFeed::new(listener);
+        if let Ok(sync) = self.sync() { feed.hold_first_screen(sync.first_screen()); }
         let handles = match open(feed.clone()) {
             Ok(handles) => Some(handles),
             Err(error) => {
@@ -623,6 +631,7 @@ impl Database {
         feed.on_rejoin(Arc::new(observer.rejoiner()));
         let (load, state) = match tracked {
             Some((sync, relation, params)) => {
+                let app_load = sync.app_load();
                 let control = observer.control();
                 let ask = control.clone();
                 feed.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
@@ -642,6 +651,7 @@ impl Database {
                     while changes.changed().await.is_ok() { follower.state(changes.borrow_and_update().clone()); }
                 }).abort_handle();
                 let load = executor()?.spawn(async move {
+                    let _app_load = app_load;
                     let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
                     let result = sync.load(&model, &relation, &params, options).await;
                     loader.state(receiver.borrow().clone());

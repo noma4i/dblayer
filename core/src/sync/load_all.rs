@@ -58,6 +58,7 @@ impl Inner {
 
 impl Sync {
     pub async fn load_all(&self, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<(), SyncError> {
+        let _app = self.app_load();
         let resolved = self.inner.resolve(model, relation, params)?;
         self.inner.load_all(&resolved, options.force).await
     }

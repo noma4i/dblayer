@@ -432,8 +432,16 @@ fn a_batch_with_validates_builds_the_upload_batch() {
 fn preload_keys_values_by_the_scope_param_name_or_the_where_column() {
     let spec = build_one("  scope :by_owner do\n    parameter :owner, :id\n    where ownerId: :owner\n    query \"S\"\n    preload owner: [\"1\", \"2\"]\n  end\n  scope :on_channel do\n    parameter :channel, :string\n    query \"T\"\n    preload channel: [\"a\"]\n  end\n  scope :all do\n    query \"U\"\n    preload\n  end\n  scope :never do\n    query \"V\"\n  end");
     let preload = |name: &str| spec.relations.iter().find(|relation| relation.name == name).unwrap().preload.clone();
-    assert_eq!(preload("by_owner"), Some([("ownerId".to_string(), vec![json!("1"), json!("2")])].into()));
-    assert_eq!(preload("on_channel"), Some([("channel".to_string(), vec![json!("a")])].into()));
+    assert_eq!(preload("by_owner"), Some([("ownerId".to_string(), dblayer::schema::PreloadChoice::Listed(vec![json!("1"), json!("2")]))].into()));
+    assert_eq!(preload("on_channel"), Some([("channel".to_string(), dblayer::schema::PreloadChoice::Listed(vec![json!("a")]))].into()));
     assert_eq!(preload("all"), Some(Default::default()));
     assert_eq!(preload("never"), None);
+}
+
+#[test]
+fn preload_takes_the_values_of_a_parameter_from_the_rows_of_another_scope() {
+    let spec = build_one("  scope :feed do\n    query \"F\"\n  end\n  scope :by_vibe do\n    parameter :vibeId, :id\n    query \"S\"\n    preload vibeId: { from: \"Sample.feed\" }\n  end");
+    let by_vibe = spec.relations.iter().find(|relation| relation.name == "by_vibe").unwrap();
+    let source = dblayer::schema::PreloadSource { model: "Sample".to_string(), relation: "feed".to_string() };
+    assert_eq!(by_vibe.preload, Some([("vibeId".to_string(), dblayer::schema::PreloadChoice::RowsOf { from: source })].into()));
 }

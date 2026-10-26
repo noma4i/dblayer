@@ -312,7 +312,10 @@ impl Inner {
             attempt,
         };
         Ok(match self.land(landing)? {
-            Landed::Applied { rows, invalid, revision } => Executed::Landed(LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts, kept_error: None }, revision),
+            Landed::Applied { rows, invalid, revision } => {
+                self.preload_on_source(&resolved.model, &resolved.relation);
+                Executed::Landed(LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts, kept_error: None }, revision)
+            }
             Landed::Discarded(reason) => Executed::Landed(LoadOutcome { attempts, ..LoadOutcome::of(LoadStatus::Discarded(reason)) }, 0),
         })
     }
@@ -398,11 +401,13 @@ impl Sync {
     }
 
     pub async fn load(&self, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
+        let _app = self.app_load();
         let resolved = self.inner.resolve(model, relation, params)?;
         self.inner.fetch(&resolved, None, options.force).await
     }
 
     pub async fn load_more(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
+        let _app = self.app_load();
         let resolved = self.inner.resolve(model, relation, params)?;
         self.inner.load_more(&resolved).await
     }

@@ -34,6 +34,9 @@ object DBlayer {
         EntityRegistries.resetAll()
     }
 
+    /** Reloads every `preload` scope now, fresh or not, and returns when all have settled. Offline it throws without a request. When some scopes fail the error names them. Call it for pull to refresh instead of refreshing each reference list. */
+    suspend fun refreshPreloads() = offCaller { database.refreshPreloads() }
+
     suspend fun retryAll(): ULong = offCaller { database.retryAll() }
 
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =

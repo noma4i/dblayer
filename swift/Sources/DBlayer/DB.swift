@@ -64,6 +64,9 @@ public enum DB {
 
   public static func sessionReset() throws { try database.sessionReset() }
 
+  /// Reloads every `preload` scope now, fresh or not, and returns when all have settled. Offline it throws without a request. When some scopes fail the error names them. Call it for pull to refresh instead of refreshing each reference list.
+  @concurrent public static func refreshPreloads() async throws { try await database.refreshPreloads() }
+
   @discardableResult @concurrent public static func retryAll() async throws -> UInt64 { try await database.retryAll() }
 
   private static func sessionBodyText<Body: Encodable>(_ body: Body) throws -> String {

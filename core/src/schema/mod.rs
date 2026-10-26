@@ -683,7 +683,20 @@ pub struct RelationSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edge_fields: Vec<FieldSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preload: Option<BTreeMap<String, Vec<Value>>>,
+    pub preload: Option<BTreeMap<String, PreloadChoice>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PreloadChoice {
+    Listed(Vec<Value>),
+    RowsOf { from: PreloadSource },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreloadSource {
+    pub model: String,
+    pub relation: String,
 }
 
 impl RelationSpec {

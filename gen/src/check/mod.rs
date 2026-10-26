@@ -6,7 +6,7 @@ use dblayer::value::ScalarKind;
 use crate::build::build;
 use crate::decl::{
     Effect, ModelDecl, OperationDecl, OperationKind, OptimisticDecl, OptimisticElement, OptimisticValue, ParamBase, ParameterDecl, Pos,
-    PreloadDecl, ResponseDecl, ResponseShape, ScopeDecl, SubscribeDecl, TypeRef, VariableValue,
+    PreloadChoice, PreloadDecl, ResponseDecl, ResponseShape, ScopeDecl, Spanned, SubscribeDecl, TypeRef, VariableValue,
 };
 use crate::ParseError;
 
@@ -127,7 +127,7 @@ fn check_model(node: &ModelDecl, all: &[ModelDecl], errors: &mut Vec<Found>) {
         }
     }
     for scope in &node.scopes {
-        check_scope(node, scope, &mut report);
+        check_scope(node, all, scope, &mut report);
     }
     cloud::check_cloud(node, &mut report);
     let attributes = attributes::AttributeCheck { node, report: &mut report };
@@ -163,7 +163,7 @@ fn check_subscription(update: &SubscribeDecl, report: &mut impl FnMut(Pos, Strin
     }
 }
 
-fn check_scope(node: &ModelDecl, scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
+fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
     let name = &scope.name;
     let mut names = HashSet::new();
     for parameter in &scope.parameters {
@@ -214,7 +214,7 @@ fn check_scope(node: &ModelDecl, scope: &ScopeDecl, report: &mut impl FnMut(Pos,
         }
     }
     if let Some(preload) = &scope.preload {
-        check_preload(scope, preload, report);
+        check_preload(scope, preload, all, report);
     }
     if !scope.is_remote() {
         return;
@@ -222,20 +222,27 @@ fn check_scope(node: &ModelDecl, scope: &ScopeDecl, report: &mut impl FnMut(Pos,
     check_remote_scope(scope, report);
 }
 
-fn check_preload(scope: &ScopeDecl, preload: &PreloadDecl, report: &mut impl FnMut(Pos, String)) {
+fn check_preload(scope: &ScopeDecl, preload: &PreloadDecl, all: &[ModelDecl], report: &mut impl FnMut(Pos, String)) {
     let name = &scope.name;
     if scope.node.is_some() {
         report(preload.pos, format!("scope `{name}`: `preload` does not apply to a `node` scope"));
         return;
     }
     let mut keys = HashSet::new();
-    for (key, values) in &preload.values {
+    for (key, choice) in &preload.values {
         if !keys.insert(key.item.as_str()) {
             report(key.pos, format!("scope `{name}`: `preload` lists `{}` twice", key.item));
         }
         let Some(parameter) = scope.parameters.iter().find(|parameter| parameter.name == key.item) else {
             report(key.pos, format!("scope `{name}`: `preload` names `{}`, which is not declared with `parameter`", key.item));
             continue;
+        };
+        let values = match choice {
+            PreloadChoice::Listed(values) => values,
+            PreloadChoice::RowsOf(source) => {
+                check_preload_source(scope, parameter, source, all, report);
+                continue;
+            }
         };
         if values.is_empty() {
             report(key.pos, format!("scope `{name}`: `preload {}:` needs at least 1 value", key.item));
@@ -260,6 +267,28 @@ fn check_preload(scope: &ScopeDecl, preload: &PreloadDecl, report: &mut impl FnM
         if !keys.contains(parameter.name.as_str()) {
             report(preload.pos, format!("scope `{name}`: `preload` needs a list of values for parameter `{}`", parameter.name));
         }
+    }
+}
+
+fn check_preload_source(scope: &ScopeDecl, parameter: &ParameterDecl, source: &Spanned<String>, all: &[ModelDecl], report: &mut impl FnMut(Pos, String)) {
+    let name = &scope.name;
+    if !matches!((&parameter.ty.base, parameter.ty.list), (ParamBase::String | ParamBase::Id | ParamBase::Named(_), false)) {
+        report(source.pos, format!("scope `{name}`: `preload {}: {{ from: }}` takes row ids, but the parameter is {}", parameter.name, parameter.ty.describe()));
+    }
+    let Some((model, relation)) = source.item.split_once('.') else {
+        report(source.pos, format!("scope `{name}`: `preload {}: {{ from: }}` takes `\"Model.scope\"`", parameter.name));
+        return;
+    };
+    let Some(model) = all.iter().find(|candidate| candidate.name == model) else {
+        report(source.pos, format!("scope `{name}`: `preload` source names unknown model `{model}`"));
+        return;
+    };
+    let Some(found) = model.scopes.iter().find(|candidate| candidate.name == relation) else {
+        report(source.pos, format!("scope `{name}`: `preload` source model `{}` has no scope `{relation}`", model.name));
+        return;
+    };
+    if found.node.is_some() || !found.parameters.is_empty() {
+        report(source.pos, format!("scope `{name}`: `preload` source `{}` must be a list without parameters", source.item));
     }
 }
 

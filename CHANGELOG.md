@@ -3,10 +3,15 @@
 ## Unreleased
 
 ### Added
+- `preload vibeId: { from: "Vibe.list" }` loads one scope for each row of another scope, and a new row adds its scope.
+- `DB.refreshPreloads()` and `DBlayer.refreshPreloads()` reload every `preload` scope in one call, fresh or not, and name the scopes that failed.
 - `add_to` and `remove_from` join a row to a scope or take it out.
 - `create_row` adds a row of another model that the server answer replaces.
 - `change_row` changes attributes of another row and shifts numbers with `minus:` or `plus:`.
 - A refused operation takes back only its own membership, created row and changed attributes.
+
+### Changed
+- `preload` waits for the first snapshot of the app and runs behind loads the app asked for.
 
 ## 6.9.2 - 2026-10-26
 

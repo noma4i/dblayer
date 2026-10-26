@@ -214,7 +214,13 @@ pub struct FreshnessDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreloadDecl {
     pub pos: Pos,
-    pub values: Vec<(Spanned<String>, Vec<Spanned<Json>>)>,
+    pub values: Vec<(Spanned<String>, PreloadChoice)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PreloadChoice {
+    Listed(Vec<Spanned<Json>>),
+    RowsOf(Spanned<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

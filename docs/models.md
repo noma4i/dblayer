@@ -538,7 +538,7 @@ end
 | `total from: "node.membersCount"` | `total` of the list state comes from this field of the response, after `paginate` | `totalCount` of the connection |
 | `freshness expires_in: 5.minutes` | how long a response counts as fresh | `5.minutes` |
 | `freshness expires_in: 5.minutes, empty_in: 30.seconds` | shorter freshness for an empty response | same |
-| `preload` or `preload channel: ["lobby", "stage"]` | the library loads the scope once the app has a session: after open, sign-in and reset, after the network returns and after power saving ends. A parameter lists its values, several parameters load every combination. A fresh answer sends nothing. Errors show in the state of the scope | not loaded until read |
+| `preload` or `preload channel: ["lobby", "stage"]` | the library loads the scope once the app has a session: after open, sign-in and reset, after the network returns and after power saving ends. A parameter lists its values, several parameters load every combination. `preload vibeId: { from: "Vibe.list" }` takes the values of a parameter from the row ids of another scope without parameters: each row gets one scope, and a row that a later load of the source adds gets its scope at once. A fresh answer sends nothing. Errors show in the state of the scope | not loaded until read |
 | `stable_order: true` (on the `scope` line) | the list keeps the order the rows were shown in, see [stable order](#scopes) | sorted by the `order` values on every read |
 | `variables statusFilter: :status, includeRewards: false` | name the GraphQL variables: a symbol takes the value of a scope parameter, any other value is sent as written | every parameter under its own name |
 | `edge do attribute :impressionUuid, :string, null: true end` | values of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
@@ -705,6 +705,8 @@ Observing a model opens the shared subscription. The last cancel releases it aft
 After a reconnect, only observed reads whose answers have expired are reread.
 Node reads and remote scopes default to `5.minutes` when `freshness` is omitted.
 A `preload` scope loads on its own after open with a session, sign-in, reset and network return. It starts no request while offline, signed out, or while the device saves power, and none while its answer is fresh. It waits for the end of power saving and never runs on a low-RAM Android device.
+`DB.refreshPreloads()` (Swift) and `DBlayer.refreshPreloads()` (Kotlin) reload every `preload` scope, fixed and derived, at once and whether it is fresh or not, and return when all have settled. Use it for pull to refresh. Offline it throws and sends no request. When some scopes fail, the error names each of them and the others stay loaded.
+A `preload` scope yields to the app. It starts no request while an observed read of the app has not delivered its first snapshot or while a load the app asked for is in flight. At most 3 preload requests run at once, and each one waits until no load the app asked for is in flight. The library starts and resumes this itself, the app calls nothing.
 Expiration alone starts no request. A later reconnect or read checks freshness again.
 Received events reread immediately. The first `Ready` does not trigger an extra reread.
 The full exchange is described in [Cable protocol](cable-protocol.md).

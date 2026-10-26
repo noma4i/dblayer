@@ -65,6 +65,7 @@ pub(super) struct LiveFeed {
     pub(super) calls: crate::db::CallState,
     pub(super) latest: watch::Sender<Option<LiveChange>>,
     pub(super) readiness: watch::Sender<Readiness>,
+    first_screen: Mutex<Option<crate::sync::FirstScreenHold>>,
 }
 
 fn load_failure(error: &LoadError) -> DbError {
@@ -120,7 +121,7 @@ impl LiveFeed {
             resyncs_in_row: 0,
             reported: false,
         };
-        Arc::new(Self { state: Mutex::new(state), listener, calls: crate::db::CallState::new(), latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0 })
+        Arc::new(Self { state: Mutex::new(state), listener, calls: crate::db::CallState::new(), latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0, first_screen: Mutex::new(None) })
     }
 
     pub(super) fn rows(&self, part: LiveChange) {
@@ -255,8 +256,13 @@ impl LiveFeed {
         false
     }
 
+    pub(super) fn hold_first_screen(&self, hold: crate::sync::FirstScreenHold) {
+        *held(&self.first_screen) = Some(hold);
+    }
+
     pub(super) fn end(&self) {
         self.calls.cancel();
+        held(&self.first_screen).take();
         held(&self.state).ended = true;
         self.readiness.send_replace(Readiness::Ended);
     }
@@ -350,6 +356,7 @@ impl LiveFeed {
             self.latest.send_replace(Some(next.clone()));
             let delta = !next.full;
             self.calls.call(|| self.listener.changed(next));
+            if let Some(hold) = held(&self.first_screen).take() { hold.delivered(); }
             state = held(&self.state);
             if delta && !state.reported {
                 state.resyncs_in_row = 0;

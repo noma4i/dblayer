@@ -235,7 +235,14 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
     relation.order_stable = scope.stable_order.is_some();
     relation.preload = scope.preload.as_ref().map(|preload| preload.values.iter().map(|(parameter, values)| {
         let column = scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone());
-        (column, values.iter().map(|value| value.item.clone()).collect())
+        let choice = match values {
+            crate::decl::PreloadChoice::Listed(values) => dblayer::schema::PreloadChoice::Listed(values.iter().map(|value| value.item.clone()).collect()),
+            crate::decl::PreloadChoice::RowsOf(source) => {
+                let (model, relation) = source.item.split_once('.').unwrap_or((&source.item, ""));
+                dblayer::schema::PreloadChoice::RowsOf { from: dblayer::schema::PreloadSource { model: model.to_string(), relation: relation.to_string() } }
+            }
+        };
+        (column, choice)
     }).collect());
     if scope.is_remote() {
         relation.remote = Some(build_remote(scope));
