@@ -16,11 +16,12 @@ struct State {
     session: Option<String>,
     power_saving: bool,
     low_ram: bool,
+    suppressed: bool,
 }
 
 impl State {
     fn held(&self) -> bool {
-        self.power_saving || self.low_ram
+        self.suppressed || self.power_saving || self.low_ram
     }
 }
 
@@ -119,6 +120,10 @@ impl Sync {
     pub fn set_power_saving(&self, saving: bool) {
         let was_saving = std::mem::replace(&mut locked(&self.inner.preload.state).power_saving, saving);
         if was_saving && !saving { self.inner.preload_start(); }
+    }
+
+    pub fn set_preload(&self, enabled: bool) {
+        locked(&self.inner.preload.state).suppressed = !enabled;
     }
 
     pub fn set_low_ram(&self, low_ram: bool) {

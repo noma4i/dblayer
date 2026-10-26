@@ -7,7 +7,7 @@ import kotlinx.coroutines.runBlocking
 
 fun main() = runBlocking {
     val schema = """[{"key":"Item","storage":"local","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}},{"name":"title","kind":{"type":"scalar","kind":"str"}}]}]"""
-    OpenDatabase().open(Config(null, null, 32u), schema, OpenOptions("[]", null, false, false), null, null, null, null, null).use { db ->
+    OpenDatabase().open(Config(null, null, 32u), schema, OpenOptions("[]", null, false, false, true), null, null, null, null, null).use { db ->
         val delivered = CountDownLatch(1)
         val received = AtomicReference<EntityDelivery>()
         val listener = object : EntityListener {

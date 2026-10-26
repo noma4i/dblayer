@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- `preload` parameter on `DB.openTesting` and `DBlayer.openTesting`, default false, keeps scope preloads quiet in tests.
+
 ### Changed
 - `preload` scopes wait while the device saves power and never load on a low-RAM Android device.
 

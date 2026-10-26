@@ -78,7 +78,7 @@ public enum DB {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     let origin = encrypted.flatMap { URL(string: $0.origin) }
     let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
-    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, uploads: uploads?.wire, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled, lowRam: false), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) }, retries: retries)
+    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, uploads: uploads?.wire, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled, lowRam: false, preload: true), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) }, retries: retries)
     let sink = try opened.onlineSink()
     reachability.start(sink)
     ForegroundEvents.shared.start { sink.enterForeground() }
@@ -97,8 +97,8 @@ public enum DB {
     wake.attach(uploads: uploads, database: database)
   }
 
-  @_spi(Testing) public static func openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations? = nil, clock: TestClock) async throws -> Database {
-    try await opener.openWithClock(config: config, modelsJson: modelsJson, transport: transport, uploads: uploads?.wire, clock: clock)
+  @_spi(Testing) public static func openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations? = nil, clock: TestClock, preload: Bool) async throws -> Database {
+    try await opener.openWithClock(config: config, modelsJson: modelsJson, transport: transport, uploads: uploads?.wire, clock: clock, preload: preload)
   }
 
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) throws {

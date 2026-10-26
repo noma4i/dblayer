@@ -9,6 +9,7 @@ pub struct OpenOptions {
     pub uploads: Option<WireUploadOperations>,
     pub power_saving: bool,
     pub low_ram: bool,
+    pub preload: bool,
 }
 
 #[derive(uniffi::Object)]
@@ -30,6 +31,7 @@ impl OpenDatabase {
         database.hold(lease);
         if remote {
             if let Ok(sync) = database.sync() {
+                sync.set_preload(options.preload);
                 sync.set_low_ram(options.low_ram);
                 sync.set_power_saving(options.power_saving);
             }
@@ -41,10 +43,11 @@ impl OpenDatabase {
         Ok(database)
     }
 
-    pub async fn open_with_clock(&self, config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<WireUploadOperations>, clock: Arc<TestClock>) -> Result<Arc<Database>, DbError> {
+    pub async fn open_with_clock(&self, config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<WireUploadOperations>, clock: Arc<TestClock>, preload: bool) -> Result<Arc<Database>, DbError> {
         let lease = self.slot.acquire()?;
         let database = Database::open_with_clock(config, models_json, transport, uploads.map(Into::into), clock).await?;
         database.hold(lease);
+        if let Ok(sync) = database.sync() { sync.set_preload(preload); }
         Ok(database)
     }
 }

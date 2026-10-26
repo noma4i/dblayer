@@ -1,7 +1,7 @@
 package com.noma4i.dblayer
 
 suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]", uploads: UploadOperations? = null): Database =
-    OpenDatabase().open(config, modelsJson, OpenOptions(operations, uploads?.wire(), false, false), transport, encrypted, credentials, http, null)
+    OpenDatabase().open(config, modelsJson, OpenOptions(operations, uploads?.wire(), false, false, true), transport, encrypted, credentials, http, null)
 
 fun adopt(database: Database): Database {
     DBlayer.close()
