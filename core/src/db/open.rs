@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -50,6 +50,7 @@ pub(crate) struct Shared {
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
+    pub replaced_ids: Arc<Mutex<HashMap<String, String>>>,
     pub operation_queues: Arc<crate::operation::OperationQueues>,
     pub cloud_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub connectivity: Arc<crate::transport::Connectivity>,
@@ -221,6 +222,7 @@ impl Db {
         let dispatch = Arc::new(Dispatch::new());
         let reads = ReadPool::new(dispatch.clone());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
+        let replaced_ids = Arc::new(Mutex::new(HashMap::new()));
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
         let cloud_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let reset_listeners = Arc::new(Mutex::new(Vec::new()));
@@ -230,7 +232,7 @@ impl Db {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone(), operation_queues.clone(), cloud_changes.clone(), reset_listeners.clone()));
+        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone(), replaced_ids.clone(), operation_queues.clone(), cloud_changes.clone(), reset_listeners.clone()));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -248,6 +250,7 @@ impl Db {
             reads: reads.clone(),
             dispatch: dispatch.clone(),
             outbox_changes,
+            replaced_ids,
             operation_queues,
             cloud_changes,
             connectivity: crate::transport::Connectivity::new(true),
@@ -316,9 +319,10 @@ impl Db {
     }
 }
 
-fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>, outbox_changes: Arc<tokio::sync::watch::Sender<u64>>, operation_queues: Arc<crate::operation::OperationQueues>, cloud_changes: Arc<tokio::sync::watch::Sender<u64>>, reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>) -> crate::store::StoreHook {
+fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>, outbox_changes: Arc<tokio::sync::watch::Sender<u64>>, replaced_ids: Arc<Mutex<HashMap<String, String>>>, operation_queues: Arc<crate::operation::OperationQueues>, cloud_changes: Arc<tokio::sync::watch::Sender<u64>>, reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>) -> crate::store::StoreHook {
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
+            locked(&replaced_ids).extend(result.replaced.iter().map(|(from, to)| (format!("{}\0{}", from.model.as_str(), from.id.as_str()), to.to_string())));
             operation_queues.changed(&result.queue_operations);
             {
                 let mut cache = locked(&cache);

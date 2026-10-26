@@ -187,6 +187,22 @@ struct BridgeProbeTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
+  func parallelConfirmedIdCallsOfOneCreateAllGetTheServerId() async throws {
+    let transport = MockTransport()
+    transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
+
+    let local = try await Moment.create(text: "hello", media: nil)
+    let ids = try await withThrowingTaskGroup(of: String.self) { group in
+      for _ in 0..<8 { group.addTask { try await local.confirmedId() } }
+      return try await group.reduce(into: [String]()) { $0.append($1) }
+    }
+
+    #expect(ids == Array(repeating: "m77", count: 8))
+  }
+
+  @Test(.timeLimit(.minutes(1)))
   func aCreateSendsItsArgsAndTheRowNeverStoresThem() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}"#)

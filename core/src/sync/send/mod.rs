@@ -103,7 +103,7 @@ impl Sync {
         }
         self.settled(model, id, None).await?;
         let key = format!("{model}\0{id}");
-        let real = locked(&self.inner.replaced).get(&key).cloned();
+        let real = locked(&self.inner.db.shared.replaced_ids).get(&key).cloned();
         match real {
             Some(real) => RowId::new(&real).map_err(|error| SyncError::Malformed(error.to_string())),
             None => Err(SyncError::Store(format!("{model} {id} was not confirmed"))),
@@ -143,6 +143,8 @@ impl Sync {
 
 #[cfg(test)]
 mod answer_tests;
+#[cfg(test)]
+pub(super) mod confirmed_tests;
 #[cfg(test)]
 mod correlate_tests;
 #[cfg(test)]

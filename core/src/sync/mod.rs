@@ -134,8 +134,9 @@ pub(crate) struct Inner {
     pub wake: Mutex<Option<tokio::task::AbortHandle>>,
     pub(crate) resume: resume::ResumeOwner,
     pub(crate) preload: preload::PreloadOwner,
-    pub replaced: Mutex<HashMap<String, String>>,
     pub outcomes: Mutex<send::Outcomes>,
+    #[cfg(test)]
+    pub(crate) landed_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     pub final_attempts: Mutex<send::FinalAttempts>,
 }
 
@@ -217,8 +218,9 @@ impl Sync {
             wake: Mutex::new(None),
             resume: resume::ResumeOwner::new(),
             preload: preload::PreloadOwner::default(),
-            replaced: Mutex::new(HashMap::new()),
             outcomes: Mutex::new(send::Outcomes::default()),
+            #[cfg(test)]
+            landed_probe: Mutex::new(None),
             final_attempts: Mutex::new(send::FinalAttempts::default()),
         };
         let this = Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) };

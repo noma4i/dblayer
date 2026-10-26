@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `confirmed` returns the server id to a waiter that the closing commit of a create wakes.
+
 ## 6.9.1 - 2026-10-26
 
 ### Fixed

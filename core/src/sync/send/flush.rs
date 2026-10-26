@@ -551,10 +551,8 @@ impl Inner {
             return Ok(SendResult::Discarded);
         }
         kept.committed();
-        if let (Some(temp), Some(real)) = (&temp, &real) {
-            locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string());
-        }
-        for (temp, real) in replacements { locked(&self.replaced).insert(format!("{}\0{temp}", sending.model), real.to_string()); }
+        #[cfg(test)]
+        if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
         self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;
         self.invalidate_after(&sending.model, &sending.action).await?;
         Ok(SendResult::Committed)
