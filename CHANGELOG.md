@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- A model with several node relations generates one `entity(id, fetch:)`.
+
 ## 6.10.0 - 2026-10-27
 
 ### Added

@@ -1,4 +1,4 @@
-use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, RemoteShape, RelationSpec, Sort};
+use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, NodeRead, RemoteShape, RelationSpec, Sort};
 use dblayer::value::ScalarKind;
 use std::fmt::Write;
 
@@ -292,6 +292,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             writeln!(out, "        return {built}\n    }}").unwrap();
             swift_accessors(&mut out, &mut edge_types, model, relation, &decls);
         }
+        if model.relations.iter().any(|relation| relation.node == Some(NodeRead::One)) { out.push_str("    @MainActor public static func entity(_ id: String, fetch: EntityFetch) -> Entity<Self> { Entities<Self>.shared.entity(id, fetch: fetch) }\n"); }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ {} }}", identifier(&name(&relation.name), true)).unwrap(); }
         for action in model.actions.iter().filter(|action| action.upload && !action.args.is_empty()) {
             let upload_args = standard_args(model, &action.name);
@@ -408,6 +409,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             writeln!(out, "            return {built}\n        }}").unwrap();
             kotlin_accessors(&mut out, &mut edge_types, model, relation, &decls);
         }
+        if model.relations.iter().any(|relation| relation.node == Some(NodeRead::One)) { writeln!(out, "        fun entity(id: String, fetch: EntityFetch) = entityOf(\"{class}\", this, id, fetch)").unwrap(); }
         if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", this, {})", identifier(&name(&relation.name), false)).unwrap(); }
         for action in model.actions.iter().filter(|action| action.upload && !action.args.is_empty()) {
             let upload_args = standard_args(model, &action.name);

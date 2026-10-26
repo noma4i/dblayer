@@ -266,3 +266,14 @@ end
     assert!(swift.contains(map), "Swift literal");
     assert!(kotlin.contains(&map.replace('$', "${'$'}")), "Kotlin literal");
 }
+
+#[test]
+fn model_with_two_node_relations_gets_one_entity_per_platform() {
+    let source = "model Message do\n  attribute :text, :string\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"MessageNode\"\n    variables id: :id\n  end\n  scope :transcode_status, node: :one do\n    parameter :id, :id\n    query \"MessageTranscodeStatus\"\n    variables id: :id\n  end\nend\n";
+    let models = parse_models(source).unwrap();
+    let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
+    assert_eq!(swift.matches("entity(_ id: String, fetch: EntityFetch)").count(), 1, "{swift}");
+    assert_eq!(kotlin.matches("fun entity(id: String, fetch: EntityFetch)").count(), 1, "{kotlin}");
+    assert!(swift.contains("func node(_ id: String") && swift.contains("func transcodeStatus(_ id: String"), "{swift}");
+    assert!(kotlin.contains("fun node(id: String") && kotlin.contains("fun transcodeStatus(id: String"), "{kotlin}");
+}
