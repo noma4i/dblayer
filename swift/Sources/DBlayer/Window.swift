@@ -13,22 +13,33 @@ public struct WindowEdges: Sendable, Equatable {
   }
 }
 
+struct WeakSubscription: @unchecked Sendable {
+  weak var value: LiveSubscription?
+}
+
 final class WindowControl: @unchecked Sendable {
   private let lock = NSLock()
-  private var subscription: LiveSubscription?
+  private var subscriptions: [WeakSubscription] = []
   private var rows: Int
 
   init(tail: Int) { rows = tail }
 
   var size: Int { lock.withLock { rows } }
 
-  func attach(_ next: LiveSubscription) { lock.withLock { subscription = next } }
+  func attach(_ next: LiveSubscription) {
+    lock.withLock {
+      subscriptions.removeAll { $0.value == nil }
+      subscriptions.append(WeakSubscription(value: next))
+    }
+  }
   func shown(_ count: Int) { lock.withLock { rows = max(rows, count) } }
 
   func grow(before: Int, after: Int) {
-    let current = lock.withLock { subscription }
-    if before > 0 { current?.expandBefore(rows: UInt32(clamping: before)) }
-    if after > 0 { current?.expandAfter(rows: UInt32(clamping: after)) }
+    let current = lock.withLock { subscriptions.compactMap(\.value) }
+    for subscription in current {
+      if before > 0 { subscription.expandBefore(rows: UInt32(clamping: before)) }
+      if after > 0 { subscription.expandAfter(rows: UInt32(clamping: after)) }
+    }
   }
 }
 
@@ -56,6 +67,30 @@ public struct Window<Model: DBModel>: Sendable {
 
   public func expand(before rows: Int) { control.grow(before: rows, after: 0) }
   public func expand(after rows: Int) { control.grow(before: 0, after: rows) }
+
+  public func related<Target: DBModel>(_ association: Association<Model, Target>) -> RelatedWindow<Target> {
+    RelatedWindow(name: association.name, sourceJson: { try query.json }, control: control)
+  }
+}
+
+public struct RelatedWindow<Target: DBModel>: Sendable {
+  let name: String
+  let sourceJson: @Sendable () throws -> String
+  let control: WindowControl
+
+  private func connect(_ listener: QueryListener) throws -> LiveSubscription {
+    let subscription = try DB.database.liveWindowRelated(queryJson: try sourceJson(), tail: UInt32(clamping: control.size), name: name, listener: listener)
+    control.attach(subscription)
+    return subscription
+  }
+
+  public var live: LiveSource<[Target]> {
+    listSource(initial: [], open: { listener in try connect(listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
+  }
+
+  public var snapshots: LiveSource<Snapshot<Target>> {
+    listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in try connect(listener) }) { (applied: ListApplied<Target>, change) in Snapshot(applied, change) }
+  }
 }
 
 @MainActor

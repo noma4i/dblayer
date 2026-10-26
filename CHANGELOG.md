@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `window(tail:).related(Relations.x)` reads the targets of the rows of a window and follows their changes.
 - `optimistic ids: { include: { of: Model, field: :id }, when: :flag }` puts or removes an id in a list attribute.
 - `optimistic count: { at_least: 1, when: :flag }` raises a number attribute while the flag is true.
 - `subscribe id: ["chatId", "userId"]` makes events with the same values one row, and `delete_unless:` deletes the row when its path is false.

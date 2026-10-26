@@ -141,11 +141,13 @@ pub(super) struct LiveHandles {
     pub load: Option<tokio::task::AbortHandle>,
     pub failure: Option<tokio::task::AbortHandle>,
     pub state: Option<tokio::task::AbortHandle>,
+    pub targets: Option<Arc<Mutex<std::collections::HashMap<crate::identity::RowId, ObserverHandle>>>>,
 }
 
 impl Drop for LiveHandles {
     fn drop(&mut self) {
         for task in [self.load.take(), self.failure.take(), self.state.take()].into_iter().flatten() { task.abort(); }
+        if let Some(targets) = self.targets.take() { targets.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); }
     }
 }
 

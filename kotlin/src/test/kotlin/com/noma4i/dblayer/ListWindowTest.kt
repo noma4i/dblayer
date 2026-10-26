@@ -45,4 +45,13 @@ class ListWindowTest {
         assertEquals(WindowEdges(false, false, 31L), live.edges.value)
         scope.cancel()
     }
+
+    @Test
+    fun a_related_window_reads_the_senders_of_the_window_rows_only() = bounded {
+        open()
+        listOf("u1" to "Ann", "u2" to "Bob", "u3" to "Cy").forEach { (id, name) -> DBlayer.database.create("User", """{"id":"$id","name":"$name"}""", "{}") }
+        listOf("u2", "u2", "u1", "u3").forEachIndexed { number, user -> DBlayer.database.create("Moment", """{"text":"t%05d","userId":"$user"}""".format(number), "{}") }
+        val senders = byText.window(tail = 2).related(Moment.Relations.author)
+        assertEquals(listOf("Ann", "Cy"), senders.live.current().map { it.name })
+    }
 }

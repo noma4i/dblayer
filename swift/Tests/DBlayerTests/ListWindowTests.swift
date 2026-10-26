@@ -35,4 +35,15 @@ extension BridgeProbeTests {
     await eventually("every row") { live.rows.count == 31 }
     #expect(!live.hasBefore && !live.hasAfter && live.total == 31)
   }
+
+  @Test @MainActor
+  func aRelatedWindowReadsTheSendersOfTheWindowRowsOnly() async throws {
+    try await Self.openWindowBase()
+    for (id, name) in [("u1", "Ann"), ("u2", "Bob"), ("u3", "Cy")] { _ = try await User.create(values: ["id": .string(id), "name": .string(name)]) }
+    for (number, user) in ["u2", "u2", "u1", "u3"].enumerated() {
+      _ = try await Moment.create(values: ["text": .string(String(format: "t%05d", number)), "userId": .string(user)])
+    }
+    let senders = Self.byText.window(tail: 2).related(Moment.Relations.author)
+    #expect(try await senders.live.current().map(\.name) == ["Ann", "Cy"])
+  }
 }

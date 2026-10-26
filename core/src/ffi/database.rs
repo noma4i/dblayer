@@ -243,20 +243,10 @@ impl Database {
         self.subscribed(listener, |feed| self.connect_json(&query_json, false, None, feed))
     }
     pub fn live_window(&self, query_json: String, tail: u32, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| {
-            let (query, relation) = self.parsed_query(&query_json)?;
-            let _entered = executor()?.enter();
-            let mut watch = match (self.sync.as_ref(), relation) {
-                (Some(sync), Some((relation, params))) => Some(sync.watch(query.model.as_str(), &relation, &params)?),
-                _ => None,
-            };
-            let wire = self.wire(query.model.as_str())?.clone();
-            let sink = feed.clone();
-            let window = self.db.observe_window_feed(query, WindowSpec::Tail { size: tail as usize }, move |item| intake(&sink, &wire, item))?;
-            feed.on_rejoin(Arc::new(window.rejoiner()));
-            let failure = follow_failures(watch.as_mut(), feed);
-            Ok(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None, failure, state: None })
-        })
+        self.subscribed(listener, |feed| self.window_handles(&query_json, tail, None, feed))
+    }
+    pub fn live_window_related(&self, query_json: String, tail: u32, name: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
+        self.subscribed(listener, |feed| self.window_handles(&query_json, tail, Some(name), feed))
     }
     pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| self.connect_json(&query_json, true, None, feed))
@@ -586,6 +576,65 @@ impl Database {
         };
         Arc::new(LiveSubscription { feed, handles: Mutex::new(handles) })
     }
+    fn window_handles(&self, query_json: &str, tail: u32, related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
+        let (query, relation) = self.parsed_query(query_json)?;
+        let _entered = executor()?.enter();
+        let mut watch = match (self.sync.as_ref(), relation) {
+            (Some(sync), Some((relation, params))) => Some(sync.watch(query.model.as_str(), &relation, &params)?),
+            _ => None,
+        };
+        let model = query.model.to_string();
+        let wire = self.wire(&model)?.clone();
+        let sink = feed.clone();
+        let spec = WindowSpec::Tail { size: tail as usize };
+        let (window, targets) = match related {
+            None => (self.db.observe_window_feed(query, spec, move |item| intake(&sink, &wire, item))?, None),
+            Some(name) => {
+                let association = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
+                let (target, kind) = (association.target.to_string(), association.kind);
+                feed.show_targets_only();
+                let projection = Arc::new(Mutex::new(RelatedProjection::new(name.clone(), kind, self.db.shared.counters.clone())));
+                let target_wire = self.wire(&target)?.clone();
+                let held: Arc<Mutex<HashMap<RowId, crate::db::ObserverHandle>>> = Arc::default();
+                let db = self.db.clone();
+                let window = self.db.observe_window_feed(query, spec, {
+                    let held = held.clone();
+                    move |item| match item {
+                        Feed::Rows(mut change) => {
+                            match db.shared.related_for(&model, &name, &change.rows) {
+                                Ok(found) => change.related = found,
+                                Err(error) => return intake(&sink, &wire, Feed::Failed(error.to_string())),
+                            }
+                            let (shown, (gained, lost)) = {
+                                let mut projection = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                                (projection.apply(&change, &target_wire), projection.take_watch_delta())
+                            };
+                            let mut held = held.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                            for id in lost { held.remove(&id); }
+                            for id in gained {
+                                let (projection, sink, target_wire) = (projection.clone(), sink.clone(), target_wire.clone());
+                                let known = id.clone();
+                                if let Ok(observer) = db.observe_row(&target, &id, move |seen| {
+                                    let row = seen.rows.first().cloned();
+                                    let shown = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).target_changed(&known, row, seen.revision, &target_wire);
+                                    if let Some(shown) = shown { sink.rows(shown); }
+                                }) { held.insert(id, observer); }
+                            }
+                            match shown {
+                                Some(shown) => sink.rows(shown),
+                                None => sink.reached(change.revision),
+                            }
+                        }
+                        item => intake(&sink, &wire, item),
+                    }
+                })?;
+                (window, Some(held))
+            }
+        };
+        feed.on_rejoin(Arc::new(window.rejoiner()));
+        let failure = follow_failures(watch.as_mut(), feed);
+        Ok(LiveHandles { _observer: None, window: Some(window), _watch: watch, load: None, failure, state: None, targets })
+    }
     fn connect_json(&self, json: &str, count: bool, related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let (query, remote) = self.parsed_query(json)?;
         let description: Value = serde_json::from_str(json)?;
@@ -662,6 +711,6 @@ impl Database {
             None => (None, None),
         };
         let failure = follow_failures(watch.as_mut(), feed);
-        Ok(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load, failure, state })
+        Ok(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load, failure, state, targets: None })
     }
 }

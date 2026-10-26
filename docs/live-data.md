@@ -279,6 +279,18 @@ val edits = update.edits
 if (edits != null) mirror.replay(edits) else mirror = update.rows.toMutableList()
 ```
 
+`window.related(Association)` reads the targets of one association for the rows of the window only, such as the senders of the shown messages. It has `live` and `snapshots` like `RelatedQuery`. The targets follow the window: a row that enters adds its target, a row that leaves releases it, and `expand` of the window grows this read too. A change of a target reaches the subscriber as one updated row, and a change of a user outside the window delivers nothing.
+
+```swift
+let senders = Note.thread(groupId).window(tail: 50).related(Note.Relations.user)
+for await users in try await senders.live.stream() { show(users) }
+```
+
+```kotlin
+val senders = Note.thread(groupId).window(tail = 50).related(Note.Relations.user)
+senders.live.flow.collect { users -> show(users) }
+```
+
 **UIKit and Android views.** Read `changes` and apply each `ListChange` to a diffable data source, a collection view or a `ListAdapter` (`dataSource` and `adapter` are app code). The change already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
 
 ```swift

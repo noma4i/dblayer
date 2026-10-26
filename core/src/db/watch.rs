@@ -824,6 +824,12 @@ impl Shared {
         Ok(Some(Arc::new(std::sync::Mutex::new(map))))
     }
 
+    pub(crate) fn related_for(&self, model: &str, name: &str, rows: &[Row]) -> Result<Related, DbError> {
+        let include = [name.to_string()];
+        let models = self.query_models(model, &include)?;
+        self.read(&models, |reader| Ok(self.related_rows(reader, self.spec(model)?, &include, rows)?.0))
+    }
+
     fn related_rows(
         &self,
         reader: &Reader<'_>,

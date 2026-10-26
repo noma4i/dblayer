@@ -188,3 +188,31 @@ async fn related_05_one_edit_reads_sends_and_visits_by_the_touched_rows_for_ever
     }
     println!("{}", table.join("\n"));
 }
+
+#[tokio::test]
+async fn related_window_01_reads_only_the_targets_of_window_rows_and_follows_a_target_update() {
+    let db = open().await;
+    for (id, name) in [("u1", "Ann"), ("u2", "Bob"), ("u3", "Cy")] { make(&db, "User", &format!(r#"{{"id":"{id}","name":"{name}"}}"#)).await; }
+    for (id, user) in [("m1", "u2"), ("m2", "u2"), ("m3", "u1"), ("m4", "u3")] {
+        make(&db, "Moment", &format!(r#"{{"id":"{id}","text":"{id}","userId":"{user}"}}"#)).await;
+    }
+    let tape = Arc::new(Tape(Mutex::default()));
+    let live = db.live_window_related(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 2, "author".into(), tape.clone());
+    settle(&db);
+    assert_eq!(ids(&tape), ["u1", "u3"], "the senders of the 2 window rows, none of the older rows");
+
+    let deliveries = tape.0.lock().unwrap().len();
+    patch(&db, "User", "u2", r#"{"name":"Bobby"}"#).await;
+    settle(&db);
+    assert_eq!(tape.0.lock().unwrap().iter().skip(deliveries).filter(|change| !change.rows.is_empty()).count(), 0, "a user outside the window delivers nothing");
+
+    patch(&db, "User", "u1", r#"{"name":"Anna"}"#).await;
+    settle(&db);
+    let update = last(&tape);
+    assert_eq!(update.rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["u1"], "a user of the window is one updated row");
+
+    live.expand_before(1);
+    settle(&db);
+    assert_eq!(ids(&tape), ["u2", "u1", "u3"], "growing the window adds the sender of the older row");
+    drop(live);
+}
