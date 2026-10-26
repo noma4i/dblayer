@@ -81,4 +81,5 @@ model Record do
     paginate size: 30, direction: :backward
     freshness expires_in: 1.minute, empty_in: 10.seconds
   end
+  changed_by "RECORD", via: :observed
 end

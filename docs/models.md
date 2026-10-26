@@ -653,7 +653,7 @@ model WalletTransaction do
 end
 ```
 
-Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `event`, `missed` or `failed`. The generated `events` property reads `watchEvents()` in Swift and `modelEvents()` in Kotlin.
+Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `event`, `missed` or `failed`. The generated `events` property reads `watchEvents()` in Swift and `modelEvents()` in Kotlin. Any model with `changed_by` has `events`, whichever model declares the `changes` source. A reader receives the events that arrive after it starts: Swift subscribes when `events` is read and Kotlin when the flow is collected. An earlier event is not replayed, because the rows before and after are read only while the model has a reader. An open change subscription (another model's reader, an observed read) does not show that a reader exists, so wait for your own collection to start before you trigger the event.
 
 ```swift
 for await item in Message.events {

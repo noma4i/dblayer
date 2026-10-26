@@ -170,3 +170,44 @@ async fn rows_are_read_for_an_event_only_while_the_model_has_a_reader() {
     expect_event(within(&events).await);
     assert_eq!(finds() - start, unwatched + 2);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_model_gets_the_events_of_a_changes_source_that_another_model_declares() {
+    for (change, area) in [
+        (ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true }, "WALLET"),
+        (ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false }, "MOOD"),
+    ] {
+        let (mut users, mut moments) = (users_spec(), moments_spec());
+        users.change_feed = Some(change_feed());
+        moments.changes.push(change);
+        let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+        rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
+        let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
+        let events = rig.sync.model_events("moments").unwrap();
+        rig.transport.await_calls("Changes", 1).await;
+        rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "m1", "text": "a"}]})));
+        emit(&rig, vec![event(area, "CREATED", "calm")]);
+        let seen = expect_event(within(&events).await);
+        assert_eq!((seen.area.as_str(), seen.id.as_str()), (area, "calm"), "{area}");
+        assert_eq!(rig.transport.call_count("MomentsByMood"), 1, "{area}");
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "{area}: one event only");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_one_is_delivered() {
+    let (mut users, mut moments) = (users_spec(), moments_spec());
+    users.change_feed = Some(change_feed());
+    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false });
+    let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
+    let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
+    rig.transport.await_calls("Changes", 1).await;
+    for _ in 0..2 { rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "m1", "text": "a"}]}))); }
+    emit(&rig, vec![event("MOOD", "CREATED", "calm")]);
+    rig.transport.await_calls("MomentsByMood", 1).await;
+    let events = rig.sync.model_events("moments").unwrap();
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "the earlier event is not replayed");
+    emit(&rig, vec![event("MOOD", "CREATED", "wild")]);
+    assert_eq!(expect_event(within(&events).await).id, "wild");
+}
