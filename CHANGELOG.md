@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- `preload` scopes wait while the device saves power and never load on a low-RAM Android device.
+
 ## 6.8.0 - 2026-10-26
 
 ### Added

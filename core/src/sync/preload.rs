@@ -14,6 +14,14 @@ struct State {
     due: bool,
     running: bool,
     session: Option<String>,
+    power_saving: bool,
+    low_ram: bool,
+}
+
+impl State {
+    fn held(&self) -> bool {
+        self.power_saving || self.low_ram
+    }
 }
 
 #[derive(Default)]
@@ -50,7 +58,7 @@ impl Inner {
 
     pub(crate) fn preload_start(self: &Arc<Self>) {
         let mut state = locked(&self.preload.state);
-        if !state.due || state.running || !self.connectivity.is_online() { return; }
+        if !state.due || state.running || state.held() || !self.connectivity.is_online() { return; }
         let Ok(runtime) = Handle::try_current() else { return };
         state.running = true;
         let inner = Arc::downgrade(self);
@@ -65,7 +73,7 @@ impl Inner {
     fn preload_take(&self) -> bool {
         let signed_in = self.transport.session();
         let mut state = locked(&self.preload.state);
-        let ready = state.due && self.connectivity.is_online() && matches!(signed_in, Ok(Some(_)));
+        let ready = state.due && !state.held() && self.connectivity.is_online() && matches!(signed_in, Ok(Some(_)));
         if ready { state.due = false; } else { state.running = false; }
         drop(state);
         if let Err(error) = signed_in { self.preload_failed(&SyncError::Transport(error)); }
@@ -108,6 +116,15 @@ impl Inner {
 }
 
 impl Sync {
+    pub fn set_power_saving(&self, saving: bool) {
+        let was_saving = std::mem::replace(&mut locked(&self.inner.preload.state).power_saving, saving);
+        if was_saving && !saving { self.inner.preload_start(); }
+    }
+
+    pub fn set_low_ram(&self, low_ram: bool) {
+        locked(&self.inner.preload.state).low_ram = low_ram;
+    }
+
     pub fn preload_on_session(&self) {
         self.inner.preload_on_session();
     }
@@ -115,7 +132,11 @@ impl Sync {
 
 #[cfg(test)]
 impl Sync {
-    pub(super) fn preload_running(&self) -> bool {
+    pub(crate) fn preload_running(&self) -> bool {
         locked(&self.inner.preload.state).running
+    }
+
+    pub(super) fn preload_taken(&self) -> bool {
+        self.inner.preload_take()
     }
 }

@@ -20,6 +20,7 @@ public enum DB {
   @MainActor public static func close() {
     EntityRegistries.closeAll()
     ForegroundEvents.shared.stop()
+    PowerSaving.shared.stop()
     wake.detach()
     current?.shutdown()
     current = nil
@@ -77,10 +78,11 @@ public enum DB {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     let origin = encrypted.flatMap { URL(string: $0.origin) }
     let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers, cablePath: encrypted?.endpoints.cable) }
-    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, uploads: uploads?.wire), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) }, retries: retries)
+    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, uploads: uploads?.wire, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled, lowRam: false), transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0) }, retries: retries)
     let sink = try opened.onlineSink()
     reachability.start(sink)
     ForegroundEvents.shared.start { sink.enterForeground() }
+    PowerSaving.shared.start { sink.setPowerSaving(saving: $0) }
     current = opened
     attachUploads(selectedTransport, to: opened)
   }
@@ -105,6 +107,7 @@ public enum DB {
     let sink = try database.onlineSink()
     reachability.start(sink)
     ForegroundEvents.shared.start { sink.enterForeground() }
+    PowerSaving.shared.start { sink.setPowerSaving(saving: $0) }
     current = database
   }
 }

@@ -2,7 +2,7 @@ import Foundation
 @testable import DBlayer
 
 func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]", uploads: UploadOperations? = nil) async throws -> Database {
-  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: operations, uploads: uploads?.wire), transport: transport, encrypted: encrypted, credentials: credentials, http: http, retries: nil)
+  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: operations, uploads: uploads?.wire, powerSaving: false, lowRam: false), transport: transport, encrypted: encrypted, credentials: credentials, http: http, retries: nil)
 }
 
 @MainActor @discardableResult

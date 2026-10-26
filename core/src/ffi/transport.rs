@@ -145,6 +145,12 @@ impl OnlineSink {
         }
     }
 
+    pub fn set_power_saving(&self, saving: bool) {
+        let (Some(sync), Ok(executor)) = (&self.sync, super::database::executor()) else { return };
+        let _entered = executor.enter();
+        sync.set_power_saving(saving);
+    }
+
     pub fn enter_foreground(&self) {
         let (Some(sync), Ok(executor)) = (&self.sync, super::database::executor()) else { return };
         let _entered = executor.enter();

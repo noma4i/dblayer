@@ -1,7 +1,7 @@
 use super::*;
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
-fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), uploads: None } }
+fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), uploads: None, power_saving: false, low_ram: false } }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
     slot.open(config(), "[]".into(), options(), None, None, None, None, None).await
 }
@@ -36,11 +36,62 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     let blob = |name: &str| WireUploadOperations { create_blob: Some(WireUploadOperation { name: name.into(), root_path: None }), multipart: None };
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), uploads: Some(blob(name)) };
+        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), uploads: Some(blob(name)), power_saving: false, low_ram: false };
         let opened = slot.open(config(), "[]".into(), options, Some(Arc::new(Plain)), None, None, None, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
             Err(error) => assert!(!accepted && error.to_string().ends_with("invalid upload: upload operation Missing is not registered"), "{name}: {error}"),
         }
+    }
+}
+
+struct CountingFeed(Arc<std::sync::atomic::AtomicUsize>);
+
+#[async_trait::async_trait]
+impl Transport for CountingFeed {
+    async fn open_cable(&self, _: Arc<super::super::CableLease>) -> Result<(), DbError> { unreachable!() }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<super::super::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) { unreachable!() }
+    async fn query(&self, _: super::super::TransportRequest) -> Result<String, DbError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(r#"{"data":{"feed":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#.into())
+    }
+    async fn mutate(&self, _: super::super::TransportRequest) -> Result<String, DbError> { unreachable!() }
+    async fn subscribe(&self, _: super::super::TransportRequest, _: Arc<super::super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
+    fn unsubscribe(&self, _: String) { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::super::ByteProgress>) -> Result<super::super::PutReply, DbError> { unreachable!() }
+}
+
+#[tokio::test]
+async fn the_power_and_memory_facts_given_to_open_hold_the_first_preload() {
+    use crate::sync::rig::{moments_spec, users_spec};
+    use crate::test_wait::yield_until;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut moments = moments_spec();
+    moments.relations.iter_mut().find(|relation| relation.name == "feed").unwrap().preload = Some(Default::default());
+    let models = serde_json::to_string(&vec![users_spec(), moments]).unwrap();
+    let operations = r#"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id } pageInfo { hasNextPage endCursor } } }"}]"#;
+    for (power_saving, low_ram, loads_at_open) in [(true, false, false), (false, true, false), (false, false, true)] {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let slot = OpenDatabase::new();
+        let options = OpenOptions { operations: operations.into(), uploads: None, power_saving, low_ram };
+        let database = slot.open(config(), models.clone(), options, Some(Arc::new(CountingFeed(requests.clone()))), None, None, None, None).await.unwrap();
+        let sync = database.sync().unwrap();
+        if loads_at_open {
+            yield_until("the preload at open", || requests.load(Ordering::SeqCst) == 1).await;
+            database.shutdown();
+            continue;
+        }
+        assert!(requests.load(Ordering::SeqCst) == 0 && !sync.preload_running(), "power_saving={power_saving} low_ram={low_ram} started a preload at open");
+        let _entered = super::super::database::executor().unwrap().enter();
+        sync.set_power_saving(true);
+        sync.set_power_saving(false);
+        if low_ram {
+            assert!(requests.load(Ordering::SeqCst) == 0 && !sync.preload_running(), "a low-RAM device loaded after power saving ended");
+        } else {
+            yield_until("the preload after power saving ends", || requests.load(Ordering::SeqCst) == 1).await;
+        }
+        database.shutdown();
     }
 }

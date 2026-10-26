@@ -7,6 +7,8 @@ use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, Encrypt
 pub struct OpenOptions {
     pub operations: String,
     pub uploads: Option<WireUploadOperations>,
+    pub power_saving: bool,
+    pub low_ram: bool,
 }
 
 #[derive(uniffi::Object)]
@@ -27,6 +29,10 @@ impl OpenDatabase {
         let database = Database::open(config, models_json, transport, encrypted, credentials, http, options.uploads.map(Into::into), retries).await?;
         database.hold(lease);
         if remote {
+            if let Ok(sync) = database.sync() {
+                sync.set_low_ram(options.low_ram);
+                sync.set_power_saving(options.power_saving);
+            }
             if let Err(error) = database.register_operations(options.operations).and_then(|()| Ok(database.sync()?.check_uploads()?)) {
                 database.shutdown();
                 return Err(error);

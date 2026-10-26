@@ -154,3 +154,49 @@ async fn going_offline_during_a_round_ends_it_and_the_online_event_loads_again()
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 5);
 }
+
+#[tokio::test(start_paused = true)]
+async fn power_saving_holds_the_load_until_it_ends() {
+    let rig = preloading();
+    rig.sync.set_power_saving(true);
+    rig.sync.preload_on_session();
+    rig.sync.preload_settled().await;
+    assert_eq!(requests(&rig), 0);
+    rig.sync.set_online(false);
+    rig.sync.set_online(true);
+    rig.sync.preload_settled().await;
+    assert_eq!(requests(&rig), 0);
+    rig.sync.set_power_saving(false);
+    rig.sync.preload_settled().await;
+    assert_eq!(requests(&rig), 3);
+    rig.sync.set_power_saving(true);
+    rig.sync.set_power_saving(false);
+    rig.sync.preload_settled().await;
+    assert_eq!(requests(&rig), 3);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_low_ram_device_never_loads() {
+    let rig = preloading();
+    rig.sync.set_low_ram(true);
+    rig.sync.preload_on_session();
+    rig.sync.set_online(false);
+    rig.sync.set_online(true);
+    rig.sync.set_power_saving(true);
+    rig.sync.set_power_saving(false);
+    rig.sync.inner.preload_on_event();
+    rig.sync.preload_settled().await;
+    assert_eq!(requests(&rig), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_round_in_flight_stops_taking_work_when_power_saving_starts() {
+    let rig = preloading();
+    rig.sync.set_power_saving(true);
+    rig.sync.inner.preload_on_event();
+    assert!(!rig.sync.preload_taken());
+    assert_eq!(requests(&rig), 0);
+    rig.sync.set_power_saving(false);
+    rig.sync.preload_settled().await;
+    assert_eq!(requests(&rig), 3);
+}
