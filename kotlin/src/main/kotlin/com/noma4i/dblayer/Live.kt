@@ -117,7 +117,18 @@ data class Snapshot<Model>(
     }
 }
 
-class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope, refreshOnConnect: Boolean = false) {
+class LiveList<Model : DBModel> private constructor(
+    private val reload: suspend () -> Unit,
+    private val more: suspend () -> LoadMoreResult,
+    scope: kotlinx.coroutines.CoroutineScope,
+    open: ((Result<LiveSubscription>) -> Unit) -> LiveSource<Snapshot<Model>>,
+) {
+    constructor(query: Query<Model>, scope: kotlinx.coroutines.CoroutineScope, refreshOnConnect: Boolean = false) :
+        this({ query.refresh() }, { query.loadMore() }, scope, { connected -> query.snapshots(refreshOnConnect, connected) })
+
+    constructor(related: RelatedQuery<Model>, scope: kotlinx.coroutines.CoroutineScope, refreshOnConnect: Boolean = false) :
+        this(related.refresh, related.loadMore, scope, { connected -> related.snapshots(refreshOnConnect, connected) })
+
     private val initialSubscription = kotlinx.coroutines.CompletableDeferred<LiveSubscription>(scope.coroutineContext[kotlinx.coroutines.Job])
     private val mutableSnapshot = kotlinx.coroutines.flow.MutableStateFlow(Snapshot<Model>(emptyList(), emptyMap()))
     private val mutableRows = kotlinx.coroutines.flow.MutableStateFlow<List<Model>>(emptyList())
@@ -126,7 +137,7 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
     private val updates = ListUpdates<Model>()
 
     init {
-        val snapshots = query.snapshots(refreshOnConnect) { result ->
+        val snapshots = open { result ->
             result.fold({ initialSubscription.complete(it) }, { initialSubscription.completeExceptionally(it) })
         }
         scope.launch(kotlinx.coroutines.Dispatchers.Default) {
@@ -153,7 +164,7 @@ class LiveList<Model : DBModel>(private val query: Query<Model>, scope: kotlinx.
 
     fun takeUpdate(): ListUpdate<Model> = updates.take()
 
-    suspend fun refresh() = query.refresh()
+    suspend fun refresh() = reload()
     suspend fun waitForInitialLoad() = initialSubscription.await().waitForInitialLoad()
-    suspend fun loadMore(): LoadMoreResult = query.loadMore()
+    suspend fun loadMore(): LoadMoreResult = more()
 }

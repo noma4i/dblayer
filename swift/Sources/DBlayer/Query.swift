@@ -74,7 +74,11 @@ public struct Query<Model: DBModel>: Sendable {
   public func order(_ order: Order...) -> Query { var copy = self; copy.orders += order; return copy }
   public func limit(_ count: Int) -> Query { var copy = self; copy.limitCount = count; return copy }
   public func related<Target: DBModel>(_ association: Association<Model, Target>) -> RelatedQuery<Target> {
-    RelatedQuery(name: association.name, sourceJson: { try json })
+    let source = self
+    return RelatedQuery(
+      name: association.name, sourceJson: { try source.json(refreshOnConnect: $0) },
+      refresh: { try await source.refresh() }, loadMore: { try await source.loadMore() }
+    )
   }
   public func window(tail rows: Int, max: Int? = nil) -> Window<Model> { Window(query: self, tail: rows, max: max) }
 
@@ -82,7 +86,7 @@ public struct Query<Model: DBModel>: Sendable {
     get throws { try json(refreshOnConnect: false) }
   }
 
-  private func json(refreshOnConnect: Bool) throws -> String {
+  func json(refreshOnConnect: Bool) throws -> String {
     var object: [String: JSONValue] = ["model": .string(Model.modelName)]
     if refreshOnConnect { object["refreshOnConnect"] = .bool(true) }
     if let condition { object["where"] = condition.json }
@@ -142,17 +146,25 @@ public struct Association<Owner: DBModel, Target: DBModel>: Sendable {
 
 public struct RelatedQuery<Target: DBModel>: Sendable {
   let name: String
-  let sourceJson: @Sendable () throws -> String
+  let sourceJson: @Sendable (Bool) throws -> String
+  let refresh: @Sendable () async throws -> Void
+  let loadMore: @Sendable () async throws -> LoadMoreResult
 
   public var live: LiveSource<[Target]> {
     let name = name, sourceJson = sourceJson
-    return listSource(initial: [], open: { listener in try DB.database.liveRelated(queryJson: try sourceJson(), name: name, listener: listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
+    return listSource(initial: [], open: { listener in try DB.database.liveRelated(queryJson: try sourceJson(false), name: name, listener: listener) }) { (applied: ListApplied<Target>, _) in applied.rows }
   }
 
   public var snapshots: LiveSource<Snapshot<Target>> {
+    snapshots(refreshOnConnect: false) { _ in }
+  }
+
+  func snapshots(refreshOnConnect: Bool, connected: @escaping @Sendable (Result<LiveSubscription, Error>) -> Void) -> LiveSource<Snapshot<Target>> {
     let name = name, sourceJson = sourceJson
     return listSource(initial: Snapshot(rows: [], replaced: [:], reordered: false), merge: { Snapshot.merging($0, $1) }, open: { listener in
-      try DB.database.liveRelated(queryJson: try sourceJson(), name: name, listener: listener)
+      let result = Result { try DB.database.liveRelated(queryJson: try sourceJson(refreshOnConnect), name: name, listener: listener) }
+      connected(result)
+      return try result.get()
     }) { (applied: ListApplied<Target>, change) in Snapshot(applied, change) }
   }
 }

@@ -105,7 +105,7 @@ fun <Target : DBModel> DBModel.related(name: String, decoder: ModelDecoder<Targe
         put("model", modelName)
         put("where", Condition.equal("id", jsonValue(id)).json)
     }.jsonText()
-    return RelatedQuery(name, decoder) { owner }.live
+    return RelatedQuery(name, decoder, { owner }, { offCaller { DBlayer.database.refresh(modelName, "", "{}") } }, { offCaller { DBlayer.database.loadMore(modelName, "", "{}") } }).live
 }
 
 class ModelEvent<Model : DBModel>(val area: String, val kind: String, val id: String, val before: Model?, val after: Model?)

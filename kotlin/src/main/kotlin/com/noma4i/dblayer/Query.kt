@@ -85,7 +85,7 @@ class Query<Model : DBModel>(
     internal val json: String
         get() = json(false)
 
-    private fun json(refreshOnConnect: Boolean) = buildJsonObject {
+    internal fun json(refreshOnConnect: Boolean) = buildJsonObject {
         put("model", modelName)
         if (refreshOnConnect) put("refreshOnConnect", true)
         condition?.let { put("where", it.json) }
@@ -109,7 +109,8 @@ class Query<Model : DBModel>(
             Snapshot.of(applied, change)
         }
 
-    fun <Target : DBModel> related(association: Association<Model, Target>) = RelatedQuery(association.name, association.decoder) { json }
+    fun <Target : DBModel> related(association: Association<Model, Target>) =
+        RelatedQuery(association.name, association.decoder, { refreshOnConnect -> json(refreshOnConnect) }, { refresh() }, { loadMore() })
 
     val count: LiveSource<Long>
         get() = LiveSource(0L, { listener -> DBlayer.database.liveCount(json, listener) }) { change -> change.count ?: 0L }
@@ -143,17 +144,24 @@ fun <Model : DBModel> idsQuery(modelName: String, decoder: ModelDecoder<Model>, 
 class Association<Owner : DBModel, Target : DBModel>(val name: String, internal val decoder: ModelDecoder<Target>)
 
 class RelatedQuery<Target : DBModel> internal constructor(
-    private val name: String,
+    internal val name: String,
     private val decoder: ModelDecoder<Target>,
-    private val sourceJson: () -> String,
+    private val sourceJson: (Boolean) -> String,
+    internal val refresh: suspend () -> Unit,
+    internal val loadMore: suspend () -> LoadMoreResult,
 ) {
-    internal fun sourceJsonText() = sourceJson()
+    internal fun sourceJsonText(refreshOnConnect: Boolean = false) = sourceJson(refreshOnConnect)
 
     val live: LiveSource<List<Target>>
-        get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveRelated(sourceJson(), name, listener) }) { applied, _ -> applied.rows }
+        get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveRelated(sourceJson(false), name, listener) }) { applied, _ -> applied.rows }
 
     val snapshots: LiveSource<Snapshot<Target>>
-        get() = listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener ->
-            DBlayer.database.liveRelated(sourceJson(), name, listener)
+        get() = snapshots(false) {}
+
+    internal fun snapshots(refreshOnConnect: Boolean, connected: (Result<LiveSubscription>) -> Unit): LiveSource<Snapshot<Target>> =
+        listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener ->
+            val result = runCatching { DBlayer.database.liveRelated(sourceJson(refreshOnConnect), name, listener) }
+            connected(result)
+            result.getOrThrow()
         }) { applied, change -> Snapshot.of(applied, change) }
 }

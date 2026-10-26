@@ -368,7 +368,7 @@ moment.vibes.count                  // counted by SQLite, no cache field
 
 ## Related rows of a query
 
-`Query.related(Moment.Relations.author)` returns a `RelatedQuery<User>` with `live` and `snapshots`. It reads the targets of one association for every row of the source query. The generated `Relations` of a model lists its `belongs_to`, `has_one`, `has_many` and `references` links with their target type.
+`Query.related(Moment.Relations.author)` returns a `RelatedQuery<User>` with `live` and `snapshots`. `LiveList(authors)`, `rememberLiveList(authors)` (Kotlin), `Live(authors)` and `LiveView(authors)` (Swift) take it like a `Query`. It reads the targets of one association for every row of the source query. The generated `Relations` of a model lists its `belongs_to`, `has_one`, `has_many` and `references` links with their target type.
 
 ```swift
 let authors = try Moment.where(Moment.userId == id).order(Moment.createdAt.desc).limit(20).related(Moment.Relations.author)
@@ -380,7 +380,17 @@ val authors = Moment.where(Moment.userId eq id).order(Moment.createdAt.desc).lim
 authors.snapshots.flow.collect { show(it.rows, it.hasMore) }
 ```
 
-- The source query owns the where, order, limit, remote relation, load, refresh and load-more. `RelatedQuery` has none of its own, so call them on the source query.
+A `LiveList` over a related query connects the source scope like a `LiveList` over the scope itself: it loads the source when it is stale, makes no request when it is fresh, and keeps the server subscription while the list lives. `refreshOnConnect: true`, `refresh()`, `loadMore()` and `waitForInitialLoad()` act on the source query.
+
+```swift
+let authors = LiveList(try Moment.feed.related(Moment.Relations.author))   // authors.rows are User
+```
+
+```kotlin
+val authors = LiveList(Moment.feed.related(Moment.Relations.author), viewModelScope)   // authors.rows are StateFlow<List<User>>
+```
+
+- The source query owns the where, order, limit, remote relation, load, refresh and load-more. `RelatedQuery` has none of its own: a `LiveList` over it forwards `refresh()` and `loadMore()` to the source query.
 - Targets follow the order of the source rows, then the order of the link. A target that several parents share appears once, at its first position.
 - A change of a parent row, a link or a target updates the result. A target that arrives after its link joins at the position of its parent. No parents give an empty result.
 - A snapshot carries the phase, error, `hasMore` and `isRefreshing` of the source load in one delivery. `total` is nil, because the source count is not the number of targets.

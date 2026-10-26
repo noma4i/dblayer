@@ -159,6 +159,7 @@ public struct Live<Value: Sendable>: DynamicProperty {
 
 extension Live {
   public init<Model: DBModel>(_ query: Query<Model>) where Value == [Model] { self.init(query.live) }
+  public init<Target: DBModel>(_ related: RelatedQuery<Target>) where Value == [Target] { self.init(related.live) }
 }
 
 public struct LiveView<Value: Sendable, Content: View>: View {
@@ -170,6 +171,9 @@ public struct LiveView<Value: Sendable, Content: View>: View {
   public init<Model: DBModel>(_ query: Query<Model>, @ViewBuilder content: @escaping ([Model]) -> Content) where Value == [Model] {
     self.init(query.live, content: content)
   }
+  public init<Target: DBModel>(_ related: RelatedQuery<Target>, @ViewBuilder content: @escaping ([Target]) -> Content) where Value == [Target] {
+    self.init(related.live, content: content)
+  }
   public var body: some View { content(value) }
 }
 
@@ -180,27 +184,48 @@ public final class LiveList<Model: DBModel> {
   public private(set) var rows: [Model] = []
   public private(set) var ids: [String] = []
   public private(set) var replaced: [String: String] = [:]
-  @ObservationIgnored private let query: Query<Model>
+  @ObservationIgnored private let reload: @Sendable () async throws -> Void
+  @ObservationIgnored private let more: @Sendable () async throws -> LoadMoreResult
   @ObservationIgnored let updates = ListUpdates<Model>()
   @ObservationIgnored private(set) var tasks: [Task<Void, Never>] = []
   @ObservationIgnored private var initialLoad: Task<Void, Error>?
 
   public convenience init(_ query: Query<Model>, refreshOnConnect: Bool = false) {
+    self.init(refresh: { try await query.refresh() }, loadMore: { try await query.loadMore() }, refreshOnConnect: refreshOnConnect) { connected in
+      query.snapshots(refreshOnConnect: refreshOnConnect, connected: connected)
+    }
+  }
+
+  public convenience init(_ related: RelatedQuery<Model>, refreshOnConnect: Bool = false) {
+    self.init(refresh: related.refresh, loadMore: related.loadMore, refreshOnConnect: refreshOnConnect) { connected in
+      related.snapshots(refreshOnConnect: refreshOnConnect, connected: connected)
+    }
+  }
+
+  private convenience init(
+    refresh: @escaping @Sendable () async throws -> Void, loadMore: @escaping @Sendable () async throws -> LoadMoreResult, refreshOnConnect: Bool,
+    snapshots open: (@escaping @Sendable (Result<LiveSubscription, Error>) -> Void) -> LiveSource<Snapshot<Model>>
+  ) {
     let (connections, continuation) = AsyncThrowingStream<LiveSubscription, Error>.makeStream(bufferingPolicy: .bufferingNewest(1))
-    let snapshots = query.snapshots(refreshOnConnect: refreshOnConnect) { result in
+    let snapshots = open { result in
       switch result {
       case .success(let subscription): continuation.yield(subscription); continuation.finish()
       case .failure(let error): continuation.finish(throwing: error)
       }
     }
-    self.init(query, snapshots: snapshots)
+    self.init(refresh: refresh, loadMore: loadMore, snapshots: snapshots)
     initialLoad = Task {
       for try await subscription in connections { try await subscription.waitForInitialLoad() }
     }
   }
 
-  init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>) {
-    self.query = query
+  convenience init(_ query: Query<Model>, snapshots: LiveSource<Snapshot<Model>>) {
+    self.init(refresh: { try await query.refresh() }, loadMore: { try await query.loadMore() }, snapshots: snapshots)
+  }
+
+  private init(refresh: @escaping @Sendable () async throws -> Void, loadMore: @escaping @Sendable () async throws -> LoadMoreResult, snapshots: LiveSource<Snapshot<Model>>) {
+    reload = refresh
+    more = loadMore
     let updates = updates
     tasks = [
       Task.detached { [weak self] in
@@ -232,7 +257,7 @@ public final class LiveList<Model: DBModel> {
 
   public func takeUpdate() -> ListUpdate<Model> { updates.take() }
 
-  public func refresh() async throws { try await query.refresh() }
+  public func refresh() async throws { try await reload() }
 
   public func waitForInitialLoad() async throws {
     let load = initialLoad
@@ -244,7 +269,7 @@ public final class LiveList<Model: DBModel> {
   }
 
   @discardableResult
-  public func loadMore() async throws -> LoadMoreResult { try await query.loadMore() }
+  public func loadMore() async throws -> LoadMoreResult { try await more() }
 
   isolated deinit { tasks.forEach { $0.cancel() }; initialLoad?.cancel() }
 }

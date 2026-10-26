@@ -22,6 +22,15 @@ fun <Model : DBModel> rememberLiveList(query: Query<Model>, refreshOnConnect: Bo
 }
 
 @Composable
+fun <Model : DBModel> rememberLiveList(related: RelatedQuery<Model>, refreshOnConnect: Boolean = false): LiveList<Model> {
+    val scope = rememberLiveScope(related.name, related.sourceJsonText(refreshOnConnect))
+    return remember(scope) { LiveList(related, scope, refreshOnConnect) }
+}
+
+@Composable
+fun <Model : DBModel> RelatedQuery<Model>.collectAsLive(): State<List<Model>> = live.collectAsLive()
+
+@Composable
 fun <Model : DBModel> rememberLiveWindow(window: Window<Model>): LiveWindow<Model> {
     val scope = rememberLiveScope(window)
     return remember(scope) { LiveWindow(window, scope) }

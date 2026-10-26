@@ -3,6 +3,7 @@
 ## 6.10.0 - 2026-10-27
 
 ### Added
+- `LiveList`, `Live`, `LiveView` and `rememberLiveList` take a `RelatedQuery` and load its source scope like a `Query`.
 - Kotlin `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope of a live list in Compose.
 - `Model.entity(id, fetch: .force|.stale|.none)` reads the node when a reader appears, and `refreshError` shows a failed read.
 - `merge: :stable_list` keeps the places of a stored id list, appends new ids and drops vanished ones.

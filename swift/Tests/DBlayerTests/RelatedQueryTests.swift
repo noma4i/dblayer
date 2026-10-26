@@ -7,6 +7,6 @@ struct RelatedQueryTests {
     let vibes: RelatedQuery<Vibe> = Moment.ids(["m1"]).related(Moment.Relations.vibes)
     #expect(authors.name == "author")
     #expect(vibes.name == "vibes")
-    #expect(try authors.sourceJson() == (try Moment.ids(["m1"]).json))
+    #expect(try authors.sourceJson(false) == (try Moment.ids(["m1"]).json))
   }
 }
