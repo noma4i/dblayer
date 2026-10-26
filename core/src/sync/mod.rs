@@ -304,6 +304,8 @@ mod resume_tests;
 #[cfg(test)]
 mod run_tests;
 #[cfg(test)]
+mod change_source_tests;
+#[cfg(test)]
 mod subscribe_tests;
 #[cfg(test)]
 mod model_event_tests;

@@ -141,46 +141,83 @@ impl Feed {
                 let reads: Vec<_> = spec.changes.iter().filter(|read| read.area == area).cloned().collect();
                 if !reads.is_empty() { targets.insert(spec.key.to_string(), reads); }
             }
-            if targets.is_empty() { locked(&self.status).rejected += 1; }
-            for (model, reads) in targets {
-                let Ok(row_id) = RowId::new(id) else {
+            if targets.is_empty() {
+                locked(&self.status).rejected += 1;
+                continue;
+            }
+            let Ok(row_id) = RowId::new(id) else {
+                locked(&self.status).rejected += 1;
+                continue;
+            };
+            let derived: Vec<(String, crate::schema::ChangeRead)> = targets.iter().flat_map(|(model, reads)| reads.iter().filter(|read| read.id_of.is_some()).map(|read| (model.clone(), read.clone()))).collect();
+            let sources_before: Vec<Option<RowId>> = derived.iter().map(|(_, read)| self.source_id(read, &row_id)).collect();
+            let mut settled: BTreeMap<String, bool> = BTreeMap::new();
+            for (model, reads) in &targets {
+                let direct: Vec<_> = reads.iter().filter(|read| read.id_of.is_none()).cloned().collect();
+                if direct.is_empty() { continue; }
+                let ok = self.reread_target(model, &direct, area, kind, id, &row_id).await;
+                settled.insert(model.clone(), ok);
+            }
+            for ((model, read), before) in derived.iter().zip(sources_before) {
+                let Some(source) = read.id_of.as_ref() else { continue };
+                if settled.get(&source.model) != Some(&true) {
                     locked(&self.status).rejected += 1;
                     continue;
-                };
-                let watched = self.inner.has_event_readers(&model);
-                let before = watched.then(|| self.inner.db.find(&model, &row_id));
-                if reads.iter().any(|read| read.removes_on.iter().any(|removal| removal == kind)) {
-                    let removed = self.apply(vec![Pending { bucket: String::new(), id: row_id, node: Map::new(), generation: self.inner.db.generation() }], &model, EventEffect::Destroy).await;
-                    if let Some(before) = before {
-                        if !removed {
-                            self.inner.publish_model_gap(&model);
-                        } else if !self.inner.publish_rows(&model, area, kind, id, before, Ok(None)) {
-                            locked(&self.status).rejected += 1;
-                        }
-                    }
+                }
+                let mut ids: Vec<RowId> = self.source_id(read, &row_id).into_iter().chain(before).collect();
+                ids.dedup();
+                if ids.is_empty() {
+                    locked(&self.status).rejected += 1;
                     continue;
                 }
-                let mut result = Ok(());
-                for read in &reads {
-                    let outcome = if read.observed { self.reread_observed(&model).await } else { self.reread(&model, &read.relation, read.parameter.as_deref(), Some(id)).await };
-                    if let (Err(error), Ok(())) = (outcome, &result) { result = Err(error); }
-                }
-                match result {
-                    Ok(()) => {
-                        locked(&self.status).applied += 1;
-                        if let Some(before) = before {
-                            let after = self.inner.db.find(&model, &row_id);
-                            if !self.inner.publish_rows(&model, area, kind, id, before, after) { locked(&self.status).rejected += 1; }
-                        }
-                    }
-                    Err(_) => {
-                        locked(&self.status).rejected += 1;
-                        if before.is_some() { self.inner.publish_model_gap(&model); }
-                    }
+                for target_id in ids {
+                    self.reread_target(model, std::slice::from_ref(&crate::schema::ChangeRead { id_of: None, ..read.clone() }), area, kind, target_id.as_str(), &target_id).await;
                 }
             }
         }
         true
+    }
+
+    fn source_id(&self, read: &crate::schema::ChangeRead, event_id: &RowId) -> Option<RowId> {
+        let source = read.id_of.as_ref()?;
+        let row = self.inner.db.find(&source.model, event_id).ok()??;
+        row.get(&source.field).and_then(read_id)
+    }
+
+    async fn reread_target(&self, model: &str, reads: &[crate::schema::ChangeRead], area: &str, kind: &str, id: &str, row_id: &RowId) -> bool {
+        let watched = self.inner.has_event_readers(model);
+        let before = watched.then(|| self.inner.db.find(model, row_id));
+        if reads.iter().any(|read| read.removes_on.iter().any(|removal| removal == kind)) {
+            let removed = self.apply(vec![Pending { bucket: String::new(), id: row_id.clone(), node: Map::new(), generation: self.inner.db.generation() }], model, EventEffect::Destroy).await;
+            if let Some(before) = before {
+                if !removed {
+                    self.inner.publish_model_gap(model);
+                } else if !self.inner.publish_rows(model, area, kind, id, before, Ok(None)) {
+                    locked(&self.status).rejected += 1;
+                }
+            }
+            return removed;
+        }
+        let mut result = Ok(());
+        for read in reads {
+            let outcome = if read.observed { self.reread_observed(model).await } else { self.reread(model, &read.relation, read.parameter.as_deref(), Some(id)).await };
+            if let (Err(error), Ok(())) = (outcome, &result) { result = Err(error); }
+        }
+        match result {
+            Ok(()) => {
+                locked(&self.status).applied += 1;
+                if let Some(before) = before {
+                    let after = self.inner.db.find(model, row_id);
+                    if !self.inner.publish_rows(model, area, kind, id, before, after) { locked(&self.status).rejected += 1; }
+                }
+                true
+            }
+            Err(_) => {
+                locked(&self.status).rejected += 1;
+                if before.is_some() { self.inner.publish_model_gap(model); }
+                false
+            }
+        }
     }
 
     async fn reread_observed(&self, model: &str) -> Result<(), SyncError> {

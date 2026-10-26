@@ -1577,10 +1577,21 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
                 let via = line.opt(cx, "via").and_then(|pair| symbol(cx, &pair.value, "`via`"));
                 let parameter = line.opt(cx, "parameter").and_then(|pair| symbol(cx, &pair.value, "`parameter`"));
                 let removes_on = line.opt(cx, "removes_on").and_then(|pair| string_list(cx, &pair.value, "`removes_on`"));
+                let id_of = line.opt(cx, "id_of").and_then(|pair| match &pair.value.item {
+                    Value::Hash(parts) if parts.len() == 2 && parts.iter().any(|part| part.key == "of") && parts.iter().any(|part| part.key == "field") => {
+                        let model = parts.iter().find(|part| part.key == "of").and_then(|part| konst(cx, &part.value, "`of:`"));
+                        let field = parts.iter().find(|part| part.key == "field").and_then(|part| symbol(cx, &part.value, "`field:`"));
+                        model.zip(field)
+                    }
+                    _ => {
+                        cx.fail(at(&pair.value), "`id_of` is `{ of: Model, field: :name }`");
+                        None
+                    }
+                });
                 line.finish(cx);
                 let via = require(cx, &line, "via", via);
                 if let (Some(area), Some(via)) = (area, via) {
-                    decl.changed_by.push(ChangedByDecl { pos: line.pos, area, via, parameter, removes_on });
+                    decl.changed_by.push(ChangedByDecl { pos: line.pos, area, via, parameter, removes_on, id_of });
                 }
             }
             "operation" => decl.operations.extend(operation(cx, call)),

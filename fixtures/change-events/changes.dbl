@@ -7,10 +7,12 @@ model Notebook do
     variables id: :id
   end
   changed_by "NOTEBOOK", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
+  changed_by "ENTRY", via: :node, id_of: { of: Entry, field: :notebookId }
 end
 
 model Entry do
   attribute :text, :string
+  attribute :notebookId, :id
   scope :node, node: :one do
     parameter :id, :id
     query "EntryNode"

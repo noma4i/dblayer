@@ -1035,6 +1035,14 @@ pub struct ChangeRead {
     pub removes_on: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub observed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_of: Option<ChangeIdOf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeIdOf {
+    pub model: String,
+    pub field: String,
 }
 
 fn is_reserved_name(name: &str) -> bool {

@@ -200,3 +200,23 @@ fn node_and_observed_forms_share_an_area_and_equal_forms_stay_refused() {
         assert!(errors.iter().any(|error| error.message.contains("duplicate change area `CHAT`")), "{lines}: {errors:?}");
     }
 }
+
+#[test]
+fn id_of_names_the_source_row_attribute_that_holds_the_target_id() {
+    let node = "  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"ById\"\n    variables id: :id\n  end\n";
+    let feed = "  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n";
+    let sources = |target: &str, source_area: &str, field_type: &str| format!("model Chat do\n  attribute :title, :string\n{node}{feed}  {target}\nend\n\nmodel Message do\n  attribute :chatId, {field_type}\n{node}  changed_by \"{source_area}\", via: :by_id\nend\n");
+    let valid = "changed_by \"MESSAGE\", via: :by_id, id_of: { of: Message, field: :chatId }";
+    let models = check_source(&sources(valid, "MESSAGE", ":id")).unwrap();
+    assert_eq!(serde_json::to_value(&models[0]).unwrap()["changes"][0]["id_of"], serde_json::json!({"model": "Message", "field": "chatId"}));
+    for (target, area, field_type, message) in [
+        (valid, "OTHER", ":id", "needs Message to declare area `MESSAGE`"),
+        (valid, "MESSAGE", ":string", "not an id attribute"),
+        ("changed_by \"MESSAGE\", via: :by_id, id_of: { of: Absent, field: :chatId }", "MESSAGE", ":id", "unknown model `Absent`"),
+        ("changed_by \"MESSAGE\", via: :by_id, id_of: { of: Message, field: :chatId }, removes_on: [\"DELETED\"]", "MESSAGE", ":id", "removes_on cannot be combined with `id_of`"),
+        ("changed_by \"MESSAGE\", via: :by_id, id_of: :chatId", "MESSAGE", ":id", "`id_of` is `{ of: Model, field: :name }`"),
+    ] {
+        let errors = check_source(&sources(target, area, field_type)).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(message)), "{target}: {errors:?}");
+    }
+}

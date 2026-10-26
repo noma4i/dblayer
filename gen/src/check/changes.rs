@@ -1,4 +1,5 @@
-use dblayer::schema::{ModelSpec, NodeRead};
+use dblayer::schema::{FieldKind, ModelSpec, NodeRead};
+use dblayer::value::ScalarKind;
 
 use super::{at, Found};
 use crate::decl::ModelDecl;
@@ -36,6 +37,21 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
             let node_read = relation.node == Some(NodeRead::One);
             if decl.removes_on.is_some() && !node_read {
                 report("removes_on requires a via scope declared with `node: :one`".into());
+            }
+            if let Some((source, field)) = &decl.id_of {
+                if !node_read { report("`id_of` requires a via scope declared with `node: :one`".into()); }
+                if decl.removes_on.is_some() { report("removes_on cannot be combined with `id_of`".into()); }
+                match models.iter().find(|candidate| candidate.key.as_str() == source) {
+                    None => report(format!("`id_of` names unknown model `{source}`")),
+                    Some(origin) => {
+                        if !origin.changes.iter().any(|read| read.area == change.area && !read.observed && read.id_of.is_none() && origin.relations.iter().any(|relation| relation.name == read.relation && relation.node == Some(NodeRead::One))) {
+                            report(format!("`id_of` needs {source} to declare area `{}` with a node read", change.area));
+                        }
+                        if !origin.field(field).is_some_and(|found| matches!(found.kind, FieldKind::Scalar { kind: ScalarKind::Id })) {
+                            report(format!("`id_of` names `{source}.{field}` which is not an id attribute"));
+                        }
+                    }
+                }
             }
             let parameters: Vec<&str> = relation.text_params.iter().chain(&relation.by_columns).map(String::as_str).collect();
             match (&change.parameter, node_read) {

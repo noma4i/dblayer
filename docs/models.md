@@ -687,6 +687,31 @@ model Chat do
   changed_by "CHAT", via: :observed
 end
 ```
+An event that names a row of another model rereads the node of the row that row points to. `id_of: { of: Message, field: :chatId }` makes the event of a message reread `Chat.node(chatId)`:
+
+```ruby
+model Chat do
+  scope :node, node: :one do
+    parameter :id, :id
+    query "ChatNode"
+    variables id: :id
+  end
+  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+  changed_by "MESSAGE", via: :node, id_of: { of: Message, field: :chatId }
+end
+
+model Message do
+  attribute :chatId, :id
+  scope :node, node: :one do
+    parameter :id, :id
+    query "MessageNode"
+    variables id: :id
+  end
+  changed_by "MESSAGE", via: :node, removes_on: ["DELETED"]
+end
+```
+
+`Message` declares the same area with a node read, and `chatId` is an id attribute. The core rereads the message first, then rereads the chat from the `chatId` the stored message holds. A deleted message gives the `chatId` it had before the removal. When the message is missing, its read failed or it holds no `chatId`, the chat read is skipped and the rejected count rises. `id_of` takes no `removes_on`.
 `removes_on` requires a `via` scope declared with `node: :one`, whatever its name. Matching kinds remove rows. Other kinds reread them.
 Missing entry fields and undeclared areas are rejected.
 

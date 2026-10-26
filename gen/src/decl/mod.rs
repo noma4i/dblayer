@@ -316,6 +316,7 @@ pub struct ChangedByDecl {
     pub via: String,
     pub parameter: Option<String>,
     pub removes_on: Option<Vec<String>>,
+    pub id_of: Option<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

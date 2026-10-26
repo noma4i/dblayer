@@ -90,6 +90,7 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
         parameter: change.parameter.clone(),
         removes_on: change.removes_on.clone().unwrap_or_default(),
         observed: change.via == "observed",
+        id_of: change.id_of.as_ref().map(|(model, field)| dblayer::schema::ChangeIdOf { model: model.clone(), field: field.clone() }),
     }).collect();
     model.actions = node.operations.iter().map(|operation| build_operation(operation, &node.name)).collect();
     if model.field("id").is_none() {

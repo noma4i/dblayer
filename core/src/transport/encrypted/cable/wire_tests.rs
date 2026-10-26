@@ -450,7 +450,7 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     relation.remote = Some(serde_json::from_value(json!({"operation":"ChatNode", "shape":{"type":"single"}, "stale_time":"5.minutes"})).unwrap());
     relation.remote.as_mut().unwrap().variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
     model.relations.push(relation);
-    model.changes.push(ChangeRead { area:"CHAT".into(), relation:"node".into(), parameter:None, removes_on: vec![], observed: false });
+    model.changes.push(ChangeRead { area:"CHAT".into(), relation:"node".into(), parameter:None, removes_on: vec![], observed: false, id_of: None });
     model.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.changes".into(), area: "area".into(), kind: "kind".into(), id: "entityId".into() });
     let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
     let http = Arc::new(Http { key:RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads:AtomicUsize::new(0) });

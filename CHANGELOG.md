@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `changed_by "AREA", via: :node, id_of: { of: Model, field: :attr }` rereads the node that a loaded row points to.
 - `optimistic attr: { from: :param, map: { VALUE: "literal" } }` writes the literal that belongs to an enum parameter.
 - `local :attr, from: { of: Model, field: :name }` fills a `create` attribute from a singleton row.
 - `changed_by` may name one area as `via: :node` and as `via: :observed` on a model.
