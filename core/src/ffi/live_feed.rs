@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::watch;
@@ -63,6 +62,7 @@ struct FeedState {
 pub(super) struct LiveFeed {
     state: Mutex<FeedState>,
     listener: Arc<dyn QueryListener>,
+    pub(super) calls: crate::db::CallState,
     pub(super) latest: watch::Sender<Option<LiveChange>>,
     pub(super) readiness: watch::Sender<Readiness>,
 }
@@ -120,7 +120,7 @@ impl LiveFeed {
             resyncs_in_row: 0,
             reported: false,
         };
-        Arc::new(Self { state: Mutex::new(state), listener, latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0 })
+        Arc::new(Self { state: Mutex::new(state), listener, calls: crate::db::CallState::new(), latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0 })
     }
 
     pub(super) fn rows(&self, part: LiveChange) {
@@ -256,6 +256,7 @@ impl LiveFeed {
     }
 
     pub(super) fn end(&self) {
+        self.calls.cancel();
         held(&self.state).ended = true;
         self.readiness.send_replace(Readiness::Ended);
     }
@@ -348,7 +349,7 @@ impl LiveFeed {
             drop(state);
             self.latest.send_replace(Some(next.clone()));
             let delta = !next.full;
-            let _ = catch_unwind(AssertUnwindSafe(|| self.listener.changed(next)));
+            self.calls.call(|| self.listener.changed(next));
             state = held(&self.state);
             if delta && !state.reported {
                 state.resyncs_in_row = 0;

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::cloud::{Cloud, CloudError, CloudIo, CloudState, MergeSource};
 
@@ -36,15 +36,7 @@ impl CloudLink {
     }
 
     pub fn listen(&self, listener: Arc<dyn CloudStateListener>) -> Result<Arc<StateSubscription>, DbError> {
-        let mut changes = self.cloud.state_changes();
-        let task = executor()?.spawn(async move {
-            listener.changed(changes.borrow_and_update().clone());
-            while changes.changed().await.is_ok() {
-                let state = changes.borrow_and_update().clone();
-                listener.changed(state);
-            }
-        });
-        Ok(Arc::new(StateSubscription { task: Mutex::new(Some(task.abort_handle())) }))
+        StateSubscription::follow(self.cloud.state_changes(), move |state| listener.changed(state))
     }
 
     pub async fn sync_now(&self) -> Result<(), CloudError> {

@@ -387,3 +387,32 @@ fn refusals_in_a_row_stop_the_list_with_an_error_and_a_good_delta_resets_the_cou
     feed.rows(rows(8, 3));
     assert_eq!(listener.tape.lock().unwrap().last().unwrap().error_kind.as_deref(), Some("invalid"), "a stopped list delivers nothing more");
 }
+
+const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn hold_before_the_call(call_state: &crate::db::CallState) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+    let (reached, at_the_call) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    *call_state.before_enter.lock().unwrap() = Some(Box::new(move || {
+        reached.send(()).unwrap();
+        released.recv_timeout(WAIT).unwrap();
+    }));
+    (at_the_call, release)
+}
+
+#[test]
+fn inv_observe_08_a_live_call_that_passed_the_cancel_check_does_not_start_after_the_cancel_returns() {
+    let (feed, tape) = feed();
+    send(&feed, &Input::State(LoadPhase::Loaded, 0, None));
+    send(&feed, &Input::Reached(4));
+    let (at_the_call, release) = hold_before_the_call(&feed.calls);
+    let delivering = {
+        let feed = feed.clone();
+        std::thread::spawn(move || send(&feed, &Input::Rows(4, 2)))
+    };
+    at_the_call.recv_timeout(WAIT).unwrap();
+    feed.end();
+    release.send(()).unwrap();
+    join_within(delivering);
+    assert!(heard(&tape).is_empty());
+}

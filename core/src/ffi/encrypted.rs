@@ -120,28 +120,35 @@ impl RetryProgress {
     pub fn subscribe(&self, listener: Arc<dyn RetryProgressListener>) -> Result<Arc<RetrySubscription>, DbError> {
         let mut changes = self.inner.watch();
         let runtime = super::database::executor()?;
-        let task = runtime.spawn(async move {
-            loop {
-                let snapshot = changes.borrow_and_update().clone();
-                let listener = listener.clone();
-                let _ = tokio::task::spawn_blocking(move || std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| listener.changed(snapshot)))).await;
-                if changes.changed().await.is_err() { break; }
+        let calls = Arc::new(crate::db::CallState::new());
+        let task = runtime.spawn({
+            let calls = calls.clone();
+            async move {
+                loop {
+                    let snapshot = changes.borrow_and_update().clone();
+                    let (listener, calls) = (listener.clone(), calls.clone());
+                    let _ = tokio::task::spawn_blocking(move || calls.call(|| listener.changed(snapshot))).await;
+                    if changes.changed().await.is_err() { break; }
+                }
             }
         });
-        Ok(Arc::new(RetrySubscription(task.abort_handle())))
+        Ok(Arc::new(RetrySubscription { task: task.abort_handle(), calls }))
     }
 }
 
 #[derive(uniffi::Object)]
-pub struct RetrySubscription(tokio::task::AbortHandle);
+pub struct RetrySubscription { task: tokio::task::AbortHandle, pub(crate) calls: Arc<crate::db::CallState> }
 
 #[uniffi::export]
 impl RetrySubscription {
-    pub fn cancel(&self) { self.0.abort(); }
+    pub fn cancel(&self) {
+        self.calls.cancel();
+        self.task.abort();
+    }
 }
 
 impl Drop for RetrySubscription {
-    fn drop(&mut self) { self.0.abort(); }
+    fn drop(&mut self) { self.cancel(); }
 }
 
 #[uniffi::export]

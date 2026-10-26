@@ -260,3 +260,48 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
     assert_eq!(slow.deliveries.load(Ordering::SeqCst), delivered, "a cancelled reader hears nothing more, the other reader kept going");
     drop(late_subscription);
 }
+
+const HOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn hold_before_the_call(call_state: &crate::db::CallState) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+    let (reached, at_the_call) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    *call_state.before_enter.lock().unwrap() = Some(Box::new(move || {
+        reached.send(()).unwrap();
+        released.recv_timeout(HOLD_WAIT).unwrap();
+    }));
+    (at_the_call, release)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_not_start_after_the_cancel_returns() {
+    use crate::transport::retry::Retrying;
+    struct Tap(std::sync::Mutex<std::sync::mpsc::Sender<()>>);
+    impl super::RetryProgressListener for Tap {
+        fn changed(&self, _: crate::transport::RetrySnapshot) {
+            self.0.lock().unwrap().send(()).unwrap();
+        }
+    }
+    let (heard, deliveries) = std::sync::mpsc::channel();
+    let tap = Arc::new(Tap(std::sync::Mutex::new(heard)));
+    let retries = super::RetryProgress::new();
+    let subscription = retries.subscribe(tap.clone()).unwrap();
+    deliveries.recv_timeout(HOLD_WAIT).unwrap();
+    let (at_the_call, release) = hold_before_the_call(&subscription.calls);
+    let progress = retries.inner.clone();
+    let retrying = tokio::spawn(async move {
+        let clock = crate::pacing::ManualClock::new(std::time::Duration::ZERO);
+        let online = crate::transport::Connectivity::new(true);
+        let _ = Retrying::new(&clock, &progress, &online, crate::pacing::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
+    });
+    at_the_call.recv_timeout(HOLD_WAIT).unwrap();
+    subscription.cancel();
+    release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + HOLD_WAIT;
+    while Arc::strong_count(&tap) > 1 {
+        assert!(std::time::Instant::now() < deadline, "the blocked delivery did not end");
+        tokio::task::yield_now().await;
+    }
+    assert!(deliveries.try_recv().is_err());
+    retrying.abort();
+}
