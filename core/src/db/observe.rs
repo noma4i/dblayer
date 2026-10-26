@@ -546,7 +546,7 @@ impl Shared {
         let (subject, version, token) = (group.subject.clone(), group.version.clone(), group.token);
         let joiners = group.facts.joining.iter().map(|(id, _)| *id).collect();
         let target = ReadTarget::Join { key: key.to_string(), token, joiners };
-        if !self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.load_whole(&subject, &version).map(ReadRows::Whole)) }) {
+        if !self.reads.submit(self, ReadJob { target, run: Box::new(move |shared| shared.load_whole(&subject, &version).map(|loaded| loaded.map_or(ReadRows::Moved, ReadRows::Whole))) }) {
             group.facts.reading = false;
             observers.defer_read(key);
         }
@@ -688,6 +688,7 @@ impl Shared {
             ReadResult::ReadOk { target, rows } => match (target, rows) {
                 (ReadTarget::Publish { key, token, previous, grow }, rows) => self.apply_publish(&key, token, &previous, grow, rows),
                 (ReadTarget::Join { key, token, joiners }, ReadRows::Whole(loaded)) => self.apply_join(&key, token, &joiners, loaded),
+                (ReadTarget::Join { key, token, .. }, ReadRows::Moved) => self.rejoin_after_publish(&key, token),
                 (ReadTarget::Open { key, token }, ReadRows::Evaluated(evaluated)) => self.apply_open(&key, token, evaluated),
                 (ReadTarget::Entities { key, ids }, ReadRows::Entities { position, loaded }) => self.apply_entities(&key, &ids, Ok((position, loaded))),
                 _ => {}
@@ -791,6 +792,15 @@ impl Shared {
             subscriber.post(&self.executor, version.clone(), &[], loaded.clone());
             group.subscribers.push((id, subscriber));
         }
+        self.pump(&mut observers, key);
+    }
+
+    fn rejoin_after_publish(&self, key: &str, token: u64) {
+        let mut observers = self.observers();
+        let Some(group) = observers.groups.get_mut(key).filter(|group| group.token == token) else { return };
+        group.facts.reading = false;
+        group.facts.read_error = None;
+        group.facts.again = Some(Follow::Full);
         self.pump(&mut observers, key);
     }
 

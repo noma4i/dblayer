@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- A live read opened while a server reply replaces a temporary row returns the rows before or after the swap, never an empty set.
+
 ## 6.9.0 - 2026-10-26
 
 ### Added

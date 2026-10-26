@@ -25,6 +25,7 @@ pub(crate) enum ReadRows {
     Skipped { revision: i64, epoch: u64 },
     Evaluated(Evaluated),
     Whole(Loaded),
+    Moved,
     Entities { position: Position, loaded: HashMap<String, Row> },
 }
 

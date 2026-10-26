@@ -4,6 +4,7 @@ mod pause;
 #[cfg(test)] mod pause_tests;
 mod report;
 mod settle;
+#[cfg(test)] mod swap_window_tests;
 mod variables;
 
 pub(crate) use flush::{Sending, FinalAttempts};

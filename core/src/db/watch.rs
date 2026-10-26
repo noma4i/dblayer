@@ -766,20 +766,24 @@ impl Shared {
         Ok((Body::Rows(RowsBody { links, ..RowsBody::ranked(Ranked::from_sorted(sorted), None) }), loaded))
     }
 
-    pub(crate) fn load_whole(&self, subject: &Subject, version: &Version) -> Result<Loaded, DbError> {
-        let Body::Rows(body) = &version.body else { return Ok(Loaded::default()) };
+    pub(crate) fn load_whole(&self, subject: &Subject, version: &Version) -> Result<Option<Loaded>, DbError> {
+        let Body::Rows(body) = &version.body else { return Ok(Some(Loaded::default())) };
         let (model, include) = match subject {
             Subject::Rows(query) => (query.model.clone(), query.include.clone()),
             Subject::Row(row) => (row.model.clone(), Vec::new()),
-            Subject::Count(_) | Subject::Window(..) => return Ok(Loaded::default()),
+            Subject::Count(_) | Subject::Window(..) => return Ok(Some(Loaded::default())),
         };
         let keys: Vec<(String, i64)> = body.entries().iter().map(|entry| (entry.id.to_string(), entry.stamp.revision)).collect();
         let models = self.query_models(model.as_str(), &include)?;
         self.read(&models, |reader| {
             let rows = self.rows_for_keys(reader, model.as_str(), &keys)?;
+            let unchanged = rows.len() == keys.len() && rows.iter().zip(&keys).all(|(row, (id, revision))| row.id.as_str() == id && row.revision == *revision);
+            if !unchanged {
+                return Ok(None);
+            }
             locked(&self.counters).rows_loaded += rows.len();
             let related = self.related_rows(reader, self.spec(model.as_str())?, &include, &rows)?.0;
-            Ok(Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related })
+            Ok(Some(Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related }))
         })
     }
 
