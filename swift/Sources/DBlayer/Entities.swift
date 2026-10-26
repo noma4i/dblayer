@@ -203,7 +203,9 @@ public final class Entities<Model: DBModel> {
     if let existing = live[id]?.entity { return existing }
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
     let made = Entity<Model>(id: id, registry: self)
-    if let retained, let value = retained.value { made.seed(revision: retained.revision, bytes: retained.bytes) { value } }
+    if let retained {
+      if let value = retained.value { made.seed(revision: retained.revision, bytes: retained.bytes) { value } } else { made.accept(nil, revision: retained.revision, bytes: retained.bytes) }
+    }
     if retained == nil {
       do {
         if let cached = try source.cachedRow(id) { made.seed(revision: cached.revision, bytes: cached.estimatedBytes) { try Model.decode(cached) } }

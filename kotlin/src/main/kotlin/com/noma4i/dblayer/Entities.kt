@@ -157,7 +157,7 @@ class Entities<Model : DBModel> internal constructor(
         if (previous != null) collected(previous)
         val retained = kept.take<Model>(modelName, id, now())
         val cell = EntityCell<Model>()
-        retained?.value?.let { value -> cell.seed(retained.revision, retained.bytes) { value } }
+        retained?.let { held -> held.value?.let { value -> cell.seed(held.revision, held.bytes) { value } } ?: cell.accept(null, held.revision, held.bytes) }
         if (retained == null) try {
             source.cachedRow(id)?.let { cached -> cell.seed(cached.revision, cached.estimatedBytes) { decoder.read(cached) } }
         } catch (error: Exception) {
