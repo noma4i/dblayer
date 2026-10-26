@@ -11,6 +11,7 @@
 ### Fixed
 - An action that declares a result reads its answer when the payload row is null.
 - Local writes check nested objects and lists against their declared type.
+- `TestClock.advance` expires due memory rows and resets ephemeral values at once.
 
 ## 6.8.0 - 2026-10-26
 

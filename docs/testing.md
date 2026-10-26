@@ -31,7 +31,7 @@ JVM locals can become unreachable after their last use, even while the enclosing
 
 A live query loads by itself when something subscribes, and an explicit refresh can add a second request. Queue 2 or 3 replies per operation and assert the content of `transport.calls`, not their exact count.
 
-Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. The production `open` has no clock parameter. `openTesting` takes `preload`, default false: a scope declared with `preload` sends no request on open, session, network return or the end of power saving. Pass `preload: true` to load like the production `open`. In Kotlin, `openTesting` and `TestClock.advance` need `@OptIn(DBlayerTestingApi::class)` on the calling declaration.
+Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. `advance` expires due memory rows and resets due ephemeral values at once, with no waiting. The production `open` has no clock parameter. `openTesting` takes `preload`, default false: a scope declared with `preload` sends no request on open, session, network return or the end of power saving. Pass `preload: true` to load like the production `open`. In Kotlin, `openTesting` and `TestClock.advance` need `@OptIn(DBlayerTestingApi::class)` on the calling declaration.
 
 ```swift
 let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)

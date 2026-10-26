@@ -4,6 +4,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub trait Clock: Send + Sync {
     fn now(&self) -> Duration;
     fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>;
+    fn on_advance(&self, _wake: Arc<dyn Fn() + Send + Sync>) {}
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -19,32 +20,52 @@ impl Clock for SystemClock {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+type Waker = Arc<dyn Fn() + Send + Sync>;
+
+#[derive(Clone, Default)]
 pub struct ManualClock {
     pub(crate) now: Arc<Mutex<Duration>>,
     changed: Arc<tokio::sync::Notify>,
+    wakers: Arc<Mutex<Vec<Waker>>>,
+}
+
+impl std::fmt::Debug for ManualClock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("ManualClock").field("now", &self.now()).finish_non_exhaustive()
+    }
 }
 
 impl ManualClock {
     pub fn new(start: Duration) -> Self {
-        Self { now: Arc::new(Mutex::new(start)), changed: Arc::default() }
+        Self { now: Arc::new(Mutex::new(start)), changed: Arc::default(), wakers: Arc::default() }
     }
 
     pub fn advance(&self, by: Duration) {
         *crate::db::locked(&self.now) += by;
         self.changed.notify_waiters();
+        self.wake();
+    }
+
+    fn wake(&self) {
+        let wakers = crate::db::locked(&self.wakers).clone();
+        for wake in wakers { wake(); }
     }
 
     #[cfg(test)]
     pub fn set(&self, now: Duration) {
         *crate::db::locked(&self.now) = now;
         self.changed.notify_waiters();
+        self.wake();
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Duration {
         *crate::db::locked(&self.now)
+    }
+
+    fn on_advance(&self, wake: Waker) {
+        crate::db::locked(&self.wakers).push(wake);
     }
 
     fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {

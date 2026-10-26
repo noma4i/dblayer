@@ -215,6 +215,11 @@ impl Ephemerals {
         self.wake.notify_all();
     }
 
+    pub(crate) fn wake_for_clock(&self) {
+        drop(self.lock());
+        self.wake.notify_all();
+    }
+
     pub(crate) fn close(&self) {
         self.lock().closed = true;
         self.wake.notify_all();

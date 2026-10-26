@@ -276,6 +276,10 @@ impl Db {
     }
 
     pub fn set_clock(&self, clock: Arc<dyn Clock>) {
+        let ephemeral = Arc::downgrade(&self.shared.ephemeral);
+        clock.on_advance(Arc::new(move || {
+            if let Some(held) = ephemeral.upgrade() { held.wake_for_clock(); }
+        }));
         self.shared.ephemeral.lock().clock = clock.clone();
         self.shared.store.lock().clock = clock;
     }
