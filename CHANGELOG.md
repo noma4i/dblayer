@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- An optimistic keyed element carries the nested object of the local row its id field references.
+- An optimistic keyed element carries the nested object of the local row its declared `ref:` and `id:` name.
 
 ### Changed
 - `expires_in` of a memory model counts from the last write, and a write of equal values renews it.

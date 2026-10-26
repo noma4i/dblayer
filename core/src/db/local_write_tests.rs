@@ -5,7 +5,7 @@ use crate::operation::OperationStatus;
 use crate::identity::{ModelKey, ListKey};
 use crate::query::Query;
 use crate::syncstate::{FailureKind, OperationFailure};
-use crate::schema::{AssociationKind, AssociationSpec, FieldSpec, Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec, VariableSource};
+use crate::schema::{AssociationKind, AssociationSpec, FieldLink, FieldSpec, Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec, VariableSource};
 use crate::value::{relation_scope_key, ScalarKind};
 use serde_json::json;
 
@@ -326,7 +326,7 @@ fn a_keyed_patch_upserts_and_removes_one_element_of_an_array_field() {
     assert_eq!(react("u1", ""), json!([{"userId": "u2", "body": "x"}]));
 }
 
-fn reacting_db() -> Db {
+fn reacting_db(linked: bool) -> Db {
     let mut messages = messages_spec();
     messages.fields.retain(|field| field.name != "reactions");
     messages.fields.push(FieldSpec::scalar("authorId", ScalarKind::Id).nullable().optional().indexed());
@@ -334,7 +334,11 @@ fn reacting_db() -> Db {
         fields: vec![
             FieldSpec::scalar("body", ScalarKind::Str).nullable(),
             FieldSpec::scalar("userId", ScalarKind::Id).nullable().read_from("user.id"),
-            FieldSpec { fields: vec![FieldSpec::scalar("id", ScalarKind::Id).nullable(), FieldSpec::scalar("name", ScalarKind::Str).nullable()], ..FieldSpec::object("user").nullable() },
+            FieldSpec {
+            fields: vec![FieldSpec::scalar("id", ScalarKind::Id).nullable(), FieldSpec::scalar("name", ScalarKind::Str).nullable()],
+            link: linked.then(|| FieldLink { model: "users".to_string(), id: "userId".to_string() }),
+            ..FieldSpec::object("user").nullable()
+        },
         ],
         ..FieldSpec::array("reactions").optional()
     });
@@ -352,7 +356,7 @@ fn react_as(db: &Db, user: &str) -> serde_json::Value {
 
 #[test]
 fn a_keyed_element_carries_the_nested_record_of_the_local_row_it_references() {
-    let db = reacting_db();
+    let db = reacting_db(true);
     put(&db, "users", json!({"id": "u1", "name": "Ada"}));
     assert_eq!(react_as(&db, "u1"), json!([{"user.id": "u1", "body": "x", "user": {"id": "u1", "name": "Ada"}}]));
     put(&db, "messages", json!({"id": "m1", "chatId": "c1", "reactions": [{"user.id": "u1", "body": "x", "user": {"id": "u1", "name": "Ada Server"}}]}));
@@ -362,8 +366,15 @@ fn a_keyed_element_carries_the_nested_record_of_the_local_row_it_references() {
 
 #[test]
 fn a_keyed_element_without_the_referenced_local_row_has_no_nested_record() {
-    let db = reacting_db();
+    let db = reacting_db(true);
     assert_eq!(react_as(&db, "u9"), json!([{"user.id": "u9", "body": "x"}]));
+}
+
+#[test]
+fn a_keyed_element_without_a_declared_link_has_no_nested_record_whatever_the_owner_associates() {
+    let db = reacting_db(false);
+    put(&db, "users", json!({"id": "u1", "name": "Ada"}));
+    assert_eq!(react_as(&db, "u1"), json!([{"user.id": "u1", "body": "x"}]));
 }
 
 #[test]

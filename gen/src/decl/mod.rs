@@ -63,6 +63,7 @@ pub struct AttributeDecl {
     pub optional: bool,
     pub default: Option<Spanned<Json>>,
     pub id_from: Option<String>,
+    pub link: Option<(String, String)>,
     pub from: Option<Spanned<String>>,
     pub merge: Option<Spanned<MergeRule>>,
     pub local: bool,

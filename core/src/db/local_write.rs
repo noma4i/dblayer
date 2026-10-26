@@ -320,10 +320,7 @@ impl Db {
             merged.extend(patch.clone());
             for (field, op) in &keyed {
                 let Some(declared) = spec.field(field) else { continue };
-                let target_row = |association: &str, id: &str| match spec.associations.iter().find(|candidate| candidate.kind == AssociationKind::BelongsTo && candidate.name == association) {
-                    Some(candidate) => Ok(reader.point(candidate.target.as_str(), id)?),
-                    None => Ok::<_, DbError>(None),
-                };
+                let target_row = |model: &str, id: &str| Ok::<_, DbError>(reader.point(model, id)?);
                 if let Some(next) = crate::schema::keyed::apply(declared, current.get(field), op, &input_args, target_row)? {
                     merged.insert(field.clone(), next);
                 }

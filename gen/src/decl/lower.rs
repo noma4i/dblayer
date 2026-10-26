@@ -367,6 +367,7 @@ fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> Option<Attr
         optional: false,
         default: None,
         id_from: None,
+        link: None,
         from: None,
         merge: None,
         local,
@@ -397,6 +398,19 @@ fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> Option<Attr
         } else {
             decl.id_from = symbol(cx, &pair.value, "`id_from`");
         }
+    }
+    let link_model = line.opt(cx, "ref");
+    let link_id = line.opt(cx, "id");
+    match (link_model, link_id) {
+        (None, None) => {}
+        (Some(model), Some(id)) => {
+            if site != Site::Nested || !matches!(decl.ty, TypeRef::Named(_)) || decl_is_union_block(call) {
+                cx.fail(pair_pos(model), "`ref` and `id` apply only to a nested object attribute that is not a union");
+            } else if let (Some(model), Some(id)) = (konst(cx, &model.value, "`ref`"), symbol(cx, &id.value, "`id`")) {
+                decl.link = Some((model, id));
+            }
+        }
+        (Some(pair), None) | (None, Some(pair)) => cx.fail(pair_pos(pair), "`ref` and `id` are given together: `ref: Model, id: :attribute`"),
     }
     if let Some(pair) = line.opt(cx, "merge") {
         if site != Site::Model || is_file {

@@ -121,6 +121,7 @@ fn build_field(attribute: &AttributeDecl, owner: &str) -> FieldSpec {
     field.optional = attribute.optional;
     field.parse_json = attribute.parse_json;
     field.id_from_parent = attribute.id_from.clone();
+    field.link = attribute.link.as_ref().map(|(model, id)| dblayer::schema::FieldLink { model: model.clone(), id: id.clone() });
     field.app_type = match &attribute.ty {
         TypeRef::Named(type_name) | TypeRef::NamedList(type_name) => Some(type_name.clone()),
         _ => attribute.as_name.clone(),

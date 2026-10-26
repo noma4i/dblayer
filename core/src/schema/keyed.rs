@@ -1,5 +1,5 @@
 use serde_json::{Map, Value};
-use super::{FieldKind, FieldSpec};
+use super::{FieldKind, FieldLink, FieldSpec};
 
 const MARK: &str = "$keyed";
 
@@ -48,10 +48,10 @@ pub fn apply<E>(
     let at = items.iter().position(|item| item.get(&by) == Some(&key));
     let removes = element.iter().filter(|(name, _)| **name != by).all(|(_, value)| is_blank(value));
     if !removes {
-        let missing: Vec<&FieldSpec> = declared().filter(|nested| nested.kind == FieldKind::Object && !element.contains_key(&stored_name(&nested.name))).collect();
-        for nested in missing {
-            let Some(id) = element.get(&stored_name(&format!("{}Id", nested.name))).and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_string) else { continue };
-            if let Some(row) = target_row(&nested.name, &id)? {
+        let missing: Vec<(&FieldSpec, &FieldLink)> = declared().filter(|nested| nested.kind == FieldKind::Object && !element.contains_key(&stored_name(&nested.name))).filter_map(|nested| nested.link.as_ref().map(|link| (nested, link))).collect();
+        for (nested, link) in missing {
+            let Some(id) = element.get(&stored_name(&link.id)).and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_string) else { continue };
+            if let Some(row) = target_row(&link.model, &id)? {
                 element.insert(stored_name(&nested.name), Value::Object(snapshot(nested, &id, &row)));
             }
         }
@@ -72,8 +72,9 @@ fn snapshot(nested: &FieldSpec, id: &str, row: &Map<String, Value>) -> Map<Strin
         .fields
         .iter()
         .filter_map(|child| {
-            let value = if child.name == "id" { Value::String(id.to_string()) } else { row.get(&child.name).filter(|value| !value.is_null())?.clone() };
-            Some((child.from.clone().unwrap_or_else(|| child.name.clone()), value))
+            let column = child.from.clone().unwrap_or_else(|| child.name.clone());
+            let value = if column == "id" { Value::String(id.to_string()) } else { row.get(&column).filter(|value| !value.is_null())?.clone() };
+            Some((column, value))
         })
         .collect()
 }

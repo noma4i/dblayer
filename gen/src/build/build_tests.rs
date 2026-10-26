@@ -57,6 +57,13 @@ fn attribute_options_set_flags() {
 }
 
 #[test]
+fn a_nested_link_reaches_the_field_spec() {
+    let fields = fields_of("attribute :a, [Cell] do\n  attribute :ownerId, :id\n  attribute :o, Inner, null: true, ref: Sample, id: :ownerId do\n    attribute :x, :int, null: true\n  end\nend");
+    let link = fields[0].fields[1].link.clone().unwrap();
+    assert_eq!((link.model.as_str(), link.id.as_str()), ("Sample", "ownerId"));
+}
+
+#[test]
 fn defaults_convert_to_json() {
     let fields = fields_of("attribute :b, :int, default: 3\nattribute :c, :num, default: 1.5\nattribute :d, :bool, default: false\nattribute :e, :string, null: true, default: nil\nattribute :f, [:string], default: [\"one\", :two]");
     let defaults: Vec<_> = fields.iter().map(|field| field.default.clone()).collect();

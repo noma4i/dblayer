@@ -250,6 +250,22 @@ fn an_action_that_lands_an_unknown_model_is_reported() {
 }
 
 #[test]
+fn a_declared_field_link_needs_a_known_model_and_an_id_attribute_beside_it() {
+    let users = ModelSpec::new("users", vec![id_field()]);
+    let host = |link: FieldLink| {
+        let element = FieldSpec {
+            fields: vec![FieldSpec::scalar("userId", ScalarKind::Id).nullable(), FieldSpec { link: Some(link), ..FieldSpec::object("user").nullable() }],
+            ..FieldSpec::array("reactions").optional()
+        };
+        ModelSpec::new("messages", vec![id_field(), element])
+    };
+    let link = |model: &str, id: &str| FieldLink { model: model.into(), id: id.into() };
+    assert!(validate_models(&[users.clone(), host(link("users", "userId"))], &[]).is_empty());
+    assert_eq!(validate_models(&[users.clone(), host(link("ghosts", "userId"))], &[])[0].error, DeclarationError::UnknownFieldLink("user".into()));
+    assert_eq!(validate_models(&[users, host(link("users", "missing"))], &[])[0].error, DeclarationError::FieldLinkWithoutId("user".into()));
+}
+
+#[test]
 fn cross_model_checks_report_unknown_target_and_foreign_key() {
     let chats = ModelSpec::new("chats", vec![id_field(), FieldSpec::scalar("unreadCount", ScalarKind::Int)]);
     let messages = |association: AssociationSpec| ModelSpec {

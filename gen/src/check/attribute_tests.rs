@@ -101,6 +101,11 @@ fn names_are_unique_and_blocks_are_not_empty() {
         ("nested merge", "  attribute :a, Inner do\n    attribute :x, :int, merge: :positive\n  end", Some("`merge` applies only to a top-level")),
         ("nested id_from", "  attribute :a, Inner do\n    attribute :x, :id, id_from: :owner\n  end", Some("`id_from` applies only to a top-level")),
         ("nested local", "  attribute :a, Inner do\n    attribute :x, :int, optional: true, local: true\n  end", Some("`local` applies only to a top-level")),
+        ("nested link", "  attribute :a, [Cell] do\n    attribute :ownerId, :id\n    attribute :o, Inner, null: true, ref: Sample, id: :ownerId do\n      attribute :x, :int, null: true\n    end\n  end", None),
+        ("link unknown model", "  attribute :a, [Cell] do\n    attribute :ownerId, :id\n    attribute :o, Inner, null: true, ref: Ghost, id: :ownerId do\n      attribute :x, :int, null: true\n    end\n  end", Some("links to an unknown model")),
+        ("link missing id attribute", "  attribute :a, [Cell] do\n    attribute :ownerId, :id\n    attribute :o, Inner, null: true, ref: Sample, id: :gone do\n      attribute :x, :int, null: true\n    end\n  end", Some("id attribute that is not declared beside it")),
+        ("ref without id", "  attribute :a, [Cell] do\n    attribute :o, Inner, null: true, ref: Sample do\n      attribute :x, :int, null: true\n    end\n  end", Some("`ref` and `id` are given together")),
+        ("link on a top-level attribute", "  attribute :a, Inner, null: true, ref: Sample, id: :ownerId do\n    attribute :x, :int, null: true\n  end", Some("apply only to a nested object")),
         ("nested default fits", "  attribute :a, Inner do\n    attribute :x, :int, default: 1\n  end", None),
         ("nested default does not fit", "  attribute :a, Inner do\n    attribute :x, :int, default: \"s\"\n  end", Some("default must match its type")),
     ]);

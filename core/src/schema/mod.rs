@@ -92,6 +92,10 @@ pub enum DeclarationError {
     DependentOnNonOwner(String),
     #[error("association {0} targets an unknown model")]
     UnknownTarget(String),
+    #[error("field {0} links to an unknown model")]
+    UnknownFieldLink(String),
+    #[error("field {0} links by an id attribute that is not declared beside it")]
+    FieldLinkWithoutId(String),
     #[error("action {0} correlates on a field that is not declared")]
     CorrelateUnknownField(String),
     #[error("field {0} has a merge rule that does not fit its type")]
@@ -189,6 +193,12 @@ pub enum FieldKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldLink {
+    pub model: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldSpec {
     pub name: String,
     pub kind: FieldKind,
@@ -206,6 +216,8 @@ pub struct FieldSpec {
     pub id_from_parent: Option<String>,
     #[serde(default)]
     pub from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<FieldLink>,
     #[serde(default)]
     pub app_type: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -232,6 +244,7 @@ impl FieldSpec {
             indexed: false,
             id_from_parent: None,
             from: None,
+            link: None,
             app_type: None,
             values: Vec::new(),
             merge: None,
@@ -1288,6 +1301,19 @@ impl ModelSpec {
     }
 }
 
+fn check_links(field: &FieldSpec, siblings: &[&FieldSpec], by_key: &BTreeMap<&str, &ModelSpec>) -> Result<(), DeclarationError> {
+    if let Some(link) = &field.link {
+        if !by_key.contains_key(link.model.as_str()) {
+            return Err(DeclarationError::UnknownFieldLink(field.name.clone()));
+        }
+        if !siblings.iter().any(|sibling| sibling.name == link.id && matches!(sibling.kind, FieldKind::Scalar { .. })) {
+            return Err(DeclarationError::FieldLinkWithoutId(field.name.clone()));
+        }
+    }
+    let inner: Vec<&FieldSpec> = field.shared.iter().chain(&field.fields).collect();
+    inner.iter().try_for_each(|child| check_links(child, &inner, by_key))
+}
+
 pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<ModelFault> {
     let mut faults = Vec::new();
     let keys: Vec<&str> = models.iter().map(|model| model.key.as_str()).collect();
@@ -1301,6 +1327,7 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
                 .associations
                 .iter()
                 .try_for_each(|association| association.check_target(by_key.get(association.target.as_str()).copied()))
+                .and_then(|()| model.fields.iter().try_for_each(|field| check_links(field, &[], &by_key)))
                 .and_then(|()| {
                     let missing = model.actions.iter().flat_map(|action| action.refetch.iter().filter_map(|name| name.split_once('.')).map(move |(target, relation)| (action, target, relation)));
                     missing
