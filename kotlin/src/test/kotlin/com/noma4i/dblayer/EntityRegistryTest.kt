@@ -16,7 +16,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
 
 private class CountingSource(private val cached: WireRow? = null) : EntitySource {
-    override fun cachedRow(id: String): WireRow? = cached?.takeIf { it.id == id }
+    val peeks = AtomicInteger()
+    override fun cachedRow(id: String): WireRow? { peeks.incrementAndGet(); return cached?.takeIf { it.id == id } }
     val retained = java.util.concurrent.CopyOnWriteArrayList<String>()
     val released = java.util.concurrent.CopyOnWriteArrayList<String>()
     override fun retain(ids: List<String>) { retained.addAll(ids) }
@@ -43,6 +44,20 @@ class EntityRegistryTest {
         registry.apply(delivery(cached.revision, listOf(row)))
         assertEquals("newer", returned.value.value?.text)
         assertNull(registry.entity("missing").value.value)
+    }
+
+    /** REL-31 */
+    @Test
+    fun repeatedReadsOfOneRecordPeekTheCoreOnce() = bounded {
+        reopen(Config(null, null, 32u), modelsJSON, null)
+        val row = Moment.create(text = "cached")
+        Moment.recent.warm()
+        val source = CountingSource(DBlayer.database.peekRow("Moment", row.id)!!)
+        val registry = registry(source)
+        repeat(5) { assertEquals("cached", registry.entity(row.id).value.value?.text) }
+        collectGarbage { registry.liveCount == 0 }
+        repeat(5) { assertEquals("cached", registry.entity(row.id).value.value?.text) }
+        assertEquals(1, source.peeks.get())
     }
 
     private fun moment(id: String, text: String) = Moment(id = id, uuid = id, text = text, likedByMe = false, media = JsonObject(emptyMap()), createdAt = "2026-10-08T00:00:00.000Z")

@@ -203,9 +203,11 @@ public final class Entities<Model: DBModel> {
     let retained = kept.take(id, as: Model.self, now: UInt64(now() * 1000))
     let made = Entity<Model>(id: id, registry: self)
     if let retained { made.seed(revision: retained.revision, bytes: retained.bytes) { retained.value } }
-    do {
-      if let cached = try source.cachedRow(id) { made.seed(revision: cached.revision, bytes: cached.estimatedBytes) { try Model.decode(cached) } }
-    } catch { made.fail(String(describing: error)) }
+    if retained == nil {
+      do {
+        if let cached = try source.cachedRow(id) { made.seed(revision: cached.revision, bytes: cached.estimatedBytes) { try Model.decode(cached) } }
+      } catch { made.fail(String(describing: error)) }
+    }
     live[id] = Weak(entity: made)
     steps[id] = (retained != nil || steps[id] == .release) ? .refresh : .retain
     scheduleFlush()

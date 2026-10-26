@@ -21,4 +21,16 @@ extension BridgeProbeTests {
     #expect(returned.value?.text == "newer")
     #expect(registry.entity("missing").value == nil)
   }
+
+  /// REL-31
+  @Test @MainActor
+  func repeatedReadsOfOneRecordPeekTheCoreOnce() async throws {
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    let row = try await Moment.create(text: "cached")
+    try await Moment.recent.warm()
+    let source = CountingSource(cached: try #require(try DB.database.peekRow(model: "Moment", rowId: row.id)))
+    let registry = Entities<Moment>(source: source)
+    for _ in 0 ..< 5 { #expect(registry.entity(row.id).value?.text == "cached") }
+    #expect(source.peeks == 1)
+  }
 }
