@@ -12,7 +12,7 @@ private enum ForegroundFeed: GraphQLOperation {
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func aTestingForegroundEventReloadsOnlyAWindowWithAReader() async throws {
+  func inv_api_07_aTestingForegroundEventReloadsOnlyAWindowWithAReader() async throws {
     DB.close()
     defer { DB.close() }
     var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])

@@ -627,7 +627,7 @@ end
 ```
 
 ```swift
-let edge = try Moment.vibeFeedEdge(vibeId, of: moment.id)
+let edge = try await Moment.vibeFeedEdge(vibeId, of: moment.id)
 edge?.score                                               // Int?, the response key is impressionScore
 edge?.rank                                                // FeedRank?
 ```
@@ -676,7 +676,11 @@ A singleton read needs no parameter: `changed_by "TOTALS", via: :current`.
 
 ```ruby
 model WalletTransaction do
-  scope :by_kind, kind: :enum do ... end
+  scope :by_kind do
+    parameter :kind, :string
+    query "WalletTransactions"
+    variables kind: :kind
+  end
   changed_by "WALLET", via: :observed
 end
 ```
@@ -701,7 +705,7 @@ val events = Message.events()
 events.collect { item -> when (item) { is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Missed -> resync(item.count); is ModelEventItem.Failed -> report(item.error) } }
 ```
 
-The queue of a reader holds 256 events. A reader that is slower reads `missed` with the number of dropped events, and never delays the next event of other readers. A failed row read publishes no event and raises the rejected count of the subscription. A failure of the stream itself arrives as the last item `failed`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription after `live_linger`, without app cleanup. The stream needs no notice model.
+The queue of a reader holds 256 events. A reader that is slower reads `missed` with the number of dropped events, and never delays the next event of other readers. A failed row read publishes `missed` in place of the event and raises the rejected count of the subscription. A failure of the stream itself arrives as the last item `failed`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription after `live_linger`, without app cleanup. The stream needs no notice model.
 Area and removal values are strings that belong to the application.
 An area can repeat on several models, for `via: :observed`, node reads and named reads. One event rereads the read of each of those models and gives each model its own item on `events`. A model declares an area once per form: `via: :node` (or a named read) and `via: :observed` may both name the same area, and the event does one reread for each form and gives the model one item. A repeat of the same form inside one model is rejected.
 

@@ -432,7 +432,7 @@ The values of a connection edge are read with the `async` `feedEdge(of:)`, see [
 
 ```swift
 let list = Moment.feed
-let uuid = try Moment.feedEdge(of: id)?.impressionUuid
+let uuid = try await Moment.feedEdge(of: id)?.impressionUuid
 ```
 
 ```kotlin

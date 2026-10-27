@@ -51,7 +51,7 @@ class ModelEventsTest {
 
     @OptIn(DBlayerTestingApi::class)
     @Test
-    fun openTestingHoldsSubscriptionsUntilRegistrationCompletes() = bounded {
+    fun inv_api_05_openTestingHoldsSubscriptionsUntilRegistrationCompletes() = bounded {
         DBlayer.close()
         try {
             val transport = MockTransport()

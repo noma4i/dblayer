@@ -44,7 +44,7 @@ fn title(row: &Option<crate::db::Row>) -> Option<&str> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn opening_events_establishes_the_subscription_or_returns_its_failure() {
+async fn inv_api_06_opening_events_establishes_the_subscription_or_returns_its_failure() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "before"}));
     let events = rig.sync.open_model_events("chats").await.unwrap();

@@ -24,7 +24,7 @@ class ForegroundTestingTest {
 
     @OptIn(DBlayerTestingApi::class)
     @Test
-    fun aTestingForegroundEventReloadsOnlyAWindowWithAReader() = bounded {
+    fun inv_api_07_aTestingForegroundEventReloadsOnlyAWindowWithAReader() = bounded {
         DBlayer.close()
         val scope = CoroutineScope(SupervisorJob())
         try {

@@ -82,7 +82,7 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func openTestingHoldsSubscriptionsUntilRegistrationCompletes() async throws {
+  func inv_api_05_openTestingHoldsSubscriptionsUntilRegistrationCompletes() async throws {
     DB.close()
     defer { DB.close() }
     let transport = MockTransport()

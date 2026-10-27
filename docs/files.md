@@ -276,7 +276,7 @@ The final content mutation does not hold a file permit.
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `fraction` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 
-A finished upload closes its operation, so `upload` goes back to `nil` and the record is `synced`. Progress ticks are limited to one per 100 ms and never go down inside a phase. A restarted phase starts again from the bytes of its finished parts.
+A finished upload closes its operation and removes its entry from `uploads`. The record becomes `synced` when no other operation remains open. Progress ticks are limited to one per 100 ms and never go down inside a phase. A restarted phase starts again from the bytes of its finished parts.
 
 ### Rules
 
@@ -293,4 +293,4 @@ A finished upload closes its operation, so `upload` goes back to `nil` and the r
 - `retry(action)` and `discard(action)` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
 - Offline cancellation returns without a network call and keeps the multipart upload id. After `setOnline(true)`, the saved cancellation aborts the multipart and removes the operation.
 - After the content mutation starts, cancelling a single upload returns `false` immediately. Cancelling a batch member returns `InFlight`.
-- One record has one upload at a time.
+- One record has one open upload per declared action.

@@ -16,7 +16,7 @@ Use `DB.open` (Swift) or `DBlayer.open` (Kotlin) for every database.
 Without `encrypted`, requests use ordinary GraphQL HTTP and the transport's existing subscriptions, without credentials, sequence numbers or APQ.
 
 Opening is asynchronous: use `try await DB.open(...)` in Swift and suspend `DBlayer.open(context, ...)` in Kotlin.
-The library opens files and runs migrations on its worker pool.
+The library opens files and recreates incompatible caches on its worker pool.
 Open the database once at app start and use that instance everywhere. A second call to `open` while the database is open fails with `database is already open; open it once at app start`, whatever its parameters. An opening error permits retry. `close` ends the database, meant for tests and the end of the process, and the next `open` opens it again.
 
 ```swift
@@ -472,7 +472,7 @@ Every response, whether from a query, a mutation or a subscription event, goes t
 
 | Rule | Behavior |
 | ---- | -------- |
-| Identity | the objects of a relation are rows of its model and need an `id`. Objects without one are dropped |
+| Identity | the objects of a relation are rows of its model and need an `id`. A relation parameter can supply a missing id. Other objects without one are dropped |
 | Nesting | objects found at the `from:` path of an association (its name by default) become rows of the target model. `belongs_to` keeps the key (`userId`) on the outer row, `has_many` and `has_one` rows get the outer id, `references` keeps the ids |
 | Lists and pages | lists and `edges { node }` with `pageInfo` are recognized from the document and keep server order |
 | Partial responses | fields a query did not select are never erased, each field is updated on its own and the newer revision wins |
@@ -529,7 +529,7 @@ A scope parameter without `where` needs explicit `membership` to accept event ro
 `insert_on: [:event, :response, :node]` also admits rows from `changed_by` node rereads.
 Missing members join loaded windows at the head. Existing members keep their places. Manual node reads do not insert members.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
-`via: :observed` uses this reread for each event. Each event also reaches `Model.events` with the row before and after the reread, see [Models](models.md).
+`via: :observed` uses this reread for each event. Each event also reaches `Model.events()` with the row before and after the reread, see [Models](models.md).
 
 ## Mutations
 
@@ -837,7 +837,7 @@ model User do
 end
 ```
 
-The core starts these subscriptions when a session credential is committed (a session call that changes the session, or a session that is already stored at start) and stops them at `logout()` and `sessionReset()`. The core listens only while a credential is committed and the app allows it. The app allows it by default. An app that opens no subscription before registration is complete passes `listening: false` to `open` and calls `setListening(true)` when registration completes (`DB.setListening(_:)`, `DBlayer.setListening(allowed)`). The call is idempotent and starts the subscriptions once. `setListening(false)`, `logout()` and `sessionReset()` stop them, and `logout()` and `sessionReset()` stop them whatever the flag says. The flag gates only the subscriptions that a committed credential starts. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. A `Model.events` collector and a screen that watches a relation with `updates` open their own subscription when they start, so the app starts them after registration too. A `Model.events` stream stream stays open across sign-out and the next sign-in and never sends a closing element. Subscriptions that a refusal stopped restart with the next committed credential or with `resume()`.
+The core starts these subscriptions when a session credential is committed (a session call that changes the session, or a session that is already stored at start) and stops them at `logout()` and `sessionReset()`. The core listens only while a credential is committed and the app allows it. The app allows it by default. An app that opens no subscription before registration is complete passes `listening: false` to `open` and calls `setListening(true)` when registration completes (`DB.setListening(_:)`, `DBlayer.setListening(allowed)`). The call is idempotent and starts the subscriptions once. `setListening(false)`, `logout()` and `sessionReset()` stop them, and `logout()` and `sessionReset()` stop them whatever the flag says. The flag gates only the subscriptions that a committed credential starts. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. A `Model.events()` collector and a screen that watches a relation with `subscribe` open their own subscription when they start, so the app starts them after registration too. A `Model.events()` stream stays open across sign-out and the next sign-in and never sends a closing element. Subscriptions that a refusal stopped restart with the next committed credential or with `resume()`.
 
 ## Automatic refetching
 
@@ -849,7 +849,7 @@ The core starts these subscriptions when a session credential is committed (a se
 | App returns to the foreground, network returns after offline | the library reloads the stale relations with readers in small groups. Events that coincide share one run. An offline foreground does nothing, close cancels the run, stopped subscriptions with a non-terminal failure restart, and a session refusal of a subscription or of a window load stays stopped. A committed credential (a session call that changes the session) does the same once, and also restarts the subscriptions a session refusal stopped, so the app calls nothing after sign-in. `DB.resume()` (Swift) and `DBlayer.resume()` (Kotlin) stay as the manual refresh |
 | Explicit resume after logout | stopped singleton subscriptions restart, existing singleton entities receive values again |
 | Network is back | the queue is sent and stale relations are refetched |
-| Subscription reconnects | the relation is refetched |
+| Subscription reconnects | stale watched relations are refetched |
 
 You never write "if the mutation worked, reload the list".
 
