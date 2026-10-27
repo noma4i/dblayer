@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.12.0 - 2026-10-27
 
 ### Added
 - Apply full event rows with `changed_by payload` on Swift and Kotlin.
