@@ -69,7 +69,9 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
             }
             "action" | "lands" => {
                 put(&rig, "Message", json!({"id": "m1", "reactions": []}));
-                rig.transport.enqueue("Change", Reply::data(json!({"change": {"message": value}})));
+                let mut response = json!({"change": {"message": value}});
+                if entry == "lands" { response["change"]["id"] = json!("m2"); }
+                rig.transport.enqueue("Change", Reply::data(response));
                 rig.db.act("Message", "revise", &id, params(json!({})), params(json!({}))).unwrap();
                 rig.sync.flush().await.unwrap();
             }

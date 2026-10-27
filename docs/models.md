@@ -708,6 +708,7 @@ model WalletTransaction do
     query "WalletTransactions"
     variables kind: :kind
   end
+  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   changed_by "WALLET", via: :observed
 end
 ```
