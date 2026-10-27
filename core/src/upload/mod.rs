@@ -6,6 +6,9 @@ mod plan;
 mod progress;
 mod source;
 mod state;
+mod blob;
+pub use blob::{BlobSnapshot, BlobState, BlobUploadDeclaration, UploadOwner};
+pub(crate) use blob::BLOB_LIFETIME_MS;
 
 pub use config::{UploadConfig, MEBIBYTE};
 pub(crate) use input::UploadInput;

@@ -184,6 +184,7 @@ fn arg_type(kind: &str, swift: bool) -> String {
         return if swift { format!("[{item}]") } else { format!("List<{item}>") };
     }
     let name = match (kind, swift) {
+        ("blob", _) => "Blob",
         ("bool", true) => "Bool",
         ("bool", false) => "Boolean",
         ("int" | "long", true) => "Int",
@@ -357,6 +358,10 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             for (field, value) in &action.optimistic { if let Some(arg) = value.get("$arg").and_then(|arg| arg.as_str()) { writeln!(out, "        {values}[\"{field}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); } }
             let args = action.args.keys().map(|arg| format!("\"{arg}\": try JSONValue.encode({printed})", printed = identifier(arg, true))).collect::<Vec<_>>().join(", ");
             writeln!(out, "        return try await {}(\"{}\", values: {values}, args: [{}])\n    }}", if action.result.is_empty() { "act" } else { "actAnswering" }, action.name, if args.is_empty() { ":" } else { &args }).unwrap();
+            if singleton_relation(model).is_some() && action.args.values().any(|kind| kind == "blob") {
+                let args = action.args.keys().map(|arg| format!("{}: {}", identifier(arg, true), identifier(arg, true))).collect::<Vec<_>>().join(", ");
+                writeln!(out, "    @concurrent public static func {}({params}) async throws -> {returns} {{\n        guard let current = try await singleton.live.current().first else {{ throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: \"singleton is missing\")) }}\n        return try await current.{}({args})\n    }}", identifier(&name(&action.name), true), identifier(&name(&action.name), true)).unwrap();
+            }
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
             writeln!(out, "    @concurrent public func {}(_ request: UploadRequest) async throws -> ActionAnswer<Self, {}> {{\n        try await upload(action: \"{}\", request)\n    }}", identifier(&name(&action.name), true), result_type(class, &action.name), action.name).unwrap();
@@ -413,7 +418,14 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             kotlin_accessors(&mut out, &mut edge_types, model, relation, &decls);
         }
         if model.relations.iter().any(|relation| relation.node == Some(NodeRead::One)) { writeln!(out, "        fun entity(id: String, fetch: EntityFetch) = entityOf(\"{class}\", this, id, fetch)").unwrap(); }
-        if let Some(relation) = singleton_relation(model) { writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", this, {})", identifier(&name(&relation.name), false)).unwrap(); }
+        if let Some(relation) = singleton_relation(model) {
+            writeln!(out, "        fun entity() = singletonEntityOf(\"{class}\", this, {})", identifier(&name(&relation.name), false)).unwrap();
+            for action in model.actions.iter().filter(|action| !action.upload && action.args.values().any(|kind| kind == "blob")) {
+                let params = action.args.iter().map(|(arg, kind)| format!("{}: {}", identifier(arg, false), arg_type(kind, false))).collect::<Vec<_>>().join(", ");
+                let args = action.args.keys().map(|arg| identifier(arg, false)).collect::<Vec<_>>().join(", ");
+                writeln!(out, "        suspend fun {}({params}) = requireNotNull({}.live.current().firstOrNull()) {{ \"singleton is missing\" }}.{}({args})", identifier(&name(&action.name), false), identifier(&name(&relation.name), false), identifier(&name(&action.name), false)).unwrap();
+            }
+        }
         for action in model.actions.iter().filter(|action| action.upload && !action.args.is_empty()) {
             let upload_args = standard_args(model, &action.name);
             let method = name(&action.name);

@@ -1,0 +1,15 @@
+blob_upload :video_intro, create: "BlobCreate"
+
+model BlobProfile do
+  attribute :label, :string, null: true
+  scope :current do
+    query "BlobProfileCurrent"
+    response from: "blobProfile", shape: :one
+  end
+  operation :set_video do
+    mutation "BlobSetVideo"
+    parameter :video, :blob
+    optimistic false
+    response from: "setVideo.profile"
+  end
+end

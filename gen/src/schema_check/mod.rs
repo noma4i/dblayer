@@ -70,6 +70,18 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     Ok(Outcome { variables, notes: run.notes, idempotent_inputs })
 }
 
+pub(crate) fn check_blob_uploads(_schema: &Schema, paths: &[PathBuf], declarations: &[dblayer::upload::BlobUploadDeclaration]) -> Result<(), String> {
+    let mut operations = Operations::default();
+    for path in operation_files(paths) { operations.load(&path)?; }
+    for declaration in declarations {
+        let operation = operations.named.get(&declaration.create).filter(|operation| operation.kind == "mutation").ok_or_else(|| format!("blob_upload {} create {} is not a mutation in the documents", declaration.name, declaration.create))?;
+        for (name, kinds) in [("filename", &["String"][..]), ("contentType", &["String"][..]), ("byteSize", &["Int", "Int64"][..]), ("checksum", &["String"][..])] {
+            if !operation.variables.get(name).is_some_and(|ty| !ty.is_list() && kinds.contains(&ty.name())) { return Err(format!("blob_upload {} requires compatible ${name}", declaration.name)); }
+        }
+    }
+    Ok(())
+}
+
 fn operation_files(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for path in paths {
@@ -328,6 +340,8 @@ impl<'a> Run<'a> {
 
     fn check_mutation_args(&mut self, node: &'a ModelDecl) {
         for operation in &node.operations {
+            let blobs: Vec<_> = operation.parameters.iter().filter(|parameter| parameter.ty.base == ParamBase::Blob).collect();
+            if blobs.iter().any(|parameter| parameter.null || parameter.ty.list) { self.fail(node.file, operation.pos, "a Blob parameter must be required and singular".into()); }
             let Some(name) = operation.mutation.as_ref().map(|found| found.item.as_str()) else { continue };
             let input: Vec<(String, String)> = match (&operation.variables, operation.upload.is_some()) {
                 (Some(variables), _) => variables.iter().filter_map(|binding| match &binding.value {
@@ -337,6 +351,10 @@ impl<'a> Run<'a> {
                 (None, true) => operation.parameters.iter().map(|parameter| (parameter.name.clone(), parameter.name.clone())).collect(),
                 (None, false) => Vec::new(),
             };
+            let mut input = input;
+            for parameter in operation.parameters.iter().filter(|parameter| parameter.ty.base == ParamBase::Blob) {
+                if !input.iter().any(|(_, source)| source == &parameter.name) { input.push(("signedId".into(), parameter.name.clone())); }
+            }
             self.check_args_of(node.file, operation.pos, name, operation.wrap.as_deref(), &operation.parameters, &input);
             self.check_optimistic_maps(node, operation);
             if let Some(batch) = &operation.batch {
@@ -469,6 +487,7 @@ impl<'a> Run<'a> {
             "ids" => declared.is_list() && (matches!(named, "ID" | "String" | "Int") || self.custom_fits(named, "id")),
             _ if declared.is_list() => false,
             "string" => matches!(named, "String" | "ID") || self.custom_fits(named, "string"),
+            "blob" => matches!(named, "String" | "ID"),
             "id" => matches!(named, "ID" | "String" | "Int") || self.custom_fits(named, "id"),
             "int" => named == "Int" || self.custom_fits(named, "int"),
             "long" => self.custom_fits(named, "long"),

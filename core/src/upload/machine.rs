@@ -7,6 +7,7 @@ use super::state::{UploadPart, UploadRequest, UploadRetry, UploadScenario, Uploa
 
 #[derive(Debug, Clone)]
 pub(crate) enum UploadEvent {
+    BlobUploaded,
     Restore,
     Start,
     Located { total: u64, scenario: UploadScenario },
@@ -93,6 +94,7 @@ impl UploadFlow {
     #[superstate]
     fn any(context: &mut Flow, event: &UploadEvent) -> Outcome<State> {
         match event {
+            UploadEvent::BlobUploaded if context.state.is_transferred() => Transition(State::done()),
             UploadEvent::Restore => match state_of(context.state.phase) {
                 Some(stored) => Transition(stored),
                 None => {
@@ -296,6 +298,9 @@ impl UploadFlow {
     }
 
     #[state(superstate = "any")]
+    fn done(event: &UploadEvent) -> Outcome<State> { let _ = event; Super }
+
+    #[state(superstate = "any")]
     fn cancelled(event: &UploadEvent) -> Outcome<State> {
         let _ = event;
         Super
@@ -310,6 +315,7 @@ fn phase_of(state: &State) -> UploadStatus {
         State::Sending {} => UploadStatus::Sending,
         State::Failed {} => UploadStatus::Failed,
         State::Cancelled {} => UploadStatus::Cancelled,
+        State::Done {} => UploadStatus::Done,
     }
 }
 
@@ -321,7 +327,8 @@ fn state_of(phase: UploadStatus) -> Option<State> {
         UploadStatus::Sending => Some(State::sending()),
         UploadStatus::Failed => Some(State::failed()),
         UploadStatus::Cancelled => Some(State::cancelled()),
-        UploadStatus::Waiting | UploadStatus::Done | UploadStatus::DeliveryUnknown => None,
+        UploadStatus::Done => Some(State::done()),
+        UploadStatus::Waiting | UploadStatus::DeliveryUnknown => None,
     }
 }
 
@@ -346,7 +353,7 @@ impl UploadState {
     }
 
     pub(crate) fn awaits_run(&self) -> bool {
-        !matches!(self.phase, UploadStatus::Failed | UploadStatus::Cancelled)
+        !matches!(self.phase, UploadStatus::Failed | UploadStatus::Cancelled | UploadStatus::Done)
     }
 
     pub(crate) fn awaits_transfer(&self) -> bool {

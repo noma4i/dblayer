@@ -43,6 +43,40 @@ impl Drop for UploadFiles<'_> {
 }
 
 impl Db {
+    pub(crate) fn expire_blobs_before_use(&self) -> Result<(), DbError> {
+        let failed_due = self.shared.store.lock().now_ms().saturating_sub(self.shared.blob_failed_ttl_ms.load(std::sync::atomic::Ordering::Relaxed));
+        self.expire_blob_cache(failed_due)
+    }
+
+    pub(crate) fn expire_blob_cache(&self, failed_due: i64) -> Result<(), DbError> {
+        let ready_due = self.shared.store.lock().now_ms().saturating_sub(crate::upload::BLOB_LIFETIME_MS);
+        let due = self.shared.read(&[], |reader| Ok(crate::store::blob::due(reader.connection(), ready_due, failed_due)?))?;
+        if due.is_empty() { return Ok(()); }
+        let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Response, self.generation());
+        envelope.operation_transitions.extend(due.iter().map(|(id, _)| crate::commit::OperationTransition::RetireBlob { id: id.clone(), expired: true }));
+        self.land(envelope)?;
+        let files: Vec<String> = self.shared.read(&[], |reader| {
+            Ok(due.iter().filter_map(|(_, file)| file.as_ref()).filter_map(|id| match reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [id], |row| row.get::<_, bool>(0)) { Ok(false) => Some(Ok(id.clone())), Ok(true) => None, Err(error) => Some(Err(crate::store::StoreError::from(error))) }).collect::<Result<Vec<_>, _>>()?)
+        })?;
+        self.shared.files.discard(&files).map_err(super::files::io_fault)?;
+        Ok(())
+    }
+
+    pub(crate) fn prepare_blob<T, E: From<DbError> + std::fmt::Display>(&self, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>) -> Result<T, E>) -> Result<T, E> {
+        let _gate = locked(&self.shared.files_gate);
+        self.shared.store.lock().ensure_generation(generation).map_err(DbError::from)?;
+        let mut files = UploadFiles { files: &self.shared.files, owned: Vec::new(), now: self.shared.store.lock().now_ms() };
+        let result = run(&mut files);
+        if result.is_ok() { files.owned.clear(); }
+        result
+    }
+
+    pub fn blob_snapshot(&self, id: &str) -> Result<crate::upload::BlobSnapshot, DbError> {
+        let store = self.shared.store.lock();
+        store.ensure_healthy()?;
+        crate::store::blob::snapshot(&store.connection, id)?.ok_or_else(|| DbError::InvalidUpload("unknown Blob in this database".into()))
+    }
+
     pub(crate) fn preparing_uploads<T, E: From<DbError> + std::fmt::Display>(&self, model: &str, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, Generation) -> Result<T, E>) -> Result<T, E> {
         let spec = self.shared.spec(model)?;
         if spec.is_local() || spec.is_memory() {

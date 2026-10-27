@@ -196,6 +196,7 @@ impl Drop for Lifetime {
 impl Sync {
     pub fn new(db: Db, transport: Arc<dyn Transport>, clock: Arc<dyn Clock>, config: SyncConfig) -> Self {
         db.set_clock(clock.clone());
+        db.shared.blob_failed_ttl_ms.store(config.upload.failed_ttl.as_millis().try_into().unwrap_or(i64::MAX), std::sync::atomic::Ordering::Relaxed);
         let queue = db.operation_queue().map_err(|error| error.to_string());
         let max_files = config.upload.max_files;
         let (stop, stopped) = watch::channel(());

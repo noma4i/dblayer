@@ -80,7 +80,30 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 40] = [
+const CORE_STATEMENTS: [&str; 45] = [
+    "CREATE TABLE IF NOT EXISTS blob_upload (
+  id TEXT PRIMARY KEY NOT NULL,
+  name TEXT NOT NULL,
+  seq INTEGER UNIQUE,
+  consumer_seq INTEGER,
+  generation INTEGER NOT NULL,
+  created_at INTEGER,
+  ready INTEGER NOT NULL DEFAULT 0,
+  failed_at INTEGER,
+  signed_id TEXT,
+  total_bytes INTEGER NOT NULL DEFAULT 0,
+  sent_bytes INTEGER NOT NULL DEFAULT 0,
+  expired INTEGER NOT NULL DEFAULT 0 CHECK (expired IN (0, 1))
+) STRICT",
+    "CREATE INDEX IF NOT EXISTS blob_expiry ON blob_upload (consumer_seq, expired, ready, created_at)",
+    "CREATE INDEX IF NOT EXISTS blob_failed_expiry ON blob_upload (consumer_seq, expired, failed_at)",
+    "CREATE TABLE IF NOT EXISTS blob_use (
+  consumer_seq INTEGER NOT NULL,
+  parameter TEXT NOT NULL,
+  blob_id TEXT NOT NULL,
+  PRIMARY KEY (consumer_seq, parameter)
+) STRICT, WITHOUT ROWID",
+    "CREATE INDEX IF NOT EXISTS blob_consumer ON blob_use (blob_id)",
     "CREATE TABLE IF NOT EXISTS manifest (
   key TEXT PRIMARY KEY NOT NULL,
   value TEXT NOT NULL

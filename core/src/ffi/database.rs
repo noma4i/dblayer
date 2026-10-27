@@ -71,7 +71,7 @@ pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Ru
     Ok(slot.runtime.get_or_init(|| runtime))
 }
 
-async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'static>(work: impl std::future::Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
+pub(super) async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'static>(work: impl std::future::Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
     executor()?.spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
 }
 
@@ -83,7 +83,7 @@ pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Futur
     task.await.map_err(|error| DbError::Invalid { detail: error.to_string() })
 }
 
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
     #[cfg(test)]
     let work = {
         let caller = std::thread::current().id();

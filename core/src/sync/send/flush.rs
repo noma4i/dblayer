@@ -174,7 +174,7 @@ impl Inner {
             let sequence = operation.id.0;
             *cursor = sequence;
             locked(&self.counters).outbox_candidates += 1;
-            let waiting = if held_back { None } else { self.waiting_reason(&operation) };
+            let waiting = if held_back { None } else { self.waiting_reason(&operation)? };
             if waiting.is_none() && !held_back && !blocked {
                 if let Some(entry) = self.outbox_operation(sequence)? { return Ok(Some(entry)); }
                 continue;
@@ -188,11 +188,12 @@ impl Inner {
         }
     }
 
-    fn waiting_reason(&self, operation: &Operation) -> Option<SkipReason> {
+    fn waiting_reason(&self, operation: &Operation) -> Result<Option<SkipReason>, SyncError> {
         if !self.connectivity.is_online() {
-            return Some(SkipReason::Offline);
+            return Ok(Some(SkipReason::Offline));
         }
-        self.is_waiting(operation).then_some(SkipReason::Waiting)
+        if self.db.shared.read(&[], |reader| Ok(crate::store::blob::waiting(reader.connection(), operation.id.0)?))? { return Ok(Some(SkipReason::Waiting)); }
+        Ok(self.is_waiting(operation).then_some(SkipReason::Waiting))
     }
 
     fn bind(&self, entry: &OutboxOperation) -> Result<Option<Bound>, SyncError> {
@@ -201,7 +202,8 @@ impl Inner {
         let Some(declaration) = spec.actions.iter().find(|declared| declared.name == action).cloned() else { return Ok(None) };
         let Some(mutation) = declaration.mutation.clone() else { return Ok(None) };
         let is_id = |field: &str| spec.field(field).is_some_and(|field| matches!(field.kind, crate::schema::FieldKind::Scalar { kind: crate::value::ScalarKind::Id }));
-        let variables = mutation_variables(&declaration, &entry.input, entry.operation.temp_id.as_ref(), &is_id);
+        let Some(input) = self.db.shared.read(&[], |reader| Ok(crate::store::blob::variables(reader.connection(), entry.operation.id.0, &entry.input)?))? else { return Ok(None) };
+        let variables = mutation_variables(&declaration, &input, entry.operation.temp_id.as_ref(), &is_id);
         let variables = idempotent_variables(&declaration, &entry.input, variables, &entry.operation.client_mutation_id);
         Ok(Some(Bound { model, action, declaration, mutation, variables }))
     }
@@ -313,7 +315,7 @@ impl Inner {
             }
         };
         let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
-        request.upload = entry.operation.upload.is_some();
+        request.upload = entry.operation.upload.is_some() || self.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM blob_use WHERE consumer_seq = ?1)", [entry.operation.id.0], |row| row.get::<_, bool>(0))?))?;
         if let Some(mut state) = entry.operation.upload.clone() {
             state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
             self.commit(sending.generation, |_| {
@@ -476,6 +478,7 @@ impl Inner {
     }
 
     async fn land_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: Value) -> Result<SendResult, SyncError> {
+        let blob_files = self.db.shared.read(&[], |reader| Ok(crate::store::blob::files(reader.connection(), sending.entry.operation.id.0)?))?;
         let entry = sending.entry;
         let temp = entry.operation.temp_id.clone();
         let spec = self.db.spec(&sending.model)?;
@@ -571,6 +574,7 @@ impl Inner {
         #[cfg(test)]
         if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
         self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;
+        self.discard_files(blob_files).await?;
         self.invalidate_after(&sending.model, &sending.action).await?;
         Ok(SendResult::Committed)
     }

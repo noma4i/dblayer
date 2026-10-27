@@ -12,6 +12,7 @@ use crate::schema::{ModelSpec, SearchPath};
 mod admission;
 mod apply;
 mod upload;
+pub(crate) mod blob;
 mod boot;
 mod error;
 mod file_ops;

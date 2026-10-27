@@ -1,0 +1,96 @@
+[
+  {
+    "key": "BlobProfile",
+    "fields": [
+      {
+        "name": "id",
+        "kind": {
+          "type": "scalar",
+          "kind": "id"
+        },
+        "nullable": false,
+        "optional": false,
+        "default": null,
+        "indexed": false,
+        "id_from_parent": null,
+        "from": null,
+        "app_type": null,
+        "merge": null
+      },
+      {
+        "name": "label",
+        "kind": {
+          "type": "scalar",
+          "kind": "str"
+        },
+        "nullable": true,
+        "optional": false,
+        "default": null,
+        "indexed": false,
+        "id_from_parent": null,
+        "from": null,
+        "app_type": null,
+        "merge": null
+      }
+    ],
+    "associations": [],
+    "relations": [
+      {
+        "name": "current",
+        "by_columns": [],
+        "text_params": [],
+        "remote": {
+          "operation": "BlobProfileCurrent",
+          "shape": {
+            "type": "single"
+          },
+          "stale_time": "5.minutes",
+          "empty_stale_time": null,
+          "selects_page_info": false,
+          "page_size": null,
+          "variables": {},
+          "root": "blobProfile"
+        },
+        "is_global": true,
+        "sort": "server_order",
+        "joins_events": false,
+        "joins_created": false
+      }
+    ],
+    "indexes": [],
+    "actions": [
+      {
+        "client_mutation_id": false,
+        "name": "set_video",
+        "root_shape": "upsert",
+        "on_failure": "rollback",
+        "has_optimistic": false,
+        "has_temp_row_retention": false,
+        "has_cascade_dependents": false,
+        "members": [],
+        "mutation": "BlobSetVideo",
+        "upload": false,
+        "variables": {
+          "blobProfileId": "id",
+          "signedId": "video"
+        },
+        "optimistic": {},
+        "refetch": [],
+        "args": {
+          "video": "blob"
+        },
+        "local": [],
+        "correlate": [],
+        "ignore_response": false,
+        "wrap": null,
+        "root": "setVideo.profile",
+        "lands": [],
+        "result": {}
+      }
+    ],
+    "ephemeral": [],
+    "storage": "disk",
+    "expire_after": null,
+    "listens": []
+  }
+]

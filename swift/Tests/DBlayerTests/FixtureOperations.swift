@@ -1,6 +1,58 @@
 import Foundation
 import DBlayer
 
+public struct BlobProfile: DBSingleton {
+    public static let modelName = "BlobProfile"
+    public let id: String
+    public let label: String?
+    public let sync: SyncInfo
+    public let uploads: [String: UploadInfo]
+
+    public init(id: String, label: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
+        self.id = id
+        self.label = label
+        self.sync = sync
+        self.uploads = uploads
+    }
+
+    public static let wireLayout = "cae70f3b4f7f7821a632570ad1a489bc597e5b848b1ccc6df664113173d98031"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.label = try r.opt(0, \.asText)
+        self.sync = SyncInfo(wire: row.sync)
+        self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
+    }
+
+    public static let label = Column<BlobProfile, String?>("label")
+    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
+    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
+    public static var current: Query<Self> {
+        let built = Query<Self>(relation: "current", params: [:])
+        return built
+    }
+    public static var singleton: Query<Self> { current }
+    @concurrent public static func create(label: String? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = label { values["label"] = try JSONValue.encode(value) }
+        return try await create(values: values)
+    }
+    @concurrent public func update(label: String?? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = label { values["label"] = try JSONValue.encode(value) }
+        return try await update(values: values)
+    }
+    @concurrent public func setVideo(video: Blob) async throws -> Self {
+        let values = try JSONValue.read(#"{}"#).objectValue
+        return try await act("set_video", values: values, args: ["video": try JSONValue.encode(video)])
+    }
+    @concurrent public static func setVideo(video: Blob) async throws -> Self {
+        guard let current = try await singleton.live.current().first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
+        return try await current.setVideo(video: video)
+    }
+}
+
 public struct Clip: DBModel {
     public static let modelName = "Clip"
     public let id: String
@@ -929,4 +981,9 @@ public enum Operations {
         if let value = upToSequence { variables["upToSequence"] = try JSONValue.encode(value) }
         return try await DB.run("containerMedia", variables: variables, as: ContainerMediaLoadResult.self)
     }
+}
+
+
+public extension BlobUpload {
+    static let videoIntro = BlobUpload(name: "video_intro", create: "BlobCreate")
 }

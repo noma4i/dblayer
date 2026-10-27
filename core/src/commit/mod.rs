@@ -132,6 +132,8 @@ pub struct UploadAdmission {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperationTransition {
+    BeginBlob { record: OperationRecord, item: UploadAdmission, id: String, name: String },
+    RetireBlob { id: String, expired: bool },
     Begin(OperationRecord),
     BeginUpload { record: OperationRecord, items: Vec<UploadAdmission> },
     RemoveUploadItem { seq: i64, position: i64, inputs: Vec<(i64, crate::upload::UploadInput)> },

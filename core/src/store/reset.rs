@@ -85,6 +85,7 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
 }
 
 pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String]>, quarantined: Option<QuarantineReason>) -> Result<(), StoreError> {
+    if models.is_none() { connection.execute_batch("DELETE FROM blob_use; DELETE FROM blob_upload;")?; }
     let open: Vec<(i64, String)> = connection.prepare("SELECT seq, action_key FROM op")?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
     for (seq, action_key) in open {
         let owner = Operation::split_action_key(&action_key).map(|(owner, _)| owner).unwrap_or_default();
@@ -95,6 +96,7 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
             let input = read_value(connection, seq, "input")?.unwrap_or(serde_json::Value::Null);
             quarantine_add(connection, Some(&owner), &input, reason)?;
         }
+        super::blob::release(connection, seq, false)?;
         delete_operation(connection, seq)?;
     }
     match models {

@@ -20,6 +20,8 @@ mod retention;
 mod state;
 mod transport;
 mod upload_accepted;
+mod blob;
+pub use blob::{BlobChanges, WireBlobSnapshot};
 pub mod upload_wire;
 pub mod wire;
 

@@ -63,6 +63,7 @@ pub(crate) struct Shared {
     pub files_gate: Mutex<()>,
     pub upload_accepted: Mutex<Option<super::upload_accepted::UploadAcceptedCallback>>,
     pub upload_round: Mutex<super::upload_round::UploadRound>,
+    pub blob_failed_ttl_ms: std::sync::atomic::AtomicI64,
     pub expiry_gate: Mutex<()>,
     #[cfg(test)]
     pub panic_key: Mutex<Option<String>>,
@@ -261,6 +262,7 @@ impl Db {
             files_gate: Mutex::new(()),
             upload_accepted: Mutex::new(None),
             upload_round: Mutex::new(super::upload_round::UploadRound::default()),
+            blob_failed_ttl_ms: std::sync::atomic::AtomicI64::new(crate::upload::UploadConfig::default().failed_ttl.as_millis().try_into().unwrap_or(i64::MAX)),
             expiry_gate: Mutex::new(()),
             #[cfg(test)]
             panic_key: Mutex::new(None),

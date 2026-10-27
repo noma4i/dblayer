@@ -30,6 +30,7 @@ impl Inner {
     }
 
     pub(crate) async fn expire_uploads(self: &Arc<Self>) -> Result<(), SyncError> {
+        self.expire_blobs().await?;
         let limit = i64::try_from(self.config.upload.failed_ttl.as_millis()).unwrap_or(i64::MAX);
         let due = self.now_ms().saturating_sub(limit);
         let running: Vec<i64> = locked(&self.uploads).active.keys().map(|key| key.0).collect();

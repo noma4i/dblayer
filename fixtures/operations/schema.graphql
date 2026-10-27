@@ -1,6 +1,6 @@
-type Query { keywordCall(class: String!): KeywordResult!, ping: Int, inbox(list: ContainerShelfKind, first: Int, after: String): InboxConnection!, containerMembers(containerId: ID!, order: ContainerMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]!, containerMedia(containerId: ID!, upToSequence: Int): ContainerMedia, node(id: ID!): MediaNode }
+type Query { keywordCall(class: String!): KeywordResult!, ping: Int, inbox(list: ContainerShelfKind, first: Int, after: String): InboxConnection!, containerMembers(containerId: ID!, order: ContainerMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]!, containerMedia(containerId: ID!, upToSequence: Int): ContainerMedia, node(id: ID!): MediaNode, blobProfile: BlobProfile }
 type KeywordResult { default: String!, when: String!, container: String!, r: String! }
-type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated, widgetsSend(widgets: [StickerWidgetInput!]): Sticker, clipCreate(signedId: String!, widgets: [StickerWidgetInput!]): ClipCreated, inboxMove(id: ID!, list: ContainerShelfKind!): Inbox }
+type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated, widgetsSend(widgets: [StickerWidgetInput!]): Sticker, clipCreate(signedId: String!, widgets: [StickerWidgetInput!]): ClipCreated, inboxMove(id: ID!, list: ContainerShelfKind!): Inbox, blobCreate(filename: String!, contentType: String!, byteSize: Int!, checksum: String!): BlobGrant!, setVideo(id: ID!, signedId: String!): BlobProfileResult! }
 type ClipCreated { clip: Clip }
 type Clip { id: ID!, title: String }
 type MomentCreated { moment: Moment }
@@ -43,3 +43,6 @@ type Chat implements MediaNode { id: ID!, mediaLibrary(upToSequence: Int): ChatM
 type ChatMediaLibrary { revision: Int64!, visualCount: Int!, audioCount: Int!, giftCount: Int!, latestSequence: Int! }
 type MediaEntry { id: ID!, text: String, sequenceNumber: Int! }
 type MediaConnection { nodes: [MediaEntry!]!, pageInfo: InboxPageInfo! }
+type BlobProfile { id: ID!, label: String }
+type BlobGrant { url: String!, headers: String, signedId: String!, blobId: ID! }
+type BlobProfileResult { profile: BlobProfile! }

@@ -43,6 +43,63 @@ You do not decide where bytes live. Small files are kept inside the database, la
 
 ## Uploads
 
+### Upload before choosing an action
+
+Declare the upload once and use a Blob parameter in its consumer operation:
+
+```ruby
+blob_upload :video_intro, create: "uploadCreate"
+
+operation :set_video do
+  mutation "ProfileSetVideo"
+  parameter :video, :blob
+  optimistic false
+  response from: "profileSetVideo.profile"
+end
+```
+
+The generator checks the create mutation, its file variables, and the consumer's signedId type and binding.
+The generated BlobUpload name and typed operation are available on both platforms.
+Existing UploadOperations multipart declarations apply to these transfers too.
+
+```swift
+let blob = try await DB.upload(.videoIntro, request: UploadRequest(path: url.path))
+let restored = try await DB.blob(blob.id)
+let signedId = try await blob.waitUntilUploaded()
+try await Profile.setVideo(video: blob)
+```
+
+```kotlin
+val blob = DBlayer.upload(BlobUpload.VideoIntro, UploadRequest(file.path))
+val restored = DBlayer.blob(blob.id)
+val signedId = blob.waitUntilUploaded()
+Profile.setVideo(video = blob)
+```
+
+Upload returns a durable reference after the source is accepted, before PUT finishes.
+The snapshot contains state, progress, error and nullable signedId.
+Retry a failed transfer with `try await blob.retry()` on Swift or `blob.retry()` on Kotlin.
+Discard an unused Blob with `try await blob.discard()` on Swift or `blob.discard()` on Kotlin.
+Swift reads `blob.snapshot`. Kotlin reads `blob.snapshot.value`.
+An operation can accept an uploading Blob. The core waits and supplies signedId itself.
+The snapshot states are uploading, uploaded, failed, expired, discarded and consumed.
+Only one operation can pin a Blob. A second pin fails explicitly.
+An unknown mutation outcome keeps the pin. Discard rejects a pinned Blob.
+Confirmed success removes local bytes and the transfer operation.
+A final refusal releases the pin and preserves the uploaded Blob for another choice until expiry.
+The upload and confirmed multipart parts survive reopening under the same id.
+Leaving the editor does not cancel the transfer.
+
+An unused uploaded Blob expires seven days after createBlob, not after PUT or multipart completion.
+Multipart creation is recorded at init. Failed transfers retain UploadConfig.failed_ttl, measured from failure.
+Expiry is checked at startup, network return and use acceptance. No expiry timer runs.
+Expired Blobs fail before the consumer mutation is sent. Local bytes are removed without deleting the server blob.
+Before every multipart part is confirmed, failure can abort the multipart.
+After confirmation, retry repeats complete and startup cleanup preserves the confirmed parts.
+Explicit discard and failed expiry still abort an unfinished multipart, including confirmed parts awaiting complete.
+The existing iOS and Android background transfer paths apply without additional app steps.
+An unused uploaded Blob without readers sends no periodic requests and schedules no wakeups.
+
 An upload sends a local file to storage and then runs one content mutation with the stored blob. It is an operation of the library: it lives in the same queue as other pending operations, survives restarts, and shows its state on the record.
 
 After the upload call returns, the library owns a copy of the source. The application can delete its temporary file.

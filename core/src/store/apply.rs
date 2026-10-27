@@ -583,7 +583,7 @@ pub(crate) fn apply_envelope(
     }
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
-    wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
+    wrote |= apply_transitions(connection, models, envelope.generation, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
     let is_batch = |key: &str| crate::operation::Operation::upload_action(key).is_some_and(|(model, action)| models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some())));
     for (model, id) in recompute_sync_with(connection, &synced_keys, &is_batch)? {
         let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);
@@ -649,7 +649,8 @@ pub(crate) fn apply_envelope(
         }).collect();
         for transition in &envelope.operation_transitions {
             let seq = match transition {
-                OperationTransition::Begin(record) | OperationTransition::BeginUpload { record, .. } => record.seq,
+                OperationTransition::Begin(record) | OperationTransition::BeginUpload { record, .. } | OperationTransition::BeginBlob { record, .. } => record.seq,
+                OperationTransition::RetireBlob { .. } => None,
                 OperationTransition::Progress { seq, state, .. } if state.phase == crate::upload::UploadStatus::Queued => Some(*seq),
                 OperationTransition::Progress { .. } | OperationTransition::BackgroundRefused { .. } => None,
                 OperationTransition::RemoveUploadItem { seq, .. } | OperationTransition::SeparateUploads { seq, .. }
@@ -876,6 +877,8 @@ fn stamp_owned_fields(connection: &Connection, info: &ModelInfo, id: &str, owned
 
 fn apply_transitions(
     connection: &Connection,
+    models: &BTreeMap<String, ModelInfo>,
+    generation: Generation,
     transitions: &[OperationTransition],
     now_ms: i64,
     synced: &mut BTreeSet<SyncKey>,
@@ -884,6 +887,28 @@ fn apply_transitions(
     let mut wrote = false;
     for transition in transitions {
         match transition {
+            OperationTransition::BeginBlob { record, item, id, name } => {
+                let seq = begin_operation(connection, record)?;
+                crate::operation::write_upload(connection, seq, 0, &item.state)?;
+                write_item_source(connection, seq, 0, item)?;
+                connection.execute("INSERT INTO blob_upload (id, name, seq, generation) VALUES (?1, ?2, ?3, ?4)", params![id, name, seq, generation.value() as i64])?;
+                result.operations.insert(seq);
+                wrote = true;
+            }
+            OperationTransition::RetireBlob { id, expired } => {
+                let row: Option<(Option<i64>, Option<i64>)> = connection.query_row("SELECT seq, consumer_seq FROM blob_upload WHERE id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+                if let Some((Some(seq), owner)) = row {
+                    if owner.is_some() {
+                        if *expired { continue; }
+                        return Err(StoreError::Constraint("Blob is pinned to an operation".into()));
+                    }
+                    crate::operation::record_orphan_uploads(connection, seq, None)?;
+                    connection.execute("UPDATE blob_upload SET seq = NULL, ready = 0, expired = ?1 WHERE id = ?2", params![expired, id])?;
+                    delete_operation(connection, seq)?;
+                    result.operations.insert(seq);
+                    wrote = true;
+                }
+            }
             OperationTransition::BeginUpload { record, items } => {
                 let seq = begin_operation(connection, record)?;
                 for (position, item) in items.iter().enumerate() {
@@ -922,6 +947,7 @@ fn apply_transitions(
                     synced.extend(op_keys_of(connection, seq)?);
                 }
                 let seq = begin_operation(connection, record)?;
+                super::blob::pin(connection, seq, record, models, now_ms)?;
                 synced.extend(operation_keys(&record.action_key, &record.row_ids, record.temp_id.as_ref()));
                 result.operations.insert(seq);
                 wrote = true;
@@ -934,6 +960,10 @@ fn apply_transitions(
                     continue;
                 }
                 synced.extend(op_keys_of(connection, *seq)?);
+                if *status == OperationStatus::RolledBack && connection.query_row("SELECT EXISTS (SELECT 1 FROM blob_upload b JOIN op o ON o.seq = b.consumer_seq WHERE o.seq = ?1 AND o.status = 'delivery_unknown')", [seq], |row| row.get::<_, bool>(0))? {
+                    return Err(StoreError::Constraint("Blob owner has an unknown outcome".into()));
+                }
+                result.operations.extend(super::blob::release(connection, *seq, *status == OperationStatus::Committed)?);
                 if *status == OperationStatus::RolledBack {
                     crate::operation::record_orphan_uploads(connection, *seq, None)?;
                 }
@@ -946,6 +976,10 @@ fn apply_transitions(
                 if set_open_status(connection, *seq, *status, failure, now_ms)? == 0 {
                     result.unknown_operation_acks += 1;
                     continue;
+                }
+                if *status == OperationStatus::Failed {
+                    connection.execute("UPDATE blob_upload SET ready = 0, failed_at = COALESCE(failed_at, ?1) WHERE seq = ?2", params![now_ms, seq])?;
+                    if failure.kind == crate::syncstate::FailureKind::Rejected { super::blob::release(connection, *seq, false)?; }
                 }
                 result.operations.insert(*seq);
                 wrote = true;
@@ -981,6 +1015,10 @@ fn apply_transitions(
             OperationTransition::Progress { seq, item_position, state } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let saved = crate::operation::write_upload(connection, *seq, *item_position, state)?;
+                connection.execute("UPDATE blob_upload SET ready = ?1, failed_at = ?2, signed_id = ?3, total_bytes = ?4, sent_bytes = ?5 WHERE seq = ?6", params![state.transferred, state.failed_at.map(|at| at as i64), state.signed_id, state.total_bytes as i64, state.sent_bytes as i64, seq])?;
+                if matches!(state.stage, crate::upload::UploadStage::Create | crate::upload::UploadStage::Init) && state.put_url.is_none() && state.upload_id.is_none() {
+                    connection.execute("UPDATE blob_upload SET created_at = ?1 WHERE seq = ?2", params![now_ms, seq])?;
+                }
                 if saved == 0 {
                     result.unknown_operation_acks += 1;
                     continue;
@@ -998,10 +1036,12 @@ fn apply_transitions(
                     result.unknown_operation_acks += 1;
                     continue;
                 }
+                connection.execute("UPDATE blob_upload SET ready = 0, failed_at = COALESCE(failed_at, ?1) WHERE seq = ?2", params![now_ms, seq])?;
                 result.operations.insert(*seq);
                 wrote = true;
             }
             OperationTransition::Retry { seq } => {
+                super::blob::retry(connection, *seq, models, now_ms)?;
                 synced.extend(op_keys_of(connection, *seq)?);
                 connection.execute("UPDATE op_item SET background_refused = NULL WHERE seq = ?1", params![seq])?;
                 let retried = connection.execute(
@@ -1013,6 +1053,7 @@ fn apply_transitions(
                     continue;
                 }
                 connection.execute("DELETE FROM op_item_retry WHERE seq = ?1", [seq])?;
+                connection.execute("UPDATE blob_upload SET failed_at = NULL WHERE seq = ?1", [seq])?;
                 write_operation_error(connection, *seq, None)?;
                 result.operations.insert(*seq);
                 wrote = true;
@@ -1024,6 +1065,10 @@ fn apply_transitions(
                     None => true,
                 };
                 if matches {
+                    if connection.query_row("SELECT EXISTS (SELECT 1 FROM blob_upload b JOIN op o ON o.seq = b.consumer_seq WHERE o.seq = ?1 AND o.status = 'delivery_unknown')", [seq], |row| row.get::<_, bool>(0))? {
+                        return Err(StoreError::Constraint("Blob owner has an unknown outcome".into()));
+                    }
+                    super::blob::release(connection, *seq, false)?;
                     crate::operation::record_orphan_uploads(connection, *seq, None)?;
                 }
                 let removed = if matches { delete_operation(connection, *seq)? } else { 0 };

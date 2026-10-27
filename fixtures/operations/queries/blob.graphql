@@ -1,0 +1,7 @@
+query BlobProfileCurrent { blobProfile { id label } }
+mutation BlobCreate($filename: String!, $contentType: String!, $byteSize: Int!, $checksum: String!) {
+  blobCreate(filename: $filename, contentType: $contentType, byteSize: $byteSize, checksum: $checksum) { url headers signedId blobId }
+}
+mutation BlobSetVideo($blobProfileId: ID!, $signedId: String!) {
+  setVideo(id: $blobProfileId, signedId: $signedId) { profile { id label } }
+}

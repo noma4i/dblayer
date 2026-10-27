@@ -4,6 +4,9 @@ mod run;
 #[cfg(test)]
 mod run_tests;
 mod steps;
+mod blob;
+#[cfg(test)]
+mod blob_tests;
 
 #[cfg(test)]
 mod batch_tests;

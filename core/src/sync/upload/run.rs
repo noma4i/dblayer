@@ -26,6 +26,7 @@ pub(super) struct Runner {
     pub(super) input: UploadInput,
     source_error: Option<String>,
     file_id: Option<String>,
+    owner: crate::upload::UploadOwner,
     inline_file: Mutex<Option<(String, String, Vec<u8>)>>,
     model: String,
     batch: bool,
@@ -84,7 +85,11 @@ pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, 
 impl Runner {
     pub(super) fn load(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, transfer: bool) -> Result<Option<Self>, super::super::SyncError> {
         let Some(entry) = inner.outbox_operation(seq)? else { return Ok(None) };
-        let (model, _) = Operation::split_action_key(&entry.operation.action_key).ok_or_else(|| super::super::SyncError::Malformed("the upload action key is invalid".into()))?;
+        let owner = match inner.blob_id(seq)? {
+            Some(id) => crate::upload::UploadOwner::Blob { id },
+            None => crate::upload::UploadOwner::Action { model: Operation::split_action_key(&entry.operation.action_key).ok_or_else(|| super::super::SyncError::Malformed("the upload action key is invalid".into()))?.0 },
+        };
+        let model = match &owner { crate::upload::UploadOwner::Action { model } => model.clone(), crate::upload::UploadOwner::Blob { .. } => String::new() };
         let Some(state) = inner.operation_uploads(seq)?.remove(&(seq, position)) else { return Ok(None) };
         let needs_file = transfer && !state.is_transferred();
         let (mut input, file, source_error, file_id) = inner.db.shared.read(&[], |reader| {
@@ -117,9 +122,9 @@ impl Runner {
             };
             input.path = path.to_string_lossy().into_owned();
         }
-        let batch = inner.db.spec(&model)?.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&input.steps.mutation));
+        let batch = match &owner { crate::upload::UploadOwner::Action { model } => inner.db.spec(model)?.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&input.steps.mutation)), crate::upload::UploadOwner::Blob { .. } => false };
         let progress = TransferProgress::new(state.total_bytes, inner.config.upload.tick);
-        Ok(Some(Self { inner, seq, position, run, token, batch, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
+        Ok(Some(Self { inner, seq, position, run, token, batch, owner, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
     }
 
     pub(super) fn snapshot(&self) -> UploadState {
@@ -176,6 +181,12 @@ impl Runner {
         };
         self.inner.release_file_slot(self.seq, self.position, self.run);
         let result = match transferred {
+            Ok(()) if matches!(self.owner, crate::upload::UploadOwner::Blob { .. }) => {
+                match self.save(UploadEvent::BlobUploaded) {
+                    Ok(()) => self.inner.flush().await.map(|_| ()).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string()))),
+                    Err(error) => Err(error),
+                }
+            }
             Ok(()) => self.mutation().await,
             Err(stop) => Err(stop),
         };

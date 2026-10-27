@@ -15,6 +15,54 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
 @Immutable
+data class BlobProfile(
+    override val id: String,
+    val label: String? = null,
+    override val sync: SyncInfo = SyncInfo(),
+    override val uploads: Map<String, UploadInfo> = emptyMap()
+) : DBModel {
+    override val modelName get() = "BlobProfile"
+    companion object : ModelDecoder<BlobProfile> {
+        override val layout = "cae70f3b4f7f7821a632570ad1a489bc597e5b848b1ccc6df664113173d98031"
+        override val modelName = "BlobProfile"
+        override fun decode(row: WireRow): BlobProfile {
+            val r = CellReader(row.cells)
+            return BlobProfile(
+                id = row.id,
+                label = r.opt(0, Cell::asText),
+                sync = SyncInfo.of(row.sync),
+                uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+            )
+        }
+
+        val label = Column<BlobProfile, String?>("label")
+        fun find(id: String) = Query("BlobProfile", this).find(id)
+        fun where(condition: Condition) = Query("BlobProfile", this).where(condition)
+        fun ids(ids: List<String>) = idsQuery("BlobProfile", this, ids)
+        fun entity(id: String) = entityOf("BlobProfile", this, id)
+        val current: Query<BlobProfile> get() {
+            var built = Query("BlobProfile", this, relation = "current", params = buildJsonObject {  })
+            return built
+        }
+        fun entity() = singletonEntityOf("BlobProfile", this, current)
+        suspend fun setVideo(video: Blob) = requireNotNull(current.live.current().firstOrNull()) { "singleton is missing" }.setVideo(video)
+        suspend fun create(label: String? = null): BlobProfile = offCaller {
+            val values = buildJsonObject {
+                label?.let { put("label", jsonValue(it)) }
+            }
+            read(DBlayer.database.create("BlobProfile", values.jsonText(), "{}"))
+        }
+    }
+    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted): BlobProfile = offCaller {
+        val values = buildJsonObject {
+            put("label", label)
+        }
+        BlobProfile.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+    }
+    suspend fun setVideo(video: Blob): BlobProfile = act("set_video", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf("video" to jsonValue(video))), BlobProfile)
+}
+
+@Immutable
 data class Clip(
     override val id: String,
     val title: String? = null,
@@ -538,3 +586,6 @@ object Operations {
         DBlayer.run("containerMedia", JsonObject(variables), ContainerMediaLoadResult.serializer())
     }
 }
+
+
+val BlobUpload.Companion.VideoIntro: BlobUpload get() = BlobUpload("video_intro", "BlobCreate")
