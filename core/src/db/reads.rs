@@ -18,7 +18,7 @@ pub(crate) enum ReadTarget {
     Publish { key: String, token: u64, previous: Arc<Version>, grow: Option<(usize, usize)> },
     Join { key: String, token: u64, joiners: Vec<u64> },
     Open { key: String, token: u64 },
-    Entities { key: String, ids: BTreeSet<RowId> },
+    Entities { key: String, ids: BTreeSet<RowId>, leases: std::collections::BTreeMap<RowId, u64> },
 }
 
 pub(crate) enum ReadRows {

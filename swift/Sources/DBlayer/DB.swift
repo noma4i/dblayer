@@ -14,7 +14,7 @@ public enum DB {
 
   @MainActor public static func logout() async throws {
     try await database.logout()
-    EntityRegistries.resetAll()
+    await EntityRegistries.settleAll()
   }
 
   @MainActor public static func close() {

@@ -120,7 +120,7 @@ fn inv_observe_08_an_entity_call_that_passed_the_cancel_check_does_not_start_aft
     let (at_the_call, release) = hold_before_the_call(&observer.subscriber.call_state);
     let delivering = {
         let (subscriber, executor) = (observer.subscriber.clone(), db.shared.executor.clone());
-        std::thread::spawn(move || subscriber.post(&executor, vec![(super::fixtures::rid("m1"), (1, 0), None)]))
+        std::thread::spawn(move || subscriber.post(&executor, vec![(super::fixtures::rid("m1"), (1, 0), None, 1)]))
     };
     at_the_call.recv_timeout(WAIT).unwrap();
     observer.subscriber.call_state.cancel();

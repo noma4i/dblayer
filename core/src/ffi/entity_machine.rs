@@ -24,7 +24,7 @@ pub enum EntityRead {
     Failed { error: EntityRefreshError },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EntityVerdict {
     pub applied: bool,
     pub cleared: bool,
@@ -47,7 +47,6 @@ enum Event {
     ReadEnded { error: Option<EntityRefreshError>, feed: Option<u64> },
     Reset,
     BeginFeed,
-    Unopened { feed: u64 },
     Close,
 }
 
@@ -81,7 +80,6 @@ impl Flow {
     }
 
     fn drop_value(&mut self, effect: &mut Effect) {
-        self.revision = i64::MIN;
         self.stale = false;
         self.delivered = false;
         self.reading = false;
@@ -111,10 +109,8 @@ impl Flow {
             }
             Event::Accept { .. } => Handled,
             Event::Fail { message, feed } if self.admits(*feed) => {
-                if self.reading {
-                    self.reading = false;
-                    self.read = EntityRead::Failed { error: EntityRefreshError::Failed { message: message.clone() } };
-                }
+                self.reading = false;
+                self.read = EntityRead::Failed { error: EntityRefreshError::Failed { message: message.clone() } };
                 Transition(State::failed(message.clone()))
             }
             Event::Fail { .. } => Handled,
@@ -129,22 +125,16 @@ impl Flow {
                 Handled
             }
             Event::ReadEnded { .. } => Handled,
-            Event::Reset if self.singleton => {
+            Event::Reset => {
                 self.drop_value(context);
                 self.active = 0;
                 Transition(State::opening())
             }
-            Event::Reset => Handled,
             Event::BeginFeed => {
                 self.active = NEXT_FEED.fetch_add(1, Ordering::Relaxed);
                 self.reading = self.singleton;
                 Handled
             }
-            Event::Unopened { feed } if self.admits(Some(*feed)) => {
-                self.drop_value(context);
-                Transition(State::closed())
-            }
-            Event::Unopened { .. } => Handled,
             Event::Close => {
                 self.drop_value(context);
                 Transition(State::closed())
@@ -180,7 +170,6 @@ impl Flow {
 }
 
 /// The one owner of the transitions of an `Entity`: seed, revision order, stale, failure, reset and close. The platform keeps the typed value and shows the verdict.
-#[derive(uniffi::Object)]
 pub struct EntityMachine {
     flow: Mutex<InitializedStateMachine<Flow>>,
 }
@@ -198,14 +187,12 @@ impl EntityMachine {
             State::Closed {} => EntityStage::Closed,
         };
         let inner = flow.inner();
-        let settled = !inner.reading || matches!(stage, EntityStage::Present);
+        let settled = (!matches!(stage, EntityStage::Opening) && (!inner.reading || matches!(stage, EntityStage::Present))) || (!inner.reading && matches!(inner.read, EntityRead::Failed { .. }));
         EntityVerdict { applied: effect.applied, cleared: effect.cleared, stage, stale: inner.stale, revision: inner.revision, feed: inner.active, read: inner.read.clone(), settled }
     }
 }
 
-#[uniffi::export]
 impl EntityMachine {
-    #[uniffi::constructor]
     pub fn new(singleton: bool) -> Self {
         Self { flow: Mutex::new(Flow::new(singleton).uninitialized_state_machine().init_with_context(&mut Effect::default())) }
     }
@@ -225,8 +212,6 @@ impl EntityMachine {
     pub fn reset(&self) -> EntityVerdict { self.send(Event::Reset) }
 
     pub fn begin_feed(&self) -> EntityVerdict { self.send(Event::BeginFeed) }
-
-    pub fn unopened(&self, feed: u64) -> EntityVerdict { self.send(Event::Unopened { feed }) }
 
     pub fn database_closed(&self) -> EntityVerdict { self.send(Event::Close) }
 }

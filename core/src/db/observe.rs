@@ -705,12 +705,12 @@ impl Shared {
                 (ReadTarget::Join { key, token, joiners }, ReadRows::Whole(loaded)) => self.apply_join(&key, token, &joiners, loaded),
                 (ReadTarget::Join { key, token, .. }, ReadRows::Moved) => self.rejoin_after_publish(&key, token),
                 (ReadTarget::Open { key, token }, ReadRows::Evaluated(evaluated)) => self.apply_open(&key, token, evaluated),
-                (ReadTarget::Entities { key, ids }, ReadRows::Entities { position, loaded }) => self.apply_entities(&key, &ids, Ok((position, loaded))),
+                (ReadTarget::Entities { key, ids, leases }, ReadRows::Entities { position, loaded }) => self.apply_entities(&key, &ids, &leases, Ok((position, loaded))),
                 _ => {}
             },
             ReadResult::ReadFailed { target, error } => {
                 match target {
-                    ReadTarget::Entities { key, ids } => return self.apply_entities(&key, &ids, Err(error)),
+                    ReadTarget::Entities { key, ids, leases } => return self.apply_entities(&key, &ids, &leases, Err(error)),
                     ReadTarget::Publish { key, token, .. } | ReadTarget::Join { key, token, .. } => {
                         locked(&self.counters).query_reads_failed += 1;
                         let mut observers = self.observers();

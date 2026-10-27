@@ -5,10 +5,10 @@ const MAX_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_COUNT: usize = 200;
 const MAX_AGE: u64 = 120_000;
 
-#[derive(uniffi::Record)]
 pub struct RetentionChange {
     pub selected: Option<u64>,
     pub evicted: Vec<u64>,
+    #[cfg(test)]
     pub count: u32,
 }
 
@@ -48,18 +48,15 @@ impl RetainedRows {
     }
 
     fn change(&self, model: &str, selected: Option<u64>, evicted: Vec<u64>) -> RetentionChange {
-        RetentionChange { selected, evicted, count: self.models.get(model).map_or(0, |rows| rows.len() as u32) }
+        RetentionChange { selected, evicted, #[cfg(test)] count: self.models.get(model).map_or(0, |rows| rows.len() as u32) }
     }
 }
 
-#[derive(uniffi::Object)]
 pub struct RetentionPool {
     rows: Mutex<RetainedRows>,
 }
 
-#[uniffi::export]
 impl RetentionPool {
-    #[uniffi::constructor]
     pub fn new() -> Arc<Self> {
         Arc::new(Self { rows: Mutex::new(RetainedRows::default()) })
     }
@@ -100,6 +97,7 @@ impl RetentionPool {
         rows.change(&model, selected, evicted)
     }
 
+    #[cfg(test)]
     pub fn count(&self, model: String, now: u64) -> RetentionChange {
         let mut rows = crate::db::locked(&self.rows);
         let mut evicted = Vec::new();

@@ -10,6 +10,8 @@
 - Limit derived preloads with `preload ..., limit: N`.
 - Scopes with `members_complete: true` automatically load all members by cursor.
 - Expose one `LiveWindow.snapshot` with `complete` on Swift and Kotlin.
+- Publish `Entity.snapshot` built in the core on Swift and Kotlin.
+- Read entity nodes only when the row is absent with `fetch: ifMissing`.
 - Repeat `local` declarations with distinct singleton sources in create operations.
 - Filter all subscription effects with value lists and `not`.
 - Share subscription streams across matching model declarations with atomic row updates.
@@ -18,6 +20,7 @@
 - `enterForegroundForTesting()` sends a foreground event to a database opened with `openTesting`.
 
 ### Changed
+- Wait for the first local core snapshot in `waitForInitialLoad()` when an entity has no fetch.
 - `members_complete` windows read SQLite slices without retaining all keys and reject sizes above 200 rows.
 - Derived `preload` requires a positive `limit` for the entire parameter product.
 - Reject `local from:` in update operations.

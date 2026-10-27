@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -41,8 +40,6 @@ class SingletonEntityTest {
     }
 
     private suspend fun loaded(entity: Entity<User>) = withTimeout(5000) { entity.value.first { it != null } }
-
-    private val registry get() = EntityRegistries.of("User", User)
 
     @Test
     fun singletonRefreshStoresBeforeAnyReaderExists() = bounded {
@@ -86,11 +83,9 @@ class SingletonEntityTest {
     fun tenReadersCostOneSubscriptionAndSeeOneValue() = bounded {
         open()
         val readers = listOf(createEntity()) + List(9) { User.entity() }
-        val feed = registry.currentSingleFeed
         refreshTo("1", "Ann")
         loaded(readers[0])
         assertEquals(1, readers.map { System.identityHashCode(it) }.toSet().size)
-        assertTrue(feed != null && feed === registry.currentSingleFeed)
         assertTrue(readers.all { it.value.value?.name == "Ann" && it.id == readers[0].value.value?.id })
         assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
     }
@@ -124,7 +119,6 @@ class SingletonEntityTest {
         assertTrue(entity.value.value == null && entity.id.isEmpty())
         assertTrue(User.entity() === entity)
         assertEquals(0uL, DBlayer.subscriptionCensus().observedQueries)
-        assertNull(registry.currentSingleFeed)
     }
 
     /** REL-24: the next login after a logout loads the new user into the same entity, and a second resume keeps the feed. */
@@ -139,28 +133,7 @@ class SingletonEntityTest {
         DBlayer.resume()
         assertEquals("Bob", loaded(entity)?.name)
         assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
-        val resumed = registry.currentSingleFeed
         DBlayer.resume()
-        assertTrue(resumed === registry.currentSingleFeed)
-    }
-
-    /** A delivery of a feed that a reset replaced writes nothing. */
-    @Test
-    fun aDeliveryOfAReplacedFeedNeverWrites() = bounded {
-        open()
-        val entity = createEntity()
-        val old = registry.currentSingleFeed!!
-        refreshTo("1", "Ann")
-        loaded(entity)
-        DBlayer.logout()
-        transport.enqueue("UserProfile", reply = """{"data":{"me":null}}""")
-        DBlayer.resume()
-        eventually("the profile request after the resume") { transport.calls.size == 3 }
-        assertTrue(User.entity() === entity && entity.value.value == null)
-        registry.receive(old, Long.MAX_VALUE, User(id = "9", name = "Late", typing = false))
-        assertNull(entity.value.value)
-        refreshTo("2", "Bob")
-        assertEquals("Bob", loaded(entity)?.name)
         assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
     }
 
@@ -174,11 +147,10 @@ class SingletonEntityTest {
         val entity = createEntity()
         refreshTo("1", "Ann")
         loaded(entity)
-        val feed = registry.currentSingleFeed!!
-        val before = Triple(feed.delivered, DBlayer.subscriptionCensus().observedQueries, transport.calls.size)
+        val before = Triple(entity.snapshot.value.revision, DBlayer.subscriptionCensus().observedQueries, transport.calls.size)
         clock.advance(10_000L)
         DBlayer.database.flush()
-        assertEquals(before.first, feed.delivered)
+        assertEquals(before.first, entity.snapshot.value.revision)
         assertEquals(before.second, DBlayer.subscriptionCensus().observedQueries)
         assertEquals(before.third, transport.calls.size)
         assertNotNull(entity.value.value)

@@ -13,16 +13,20 @@ use super::observe::Observers;
 use super::reads::{Position, ReadJob, ReadRows, ReadTarget};
 use super::row::Row;
 
+static NEXT_ENTITY_LEASE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub struct EntityChange {
     pub revision: i64,
+    pub epoch: u64,
+    pub leases: BTreeMap<RowId, u64>,
     pub rows: Vec<Row>,
     pub removed: Vec<RowId>,
     pub failure: Option<String>,
 }
 
 struct Known {
+    lease: u64,
     position: Position,
     stamp: Option<Stamp>,
     told: bool,
@@ -79,7 +83,7 @@ impl EntityGroup {
         self.known.keys()
     }
 
-    fn apply_read(&mut self, position: Position, loaded: &HashMap<String, Row>, ids: impl Iterator<Item = RowId>) -> Vec<(RowId, Position, Option<Row>)> {
+    fn apply_read(&mut self, position: Position, loaded: &HashMap<String, Row>, ids: impl Iterator<Item = RowId>) -> Vec<(RowId, Position, Option<Row>, u64)> {
         let mut changes = Vec::new();
         for id in ids {
             let Some(known) = self.known.get_mut(&id) else { continue };
@@ -95,7 +99,7 @@ impl EntityGroup {
             }
             known.told = true;
             known.stamp = stamp;
-            changes.push((id, position, row));
+            changes.push((id, position, row, known.lease));
         }
         changes
     }
@@ -103,9 +107,11 @@ impl EntityGroup {
 
 #[derive(Default)]
 struct Pending {
+    leases: BTreeMap<RowId, u64>,
     rows: BTreeMap<RowId, Row>,
     removed: BTreeSet<RowId>,
     revision: i64,
+    epoch: u64,
     failure: Option<String>,
     scheduled: bool,
 }
@@ -118,14 +124,16 @@ pub(crate) struct EntitySubscriber {
 }
 
 impl EntitySubscriber {
-    pub(crate) fn post(self: &Arc<Self>, executor: &Arc<Executor>, changes: Vec<(RowId, Position, Option<Row>)>) {
+    pub(crate) fn post(self: &Arc<Self>, executor: &Arc<Executor>, changes: Vec<(RowId, Position, Option<Row>, u64)>) {
         if changes.is_empty() {
             return;
         }
         let needs_run = {
             let mut pending = locked(&self.pending);
-            for (id, position, row) in changes {
+            for (id, position, row, lease) in changes {
+                pending.leases.insert(id.clone(), lease);
                 pending.revision = pending.revision.max(position.0);
+                pending.epoch = pending.epoch.max(position.1);
                 match row {
                     Some(row) => {
                         pending.removed.remove(&id);
@@ -146,10 +154,12 @@ impl EntitySubscriber {
 }
 
 impl EntitySubscriber {
-    pub(crate) fn post_failure(self: &Arc<Self>, executor: &Arc<Executor>, error: &DbError) {
+    pub(crate) fn post_failure(self: &Arc<Self>, executor: &Arc<Executor>, error: &DbError, epoch: u64, leases: BTreeMap<RowId, u64>) {
         let needs_run = {
             let mut pending = locked(&self.pending);
             pending.failure = Some(error.to_string());
+            pending.leases.extend(leases);
+            pending.epoch = pending.epoch.max(epoch);
             !std::mem::replace(&mut pending.scheduled, true)
         };
         if needs_run {
@@ -162,6 +172,7 @@ impl EntitySubscriber {
         for id in ids {
             pending.rows.remove(id);
             pending.removed.remove(id);
+            pending.leases.remove(id);
         }
     }
 }
@@ -177,7 +188,7 @@ impl Runnable for EntitySubscriber {
                 }
                 let rows = std::mem::take(&mut pending.rows).into_values().collect();
                 let removed = std::mem::take(&mut pending.removed).into_iter().collect();
-                EntityChange { revision: std::mem::take(&mut pending.revision), rows, removed, failure: pending.failure.take() }
+                EntityChange { revision: std::mem::take(&mut pending.revision), epoch: pending.epoch, leases: std::mem::take(&mut pending.leases), rows, removed, failure: pending.failure.take() }
             };
             if self.call_state.is_cancelled() {
                 continue;
@@ -215,7 +226,10 @@ impl EntityObserver {
             return Ok(());
         }
         for id in &fresh {
-            group.known.entry(id.clone()).or_insert(Known { position: (i64::MIN, 0), stamp: None, told: false });
+            if !group.known.contains_key(id) {
+                let lease = NEXT_ENTITY_LEASE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                group.known.insert(id.clone(), Known { lease, position: (i64::MIN, 0), stamp: None, told: false });
+            }
         }
         group.pending.extend(fresh.iter().cloned());
         observers.index_rows(&self.key, &model, fresh.iter());
@@ -237,6 +251,12 @@ impl EntityObserver {
         observers.unindex_rows(&self.key, &model, gone.iter());
         observers.drop_unused_entities(&self.key);
         subscriber.discard(&gone);
+    }
+
+    pub(crate) fn leases(&self, ids: &[RowId]) -> BTreeMap<RowId, u64> {
+        let Some(shared) = self.shared.upgrade() else { return BTreeMap::new() };
+        let observers = shared.observers();
+        observers.entities.get(&self.key).map(|group| ids.iter().filter_map(|id| Some((id.clone(), group.known.get(id)?.lease))).collect()).unwrap_or_default()
     }
 }
 
@@ -274,7 +294,8 @@ impl Shared {
         }
         let ids = std::mem::take(&mut group.pending);
         let counted = std::mem::take(&mut group.counted);
-        let target = ReadTarget::Entities { key: key.to_string(), ids: ids.clone() };
+        let leases = ids.iter().filter_map(|id| Some((id.clone(), group.known.get(id)?.lease))).collect();
+        let target = ReadTarget::Entities { key: key.to_string(), ids: ids.clone(), leases };
         let model = group.model.clone();
         let wanted = ids.clone();
         let run = move |shared: &Shared| {
@@ -294,7 +315,7 @@ impl Shared {
         }
     }
 
-    pub(crate) fn apply_entities(&self, key: &str, ids: &BTreeSet<RowId>, read: Result<(Position, HashMap<String, Row>), DbError>) {
+    pub(crate) fn apply_entities(&self, key: &str, ids: &BTreeSet<RowId>, leases: &BTreeMap<RowId, u64>, read: Result<(Position, HashMap<String, Row>), DbError>) {
         let _finished = ReadFinished(&self.dispatch.progress);
         if read.is_err() {
             locked(&self.counters).entity_reads_failed += 1;
@@ -302,11 +323,13 @@ impl Shared {
         let mut observers = self.observers();
         let Some(group) = observers.entities.get_mut(key) else { return };
         group.reading = false;
+        let ids: BTreeSet<_> = ids.iter().filter(|id| group.known.get(*id).is_some_and(|known| leases.get(*id) == Some(&known.lease))).cloned().collect();
         let (position, loaded) = match read {
             Ok(loaded) => loaded,
             Err(error) => {
                 group.dirty.extend(ids.iter().filter(|id| group.known.contains_key(*id)).cloned());
-                group.subscriber.clone().post_failure(&self.executor, &error);
+                let failed = ids.iter().filter_map(|id| Some((id.clone(), group.known.get(id)?.lease))).collect();
+                group.subscriber.clone().post_failure(&self.executor, &error, self.ephemeral.lock().epoch, failed);
                 self.pump_entities(&mut observers, key);
                 observers.drop_unused_entities(key);
                 return;
@@ -329,6 +352,17 @@ impl Drop for ReadFinished<'_> {
 }
 
 impl Db {
+    pub(crate) fn entity_present(&self, model: &str, id: &str) -> Result<bool, DbError> {
+        #[cfg(test)]
+        if let Some(error) = self.shared.store.injected_entity_read_failure() { return Err(error.into()); }
+        self.shared.read(&[model], |reader| Ok(reader.point(model, id)?.is_some()))
+    }
+
+    pub(crate) fn entity_row(&self, model: &str, id: &RowId) -> Result<(i64, Option<Row>), DbError> {
+        let ((revision, _), mut loaded) = self.shared.read_entities(&ModelKey::new(model), std::iter::once(id))?;
+        Ok((revision, loaded.remove(id.as_str())))
+    }
+
     pub fn observe_entities(&self, model: &str, listener: impl Fn(&EntityChange) + Send + Sync + 'static) -> Result<EntityObserver, DbError> {
         self.shared.spec(model)?;
         let subscriber = Arc::new(EntitySubscriber { call_state: super::listeners::CallState::new(), pending: Mutex::new(Pending::default()), listener: Box::new(listener), counters: self.shared.counters.clone() });

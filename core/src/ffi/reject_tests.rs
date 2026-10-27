@@ -29,7 +29,7 @@ struct Failures(std::sync::Mutex<Vec<Option<String>>>);
 
 impl super::EntityListener for Failures {
     fn changed(&self, delivery: super::EntityDelivery) {
-        self.0.lock().unwrap().push(delivery.failure);
+        self.0.lock().unwrap().extend(delivery.snapshots.into_iter().map(|snapshot| match snapshot.phase { super::EntityStage::Failed { message } => Some(message), _ => None }));
     }
 }
 
@@ -39,7 +39,7 @@ async fn inv_observe_24_an_entity_read_failure_reaches_the_foreign_listener() {
     let listener = Arc::new(Failures(std::sync::Mutex::new(Vec::new())));
     let live = db.live_entities("Moment".into(), listener.clone()).unwrap();
     db.db.shared.store.fail_next_entity_reads(1);
-    live.retain(vec!["m1".into()], super::EntityFetch::None).unwrap();
+    live.retain(vec![super::EntityRequest { id: "m1".into(), lease: 1, fetch: super::EntityFetch::None }]).unwrap();
     db.db.await_revision(db.db.revision_seq().unwrap());
     let told = listener.0.lock().unwrap().clone();
     assert_eq!(told.len(), 1);

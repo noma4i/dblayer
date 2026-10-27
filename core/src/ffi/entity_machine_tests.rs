@@ -36,9 +36,9 @@ fn a_closed_entity_ignores_every_later_event() {
     let machine = EntityMachine::new(false);
     machine.accept(1, true, None);
     let closed = machine.database_closed();
-    assert!(closed.cleared && closed.stage == EntityStage::Closed && closed.revision == i64::MIN);
-    for verdict in [machine.accept(9, true, None), machine.seed(9), machine.fail("late".into(), None), machine.reset(), machine.unopened(1)] {
-        assert!(!verdict.applied && !verdict.cleared && verdict.stage == EntityStage::Closed && verdict.revision == i64::MIN);
+    assert!(closed.cleared && closed.stage == EntityStage::Closed && closed.revision == 1);
+    for verdict in [machine.accept(9, true, None), machine.seed(9), machine.fail("late".into(), None), machine.reset()] {
+        assert!(!verdict.applied && !verdict.cleared && verdict.stage == EntityStage::Closed && verdict.revision == 1);
     }
 }
 
@@ -50,7 +50,7 @@ fn a_singleton_accepts_only_the_current_feed_and_a_reset_replaces_it() {
     assert!(machine.accept(1, true, Some(first)).applied);
     assert!(!machine.accept(2, true, Some(first + 1)).applied);
     let reset = machine.reset();
-    assert!(reset.cleared && reset.stage == EntityStage::Opening && reset.revision == i64::MIN && reset.feed == 0);
+    assert!(reset.cleared && reset.stage == EntityStage::Opening && reset.revision == 1 && reset.feed == 0);
     assert!(!machine.accept(i64::MAX, true, Some(first)).applied);
     assert!(machine.fail("old feed".into(), Some(first)).stage == EntityStage::Opening);
     let second = machine.begin_feed().feed;
@@ -62,7 +62,7 @@ fn a_singleton_accepts_only_the_current_feed_and_a_reset_replaces_it() {
 }
 
 #[test]
-fn reset_and_close_differ_and_a_plain_entity_keeps_its_state_on_reset() {
+fn reset_and_close_differ_and_reset_opens_each_entity_without_lowering_revision() {
     let singleton = EntityMachine::new(true);
     let feed = singleton.begin_feed().feed;
     singleton.accept(3, true, Some(feed));
@@ -71,17 +71,7 @@ fn reset_and_close_differ_and_a_plain_entity_keeps_its_state_on_reset() {
     let plain = EntityMachine::new(false);
     plain.accept(3, true, None);
     let kept = plain.reset();
-    assert!(!kept.cleared && kept.stage == EntityStage::Present && kept.revision == 3);
-}
-
-#[test]
-fn an_unopened_feed_closes_only_when_it_is_current() {
-    let machine = EntityMachine::new(true);
-    let first = machine.begin_feed().feed;
-    machine.reset();
-    let second = machine.begin_feed().feed;
-    assert_eq!(machine.unopened(first).stage, EntityStage::Opening);
-    assert_eq!(machine.unopened(second).stage, EntityStage::Closed);
+    assert!(kept.cleared && kept.stage == EntityStage::Opening && kept.revision == 3 && !kept.settled);
 }
 
 #[test]
@@ -94,7 +84,6 @@ fn a_feed_of_one_machine_changes_nothing_in_another() {
     assert_ne!(old, current);
     assert!(!second.accept(1, true, Some(old)).applied);
     assert_eq!(second.fail("old".into(), Some(old)).stage, EntityStage::Opening);
-    assert_eq!(second.unopened(old).stage, EntityStage::Opening);
     assert!(second.accept(1, true, Some(current)).applied);
 }
 
@@ -109,7 +98,8 @@ fn the_read_outcome_moves_from_not_loaded_to_loaded_or_failed_and_a_wait_settles
     assert!(offline.read == EntityRead::Failed { error: EntityRefreshError::Offline } && offline.settled);
     other.read_started();
     let landed = other.read_ended(None, None);
-    assert!(landed.read == EntityRead::Loaded && landed.settled);
+    assert!(landed.read == EntityRead::Loaded && !landed.settled, "a read that ends before the first snapshot waits for it");
+    assert!(other.accept(1, true, None).settled);
     let cached = EntityMachine::new(false);
     cached.read_started();
     assert!(cached.seed(2).settled, "a value already there ends the wait");
@@ -120,7 +110,7 @@ fn the_read_outcome_moves_from_not_loaded_to_loaded_or_failed_and_a_wait_settles
     assert!(!singleton.read_ended(None, Some(feed + 1)).settled, "another feed ends nothing");
     assert!(singleton.read_ended(None, Some(feed)).read == EntityRead::Loaded);
     let reset = singleton.reset();
-    assert!(reset.read == EntityRead::NotLoaded && reset.settled);
+    assert!(reset.read == EntityRead::NotLoaded && !reset.settled);
     let again = singleton.begin_feed().feed;
     let failed = singleton.fail("boom".into(), Some(again));
     assert!(failed.settled && failed.read == EntityRead::Failed { error: EntityRefreshError::Failed { message: "boom".into() } });

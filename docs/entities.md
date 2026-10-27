@@ -16,9 +16,9 @@ val author = User.entity(moment.userId)   // hold it while the author is shown
 val name by author.value.collectAsState()
 ```
 
-`value` is the newest known state of the record. The first reader receives a cached row immediately when it is in memory. A second reader of a live id receives the same object and opens no new subscription.
+`value` is the newest known state of the record. Swift publishes `entity.snapshot` and Kotlin a `StateFlow<EntitySnapshot<Model>>` with `value`, `phase`, `read`, `revision`, `isStale` and `settled`. The core builds every snapshot, the platform only carries it. A new entity is `opening` until the first snapshot of the core arrives, and no native call runs on the main thread. A second reader of a live id receives the same object and opens no new subscription.
 
-A model with a `node: :one` scope can ask the core to read the record when a reader appears. `fetch:` takes `none` (the default), `stale` and `force`. `stale` reads the node only when the row is missing or its freshness ran out. `force` reads it for every new first reader, so opening a screen again sends a new request. A second reader of a live id sends nothing, and overlapping reads of one id share one request. The row lands like any server row. The outcome of the read shows in `read` next to `phase`: `notLoaded` until the read ends, then `loaded`, or `failed` with `offline` or `failed(message)`. A read that found no network repeats once when the network returns and then moves `read` to `loaded`. A model without a node scope has no `fetch:` overload.
+A model with a `node: :one` scope can ask the core to read the record when a reader appears. `fetch:` takes `none` (the default), `stale`, `force` and `ifMissing`. `ifMissing` sends no request when the row exists in the database, whatever its age, and does not refresh the node window. Otherwise it reads the node and retries when the network returns, like `stale`. `stale` checks the node window for this model, relation and id. A row loaded by a list does not refresh that window. `force` reads it for every new first reader, so opening a screen again sends a new request. A second reader of a live id sends nothing, and overlapping reads of one id share one request. The row lands like any server row. The outcome of the read shows in `read` next to `phase`: `notLoaded` until the read ends, then `loaded`, or `failed` with `offline` or `failed(message)`. A read that found no network repeats once when the network returns and then moves `read` to `loaded`. A model without a node scope has no `fetch:` overload.
 
 ```swift
 let group = Group.entity(id, fetch: .force)   // one node read per new first reader
@@ -30,7 +30,15 @@ val group = Group.entity(id, fetch = EntityFetch.FORCE)   // one node read per n
 val read by group.read.collectAsState()
 ```
 
-`waitForInitialLoad()` waits for the first load of an entity. It reuses the read the entity already started and sends no request of its own, which is the first read of `fetch:` for an id entity and the live read of the relation for a singleton. It returns when the read has ended or when a value is already there, so a loaded entity returns at once. It throws the error of a failed read (Swift: `EntityRefreshError`, Kotlin: `EntityReadException` with `error`) and an interrupted error when the database closes. An entity without `fetch:` has no read to wait for and returns at once.
+```swift
+let chat = Chat.entity(id, fetch: .ifMissing)   // no node read when Chat.list already stored the row
+```
+
+```kotlin
+val chat = Chat.entity(id, fetch = EntityFetch.IF_MISSING)   // no node read when Chat.list already stored the row
+```
+
+`waitForInitialLoad()` waits for the first load of an entity. It reuses the read the entity already started and sends no request of its own, which is the first read of `fetch:` for an id entity and the live read of the relation for a singleton. An entity without a read (`fetch: none`) returns after the first local snapshot of the core and makes 0 HTTP requests. It throws the error of a failed read (Swift: `EntityRefreshError`, Kotlin: `EntityReadException` with `error`) and an interrupted error when the database closes.
 
 ```swift
 let me = CurrentUser.entity()

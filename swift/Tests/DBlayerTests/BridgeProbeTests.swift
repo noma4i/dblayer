@@ -366,39 +366,39 @@ struct BridgeProbeTests {
 
 final class EntityCollector: EntityListener, @unchecked Sendable {
   private let lock = NSLock()
-  private var received: [EntityDelivery] = []
-  func changed(delivery: EntityDelivery) { lock.withLock { received.append(delivery) } }
-  var deliveries: [EntityDelivery] { lock.withLock { received } }
-  func wait(for count: Int) async -> [EntityDelivery] {
-    await eventually("\(count) entity deliveries") { deliveries.count >= count }
-    return deliveries
+  private var received: [WireEntitySnapshot] = []
+  func changed(delivery: EntityDelivery) { lock.withLock { received.append(contentsOf: delivery.snapshots) } }
+  var snapshots: [WireEntitySnapshot] { lock.withLock { received } }
+  func wait(for count: Int) async -> [WireEntitySnapshot] {
+    await eventually("\(count) entity snapshots") { snapshots.count >= count }
+    return snapshots
   }
 }
 
 extension BridgeProbeTests {
   @Test
-  func retainedRowsReachTheBridgeAsChangedRowsAndReleasedRowsStayQuiet() async throws {
+  func retainedRowsReachTheBridgeAsSnapshotsAndReleasedRowsStayQuiet() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let first = try await Moment.create(text: "one")
     let second = try await Moment.create(text: "two")
     let collector = EntityCollector()
     let entities = try DB.database.liveEntities(model: Moment.modelName, listener: collector)
-    try entities.retain(ids: [first.id, second.id], fetch: .none)
-    #expect(await collector.wait(for: 1).first?.rows.count == 2)
+    try entities.retain(requests: [EntityRequest(id: first.id, lease: 1, fetch: .none), EntityRequest(id: second.id, lease: 2, fetch: .none)])
+    #expect(Set(await collector.wait(for: 2).map(\.id)) == [first.id, second.id])
 
     _ = try await first.update(text: "edited")
-    let changed = await collector.wait(for: 2)
-    #expect(changed.count == 2 && changed[1].rows.count == 1 && changed[1].rows[0].cells.contains(.text(value: "edited")))
+    let changed = await collector.wait(for: 3)
+    #expect(changed.count == 3 && changed[2].id == first.id && changed[2].value?.cells.contains(.text(value: "edited")) == true)
 
-    try entities.release(ids: [first.id])
+    try entities.release(leases: [EntityLease(id: first.id, lease: 1)])
     _ = try await first.update(text: "unseen")
     _ = try await second.update(text: "seen")
-    let last = await collector.wait(for: 3)
-    #expect(last.count == 3 && last[2].rows.count == 1 && last[2].rows[0].cells.contains(.text(value: "seen")))
+    let last = await collector.wait(for: 4)
+    #expect(last.count == 4 && last[3].id == second.id && last[3].value?.cells.contains(.text(value: "seen")) == true)
 
     try await second.destroy()
-    let removed = await collector.wait(for: 4)
-    #expect(removed.last?.removed == [second.id])
+    let removed = await collector.wait(for: 5)
+    #expect(removed.last?.id == second.id && removed.last?.phase == .absent)
   }
 
   /// REL-24: a reset of the account empties the entities that readers hold and the same objects receive the next rows.

@@ -2,20 +2,6 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private struct PeekFailed: Error {}
-
-private final class ThrowingSource: EntitySource, @unchecked Sendable {
-  func cachedRow(_ id: String) throws -> WireRow? { throw PeekFailed() }
-  func retain(_ ids: [String], fetch: EntityFetch) {}
-  func release(_ ids: [String]) {}
-}
-
-private final class BrokenRowSource: EntitySource, @unchecked Sendable {
-  func cachedRow(_ id: String) throws -> WireRow? { var row = SilentErrorTests.wire(id); row.layout = "other"; return row }
-  func retain(_ ids: [String], fetch: EntityFetch) {}
-  func release(_ ids: [String]) {}
-}
-
 @MainActor
 struct SilentErrorTests {
   nonisolated static func wire(_ id: String) -> WireRow {
@@ -68,19 +54,6 @@ struct SilentErrorTests {
     broken.layout = "other"
     let decoded = LiveChange(revision: 1, full: true, size: 1, rows: [broken], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], count: nil, error: nil, inserted: [0])
     guard case .Invalid? = Snapshot(ListFeed<Moment>().apply(decoded), decoded).error as? DbError else { Issue.record("decode failure is not DbError.Invalid"); return }
-  }
-
-  @Test
-  func aSeedThatDoesNotDecodeFailsTheEntityPhase() {
-    let entity = Entities<Moment>(source: BrokenRowSource()).entity("1")
-    guard case .failed = entity.phase else { Issue.record("phase \(entity.phase)"); return }
-    #expect(entity.value == nil)
-  }
-
-  @Test
-  func aSeedReadThatThrowsFailsTheEntityPhase() {
-    let entity = Entities<Moment>(source: ThrowingSource()).entity("1")
-    guard case .failed = entity.phase else { Issue.record("phase \(entity.phase)"); return }
   }
 
   @Test

@@ -51,7 +51,7 @@ mod subscribe;
 mod upload;
 mod variables;
 
-pub use entity_fetch::{RefreshError, RefreshSink};
+pub use entity_fetch::{EntityFetch, RefreshError, RefreshSink};
 pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};

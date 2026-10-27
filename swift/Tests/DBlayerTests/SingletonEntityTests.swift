@@ -70,12 +70,10 @@ extension BridgeProbeTests {
   func tenReadersCostOneSubscriptionAndSeeOneValue() async throws {
     let transport = try await Self.openSingletonRig()
     let readers = (0 ..< 10).map { _ in User.entity() }
-    let feed = Entities<User>.shared.singleFeed
     try await Self.login(transport, "1", "Ann")
     await eventually(#"readers[0].value != nil"#) { readers[0].value != nil }
     #expect(Set(readers.map(ObjectIdentifier.init)).count == 1)
     #expect(readers.allSatisfy { $0.value?.name == "Ann" && $0.id == readers[0].value?.id })
-    #expect(feed != nil && feed === Entities<User>.shared.singleFeed)
     #expect(try DB.subscriptionCensus().observedQueries == 1)
   }
 
@@ -105,7 +103,6 @@ extension BridgeProbeTests {
     #expect(entity.value == nil && entity.id.isEmpty)
     #expect(User.entity() === entity)
     #expect(try DB.subscriptionCensus().observedQueries == 0)
-    #expect(Entities<User>.shared.singleFeed == nil)
   }
 
   /// REL-24: the next login after a logout loads the new user into the same entity, and a second resume keeps the feed.
@@ -121,29 +118,7 @@ extension BridgeProbeTests {
     try await DB.resume()
     await eventually(#"entity.value?.name == "Bob""#) { entity.value?.name == "Bob" }
     #expect(try DB.subscriptionCensus().observedQueries == 1)
-    let resumed = Entities<User>.shared.singleFeed
     try await DB.resume()
-    #expect(resumed === Entities<User>.shared.singleFeed)
-  }
-
-  /// A delivery of a feed that a reset replaced writes nothing.
-  @MainActor
-  @Test
-  func aDeliveryOfAReplacedFeedNeverWrites() async throws {
-    let transport = try await Self.openSingletonRig()
-    let entity = User.entity()
-    let registry = Entities<User>.shared
-    let old = try #require(registry.singleFeed)
-    try await Self.login(transport, "1", "Ann")
-    await eventually(#"entity.value != nil"#) { entity.value != nil }
-    try await DB.logout()
-    try await DB.resume()
-    #expect(User.entity() === entity && entity.value == nil)
-    registry.receive(from: old, revision: Int64.max, row: entity.value ?? User(id: "9", name: "Late"))
-    #expect(entity.value == nil)
-    try await Self.login(transport, "2", "Bob")
-    await eventually(#"entity.value != nil"#) { entity.value != nil }
-    #expect(entity.value?.name == "Bob")
     #expect(try DB.subscriptionCensus().observedQueries == 1)
   }
 
@@ -158,10 +133,9 @@ extension BridgeProbeTests {
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
-    let feed = try #require(Entities<User>.shared.singleFeed)
-    let before = (feed.delivered, try DB.subscriptionCensus().observedQueries, transport.calls.count)
+    let before = (entity.snapshot.revision, try DB.subscriptionCensus().observedQueries, transport.calls.count)
     clock.advance(by: 10)
     try await DB.database.flush()
-    #expect(try feed.delivered == before.0 && DB.subscriptionCensus().observedQueries == before.1 && transport.calls.count == before.2 && entity.value?.name == "Ann")
+    #expect(try entity.snapshot.revision == before.0 && DB.subscriptionCensus().observedQueries == before.1 && transport.calls.count == before.2 && entity.value?.name == "Ann")
   }
 }

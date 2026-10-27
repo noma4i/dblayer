@@ -32,7 +32,7 @@ object DBlayer {
 
     suspend fun logout() {
         offCaller { database.logout() }
-        EntityRegistries.resetAll()
+        EntityRegistries.settleAll()
     }
 
     /** Reloads every `preload` scope now, fresh or not, and returns when all have settled. Offline it throws without a request. When some scopes fail the error names them. Call it for pull to refresh instead of refreshing each reference list. */

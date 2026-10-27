@@ -1,25 +1,22 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.FlowCollector
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import java.lang.ref.Reference
 import java.lang.ref.ReferenceQueue
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.logging.Logger
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlinx.coroutines.flow.FlowCollector
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 
-private val entityLog = Logger.getLogger("DBlayer")
-
-/** `Opening` until the core answers, then `Present` or `Absent`. `Failed` keeps the last value and says why the core could not read or decode the record. `Closed` after the database closed. */
 sealed class EntityPhase {
     data object Opening : EntityPhase()
     data object Present : EntityPhase()
@@ -28,173 +25,82 @@ sealed class EntityPhase {
     data object Closed : EntityPhase()
 }
 
-internal class EntityCell<Model : DBModel>(singleton: Boolean = false) {
-    private val machine = EntityMachine(singleton)
-    val value = MutableStateFlow<Model?>(null)
-    val phase = MutableStateFlow<EntityPhase>(EntityPhase.Opening)
-    val read = MutableStateFlow<EntityRead>(EntityRead.NotLoaded)
-    val settled = MutableStateFlow(true)
-    @Volatile var stale = false
-    @Volatile var revision = Long.MIN_VALUE
-    @Volatile var bytes = 0uL
-
-    private fun show(verdict: EntityVerdict) {
-        revision = verdict.revision
-        stale = verdict.stale
-        phase.value = when (val stage = verdict.stage) {
-            is EntityStage.Opening -> EntityPhase.Opening
-            is EntityStage.Present -> EntityPhase.Present
-            is EntityStage.Absent -> EntityPhase.Absent
-            is EntityStage.Failed -> EntityPhase.Failed(stage.message)
-            is EntityStage.Closed -> EntityPhase.Closed
-        }
-        read.value = verdict.read
-        settled.value = verdict.settled
-    }
-
-    private fun emptied(verdict: EntityVerdict) {
-        value.value = null
-        bytes = 0uL
-        show(verdict)
-    }
-
-    @Synchronized
-    fun seed(incoming: Long, bytes: ULong, make: () -> Model?) {
-        val verdict = machine.seed(incoming)
-        if (!verdict.applied) return
-        try { value.value = make() } catch (error: Exception) { fail(error.toString()); return }
-        this.bytes = bytes
-        show(verdict)
-    }
-
-    @Synchronized
-    fun accept(next: Model?, incoming: Long, bytes: ULong = 0uL, feed: ULong? = null) {
-        val verdict = machine.accept(incoming, next != null, feed)
-        if (!verdict.applied) return
-        this.bytes = bytes
-        show(verdict)
-        value.value = next
-    }
-
-    @Synchronized
-    fun readStarted() = show(machine.readStarted())
-
-    @Synchronized
-    fun readEnded(error: EntityRefreshError?, feed: ULong? = null) = show(machine.readEnded(error, feed))
-
-    @Synchronized
-    fun fail(message: String, feed: ULong? = null) = show(machine.fail(message, feed))
-
-    @Synchronized
-    fun reset() {
-        val verdict = machine.reset()
-        if (verdict.cleared) emptied(verdict)
-    }
-
-    @Synchronized
-    fun close() = emptied(machine.databaseClosed())
-
-    @Synchronized
-    fun unopened(feed: ULong): Boolean {
-        val verdict = machine.unopened(feed)
-        if (verdict.cleared) emptied(verdict)
-        return verdict.cleared
-    }
-
-    @Synchronized
-    fun beginFeed(): ULong = machine.beginFeed().also { show(it) }.feed
-}
+data class EntitySnapshot<Model : DBModel>(
+    val value: Model?,
+    val phase: EntityPhase,
+    val read: EntityRead,
+    val revision: Long,
+    val isStale: Boolean,
+    val settled: Boolean,
+)
 
 @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
-private class HeldState<T>(private val owner: Any, private val inner: StateFlow<T>) : StateFlow<T> {
-    override val value: T get() = inner.value
-    override val replayCache: List<T> get() = inner.replayCache
+private class EntityField<Model : DBModel, T>(
+    private val owner: Any,
+    private val state: StateFlow<EntitySnapshot<Model>>,
+    private val select: (EntitySnapshot<Model>) -> T,
+) : StateFlow<T> {
+    override val value get() = select(state.value)
+    override val replayCache get() = listOf(value)
     override suspend fun collect(collector: FlowCollector<T>): Nothing {
-        try { inner.collect(collector) } finally { Reference.reachabilityFence(owner) }
+        try { state.map(select).distinctUntilChanged().collect(collector) }
+        finally { Reference.reachabilityFence(owner) }
+        error("entity snapshot collection ended")
     }
 }
 
-class Entity<Model : DBModel> internal constructor(private val fixedId: String?, internal val cell: EntityCell<Model>) {
-    val id: String get() = fixedId ?: cell.value.value?.id.orEmpty()
-    val value: StateFlow<Model?> = HeldState(this, cell.value)
-    val isStale: Boolean get() = cell.stale
-    val phase: StateFlow<EntityPhase> = HeldState(this, cell.phase)
-    val read: StateFlow<EntityRead> = HeldState(this, cell.read)
-
-    /** Returns when the first read has ended or a value is already there, throws [EntityReadException] for a failed read, and sends no request of its own: it waits for the read the entity started. */
+class Entity<Model : DBModel> internal constructor(
+    private val fixedId: String?,
+    internal val lease: ULong,
+    private val owner: Entities<Model>,
+) {
+    private val shown = MutableStateFlow(EntitySnapshot<Model>(null, EntityPhase.Opening, EntityRead.NotLoaded, Long.MIN_VALUE, false, false))
+    val snapshot: StateFlow<EntitySnapshot<Model>> = EntityField(this, shown) { it }
+    val id: String get() = fixedId ?: shown.value.value?.id.orEmpty()
+    val value: StateFlow<Model?> = EntityField(this, shown) { it.value }
+    val phase: StateFlow<EntityPhase> = EntityField(this, shown) { it.phase }
+    val read: StateFlow<EntityRead> = EntityField(this, shown) { it.read }
+    val isStale: Boolean get() = shown.value.isStale
+    val isClosed: Boolean get() = shown.value.phase == EntityPhase.Closed
+    internal fun publish(snapshot: EntitySnapshot<Model>) { shown.value = snapshot }
     suspend fun waitForInitialLoad() {
-        cell.settled.first { it }
-        if (cell.phase.value == EntityPhase.Closed) throw DbException.Interrupted("entity closed")
-        (cell.read.value as? EntityRead.Failed)?.let { throw EntityReadException(it.error) }
+        val ready = shown.first { it.settled || it.phase == EntityPhase.Closed }
+        if (ready.phase == EntityPhase.Closed) throw DbException.Interrupted("entity closed")
+        (ready.read as? EntityRead.Failed)?.let { throw EntityReadException(it.error) }
     }
-    val isClosed: Boolean get() = cell.phase.value == EntityPhase.Closed
 }
 
 class EntityReadException(val error: EntityRefreshError) : Exception(error.toString())
 
-internal interface EntitySource {
-    fun cachedRow(id: String): WireRow?
-    fun retain(ids: List<String>, fetch: EntityFetch)
-    fun release(ids: List<String>)
-}
-
-internal class EntityDeliveryRows<Model>(val revision: Long, val rows: List<Pair<Model, ULong>>, val removed: List<String>, val failure: String? = null, val failedIds: Map<String, String> = emptyMap(), val refreshes: List<EntityRefresh> = emptyList())
-
-private class LiveRef<Model : DBModel>(entity: Entity<Model>, val id: String, val cell: EntityCell<Model>, private val collect: (LiveRef<Model>) -> Unit) :
+private class LiveRef<Model : DBModel>(entity: Entity<Model>, val id: String, val lease: ULong, private val collect: (LiveRef<Model>) -> Unit) :
     WeakReference<Entity<Model>>(entity, EntityReferences.queue) {
     fun collected() = collect(this)
 }
 
 private object EntityReferences {
     val queue = ReferenceQueue<Any>()
-
-    init {
-        Thread({ while (true) (queue.remove() as LiveRef<*>).collected() }, "dblayer-entity-releases").apply { isDaemon = true }.start()
-    }
+    init { Thread({ while (true) (queue.remove() as LiveRef<*>).collected() }, "dblayer-entity-releases").apply { isDaemon = true }.start() }
 }
 
-private enum class Step { Retain, Release, Refresh }
-
-class Entities<Model : DBModel> internal constructor(
-    private val modelName: String,
-    private val decoder: ModelDecoder<Model>,
-    private val now: () -> Long = { System.nanoTime() / 1_000_000 },
-    source: EntitySource? = null,
-) {
+class Entities<Model : DBModel> internal constructor(private val modelName: String, private val decoder: ModelDecoder<Model>) {
     private val lock = Any()
     private val live = HashMap<String, LiveRef<Model>>()
-    private val kept = if (source == null) EntityRegistries.retained else RetainedValues()
-    private val steps = HashMap<String, Step>()
-    private val fetches = HashMap<String, EntityFetch>()
-    private var flushScheduled = false
+    private val next = AtomicLong()
+    private val pending = HashMap<String, EntityRequest>()
+    private var scheduled = false
     private var single: Entity<Model>? = null
-    private var singleQuery: Query<Model>? = null
-    private var singleFeed: SingletonFeed<Model>? = null
-    private val core = CoreEntitySource(modelName, decoder) { delivery -> apply(delivery) }
-    private val source: EntitySource = source ?: core
-
-    internal val decodedRows: Int get() = core.decodedRows
-    internal val peekedRows: Int get() = core.peekedRows
-    internal val leaseFailures: Int get() = core.leaseFailures
+    private val core = CoreEntitySource(modelName, decoder, ::publish)
+    internal val decodedRows get() = core.decodedRows
+    internal val leaseFailures get() = core.leaseFailures
+    internal val liveCount get() = synchronized(lock) { live.values.count { it.get() != null } }
 
     fun entity(id: String, fetch: EntityFetch = EntityFetch.NONE): Entity<Model> = synchronized(lock) {
-        val previous = live[id]
-        previous?.get()?.let { return it }
-        if (previous != null) collected(previous)
-        val retained = kept.take<Model>(modelName, id, now())
-        val cell = EntityCell<Model>()
-        retained?.let { held -> held.value?.let { value -> cell.seed(held.revision, held.bytes) { value } } ?: cell.accept(null, held.revision, held.bytes) }
-        if (retained == null) try {
-            source.cachedRow(id)?.let { cached -> cell.seed(cached.revision, cached.estimatedBytes) { decoder.read(cached) } }
-        } catch (error: Exception) {
-            cell.fail(error.toString())
-        }
-        if (fetch != EntityFetch.NONE) cell.readStarted()
-        val made = Entity(id, cell)
-        live[id] = LiveRef(made, id, cell, ::collected)
-        steps[id] = if (retained != null || steps[id] == Step.Release) Step.Refresh else Step.Retain
-        fetches[id] = fetch
-        scheduleFlush()
+        live[id]?.get()?.let { return it }
+        val lease = next.incrementAndGet().toULong()
+        val made = Entity(id, lease, this)
+        live[id] = LiveRef(made, id, lease, ::collected)
+        pending[id] = EntityRequest(id, lease, fetch)
+        if (!scheduled) { scheduled = true; flusher.execute { flush() } }
         made
     }
 
@@ -202,234 +108,120 @@ class Entities<Model : DBModel> internal constructor(
 
     fun singleton(query: Query<Model>): Entity<Model> = synchronized(lock) {
         single?.let { return it }
-        val made = Entity(null, EntityCell<Model>(singleton = true))
+        val lease = next.incrementAndGet().toULong()
+        val made = Entity<Model>(null, lease, this)
         single = made
-        singleQuery = query
-        startSingleton()
+        core.singleton(query.json, lease)
         made
     }
 
-    private fun startSingleton() {
-        val query = singleQuery ?: return
-        val cell = single?.cell ?: return
-        singleFeed?.cancel()
-        val feed = SingletonFeed(query, decoder, cell.beginFeed(), { from, revision, row -> receive(from, revision, row) }, ::unopened, ::singletonRead, ::singletonFailed)
-        singleFeed = feed
-        flusher.execute { feed.attach() }
-    }
-
-    internal fun receive(feed: SingletonFeed<Model>, revision: Long, row: Model?) = synchronized(lock) {
-        single?.cell?.accept(row, revision, feed = feed.generation)
-    }
-
-    private fun singletonRead(feed: SingletonFeed<Model>, error: EntityRefreshError?) = synchronized(lock) {
-        single?.cell?.readEnded(error, feed.generation)
-    }
-
-    private fun singletonFailed(feed: SingletonFeed<Model>, message: String) = synchronized(lock) {
-        single?.cell?.fail(message, feed.generation)
-    }
-
-    private fun unopened(feed: SingletonFeed<Model>) = synchronized(lock) {
-        if (single?.cell?.unopened(feed.generation) != true) return@synchronized
-        singleFeed = null
-        single = null
-        singleQuery = null
-    }
-
-    internal val currentSingleFeed: SingletonFeed<Model>? get() = synchronized(lock) { singleFeed }
-
-    fun reset() = synchronized(lock) {
-        kept.clear(modelName)
-        singleFeed?.cancel()
-        singleFeed = null
-        single?.cell?.reset()
-    }
-
-    internal fun close() = synchronized(lock) {
-        live.values.forEach { ref -> ref.get()?.cell?.let { it.close() } }
-        live.clear()
-        steps.clear()
-        fetches.clear()
-        kept.clear(modelName)
-        singleFeed?.cancel()
-        singleFeed = null
-        single?.cell?.let { it.close() }
-        single = null
-        singleQuery = null
-        core.close()
-    }
-
-    internal fun resume() = synchronized(lock) {
-        if (singleFeed == null) startSingleton()
-    }
-
-    internal val retainedCount: Int get() = synchronized(lock) { kept.count(modelName, now()) }
-    internal val liveCount: Int get() = synchronized(lock) { live.size }
-
-    internal fun apply(delivery: EntityDeliveryRows<Model>) {
-        val writes = ArrayList<() -> Unit>()
-        synchronized(lock) {
-            fun liveCell(id: String) = live[id]?.takeIf { it.get() != null }?.cell
-            delivery.rows.forEach { (model, bytes) -> liveCell(model.id)?.let { writes += { it.accept(model, delivery.revision, bytes) } } }
-            delivery.removed.forEach { id -> liveCell(id)?.let { writes += { it.accept(null, delivery.revision) } } }
-            delivery.failure?.let { message -> live.values.forEach { ref -> if (ref.get() != null) writes += { ref.cell.fail(message) } } }
-            delivery.refreshes.forEach { refresh -> liveCell(refresh.id)?.let { writes += { it.readEnded(refresh.error) } } }
-            delivery.failedIds.forEach { (id, message) -> liveCell(id)?.let { writes += { it.fail(message) } } }
-        }
-        writes.forEach { it() }
-    }
-
-    private fun collected(ref: LiveRef<Model>) = synchronized(lock) {
-        if (live[ref.id] !== ref) return@synchronized
-        live.remove(ref.id)
-        steps[ref.id] = Step.Release
-        val value = ref.cell.value.value
-        if (value != null || ref.cell.phase.value == EntityPhase.Absent) kept.keep(modelName, ref.id, Retained(value, ref.cell.revision, ref.cell.bytes), now())
-        scheduleFlush()
-    }
-
-    private fun scheduleFlush() {
-        if (flushScheduled) return
-        flushScheduled = true
-        flusher.execute { flush() }
-    }
-
     private fun flush() {
-        val (pending, wanted) = synchronized(lock) {
-            flushScheduled = false
-            HashMap(steps).also { steps.clear() } to HashMap(fetches).also { fetches.clear() }
-        }
-        val release = pending.filterValues { it != Step.Retain }.keys.toList()
-        val retain = pending.filterValues { it != Step.Release }.keys.groupBy { wanted[it] ?: EntityFetch.NONE }
-        if (release.isNotEmpty()) source.release(release)
-        retain.forEach { (fetch, ids) -> source.retain(ids, fetch) }
+        val requests = synchronized(lock) { scheduled = false; pending.values.toList().also { pending.clear() } }
+        if (requests.isNotEmpty()) core.retain(requests)
     }
+
+    private fun collected(ref: LiveRef<Model>) {
+        synchronized(lock) {
+            if (live[ref.id] === ref) live.remove(ref.id)
+            if (pending[ref.id]?.lease == ref.lease) pending.remove(ref.id)
+        }
+        core.release(listOf(EntityLease(ref.id, ref.lease)))
+    }
+
+    private fun publish(lease: ULong, id: String, snapshot: EntitySnapshot<Model>) {
+        val target = synchronized(lock) { if (id.isEmpty()) single else live[id]?.get() } ?: return
+        if (target.lease != lease) return
+        target.publish(snapshot)
+        if (snapshot.phase == EntityPhase.Closed) synchronized(lock) {
+            if (id.isEmpty()) single = null else if (live[id]?.lease == lease) live.remove(id)
+        }
+    }
+
+    fun reset() = core.reset()
+    internal suspend fun delivered() = core.delivered()
+    internal fun close() { synchronized(lock) { pending.clear() }; core.close() }
+    internal fun resume() = core.resume()
 
     companion object {
-        private val flusher = Executors.newSingleThreadExecutor { task -> Thread(task, "dblayer-entities").apply { isDaemon = true } }
+        internal val flusher = Executors.newSingleThreadExecutor { task -> Thread(task, "dblayer-entities").apply { isDaemon = true } }
     }
 }
 
 internal class CoreEntitySource<Model : DBModel>(
     private val modelName: String,
     private val decoder: ModelDecoder<Model>,
-    private val deliver: (EntityDeliveryRows<Model>) -> Unit,
-) : EntitySource {
+    private val deliver: (ULong, String, EntitySnapshot<Model>) -> Unit,
+) {
     private class Changes<Model : DBModel>(source: CoreEntitySource<Model>) : EntityListener {
         private val source = WeakReference(source)
-        override fun changed(delivery: EntityDelivery) {
-            source.get()?.changed(delivery)
-        }
+        override fun changed(delivery: EntityDelivery) { source.get()?.changed(delivery) }
     }
-
     private var observer: LiveEntities? = null
+    private val values = HashMap<ULong, Pair<ULong, Model?>>()
     private val decoded = AtomicInteger()
     private val failures = AtomicInteger()
-    private val peeks = AtomicInteger()
-
-    val decodedRows: Int get() = decoded.get()
-    val peekedRows: Int get() = peeks.get()
-    val leaseFailures: Int get() = failures.get()
-
-    override fun cachedRow(id: String): WireRow? {
-        peeks.incrementAndGet()
-        return DBlayer.database.peekRow(modelName, id)
-    }
-
-    @Synchronized
-    override fun retain(ids: List<String>, fetch: EntityFetch) {
-        try { open().retain(ids, fetch) } catch (error: Exception) { failed("retain", ids, error) }
-    }
-
-    @Synchronized
-    override fun release(ids: List<String>) {
-        try { open().release(ids) } catch (error: Exception) { failed("release", ids, error) }
-    }
-
-    @Synchronized
-    fun close() {
-        observer = null
-    }
-
-    private fun failed(call: String, ids: List<String>, error: Exception) {
-        failures.incrementAndGet()
-        entityLog.severe("Entity $call of ${ids.size} $modelName ids failed: $error")
-        deliver(EntityDeliveryRows(Long.MIN_VALUE, emptyList(), emptyList(), failedIds = ids.associateWith { error.toString() }))
-    }
-
+    val decodedRows get() = decoded.get()
+    val leaseFailures get() = failures.get()
     private fun open(): LiveEntities = observer ?: DBlayer.database.liveEntities(modelName, Changes(this)).also { observer = it }
+    private fun submit(work: () -> Unit) = Entities.flusher.execute(work)
 
-    private fun changed(delivery: EntityDelivery) {
-        delivery.failure?.let { failures.incrementAndGet(); entityLog.severe("Entity read of $modelName failed: $it") }
-        val failedIds = HashMap<String, String>()
-        val rows = delivery.rows.mapNotNull { row ->
-            runCatching { decoder.read(row) to row.estimatedBytes }
-                .onFailure { failures.incrementAndGet(); failedIds[row.id] = it.toString(); entityLog.severe("Row of $modelName failed to decode for its entity: $it") }
-                .getOrNull()
-        }
-        decoded.addAndGet(rows.size)
-        deliver(EntityDeliveryRows(delivery.revision, rows, delivery.removed, delivery.failure, failedIds, delivery.refreshes))
+    fun retain(requests: List<EntityRequest>) = submit {
+        perform(requests.map { EntityLease(it.id, it.lease) }) { open().retain(requests) }
     }
-}
-
-internal class SingletonFeed<Model : DBModel>(
-    private val query: Query<Model>,
-    private val decoder: ModelDecoder<Model>,
-    val generation: ULong,
-    private val deliver: (SingletonFeed<Model>, Long, Model?) -> Unit,
-    private val unopened: (SingletonFeed<Model>) -> Unit,
-    private val read: (SingletonFeed<Model>, EntityRefreshError?) -> Unit,
-    private val failed: (SingletonFeed<Model>, String) -> Unit,
-) {
-    private var session: ListSession<Model, Pair<Long, Model?>>? = null
-    private var cancelled = false
-    private val count = AtomicInteger()
-
-    val delivered: Int get() = count.get()
-
-    private companion object {
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    fun release(leases: List<EntityLease>) = submit {
+        leases.forEach { values.remove(it.lease) }
+        observer?.let { perform(leases) { it.release(leases) } }
     }
+    fun singleton(query: String, lease: ULong) = submit {
+        perform(listOf(EntityLease("", lease))) { open().singleton(query, lease) }
+    }
+    fun reset() = submit { observer?.reset() }
+    fun resume() = submit { observer?.resume() }
+    fun close() = submit { observer?.shutdown(); observer = null; values.clear() }
+    suspend fun delivered(): Unit = suspendCancellableCoroutine { continuation -> submit { continuation.resume(Unit) } }
 
-    fun attach() {
-        val database = try { DBlayer.database } catch (_: IllegalStateException) { unopened(this); return }
-        val made = ListSession<Model, Pair<Long, Model?>>(
-            decoder,
-            { listener -> ListHandle(database.liveQuery(query.json, listener)) },
-            { value -> count.incrementAndGet(); deliver(this, value.first, value.second) },
-            { applied, change -> change.revision to applied.rows.firstOrNull() },
-        )
-        val keep = synchronized(this) { if (cancelled) false else { session = made; true } }
-        if (!keep) return
-        try { made.start() } catch (error: Exception) { failed(this, error.toString()); return }
-        scope.launch {
-            try { made.waitForInitialLoad(); read(this@SingletonFeed, null) } catch (error: kotlinx.coroutines.CancellationException) {} catch (error: Exception) { read(this@SingletonFeed, EntityRefreshError.Failed(error.toString())) }
+    private fun perform(leases: List<EntityLease>, call: () -> Unit) {
+        try { call() } catch (error: Exception) {
+            failures.incrementAndGet()
+            leases.forEach { decode(entityOpenFailed(it.id, it.lease, error.toString(), error is IllegalStateException)) }
         }
     }
 
-    fun cancel() {
-        val current = synchronized(this) { cancelled = true; session.also { session = null } }
-        current?.cancel()
+    private fun changed(delivery: EntityDelivery) = submit { delivery.snapshots.forEach(::decode) }
+
+    private fun decode(wire: WireEntitySnapshot) {
+        val value = try {
+            val held = values[wire.lease]
+            if (held != null && held.first == wire.valueToken) held.second
+            else wire.value?.let { decoder.read(it).also { decoded.incrementAndGet() } }.also { values[wire.lease] = wire.valueToken to it }
+        } catch (error: Exception) {
+            failures.incrementAndGet()
+            observer?.decodeFailed(EntityLease(wire.id, wire.lease), wire.revision, error.toString())
+            return
+        }
+        val phase = when (val state = wire.phase) {
+            is EntityStage.Opening -> EntityPhase.Opening
+            is EntityStage.Present -> EntityPhase.Present
+            is EntityStage.Absent -> EntityPhase.Absent
+            is EntityStage.Failed -> EntityPhase.Failed(state.message)
+            is EntityStage.Closed -> EntityPhase.Closed
+        }
+        deliver(wire.lease, wire.id, EntitySnapshot(value, phase, wire.read, wire.revision, wire.isStale, wire.settled))
     }
 }
 
 internal object EntityRegistries {
-    val retained = RetainedValues()
     private val registries = ConcurrentHashMap<String, Entities<*>>()
-
     @Suppress("UNCHECKED_CAST")
     fun <Model : DBModel> of(modelName: String, decoder: ModelDecoder<Model>): Entities<Model> =
         registries.getOrPut(modelName) { Entities(modelName, decoder) } as Entities<Model>
-
     fun leaseFailures(): Int = registries.values.sumOf { it.leaseFailures }
-    fun resetAll() = registries.values.forEach { it.reset() }
-    fun closeAll() = registries.values.forEach { it.close() }
+    suspend fun settleAll() { registries.values.forEach { it.delivered() } }
+    fun closeAll() { registries.values.forEach { it.close() }; registries.clear() }
     fun resumeAll() = registries.values.forEach { it.resume() }
 }
 
 fun <Model : DBModel> entityOf(modelName: String, decoder: ModelDecoder<Model>, id: String, fetch: EntityFetch = EntityFetch.NONE): Entity<Model> =
     EntityRegistries.of(modelName, decoder).entity(id, fetch)
-
 fun <Model : DBModel> singletonEntityOf(modelName: String, decoder: ModelDecoder<Model>, query: Query<Model>): Entity<Model> =
     EntityRegistries.of(modelName, decoder).singleton(query)

@@ -3,35 +3,32 @@ import Testing
 
 extension BridgeProbeTests {
   @Test @MainActor
-  func cachedFirstReadAndRetainedNewerValueAreAvailableBeforeDelivery() async throws {
+  func coldAndReleasedEntitiesOpenUntilTheirCoreSnapshotArrives() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let row = try await Moment.create(text: "cached")
-    try await Moment.recent.warm()
-    let cached = try #require(try DB.database.peekRow(model: "Moment", rowId: row.id))
-    let registry = Entities<Moment>(source: CountingSource(cached: cached))
-    var held: Entity<Moment>? = registry.entity(row.id)
+    var held: Entity<Moment>? = Moment.entity(row.id)
+    #expect(held?.phase == .opening && held?.value == nil)
+    try await held?.waitForInitialLoad()
     #expect(held?.value?.text == "cached")
-    let newer = Moment(id: row.id, uuid: row.id, text: "newer", media: .object([:]), createdAt: "2026-10-08T00:00:00.000Z")
-    registry.apply(EntityDecoding.Decoded(revision: cached.revision + 1, rows: [(newer, 1)], removed: []))
-    #expect(registry.entity(row.id).value?.text == "newer")
+    weak var old = held
     held = nil
-    let returned = registry.entity(row.id)
-    #expect(returned.value?.text == "newer")
-    registry.apply(EntityDecoding.Decoded(revision: cached.revision, rows: [(row, 1)], removed: []))
-    #expect(returned.value?.text == "newer")
-    #expect(registry.entity("missing").value == nil)
+    await eventually("the entity releases") { old == nil }
+    let returned = Moment.entity(row.id)
+    #expect(returned.phase == .opening)
+    try await returned.waitForInitialLoad()
+    #expect(returned.value?.text == "cached")
   }
 
-  /// REL-31
   @Test @MainActor
-  func repeatedGeneratedReadsOfOneRecordPeekTheCoreOnce() async throws {
+  func repeatedGeneratedReadsKeepTheLiveObjectAndSnapshot() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let row = try await Moment.create(text: "cached")
-    try await Moment.recent.warm()
-    let registry = Entities<Moment>.shared
-    let before = registry.peekedRows
-    for _ in 0 ..< 5 { #expect(Moment.entity(row.id).value?.text == "cached") }
-    #expect(registry.peekedRows - before == 1)
+    let first = Moment.entity(row.id)
+    try await first.waitForInitialLoad()
+    let before = Entities<Moment>.shared.decodedRows
+    for _ in 0..<5 { #expect(Moment.entity(row.id) === first) }
+    #expect(Entities<Moment>.shared.decodedRows == before)
+    #expect(first.value?.text == "cached")
   }
 
   @Test @MainActor
@@ -41,10 +38,11 @@ extension BridgeProbeTests {
     let base = try DB.subscriptionCensus().subscriptions
     var owner: [Entity<Moment>]? = rows.map { Moment.entity($0.id) }
     await eventually("both entities read") { owner?.allSatisfy { $0.value != nil } == true }
-    await eventually("the owner holds one subscription") { (try? DB.subscriptionCensus().subscriptions) == base + 1 }
+    await eventually("one observer holds both ids") { (try? DB.subscriptionCensus().subscriptions) == base + 1 }
     owner = nil
-    await eventually("the census returns to its base") { (try? DB.subscriptionCensus().subscriptions) == base }
+    await eventually("the observer releases") { (try? DB.subscriptionCensus().subscriptions) == base }
     let again = Moment.entity(rows[0].id)
-    await eventually("a later entity reads again") { again.value?.text == "one" && (try? DB.subscriptionCensus().subscriptions) == base + 1 }
+    try await again.waitForInitialLoad()
+    #expect(again.value?.text == "one")
   }
 }

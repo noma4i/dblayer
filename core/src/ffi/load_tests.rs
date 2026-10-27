@@ -12,7 +12,7 @@ use crate::value::ScalarKind;
 use crate::test_wait::within;
 
 pub(super) struct Counting {
-    queries: AtomicUsize,
+    pub(super) queries: AtomicUsize,
     started: Notify,
     hold: Option<Arc<tokio::sync::Semaphore>>,
     gate: Option<Arc<tokio::sync::Semaphore>>,

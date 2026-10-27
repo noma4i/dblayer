@@ -118,7 +118,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) entity_cache: Arc<super::entity_pool::EntityCache>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -144,7 +144,7 @@ impl Database {
         }
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, testing: false, wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), testing: false, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -240,7 +240,8 @@ impl Database {
         EntityCensus { facts_told: counters.entity_facts_told as u64, position_skips: counters.entity_position_skips as u64, reads_failed: counters.entity_reads_failed as u64 }
     }
     pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
-        entities::open(&self.db, self.sync.clone(), &model, self.wire(&model)?.clone(), listener)
+        super::entity_calls::entered();
+        entities::open(self.clone(), &model, self.wire(&model)?.clone(), listener)
     }
     pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| self.connect_json(&query_json, false, None, feed))

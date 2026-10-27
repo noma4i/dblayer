@@ -88,3 +88,11 @@ Select `viewerState.lists` into Chat.lists in the node response. Chat.status alo
 Remove app-side insertion and list refetch after MESSAGE. Regenerate Swift and Kotlin models.
 The existing generated list and node calls keep their signatures.
 Missing members join the head. Existing members keep their places. Manual node reads do not insert rows into lists.
+
+## Entity snapshot
+
+Read `entity.snapshot` on Swift or `entity.snapshot.value` on Kotlin when one view needs value, phase, read, revision and staleness together. The `value`, `phase`, `read`, `isStale` and `id` accessors stay and read the same snapshot.
+Remove app code that waits for a cached first value or seeds an entity by hand. A new entity is `opening` until the first snapshot of the core arrives.
+Replace `fetch: .stale` plus a manual row check with `fetch: .ifMissing` (Kotlin: `EntityFetch.IF_MISSING`) when the node should be read only for an absent row.
+`waitForInitialLoad()` of an entity without fetch now returns after the first local snapshot and sends no request.
+Removed: platform-side retained values, `EntitySource` and `EntityRefresh`. The core owns them.

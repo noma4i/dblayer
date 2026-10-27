@@ -240,7 +240,7 @@ fn inv_observe_29_a_refresh_deferred_by_saturation_still_reads_only_the_touched_
             let _ = recv_or_closed(&gate.lock().unwrap());
             Ok(ReadRows::Skipped { revision: 0, epoch: 0 })
         });
-        let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default() }, run };
+        let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default(), leases: Default::default() }, run };
         assert!(db.shared.reads.submit(&db.shared, job));
     }
     let before = db.counters().rows_loaded;
@@ -274,7 +274,7 @@ fn inv_observe_29_refreshes_deferred_by_saturation_merge_their_touched_rows() {
             let _ = recv_or_closed(&gate.lock().unwrap());
             Ok(ReadRows::Skipped { revision: 0, epoch: 0 })
         });
-        let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default() }, run };
+        let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default(), leases: Default::default() }, run };
         assert!(db.shared.reads.submit(&db.shared, job));
     }
     let before = db.counters().rows_loaded;

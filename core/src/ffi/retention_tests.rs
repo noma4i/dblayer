@@ -1,4 +1,4 @@
-use super::RetentionPool;
+use super::retention::RetentionPool;
 
 #[test]
 fn retained_values_share_one_byte_budget_across_models() {
