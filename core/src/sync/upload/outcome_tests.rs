@@ -3,6 +3,7 @@ use super::upload_tests::{blob, created, file, input, rid, small, upload_of, upl
 use crate::syncstate::SyncState;
 use crate::transport::{Reply, TransportError};
 use crate::upload::UploadStatus;
+use serde_json::json;
 
 async fn uploaded_with_answer(answer: Reply) -> (Rig, tempfile::NamedTempFile) {
     let rig = upload_rig(small());
@@ -52,4 +53,15 @@ async fn inv_upload_13_the_content_mutation_meets_each_transport_outcome_like_an
         assert_eq!(rig.db.outbox().unwrap().len(), 1, "an unconfirmed mutation must keep its operation");
         assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn inv_op_05_an_unreadable_content_answer_keeps_the_upload_operation_and_the_row() {
+    let (rig, _source) = uploaded_with_answer(Reply::data(json!({"createMoment":{"text":"unreadable without id"}}))).await;
+    let pending = rig.db.outbox().unwrap();
+    assert_eq!(pending.len(), 1, "normalization must precede closing the upload operation");
+    assert_eq!(pending[0].operation.status, crate::operation::OperationStatus::DeliveryUnknown);
+    assert_eq!(text_of(&rig, "moments", "m1"), Some("x".into()));
+    assert_eq!(upload_of(&rig, "m1").unwrap().status, UploadStatus::DeliveryUnknown);
+    assert_eq!(rig.transport.call_count("CreateMoment"), 1);
 }

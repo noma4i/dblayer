@@ -108,6 +108,7 @@ impl FlightGuard<'_> {
         let mut flights = locked(&self.inner.flights);
         flights.coalescing.finish(&self.key);
         flights.waiting.remove(&self.key);
+        flights.node_rereads.remove(&self.key);
         sender.send_replace(Some(end));
     }
 }
@@ -206,11 +207,10 @@ impl Inner {
     }
 
     pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
-        let mut flight_key = match &cursor {
+        let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
             None => resolved.window_key.clone(),
         };
-        if resolved.node_reread { flight_key.push_str("|node-reread"); }
         let forced = force || cursor.is_some();
         loop {
             if !self.connectivity.is_online() {
@@ -220,6 +220,9 @@ impl Inner {
             let verdict = {
                 let mut flights = locked(&self.flights);
                 let verdict = flights.coalescing.request(&flight_key, forced, || self.window_is_fresh(resolved).unwrap_or(false));
+                if resolved.node_reread && matches!(verdict, FetchVerdict::StartFetch | FetchVerdict::AwaitInFlight) {
+                    flights.node_rereads.insert(flight_key.clone());
+                }
                 match verdict {
                     FetchVerdict::StartFetch => {
                         let sender = watch::channel(None).0;
@@ -308,7 +311,7 @@ impl Inner {
         let plans_as_first = is_first_page && (resolved.is_connection() || resolved.remote.coverage() == Coverage::Complete);
         let has_next = extracted.page_info.as_ref().is_some_and(|info| info.has_next_page);
         let landing = Landing {
-            node_reread: resolved.node_reread,
+            node_reread: locked(&self.flights).node_rereads.contains(&resolved.window_key),
             model: resolved.model.clone(),
             scope: resolved.scope.clone(),
             window_key: resolved.window_key.clone(),

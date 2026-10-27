@@ -794,7 +794,7 @@ impl RelationSpec {
     pub fn row_params(&self, row: &Map<String, Value>) -> Vec<Map<String, Value>> {
         let mut params = vec![Map::new()];
         for column in &self.by_columns {
-            let Some(value) = row.get(column).filter(|value| !value.is_null()) else { return Vec::new() };
+            let Some(value) = row.get(column) else { return Vec::new() };
             for values in &mut params { values.insert(column.clone(), value.clone()); }
         }
         for (parameter, rule) in &self.membership {

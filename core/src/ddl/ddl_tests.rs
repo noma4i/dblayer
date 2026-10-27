@@ -383,6 +383,26 @@ fn inv_dsl_04_field_and_relation_changes_change_the_fingerprint() {
     );
 }
 
+#[test]
+fn membership_changes_and_swapped_bindings_change_the_fingerprint() {
+    use crate::schema::Membership;
+    let mut model = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str), FieldSpec::scalar("status", ScalarKind::Str), FieldSpec::list("lists", ScalarKind::Str)]);
+    let mut relation = RelationSpec::new("list", &[]);
+    relation.text_params = vec!["first".into(), "second".into()];
+    relation.membership = BTreeMap::from([("first".into(), Membership::Equals("title".into())), ("second".into(), Membership::Equals("status".into()))]);
+    model.relations.push(relation);
+    let original = fingerprint(&model);
+    let mut changed = model.clone();
+    changed.relations[0].membership.insert("first".into(), Membership::Contains("lists".into()));
+    assert_ne!(original, fingerprint(&changed));
+    let mut swapped = model.clone();
+    swapped.relations[0].membership = BTreeMap::from([("first".into(), Membership::Equals("status".into())), ("second".into(), Membership::Equals("title".into()))]);
+    assert_ne!(original, fingerprint(&swapped));
+    let mut node = model;
+    node.relations[0].joins_node = true;
+    assert_ne!(original, fingerprint(&node));
+}
+
 fn verdict(writes: &[(&str, &str)], data_version: Option<&str>, fingerprints: &[(&str, &str)]) -> ManifestVerdict {
     let connection = core_connection();
     for (key, value) in writes {

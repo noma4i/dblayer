@@ -74,7 +74,7 @@ pub(crate) struct MembersRead {
 
 impl MembersRead {
     pub(crate) async fn finished(&mut self) -> Result<(), super::SyncError> {
-        self.result.wait_for(Option::is_some).await.map_err(|_| super::SyncError::Cancelled)?.as_ref().unwrap().clone()
+        self.result.wait_for(Option::is_some).await.map_err(|_| super::SyncError::Cancelled)?.as_ref().cloned().ok_or(super::SyncError::Cancelled)?
     }
 }
 
@@ -86,7 +86,8 @@ impl Drop for MembersRead {
             if !Arc::ptr_eq(&chain.identity, &self.identity) { return; }
             chain.readers -= 1;
             if chain.readers == 0 {
-                state.chains.remove(&self.window).unwrap().task.abort();
+                chain.task.abort();
+                state.chains.remove(&self.window);
             }
         }
     }

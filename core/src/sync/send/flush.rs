@@ -465,9 +465,9 @@ impl Inner {
         let answers_from_payload = declared.as_ref().is_some_and(|declared| !declared.result.is_empty()) && root.rsplit_once('.').is_some_and(|(parent, _)| root_value(&data, parent).is_some_and(Value::is_object));
         let readable = landed
             || match root_value(&data, root) {
-                None | Some(Value::String(_)) => false,
                 Some(Value::Null) => sending.action == "destroy" || answers_from_payload,
-                Some(_) => true,
+                Some(Value::Object(_) | Value::Array(_)) => true,
+                _ => false,
             };
         if !readable {
             return self.quarantine(sending, &data);
@@ -479,7 +479,11 @@ impl Inner {
         let entry = sending.entry;
         let temp = entry.operation.temp_id.clone();
         let spec = self.db.spec(&sending.model)?;
-        let (normalized, landings) = self.read_response(spec, sending, operation, &data);
+        let (normalized, landings) = match self.read_response(spec, sending, operation, &data) {
+            Ok(read) => read,
+            Err(SyncError::Malformed(_)) => return self.quarantine(sending, &data),
+            Err(error) => return Err(error),
+        };
         let batch_action = spec.actions.iter().find(|action| action.name == sending.action && action.batch.is_some());
         let mut replacements = Vec::new();
         if let Some(action) = batch_action {
@@ -584,21 +588,19 @@ impl Inner {
         locked(&self.outcomes).answered(entry.operation.id.0, &sending.model, &entry.operation.action_key, rows, Value::Object(fields.collect()));
     }
 
-    fn read_response(&self, spec: &crate::schema::ModelSpec, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> (Normalized, Vec<RowRef>) {
+    fn read_response(&self, spec: &crate::schema::ModelSpec, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> Result<(Normalized, Vec<RowRef>), SyncError> {
         let ignored = spec.actions.iter().any(|declared| declared.name == sending.action && declared.ignore_response);
         if sending.action == "destroy" || ignored {
-            return (Normalized::default(), Vec::new());
+            return Ok((Normalized::default(), Vec::new()));
         }
         let declared = spec.actions.iter().find(|declared| declared.name == sending.action).cloned();
         let root = declared.as_ref().and_then(|declared| declared.root.as_deref()).unwrap_or(&operation.root_path);
         let shape = if declared.as_ref().is_some_and(|action| action.batch.is_some()) { RemoteShape::List { coverage: crate::schema::Coverage::Complete } } else { RemoteShape::Single };
-        let mut normalized = extract(data, root, &shape, None)
-            .and_then(|extracted| normalize_nodes(&self.db, &sending.model, &extracted.nodes))
-            .unwrap_or_default();
+        let mut normalized = self.response_rows(&sending.model, data, root, &shape)?;
         let mut landings = Vec::new();
         for landing in declared.iter().flat_map(|declared| &declared.lands) {
             let shape = if root_value(data, &landing.root).is_some_and(Value::is_array) { RemoteShape::List { coverage: crate::schema::Coverage::Complete } } else { RemoteShape::Single };
-            let Ok(landed) = extract(data, &landing.root, &shape, None).and_then(|extracted| normalize_nodes(&self.db, &landing.model, &extracted.nodes)) else { continue };
+            let landed = self.response_rows(&landing.model, data, &landing.root, &shape)?;
             let model = ModelKey::new(&landing.model);
             landings.extend(landed.roots.iter().filter_map(|row| row.get("id").and_then(read_id)).map(|id| RowRef::new(model.clone(), id)));
             normalized.related.extend(landed.roots.into_iter().map(|row| (model.clone(), row)));
@@ -606,7 +608,20 @@ impl Inner {
             normalized.dropped += landed.dropped;
         }
         normalized.coalesce(&sending.model);
-        (normalized, landings)
+        Ok((normalized, landings))
+    }
+
+    fn response_rows(&self, model: &str, data: &Value, root: &str, shape: &RemoteShape) -> Result<Normalized, SyncError> {
+        if *shape == RemoteShape::Single && root_value(data, root).is_some_and(Value::is_array) {
+            return Err(SyncError::Malformed(format!("{root}: expected a response row")));
+        }
+        let extracted = extract(data, root, shape, None)?;
+        let acknowledgements = extracted.nodes.iter().filter(|row| !row.is_empty() && row.values().all(Value::is_null)).count();
+        let normalized = normalize_nodes(&self.db, model, &extracted.nodes)?;
+        if normalized.dropped > acknowledgements {
+            return Err(SyncError::Malformed(format!("{root}: unreadable response row")));
+        }
+        Ok(normalized)
     }
 
     fn quarantine(&self, sending: &Sending<'_>, data: &Value) -> Result<SendResult, SyncError> {

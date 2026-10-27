@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::schema::{AssociationSpec, FieldKind, FieldSpec, ModelSpec, Sort, Storage};
+use crate::schema::{AssociationSpec, FieldKind, FieldSpec, Membership, ModelSpec, Sort, Storage};
 
 mod layout;
 pub use layout::*;
@@ -636,6 +636,8 @@ struct RelationFingerprint<'a> {
     text_params: Vec<&'a str>,
     is_global: bool,
     sort: &'a Sort,
+    membership: &'a BTreeMap<String, Membership>,
+    joins_node: bool,
 }
 
 #[derive(Serialize)]
@@ -659,7 +661,7 @@ pub fn fingerprint(model: &ModelSpec) -> String {
             by_columns.sort_unstable();
             let mut text_params: Vec<&str> = relation.text_params.iter().map(String::as_str).collect();
             text_params.sort_unstable();
-            RelationFingerprint { name: &relation.name, by_columns, text_params, is_global: relation.is_global, sort: &relation.sort }
+            RelationFingerprint { name: &relation.name, by_columns, text_params, is_global: relation.is_global, sort: &relation.sort, membership: &relation.membership, joins_node: relation.joins_node }
         })
         .collect();
     relations.sort_by(|left, right| left.name.cmp(right.name));

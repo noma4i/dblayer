@@ -539,9 +539,12 @@ Every parameter needs `where` or `membership`. Hidden server parameters still pr
 Use `membership list: { contains: :lists }` when a row belongs to several lists.
 Use `membership list: { equals: :status }` for scalar membership.
 Rules combine with AND. The parameter type must match the scalar field or array element, including the enum name.
+Membership rules require `query`. Local scopes read their `where` columns.
+When a nullable `where` column has a default, an explicit null selects its own window.
 Missing membership fields after merging the stored row fail application. An empty array removes previous membership.
 Missing members join the head once. Existing members keep their places. Unloaded windows are not created.
 Membership and row changes share one commit. Pages retain their server membership, cursors and revision protection.
+When an event joins an active manual node request, that request also inserts the row into matching loaded windows.
 
 ```ruby
 scope :list, insert_on: [:event, :response, :node] do

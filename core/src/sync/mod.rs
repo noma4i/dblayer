@@ -105,6 +105,7 @@ pub(crate) type SubscriptionFailureNotice = Option<(String, crate::transport::Su
 pub(crate) struct Flights {
     pub coalescing: FetchCoalescing,
     pub waiting: HashMap<String, watch::Sender<Option<FlightEnd>>>,
+    pub node_rereads: std::collections::HashSet<String>,
     #[cfg(test)]
     pub joined: JoinedLoads,
 }

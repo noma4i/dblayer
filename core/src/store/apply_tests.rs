@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::{
-    CommitEnvelope, DestroyReason, EntityOp, EnvelopeFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, WriteOrigin,
+    CommitEnvelope, DestroyReason, EntityOp, EnvelopeFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef, WriteOrigin,
 };
 use crate::operation::OperationStatus;
 use crate::syncstate::{FailureKind, OperationFailure};
@@ -24,6 +24,27 @@ fn commit_inserts_row_with_promoted_column_and_payload() {
     let payload = store.point("messages", "m1").unwrap().unwrap();
     assert_eq!(payload["chatId"], json!("c1"));
     assert!(payload.get("chat_id").is_none());
+}
+
+#[test]
+fn nullable_relation_membership_moves_to_null_and_back() {
+    use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape};
+    use crate::value::ScalarKind;
+    let mut spec = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("folder", ScalarKind::Str).nullable().with_default(json!("a")).indexed()]);
+    let mut relation = RelationSpec::new("folder", &["folder"]);
+    relation.remote = Some(crate::sync::rig::remote("Notes", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
+    spec.relations.push(relation);
+    let target = |value| ScopeRef::new(model("notes"), spec.selection_key("folder", &row(json!({"folder": value}))).unwrap());
+    let (named, null) = (target(json!("a")), target(json!(null)));
+    let store = Store::open_in_memory().unwrap();
+    store.boot(&[spec], None).unwrap();
+    store.mark_ready();
+    commit(&store, vec![upsert("notes", json!({"id":"n1", "folder":"a"}))], vec![append(&named, "n1", "a")]);
+    for (value, expected_named, expected_null) in [(json!(null), 0, 1), (json!("a"), 1, 0)] {
+        commit(&store, vec![upsert("notes", json!({"id":"n1", "folder":value}))], vec![]);
+        assert_eq!(store.scope_members("notes", named.key.as_str()).unwrap().len(), expected_named);
+        assert_eq!(store.scope_members("notes", null.key.as_str()).unwrap().len(), expected_null);
+    }
 }
 
 #[test]

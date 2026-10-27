@@ -89,6 +89,45 @@ async fn node_reads_one_entity_and_lands_its_row() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_event_joins_a_manual_node_flight_and_keeps_its_membership_intent() {
+    use std::time::Duration;
+    use crate::schema::Membership;
+    use crate::transport::{Response, SubscriptionEvent};
+    let mut chat = chats_spec();
+    let mut list = RelationSpec::new("list", &[]);
+    list.text_params.push("name".into());
+    list.membership.insert("name".into(), Membership::Equals("title".into()));
+    list.joins_node = true;
+    list.remote = Some(remote("Chats", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    chat.relations.push(list);
+    chat.change_feed = Some(super::subscribe_tests::change_feed());
+    chat.changes.push(serde_json::from_value(json!({"area":"CHAT", "relation":"node"})).unwrap());
+    let rig = rig_on(Db::open_in_memory(vec![chat], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(OperationDef::new("Chats", "query Chats { chats { id title } }", "chats"));
+    rig.sync.register(OperationDef::from_document("ChatNode", "query chat($id: ID!) { node(id: $id) { ... on Chat { id title } } }").unwrap());
+    rig.sync.register(OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
+    let values = params(json!({"name":"same"}));
+    rig.transport.enqueue("Chats", data(json!({"chats":[]})));
+    rig.sync.load("chats", "list", &values, Default::default()).await.unwrap();
+    put(&rig, "chats", json!({"id":"c1", "title":"before"}));
+    let events = rig.sync.open_model_events("chats").await.unwrap();
+    rig.transport.enqueue("ChatNode", data(json!({"node":{"id":"c1", "title":"same"}})).after(Duration::from_secs(5)));
+    let sync = rig.sync.clone();
+    let manual = tokio::spawn(async move { sync.node("chats", "node", "c1", true).await });
+    rig.transport.await_calls("ChatNode", 1).await;
+    rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"CHAT", "action":"UPDATED", "recordId":"c1"}]}}))));
+    tokio::time::timeout(Duration::from_secs(1), rig.sync.wait_joined(1)).await.expect("the event must join the manual request");
+    let row = tokio::time::timeout(Duration::from_secs(10), manual).await.expect("the manual request must complete").unwrap().unwrap().unwrap();
+    assert_eq!(row.text("title"), Some("same"));
+    let item = tokio::time::timeout(Duration::from_secs(5), events.next()).await.expect("the event must be served by the shared request");
+    let Some(super::ModelEventItem::Event(event)) = item else { panic!("expected a model event: {item:?}") };
+    assert_eq!(event.before.unwrap().text("title"), Some("before"));
+    assert_eq!(event.after.unwrap().text("title"), Some("same"));
+    assert_eq!(member_ids(&rig, "chats", "list", &values), ["c1"]);
+    assert_eq!(rig.transport.call_count("ChatNode"), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_relation_under_node_lands_the_connection_rows() {
     let rig = node_rig();
     let edges = json!([{"node": {"id": "m1", "chatId": "c1", "text": "a"}}, {"node": {"id": "m2", "chatId": "c1", "text": "b"}}]);

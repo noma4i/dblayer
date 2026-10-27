@@ -21,6 +21,10 @@
 - Replace the `events` property with the suspending `events()` call on Swift and Kotlin.
 
 ### Fixed
+- Preserve nullable list membership when a column changes to null and back.
+- Reset cached server data after membership rules or node insertion rules change.
+- Share node requests while preserving insertion requested by an event.
+- Keep upload operations open when the content response contains an unreadable record.
 - Preserve each active subscription declaration's debounce, effects, nested fields, events, and failure recovery.
 - Apply the supplied definition when subscribing directly to a declared operation.
 - Give each event collection an independent reader, including after cancellation or completion.
