@@ -2,6 +2,8 @@
 set -euo pipefail
 
 name="generate_kotlin_bindings.sh"
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+absolute() { printf '%s/%s' "$(cd -- "$(dirname -- "$1")" && pwd -P)" "$(basename -- "$1")"; }
 usage="usage: $name --bindgen <uniffi-bindgen> --library <libdblayer.a|.so|.dylib> --config <uniffi.toml> --out <directory>"
 bindgen="" library="" config="" out=""
 while [ "$#" -gt 0 ]; do
@@ -30,7 +32,7 @@ done
 global="$(mktemp)"
 trap '/bin/rm -f "$global"' EXIT
 sed 's/^\[/[crates.dblayer./' "$config" > "$global"
-"$bindgen" generate --library "$library" --config "$global" --language kotlin --no-format --out-dir "$out"
+(cd -- "$root/core" && "$(absolute "$bindgen")" generate --library "$(absolute "$library")" --config "$global" --language kotlin --no-format --out-dir "$(cd -- "$out" && pwd -P)")
 
 generated="$out/com/noma4i/dblayer/dblayer.kt"
 [ -f "$generated" ] || { echo "$name: $generated was not generated" >&2; exit 1; }
