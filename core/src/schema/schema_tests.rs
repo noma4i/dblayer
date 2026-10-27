@@ -303,7 +303,7 @@ fn local_and_global_relations_are_local_without_remote() {
     assert!(global.is_global);
     assert!(global.is_local());
     assert!(!non_global_empty.is_global);
-    let key = local.scope_key("messages", &[("chatId".to_string(), "7".to_string())].into_iter().collect()).unwrap();
+    let key = local.scope_key("messages", &[("chatId".to_string(), crate::value::relation_param_text(&json!("7")))].into_iter().collect()).unwrap();
     assert!(key.as_str().contains("messages"));
     assert!(key.as_str().contains("thread"));
 }

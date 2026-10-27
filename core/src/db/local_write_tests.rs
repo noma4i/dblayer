@@ -255,7 +255,7 @@ fn threaded_db() -> Db {
 }
 
 fn scope_of(relation: &str, chat: &str) -> ListKey {
-    relation_scope_key("messages", relation, &[("chatId".to_string(), chat.to_string())].into()).unwrap()
+    relation_scope_key("messages", relation, &[("chatId".to_string(), crate::value::relation_param_text(&json!(chat)))].into()).unwrap()
 }
 
 #[test]

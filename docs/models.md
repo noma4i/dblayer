@@ -487,6 +487,12 @@ val opponent = group?.opponent?.current()?.firstOrNull()
 
 `scope :name do ... end` declares a named selection. `parameter :ownerId, :id` declares a typed parameter and `where ownerId: :ownerId` binds the column to it. A parameter bound by `where` has the name of its column. Each column takes its own `where` pair. `order field: :asc` sorts rows. Null values come first in `:asc` and last in `:desc`. Use `:asc_nulls_last` or `:desc_nulls_first` to reverse their placement.
 
+Integer comparisons remain exact above 2^53, including comparisons with real numbers in merges and sorted lists.
+
+Scope keys encode each normalized parameter with its type and JSON value. Null and strings always identify distinct windows.
+Variable bindings read the original parameters, including cross bindings. Ordinary requests pass remaining parameters, while marker and tail requests select declared variables.
+Duration counts that overflow milliseconds are rejected.
+
 When a response row has no value for a column the relation groups by, the param fills it. A response without an id becomes a row keyed by the param.
 
 A `query "Operation"` line connects a scope to the server. A scope that depends on columns binds them: `where userId: :userId` loads and lists the rows whose `userId` equals the parameter. `order createdAt: :desc` sorts the rows locally, otherwise the server order is kept. A row whose param column changes (a message moving to another `groupId`) leaves the list of the old value and joins the head of the list of the new value in the same commit, for relations that list every row of their params. `insert_on: [:create]` on a scope without parameters makes the list take the rows this device creates, at its head; `insert_on: [:event, :response]` makes it take rows from its subscription events and from operation responses.

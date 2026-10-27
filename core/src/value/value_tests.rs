@@ -148,15 +148,34 @@ fn null_semantics_compare_numbers_strings_and_absent_values() {
     assert!(null_compare(Some(&three), &five, false, false));
     assert!(!null_compare(Some(&json!("b")), &five, true, false));
     assert!(null_equals(Some(&json!(1)), Some(&json!(1.0))));
+    for (left, right, expected) in [
+        (json!(9_007_199_254_740_992_i64), json!(9_007_199_254_740_993_i64), Ordering::Less),
+        (json!(9_007_199_254_740_993_i64), json!(9_007_199_254_740_992.0), Ordering::Greater),
+        (json!(u64::MAX), json!(18_446_744_073_709_551_616.0), Ordering::Less),
+        (json!(-1), json!(u64::MAX), Ordering::Less),
+        (json!(-9_007_199_254_740_993_i64), json!(-9_007_199_254_740_992.0), Ordering::Less),
+        (json!(0), json!(-0.5), Ordering::Greater),
+        (json!(0), json!(0.5), Ordering::Less),
+    ] {
+        assert_eq!(compare_numbers(left.as_number().unwrap(), right.as_number().unwrap()), Some(expected));
+        assert_eq!(compare_numbers(right.as_number().unwrap(), left.as_number().unwrap()), Some(expected.reverse()));
+    }
 }
 
 #[test]
 fn null_relation_value_is_its_own_scope() {
-    let kinds = BTreeMap::from([("vibeId".to_string(), ScalarKind::Id)]);
-    let none = relation_scope_key_from_values("moment", "feed", &object(json!({"vibeId": null})), &kinds).unwrap();
-    let some = relation_scope_key_from_values("moment", "feed", &object(json!({"vibeId": "1"})), &kinds).unwrap();
-    assert_ne!(none, some);
-    assert_eq!(none, relation_scope_key_from_values("moment", "feed", &object(json!({"vibeId": null})), &kinds).unwrap());
+    let kinds = BTreeMap::from([("q".to_string(), ScalarKind::Str)]);
+    for text in ["\u{0}null", "null", "true", "1", "\"null\""] {
+        let none = relation_scope_key_from_values("moment", "feed", &object(json!({"q": null})), &kinds).unwrap();
+        let some = relation_scope_key_from_values("moment", "feed", &object(json!({"q": text})), &kinds).unwrap();
+        assert_ne!(none, some, "{text:?}");
+        assert_ne!(relation_param_text(&Value::Null), relation_param_text(&json!(text)));
+        let normalized = normalize_relation_params(&object(json!({"q": text})), &kinds).unwrap();
+        assert_eq!(normalized["q"], relation_param_text(&json!(text)));
+    }
+    for (left, right) in [(json!(true), json!("true")), (json!(1), json!("1")), (json!([1]), json!("[1]"))] {
+        assert_ne!(relation_param_text(&left), relation_param_text(&right));
+    }
 }
 
 #[test]
@@ -164,16 +183,16 @@ fn relation_values_normalize_to_equal_params_and_keys() {
     let kinds = BTreeMap::from([("chatId".to_string(), ScalarKind::Id)]);
     let from_string = normalize_relation_params(&object(json!({"chatId": "1"})), &kinds).unwrap();
     let from_number = normalize_relation_params(&object(json!({"chatId": 1})), &kinds).unwrap();
-    assert_eq!(from_string, BTreeMap::from([("chatId".to_string(), "1".to_string())]));
+    assert_eq!(from_string, BTreeMap::from([("chatId".to_string(), "s:\"1\"".to_string())]));
     assert_eq!(from_number, from_string);
     let count = BTreeMap::from([("count".to_string(), ScalarKind::Int)]);
-    assert_eq!(normalize_relation_params(&object(json!({"count": "42"})), &count).unwrap()["count"], "42");
+    assert_eq!(normalize_relation_params(&object(json!({"count": "42"})), &count).unwrap()["count"], "d:42");
     let flag = BTreeMap::from([("flag".to_string(), ScalarKind::Bool)]);
-    assert_eq!(normalize_relation_params(&object(json!({"flag": true})), &flag).unwrap()["flag"], "true");
+    assert_eq!(normalize_relation_params(&object(json!({"flag": true})), &flag).unwrap()["flag"], "b:true");
     let text = BTreeMap::from([("q".to_string(), ScalarKind::Str), ("at".to_string(), ScalarKind::Date)]);
     let both = normalize_relation_params(&object(json!({"q": "hi", "at": "2021-01-01T00:00:00Z"})), &text).unwrap();
-    assert_eq!(both["q"], "hi");
-    assert_eq!(both["at"], "2021-01-01T00:00:00.000Z");
+    assert_eq!(both["q"], "s:\"hi\"");
+    assert_eq!(both["at"], "s:\"2021-01-01T00:00:00.000Z\"");
     let from_string_key = relation_scope_key_from_values("message", "thread", &object(json!({"chatId": "42"})), &kinds).unwrap();
     let from_number_key = relation_scope_key_from_values("message", "thread", &object(json!({"chatId": 42})), &kinds).unwrap();
     assert_eq!(from_string_key, from_number_key);

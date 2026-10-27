@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Fixed
+- Preserve exact large-integer ordering in merges, sequence selection, and sorted lists.
+- Preserve original parameter values during cross binding and distinguish typed scope keys.
+- Reject duration counts whose converted milliseconds overflow.
 - Report corrupt stored rollback data, revisions, sync states, and pending requests as errors.
 - Report upload state persistence failures instead of continuing with unsaved transitions.
 - Report stored window and watched reload failures without treating them as missing or fresh.

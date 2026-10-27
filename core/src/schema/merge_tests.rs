@@ -20,6 +20,8 @@ fn a_rule_decides_what_an_arriving_value_may_replace() {
         ("positive takes a bigger size", Positive, Some(json!(640)), json!(720), json!(720)),
         ("monotonic keeps a higher number", Monotonic, Some(json!(80)), json!(40), json!(80)),
         ("monotonic takes a higher number", Monotonic, Some(json!(40)), json!(80), json!(80)),
+        ("monotonic keeps an exact large integer", Monotonic, Some(json!(9_007_199_254_740_993_i64)), json!(9_007_199_254_740_992_i64), json!(9_007_199_254_740_993_i64)),
+        ("monotonic takes an exact large integer", Monotonic, Some(json!(9_007_199_254_740_992_i64)), json!(9_007_199_254_740_993_i64), json!(9_007_199_254_740_993_i64)),
         ("monotonic keeps a later date", Monotonic, Some(json!("2026-01-02T00:00:00.000Z")), json!("2026-01-01T00:00:00.000Z"), json!("2026-01-02T00:00:00.000Z")),
         ("monotonic keeps a value against null", Monotonic, Some(json!(80)), Value::Null, json!(80)),
         ("ladder never steps down a tier", ladder(), Some(json!("COMPLETED")), json!("PROGRESSING"), json!("COMPLETED")),

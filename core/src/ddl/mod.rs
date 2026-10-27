@@ -635,7 +635,7 @@ pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>
     Ok(None)
 }
 
-const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds; rows are typed columns with rev__ columns; free values are node trees";
+const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds; rows are typed columns with rev__ columns; free values are node trees; relation parameters are type-tagged JSON values";
 
 pub fn format_version() -> String {
     let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");

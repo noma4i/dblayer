@@ -121,7 +121,14 @@ fn boolean(cx: &mut Cx, node: &Node<Value>, what: &str) -> Option<bool> {
 
 fn duration(cx: &mut Cx, node: &Node<Value>, what: &str) -> Option<String> {
     match &node.item {
-        Value::Duration { amount, unit } => Some(format!("{amount}.{unit}")),
+        Value::Duration { amount, unit } => {
+            let text = format!("{amount}.{unit}");
+            if dblayer::pacing::parse_duration(&text).is_none() {
+                cx.fail(at(node), format!("{what} duration exceeds supported milliseconds"));
+                return None;
+            }
+            Some(text)
+        }
         _ => {
             cx.fail(at(node), format!("{what} must be a duration like `5.minutes`"));
             None

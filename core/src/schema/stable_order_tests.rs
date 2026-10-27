@@ -42,7 +42,7 @@ fn a_stable_relation_needs_a_fetch_an_order_and_where_columns_without_text_param
 #[test]
 fn the_stable_order_of_a_scope_key_belongs_to_the_relation_that_made_it() {
     let model = host(vec![thread("thread"), RelationSpec { order_stable: false, ..thread("threads") }, thread("thread2")]);
-    let key = |name: &str| model.relations.iter().find(|relation| relation.name == name).unwrap().scope_key("messages", &[("chatId".to_string(), "c1".to_string())].into()).unwrap();
+    let key = |name: &str| model.selection_key(name, serde_json::json!({"chatId": "c1"}).as_object().unwrap()).unwrap();
     assert!(model.stable_order(&key("thread")).is_some());
     assert!(model.stable_order(&key("thread2")).is_some());
     assert!(model.stable_order(&key("threads")).is_none());

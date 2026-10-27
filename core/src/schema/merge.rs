@@ -31,12 +31,12 @@ fn is_empty(value: &Value) -> bool {
 }
 
 fn is_positive(value: &Value) -> bool {
-    value.as_f64().is_some_and(|number| number > 0.0)
+    value.as_number().is_some_and(|number| crate::value::compare_numbers(number, &0.into()) == Some(Ordering::Greater))
 }
 
 fn order(left: &Value, right: &Value) -> Option<Ordering> {
     match (left, right) {
-        (Value::Number(left), Value::Number(right)) => left.as_f64()?.partial_cmp(&right.as_f64()?),
+        (Value::Number(left), Value::Number(right)) => crate::value::compare_numbers(left, right),
         (Value::String(left), Value::String(right)) => Some(left.cmp(right)),
         _ => None,
     }

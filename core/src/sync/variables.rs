@@ -6,19 +6,20 @@ use crate::schema::{PageDirection, RemoteShape, VariableSource};
 
 pub(crate) fn mapped_variables(params: &Map<String, Value>, mapping: &BTreeMap<String, VariableSource>) -> Map<String, Value> {
     let mut variables = params.clone();
-    for (name, source) in mapping {
-        match source {
-            VariableSource::Param { name: param } => {
-                if let Some(value) = variables.remove(param) {
-                    variables.insert(name.clone(), value);
-                }
-            }
-            VariableSource::Constant { value } => {
-                variables.insert(name.clone(), value.clone());
-            }
+    for source in mapping.values() {
+        if let VariableSource::Param { name } = source {
+            variables.remove(name);
         }
     }
+    variables.extend(declared_variables(params, mapping));
     variables
+}
+
+pub(crate) fn declared_variables(params: &Map<String, Value>, mapping: &BTreeMap<String, VariableSource>) -> Map<String, Value> {
+    mapping.iter().filter_map(|(variable, source)| match source {
+        VariableSource::Param { name } => params.get(name).map(|value| (variable.clone(), value.clone())),
+        VariableSource::Constant { value } => Some((variable.clone(), value.clone())),
+    }).collect()
 }
 
 pub(crate) fn load_variables(params: &Map<String, Value>, shape: &RemoteShape, page_size: u32, cursor: Option<&str>, mapping: &BTreeMap<String, VariableSource>) -> Value {

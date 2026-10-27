@@ -25,6 +25,7 @@ fn a_stale_window_is_a_literal_duration_and_any_name_is_an_error() {
     let cases = [
         ("90.seconds", Ok(Duration::from_secs(90))),
         ("eventually", Err(SyncError::UnknownFreshness("eventually".to_string()))),
+        ("18446744073709551615.days", Err(SyncError::UnknownFreshness("18446744073709551615.days".to_string()))),
     ];
     for (input, expected) in cases {
         assert_eq!(stale_window(input), expected, "{input:?}");

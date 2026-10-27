@@ -16,7 +16,7 @@ fn present(value: Option<&Value>) -> Option<&Value> {
 
 fn compare_values(left: &Value, right: &Value) -> Ordering {
     match (left, right) {
-        (Value::Number(left), Value::Number(right)) => left.as_f64().partial_cmp(&right.as_f64()).unwrap_or(Ordering::Equal),
+        (Value::Number(left), Value::Number(right)) => crate::value::compare_numbers(left, right).unwrap_or(Ordering::Equal),
         (Value::String(left), Value::String(right)) => left.cmp(right),
         _ => Ordering::Equal,
     }

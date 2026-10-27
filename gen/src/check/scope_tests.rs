@@ -57,6 +57,7 @@ fn a_remote_scope_reads_with_query_variables_and_response() {
         ("query twice", &scope("", "    query \"S\"\n    query \"T\"\n"), Some("`query` is declared twice")),
         ("query option", &scope("", "    query \"S\", root: \"a.b\"\n"), Some("unknown key `root` for `query`")),
         ("variables with a parameter and a constant", &scope("", "    parameter :q, :string\n    query \"S\"\n    variables query: :q, limit: 5, kinds: [\"a\"]\n"), None),
+        ("cross binding reads original parameters", &scope("", "    parameter :a, :string\n    parameter :b, :string\n    query \"S\"\n    variables a: :b, b: :a\n"), None),
         ("variables names an undeclared parameter", &scope("", "    query \"S\"\n    variables query: :q\n"), Some("variable `query` names `:q`")),
         ("variables without bindings", &scope("", "    query \"S\"\n    variables\n"), Some("`variables` needs bindings")),
         ("variable bound twice", &scope("", "    parameter :q, :string\n    query \"S\"\n    variables a: :q, a: :q\n"), Some("variable `a` is bound twice")),
@@ -136,6 +137,7 @@ fn freshness_is_one_declaration_with_durations() {
     let fresh = |line: &str| scope("", &format!("    query \"S\"\n    {line}\n"));
     run(&[
         ("expires", &fresh("freshness expires_in: 5.minutes"), None),
+        ("expires overflows milliseconds", &fresh("freshness expires_in: 18446744073709551615.days"), Some("duration")),
         ("expires and empty", &fresh("freshness expires_in: 5.minutes, empty_in: 30.seconds"), None),
         ("old fresh_for", &fresh("fresh_for 5.minutes"), Some("unknown word `fresh_for`")),
         ("expires missing", &fresh("freshness empty_in: 30.seconds"), Some("`freshness` needs `expires_in:`")),

@@ -33,6 +33,16 @@ fn a_child_moves_the_parent_pointer_only_when_it_is_newer_by_the_tuple() {
 }
 
 #[test]
+fn large_sequences_decide_before_the_id_tiebreaker() {
+    let parent = row(json!({"lastMessageId": "7", "lastSequenceNumber": 9_007_199_254_740_992_i64}));
+    let child = row(json!({"id": "6", "sequenceNumber": 9_007_199_254_740_993_i64}));
+    assert!(chat_link().child_is_newer(&parent, &child));
+    let parent = row(json!({"lastMessageId": "7", "lastSequenceNumber": 9_007_199_254_740_993_i64}));
+    let child = row(json!({"id": "8", "sequenceNumber": 9_007_199_254_740_992_i64}));
+    assert!(!chat_link().child_is_newer(&parent, &child));
+}
+
+#[test]
 fn a_pending_pointer_holds_against_a_confirmed_child() {
     let chat = chat_link();
     let parent = row(json!({"lastMessageId": "temp-a", "lastMessageAt": "2026-01-03T00:00:05.000Z"}));

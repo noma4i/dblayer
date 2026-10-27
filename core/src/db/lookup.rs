@@ -7,7 +7,6 @@ use crate::identity::touches::touch;
 use crate::identity::RowId;
 use crate::query::{compile_count, compile_keys, fetch_count, fetch_keys, Order, Query};
 use crate::schema::Sort;
-use crate::value::relation_param_text;
 use crate::store::{Reader, StoreError};
 use crate::syncstate::read_sync;
 
@@ -153,8 +152,7 @@ impl Db {
         if relation.remote.is_none() {
             return Ok(None);
         }
-        let strings = params.iter().map(|(key, value)| (key.clone(), relation_param_text(value))).collect();
-        let scope = relation.scope_key(model, &strings).map_err(|_| DbError::UnknownAssociation { model: model.to_string(), name: name.to_string() })?;
+        let scope = spec.selection_key(name, params)?;
         let order = match &relation.sort {
             Sort::ServerOrder if relation.members_complete => vec![Order::new("id", crate::value::SortDirection::Asc)],
             Sort::ServerOrder => Vec::new(),

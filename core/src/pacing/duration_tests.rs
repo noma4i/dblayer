@@ -9,8 +9,9 @@ fn parses_a_count_and_a_unit() {
 
 #[test]
 fn rejects_text_without_a_count_or_a_known_unit() {
-    assert_eq!(parse_duration("soon"), None);
-    assert_eq!(parse_duration("5.fortnights"), None);
+    for text in ["soon", "5.fortnights", "18446744073709551615.days", "18446744073709551615.hours", "18446744073709551615.minutes", "18446744073709551615.seconds"] {
+        assert_eq!(parse_duration(text), None, "{text}");
+    }
 }
 
 #[test]

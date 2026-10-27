@@ -67,8 +67,9 @@ fn an_ephemeral_name_cannot_repeat_a_stored_field() {
 
 #[test]
 fn a_reset_window_must_be_a_positive_duration() {
-    assert_eq!(with_ephemeral(typing().resetting_after("soon")).validate(&[]), Err(DeclarationError::InvalidDuration("soon".into())));
-    assert_eq!(with_ephemeral(typing().resetting_after("0.seconds")).validate(&[]), Err(DeclarationError::InvalidDuration("0.seconds".into())));
+    for text in ["soon", "0.seconds", "18446744073709551615.days"] {
+        assert_eq!(with_ephemeral(typing().resetting_after(text)).validate(&[]), Err(DeclarationError::InvalidDuration(text.into())));
+    }
 }
 
 #[test]

@@ -11,5 +11,5 @@ pub fn parse_duration(text: &str) -> Option<Duration> {
         "day" => 86_400_000,
         _ => return None,
     };
-    Some(Duration::from_millis(count * milliseconds))
+    Some(Duration::from_millis(count.checked_mul(milliseconds)?))
 }

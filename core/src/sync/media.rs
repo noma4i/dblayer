@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use crate::commit::WindowMarker;
-use crate::schema::{Coverage, MediaSpec, RemoteShape, VariableSource};
+use crate::schema::{Coverage, MediaSpec, RemoteShape};
 use crate::store::PageInfo;
 use crate::transport::GraphQLRequest;
 
@@ -13,15 +13,8 @@ use super::land::{Landed, Landing};
 use super::load::{stamp_scope_values, Executed, LoadOutcome, LoadStatus, Resolved};
 use super::normalize::normalize_nodes;
 use super::registry::OperationDef;
-use super::variables::load_variables;
+use super::variables::{declared_variables, load_variables};
 use super::{locked, Inner, SyncError};
-
-fn bound(params: &Map<String, Value>, sources: &BTreeMap<String, VariableSource>) -> Map<String, Value> {
-    sources.iter().filter_map(|(variable, source)| match source {
-        VariableSource::Param { name } => params.get(name).map(|value| (variable.clone(), value.clone())),
-        VariableSource::Constant { value } => Some((variable.clone(), value.clone())),
-    }).collect()
-}
 
 fn integer(value: &Value, field: &str) -> Result<i64, SyncError> {
     value.as_i64().or_else(|| value.as_str().and_then(|text| text.parse().ok())).ok_or_else(|| SyncError::Malformed(format!("marker {field} must be an integer")))
@@ -34,7 +27,7 @@ impl Inner {
 
     async fn media_marker(&self, resolved: &Resolved<'_>, media: &MediaSpec, prefix: i64) -> Result<WindowMarker, SyncError> {
         let operation = self.media_operation(&media.marker)?;
-        let mut variables = bound(&resolved.params, &media.marker_variables);
+        let mut variables = declared_variables(&resolved.params, &media.marker_variables);
         variables.insert("upToSequence".into(), json!(prefix));
         let (response, _) = self.query_with_retry(GraphQLRequest::new(&operation.document, &operation.name, Value::Object(variables))).await?;
         let data = response.data.ok_or_else(|| SyncError::Malformed("marker response has no data".into()))?;
@@ -60,7 +53,7 @@ impl Inner {
         let mut stable = true;
         if !tail || before.sequence > prefix {
             let operation = if tail { self.media_operation(&media.tail)? } else { resolved.operation.clone() };
-            let mut params = if tail { bound(&resolved.params, &media.tail_variables) } else { resolved.params.clone() };
+            let mut params = if tail { declared_variables(&resolved.params, &media.tail_variables) } else { resolved.params.clone() };
             if tail { params.insert(media.after.clone(), json!(prefix)); }
             let mapping = if tail { BTreeMap::new() } else { resolved.remote.variables.clone() };
             let mut cursor = None;

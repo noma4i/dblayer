@@ -12,6 +12,9 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::identity::{RowId, ListKey};
 
 mod fractional;
+mod numeric;
+
+pub(crate) use numeric::{compare_numbers, Numeric};
 
 pub use fractional::{fractional_between, fractional_keys_between, ORDER_KEY_LIMIT};
 
@@ -215,17 +218,6 @@ fn iso_from_milliseconds(milliseconds: f64) -> Option<String> {
 }
 
 #[cfg(test)]
-fn compare_numbers(left: &Number, right: &Number) -> Option<Ordering> {
-    if let (Some(left), Some(right)) = (left.as_i64(), right.as_i64()) {
-        return Some(left.cmp(&right));
-    }
-    if let (Some(left), Some(right)) = (left.as_u64(), right.as_u64()) {
-        return Some(left.cmp(&right));
-    }
-    left.as_f64()?.partial_cmp(&right.as_f64()?)
-}
-
-#[cfg(test)]
 fn values_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Number(left), Value::Number(right)) => compare_numbers(left, right) == Some(Ordering::Equal),
@@ -283,15 +275,16 @@ pub fn null_compare(value: Option<&Value>, bound: &Value, keeps_greater: bool, o
     }
 }
 
-/// Scope-key text of a relation parameter that was passed as null (for example the unfiltered feed).
-const NULL_PARAM: &str = "\u{0}null";
-
 pub fn relation_param_text(value: &Value) -> String {
-    match value {
-        Value::Null => NULL_PARAM.to_string(),
-        Value::String(text) => text.clone(),
-        other => other.to_string(),
-    }
+    let tag = match value {
+        Value::Null => "n",
+        Value::Bool(_) => "b",
+        Value::Number(_) => "d",
+        Value::String(_) => "s",
+        Value::Array(_) => "a",
+        Value::Object(_) => "o",
+    };
+    format!("{tag}:{value}")
 }
 
 pub fn normalize_relation_params(
@@ -302,19 +295,19 @@ pub fn normalize_relation_params(
     for (name, value) in values {
         let kind = kinds.get(name).ok_or_else(|| RelationParamsError::UnknownField(name.clone()))?;
         if value.is_null() {
-            result.insert(name.clone(), NULL_PARAM.to_string());
+            result.insert(name.clone(), relation_param_text(value));
             continue;
         }
         let value = Some(value);
-        let text = match kind {
-            ScalarKind::Id => require(value, name, read_id)?.as_str().to_string(),
-            ScalarKind::Int => require(value, name, read_int)?.to_string(),
-            ScalarKind::Num => require(value, name, read_num)?.to_string(),
-            ScalarKind::Bool => require(value, name, read_bool)?.to_string(),
-            ScalarKind::Date => require(value, name, read_date)?,
-            ScalarKind::Str => require(value, name, read_str)?,
+        let normalized = match kind {
+            ScalarKind::Id => Value::String(require(value, name, read_id)?.as_str().to_string()),
+            ScalarKind::Int => Value::from(require(value, name, read_int)?),
+            ScalarKind::Num => Value::from(require(value, name, read_num)?),
+            ScalarKind::Bool => Value::Bool(require(value, name, read_bool)?),
+            ScalarKind::Date => Value::String(require(value, name, read_date)?),
+            ScalarKind::Str => Value::String(require(value, name, read_str)?),
         };
-        result.insert(name.clone(), text);
+        result.insert(name.clone(), relation_param_text(&normalized));
     }
     Ok(result)
 }

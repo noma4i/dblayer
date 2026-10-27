@@ -58,3 +58,18 @@ fn mapped_variables_rename_params_and_add_constants() {
     let variables = load_variables(&params(), &connection(PageDirection::Forward), 20, None, &mapping);
     assert_eq!(variables, json!({"statusFilter": "u1", "includeGifts": false, "first": 20}));
 }
+
+#[test]
+fn bindings_read_the_original_params_and_choose_whether_to_pass_the_rest() {
+    use std::collections::BTreeMap;
+    use crate::schema::VariableSource::{Constant, Param};
+    let params = json!({"a": "first", "b": "second", "rest": 3}).as_object().unwrap().clone();
+    for (mapping, declared, remaining) in [
+        (BTreeMap::from([("a".into(), Param { name: "b".into() }), ("b".into(), Param { name: "a".into() })]), json!({"a": "second", "b": "first"}), json!({"a": "second", "b": "first", "rest": 3})),
+        (BTreeMap::from([("x".into(), Param { name: "a".into() }), ("y".into(), Param { name: "a".into() })]), json!({"x": "first", "y": "first"}), json!({"x": "first", "y": "first", "b": "second", "rest": 3})),
+        (BTreeMap::from([("a".into(), Constant { value: json!(false) }), ("b".into(), Param { name: "a".into() })]), json!({"a": false, "b": "first"}), json!({"a": false, "b": "first", "rest": 3})),
+    ] {
+        assert_eq!(Value::Object(declared_variables(&params, &mapping)), declared);
+        assert_eq!(Value::Object(mapped_variables(&params, &mapping)), remaining);
+    }
+}

@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 
 use rusqlite::types::Value;
+use crate::value::Numeric;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct OrderKey {
@@ -51,24 +52,17 @@ fn storage_class(value: &Value) -> u8 {
 }
 
 pub(crate) fn compare_cells(left: &Value, right: &Value) -> Ordering {
+    let numeric = |value: &Value| match value {
+        Value::Integer(value) => Some(Numeric::Integer(i128::from(*value))),
+        Value::Real(value) => Some(Numeric::Real(*value)),
+        _ => None,
+    };
+    if let (Some(left), Some(right)) = (numeric(left), numeric(right)) {
+        return left.compare(right).unwrap_or(Ordering::Equal);
+    }
     match (left, right) {
-        (Value::Integer(a), Value::Integer(b)) => a.cmp(b),
-        (Value::Real(a), Value::Real(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
-        (Value::Integer(a), Value::Real(b)) => compare_integer_real(*a, *b),
-        (Value::Real(a), Value::Integer(b)) => compare_integer_real(*b, *a).reverse(),
         (Value::Text(a), Value::Text(b)) => a.as_bytes().cmp(b.as_bytes()),
         (Value::Blob(a), Value::Blob(b)) => a.cmp(b),
         _ => storage_class(left).cmp(&storage_class(right)),
     }
-}
-
-fn compare_integer_real(integer: i64, real: f64) -> Ordering {
-    if real < -9_223_372_036_854_775_808.0 {
-        return Ordering::Greater;
-    }
-    if real >= 9_223_372_036_854_775_808.0 {
-        return Ordering::Less;
-    }
-    let truncated = real as i64;
-    integer.cmp(&truncated).then_with(|| (integer as f64).partial_cmp(&real).unwrap_or(Ordering::Equal))
 }
