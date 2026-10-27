@@ -1,19 +1,19 @@
 # App migration
 
-## Метка медиатеки
+## Media library marker
 
-В scope медиатеки добавить `marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :visualCount, :audioCount, :giftCount], sequence: :latestSequence`.
-Добавить `tail "chatMedia", after: :afterSequence` рядом с существующими `query`, `response`, `paginate` и `freshness`.
-Запрос `chatMediaState` принимает `chatId` и `upToSequence`, выбирает все поля метки и `latestSequence`.
-Запрос `chatMedia` принимает `afterSequence`, `first`, `after` и возвращает сообщения по возрастанию sequence.
-Источник `revision` - `ChatMediaLibrary.revision`, серверный `chats.media_revision`. `Chat.revision` не заменяет эту метку.
-Перегенерировать модели Swift и Kotlin с GraphQL schema и документами запросов.
-Открывать `LiveList(try ChatMedia.media(chatId))` / `LiveList(ChatMedia.media(chatId), scope)`.
-Удалить локальные поля Chat: `mediaSequence`, `mediaVisualCount`, `mediaAudioCount`, `mediaGiftCount`.
-Их заменяет типизированная метка SQLite, принадлежащая ядру.
-Удалить сравнение счётчиков и ручную загрузку tail из ChatMediaModel на обеих платформах.
-Существующие snapshot и refresh передают строки, полноту и ошибку. Дополнительных вызовов приложения нет.
-Rust: существующие литералы `WindowSave` добавляют `marker: None`, `invalidated: false`, если они не подтверждают метку медиатеки.
+Add `marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :visualCount, :audioCount, :giftCount], sequence: :latestSequence` to the media library scope.
+Add `tail "chatMedia", after: :afterSequence` beside the existing `query`, `response`, `paginate` and `freshness`.
+The `chatMediaState` query takes `chatId` and `upToSequence`, and selects every marker field and `latestSequence`.
+The `chatMedia` query takes `afterSequence`, `first`, `after` and returns messages in ascending sequence order.
+The source of `revision` is `ChatMediaLibrary.revision`, the server's `chats.media_revision`. `Chat.revision` does not replace this marker.
+Regenerate Swift and Kotlin models with the GraphQL schema and query documents.
+Open `LiveList(try ChatMedia.media(chatId))` on Swift or `LiveList(ChatMedia.media(chatId), scope)` on Kotlin.
+Remove the local Chat fields: `mediaSequence`, `mediaVisualCount`, `mediaAudioCount`, `mediaGiftCount`.
+A typed SQLite marker owned by the core replaces them.
+Remove counter comparisons and manual tail loading from ChatMediaModel on both platforms.
+Existing snapshot and refresh calls carry rows, completeness and errors. The app makes no additional calls.
+Rust: existing `WindowSave` literals add `marker: None`, `invalidated: false` unless they confirm a media library marker.
 
 ## Preloading and members
 

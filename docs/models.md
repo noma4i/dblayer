@@ -1,6 +1,6 @@
 # Describing models
 
-## Метка и хвост медиатеки
+## Media library marker and tail
 
 ```ruby
 scope :media do
@@ -14,15 +14,15 @@ scope :media do
 end
 ```
 
-`marker` и `tail` объявляются парой внутри удалённого scope с курсорной пагинацией.
-`from` задаёт выбранный объект ответа marker. Поля и sequence имеют ненулевой тип `Int` или `Int64`.
-`Int64` принимает десятичную строку ответа сервера. SQLite хранит числовые значения, без JSON.
-Генератор требует schema, документы обоих запросов, пути ответа и совместимые переменные.
-Параметры scope и существующий `variables` связывают переменные обоих запросов.
-Ядро передаёт `upToSequence` в marker, объявленную переменную `after` в tail и обычные переменные пагинации.
-Запрос tail возвращает тот же connection и поля модели, в порядке возрастания sequence.
-`latestSequence` относится ко всей медиатеке. Счётчики marker относятся к префиксу `upToSequence`.
-`revision` берётся из `ChatMediaLibrary.revision`, соответствующего `chats.media_revision`.
+Declare `marker` and `tail` together inside a remote scope with cursor pagination.
+`from` specifies the selected marker response object. Fields and sequence have the non-null type `Int` or `Int64`.
+`Int64` accepts a decimal string in the server response. SQLite stores numeric values without JSON.
+The generator requires a schema, both query documents, response paths and compatible variables.
+Scope parameters and the existing `variables` bind variables for both queries.
+The core passes `upToSequence` to marker, the declared `after` variable to tail, and standard pagination variables.
+The tail query returns the same connection and model fields in ascending sequence order.
+`latestSequence` refers to the entire media library. Marker counts refer to the `upToSequence` prefix.
+`revision` comes from `ChatMediaLibrary.revision`, which corresponds to `chats.media_revision`.
 
 A model is described once in a `.dbl` file. The syntax follows Ruby on Rails: a word, a symbol name, then named options after colons and commas. Order of options does not matter.
 

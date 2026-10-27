@@ -3,10 +3,10 @@
 ## Unreleased
 
 ### Added
-- Декларации `marker` и `tail` сохраняют метку медиатеки и автоматически дочитывают новые страницы на обеих платформах.
-- Ограничение производной предзагрузки через `preload ..., limit: N`.
-- `members_complete: true` автоматически дочитывает участников по курсору.
-- Единый `LiveWindow.snapshot` с `complete` на Swift и Kotlin.
+- `marker` and `tail` store media markers and automatically finish loading new pages on both platforms.
+- Limit derived preloads with `preload ..., limit: N`.
+- Scopes with `members_complete: true` automatically load all members by cursor.
+- Expose one `LiveWindow.snapshot` with `complete` on Swift and Kotlin.
 - Repeat `local` declarations with distinct singleton sources in create operations.
 - Filter all subscription effects with value lists and `not`.
 - Share subscription streams across matching model declarations with atomic row updates.
@@ -15,8 +15,8 @@
 - `enterForegroundForTesting()` sends a foreground event to a database opened with `openTesting`.
 
 ### Changed
-- Окна `members_complete` читают SQLite-срезы без хранения всех ключей и отклоняют размер больше 200 строк.
-- Производный `preload` требует положительный `limit` для всего произведения параметров.
+- `members_complete` windows read SQLite slices without retaining all keys and reject sizes above 200 rows.
+- Derived `preload` requires a positive `limit` for the entire parameter product.
 - Reject `local from:` in update operations.
 - Replace single-string subscription matches with lists of values.
 - Replace the `events` property with the suspending `events()` call on Swift and Kotlin.

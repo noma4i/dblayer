@@ -1,19 +1,19 @@
 # Live data and queries
 
-## Медиатека с marker и tail
+## Media library with marker and tail
 
-Свежий scope не отправляет запросов. Устаревший сначала читает marker с `upToSequence`, равным сохранённому sequence.
-Совпадение revision и счётчиков префикса сохраняет покрытие. Если sequence вырос, ядро читает весь tail по курсорам.
-Несовпадение или отсутствие сохранённой метки запускает полную цепочку.
-`hasNextPage == false` завершает цепочку. Отсутствующий или повторный курсор отклоняет загрузку.
-После загрузки ядро повторно читает marker. При росте sequence оно также сохраняет счётчики нового покрытого префикса.
-Строки и подтверждённая метка попадают в одну транзакцию SQLite.
-Ошибка или отмена сохраняет прежние строки и метку. Снимок показывает ошибку существующей машины загрузки.
-Изменение marker во время чтения сохраняет окно устаревшим до следующего события, без немедленного повтора.
-Сброс базы и поздние ответы проходят проверки generation и base_revision в существующем land.
-Метка разделена по модели, scope, параметрам, направлению и поколению базы.
-`LiveList` со сгенерированным scope работает одинаково на Swift и Kotlin. Ручное сравнение полей Chat удаляется из приложения.
-В покое нет периодических запросов и пробуждений. Чтение tail затрагивает новые строки и индексные поиски.
+A fresh scope sends no requests. A stale scope first reads marker with `upToSequence` equal to the stored sequence.
+Matching revision and prefix counts preserve coverage. If sequence has grown, the core reads the entire tail by cursor.
+A mismatch or missing stored marker starts the full chain.
+`hasNextPage == false` ends the chain. A missing or repeated cursor rejects the load.
+After loading, the core reads marker again. When sequence grows, it also saves the counts of the newly covered prefix.
+Rows and the confirmed marker enter one SQLite transaction.
+An error or cancellation preserves the previous rows and marker. The snapshot shows the error from the existing load state machine.
+A marker change during reading keeps the window stale until the next event, without an immediate retry.
+Database resets and late responses use the generation and base_revision checks in the existing land.
+Markers are separate for each model, scope, parameter set, direction and database generation.
+`LiveList` with a generated scope works the same on Swift and Kotlin. Remove manual Chat field comparisons from the app.
+Idle scopes have no periodic requests or wakeups. Reading tail touches new rows and indexed lookups.
 
 Server lists and connections store each model ID once, combining selected fields from repeated rows before notifying observers.
 The last supplied field value wins. Declared merge rules still apply against stored data.
