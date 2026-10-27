@@ -132,7 +132,8 @@ impl Inner {
         if let Some(operation) = operation {
             for ((_, position), state) in items {
                 let waiting = self.is_waiting(&operation);
-                let mode = state.run_mode(operation.status, operation.transport_started, waiting, || crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default()));
+                let pending = crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default())?;
+                let mode = state.run_mode(operation.status, operation.transport_started, waiting, || pending);
                 if let Some(mode) = mode { ready.push((position, mode)); }
             }
         }
@@ -291,11 +292,13 @@ impl Inner {
 
     fn fail_upload(&self, seq: i64, error: SyncError) {
         let generation = self.db.generation();
-        let _ = self.commit(generation, |_| {
+        if let Err(failed) = self.commit(generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
             envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Unrecognized, error.to_string()) });
             Ok(Some(envelope))
-        });
+        }) {
+            self.fail_commit(SyncError::Store(format!("upload {seq}: {error}, recording failure: {failed}")));
+        }
     }
 
     pub(super) fn release_file_slot(self: &Arc<Self>, seq: i64, position: i64, run: u64) {
@@ -457,6 +460,7 @@ impl Sync {
         } else {
             for (_, mut done) in running { let _ = done.wait_for(|finished| *finished).await; }
         }
+        self.inner.db.shared.read(&[], |_| Ok(()))?;
         Ok(true)
     }
 

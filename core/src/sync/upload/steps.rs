@@ -58,8 +58,9 @@ impl Runner {
         })
     }
 
-    pub(super) fn has_pending_request(&self) -> bool {
+    pub(super) fn has_pending_request(&self) -> Result<bool, Stop> {
         crate::transport::encrypted::pending_matches(&self.inner.db, self.seq, self.position, &crate::operation::enum_text(&self.snapshot().stage).unwrap_or_default())
+            .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))
     }
 
     pub(super) async fn graphql(&self, name: &str, variables: Value, interruptible: bool) -> Result<Value, StepError> {

@@ -44,6 +44,35 @@ fn memory_db() -> Db {
     Db::open_in_memory(Vec::new(), None).unwrap()
 }
 
+#[test]
+fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
+    for case in ["missing", "valid", "corrupt", "partial_owner", "sqlite"] {
+        let db = memory_db();
+        let rig = Rig::new();
+        let client = rig.client(&db);
+        {
+            let stored = db.shared.store.lock();
+            if case == "sqlite" {
+                stored.connection.execute_batch("DROP TABLE encrypted_pending").unwrap();
+            } else if case != "missing" {
+                state::store_pending(&stored.connection, &state::Pending {
+                    credential_digest: "digest".into(), request_id: "request".into(), response_key: "response".into(), sequence: 1,
+                    path: "/graphql".into(), body: if case == "corrupt" { "{".into() } else { "{}".into() },
+                    owner: Some(crate::transport::RequestOwner { seq: 7, item_position: 0, stage: "put".into() }), upload: true,
+                }).unwrap();
+                if case == "partial_owner" { stored.connection.execute_batch("UPDATE encrypted_pending SET stage = NULL").unwrap(); }
+            }
+        }
+        let call = client.pending_call();
+        let matching = super::graphql::pending_matches(&db, 7, 0, "put");
+        match case {
+            "missing" => { assert_eq!(call.unwrap(), None); assert!(!matching.unwrap()); }
+            "valid" => { assert_eq!(call.unwrap(), Some(("/graphql".into(), json!({})))); assert!(matching.unwrap()); }
+            _ => { assert!(call.is_err(), "{case}"); assert!(matching.is_err(), "{case}"); }
+        }
+    }
+}
+
 fn file_db(path: &Path) -> Db {
     Db::open(path, Vec::new(), None).unwrap()
 }

@@ -145,7 +145,7 @@ impl Inner {
             Ok::<_, SyncError>(Some(envelope))
         });
         let revision = match committed {
-            Ok(result) => result.revision.unwrap_or_else(|| self.db.revision_seq().unwrap_or_default()),
+            Ok(result) => match result.revision { Some(revision) => revision, None => self.db.revision_seq()? },
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(Landed::Discarded(DiscardReason::StaleGeneration)),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
@@ -232,7 +232,7 @@ impl Inner {
             Ok::<_, SyncError>(Some(envelope))
         });
         let revision = match committed {
-            Ok(result) => result.revision.unwrap_or_else(|| self.db.revision_seq().unwrap_or_default()),
+            Ok(result) => match result.revision { Some(revision) => revision, None => self.db.revision_seq()? },
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(Landed::Discarded(DiscardReason::StaleGeneration)),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),

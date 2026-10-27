@@ -77,11 +77,11 @@ impl Drop for InFlight<'_> {
         let failure = OperationFailure::new(FailureKind::Network, "the send was cancelled before an answer was settled");
         let seq = self.seq;
         let generation = self.generation;
-        let _ = self.inner.commit(generation, |_| {
+        if let Err(error) = self.inner.commit(generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
             envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() });
             Ok(Some(envelope))
-        });
+        }) { self.inner.fail_commit(error); }
     }
 }
 
@@ -130,6 +130,13 @@ fn message_of(response: &Response) -> String {
 }
 
 impl Inner {
+    pub(crate) fn fail_commit(&self, error: SyncError) {
+        let stored = self.db.shared.store.lock();
+        *locked(&stored.poison) = Some(error.to_string());
+        drop(stored);
+        self.db.shared.outbox_changes.send_modify(|version| *version += 1);
+    }
+
     pub(crate) async fn flush(&self) -> Result<FlushReport, SyncError> {
         let _serial = self.outbox_gate.lock().await;
         let mut report = FlushReport::default();
@@ -445,14 +452,20 @@ impl Inner {
         locked(&self.counters).record_transport_call();
         let owner = request.owner.clone();
         let result = self.transport.mutate(request).await;
-        let replayable = owner.is_some_and(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage));
+        let replayable = match owner.map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage)).transpose() {
+            Ok(pending) => pending.unwrap_or(false),
+            Err(error) => return Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
+        };
         delivery_of(result, replayable)
     }
 
     async fn deliver_or_resume(&self, request: GraphQLRequest, resumed: Option<Result<Response, TransportError>>) -> Delivery {
         match resumed {
             Some(result) => {
-                let replayable = request.owner.is_some_and(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage));
+                let replayable = match request.owner.map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage)).transpose() {
+                    Ok(pending) => pending.unwrap_or(false),
+                    Err(error) => return Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
+                };
                 delivery_of(result, replayable)
             }
             None => self.deliver(request).await,
@@ -514,9 +527,9 @@ impl Inner {
         }
         self.keep_answer(spec, sending, operation, &data);
         let mut kept = super::outcomes::KeptAnswer::new(&self.outcomes, entry.operation.id.0);
-        let held = Prior::of(entry).map(|prior| prior.held_files()).unwrap_or_default();
+        let held = Prior::of(entry)?.map(|prior| prior.held_files()).unwrap_or_default();
         let owned: Vec<RowId> = entry.operation.row_ids.iter().chain(&temp).cloned().collect();
-        let created = Prior::of(entry).map(|prior| prior.created_beyond(&owned)).unwrap_or_default();
+        let created = Prior::of(entry)?.map(|prior| prior.created_beyond(&owned)).unwrap_or_default();
         let mut generation = sending.generation;
         let mut committed = None;
         for _ in 0..SETTLE_ATTEMPTS {
@@ -639,7 +652,7 @@ impl Inner {
         let committed = self.commit(sending.generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             if status == OperationStatus::Failed && sending.action == "destroy" {
-                if let Some(prior) = Prior::of(sending.entry) {
+                if let Some(prior) = Prior::of(sending.entry)? {
                     (envelope.entity_ops, envelope.scope_ops) = prior.reappearing();
                 }
             }

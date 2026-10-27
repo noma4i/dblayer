@@ -52,11 +52,11 @@ pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: 
     path == config.endpoints.graphql && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
 }
 
-pub(crate) fn pending_matches(db: &crate::db::Db, seq: i64, position: i64, stage: &str) -> bool {
+pub(crate) fn pending_matches(db: &crate::db::Db, seq: i64, position: i64, stage: &str) -> Result<bool, crate::store::StoreError> {
     let stored = db.shared.store.lock();
-    super::state::pending(&stored.connection).ok().flatten().is_some_and(|pending| {
+    Ok(super::state::pending(&stored.connection)?.is_some_and(|pending| {
         pending.owner.is_some_and(|owner| owner.seq == seq && owner.stage == stage && (owner.item_position == position || owner.item_position == -1 && stage == "mutation"))
-    })
+    }))
 }
 
 pub fn response_of(answer: Answer) -> Result<Response, TransportError> {

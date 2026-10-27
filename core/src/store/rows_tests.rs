@@ -6,6 +6,34 @@ use serde_json::json;
 use super::rows::column_value;
 use crate::ddl::ColumnType;
 
+#[test]
+fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values() {
+    for value in [None, Some("17"), Some("bad"), Some("9223372036854775808")] {
+        let (store, _) = booted_store();
+        {
+            let inner = store.lock();
+            inner.connection.execute("DELETE FROM manifest WHERE key = ?1", [crate::ddl::REVISION_SEQ_KEY]).unwrap();
+            if let Some(value) = value {
+                crate::ddl::manifest_write(&inner.connection, crate::ddl::REVISION_SEQ_KEY, value).unwrap();
+            }
+        }
+        match value {
+            None | Some("17") => {
+                let expected = if value.is_none() { 0 } else { 17 };
+                assert_eq!(store.revision_seq().unwrap(), expected);
+                store.reset_cache_only(&["messages"]).unwrap();
+                assert_eq!(store.revision_seq().unwrap(), expected + 1);
+            }
+            _ => {
+                assert!(store.revision_seq().is_err());
+                assert!(store.reset_cache_only(&["messages"]).is_err());
+            }
+        }
+        store.lock().connection.execute_batch("DROP TABLE manifest").unwrap();
+        assert!(store.revision_seq().is_err());
+    }
+}
+
 fn seed(store: &Store, ids: &[(&str, &str)]) {
     let ops = ids.iter().map(|(row_id, chat)| upsert("messages", message(row_id, chat))).collect();
     store.commit(envelope(store, ops, vec![])).unwrap();

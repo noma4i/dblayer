@@ -210,8 +210,11 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
                 incoming = connection.as_ref().map(|(socket, _)| Box::pin(receive(socket.clone())));
                 match event {
                     Some(SocketEvent::Text(text)) => {
-                        let body = serde_json::from_str::<Value>(&text).ok();
-                        if let Some(token) = body.as_ref().and_then(|body| body["message"]["frame"].as_str()) {
+                        let body = match serde_json::from_str::<Value>(&text) {
+                            Ok(body) => body,
+                            Err(_) => { session.closed(4400, "invalid cable response"); continue; }
+                        };
+                        if let Some(token) = body["message"]["frame"].as_str() {
                             if let Some((_, link)) = connection.as_mut() {
                                 match link.receive(token) {
                                     Ok(body) if body["t"] == "closing" => session.closed(body["code"].as_u64().unwrap_or(4400) as u16, body["reason"].as_str().unwrap_or("")),

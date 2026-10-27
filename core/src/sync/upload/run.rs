@@ -59,26 +59,23 @@ pub(super) fn stop_of(error: StepError) -> Stop {
 }
 
 pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
-    let generation = inner.db.generation();
     let runner = match Runner::load(inner.clone(), seq, position, run, token, matches!(mode, RunMode::Transfer)) {
         Ok(Some(runner)) => runner,
         Ok(None) => return,
         Err(error) => {
-            let _ = inner.commit(generation, |_| {
-                if !inner.is_current(seq, position, run) { return Ok(None); }
-                let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
-                envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Unrecognized, error.to_string()) });
-                Ok(Some(envelope))
-            });
+            if inner.is_current(seq, position, run) { inner.fail_upload(seq, error); }
             return;
         }
     };
     let runner = Arc::new(runner);
     *locked(&runner.resumed) = resumed;
-    match mode {
+    let result = match mode {
         RunMode::Transfer | RunMode::Mutation => runner.transfer().await,
         RunMode::Orphan => runner.abort_remote().await,
         RunMode::Cancel => runner.cancelled().await,
+    };
+    if let Err(Stop::Failed(failure)) = result {
+        inner.fail_upload(seq, super::super::SyncError::Store(failure.message));
     }
 }
 
@@ -153,9 +150,11 @@ impl Runner {
 
     pub(super) fn save(&self, event: UploadEvent) -> Result<(), Stop> {
         let mut state = locked(&self.state);
-        state.apply(event).map_err(|_| Stop::Superseded)?;
-        let snapshot = state.clone();
-        self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: snapshot.clone() }))
+        let mut snapshot = state.clone();
+        snapshot.apply(event).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+        self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: snapshot.clone() }))?;
+        *state = snapshot;
+        Ok(())
     }
 
     pub(super) fn report(&self, part: u32, bytes: u64) {
@@ -165,7 +164,10 @@ impl Runner {
             progress.due(self.inner.clock.now())
         };
         if let Some(sent) = due {
-            let _ = self.save(UploadEvent::Progress { sent });
+            if let Err(Stop::Failed(failure)) = self.save(UploadEvent::Progress { sent }) {
+                self.inner.fail_upload(self.seq, super::super::SyncError::Store(failure.message));
+                self.token.cancel();
+            }
         }
     }
 
@@ -173,7 +175,7 @@ impl Runner {
         locked(&self.progress)
     }
 
-    async fn transfer(self: &Arc<Self>) {
+    async fn transfer(self: &Arc<Self>) -> Result<(), Stop> {
         let transferred = tokio::select! {
             biased;
             () = self.token.cancelled() => Err(Stop::Cancelled),
@@ -191,7 +193,7 @@ impl Runner {
             Err(stop) => Err(stop),
         };
         match result {
-            Ok(()) | Err(Stop::Superseded) => {}
+            Ok(()) | Err(Stop::Superseded) => Ok(()),
             Err(Stop::Cancelled) => self.cancelled().await,
             Err(Stop::Failed(failure)) => self.failed(failure).await,
             Err(Stop::Expired) => self.failed(OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await,
@@ -223,7 +225,7 @@ impl Runner {
             .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
         let stored = self.snapshot();
         if stored.upload_id.is_some() && stored.total_bytes != 0 && stored.total_bytes != total {
-            self.abort_remote().await;
+            self.abort_remote().await?;
         }
         *locked(&self.progress) = TransferProgress::new(total, self.inner.config.upload.tick);
         let scenario = match self.snapshot() {
@@ -319,76 +321,79 @@ impl Runner {
             model: self.model.clone(),
             action,
             generation: self.inner.db.generation(),
-            base_revision: self.inner.db.revision_seq().unwrap_or_default(),
+            base_revision: self.inner.db.revision_seq().map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?,
         };
         let resumed = locked(&self.resumed).take();
         if let Err(error) = self.inner.send_owned(&sending, &operation, resumed, true).await {
             let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
-            let _ = self.commit(|envelope| {
+            self.commit(|envelope| {
                 envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() })
-            });
+            })?;
         }
         self.inner.start_uploads().map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
         Ok(())
     }
 
-    pub(super) async fn abort_remote(&self) {
+    pub(super) async fn abort_remote(&self) -> Result<(), Stop> {
         let state = self.snapshot();
-        let (Some(key), Some(upload_id)) = (state.key, state.upload_id) else { return };
+        let (Some(key), Some(upload_id)) = (state.key, state.upload_id) else { return Ok(()) };
         if let Some(steps) = &self.input.steps.multipart {
             if !self.inner.connectivity.is_online() {
-                return;
+                return Ok(());
             }
-            if self.graphql(&steps.abort, json!({"key": key, "uploadId": upload_id}), false).await.is_err() {
-                return;
+            match self.graphql(&steps.abort, json!({"key": key, "uploadId": upload_id}), false).await {
+                Ok(_) => {}
+                Err(StepError::Fatal(failure)) => return Err(Stop::Failed(failure)),
+                Err(_) => return Ok(()),
             }
         }
-        let _ = self.save(UploadEvent::Aborted);
+        self.save(UploadEvent::Aborted)
     }
 
-    async fn failed(&self, failure: OperationFailure) {
+    async fn failed(&self, failure: OperationFailure) -> Result<(), Stop> {
         let batch = self.batch;
         let stage = self.snapshot().stage;
         let snapshot = self.snapshot();
-        if snapshot.upload_id.is_some() && !snapshot.all_parts_confirmed() && !self.has_pending_request() {
-            let _ = self.save(UploadEvent::AbortStarted);
-            self.abort_remote().await;
+        if snapshot.upload_id.is_some() && !snapshot.all_parts_confirmed() && !self.has_pending_request()? {
+            self.save(UploadEvent::AbortStarted)?;
+            self.abort_remote().await?;
         }
-        let pending = self.has_pending_request();
+        let pending = self.has_pending_request()?;
         let state = {
-            let mut state = locked(&self.state);
-            let _ = state.apply(UploadEvent::Failed { failure: failure.clone(), at: self.inner.clock.now().as_millis() as u64, batch, resume_at: (!pending).then_some(stage) });
-            state.clone()
+            let mut state = self.snapshot();
+            state.apply(UploadEvent::Failed { failure: failure.clone(), at: self.inner.clock.now().as_millis() as u64, batch, resume_at: (!pending).then_some(stage) }).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+            state
         };
-        let _ = self.commit(|envelope| {
+        self.commit(|envelope| {
             envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: state.clone() });
             if !batch { envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure: failure.clone() }); }
-        });
+        })?;
+        *locked(&self.state) = state;
+        Ok(())
     }
 
-    pub(super) async fn cancelled(&self) {
+    pub(super) async fn cancelled(&self) -> Result<(), Stop> {
         let batch = self.batch;
-        let _ = self.save(UploadEvent::Cancel);
+        self.has_pending_request()?;
+        self.save(UploadEvent::Cancel)?;
         if self.snapshot().upload_id.is_some() {
-            let _ = self.save(UploadEvent::AbortStarted);
-            self.abort_remote().await;
+            self.save(UploadEvent::AbortStarted)?;
+            self.abort_remote().await?;
         }
         if self.snapshot().upload_id.is_some() {
             let failure = OperationFailure::new(FailureKind::Network, "the upload was cancelled but its remote parts are not aborted yet");
-            if batch { let _ = self.save(UploadEvent::ErrorNoted { failure }); return; }
-            let _ = self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure: failure.clone() }));
-            return;
+            if batch { return self.save(UploadEvent::ErrorNoted { failure }); }
+            return self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::Failed, failure: failure.clone() }));
         }
         if batch {
-            let row = self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT row_id FROM op_item WHERE seq = ?1 AND position = ?2", rusqlite::params![self.seq, self.position], |row| row.get::<_, String>(0))?));
-            if let Ok(row) = row {
-                if let Ok(id) = crate::identity::RowId::new(&row) { let _ = self.inner.db.remove_upload_item(&self.model, &id, self.seq, false); }
-            }
-            let _ = self.inner.start_uploads();
-            return;
+            let row = self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT row_id FROM op_item WHERE seq = ?1 AND position = ?2", rusqlite::params![self.seq, self.position], |row| row.get::<_, String>(0))?))
+                .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+            let id = crate::identity::RowId::new(&row).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+            self.inner.db.remove_upload_item(&self.model, &id, self.seq, false).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+            return self.inner.start_uploads().map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())));
         }
-        let _ = self.commit(|envelope| {
+        self.commit(|envelope| {
             envelope.operation_transitions.push(OperationTransition::Close { seq: self.seq, status: OperationStatus::RolledBack })
-        });
+        })
     }
 }

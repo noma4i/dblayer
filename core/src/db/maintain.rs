@@ -22,7 +22,9 @@ impl Db {
         let orphans = self.shared.read(&[], |reader| {
             let mut held: HashSet<String> = read_outbox(reader)?
                 .iter()
-                .filter_map(Prior::of)
+                .filter_map(|entry| Prior::of(entry).transpose())
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
                 .flat_map(|prior| prior.held_files())
                 .map(|file| file.id)
                 .collect();

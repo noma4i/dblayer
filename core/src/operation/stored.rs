@@ -22,8 +22,8 @@ pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
     }
 }
 
-pub fn enum_from<T: DeserializeOwned>(text: &str) -> Option<T> {
-    serde_json::from_value(Value::String(text.to_string())).ok()
+pub fn enum_from<T: DeserializeOwned>(text: &str) -> Result<T> {
+    serde_json::from_value(Value::String(text.to_string())).map_err(from_sql_error)
 }
 
 fn text_cell(text: Option<String>) -> SqlValue {
@@ -37,7 +37,7 @@ pub fn failure_cells(failure: Option<&OperationFailure>) -> [SqlValue; 2] {
 pub fn failure_at(row: &Row<'_>, first: usize) -> Result<Option<OperationFailure>> {
     let kind: Option<String> = row.get(first)?;
     let message: Option<String> = row.get(first + 1)?;
-    Ok(kind.and_then(|kind| enum_from(&kind)).zip(message).map(|(kind, message)| OperationFailure { kind, message, extensions: None }))
+    Ok(kind.map(|kind| enum_from(&kind)).transpose()?.zip(message).map(|(kind, message)| OperationFailure { kind, message, extensions: None }))
 }
 
 fn filter_of(keys: &[&str]) -> String {
@@ -148,13 +148,12 @@ pub fn upload_cells(state: Option<&UploadState>) -> Result<Vec<SqlValue>> {
 }
 
 pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
-    let Some(phase) = row.get::<_, Option<String>>(first)?.and_then(|text| enum_from(&text)) else { return Ok(None) };
-    let stage = row.get::<_, Option<String>>(first + 1)?.and_then(|text| enum_from(&text));
-    let Some(stage) = stage else { return Ok(None) };
+    let Some(phase) = row.get::<_, Option<String>>(first)?.map(|text| enum_from(&text)).transpose()? else { return Ok(None) };
+    let stage = enum_from(&row.get::<_, String>(first + 1)?)?;
     Ok(Some(UploadState {
         phase,
         stage,
-        scenario: row.get::<_, Option<String>>(first + 2)?.and_then(|text| enum_from(&text)),
+        scenario: row.get::<_, Option<String>>(first + 2)?.map(|text| enum_from(&text)).transpose()?,
         total_bytes: row.get::<_, i64>(first + 3)? as u64,
         sent_bytes: row.get::<_, i64>(first + 4)? as u64,
         retries: Vec::new(),
@@ -203,7 +202,7 @@ fn upload_items(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i6
             state.retries = retries.query_map(params![seq, position], |row| {
                 let stage: String = row.get(0)?;
                 Ok(UploadRetry {
-                    stage: enum_from(&stage).ok_or_else(|| rusqlite::Error::InvalidParameterName(stage))?,
+                    stage: enum_from(&stage)?,
                     part_number: row.get(1)?, attempts: row.get(2)?, retry_at: row.get::<_, Option<i64>>(3)?.map(|time| time as u64),
                 })
             })?.collect::<Result<Vec<_>>>()?;
@@ -263,14 +262,14 @@ pub fn info_cells(info: Option<&UploadInfo>) -> Result<Vec<SqlValue>> {
 }
 
 pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {
-    let Some(status) = row.get::<_, Option<String>>(first)?.and_then(|text| enum_from(&text)) else { return Ok(None) };
-    let Some(stage) = row.get::<_, Option<String>>(first + 1)?.and_then(|text| enum_from(&text)) else { return Ok(None) };
+    let Some(status) = row.get::<_, Option<String>>(first)?.map(|text| enum_from(&text)).transpose()? else { return Ok(None) };
+    let stage = enum_from(&row.get::<_, String>(first + 1)?)?;
     Ok(Some(UploadInfo {
         status,
         stage,
         sent_bytes: row.get::<_, i64>(first + 2)? as u64,
         total_bytes: row.get::<_, i64>(first + 3)? as u64,
-        wait_reason: row.get::<_, Option<String>>(first + 4)?.and_then(|text| enum_from(&text)),
+        wait_reason: row.get::<_, Option<String>>(first + 4)?.map(|text| enum_from(&text)).transpose()?,
         attempts: row.get::<_, i64>(first + 5)? as u32,
         error: failure_at(row, first + 6)?,
     }))
@@ -354,7 +353,7 @@ pub(crate) fn record_orphan_uploads(connection: &Connection, seq: i64, position:
     let mut statement = connection.prepare_cached("SELECT position, storage_key, upload_id FROM op_item WHERE seq = ?1 AND upload_id IS NOT NULL AND storage_key IS NOT NULL AND (?2 IS NULL OR position = ?2)")?;
     let pending = statement.query_map(params![seq, position], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))?.collect::<Result<Vec<_>>>()?;
     for (item, key, upload_id) in pending {
-        let input = read_item_value(connection, seq, item, "input")?.and_then(|value| serde_json::from_value::<crate::upload::UploadInput>(value).ok());
+        let input = read_item_value(connection, seq, item, "input")?.map(serde_json::from_value::<crate::upload::UploadInput>).transpose().map_err(from_sql_error)?;
         let Some(steps) = input.and_then(|input| input.steps.multipart) else { continue };
         connection.prepare_cached("INSERT INTO upload_orphan (storage_key, upload_id, abort_operation) VALUES (?1, ?2, ?3)")?.execute(params![key, upload_id, steps.abort])?;
     }

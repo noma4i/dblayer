@@ -193,7 +193,14 @@ impl Feed {
                 continue;
             };
             let derived: Vec<(String, crate::schema::ChangeRead)> = targets.iter().flat_map(|(model, reads)| reads.iter().filter(|read| read.id_of.is_some()).map(|read| (model.clone(), read.clone()))).collect();
-            let sources_before: Vec<Option<RowId>> = derived.iter().map(|(_, read)| self.source_id(read, &row_id)).collect();
+            let sources_before = match derived.iter().map(|(_, read)| self.source_id(read, &row_id)).collect::<Result<Vec<_>, _>>() {
+                Ok(sources) => sources,
+                Err(_) => {
+                    locked(&self.status).rejected += 1;
+                    for (model, _) in &derived { self.inner.publish_model_gap(model); }
+                    return false;
+                }
+            };
             let mut settled: BTreeMap<String, bool> = BTreeMap::new();
             for (model, reads) in targets {
                 for read in reads.iter().filter(|read| read.payload.is_some()) {
@@ -221,7 +228,15 @@ impl Feed {
                     locked(&self.status).rejected += 1;
                     continue;
                 }
-                let mut ids: Vec<RowId> = self.source_id(read, &row_id).into_iter().chain(before).collect();
+                let after = match self.source_id(read, &row_id) {
+                    Ok(after) => after,
+                    Err(_) => {
+                        locked(&self.status).rejected += 1;
+                        self.inner.publish_model_gap(model);
+                        continue;
+                    }
+                };
+                let mut ids: Vec<RowId> = after.into_iter().chain(before).collect();
                 ids.dedup();
                 if ids.is_empty() {
                     locked(&self.status).rejected += 1;
@@ -262,10 +277,9 @@ impl Feed {
         Ok(())
     }
 
-    fn source_id(&self, read: &crate::schema::ChangeRead, event_id: &RowId) -> Option<RowId> {
-        let source = read.id_of.as_ref()?;
-        let row = self.inner.db.find(&source.model, event_id).ok()??;
-        row.get(&source.field).and_then(read_id)
+    fn source_id(&self, read: &crate::schema::ChangeRead, event_id: &RowId) -> Result<Option<RowId>, SyncError> {
+        let Some(source) = read.id_of.as_ref() else { return Ok(None) };
+        Ok(self.inner.db.find(&source.model, event_id)?.and_then(|row| row.get(&source.field).and_then(read_id)))
     }
 
     async fn reread_target(&self, model: &str, reads: &[crate::schema::ChangeRead], area: &str, kind: &str, id: &str, row_id: &RowId) -> bool {
@@ -524,7 +538,7 @@ impl Feed {
                         continue;
                     }
                     envelope.operation_transitions.push(OperationTransition::Remove { seq: entry.operation.id.0, expected: None });
-                    for file in Prior::of(&entry).map(|prior| prior.held_files()).unwrap_or_default() {
+                    for file in Prior::of(&entry)?.map(|prior| prior.held_files()).unwrap_or_default() {
                         let Ok(row_id) = RowId::new(&file.row_id) else { continue };
                         envelope.file_ops.push(FileOp::Remove { model: ModelKey::new(&file.model), row_id, field: file.field });
                         held_files.push(file.id);

@@ -81,9 +81,9 @@ fn inv_sync_01_inv_sync_04_random_sets_of_open_operations_fold_to_the_state_atte
 #[test]
 fn state_names_round_trip_through_sql() {
     for state in SyncState::ALL {
-        assert_eq!(SyncState::from_sql(state.as_sql()), Some(state));
+        assert_eq!(SyncState::from_sql(state.as_sql()).unwrap(), state);
     }
-    assert_eq!(SyncState::from_sql("bogus"), None);
+    assert!(SyncState::from_sql("bogus").is_err());
 }
 
 #[test]

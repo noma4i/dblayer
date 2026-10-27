@@ -102,7 +102,10 @@ fn check_path(path: &str) -> Result<(), TransportError> {
 }
 
 fn storage(error: rusqlite::Error) -> TransportError {
-    TransportError::Network(format!("session storage: {error}"))
+    match error {
+        rusqlite::Error::FromSqlConversionFailure(..) => TransportError::Decode(format!("session storage: {error}")),
+        _ => TransportError::Network(format!("session storage: {error}")),
+    }
 }
 
 fn confirmed_error(body: &Value) -> Option<&str> {
@@ -168,7 +171,7 @@ impl EncryptedClient {
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
         let pending = match self.with_connection(state::pending)? {
-            Some(pending) if pending.owner == owner && pending.path == path && serde_json::from_str::<Value>(&pending.body).ok().as_ref() == Some(&body) => {
+            Some(pending) if pending.owner == owner && pending.path == path && serde_json::from_str::<Value>(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))? == body => {
                 self.pending_token(&credential, &pending)?;
                 pending
             }
@@ -194,7 +197,10 @@ impl EncryptedClient {
     }
 
     pub fn pending_call(&self) -> Result<Option<(String, Value)>, TransportError> {
-        Ok(self.with_connection(state::pending)?.and_then(|pending| Some((pending.path, serde_json::from_str(&pending.body).ok()?))))
+        self.with_connection(state::pending)?.map(|pending| {
+            let body = serde_json::from_str(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))?;
+            Ok((pending.path, body))
+        }).transpose()
     }
 
     pub(crate) fn pending_owner(&self) -> Result<Option<crate::transport::RequestOwner>, TransportError> {

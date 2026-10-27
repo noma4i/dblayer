@@ -83,8 +83,16 @@ impl PriorRow {
 }
 
 impl Prior {
+    fn decode(value: Value) -> Result<Self, StoreError> {
+        let prior: Self = serde_json::from_value(value)?;
+        for row in &prior.rows {
+            RowId::new(row.id()).map_err(|error| StoreError::Constraint(error.to_string()))?;
+        }
+        Ok(prior)
+    }
+
     pub(crate) fn related_operations(reader: &Reader<'_>, entry: &OutboxOperation) -> Result<Vec<OutboxOperation>, StoreError> {
-        let keys: BTreeSet<_> = Self::of(entry).into_iter().flat_map(|prior| prior.rows).map(|row| match row {
+        let keys: BTreeSet<_> = Self::of(entry)?.into_iter().flat_map(|prior| prior.rows).map(|row| match row {
             PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } | PriorRow::Member { model, id, .. } => (model, id),
         }).collect();
         let mut sequences = crate::operation::row_operation_sequences(reader.connection(), &keys)?;
@@ -95,8 +103,8 @@ impl Prior {
         sequences.into_iter().filter(|seq| *seq != entry.operation.id.0).filter_map(|seq| OutboxOperation::read(reader, seq).transpose()).collect()
     }
 
-    pub fn of(entry: &OutboxOperation) -> Option<Prior> {
-        serde_json::from_value(entry.rollback.clone()?).ok()
+    pub fn of(entry: &OutboxOperation) -> Result<Option<Prior>, StoreError> {
+        entry.rollback.clone().map(Self::decode).transpose()
     }
 
     fn pending<'a>(reader: &'a Reader<'_>) -> Result<&'a PendingPriors, StoreError> {
@@ -105,7 +113,7 @@ impl Prior {
             let mut statement = reader.connection().prepare_cached(&format!("SELECT seq FROM op WHERE status IN {}", crate::operation::OPEN_STATUSES))?;
             let sequences = statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
             for seq in sequences {
-                let prior = crate::operation::read_value(reader.connection(), seq, "prior")?.and_then(|value| serde_json::from_value::<Prior>(value).ok());
+                let prior = crate::operation::read_value(reader.connection(), seq, "prior")?.map(Self::decode).transpose()?;
                 for row in prior.into_iter().flat_map(|prior| prior.rows) {
                     match row {
                         PriorRow::Edited { model, id, owned: fields, .. } => {
@@ -135,12 +143,12 @@ impl Prior {
     }
 
     pub fn created_rows(reader: &Reader<'_>, seq: i64) -> Result<Vec<(String, String)>, StoreError> {
-        let prior = crate::operation::read_value(reader.connection(), seq, "prior")?.and_then(|value| serde_json::from_value::<Prior>(value).ok());
+        let prior = crate::operation::read_value(reader.connection(), seq, "prior")?.map(Self::decode).transpose()?;
         Ok(prior.into_iter().flat_map(|prior| prior.rows).filter_map(|row| match row { PriorRow::Created { model, id } => Some((model, id)), _ => None }).collect())
     }
 
     pub(crate) fn with_edits(rollback: Value, reader: &Reader<'_>, edits: &[PointerEdit]) -> Result<Value, StoreError> {
-        let Ok(mut prior) = serde_json::from_value::<Prior>(rollback.clone()) else { return Ok(rollback) };
+        let mut prior = Self::decode(rollback)?;
         for edit in edits {
             let model = edit.parent.model.as_str();
             let id = edit.parent.id.as_str();

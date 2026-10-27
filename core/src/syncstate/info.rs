@@ -28,8 +28,10 @@ impl SyncState {
         }
     }
 
-    pub fn from_sql(text: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|state| state.as_sql() == text)
+    pub fn from_sql(text: &str) -> rusqlite::Result<Self> {
+        Self::ALL.into_iter().find(|state| state.as_sql() == text).ok_or_else(|| rusqlite::Error::FromSqlConversionFailure(
+            0, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("unknown stored sync state {text}")))
+        ))
     }
 }
 

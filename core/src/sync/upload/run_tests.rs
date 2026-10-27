@@ -6,6 +6,48 @@ use crate::transport::PutReply;
 use crate::upload::{UploadConfig, UploadStage, UploadStatus};
 
 #[tokio::test]
+async fn durable_upload_failures_reach_the_waiting_operation() {
+    for case in ["transfer", "cancel", "abort", "load", "progress", "failed"] {
+        let rig = upload_rig(small());
+        let source = file(b"abcdef");
+        let mut state = UploadState::queued();
+        if case == "progress" {
+            state.phase = UploadStatus::Uploading;
+            state.stage = UploadStage::Put;
+            state.total_bytes = 6;
+        }
+        if case == "abort" {
+            state.key = Some("key".into());
+            state.upload_id = Some("upload".into());
+            rig.transport.enqueue("AbortMultipart", crate::transport::Reply::data(serde_json::json!({"abortMultipart": {"ok": true}})));
+        }
+        let seq = rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state).unwrap();
+        let (run, token) = rig.sync.inner.register(seq, 0).unwrap();
+        {
+            let stored = rig.db.shared.store.lock();
+            if case == "load" {
+                crate::operation::write_item_value(&stored.connection, seq, 0, "input", Some(&serde_json::json!({"broken": true}))).unwrap();
+            }
+            if case == "failed" { stored.connection.execute("UPDATE op_item SET source_error = 'unreadable source' WHERE seq = ?1", [seq]).unwrap(); }
+            stored.connection.execute_batch("CREATE TEMP TRIGGER reject_upload BEFORE UPDATE ON op_item BEGIN SELECT RAISE(ABORT, 'upload write rejected'); END; CREATE TEMP TRIGGER reject_failure BEFORE UPDATE ON op BEGIN SELECT RAISE(ABORT, 'failure write rejected'); END").unwrap();
+        }
+        if case == "progress" {
+            let runner = run::Runner::load(rig.sync.inner.clone(), seq, 0, run, token, false).unwrap().unwrap();
+            let before = runner.snapshot();
+            runner.report(1, 1);
+            assert_eq!(runner.snapshot(), before, "failed progress must not change the saved snapshot");
+        } else {
+            let mode = match case { "cancel" => RunMode::Cancel, "abort" => RunMode::Orphan, _ => RunMode::Transfer };
+            run::drive(rig.sync.inner.clone(), seq, 0, run, token, mode, None).await;
+        }
+        rig.sync.inner.finish_run(seq, 0, run);
+        let settled = rig.sync.settled("moments", &rid("m1"), Some("upload")).await;
+        assert!(settled.is_err(), "{case}: the failed write was hidden");
+        assert!(rig.db.shared.store.apply_failure().is_some(), "{case}: the failure could not be recorded");
+    }
+}
+
+#[tokio::test]
 async fn inv_upload_18_materialization_and_cleanup_leave_the_async_executor() {
     let rig = upload_rig(small());
     let source = file(b"inline");

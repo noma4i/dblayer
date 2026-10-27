@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-use crate::ddl::{fingerprint, fts_tables, manifest_read, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
+use crate::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ListKey;
 use crate::nodes::read_trees;
@@ -39,7 +39,7 @@ pub(crate) fn write_intent(connection: &Connection, mode: &str, models: &[String
 }
 
 fn bump_revision(connection: &Connection) -> Result<i64, StoreError> {
-    let current = manifest_read(connection, REVISION_SEQ_KEY)?.and_then(|text| text.parse::<i64>().ok()).unwrap_or(0);
+    let current = super::rows::read_revision(connection)?;
     manifest_write(connection, REVISION_SEQ_KEY, &(current + 1).to_string())?;
     Ok(current + 1)
 }

@@ -133,6 +133,12 @@ pub(crate) struct PendingMembers {
     pub left: HashSet<String>,
 }
 
+pub(crate) fn read_revision(connection: &Connection) -> Result<i64, StoreError> {
+    manifest_read(connection, REVISION_SEQ_KEY)?.map(|text| {
+        text.parse::<i64>().map_err(|error| StoreError::Constraint(format!("invalid stored revision: {error}")))
+    }).transpose().map(|revision| revision.unwrap_or(0))
+}
+
 pub struct Reader<'a> {
     connection: &'a Connection,
     models: &'a BTreeMap<String, ModelInfo>,
@@ -160,8 +166,7 @@ impl<'a> Reader<'a> {
     }
 
     pub fn revision_seq(&self) -> Result<i64, StoreError> {
-        let value = manifest_read(self.connection, REVISION_SEQ_KEY)?;
-        Ok(value.and_then(|text| text.parse().ok()).unwrap_or(0))
+        read_revision(self.connection)
     }
 
     pub fn stored_row(&self, model: &str, id: &str) -> Result<Option<StoredRow>, StoreError> {

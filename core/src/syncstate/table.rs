@@ -76,7 +76,7 @@ fn names_of(connection: &Connection, table: &str, key: &SyncKey) -> rusqlite::Re
 
 fn stored_info(connection: &Connection, key: &SyncKey, row: &Row<'_>, first: usize) -> rusqlite::Result<SyncInfo> {
     let mut info = SyncInfo {
-        state: SyncState::from_sql(&row.get::<_, String>(first)?).unwrap_or_default(),
+        state: SyncState::from_sql(&row.get::<_, String>(first)?)?,
         actions: names_of(connection, "sync_action", key)?,
         dirty_fields: names_of(connection, "sync_field", key)?,
         error: failure_at(row, first + 1)?,

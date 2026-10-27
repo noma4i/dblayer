@@ -50,7 +50,8 @@ impl Runner {
             let aged = self.inner.clock.now().saturating_sub(presigned_at) > config.presign_ttl;
             if !queue.is_empty() && (targets.is_empty() || aged) {
                 let numbers: Vec<u32> = self.snapshot().request.filter(|request| request.name == steps.presign && super::super::locked(&self.resumed).is_some())
-                    .and_then(|request| serde_json::from_value(request.variables["partNumbers"].clone()).ok())
+                    .map(|request| serde_json::from_value(request.variables["partNumbers"].clone())).transpose()
+                    .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?
                     .unwrap_or_else(|| queue.iter().copied().collect());
                 targets.extend(self.presign(&steps.presign, &key, &upload_id, &numbers).await?);
                 presigned_at = self.inner.clock.now();

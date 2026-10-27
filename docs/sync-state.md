@@ -27,6 +27,10 @@ Every record knows whether the server has seen it. The state is live like everyt
 
 The error `kind` is `network`, `server`, `rejected`, `unrecognized` or `session:<CODE>`. A sealed session refusal of the encrypted session gives the wire name of its code, for example `session:UNAUTHENTICATED`, and `message` holds the detail text.
 
+Corrupt stored rollback data, revisions, sync states, and pending requests produce errors instead of empty or synced results.
+An upload stops when its durable state cannot be saved.
+If recording that failure also fails, database calls report a storage error and wake waiting operations.
+
 GraphQL `extensions.code` and `extensions.transactionDisposition` use the same types as [operation errors](models.md#graphql-errors) on Swift and Kotlin.
 They persist in SQLite node tables for queued operations, record sync state and upload failures. Retrying clears them with the previous failure.
 

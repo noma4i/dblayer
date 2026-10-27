@@ -36,6 +36,8 @@ mod parent_pointer;
 mod ranked;
 mod reads;
 mod prior;
+#[cfg(test)]
+mod prior_tests;
 mod replace;
 mod record_sync;
 mod references;

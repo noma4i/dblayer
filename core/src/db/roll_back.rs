@@ -35,16 +35,16 @@ struct Chain<'a> {
 }
 
 impl<'a> Chain<'a> {
-    fn new(outbox: &'a [OutboxOperation], own: i64) -> Self {
+    fn new(outbox: &'a [OutboxOperation], own: i64) -> Result<Self, StoreError> {
         let open = outbox
             .iter()
             .filter(|entry| entry.operation.id.0 != own)
             .filter_map(|entry| {
                 let hidden = entry.operation.status != OperationStatus::Failed;
-                Some((entry.operation.id.0, Open { entry, hidden, prior: Prior::of(entry)? }))
+                Prior::of(entry).transpose().map(|prior| prior.map(|prior| (entry.operation.id.0, Open { entry, hidden, prior })))
             })
-            .collect();
-        Self { open, changed: BTreeSet::new() }
+            .collect::<Result<_, _>>()?;
+        Ok(Self { open, changed: BTreeSet::new() })
     }
 
     fn later_writer(&self, own: i64, model: &str, id: &str, field: &str) -> Option<i64> {
@@ -123,9 +123,9 @@ fn writes(row: &PriorRow, hidden: bool, model: &str, id: &str, field: &str) -> b
 
 fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperation) -> Result<Restore, StoreError> {
     let mut plan = Restore::default();
-    let Some(prior) = Prior::of(entry) else { return Ok(plan) };
+    let Some(prior) = Prior::of(entry)? else { return Ok(plan) };
     let own = entry.operation.id.0;
-    let mut chain = Chain::new(outbox, own);
+    let mut chain = Chain::new(outbox, own)?;
     let revision = reader.revision_seq()? + 1;
     for row in &prior.rows {
         let Ok(row_id) = RowId::new(row.id()) else { continue };
@@ -217,7 +217,7 @@ impl Db {
             if entry.operation.transport_started && entry.operation.status == OperationStatus::Pending { return Err(DbError::InFlight { model: model.into(), id: id.to_string() }); }
             let position = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get(0))?;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-            let mut prior = Prior::of(&entry).unwrap_or_default();
+            let mut prior = Prior::of(&entry)?.unwrap_or_default();
             if remove_row {
                 let mut selected = entry.clone();
                 selected.rollback = Some(Prior { rows: prior.rows.iter().filter(|row| row.id() == id.as_str()).cloned().collect() }.to_value());

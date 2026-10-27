@@ -11,6 +11,14 @@ fn database() -> Connection {
     connection
 }
 
+#[test]
+fn unknown_stored_sync_state_is_a_read_error() {
+    let connection = database();
+    connection.execute_batch("PRAGMA ignore_check_constraints = ON; INSERT INTO row_sync (model, row_id, state, attempts, since) VALUES ('moments', 'm1', 'broken', 0, 1)").unwrap();
+    let error = read_sync(&connection, "moments", &["m1".into()]).unwrap_err();
+    assert!(error.to_string().contains("unknown stored sync state broken"), "{error}");
+}
+
 fn insert(connection: &Connection, action_key: &str, status: &str, started: i64, row_ids: &str, input: &str) -> i64 {
     connection
         .execute("INSERT INTO op (action_key, status, transport_started, created_at, since) VALUES (?1, ?2, ?3, 5, 5)", rusqlite::params![action_key, status, started])

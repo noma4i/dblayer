@@ -17,7 +17,7 @@ pub(super) struct Swap<'a> {
     pub references: &'a [(String, String)],
 }
 
-pub(super) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Option<OperationTransition> {
+pub(super) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Result<Option<OperationTransition>, crate::store::StoreError> {
     let Swap { model, temp, real, references } = *swap;
     let owner = Operation::split_action_key(&entry.operation.action_key).map(|(owner, _)| owner).unwrap_or_default();
     let mut input = entry.input.clone();
@@ -32,13 +32,13 @@ pub(super) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Option<Opera
     let row_ids: Vec<RowId> = entry.operation.row_ids.iter().map(|id| if id == temp { real.clone() } else { id.clone() }).collect();
     changed |= row_ids != entry.operation.row_ids;
     let mut rollback = entry.rollback.clone();
-    if let Some(mut prior) = Prior::of(entry) {
+    if let Some(mut prior) = Prior::of(entry)? {
         if prior.swap(temp, real, model, references) {
             rollback = Some(prior.to_value());
             changed = true;
         }
     }
-    changed.then(|| entry.rewritten(row_ids, input, rollback))
+    Ok(changed.then(|| entry.rewritten(row_ids, input, rollback)))
 }
 
 impl Db {
@@ -51,7 +51,7 @@ impl Db {
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: DestroyReason::Replaced { by: real.clone() } });
         let references = self.references_to(model);
         let swap = Swap { model, temp, real, references: &references };
-        envelope.operation_transitions.extend(outbox.iter().filter(|other| other.operation.id.0 != own).filter_map(|other| retarget(other, &swap)));
+        envelope.operation_transitions.extend(outbox.iter().filter(|other| other.operation.id.0 != own).filter_map(|other| retarget(other, &swap).transpose()).collect::<Result<Vec<_>, _>>()?);
         for ReferencingRow { model: owner, field, mut row } in self.rows_referencing(reader, &references, temp)? {
             let Some(child) = row.get("id").and_then(read_id) else { continue };
             if let Some(value) = row.get_mut(&field) { swap_id(value, temp, real); }

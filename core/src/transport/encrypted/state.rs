@@ -46,10 +46,15 @@ pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
                 response_key: row.get(2)?,
                 sequence: row.get(3)?,
                 path: row.get(4)?,
-                body: row.get(5)?,
+                body: {
+                    let body: String = row.get(5)?;
+                    serde_json::from_str::<serde_json::Value>(&body).map_err(|error| rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error)))?;
+                    body
+                },
                 owner: match (row.get::<_, Option<i64>>(6)?, row.get::<_, Option<i64>>(7)?, row.get::<_, Option<String>>(8)?) {
                     (Some(seq), Some(item_position), Some(stage)) => Some(crate::transport::RequestOwner { seq, item_position, stage }),
-                    _ => None,
+                    (None, None, None) => None,
+                    _ => return Err(rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Null, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "incomplete pending request owner")))),
                 },
                 upload: row.get::<_, i64>(9)? != 0,
             })
