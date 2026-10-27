@@ -144,6 +144,10 @@ data class Roster(
             var built = Query("Roster", this, relation = "container_members", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("order", jsonValue(order)) })
             return built
         }
+        fun completeMembers(containerId: String, order: ContainerMemberOrder = ContainerMemberOrder.Joined): Query<Roster> {
+            var built = Query("Roster", this, relation = "complete_members", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("order", jsonValue(order)) })
+            return built
+        }
         suspend fun create(title: String): Roster = offCaller {
             val values = buildJsonObject {
                 put("title", jsonValue(title))

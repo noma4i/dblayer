@@ -461,8 +461,10 @@ fn preload_keys_values_by_the_scope_param_name_or_the_where_column() {
 
 #[test]
 fn preload_takes_the_values_of_a_parameter_from_the_rows_of_another_scope() {
-    let spec = build_one("  scope :feed do\n    query \"F\"\n  end\n  scope :by_vibe do\n    parameter :vibeId, :id\n    query \"S\"\n    preload vibeId: { from: \"Sample.feed\" }\n  end");
+    let spec = build_one("  scope :feed do\n    query \"F\"\n  end\n  scope :by_vibe do\n    parameter :vibeId, :id\n    query \"S\"\n    preload vibeId: { from: \"Sample.feed\" }, limit: 40\n  end");
     let by_vibe = spec.relations.iter().find(|relation| relation.name == "by_vibe").unwrap();
     let source = dblayer::schema::PreloadSource { model: "Sample".to_string(), relation: "feed".to_string() };
     assert_eq!(by_vibe.preload, Some([("vibeId".to_string(), dblayer::schema::PreloadChoice::RowsOf { from: source })].into()));
+    assert_eq!(by_vibe.preload_limit, Some(40));
+    assert_eq!(by_vibe.preload_order, ["vibeId"]);
 }

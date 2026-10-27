@@ -587,6 +587,10 @@ impl Database {
     }
     fn window_handles(&self, query_json: &str, (tail, max): (u32, Option<u32>), related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let (query, relation) = self.parsed_query(query_json)?;
+        let members = relation.as_ref().is_some_and(|(name, _)| self.db.spec(query.model.as_str()).is_ok_and(|spec| spec.relations.iter().any(|relation| relation.name == *name && relation.members_complete)));
+        if members && (tail > 200 || max.is_some_and(|max| max > 200 || max < tail)) {
+            return Err(DbError::Invalid { detail: "members_complete windows require tail <= max <= 200".into() });
+        }
         let description: Value = serde_json::from_str(query_json)?;
         let force = description.get("refreshOnConnect").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or(false);
         let _entered = executor()?.enter();
@@ -608,7 +612,7 @@ impl Database {
         let pager = Arc::new(Pager { page: tracked.clone().map(|(sync, relation, params)| (sync, model.clone(), relation, params)), busy: std::sync::atomic::AtomicBool::new(false), control: OnceLock::new() });
         let wire = self.wire(&model)?.clone();
         let sink = feed.clone();
-        let spec = WindowSpec::Tail { size: tail as usize, max: max.map(|max| max as usize), paged: paused };
+        let spec = if members { WindowSpec::Members { size: tail as usize, max: max.unwrap_or(200) as usize } } else { WindowSpec::Tail { size: tail as usize, max: max.map(|max| max as usize), paged: paused } };
         let (window, targets) = match related {
             None => (self.db.observe_window_feed(query, spec, paused, {
                 let pager = pager.clone();
@@ -771,7 +775,7 @@ impl Pager {
             let loaded = sync.load_more(&model, &relation, &params).await;
             pager.busy.store(false, Ordering::SeqCst);
             if let (Ok(outcome), Some(control)) = (loaded, pager.control.get()) {
-                if outcome.rows > 0 && !matches!(outcome.status, LoadStatus::NoMorePages(_)) { control.grow(rows, 0); }
+                if !matches!(outcome.status, LoadStatus::NoMorePages(_)) { control.grow(rows, 0); }
             }
         });
     }

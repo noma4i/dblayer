@@ -62,3 +62,15 @@ fn a_default_must_name_a_value_of_its_enum() {
     let errors = compile(&MODEL.replace("\"JOINED\"", "\"NEWEST\"")).expect_err("value outside the enum");
     assert!(errors.iter().any(|text| text.contains("default `NEWEST` is not a value of `ChatMemberOrder`")), "{errors:?}");
 }
+
+#[test]
+fn members_complete_scopes_require_cursor_pagination_without_a_page_limit() {
+    let members = MODEL.replace("scope :chat_members do", "scope :chat_members, members_complete: true do");
+    let declared = compile(&members).unwrap();
+    assert!(declared.models[0].relations[0].members_complete);
+    for pagination in ["", "paginate size: 30, direction: :forward, max_pages: 2"] {
+        let source = format!("model User do\n  attribute :name, :string\n  scope :members, members_complete: true do\n    query \"Members\"\n    {pagination}\n  end\nend\n");
+        let errors = crate::check::check_source(&source).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains("`members_complete` needs pagination")), "{errors:?}");
+    }
+}

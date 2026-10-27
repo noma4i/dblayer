@@ -18,6 +18,8 @@ extension BridgeProbeTests {
     await eventually("the window") { live.rows.count == 5 }
     #expect(live.rows.map(\.text) == (25 ..< 30).map { String(format: "t%05d", $0) })
     #expect(live.hasBefore && !live.hasAfter && live.total == 30)
+    #expect(live.snapshot.rows.map(\.id) == live.rows.map(\.id))
+    #expect(live.snapshot.window?.total == live.total)
     var held = live.rows
     _ = live.takeUpdate()
 
@@ -29,6 +31,7 @@ extension BridgeProbeTests {
 
     live.expand(before: 3)
     await eventually("the wider window") { live.rows.count == 8 }
+    #expect(live.snapshot.rows.map(\.id) == live.rows.map(\.id))
     held.replay(live.takeUpdate().edits ?? [])
     #expect(held.map(\.id) == live.rows.map(\.id))
     live.expand(before: 100)

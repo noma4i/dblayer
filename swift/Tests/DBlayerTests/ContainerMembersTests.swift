@@ -55,4 +55,28 @@ extension BridgeProbeTests {
       .object(["containerId": .string("c1"), "first": .integer(30)]),
     ])
   }
+
+  @Test @MainActor
+  func membersSnapshotPlatforms() async throws {
+    let transport = MockTransport()
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    transport.enqueue("ContainerMembers", reply: membersPage("a0", hasNext: true))
+    transport.enqueue("ContainerMembers", reply: membersPage("a1", hasNext: false))
+    let query = try User.completeMembers("c1")
+    let members = LiveWindow(query.window(tail: 50, max: 200))
+    await eventually("complete members") { members.snapshot.complete }
+    #expect(members.snapshot.phase == .loaded)
+    #expect(members.snapshot.rows.map(\.id) == ["a0", "a1"])
+    #expect(members.failure == nil)
+    members.expand(before: 40)
+    #expect(members.snapshot.rows.map(\.id) == members.rows.map(\.id))
+    transport.enqueue("ContainerMembers", reply: #"{"errors":[{"message":"refused"}]}"#)
+    do { try await query.refresh(); Issue.record("a refused refresh must throw") } catch {}
+    await eventually("members error") { members.snapshot.error != nil }
+    #expect(members.snapshot.phase == .loaded)
+    #expect(!members.snapshot.complete)
+    #expect(members.snapshot.rows.map(\.id) == ["a0", "a1"])
+    #expect(members.failure != nil)
+  }
 }

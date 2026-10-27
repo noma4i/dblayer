@@ -103,13 +103,14 @@ public struct RelatedWindow<Target: DBModel>: Sendable {
 @MainActor
 @Observable
 public final class LiveWindow<Model: DBModel> {
-  public private(set) var rows: [Model] = []
-  public private(set) var ids: [String] = []
-  public private(set) var replaced: [String: String] = [:]
-  public private(set) var hasBefore = false
-  public private(set) var hasAfter = false
-  public private(set) var total: Int?
-  public private(set) var failure: (any Error)?
+  public private(set) var snapshot = Snapshot<Model>(rows: [], replaced: [:])
+  public var rows: [Model] { snapshot.rows }
+  public var ids: [String] { snapshot.rows.map(\.id) }
+  public var replaced: [String: String] { snapshot.replaced }
+  public var hasBefore: Bool { snapshot.window?.hasBefore ?? false }
+  public var hasAfter: Bool { snapshot.window?.hasAfter ?? false }
+  public var total: Int? { snapshot.window?.total }
+  public var failure: (any Error)? { snapshot.error }
   @ObservationIgnored private let window: Window<Model>
   @ObservationIgnored let updates = ListUpdates<Model>()
   @ObservationIgnored private var task: Task<Void, Never>?
@@ -123,22 +124,19 @@ public final class LiveWindow<Model: DBModel> {
       let stream: LiveStream<Snapshot<Model>>
       do { stream = try await snapshots.stream() } catch { await self?.fail(error); return }
       for await snapshot in stream {
-        let ids = snapshot.reordered ? snapshot.rows.map(\.id) : nil
         updates.publish(snapshot)
         guard let self else { return }
-        await self.show(snapshot, ids: ids)
+        await self.show(snapshot)
       }
     }
   }
 
-  private func fail(_ error: Error) { failure = error }
+  private func fail(_ error: Error) {
+    show(Snapshot(rows: snapshot.rows, replaced: snapshot.replaced, window: snapshot.window, phase: snapshot.rows.isEmpty ? .failed : .loaded, error: error, errorKind: "subscription"))
+  }
 
-  private func show(_ snapshot: Snapshot<Model>, ids: [String]?) {
-    replaced = snapshot.replaced
-    if snapshot.error != nil || failure != nil { failure = snapshot.error }
-    if let edges = snapshot.window { (hasBefore, hasAfter, total) = (edges.hasBefore, edges.hasAfter, edges.total) }
-    rows = snapshot.rows
-    if let ids { self.ids = ids }
+  private func show(_ snapshot: Snapshot<Model>) {
+    self.snapshot = snapshot
   }
 
   public func takeUpdate() -> ListUpdate<Model> { updates.take() }

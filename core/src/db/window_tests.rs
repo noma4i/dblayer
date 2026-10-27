@@ -49,6 +49,37 @@ fn expected_ids(db: &Db, query: &Query, size: usize) -> Vec<String> {
 }
 
 #[test]
+fn members_bounded_rows() {
+    let db = seeded(100_000);
+    let scope = crate::commit::ScopeRef::new(ModelKey::new("users"), crate::identity::ListKey::compose(&["users", "members"]));
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    for n in 0..100_000 {
+        envelope.scope_ops.push(crate::commit::ScopeOp::Append { scope: scope.clone(), row: rid(&format!("u{n:06}")), order_key: format!("k{n:06}") });
+    }
+    db.land(envelope).unwrap();
+    let query = Query { stable: true, ..query().in_scope(scope.key) };
+    let subject = Subject::window(query.clone(), WindowSpec::Members { size: 50, max: 200 });
+    let before = total();
+    let first = db.shared.evaluate(&subject).unwrap();
+    assert!(total() - before <= 200, "the initial window must not read all member keys");
+    let Body::Rows(body) = &first.version.body else { panic!("rows") };
+    assert_eq!(first.loaded.rows.len(), 50);
+    assert_eq!(body.window.as_ref().unwrap().edge.total, Some(100_000));
+    let (log, callback) = recorder();
+    let live = db.observe_window(query.clone(), WindowSpec::Members { size: 50, max: 200 }, callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    live.expand_before(150);
+    db.await_revision(db.revision_seq().unwrap());
+    let widest = changes(&log).pop().unwrap();
+    assert_eq!(widest.size, 200);
+    assert!(widest.rows.len() <= 200);
+    live.expand_before(1);
+    db.await_revision(db.revision_seq().unwrap());
+    assert_eq!(changes(&log).pop().unwrap().size, 50);
+    assert_eq!(db.count(&query).unwrap(), 100_000);
+}
+
+#[test]
 fn a_tail_window_holds_the_last_rows_and_follows_the_tail() {
     let db = seeded(12);
     let (log, callback) = recorder();

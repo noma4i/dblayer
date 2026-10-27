@@ -718,6 +718,12 @@ pub struct RelationSpec {
     pub edge_fields: Vec<FieldSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preload: Option<BTreeMap<String, PreloadChoice>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preload_limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preload_order: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub members_complete: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -755,6 +761,9 @@ impl RelationSpec {
             node: None,
             edge_fields: Vec::new(),
             preload: None,
+            preload_limit: None,
+            preload_order: Vec::new(),
+            members_complete: false,
         }
     }
 

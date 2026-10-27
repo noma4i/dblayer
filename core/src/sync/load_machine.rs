@@ -44,6 +44,7 @@ impl LoadError {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelationState {
+    pub complete: bool,
     pub phase: LoadPhase,
     pub initial: bool,
     pub refreshing: bool,
@@ -57,7 +58,7 @@ pub struct RelationState {
 
 impl RelationState {
     pub(crate) fn closed() -> Self {
-        Self { phase: LoadPhase::Closed, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 }
+        Self { complete: false, phase: LoadPhase::Closed, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 }
     }
 }
 
@@ -185,6 +186,7 @@ impl WindowFacts {
         let error = self.read_error.as_ref().or(failed).cloned();
         let running = |kind: LoadKind| self.flights.values().any(|running| *running == kind);
         RelationState {
+            complete: matches!(self.data, Data::Landed { has_more: false, .. }) && error.is_none() && self.flights.is_empty(),
             phase,
             initial: running(LoadKind::Initial),
             refreshing: running(LoadKind::Refresh),
@@ -465,7 +467,6 @@ impl Machine {
         self.windows.len()
     }
 
-    #[cfg(test)]
     pub(crate) fn flights(&self, window: &str) -> usize {
         self.windows.get(window).map_or(0, |machine| machine.flights.len())
     }

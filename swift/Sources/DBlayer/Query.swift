@@ -202,6 +202,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public let isRefreshing: Bool
   public let isFetchingMore: Bool
   public let hasMore: Bool
+  public let complete: Bool
   public let total: Int?
   public let loadedAt: Int64?
   public let error: (any Error)?
@@ -211,7 +212,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public init(
     rows: [Model], replaced: [String: String], reordered: Bool = false, edits: [ListEdit<Model>]? = nil, window: WindowEdges? = nil, seq: UInt64 = 0, phase: LoadPhase = .opening,
     isInitialLoading: Bool = false, isRefreshing: Bool = false, isFetchingMore: Bool = false, hasMore: Bool = false, total: Int? = nil, loadedAt: Int64? = nil,
-    error: (any Error)? = nil, errorKind: String? = nil, undecodable: [String] = []
+    error: (any Error)? = nil, errorKind: String? = nil, undecodable: [String] = [], complete: Bool = false
   ) {
     self.rows = rows
     self.replaced = replaced
@@ -224,6 +225,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
     self.isRefreshing = isRefreshing
     self.isFetchingMore = isFetchingMore
     self.hasMore = hasMore
+    self.complete = complete
     self.total = total
     self.loadedAt = loadedAt
     self.error = error
@@ -235,7 +237,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
     self.init(
       rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, edits: applied.edits, window: change.window.map(WindowEdges.init), seq: change.seq, phase: LoadPhase(change.phase),
       isInitialLoading: change.initial, isRefreshing: change.refreshing, isFetchingMore: change.fetchingMore, hasMore: change.hasMore, total: change.total.map(Int.init), loadedAt: change.loadedAt,
-      error: applied.failure ?? change.error, errorKind: applied.failure == nil ? change.errorKind : "invalid", undecodable: applied.undecodable
+      error: applied.failure ?? change.error, errorKind: applied.failure == nil ? change.errorKind : "invalid", undecodable: applied.undecodable, complete: change.complete && applied.failure == nil
     )
   }
 
@@ -252,7 +254,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
     return Snapshot(
       rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, edits: edits, window: newer.window ?? older.window, seq: newer.seq, phase: newer.phase,
       isInitialLoading: newer.isInitialLoading, isRefreshing: newer.isRefreshing, isFetchingMore: newer.isFetchingMore, hasMore: newer.hasMore, total: newer.total, loadedAt: newer.loadedAt,
-      error: newer.error, errorKind: newer.errorKind, undecodable: newer.undecodable
+      error: newer.error, errorKind: newer.errorKind, undecodable: newer.undecodable, complete: newer.complete
     )
   }
 }

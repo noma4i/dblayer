@@ -1,7 +1,7 @@
 use super::load_machine::*;
 
 fn state(phase: LoadPhase, error: Option<LoadError>) -> RelationState {
-    RelationState { phase, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error, loaded_at: None, revision: 0 }
+    RelationState { complete: false, phase, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error, loaded_at: None, revision: 0 }
 }
 
 fn offline() -> Option<LoadError> {

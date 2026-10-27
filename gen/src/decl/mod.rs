@@ -215,6 +215,7 @@ pub struct FreshnessDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreloadDecl {
     pub pos: Pos,
+    pub limit: Option<usize>,
     pub values: Vec<(Spanned<String>, PreloadChoice)>,
 }
 
@@ -281,6 +282,7 @@ pub struct ScopeDecl {
     pub insert_on: Option<Spanned<Vec<InsertOn>>>,
     pub stable_order: Option<Pos>,
     pub refresh_on_foreground: Option<Pos>,
+    pub members_complete: bool,
     pub parameters: Vec<ParameterDecl>,
     pub where_: Option<WhereDecl>,
     pub membership: Vec<(String, dblayer::schema::Membership, Pos)>,

@@ -1,5 +1,22 @@
 # App migration
 
+## Предзагрузка и участники
+
+Производная предзагрузка: `preload vibeId: { from: "Compass.rows" }, limit: 40`.
+`limit` обязателен для `from`, положительный, общий для произведения параметров. Порядок параметров соответствует декларации, id - исходному scope.
+Удалить объявления `preload ... { from: ... }` без `limit`. `limit` теперь служебный ключ строки `preload`.
+Scope полного состава: `scope :chat_members, members_complete: true do`, существующие `query`, `response`, `paginate size: 100, direction: :forward`.
+`max_pages` несовместим с `members_complete`. Серверный предел страницы участников - 100.
+Swift: `LiveWindow(try User.chatMembers(chatId).window(tail: 50, max: 200))`.
+Kotlin: `LiveWindow(User.chatMembers(chatId).window(tail = 50, max = 200), scope)`.
+Читать `snapshot.phase`, `snapshot.error`, `snapshot.complete`, в Kotlin - через `snapshot.value`.
+Полнота наступает только после `hasNextPage == false`. Короткая или пустая промежуточная страница не завершает цепочку.
+При ошибке частичные строки сохраняются: `Loaded` с `error`, `complete = false`. Без строк - `Failed`.
+Последний читатель отменяет запрос. Следующий продолжает сохранённый курсор. Возврат сети продолжает наблюдаемую упавшую цепочку.
+Удалить `CompassRowLoads`, ручной `loadAll`, флаг полноты `ChatGroupDetails`, второй список и нарезку строк приложения.
+Оставить `expand(before: 40)` / `expand(before = 40)`. Полный состав хранит SQLite, UI получает максимум 200 строк.
+`rows`, `failure` и edges `LiveWindow` читают тот же снимок. Перегенерировать модели обеих платформ.
+
 ## Create sources
 
 Replace singleton reads and copied create arguments with repeated `local :field, from: { of: Model, field: :source }` declarations.

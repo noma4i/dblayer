@@ -25,7 +25,7 @@ fn heard(tape: &Tape) -> Vec<LiveChange> {
 }
 
 fn relation(phase: LoadPhase, revision: i64, error: Option<LoadError>) -> RelationState {
-    RelationState { phase, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error, loaded_at: None, revision }
+    RelationState { complete: false, phase, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error, loaded_at: None, revision }
 }
 
 fn wire_row(id: String) -> super::wire::WireRow {

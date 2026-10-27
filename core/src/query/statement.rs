@@ -259,6 +259,20 @@ pub fn compile_keys(query: &Query, model: &ModelSpec) -> Result<CompiledStatemen
     compile_columns(query, model, KEY_COLUMNS)
 }
 
+pub(crate) fn compile_tail(query: &Query, model: &ModelSpec, limit: usize) -> Result<CompiledStatement, QueryError> {
+    let mut statement = compile_keys(query, model)?;
+    let order = order_clause(query, model)?;
+    statement.sql.truncate(statement.sql.len() - order.len());
+    let mut reversed: Vec<String> = sort_terms(query, model)?.into_iter().map(|term| format!("{} {}", term.expression, if term.descending { "ASC" } else { "DESC" })).collect();
+    if !query.order.iter().any(|order| order.field == "id") {
+        if !keeps_member_order(query) { reversed.push(format!("{} DESC", permanent_row_flag("r.id"))); }
+        reversed.push("r.id DESC".into());
+    }
+    statement.sql.push_str(&format!(" ORDER BY {} LIMIT ?", reversed.join(", ")));
+    statement.bindings.push(SqlValue::Integer(limit as i64));
+    Ok(statement)
+}
+
 pub fn ranking(query: &Query) -> bool {
     query.limit.is_none() && query.offset.is_none() && (!query.order.is_empty() || query.scope.is_some()) && query.r#where.iter().all(|clause| clause.searches().is_empty())
 }

@@ -210,6 +210,7 @@ fn deriving() -> (Rig, Arc<Mutex<Vec<&'static str>>>) {
     for relation in moments.relations.iter_mut().filter(|relation| relation.name == "vibe_feed") {
         let source = PreloadSource { model: "vibes".to_string(), relation: "list".to_string() };
         relation.preload = Some(BTreeMap::from([("vibeId".to_string(), PreloadChoice::RowsOf { from: source })]));
+        relation.preload_limit = Some(40);
     }
     let mut vibes = vibes_spec();
     let mut list = RelationSpec::global("list");
@@ -234,6 +235,43 @@ fn feed_vibes(rig: &Rig) -> Vec<String> {
     let mut vibes: Vec<String> = rig.transport.calls().iter().filter_map(|call| call.variables["vibeId"].as_str().map(str::to_string)).collect();
     vibes.sort();
     vibes
+}
+
+#[tokio::test(start_paused = true)]
+async fn preload_limited_source() {
+    let mut moments = moments_spec();
+    let relation = moments.relations.iter_mut().find(|relation| relation.name == "vibe_feed").unwrap();
+    relation.text_params.push("channel".into());
+    relation.preload = Some(BTreeMap::from([
+        ("vibeId".into(), PreloadChoice::RowsOf { from: PreloadSource { model: "vibes".into(), relation: "list".into() } }),
+        ("channel".into(), PreloadChoice::Listed(vec![json!("x"), json!("y")])),
+    ]));
+    relation.preload_limit = Some(40);
+    relation.preload_order = vec!["vibeId".into(), "channel".into()];
+    let mut vibes = vibes_spec();
+    let mut list = RelationSpec::global("list");
+    list.remote = Some(remote("VibesList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    vibes.relations.push(list);
+    let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments, vibes], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(OperationDef::new("VibesList", "operation VibesList { x }", "vibes"));
+    let scope = crate::commit::ScopeRef::new(crate::identity::ModelKey::new("vibes"), rig.db.spec("vibes").unwrap().selection_key("list", &Default::default()).unwrap());
+    let request = crate::db::ReplaceRequest::new(scope, Coverage::Complete);
+    let rows: Vec<_> = (0..10_000).map(|n| params(json!({"id": format!("v{n:05}")}))).collect();
+    rig.db.replace(&request, rows.clone()).unwrap();
+    rig.transport.respond_with(|_| Some(feed_reply(&["m1"], false, "c1")));
+    rig.sync.check_session();
+    rig.sync.preload_settled().await;
+    assert_eq!(requests(&rig), 40, "limit covers the product, not each parameter");
+    let read_before = crate::identity::touches::member_reads();
+    assert_eq!(rig.sync.inner.preloaded_windows().unwrap().len(), 40);
+    assert_eq!(crate::identity::touches::member_reads() - read_before, 40, "only the bounded source prefix is read from SQLite");
+    let selected = feed_vibes(&rig);
+    assert_eq!(selected, (0..20).flat_map(|n| [format!("v{n:05}"), format!("v{n:05}")]).collect::<Vec<_>>(), "declaration order chooses the first 20 sources twice");
+    rig.db.replace(&request, rows.into_iter().skip(1).collect()).unwrap();
+    rig.sync.inner.preload_on_source("vibes", "list");
+    rig.sync.preload_settled().await;
+    assert_eq!(requests(&rig), 42, "only the two incoming windows reach the transport");
+    assert_eq!(feed_vibes(&rig).iter().filter(|id| id.as_str() == "v00020").count(), 2);
 }
 
 #[tokio::test(start_paused = true)]

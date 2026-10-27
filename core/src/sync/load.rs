@@ -63,6 +63,7 @@ impl LoadOutcome {
 }
 
 pub(crate) struct Resolved<'a> {
+    pub members_complete: bool,
     pub node_reread: bool,
     pub model: String,
     pub relation: String,
@@ -118,6 +119,14 @@ impl Drop for FlightGuard<'_> {
 }
 
 impl Inner {
+    pub(crate) async fn load_scope(self: &Arc<Self>, resolved: &Resolved<'_>, force: bool) -> FlightResult {
+        if resolved.members_complete {
+            self.load_members(resolved, force).await?;
+            return Ok(LoadOutcome::of(LoadStatus::Loaded));
+        }
+        self.fetch(resolved, None, force).await
+    }
+
     pub(crate) fn resolve(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Resolved<'_>, SyncError> {
         let spec = self.db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
         let declared = spec
@@ -152,7 +161,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { node_reread: false, model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
+        Ok(Resolved { members_complete: declared.members_complete, node_reread: false, model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
     }
 
     pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
@@ -185,7 +194,7 @@ impl Inner {
     pub(super) async fn flights_settled(&self, resolved: &Resolved<'_>) {
         let paged = format!("{}|", resolved.window_key);
         loop {
-            let pending = locked(&self.flights).waiting.iter().find(|(key, _)| **key == resolved.window_key || key.starts_with(&paged)).map(|(_, receiver)| receiver.clone());
+            let pending = locked(&self.flights).waiting.iter().find(|(key, _)| **key == resolved.window_key || key.starts_with(&paged)).map(|(_, sender)| sender.subscribe());
             let Some(mut receiver) = pending else { break };
             let _ = receiver.wait_for(Option::is_some).await;
         }
@@ -213,15 +222,15 @@ impl Inner {
                 let verdict = flights.coalescing.request(&flight_key, forced, || self.window_is_fresh(resolved).unwrap_or(false));
                 match verdict {
                     FetchVerdict::StartFetch => {
-                        let (sender, receiver) = watch::channel(None);
-                        flights.waiting.insert(flight_key.clone(), receiver);
+                        let sender = watch::channel(None).0;
+                        flights.waiting.insert(flight_key.clone(), sender.clone());
                         Ok(Some(sender))
                     }
                     FetchVerdict::AwaitInFlight => match flights.waiting.get(&flight_key) {
                         Some(receiver) => {
                             #[cfg(test)]
                             flights.joined.0.send_modify(|joined| *joined += 1);
-                            Err(Some(receiver.clone()))
+                            Err(Some(receiver.subscribe()))
                         }
                         None => Err(None),
                     },
@@ -406,7 +415,7 @@ impl Sync {
     pub async fn load(&self, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
         let _app = self.app_load();
         let resolved = self.inner.resolve(model, relation, params)?;
-        self.inner.fetch(&resolved, None, options.force).await
+        self.inner.load_scope(&resolved, options.force).await
     }
 
     pub async fn load_more(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {

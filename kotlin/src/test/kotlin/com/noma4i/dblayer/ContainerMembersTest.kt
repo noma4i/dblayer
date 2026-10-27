@@ -62,4 +62,32 @@ class ContainerMembersTest {
             calls.map { Json.parseToJsonElement(it.variablesJson) },
         )
     }
+
+    @Test
+    fun membersSnapshotPlatforms() = bounded {
+        val transport = MockTransport()
+        reopen(Config(null, null, 64u), modelsJSON, transport)
+        val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
+        DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
+        transport.enqueue("ContainerMembers", page("a0", true))
+        transport.enqueue("ContainerMembers", page("a1", false))
+        val query = User.completeMembers("c1")
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
+        try {
+            val members = LiveWindow(query.window(tail = 50, max = 200), scope)
+            eventually("complete members") { members.snapshot.value.complete }
+            assertEquals(LoadPhase.Loaded, members.snapshot.value.phase)
+            assertEquals(listOf("a0", "a1"), members.snapshot.value.rows.map { it.id })
+            assertEquals(null, members.failure.value)
+            members.expand(before = 40)
+            assertEquals(members.rows.value.map { it.id }, members.snapshot.value.rows.map { it.id })
+            transport.enqueue("ContainerMembers", """{"errors":[{"message":"refused"}]}""")
+            try { query.refresh(); org.junit.Assert.fail("a refused refresh must throw") } catch (_: DbException) {}
+            eventually("members error") { members.snapshot.value.error != null }
+            assertEquals(LoadPhase.Loaded, members.snapshot.value.phase)
+            assertEquals(false, members.snapshot.value.complete)
+            assertEquals(listOf("a0", "a1"), members.snapshot.value.rows.map { it.id })
+            assertTrue(members.failure.value != null)
+        } finally { scope.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
+    }
 }

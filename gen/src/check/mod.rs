@@ -252,7 +252,11 @@ fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl, report: &
         }
     }
     if !scope.is_remote() {
+        if scope.members_complete { report(scope.pos, "`members_complete` needs a paginated remote scope".into()); }
         return;
+    }
+    if scope.members_complete && (scope.paginate.is_none() || scope.paginate.as_ref().is_some_and(|page| page.max_pages.is_some())) {
+        report(scope.pos, "`members_complete` needs pagination without `max_pages`".into());
     }
     check_remote_scope(scope, report);
 }
@@ -264,6 +268,9 @@ fn check_preload(scope: &ScopeDecl, preload: &PreloadDecl, all: &[ModelDecl], re
         return;
     }
     let mut keys = HashSet::new();
+    if preload.limit.is_none() && preload.values.iter().any(|(_, choice)| matches!(choice, PreloadChoice::RowsOf(_))) {
+        report(preload.pos, format!("scope `{name}`: derived `preload` needs a positive `limit`"));
+    }
     for (key, choice) in &preload.values {
         if !keys.insert(key.item.as_str()) {
             report(key.pos, format!("scope `{name}`: `preload` lists `{}` twice", key.item));

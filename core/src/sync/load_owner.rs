@@ -55,6 +55,41 @@ struct OwnerState {
     senders: HashMap<String, watch::Sender<RelationState>>,
     targets: HashMap<String, Target>,
     retries: Vec<(String, LoadKind)>,
+    chains: HashMap<String, MembersChain>,
+}
+
+struct MembersChain {
+    identity: Arc<()>,
+    readers: usize,
+    result: watch::Sender<Option<Result<(), super::SyncError>>>,
+    task: tokio::task::AbortHandle,
+}
+
+pub(crate) struct MembersRead {
+    identity: Arc<()>,
+    owner: Weak<LoadOwner>,
+    window: String,
+    result: watch::Receiver<Option<Result<(), super::SyncError>>>,
+}
+
+impl MembersRead {
+    pub(crate) async fn finished(&mut self) -> Result<(), super::SyncError> {
+        self.result.wait_for(Option::is_some).await.map_err(|_| super::SyncError::Cancelled)?.as_ref().unwrap().clone()
+    }
+}
+
+impl Drop for MembersRead {
+    fn drop(&mut self) {
+        let Some(owner) = self.owner.upgrade() else { return };
+        let mut state = locked(&owner.state);
+        if let Some(chain) = state.chains.get_mut(&self.window) {
+            if !Arc::ptr_eq(&chain.identity, &self.identity) { return; }
+            chain.readers -= 1;
+            if chain.readers == 0 {
+                state.chains.remove(&self.window).unwrap().task.abort();
+            }
+        }
+    }
 }
 
 impl OwnerState {
@@ -83,6 +118,22 @@ pub(crate) struct LoadOwner {
 }
 
 impl LoadOwner {
+    pub(crate) fn members(self: &Arc<Self>, window: &str, start: impl FnOnce(watch::Sender<Option<Result<(), super::SyncError>>>) -> tokio::task::AbortHandle) -> MembersRead {
+        let mut state = locked(&self.state);
+        let chain = state.chains.entry(window.to_string()).or_insert_with(|| {
+            let result = watch::channel(None).0;
+            let task = start(result.clone());
+            MembersChain { identity: Arc::new(()), readers: 0, result, task }
+        });
+        chain.readers += 1;
+        MembersRead { identity: chain.identity.clone(), owner: Arc::downgrade(self), window: window.to_string(), result: chain.result.subscribe() }
+    }
+
+    pub(crate) async fn unobserved(&self, window: &str) {
+        let sender = locked(&self.state).senders.get(window).cloned();
+        if let Some(sender) = sender { sender.closed().await; }
+    }
+
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::SeqCst)
     }
@@ -142,7 +193,10 @@ impl LoadOwner {
                 }
             }
             if finished {
-                if let Some(window) = &window { state.forget_window(window); }
+                if let Some(window) = &window {
+                    if state.machine.flights(window) == 0 { state.chains.remove(window); }
+                    state.forget_window(window);
+                }
             }
             if resets {
                 let state = &mut *state;
@@ -221,6 +275,11 @@ impl LoadOwner {
     #[cfg(test)]
     pub(crate) fn flights(&self, window: &str) -> usize {
         locked(&self.state).machine.flights(window)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn members_readers(&self, window: &str) -> usize {
+        locked(&self.state).chains.get(window).map_or(0, |chain| chain.readers)
     }
 }
 

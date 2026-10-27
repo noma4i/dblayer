@@ -27,6 +27,8 @@ class ListWindowTest {
         eventually("the window") { live.rows.value.size == 5 }
         assertEquals((25 until 30).map { "t%05d".format(it) }, live.rows.value.map { it.text })
         assertEquals(WindowEdges(true, false, 30L), live.edges.value)
+        assertEquals(live.rows.value.map { it.id }, live.snapshot.value.rows.map { it.id })
+        assertEquals(live.edges.value, live.snapshot.value.window)
         val held = ArrayList(live.rows.value)
         live.takeUpdate()
 
@@ -38,6 +40,7 @@ class ListWindowTest {
 
         live.expand(before = 3)
         eventually("the wider window") { live.rows.value.size == 8 }
+        assertEquals(live.rows.value.map { it.id }, live.snapshot.value.rows.map { it.id })
         held.replay(live.takeUpdate().edits ?: emptyList())
         assertEquals(live.rows.value.map { it.id }, held.map { it.id })
         live.expand(before = 100)

@@ -1,4 +1,6 @@
 use serde_json::{Map, Value};
+use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::read::{LoadMoreVerdict, PageChain};
 use crate::schema::RemoteShape;
@@ -6,8 +8,34 @@ use crate::schema::RemoteShape;
 use super::error::SyncError;
 use super::load::{DiscardReason, LoadOptions, LoadStatus, Resolved};
 use super::{Inner, Sync};
+use super::load_machine::LoadError;
+use super::load_owner::FlightTicket;
 
 impl Inner {
+    pub(crate) async fn load_members(self: &Arc<Self>, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
+        let (inner, model, relation, params) = (self.clone(), resolved.model.clone(), resolved.relation.clone(), resolved.params.clone());
+        let mut reader = self.owner.members(&resolved.window_key, |result| {
+            tokio::spawn(self.until_closed(async move {
+                let loaded = match inner.resolve(&model, &relation, &params) {
+                    Ok(resolved) => inner.members_chain(&resolved, force).await,
+                    Err(error) => Err(error),
+                };
+                result.send_replace(Some(loaded));
+            })).abort_handle()
+        });
+        reader.finished().await
+    }
+
+    pub(crate) async fn members_chain(&self, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
+        let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, self.stored(resolved));
+        let result = self.load_all(resolved, force).await;
+        match &result {
+            Ok(()) => ticket.landed(self.stored(resolved)),
+            Err(error) => ticket.failed(LoadError::of(error)),
+        }
+        result
+    }
+
     fn incomplete(resolved: &Resolved<'_>, reason: &str) -> SyncError {
         SyncError::Incomplete { model: resolved.model.clone(), relation: resolved.relation.clone(), reason: reason.to_string() }
     }
@@ -28,6 +56,7 @@ impl Inner {
             _ => {}
         }
         let RemoteShape::Connection { max_pages, .. } = resolved.remote.shape else { return Ok(()) };
+        let mut cursors = HashSet::new();
         loop {
             self.flights_settled(resolved).await;
             let Some(window) = self.db.shared.store.window(&resolved.window_key)? else { return Err(Self::incomplete(resolved, "the window is gone")) };
@@ -38,6 +67,9 @@ impl Inner {
                 LoadMoreVerdict::NoCursor => return Ok(()),
                 LoadMoreVerdict::MaxPagesReached => return Err(Self::incomplete(resolved, "max_pages is reached and more pages remain")),
                 LoadMoreVerdict::FetchNextPage => {}
+            }
+            if !cursors.insert(window.cursor.clone()) {
+                return Err(Self::incomplete(resolved, "the cursor did not advance"));
             }
             let outcome = self.fetch(resolved, window.cursor.clone(), true).await?;
             if let Some(error) = outcome.kept_error {

@@ -291,6 +291,13 @@ val edits = update.edits
 if (edits != null) mirror.replay(edits) else mirror = update.rows.toMutableList()
 ```
 
+Для `members_complete: true` ядро автоматически обходит страницы до `hasNextPage == false`, включая короткие и пустые промежуточные страницы.
+`LiveWindow.snapshot` переносит rows, phase, error и complete вместе. `rows`, edges и failure читают тот же снимок.
+Профиль участников: `window(tail: 50, max: 200)` / `window(tail = 50, max = 200)`.
+SQLite хранит полный состав. Окно читает count и ограниченный SQL-срез, без Ranked всех ключей.
+Размер выше 200 отклоняется. `Loaded` с ошибкой сохраняет строки и `complete = false`. Без строк ошибка даёт `Failed`.
+Последний читатель отменяет цепочку, следующий продолжает сохранённый курсор. Читатели делят один запрос.
+
 `window.related(Association)` reads the targets of one association for the rows of the window only, such as the senders of the shown messages. It has `live` and `snapshots` like `RelatedQuery`. The targets follow the window: a row that enters adds its target, a row that leaves releases it, and `expand` of the window grows this read too. A change of a target reaches the subscriber as one updated row, and a change of a user outside the window delivers nothing.
 
 ```swift

@@ -2,6 +2,7 @@ mod filter;
 mod place;
 mod run;
 mod statement;
+pub(crate) use statement::compile_tail;
 
 pub use filter::{CompareOp, Where};
 pub use place::place_of;

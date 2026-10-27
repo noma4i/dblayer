@@ -1,6 +1,7 @@
 package com.noma4i.dblayer
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,37 +76,41 @@ class RelatedWindow<Target : DBModel> internal constructor(
 }
 
 class LiveWindow<Model : DBModel>(private val window: Window<Model>, scope: CoroutineScope) {
-    private val mutableRows = MutableStateFlow<List<Model>>(emptyList())
-    private val mutableIds = MutableStateFlow<List<String>>(emptyList())
-    private val mutableReplaced = MutableStateFlow<Map<String, String>>(emptyMap())
-    private val mutableEdges = MutableStateFlow(WindowEdges(false, false, null))
-    private val mutableFailure = MutableStateFlow<Throwable?>(null)
+    private val mutableSnapshot = MutableStateFlow(Snapshot<Model>(emptyList(), emptyMap()))
     private val updates = ListUpdates<Model>()
 
     init {
         scope.launch(Dispatchers.Default) {
             try {
                 window.snapshots.flow.collect { snapshot ->
+                    mutableSnapshot.value = snapshot
                     updates.publish(snapshot)
-                    if (snapshot.reordered) mutableIds.value = snapshot.rows.map { row -> row.id }
-                    mutableReplaced.value = snapshot.replaced
-                    mutableFailure.value = snapshot.error
-                    snapshot.window?.let { mutableEdges.value = it }
-                    mutableRows.value = snapshot.rows
                 }
-            } catch (error: IllegalStateException) {
-                mutableFailure.value = error
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                mutableSnapshot.value = mutableSnapshot.value.copy(phase = if (mutableSnapshot.value.rows.isEmpty()) LoadPhase.Failed else LoadPhase.Loaded, error = error, errorKind = "subscription", complete = false)
             }
         }
     }
 
-    val rows: StateFlow<List<Model>> get() = mutableRows
-    val ids: StateFlow<List<String>> get() = mutableIds
-    val replaced: StateFlow<Map<String, String>> get() = mutableReplaced
-    val edges: StateFlow<WindowEdges> get() = mutableEdges
-    val failure: StateFlow<Throwable?> get() = mutableFailure
+    val snapshot: StateFlow<Snapshot<Model>> get() = mutableSnapshot
+    val rows: StateFlow<List<Model>> = WindowField(snapshot) { it.rows }
+    val ids: StateFlow<List<String>> = WindowField(snapshot) { it.rows.map { row -> row.id } }
+    val replaced: StateFlow<Map<String, String>> = WindowField(snapshot) { it.replaced }
+    val edges: StateFlow<WindowEdges> = WindowField(snapshot) { it.window ?: WindowEdges(false, false, null) }
+    val failure: StateFlow<Throwable?> = WindowField(snapshot) { it.error }
 
     fun takeUpdate(): ListUpdate<Model> = updates.take()
 
     fun expand(before: Int = 0, after: Int = 0) = window.expand(before, after)
+}
+
+@OptIn(kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi::class)
+private class WindowField<Model, Value>(private val snapshot: StateFlow<Snapshot<Model>>, private val select: (Snapshot<Model>) -> Value) : StateFlow<Value> {
+    override val value: Value get() = select(snapshot.value)
+    override val replayCache: List<Value> get() = listOf(value)
+    override suspend fun collect(collector: kotlinx.coroutines.flow.FlowCollector<Value>): Nothing {
+        snapshot.collect { collector.emit(select(it)) }
+    }
 }

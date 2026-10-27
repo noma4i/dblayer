@@ -782,10 +782,11 @@ fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
     let insert = line.opt(cx, "insert_on").and_then(|pair| insert_on(cx, pair));
     let stable = line.opt(cx, "stable_order").and_then(|pair| boolean(cx, &pair.value, "`stable_order`").filter(|flag| *flag).map(|_| pair_pos(pair)));
     let foreground = line.opt(cx, "refresh_on_foreground").and_then(|pair| boolean(cx, &pair.value, "`refresh_on_foreground`").filter(|flag| *flag).map(|_| pair_pos(pair)));
+    let members_complete = line.opt(cx, "members_complete").and_then(|pair| boolean(cx, &pair.value, "`members_complete`")).unwrap_or(false);
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = ScopeDecl {
-        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, parameters: Vec::new(), where_: None, membership: Vec::new(), order: None, query: None, variables: None,
+        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, members_complete, parameters: Vec::new(), where_: None, membership: Vec::new(), order: None, query: None, variables: None,
         response: None, paginate: None, freshness: None, preload: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
     };
     let remote = lines.iter().any(|candidate| candidate.word == "query");
@@ -883,8 +884,12 @@ fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
         "preload" => {
             no_block(cx, call);
             line.no_args(cx);
+            let limit = line.opt(cx, "limit").and_then(|pair| match &pair.value.item {
+                Value::Int(number) if *number > 0 => usize::try_from(*number).ok(),
+                _ => { cx.fail(at(&pair.value), "`preload limit` must be a positive integer"); None }
+            });
             line.used.iter_mut().for_each(|used| *used = true);
-            let values = call.options.iter().map(|pair| {
+            let values = call.options.iter().filter(|pair| pair.key != "limit").map(|pair| {
                 let choice = match &pair.value.item {
                     Value::Array(nodes) => PreloadChoice::Listed(nodes.iter().filter_map(|node| match &node.item {
                         Value::Str(text) => Some(Spanned::new(Json::String(text.clone()), at(node))),
@@ -915,7 +920,7 @@ fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
                 };
                 (Spanned::new(pair.key.clone(), pair_pos(pair)), choice)
             }).collect();
-            decl.preload = Some(PreloadDecl { pos: line.pos, values });
+            decl.preload = Some(PreloadDecl { pos: line.pos, limit, values });
         }
         "total" => {
             no_block(cx, call);

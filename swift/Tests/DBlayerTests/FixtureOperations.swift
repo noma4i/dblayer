@@ -135,6 +135,10 @@ public struct Roster: DBModel {
         let built = Query<Self>(relation: "container_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
         return built
     }
+    public static func completeMembers(_ containerId: String, order: ContainerMemberOrder = .joined) throws -> Query<Self> {
+        let built = Query<Self>(relation: "complete_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
+        return built
+    }
     @concurrent public static func create(title: String) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["title"] = try JSONValue.encode(title)

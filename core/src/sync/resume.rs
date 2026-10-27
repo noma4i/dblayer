@@ -220,7 +220,12 @@ impl Inner {
                 let inner = self.clone();
                 loads.spawn(async move {
                     let resolved = inner.resolve(&model, &relation, &params)?;
-                    inner.fetch(&resolved, None, true).await
+                    if resolved.members_complete {
+                        tokio::select! {
+                            _ = inner.owner.unobserved(&resolved.window_key) => Err(SyncError::Cancelled),
+                            result = inner.load_scope(&resolved, true) => result,
+                        }
+                    } else { inner.fetch(&resolved, None, true).await }
                 });
             }
             while let Some(finished) = loads.join_next().await {

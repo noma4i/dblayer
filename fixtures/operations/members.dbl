@@ -7,4 +7,11 @@ model Roster do
     response from: "containerMembers"
     paginate size: 30, direction: :forward
   end
+  scope :complete_members, members_complete: true do
+    parameter :containerId, :string
+    parameter :order, ContainerMemberOrder, default: "JOINED"
+    query "containerMembers"
+    response from: "containerMembers"
+    paginate size: 100, direction: :forward
+  end
 end

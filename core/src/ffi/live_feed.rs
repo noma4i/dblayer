@@ -23,6 +23,7 @@ pub(super) enum Readiness {
 
 #[derive(Clone, PartialEq)]
 struct Shown {
+    complete: bool,
     phase: LivePhase,
     kinds: (bool, bool, bool),
     has_more: bool,
@@ -276,7 +277,7 @@ impl LiveFeed {
             state.applied = Some(relation);
         }
         let gated = state.relation.as_ref().is_some_and(|relation| !gate_open(relation, rows_at));
-        let mut effective = state.applied.clone().unwrap_or_else(|| RelationState { phase: if state.relation.is_some() { LoadPhase::NotLoaded } else { LoadPhase::Loaded }, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 });
+        let mut effective = state.applied.clone().unwrap_or_else(|| RelationState { complete: false, phase: if state.relation.is_some() { LoadPhase::NotLoaded } else { LoadPhase::Loaded }, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 });
         if effective.error.is_none() && state.subscription_error.is_some() {
             effective.error = Some(LoadError::new("subscription", ""));
         }
@@ -290,6 +291,7 @@ impl LiveFeed {
             state.subscription_error.clone().map(|error| (error, "subscription".to_string()))
         };
         let shown = Shown {
+            complete: effective.complete && error.is_none(),
             phase: live_phase(phase),
             kinds: (effective.initial, effective.refreshing, effective.fetching_more),
             has_more: effective.has_more,
@@ -311,6 +313,7 @@ impl LiveFeed {
         change.refreshing = shown.kinds.1;
         change.fetching_more = shown.kinds.2;
         change.has_more = shown.has_more;
+        change.complete = shown.complete;
         change.total = shown.total;
         change.loaded_at = shown.loaded_at;
         change.size = shown.size;

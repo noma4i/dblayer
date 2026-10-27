@@ -74,6 +74,8 @@ pub struct LiveChange {
     pub fetching_more: bool,
     #[uniffi(default = false)]
     pub has_more: bool,
+    #[uniffi(default = false)]
+    pub complete: bool,
     #[uniffi(default = None)]
     pub total: Option<i64>,
     #[uniffi(default = None)]
@@ -110,6 +112,7 @@ impl LiveChange {
         self.refreshing = from.refreshing;
         self.fetching_more = from.fetching_more;
         self.has_more = from.has_more;
+        self.complete = from.complete;
         self.total = from.total;
         self.loaded_at = from.loaded_at;
         self.error_kind.clone_from(&from.error_kind);
@@ -118,7 +121,7 @@ impl LiveChange {
     pub(super) fn empty(revision: i64) -> Self {
         Self {
             revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None, window: None, inserted: Vec::new(), updated: Vec::new(), moved: Vec::new(),
-            seq: 0, phase: None, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, loaded_at: None, error_kind: None,
+            seq: 0, phase: None, initial: false, refreshing: false, fetching_more: false, has_more: false, complete: false, total: None, loaded_at: None, error_kind: None,
         }
     }
 

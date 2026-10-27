@@ -18,4 +18,12 @@ model User do
     freshness expires_in: 5.minutes
     total from: "node.membersCount"
   end
+  scope :complete_members, members_complete: true do
+    parameter :containerId, :string
+    query "ContainerMembers"
+    response from: "node.members"
+    paginate size: 100, direction: :forward
+    freshness expires_in: 5.minutes
+    total from: "node.membersCount"
+  end
 end

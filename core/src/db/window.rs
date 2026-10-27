@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::identity::RowId;
-use crate::query::{compile_ranked, fetch_ranked, windowable, Query, QueryError, RankedRow};
+use crate::query::{compile_count, compile_tail, compile_ranked, fetch_count, fetch_keys, fetch_ranked, windowable, Query, QueryError, RankedRow};
 use crate::store::Reader;
 
 use super::diff::{Entry, Stamp};
@@ -22,6 +22,7 @@ static NONCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone)]
 pub enum WindowSpec {
+    Members { size: usize, max: usize },
     Tail { size: usize, max: Option<usize>, paged: bool },
     Around { id: RowId, before: usize, after: usize },
 }
@@ -43,6 +44,7 @@ enum Span {
 impl Span {
     fn start(spec: &WindowSpec, index: &Ranked, model: &str) -> Result<Self, DbError> {
         match spec {
+            WindowSpec::Members { size, max } => Ok(Span::Tail { size: *size, initial: *size, max: Some(*max), paged: false }),
             WindowSpec::Tail { size, max, paged } => Ok(Span::Tail { size: *size, initial: *size, max: *max, paged: *paged }),
             WindowSpec::Around { id, before, after } => {
                 let (key, _) = index.get(id.as_str()).ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
@@ -103,11 +105,13 @@ impl WindowSeed {
         if held != query {
             return None;
         }
+        if body.window.as_ref()?.bounded.is_some() { return None; }
         Some(Self { at: version.position(), index: body.window.as_ref()?.index.clone() })
     }
 }
 
 pub(crate) struct WindowPart {
+    bounded: Option<(usize, usize, usize)>,
     index: Ranked,
     span: Span,
     pub edge: WindowEdge,
@@ -200,6 +204,10 @@ impl Shared {
         if !windowable(query) {
             return Err(QueryError::NotWindowable.into());
         }
+        if let WindowSpec::Members { size, max } = spec {
+            if *size > *max || *max > 200 { return Err(QueryError::NotWindowable.into()); }
+            return self.members_body(reader, query, (*size, *size, *max), 0);
+        }
         let index = match seed {
             Some(seed) => seed.index.clone(),
             None => self.window_index(reader, query)?,
@@ -232,13 +240,14 @@ impl Shared {
             .filter_map(|(slot, held)| held.or_else(|| loaded.get(slot.id.as_str()).map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, Vec::new()) }))))
             .collect();
         let edge = edge_of(start, end, index.len(), unmet);
-        let body = RowsBody { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: Some(WindowPart { index, span, edge, shape }), links: None, link_edits: Default::default() };
+        let body = RowsBody { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: Some(WindowPart { bounded: None, index, span, edge, shape }), links: None, link_edits: Default::default() };
         Ok((Body::Rows(body), Loaded { rows: loaded, related: Related::new() }))
     }
 
     pub(crate) fn window_step(&self, query: &Query, previous: &Version, touched: &HashSet<String>, horizon: (i64, u64), grow: (usize, usize)) -> Result<Option<Evaluated>, DbError> {
         let Body::Rows(old) = &previous.body else { return Ok(None) };
         let (Some(part), Listing::Whole(shown)) = (&old.window, &old.list) else { return Ok(None) };
+        if part.bounded.is_some() { return Ok(None); }
         let model = query.model.as_str();
         let spec = self.spec(model)?;
         let epoch = self.ephemeral.lock().epoch;
@@ -270,7 +279,7 @@ impl Shared {
             let hit = changed.iter().any(|id| within(position(&part.index, id), old_start, old_end) || within(position(&index, id), start, end));
             if grow == (0, 0) && !hit {
                 let edge = edge_of(start, end, index.len(), 0);
-                let part = WindowPart { index, span, edge, shape: part.shape };
+                let part = WindowPart { bounded: None, index, span, edge, shape: part.shape };
                 let body = RowsBody { list: Listing::Whole(shown.clone()), changed: None, step: None, window: Some(part), links: None, link_edits: Default::default() };
                 return Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(body) }, loaded: Loaded::default() }));
             }
@@ -291,11 +300,34 @@ impl Shared {
         let epoch = self.ephemeral.lock().epoch;
         self.read(&[query.model.as_str()], |reader| {
             let revision = reader.revision_seq()?;
+            if let Some((size, initial, max)) = part.bounded {
+                let requested = size.saturating_add(grow.0);
+                let size = if requested > max { initial } else { requested };
+                let (body, loaded) = self.members_body(reader, query, (size, initial, max), part.shape + u64::from(grow != (0, 0)))?;
+                return Ok(Evaluated { version: Version { revision, epoch, body }, loaded });
+            }
             let index = self.window_index(reader, query)?;
             let (span, shape) = if grow == (0, 0) { (part.span.clone(), (part.shape, 0)) } else { let (grown, unmet) = part.span.grown(&index, grow.0, grow.1); (grown, (part.shape + 1, unmet)) };
             let (body, loaded) = self.windowed(reader, query, index, span, None, shape)?;
             Ok(Evaluated { version: Version { revision, epoch, body }, loaded })
         })
+    }
+
+    fn members_body(&self, reader: &Reader<'_>, query: &Query, (size, initial, max): (usize, usize, usize), shape: u64) -> Result<(Body, Loaded), DbError> {
+        let spec = self.spec(query.model.as_str())?;
+        let total = fetch_count(reader.connection(), &compile_count(query, spec)?)? as usize;
+        let mut keys = fetch_keys(reader.connection(), &compile_tail(query, spec, size)?)?;
+        keys.reverse();
+        touch(keys.len());
+        let rows = self.rows_for_keys(reader, query.model.as_str(), &keys)?;
+        locked(&self.counters).rows_loaded += rows.len();
+        let loaded: HashMap<String, Row> = rows.into_iter().map(|row| (row.id.to_string(), row)).collect();
+        let entries = keys.iter().filter_map(|(id, _)| loaded.get(id).map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, Vec::new()) }))).collect();
+        let edge = edge_of(total.saturating_sub(keys.len()), total, total, 0);
+        let span = Span::Tail { size, initial, max: Some(max), paged: false };
+        let index = Ranked::from_sorted(Vec::new());
+        let body = RowsBody { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: Some(WindowPart { bounded: Some((size, initial, max)), index, span, edge, shape }), links: None, link_edits: Default::default() };
+        Ok((Body::Rows(body), Loaded { rows: loaded, related: Related::new() }))
     }
 }
 

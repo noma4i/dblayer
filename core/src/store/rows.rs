@@ -210,6 +210,16 @@ impl<'a> Reader<'a> {
         Ok(members)
     }
 
+    pub(crate) fn scope_first_ids(&self, model: &str, scope_key: &str, limit: usize) -> Result<Vec<String>, StoreError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 ORDER BY order_key, row_id LIMIT ?3",
+        )?;
+        let rows = statement.query_map(params![model, scope_key, limit as i64], |row| row.get(0))?;
+        let ids: Vec<String> = rows.collect::<Result<_, _>>()?;
+        read_members(ids.len());
+        Ok(ids)
+    }
+
     pub fn scope_edges(&self, model: &str, scope_key: &str, row_ids: &[&str]) -> Result<EdgeRead, StoreError> {
         let mut statement = self.connection.prepare_cached(
             "SELECT e.name, e.whole, e.fraction, e.text FROM scope_member AS m \

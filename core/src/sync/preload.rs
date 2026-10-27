@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use serde_json::{Map, Value};
@@ -55,6 +55,7 @@ pub struct PreloadFailure {
 pub(crate) struct PreloadOwner {
     state: Mutex<State>,
     busy: watch::Sender<usize>,
+    changed: watch::Sender<u64>,
     inner: OnceLock<Weak<Inner>>,
     runtime: OnceLock<Handle>,
 }
@@ -67,7 +68,7 @@ impl PreloadOwner {
 
 impl Default for PreloadOwner {
     fn default() -> Self {
-        Self { state: Mutex::new(State::default()), busy: watch::channel(0).0, inner: OnceLock::new(), runtime: OnceLock::new() }
+        Self { state: Mutex::new(State::default()), busy: watch::channel(0).0, changed: watch::channel(0).0, inner: OnceLock::new(), runtime: OnceLock::new() }
     }
 }
 
@@ -110,41 +111,61 @@ impl Drop for FirstScreenHold {
 
 type Window = (String, String, Map<String, Value>);
 
+fn limited_combinations(parameters: &[(&String, Vec<Value>)], at: usize, params: &mut Map<String, Value>, limit: usize, out: &mut Vec<Map<String, Value>>) {
+    if out.len() >= limit { return; }
+    let Some((name, choices)) = parameters.get(at) else {
+        if !out.contains(params) { out.push(params.clone()); }
+        return;
+    };
+    for choice in choices {
+        params.insert((*name).clone(), choice.clone());
+        limited_combinations(parameters, at + 1, params, limit, out);
+        if out.len() >= limit { break; }
+    }
+    params.remove(name.as_str());
+}
+
 impl Inner {
-    fn preloaded_windows(&self) -> Result<Vec<Window>, SyncError> {
+    pub(super) fn preloaded_windows(&self) -> Result<Vec<Window>, SyncError> {
         let mut windows = Vec::new();
         for (model, spec) in &self.db.shared.specs {
             for relation in &spec.relations {
                 let Some(values) = &relation.preload else { continue };
-                let mut combinations = vec![Map::new()];
-                for (name, choice) in values {
+                let limit = relation.preload_limit.unwrap_or(usize::MAX);
+                if limit == 0 { return Err(SyncError::Params("preload limit must be positive".into())); }
+                let names: Vec<_> = if relation.preload_order.is_empty() { values.keys().collect() } else { relation.preload_order.iter().collect() };
+                let mut parameters = Vec::new();
+                for name in names {
+                    let choice = &values[name];
                     let choices = match choice {
                         PreloadChoice::Listed(listed) => listed.clone(),
-                        PreloadChoice::RowsOf { from } => self.source_ids(from)?,
+                        PreloadChoice::RowsOf { from } => {
+                            if relation.preload_limit.is_none() { return Err(SyncError::Params("derived preload needs a positive limit".into())); }
+                            self.source_ids(from, limit)?
+                        }
                     };
-                    combinations = combinations.into_iter().flat_map(|base| choices.iter().map(move |choice| {
-                        let mut next = base.clone();
-                        next.insert(name.clone(), choice.clone());
-                        next
-                    })).collect();
+                    parameters.push((name, choices));
                 }
+                let mut combinations = Vec::new();
+                limited_combinations(&parameters, 0, &mut Map::new(), limit, &mut combinations);
                 windows.extend(combinations.into_iter().map(|params| (model.clone(), relation.name.clone(), params)));
             }
         }
         Ok(windows)
     }
 
-    fn source_ids(&self, source: &PreloadSource) -> Result<Vec<Value>, SyncError> {
+    fn source_ids(&self, source: &PreloadSource, limit: usize) -> Result<Vec<Value>, SyncError> {
         let spec = self.db.spec(&source.model).map_err(|_| SyncError::UnknownModel(source.model.clone()))?;
         let key = spec.selection_key(&source.relation, &Map::new()).map_err(|error| SyncError::Params(error.to_string()))?;
-        let members = self.db.shared.store.scope_members(&source.model, key.as_str())?;
-        Ok(members.into_iter().map(|(id, _)| Value::String(id)).collect())
+        let ids = self.db.shared.store.read(&[&source.model], |reader| reader.scope_first_ids(&source.model, key.as_str(), limit))?;
+        Ok(ids.into_iter().map(Value::String).collect())
     }
 
     pub(crate) fn preload_on_source(&self, model: &str, relation: &str) {
         let feeds = self.db.shared.specs.values().flat_map(|spec| &spec.relations).filter_map(|declared| declared.preload.as_ref()).flat_map(BTreeMap::values);
         if !feeds.into_iter().any(|choice| matches!(choice, PreloadChoice::RowsOf { from } if from.model == model && from.relation == relation)) { return; }
         locked(&self.preload.state).due = true;
+        self.preload.changed.send_modify(|revision| *revision += 1);
         if let Some(inner) = self.preload.inner.get().and_then(Weak::upgrade) { inner.preload_start(); }
     }
 
@@ -188,22 +209,48 @@ impl Inner {
 
     async fn preload_windows(self: &Arc<Self>) {
         let lanes = Arc::new(Semaphore::new(PRELOAD_PARALLEL));
-        let windows = match self.preloaded_windows() {
-            Ok(windows) => windows,
-            Err(_) => return,
-        };
+        let mut changed = self.preload.changed.subscribe();
         let mut loads = JoinSet::new();
-        for (model, relation, params) in windows {
-            let (inner, lanes) = (self.clone(), lanes.clone());
-            loads.spawn(async move {
-                let _lane = lanes.acquire_owned().await;
-                inner.app_loads_settled().await;
-                let resolved = inner.resolve(&model, &relation, &params)?;
-                inner.fetch(&resolved, None, false).await
+        let mut started = HashSet::new();
+        let mut running: HashMap<String, (tokio::task::AbortHandle, String)> = HashMap::new();
+        let mut reselect = true;
+        loop {
+            if reselect {
+            reselect = false;
+            changed.borrow_and_update();
+            let Ok(windows) = self.preloaded_windows() else { return };
+            let selected: HashSet<String> = windows.iter().map(|(model, relation, params)| format!("{model}|{relation}|{params:?}")).collect();
+            started.retain(|key| selected.contains(key));
+            running.retain(|key, (task, window)| {
+                let borrowed = locked(&self.flights).waiting.get(window).is_some_and(|sender| sender.receiver_count() > 0);
+                let observed = self.db.observed_reads().iter().any(|read| read.key == *window);
+                if selected.contains(key) || borrowed || observed { true } else { task.abort(); false }
             });
-        }
-        while let Some(finished) = loads.join_next().await {
-            if matches!(finished, Ok(Err(SyncError::Offline))) { locked(&self.preload.state).due = true; }
+            for (model, relation, params) in windows {
+                let key = format!("{model}|{relation}|{params:?}");
+                if !started.insert(key.clone()) { continue; }
+                let Ok(window_key) = self.resolve(&model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
+                let (inner, lanes, loaded) = (self.clone(), lanes.clone(), key.clone());
+                let task = loads.spawn(async move {
+                    let _lane = lanes.acquire_owned().await;
+                    inner.app_loads_settled().await;
+                    let result = match inner.resolve(&model, &relation, &params) {
+                        Ok(resolved) => inner.load_scope(&resolved, false).await,
+                        Err(error) => Err(error),
+                    };
+                    (loaded, result)
+                });
+                running.insert(key, (task, window_key));
+            }
+            }
+            if loads.is_empty() { return; }
+            tokio::select! {
+                _ = changed.changed() => { reselect = true; },
+                finished = loads.join_next() => if let Some(Ok((key, result))) = finished {
+                    running.remove(&key);
+                    if matches!(result, Err(SyncError::Offline)) { locked(&self.preload.state).due = true; }
+                },
+            }
         }
     }
 
@@ -283,7 +330,7 @@ impl Sync {
                     let _lane = lanes.acquire_owned().await;
                     let (model, relation, params) = window;
                     let fetched = match inner.resolve(&model, &relation, &params) {
-                        Ok(resolved) => inner.fetch(&resolved, None, true).await.map(|outcome| outcome.kept_error),
+                        Ok(resolved) => inner.load_scope(&resolved, true).await.map(|outcome| outcome.kept_error),
                         Err(error) => Err(error),
                     };
                     match fetched {

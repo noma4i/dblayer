@@ -238,7 +238,7 @@ impl Feed {
         let mut failure = None;
         for (relation, params) in targets.into_values() {
             let outcome = match self.inner.resolve(model, &relation, &params) {
-                Ok(resolved) => self.inner.fetch(&resolved, None, true).await.map(|_| ()),
+                Ok(resolved) => self.inner.load_scope(&resolved, true).await.map(|_| ()),
                 Err(error) => Err(error),
             };
             if let Err(error) = outcome { failure.get_or_insert(error); }
@@ -256,7 +256,7 @@ impl Feed {
         };
         let mut resolved = self.inner.resolve(model, name, &params)?;
         resolved.node_reread = relation.node == Some(crate::schema::NodeRead::One);
-        self.inner.fetch(&resolved, None, true).await.map(|_| ())
+        self.inner.load_scope(&resolved, true).await.map(|_| ())
     }
 
     async fn apply_event(&self, response: &Response) -> bool {

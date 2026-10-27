@@ -86,6 +86,7 @@ data class Snapshot<Model>(
     val error: Throwable? = null,
     val errorKind: String? = null,
     val undecodable: List<String> = emptyList(),
+    val complete: Boolean = false,
 ) {
     val isLoading get() = phase == LoadPhase.Loading
     val failed get() = phase == LoadPhase.Failed
@@ -103,7 +104,7 @@ data class Snapshot<Model>(
                 null -> LoadPhase.Opening
             },
             change.initial, change.refreshing, change.fetchingMore, change.hasMore, change.total, change.loadedAt,
-            applied.failure ?: change.error, if (applied.failure == null) change.errorKind else "invalid", applied.undecodable,
+            applied.failure ?: change.error, if (applied.failure == null) change.errorKind else "invalid", applied.undecodable, change.complete && applied.failure == null,
         )
 
         fun <Model> merging(older: Snapshot<Model>, newer: Snapshot<Model>): Snapshot<Model> {

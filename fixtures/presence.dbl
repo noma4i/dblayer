@@ -24,6 +24,6 @@ model Presence, storage: :memory, expires_in: 1.minute do
     query "PresenceHistory"
     response shape: :list
     freshness expires_in: 12.hours
-    preload presenceId: { from: "Presence.online" }
+    preload presenceId: { from: "Presence.online" }, limit: 40
   end
 end

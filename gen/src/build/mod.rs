@@ -237,6 +237,11 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
     }
     relation.order_stable = scope.stable_order.is_some();
     relation.refresh_on_foreground = scope.refresh_on_foreground.is_some();
+    relation.members_complete = scope.members_complete;
+    relation.preload_limit = scope.preload.as_ref().and_then(|preload| preload.limit);
+    relation.preload_order = scope.preload.iter().flat_map(|preload| &preload.values).map(|(parameter, _)| {
+        scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone())
+    }).collect();
     relation.preload = scope.preload.as_ref().map(|preload| preload.values.iter().map(|(parameter, values)| {
         let column = scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone());
         let choice = match values {

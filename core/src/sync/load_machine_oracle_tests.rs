@@ -276,6 +276,7 @@ pub(super) fn expected(run: &Replay, window: &str) -> Option<RelationState> {
     let phase = ladder.iter().find(|(holds, _)| *holds).map_or(LoadPhase::Loaded, |(_, phase)| *phase);
     let running = |kind| seen.open.iter().any(|(_, running)| *running == kind);
     Some(RelationState {
+        complete: loaded_at.is_some() && !has_more && seen.open.is_empty() && seen.read_error.is_none() && last_failure.is_none(),
         phase,
         initial: running(LoadKind::Initial),
         refreshing: running(LoadKind::Refresh),
