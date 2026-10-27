@@ -14,7 +14,7 @@ If a step fails before the tag, fix the cause and rerun. After the tag, publish 
 
 ## Release page
 
-The title is the version. The text is the `CHANGELOG.md` section of that version, followed by a `Compiled parts` list that says what each file is and where it goes, with the SwiftPM checksum of the Apple archive. The script writes it.
+The title is the version. The text is the `CHANGELOG.md` section of that version and nothing else: no list of files, no checksums, no instructions. The script writes it.
 
 ## Files on the release page
 

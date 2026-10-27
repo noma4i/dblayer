@@ -40,18 +40,7 @@ attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblaye
 archives=(DBlayerFFI.xcframework.zip dblayer-android.zip)
 for archive in "${archives[@]}"; do mkdir -p "$tmp/$archive"; unzip -q "$stage/$archive" -d "$tmp/$archive"; done
 (cd "$stage" && shasum -a 256 "${attachments[@]}" > SHA256SUMS)
-checksum="$(swift package compute-checksum "$stage/DBlayerFFI.xcframework.zip")"
 awk -v heading="## $version - " 'index($0, heading)==1 {found=1; next} found && /^## / {exit} found {print}' CHANGELOG.md > "$stage/NOTES.md"
-cat >> "$stage/NOTES.md" <<NOTES
-
-## Compiled parts
-
-- DBlayerFFI.xcframework.zip: Apple libraries. Place in swift/DBlayerFFI.xcframework. SwiftPM checksum: $checksum
-- dblayer.swift: Swift bindings. Place in swift/Sources/DBlayer/dblayer.swift.
-- dblayer-android.zip: four Android ABI libraries and Kotlin bindings. Extract into the Kotlin module.
-- dblayer-gen-macos-universal: release model generator for macOS arm64 and x86_64. Install as dblayer-gen and run to generate models.
-- libdblayer-macos-universal.dylib: JVM library for macOS arm64 and x86_64. Place on the JVM native library path.
-NOTES
 (cd "$stage" && shasum -a 256 -c SHA256SUMS)
 check_archs() {
   local file="$1" expected="$2" actual
