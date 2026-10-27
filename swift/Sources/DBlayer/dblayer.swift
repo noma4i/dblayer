@@ -11448,7 +11448,7 @@ public struct FfiConverterTypeSessionCode: FfiConverterRustBuffer {
         case 12: return .serverKeyMismatch
         
         case 13: return .stateLost
-
+        
         case 14: return .other
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -11509,11 +11509,11 @@ public struct FfiConverterTypeSessionCode: FfiConverterRustBuffer {
         
         case .stateLost:
             writeInt(&buf, Int32(13))
-
-
+        
+        
         case .other:
             writeInt(&buf, Int32(14))
-
+        
         }
     }
 }
