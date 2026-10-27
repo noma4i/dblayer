@@ -12,8 +12,8 @@ The owner chooses each version and authorizes publication. Use a minor version f
 
 ## Build and publish
 
-1. Run `make release VERSION=X.Y.Z`. It checks the version, clean tree, `master` branch, previous tag, release commit, package version, changelog heading, documentation, invariants, and consistency. It builds Apple, Android, JVM, Linux, and generator outputs, packages them, and checks archive contents, architectures, Android ABIs, Maven files, Linux format and glibc compatibility, and SHA-256 sums. It publishes nothing.
-2. The build can fail if any prerequisite check fails, a build tool or target is missing, output already exists, a package is malformed, an expected file or architecture is missing, or Linux requires glibc newer than 2.17. If neither `readelf` nor `objdump` is available, the script reports that the glibc check was skipped.
+1. Run `make release VERSION=X.Y.Z`. It checks the version, clean tree, `master` branch, previous tag, release commit, package version, changelog heading, documentation, invariants, and consistency. It builds Apple, Android, JVM, and generator outputs, packages them, and checks archive contents, architectures, Android ABIs, and SHA-256 sums. It publishes nothing.
+2. The build can fail if any prerequisite check fails, a build tool or target is missing, output already exists, a package is malformed, an expected file or architecture is missing.
 3. After the owner authorizes publication, run `make release-publish VERSION=X.Y.Z`. This creates and pushes the tag, pushes `master`, creates the GitHub Release, checks its assets, downloads them, and verifies their checksums.
 4. A failure before the tag can be fixed and rerun. After the tag, fix forward with a new patch version. Never move a published tag.
 
@@ -28,11 +28,8 @@ Use the version's `CHANGELOG.md` section without its heading. Follow it with a `
 | `DBlayerFFI.xcframework.zip` | Apple device, simulator, and macOS libraries | `swift/DBlayerFFI.xcframework` |
 | `dblayer.swift` | Generated Swift bindings | swift/Sources/DBlayer/dblayer.swift |
 | `dblayer-android.zip` | Four Android ABI libraries and Kotlin bindings | Extract into the Kotlin module, preserving archive paths |
-| `DBlayer-swift-package.zip` | Swift package sources, bindings, and Apple framework | Extract `DBlayer/` and reference it by local path |
-| `dblayer-maven.zip` | Maven repository with AAR, POM, and Gradle metadata | Extract and add its directory to Gradle repositories |
 | `dblayer-gen-macos-universal` | macOS arm64 and x86_64 model generator | Run to generate models |
 | `libdblayer-macos-universal.dylib` | macOS arm64 and x86_64 JVM library | JVM native library path |
-| `libdblayer-linux-x86_64.so` | Linux x86_64 JVM library | Set as `libdblayer.so` on `jna.library.path` |
 | `MANIFEST-X.Y.Z.txt` | Tag, commit, sizes, and hashes for attachments and archive contents | Keep as the release inventory |
 | `SHA256SUMS` | Hashes for every attachment | Use to verify downloaded files |
 
