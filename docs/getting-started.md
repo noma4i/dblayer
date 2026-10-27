@@ -78,6 +78,7 @@ The native build fingerprint includes both deployment versions.
 | `cargo test` | Rust core and generator tests |
 | `bash scripts/build_ios.sh` | Builds universal macOS and simulator slices, an arm64 iOS device slice, and Swift bindings |
 | `bash scripts/build_ios.sh --device` | CI: builds only the iOS device release slice and Swift bindings |
+| `bash scripts/build_ios.sh --ios` | Builds device and simulator release slices for an iOS app, no macOS slice |
 | `bash scripts/build_ios.sh --check` | Builds macOS and arm64 simulator release slices for checks |
 | `bash scripts/build_kotlin.sh --release` | CI: builds arm64-v8a and armeabi-v7a release libraries and Kotlin bindings. This is also the default |
 | `bash scripts/build_kotlin.sh --abis` | Local development: explicitly builds all 4 Android ABIs and Kotlin bindings |

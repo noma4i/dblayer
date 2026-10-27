@@ -5,12 +5,13 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 bridge="$root/swift"
 build="$root/target/ios-build"
 targets=(aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-darwin x86_64-apple-ios)
-[ "$#" -le 1 ] || { echo "usage: build_ios.sh [--check | --device]" >&2; exit 2; }
+[ "$#" -le 1 ] || { echo "usage: build_ios.sh [--check | --device | --ios]" >&2; exit 2; }
 case "${1:-}" in
   --check) targets=(aarch64-apple-darwin aarch64-apple-ios-sim) ;;
   --device) targets=(aarch64-apple-ios) ;;
+  --ios) targets=(aarch64-apple-ios aarch64-apple-ios-sim) ;;
   "") ;;
-  *) echo "usage: build_ios.sh [--check | --device]" >&2; exit 2 ;;
+  *) echo "usage: build_ios.sh [--check | --device | --ios]" >&2; exit 2 ;;
 esac
 if [ "${DBLAYER_BUILD_TARGETS_ONLY:-0}" = 1 ]; then
   printf '%s\n' "${targets[@]}"

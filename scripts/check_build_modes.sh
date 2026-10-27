@@ -12,6 +12,7 @@ import tempfile
 
 root = sys.argv[1]
 cases = [
+    ("ios", ["--ios"], ["aarch64-apple-ios", "aarch64-apple-ios-sim"]),
     ("ios", ["--device"], ["aarch64-apple-ios"]),
     ("ios", [], ["aarch64-apple-darwin", "aarch64-apple-ios", "aarch64-apple-ios-sim", "x86_64-apple-darwin", "x86_64-apple-ios"]),
     ("ios", ["--check"], ["aarch64-apple-darwin", "aarch64-apple-ios-sim"]),
