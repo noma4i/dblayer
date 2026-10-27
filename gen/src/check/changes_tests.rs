@@ -10,7 +10,7 @@ fn subscription(apply: &str) -> String {
 #[test]
 fn subscribe_applies_one_closed_effect_with_the_data_that_effect_needs() {
     for apply in [
-        "effect: :ephemeral, fields: { active: \"typing.active\" }, matches: { kind: \"ACTIVE\" }",
+        "effect: :ephemeral, fields: { active: \"typing.active\" }, matches: { kind: [\"ACTIVE\"] }",
         "effect: :reread, via: :node",
         "effect: :ignore",
         "effect: :upsert",
@@ -20,7 +20,7 @@ fn subscribe_applies_one_closed_effect_with_the_data_that_effect_needs() {
         let models = parse_models(&subscription(apply)).unwrap_or_else(|errors| panic!("{apply}: {errors:?}"));
         let value = serde_json::to_value(&models[0]).unwrap();
         let has_apply = value["listens"][0]["apply"].is_object();
-        assert_eq!(has_apply, !apply.starts_with("effect: :upsert") && apply != "effect: :delete", "{apply}");
+        assert!(has_apply, "{apply}");
     }
     for (apply, expected) in [
         ("effect: :unknown", "`effect` must be"),
@@ -31,8 +31,13 @@ fn subscribe_applies_one_closed_effect_with_the_data_that_effect_needs() {
         ("effect: :ignore, fields: { a: \"b\" }", "`fields` applies only to effect `:ephemeral`"),
         ("effect: :ignore, values: { active: true }", "`values` applies only to effect `:upsert`"),
         ("effect: :delete, delete_if: \"gone\"", "`delete_if` applies only to effect `:upsert`"),
-        ("effect: :upsert, matches: { kind: \"A\" }", "`matches` applies only to effect `:ephemeral`, `:reread` and `:ignore`"),
-        ("effect: :ignore, matches: { kind: 1 }", "a `matches` value must be a string"),
+        ("effect: :ignore, matches: { kind: 1 }", "needs a nonempty string list"),
+        ("effect: :ignore, matches: { kind: \"A\" }", "needs a nonempty string list"),
+        ("effect: :ignore, matches: { kind: [] }", "needs a nonempty string list"),
+        ("effect: :ignore, matches: { kind: { not: [] } }", "needs a nonempty string list"),
+        ("effect: :ignore, matches: { kind: [\"A\", 1] }", "a `matches` list item must be a string"),
+        ("effect: :ignore, matches: { kind: { other: [\"A\"] } }", "needs a nonempty string list"),
+        ("effect: :ignore, matches: { kind: [\"A\"], kind: [\"B\"] }", "declared twice"),
         ("fields: { a: \"b\" }", "`apply` needs `effect:`"),
         ("effect: :ignore, junk: 1", "unknown key `junk` for `apply`"),
     ] {

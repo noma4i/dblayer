@@ -217,6 +217,19 @@ struct BridgeProbeTests {
   }
 
   @Test(.timeLimit(.minutes(1)))
+  func aCreateReadsTwoDeclaredLocalSources() async throws {
+    let transport = MockTransport()
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]"#)
+    transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"Ann"}}}"#)
+    transport.enqueue("CurrentRegionQuery", reply: #"{"data":{"region":{"id":"r1","name":"Home"}}}"#)
+    try await CurrentUser.current.load()
+    try await CurrentRegion.current.load()
+    let row = try await Record.create(containerId: "c", text: "hi")
+    #expect(row.authorId == "u1" && row.regionId == "r1")
+  }
+
+  @Test(.timeLimit(.minutes(1)))
   func aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)

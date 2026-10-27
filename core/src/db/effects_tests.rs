@@ -159,12 +159,17 @@ fn a_reopened_database_keeps_the_row_a_queued_operation_created_in_another_model
 fn authored_notes() -> Db {
     let mut notes = super::spec_fixtures::notes_spec();
     notes.fields.push(crate::schema::FieldSpec::scalar("authorId", crate::value::ScalarKind::Id).optional());
+    notes.fields.push(crate::schema::FieldSpec::scalar("regionId", crate::value::ScalarKind::Id).optional());
     let mut create = crate::schema::ActionDeclaration::new("create", crate::schema::RootShape::Upsert);
     create.mutation = Some("CreateNote".to_string());
     create.local = vec!["authorId".to_string()];
     create.local_from = std::collections::BTreeMap::from([("authorId".to_string(), crate::schema::EffectSource::Row { model: "wallets".to_string(), row: None, field: "id".to_string() })]);
+    create.local.push("regionId".into());
+    create.local_from.insert("regionId".into(), crate::schema::EffectSource::Row { model: "regions".into(), row: None, field: "id".into() });
     notes.actions.push(create);
-    Db::open_in_memory(vec![super::spec_fixtures::people_spec(), super::spec_fixtures::rooms_spec(), notes, super::spec_fixtures::wallets_spec()], None).unwrap()
+    let mut regions = super::spec_fixtures::wallets_spec();
+    regions.key = crate::identity::ModelKey::new("regions");
+    Db::open_in_memory(vec![super::spec_fixtures::people_spec(), super::spec_fixtures::rooms_spec(), notes, super::spec_fixtures::wallets_spec(), regions], None).unwrap()
 }
 
 #[test]
@@ -176,6 +181,12 @@ fn a_create_fills_a_local_attribute_from_the_singleton_row_and_skips_it_without_
     join(&db, "wallets", &scope_key(&db, "wallets", "current", json!({})), "w1", "a");
     assert_eq!(author(&db, json!({"roomId": "a"})), Some(json!("w1")));
     assert_eq!(author(&db, json!({"roomId": "a", "authorId": "w9"})), Some(json!("w9")));
+    put(&db, "regions", json!({"id": "r1", "balance": 0}));
+    join(&db, "regions", &scope_key(&db, "regions", "current", json!({})), "r1", "a");
+    for (arguments, expected) in [(json!({"roomId":"a"}), json!(["w1","r1"])), (json!({"roomId":"a", "authorId":null, "regionId":null}), json!(["w1","r1"])), (json!({"roomId":"a", "authorId":"w9", "regionId":"r9"}), json!(["w9","r9"]))] {
+        let row = db.create("notes", obj(arguments)).unwrap();
+        assert_eq!(json!([row.get("authorId"), row.get("regionId")]), expected);
+    }
 }
 
 fn reaction_patch() -> serde_json::Map<String, serde_json::Value> {

@@ -152,6 +152,8 @@ fn insert_on_is_a_closed_set_of_sources() {
     run(&[
         ("create", &joined(", insert_on: [:create]", ""), None),
         ("event and response", &joined(", insert_on: [:event, :response]", BY_OWNER), None),
+        ("event node", &joined(", insert_on: [:event, :response, :node]", BY_OWNER), None),
+        ("node", &joined(", insert_on: [:node]", BY_OWNER), None),
         ("order does not matter", &joined(", insert_on: [:response, :event]", BY_OWNER), None),
         ("unknown source", &joined(", insert_on: [:bogus]", BY_OWNER), Some("`insert_on` takes `:create`, `:event` and `:response`")),
         ("empty list", &joined(", insert_on: []", BY_OWNER), Some("`insert_on` needs at least 1 source")),
@@ -174,6 +176,32 @@ fn refresh_on_foreground_needs_a_scope_with_query() {
         ("false", &scope(", refresh_on_foreground: false", "    order createdAt: :desc\n"), None),
         ("symbol", &scope(", refresh_on_foreground: :yes", "    order createdAt: :desc\n"), Some("`refresh_on_foreground` must be true or false")),
     ]);
+}
+
+#[test]
+fn membership_checks_parameter_fields_types_and_conflicts() {
+    for (rule, expected) in [
+        ("membership list: { contains: :lists }", None),
+        ("membership list: { equals: :status }", None),
+        ("membership list: { contains: :status }", Some("must match the type")),
+        ("membership list: { equals: :lists }", Some("must match the type")),
+        ("membership ghost: { contains: :lists }", Some("must match the type")),
+        ("membership list: { contains: :missing }", Some("must match the type")),
+        ("membership list: { contains: :lists }, list: { contains: :lists }", Some("declared twice")),
+        ("membership list: { contains: :lists, equals: :status }", Some("exactly one")),
+        ("membership list: { other: :lists }", Some("exactly one")),
+        ("where status: :list\n    membership list: { contains: :lists }", Some("conflicts with where")),
+    ] {
+        let source = format!("model Chat do\n  attribute :status, :enum, values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  attribute :lists, [:enum], values: [\"PRIMARY\",\"SECONDARY\"], as: Kind\n  index :status\n  scope :list, insert_on: [:event, :response, :node] do\n    parameter :list, Kind\n    {rule}\n    query \"Chats\"\n    response shape: :list\n  end\nend");
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("chat.dbl");
+        std::fs::write(&file, source).unwrap();
+        match (crate::compile_files(&[file], None, &[]), expected) {
+            (Ok(_), None) => {},
+            (Err(errors), Some(expected)) => assert!(errors.iter().any(|error| error.error.message.contains(expected)), "{rule}: {errors:?}"),
+            (actual, expected) => panic!("{rule}: {actual:?}, expected {expected:?}"),
+        }
+    }
 }
 
 #[test]

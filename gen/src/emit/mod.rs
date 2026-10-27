@@ -271,7 +271,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         for field in &model.fields {
             if field.name != "id" && !is_file(field) { writeln!(out, "    public static let {} = Column<{class}, {}>(\"{}\")", identifier(&field.name, true), column_type(field, true), field.name).unwrap(); }
         }
-        if !model.changes.is_empty() { out.push_str("    @concurrent public static func events() async throws -> LiveStream<ModelEventItem<Self>> { try await openEvents() }\n"); }
+        if !model.changes.is_empty() || !model.listens.is_empty() { out.push_str("    @concurrent public static func events() async throws -> LiveStream<ModelEventItem<Self>> { try await openEvents() }\n"); }
         out.push_str("    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }\n    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }\n");
         for relation in &model.relations {
             let method = identifier(&name(&relation.name), true);
@@ -396,7 +396,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val uploads: Map<String, UploadInfo> = emptyMap()\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val layout = \"{}\"\n        override val modelName = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                uploads = row.uploads.associate {{ it.action to UploadInfo.of(it.upload) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", identifier(&field.name, false), wire::read_kotlin(field, at))).collect::<String>()).unwrap();
         for field in model.fields.iter().filter(|field| is_file(field)) { writeln!(out, "        val {} = FileField<{class}>(\"{}\")", identifier(&field.name, false), field.name).unwrap(); }
         for field in model.fields.iter().filter(|field| field.name != "id" && !is_file(field)) { writeln!(out, "        val {} = Column<{class}, {}>(\"{}\")", identifier(&field.name, false), column_type(field, false), field.name).unwrap(); }
-        if !model.changes.is_empty() { writeln!(out, "        suspend fun events(): kotlinx.coroutines.flow.Flow<ModelEventItem<{class}>> = openEvents()").unwrap(); }
+        if !model.changes.is_empty() || !model.listens.is_empty() { writeln!(out, "        suspend fun events(): kotlinx.coroutines.flow.Flow<ModelEventItem<{class}>> = openEvents()").unwrap(); }
         writeln!(out, "        fun find(id: String) = Query(\"{class}\", this).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", this).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", this, ids)\n        fun entity(id: String) = entityOf(\"{class}\", this, id)").unwrap();
         for relation in &model.relations {
             let method = identifier(&name(&relation.name), false);

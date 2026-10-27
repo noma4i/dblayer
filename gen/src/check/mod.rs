@@ -164,9 +164,6 @@ fn check_subscription(update: &SubscribeDecl, report: &mut impl FnMut(Pos, Strin
     if apply.delete_if.is_some() && apply.delete_unless.is_some() {
         report(apply.pos, format!("subscription `{name}`: `delete_if` and `delete_unless` cannot be combined"));
     }
-    if matches!(apply.effect, Effect::Upsert | Effect::Delete) && !apply.matches.is_empty() {
-        report(apply.pos, misplaced("matches", "`:ephemeral`, `:reread` and `:ignore`"));
-    }
 }
 
 fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
@@ -188,6 +185,33 @@ fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl, report: &
                 report(column.pos, format!("scope `{name}`: where column `{}` is given twice", column.item));
             }
         }
+    }
+    let mut memberships = HashSet::new();
+    for (parameter, rule, pos) in &scope.membership {
+        use dblayer::schema::Membership;
+        let field = match rule { Membership::Contains(field) | Membership::Equals(field) => field };
+        if !memberships.insert(parameter) || linked.contains(&parameter.as_str()) {
+            report(*pos, format!("scope `{name}`: membership parameter `{parameter}` is declared twice or conflicts with where"));
+        }
+        let declared = scope.parameters.iter().find(|candidate| &candidate.name == parameter);
+        let attribute = node.attributes.iter().find(|attribute| &attribute.name == field);
+        let fits = match (declared, attribute, rule) {
+            (Some(parameter), Some(attribute), rule) if !parameter.ty.list && !parameter.null => {
+                let scalar = match (&attribute.ty, rule) {
+                    (TypeRef::List(crate::decl::ListElement::Scalar(kind)), Membership::Contains(_)) => Some(*kind),
+                    (TypeRef::Scalar(kind), Membership::Equals(_)) => Some(*kind),
+                    (TypeRef::Enum, Membership::Equals(_)) | (TypeRef::List(crate::decl::ListElement::Enum), Membership::Contains(_)) => Some(ScalarKind::Str),
+                    _ => None,
+                };
+                match (&parameter.ty.base, scalar) {
+                    (ParamBase::String, Some(ScalarKind::Str)) | (ParamBase::Id, Some(ScalarKind::Id)) | (ParamBase::Int, Some(ScalarKind::Int)) | (ParamBase::Bool, Some(ScalarKind::Bool)) => true,
+                    (ParamBase::Named(kind), Some(ScalarKind::Str)) => attribute.as_name.as_ref() == Some(kind),
+                    _ => false,
+                }
+            }
+            _ => false,
+        };
+        if !fits { report(*pos, format!("scope `{name}`: membership `{parameter}` must match the type of `{field}`")); }
     }
     for parameter in &scope.parameters {
         let is_linked = linked.contains(&parameter.name.as_str());
@@ -348,18 +372,20 @@ fn check_remote_scope(scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
             report(total.pos, "`total` needs `paginate`".to_string());
         }
     }
-    let linked = scope.where_.is_some();
-    let server_only = scope.parameters.iter().any(|parameter| !scope.where_.iter().flat_map(|clause| &clause.pairs).any(|(_, linked)| linked.item == parameter.name));
+    let linked = scope.where_.is_some() || !scope.membership.is_empty();
+    let server_only = scope.parameters.iter().any(|parameter| !scope.where_.iter().flat_map(|clause| &clause.pairs).any(|(_, linked)| linked.item == parameter.name) && !scope.membership.iter().any(|(name, _, _)| name == &parameter.name));
     if let Some(insert) = &scope.insert_on {
         let mut sorted: Vec<_> = insert.item.iter().map(|source| *source as u8).collect();
         sorted.sort_unstable();
         let create = crate::decl::InsertOn::Create as u8;
         let events = [crate::decl::InsertOn::Event as u8, crate::decl::InsertOn::Response as u8];
-        if sorted != [create] && sorted != events {
-            report(insert.pos, format!("scope `{name}`: `insert_on` is `[:create]` or `[:event, :response]`"));
-        } else if sorted == events && !linked {
+        let automatic = !sorted.contains(&create);
+        let without_node: Vec<_> = sorted.iter().copied().filter(|value| *value != crate::decl::InsertOn::Node as u8).collect();
+        if sorted != [create] && (!automatic || (!without_node.is_empty() && without_node != events)) {
+            report(insert.pos, format!("scope `{name}`: `insert_on` is `[:create]` or `[:event, :response]`, with optional `:node`, or `[:node]`"));
+        } else if automatic && !linked {
             report(insert.pos, format!("scope `{name}`: `insert_on: [:event, :response]` joins rows by their `where` columns and needs `where`"));
-        } else if sorted == events && server_only {
+        } else if automatic && server_only {
             report(insert.pos, format!("scope `{name}`: `insert_on: [:event, :response]` joins rows by their `where` columns and a scope with server-only parameters has none, remove `insert_on:` and the server answer decides the members"));
         }
     }

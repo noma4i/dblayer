@@ -1,6 +1,8 @@
 package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.Record
+import com.noma4i.dblayer.models.CurrentUser
+import com.noma4i.dblayer.models.CurrentRegion
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -8,6 +10,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CreateArgsTest {
+    @Test
+    fun aCreateReadsTwoDeclaredLocalSources() = bounded {
+        val transport = MockTransport()
+        reopen(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]""")
+        transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"u1","name":"Ann"}}}""")
+        transport.enqueue("CurrentRegionQuery", """{"data":{"region":{"id":"r1","name":"Home"}}}""")
+        CurrentUser.current.load()
+        CurrentRegion.current.load()
+        val row = Record.create(containerId = "c", text = "hi")
+        assertEquals(listOf("u1", "r1"), listOf(row.authorId, row.regionId))
+    }
+
     @Test
     fun aCreateSendsItsArgsAndTheRowNeverStoresThem() = bounded {
         val transport = MockTransport()

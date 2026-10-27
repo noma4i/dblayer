@@ -4,6 +4,27 @@ import Testing
 @testable import DBlayer
 
 extension BridgeProbeTests {
+  @Test(.timeLimit(.minutes(1)))
+  func oneSignalRoutesTypedActionsAndNotices() async throws {
+    let transport = MockTransport()
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]"#)
+    let events = Cursor(try await ChatActivityNotice.events())
+    let actions = Cursor(try await ChatAction.byChat("c").live.stream())
+    #expect(await actions.next()?.isEmpty == true)
+    try transport.emit("ChatActionSignal", json: #"{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":true}}}"#)
+    #expect(await actions.first("typing") { !$0.isEmpty }?.first?.kind == "TYPING")
+    try transport.emit("ChatActionSignal", json: #"{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"SCREENSHOT","active":true}}}"#)
+    guard case .event(let notice)? = await events.next("screenshot") else {
+      Issue.record("screenshot did not arrive")
+      return
+    }
+    #expect(notice.after?.kind == "SCREENSHOT")
+    try transport.emit("ChatActionSignal", json: #"{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":false}}}"#)
+    #expect(await actions.first("typing stops") { $0.isEmpty }?.isEmpty == true)
+    #expect(transport.calls.filter { $0.operationName == "ChatActionSignal" }.count == 1)
+  }
+
   @Test
   func memoryNoticesReachTheGeneratedLiveQueryWithoutAReadRequest() async throws {
     let transport = MockTransport()

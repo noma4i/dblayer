@@ -161,6 +161,7 @@ pub enum InsertOn {
     Create,
     Event,
     Response,
+    Node,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,7 +257,7 @@ pub struct ApplyDecl {
     pub effect: Effect,
     pub fields: Vec<(String, String, Pos)>,
     pub values: Vec<(String, Json, Pos)>,
-    pub matches: Vec<(String, String, Pos)>,
+    pub matches: Vec<(String, dblayer::schema::MatchValues, Pos)>,
     pub via: Option<String>,
     pub delete_if: Option<Spanned<String>>,
     pub delete_unless: Option<Spanned<String>>,
@@ -282,6 +283,7 @@ pub struct ScopeDecl {
     pub refresh_on_foreground: Option<Pos>,
     pub parameters: Vec<ParameterDecl>,
     pub where_: Option<WhereDecl>,
+    pub membership: Vec<(String, dblayer::schema::Membership, Pos)>,
     pub order: Option<OrderDecl>,
     pub query: Option<QueryDecl>,
     pub variables: Option<Vec<VariableBinding>>,
@@ -431,6 +433,7 @@ pub struct OperationDecl {
     pub variables: Option<Vec<VariableBinding>>,
     pub local: Option<Vec<String>>,
     pub local_from: Vec<(String, SourceDecl, Pos)>,
+    pub local_sites: Vec<(String, Pos)>,
     pub wrap: Option<String>,
     pub response: Option<ResponseDecl>,
     pub match_by: Option<Vec<Spanned<String>>>,

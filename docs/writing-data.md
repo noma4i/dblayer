@@ -38,7 +38,7 @@ try await moment.update(text: .some(nil))
 moment.update(text = GraphQLNullable.Null)
 ```
 
-`create` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send (the author of a message, for example). `local :userId, from: { of: CurrentUser, field: :id }` lets the library fill the attribute from the row of a singleton model: the generated `create` takes it as an optional argument, a value the call passes wins, and without a `CurrentUser` row the attribute stays unset like a missing effect parameter.
+`create` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send. `local :userId, from: { of: CurrentUser, field: :id }` fills the attribute from a singleton row. Repeat `local` with different destinations and sources. Generated `create` makes each sourced argument optional. A non-null explicit value wins. An absent singleton leaves the attribute unset. Duplicate destinations and incompatible types fail generation. `update` accepts plain `local` and rejects `local from:`.
 
 ```swift
 let message = try await Message.create(text: "hello")

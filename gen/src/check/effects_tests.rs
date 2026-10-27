@@ -145,6 +145,10 @@ fn a_local_attribute_reads_the_singleton_row_and_the_generated_create_makes_it_o
     assert_eq!(declared.local, ["count"]);
     assert_eq!(serde_json::to_value(&declared.local_from).unwrap(), json!({"count": {"row": {"model": "Wallet", "field": "balance"}}}));
     for (local, message) in [
+        ("local :count\n    local :count", "local attribute `count` is declared twice, first declaration at"),
+        ("local :count, from: { of: Wallet, field: :balance }\n    local :count", "local attribute `count` is declared twice"),
+        ("local :count, :count", "local attribute `count` is declared twice"),
+        ("local :count, from: { of: Wallet, field: :label }", "cannot accept `Wallet.label`"),
         ("local :count, from: { of: Note, field: :body }", "`{ of: Note }` needs `row: :param`: Note is not a singleton"),
         ("local :count, from: { of: Wallet, field: :ghost }", "`{ of: Wallet }` names unknown attribute `ghost`"),
         ("local :count, from: :title", "`local` takes `from: { of: Model, field: :name }`"),
@@ -153,4 +157,8 @@ fn a_local_attribute_reads_the_singleton_row_and_the_generated_create_makes_it_o
         let errors = check_source(&create(local)).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains(message)), "{local}: {errors:?}");
     }
+    check_source(&create("local :count, from: { of: Wallet, field: :balance }\n    local :title, from: { of: Wallet, field: :label }")).unwrap();
+    let update = create("local :count, from: { of: Wallet, field: :balance }").replace("operation :create", "operation :update");
+    let errors = check_source(&update).unwrap_err();
+    assert!(errors.iter().any(|error| error.message.contains("supported only in `create`")), "{errors:?}");
 }

@@ -524,7 +524,10 @@ What a refresh does, in one commit:
 
 The encrypted event carries identifiers. `changed_by` selects the HTTP reread, and its response updates the database in the usual way.
 Events of the plain transport with a full row save that row directly. `insert_on: [:event, :response]` adds such a row to loaded selections that match its `where` columns, and does the same for rows from operation responses (`upsert`), including cached rows absent from matching loaded windows. Existing members keep their places.
-A scope with a parameter that has no `where` stores the server response as it was and does not accept event rows.
+A scope parameter without `where` needs explicit `membership` to accept event rows.
+`membership list: { contains: :lists }` selects windows whose list parameter occurs in the row array.
+`insert_on: [:event, :response, :node]` also admits rows from `changed_by` node rereads.
+Missing members join loaded windows at the head. Existing members keep their places. Manual node reads do not insert members.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
 `via: :observed` uses this reread for each event. Each event also reaches `Model.events` with the row before and after the reread, see [Models](models.md).
 
@@ -785,7 +788,7 @@ end
 ```
 - An event changes only the attributes it carries. Attributes it does not select keep their stored values. The read of the stored row and the write happen in one transaction, so a local edit made at the same moment is never overwritten by an older copy.
 - A delete event removes the same rows as a local `destroy`: the row and its `dependent: :destroy` children, in one commit.
-- Events preserve fields owned by unconfirmed local edits. Loaded windows of scopes with `insert_on: [:event]` accept matching rows.
+- Events preserve fields owned by unconfirmed local edits. Loaded windows with `insert_on: [:event, :response]` accept matching rows.
 - If the first connection fails, the library retries it with the same growing delay and the same offline rule as a reconnect. `subscribe` does not throw for a refused connection.
 - The subscription starts when the first reader connects, is shared by all readers and closes some time after the last reader leaves (30 seconds by default). A reader that leaves from any thread starts that wait, so a reader that arrives within it reuses the open subscription.
 - After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it.

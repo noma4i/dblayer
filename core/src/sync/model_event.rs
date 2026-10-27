@@ -103,7 +103,7 @@ impl Inner {
 pub struct ModelEvents {
     inner: Arc<Inner>,
     queue: Arc<EventQueue>,
-    key: std::sync::Mutex<Option<String>>,
+    keys: std::sync::Mutex<Vec<String>>,
 }
 
 impl ModelEvents {
@@ -129,7 +129,7 @@ impl ModelEvents {
     pub fn close(&self) {
         locked(&self.queue.state).closed = true;
         self.queue.ready.notify_one();
-        if let Some(key) = locked(&self.key).take() { self.inner.release_live(&key); }
+        for key in locked(&self.keys).drain(..) { self.inner.release_live(&key); }
     }
 }
 
@@ -142,12 +142,14 @@ impl Drop for ModelEvents {
 impl Sync {
     pub async fn open_model_events(&self, model: &str) -> Result<ModelEvents, SyncError> {
         let spec = self.inner.db.spec(model)?;
-        if spec.changes.is_empty() { return Err(SyncError::Event(format!("{model} declares no changed_by"))); }
+        if spec.changes.is_empty() && spec.listens.is_empty() { return Err(SyncError::Event(format!("{model} declares no event source"))); }
         let queue = Arc::new(EventQueue { model: model.to_string(), state: Default::default(), ready: tokio::sync::Notify::new() });
         locked(&self.inner.model_events).push(Arc::downgrade(&queue));
-        let key = self.inner.acquire_changes().ok_or_else(|| SyncError::Event("no changes source declared".into()))?;
-        let events = ModelEvents { inner: self.inner.clone(), queue, key: std::sync::Mutex::new(Some(key.clone())) };
-        self.inner.changes_ready(&key).await?;
+        let mut keys = Vec::new();
+        if !spec.changes.is_empty() { keys.push(self.inner.acquire_changes().ok_or_else(|| SyncError::Event("no changes source declared".into()))?); }
+        for updates in &spec.listens { keys.push(self.inner.acquire_one(model, updates.clone(), None)); }
+        let events = ModelEvents { inner: self.inner.clone(), queue, keys: std::sync::Mutex::new(keys.clone()) };
+        for key in keys { self.inner.changes_ready(&key).await?; }
         Ok(events)
     }
 }

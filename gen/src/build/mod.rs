@@ -212,6 +212,7 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
         relation.sort = Sort::Fields(order.fields.iter().map(|(column, direction, _)| SortField { column: column.clone(), direction: *direction }).collect());
     }
     relation.node = scope.node;
+    relation.membership = scope.membership.iter().map(|(parameter, rule, _)| (parameter.clone(), rule.clone())).collect();
     if scope.node == Some(NodeRead::One) {
         relation.text_params.push(NODE_PARAM.to_string());
     } else {
@@ -232,6 +233,7 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
     if let Some(insert) = &scope.insert_on {
         relation.joins_created = insert.item.contains(&InsertOn::Create);
         relation.joins_events = insert.item.contains(&InsertOn::Event);
+        relation.joins_node = insert.item.contains(&InsertOn::Node);
     }
     relation.order_stable = scope.stable_order.is_some();
     relation.refresh_on_foreground = scope.refresh_on_foreground.is_some();
@@ -292,7 +294,8 @@ fn updates_spec(update: &SubscribeDecl) -> UpdatesSpec {
     let apply = &update.apply;
     let matches = apply.matches.iter().map(|(path, value, _)| (path.clone(), value.clone())).collect();
     let action = match apply.effect {
-        Effect::Upsert | Effect::Delete => None,
+        Effect::Upsert => Some(SubscriptionAction::Upsert),
+        Effect::Delete => Some(SubscriptionAction::Delete),
         Effect::Ephemeral => Some(SubscriptionAction::Ephemeral { fields: apply.fields.iter().map(|(name, path, _)| (name.clone(), path.clone())).collect() }),
         Effect::Reread => Some(SubscriptionAction::Reread { via: apply.via.clone().unwrap_or_default() }),
         Effect::Ignore => Some(SubscriptionAction::Ignore),

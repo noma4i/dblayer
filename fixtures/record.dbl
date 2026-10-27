@@ -1,6 +1,7 @@
 model Record do
   attribute :containerId, :id
   attribute :authorId, :id
+  attribute :regionId, :id, null: true
   attribute :text, :string
   attribute :createdAt, :date
   attribute :sequenceNumber, :int, null: true
@@ -58,6 +59,7 @@ model Record do
     parameter :signedId, :string, null: true
     parameter :attachedUserId, :id, null: true
     local :authorId, from: { of: CurrentUser, field: :id }
+    local :regionId, from: { of: CurrentRegion, field: :id }
   end
   scope :node, node: :one do
     parameter :id, :id
@@ -94,5 +96,12 @@ model CurrentUser do
   attribute :name, :string
   scope :current do
     query "CurrentUserQuery"
+  end
+end
+
+model CurrentRegion do
+  attribute :name, :string
+  scope :current do
+    query "CurrentRegionQuery"
   end
 end

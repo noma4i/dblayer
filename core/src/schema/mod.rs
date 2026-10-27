@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use crate::ddl::{column_name, column_type, SERVICE_COLUMNS};
 use crate::identity::{ModelKey, ListKey};
 use crate::value::{
-    duplicates, read_array, read_enum, read_raw, read_scalar, relation_scope_key, relation_scope_key_from_values, ScalarKind, ListKeyError,
+    duplicates, read_array, read_enum, read_raw, read_scalar, relation_scope_key, ScalarKind, ListKeyError,
     SortDirection,
 };
 
@@ -577,12 +577,31 @@ pub struct SubscriptionApply {
     #[serde(flatten)]
     pub action: SubscriptionAction,
     #[serde(default)]
-    pub matches: BTreeMap<String, String>,
+    pub matches: BTreeMap<String, MatchValues>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MatchValues {
+    OneOf(BTreeSet<String>),
+    Except { not: BTreeSet<String> },
+}
+
+impl MatchValues {
+    pub fn accepts(&self, value: &Value) -> bool {
+        let Some(value) = value.as_str() else { return false };
+        match self {
+            Self::OneOf(values) => values.contains(value),
+            Self::Except { not } => !not.contains(value),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "effect", rename_all = "snake_case")]
 pub enum SubscriptionAction {
+    Upsert,
+    Delete,
     Ephemeral { fields: BTreeMap<String, String> },
     Reread { via: String },
     Ignore,
@@ -654,9 +673,20 @@ pub enum NodeRead {
     Many,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Membership {
+    Contains(String),
+    Equals(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationSpec {
     pub name: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub membership: BTreeMap<String, Membership>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub joins_node: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub updates: Vec<UpdatesSpec>,
     pub by_columns: Vec<String>,
@@ -707,6 +737,8 @@ impl RelationSpec {
     pub fn new(name: &str, by_columns: &[&str]) -> Self {
         Self {
             name: name.to_string(),
+            membership: BTreeMap::new(),
+            joins_node: false,
             updates: Vec::new(),
             by_columns: by_columns.iter().map(|column| column.to_string()).collect(),
             text_params: Vec::new(),
@@ -745,9 +777,29 @@ impl RelationSpec {
 
     pub fn lists_every_row_of_its_params(&self) -> bool {
         let Some(remote) = &self.remote else { return false };
-        !self.by_columns.is_empty()
-            && self.text_params.is_empty()
+        (!self.by_columns.is_empty() || !self.membership.is_empty())
+            && self.text_params.iter().all(|parameter| self.membership.contains_key(parameter))
             && !remote.variables.values().any(|source| matches!(source, VariableSource::Constant { .. }))
+    }
+
+    pub fn row_params(&self, row: &Map<String, Value>) -> Vec<Map<String, Value>> {
+        let mut params = vec![Map::new()];
+        for column in &self.by_columns {
+            let Some(value) = row.get(column).filter(|value| !value.is_null()) else { return Vec::new() };
+            for values in &mut params { values.insert(column.clone(), value.clone()); }
+        }
+        for (parameter, rule) in &self.membership {
+            let values = match rule {
+                Membership::Contains(field) => row.get(field).and_then(Value::as_array).cloned().unwrap_or_default(),
+                Membership::Equals(field) => row.get(field).filter(|value| !value.is_null()).cloned().into_iter().collect(),
+            };
+            params = params.into_iter().flat_map(|params| values.iter().map(move |value| {
+                let mut params = params.clone();
+                params.insert(parameter.clone(), value.clone());
+                params
+            })).collect();
+        }
+        params
     }
 
     #[cfg(test)]
@@ -1122,16 +1174,7 @@ impl ModelSpec {
         self.relations
             .iter()
             .filter(|relation| relation.lists_every_row_of_its_params() || relation.takes_created_rows())
-            .filter_map(|relation| {
-                let mut params = Map::new();
-                let mut kinds = BTreeMap::new();
-                for column in &relation.by_columns {
-                    let kind = self.column_scalar_kind(column)?;
-                    params.insert(column.clone(), row.get(column)?.clone());
-                    kinds.insert(column.clone(), kind);
-                }
-                relation_scope_key_from_values(self.key.as_str(), &relation.name, &params, &kinds).ok()
-            })
+            .flat_map(|relation| relation.row_params(row).into_iter().filter_map(|params| self.selection_key(&relation.name, &params).ok()))
             .collect()
     }
 

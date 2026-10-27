@@ -48,8 +48,19 @@ pub(super) fn used_parameter(operation: &OperationDecl, name: &str) -> bool {
 
 pub(super) fn check_local_from(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, report: Report<'_>) {
     let site = Site { node, all, operation };
-    for (_, source, pos) in &operation.local_from {
+    for (field, source, pos) in &operation.local_from {
         source_of(&site, source, *pos, Use::Value, report);
+        if let SourceDecl::Row { model, field: from, .. } = source {
+            let target = node.attributes.iter().find(|attribute| &attribute.name == field);
+            let origin = site.model(model).and_then(|model| model.attributes.iter().find(|attribute| &attribute.name == from));
+            if let (Some(target), Some(origin)) = (target, origin) {
+                if target.ty != origin.ty || (origin.null && !target.null) {
+                    report(*pos, format!("local attribute `{field}` cannot accept `{model}.{from}`"));
+                }
+            } else if from == "id" && target.is_some_and(|target| target.ty != TypeRef::Scalar(ScalarKind::Id)) {
+                report(*pos, format!("local attribute `{field}` must accept an id"));
+            }
+        }
     }
 }
 

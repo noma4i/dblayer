@@ -222,7 +222,7 @@ async fn declared_subscription_rereads_or_ignores_without_copying_event_fields()
 #[tokio::test(start_paused = true)]
 async fn declared_activity_changes_only_ephemeral_typing_and_expires() {
     let mut model = users_spec();
-    model.listens.push(serde_json::from_value(json!({"subscription":"PresenceSignal", "root":"presenceSignal", "id":["memberId"], "apply":{"effect":"ephemeral", "fields":{"typing":"active"}, "matches":{"kind":"ACTIVE"}}})).unwrap());
+    model.listens.push(serde_json::from_value(json!({"subscription":"PresenceSignal", "root":"presenceSignal", "id":["memberId"], "apply":{"effect":"ephemeral", "fields":{"typing":"active"}, "matches":{"kind":["ACTIVE"]}}})).unwrap());
     let rig = rig_on(Db::open_in_memory(vec![model], None).unwrap(), MockTransport::new(), SyncConfig::default());
     put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
     rig.sync.register(super::OperationDef::new("PresenceSignal", "subscription PresenceSignal { presenceSignal { memberId active kind } }", "presenceSignal"));

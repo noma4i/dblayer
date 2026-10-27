@@ -1,4 +1,6 @@
 mod entity_fetch;
+#[cfg(test)]
+mod dsl_tests;
 mod error;
 #[cfg(test)]
 mod effects_tests;
@@ -122,6 +124,8 @@ pub(crate) struct Inner {
     pub clock: Arc<dyn Clock>,
     pub config: SyncConfig,
     pub operations: Mutex<HashMap<String, Arc<OperationDef>>>,
+    pub subscriptions: HashMap<String, Vec<(String, crate::schema::UpdatesSpec)>>,
+    pub change_feed: Option<(String, crate::schema::ChangeFeed)>,
     pub flights: Mutex<Flights>,
     pub counters: Mutex<Counters>,
     pub landing: Mutex<()>,
@@ -200,6 +204,15 @@ impl Sync {
         }));
         let lifetime = Lifetime { _stop: stop, owner: owner.clone() };
         let connectivity = db.connectivity();
+        let change_feed = db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| (spec.key.to_string(), feed.clone())));
+        let mut subscriptions: HashMap<String, Vec<(String, crate::schema::UpdatesSpec)>> = HashMap::new();
+        for spec in db.shared.specs.values() {
+            for updates in spec.listens.iter().chain(spec.relations.iter().flat_map(|relation| &relation.updates)) {
+                let target = (spec.key.to_string(), updates.clone());
+                let targets = subscriptions.entry(updates.subscription.clone()).or_default();
+                if !targets.contains(&target) { targets.push(target); }
+            }
+        }
         let inner = Inner {
             stopped,
             db,
@@ -207,6 +220,8 @@ impl Sync {
             clock,
             config,
             operations: Mutex::new(HashMap::new()),
+            subscriptions,
+            change_feed,
             flights: Mutex::new(Flights::default()),
             counters: Mutex::new(Counters::default()),
             landing: Mutex::new(()),

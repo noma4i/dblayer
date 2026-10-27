@@ -80,7 +80,7 @@ async fn switching_the_observed_list_from_a_foreign_thread_keeps_the_one_viewer_
     let (database, transport) = open_viewer().await;
     let feed = database.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent));
     feed.wait_for_initial_load().await.unwrap();
-    let live = || database.sync().unwrap().inner.live_status("ChangeNotice|DblayerViewerChanges");
+    let live = || database.sync().unwrap().inner.live_status("DblayerViewerChanges|{}");
     within(transport.subscribed_event.notified()).await;
     yield_until("the viewer changes live status settled", || live() == Some((2, true))).await;
     assert_eq!(transport.subscriptions("DblayerViewerChanges"), 1);

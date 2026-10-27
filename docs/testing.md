@@ -78,6 +78,7 @@ Typical scenarios to cover:
 | Touched directories only | `bash scripts/check_dblayer.sh --fast` |
 | Every invariant has a test with an assertion | `bash scripts/check_invariants.sh` |
 | Check scripts leave unrelated processes alone | `bash scripts/check_bounded.sh --selftest` |
+
 | A second check run in the same tree is refused (exit 3), a lock of a dead run is taken over | `bash scripts/check_lock_test.sh` |
 | Every check run keeps its logs in its own `target/check-logs/<UTC time>-<sha>-<lane>-<random>/` (step logs, `summary.txt`, `run.txt`, and the Gradle test result XML and report of `gradle-test` under their source paths in `gradle-test.artifacts/`), `target/check-logs/latest` points at the newest run, nothing is deleted | `bash scripts/check_logs_test.sh` |
 | Duplicate mechanisms and names | `bash scripts/check_zoo.sh` |
@@ -86,6 +87,9 @@ Typical scenarios to cover:
 | No code swallows an error with `try?` or `runCatching {...}.getOrNull()` outside `scripts/silent_allowlist.txt` | `bash scripts/check_silent.sh` |
 | Network code has executable coverage for every source file | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
 | Coverage rejects missing reports and unexecuted lines on both platforms | `python3 -I scripts/check_coverage_test.py` |
+
+The check command stops after 300 seconds and kills its own child processes.
+Build the native artifacts before running checks. Unchanged native inputs reuse the built artifacts.
 
 Coverage includes Swift network sources, `UrlSessionTransport.swift` and `UrlSessionCable.swift`. Kotlin includes encrypted HTTP, sockets, `Transports.kt` and `TransportFailure.kt`. Missing executable coverage for any included file fails the check. Unexecuted lines require an entry in `scripts/coverage_allowlist.txt`. The Swift tests use atomic profile counters to preserve increments from concurrent execution.
 

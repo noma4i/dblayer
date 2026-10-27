@@ -303,6 +303,7 @@ fn apply_upsert(
         }
     }
     let row = &next;
+    declared_membership(connection, info, model, &id, old_row, row, envelope, moves, heads)?;
     let (born_rev, mut field_rev, changed, kind) = match &existing {
         Some(stored) => {
             let changed = diff_fields(&stored.row, row);
@@ -443,13 +444,36 @@ pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) ->
 }
 
 fn membership_moves(info: &ModelInfo, model: &ModelKey, id: &str, old: &Map<String, Value>, new: &Map<String, Value>, moves: &mut Vec<ScopeOp>, heads: &mut Vec<(ScopeRef, crate::identity::RowId)>) {
-    let before = info.spec.list_scopes(old);
-    let after = info.spec.list_scopes(new);
+    let legacy = |row: &Map<String, Value>| info.spec.relations.iter().filter(|relation| relation.membership.is_empty() && !relation.joins_node && (relation.lists_every_row_of_its_params() || relation.takes_created_rows())).flat_map(|relation| relation.row_params(row).into_iter().filter_map(|params| info.spec.selection_key(&relation.name, &params).ok())).collect::<Vec<_>>();
+    let before = legacy(old);
+    let after = legacy(new);
     let Ok(row) = crate::identity::RowId::new(id) else { return };
     moves.extend(
         before.iter().filter(|key| !after.contains(key)).map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() }),
     );
     heads.extend(after.iter().filter(|key| !before.contains(key)).map(|key| (ScopeRef::new(model.clone(), key.clone()), row.clone())));
+}
+
+fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, old: Option<&Map<String, Value>>, new: &Map<String, Value>, envelope: &CommitEnvelope, moves: &mut Vec<ScopeOp>, heads: &mut Vec<(ScopeRef, crate::identity::RowId)>) -> Result<(), StoreError> {
+    use crate::schema::{Membership, RemoteShape, PageDirection};
+    let row = crate::identity::RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
+    for relation in info.spec.relations.iter().filter(|relation| (!relation.membership.is_empty() || envelope.node_reread) && (if envelope.node_reread { relation.joins_node } else { relation.joins_events && matches!(envelope.origin, WriteOrigin::Event | WriteOrigin::Response) })) {
+        for rule in relation.membership.values() {
+            let field = match rule { Membership::Contains(field) | Membership::Equals(field) => field };
+            if !new.contains_key(field) { return Err(StoreError::Constraint(format!("missing membership field {field}"))); }
+        }
+        let keys = |values: &Map<String, Value>| relation.row_params(values).into_iter().map(|params| info.spec.selection_key(&relation.name, &params).map_err(|error| StoreError::Constraint(error.to_string()))).collect::<Result<BTreeSet<_>, _>>();
+        let before = old.map(keys).transpose()?.unwrap_or_default();
+        let after = keys(new)?;
+        moves.extend(before.difference(&after).map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() }));
+        let direction = match relation.remote.as_ref().map(|remote| &remote.shape) { Some(RemoteShape::Connection { direction, .. }) => *direction, _ => PageDirection::Forward };
+        for key in after {
+            let window = super::windows::window_key(key.as_str(), direction);
+            let loaded = connection.query_row("SELECT 1 FROM query_window WHERE key = ?1", [&window], |_| Ok(())).optional()?.is_some();
+            if loaded { heads.push((ScopeRef::new(model.clone(), key), row.clone())); }
+        }
+    }
+    Ok(())
 }
 
 fn join_heads(
@@ -461,6 +485,7 @@ fn join_heads(
 ) -> Result<bool, StoreError> {
     let mut wrote = false;
     for (scope, row) in heads {
+        if Reader::new(connection, models).scope_has_member(scope.model.as_str(), scope.key.as_str(), row.as_str())? { continue; }
         let first = Reader::new(connection, models).scope_first_key(scope.model.as_str(), scope.key.as_str())?;
         let order_key = crate::value::fractional_between(None, first.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let append = ScopeOp::Append { scope: scope.clone(), row: row.clone(), order_key };

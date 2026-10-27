@@ -3,10 +3,16 @@
 ## Unreleased
 
 ### Added
+- Repeat `local` declarations with distinct singleton sources in create operations.
+- Filter all subscription effects with value lists and `not`.
+- Share subscription streams across matching model declarations with atomic row updates.
+- Declare scalar or array membership for event-driven node insertion into loaded lists.
 - Model event streams wait for subscription readiness and report opening failures.
 - `enterForegroundForTesting()` sends a foreground event to a database opened with `openTesting`.
 
 ### Changed
+- Reject `local from:` in update operations.
+- Replace single-string subscription matches with lists of values.
 - Replace the `events` property with the suspending `events()` call on Swift and Kotlin.
 
 ## 6.11.0 - 2026-10-27

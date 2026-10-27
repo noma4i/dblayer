@@ -88,15 +88,15 @@ impl Inner {
     }
 
     pub(crate) fn unlisten_all(self: &std::sync::Arc<Self>) {
-        let keys: Vec<String> = self.db.shared.specs.values().flat_map(|spec| spec.listens.iter().map(|updates| format!("{}|{}", spec.key.as_str(), updates.subscription))).collect();
+        let keys: Vec<String> = self.db.shared.specs.values().flat_map(|spec| spec.listens.iter().map(|updates| live_key(&updates.subscription, &json!({})))).collect();
         for key in keys {
             self.release_live(&key);
         }
-        if let Some((model, feed)) = self.change_feed() { self.release_live(&format!("{model}|{}", feed.subscription)); }
+        if let Some((_, feed)) = self.change_feed() { self.release_live(&live_key(&feed.subscription, &json!({}))); }
     }
 
     pub(super) fn change_feed(&self) -> Option<(String, crate::schema::ChangeFeed)> {
-        self.db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| (spec.key.to_string(), feed.clone())))
+        self.change_feed.clone()
     }
 
     pub(crate) fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
@@ -124,10 +124,10 @@ impl Inner {
         Some((resolved.scope.key.to_string(), Value::Object(variables)))
     }
 
-    fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec, scoped: Option<(String, Value)>) -> String {
+    pub(super) fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec, scoped: Option<(String, Value)>) -> String {
         let (key, variables) = match scoped {
-            Some((scope, variables)) => (format!("{model}|{}|{scope}", updates.subscription), variables),
-            None => (format!("{model}|{}", updates.subscription), json!({})),
+            Some((_, variables)) => (live_key(&updates.subscription, &variables), variables),
+            None => (live_key(&updates.subscription, &json!({})), json!({})),
         };
         let Ok(runtime) = Handle::try_current() else { return key };
         let mut lives = locked(&self.lives);
@@ -200,6 +200,10 @@ impl Inner {
     pub(crate) fn live_status(&self, key: &str) -> Option<(usize, bool)> {
         locked(&self.lives).get(key).map(|live| (live.readers, live.subscription.is_some()))
     }
+}
+
+pub(super) fn live_key(operation: &str, variables: &Value) -> String {
+    format!("{operation}|{variables}")
 }
 
 #[cfg(test)]

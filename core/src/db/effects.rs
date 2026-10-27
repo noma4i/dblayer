@@ -200,20 +200,28 @@ impl Db {
     pub(crate) fn fill_local_sources(&self, model: &str, values: &mut Map<String, Value>) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
         let Some(create) = spec.actions.iter().find(|declared| declared.name == "create") else { return Ok(()) };
-        for (field, source) in &create.local_from {
-            if values.get(field).is_some_and(|value| !value.is_null()) {
-                continue;
+        if create.local_from.is_empty() { return Ok(()); }
+        let sources: std::collections::BTreeSet<&str> = create.local_from.values().filter_map(|source| match source {
+            EffectSource::Row { model, row: None, .. } => Some(model.as_str()),
+            _ => None,
+        }).collect();
+        self.shared.read(&sources.into_iter().collect::<Vec<_>>(), |reader| {
+            let mut rows = std::collections::BTreeMap::new();
+            for (field, source) in &create.local_from {
+                if values.get(field).is_some_and(|value| !value.is_null()) { continue; }
+                let EffectSource::Row { model: from, row: None, field: from_field } = source else { continue };
+                if !rows.contains_key(from) {
+                    let row = match self.effect_row(reader, &Map::new(), from, None)? {
+                        Some(id) => reader.point(from, id.as_str())?,
+                        None => None,
+                    };
+                    rows.insert(from.clone(), row);
+                }
+                let found = rows.get(from).and_then(Option::as_ref).and_then(|row| row.get(from_field)).filter(|value| !value.is_null()).cloned();
+                if let Some(value) = found { values.insert(field.clone(), value); }
             }
-            let EffectSource::Row { model: from, row: None, field: from_field } = source else { continue };
-            let found = self.shared.read(&[from.as_str()], |reader| {
-                let Some(id) = self.effect_row(reader, &Map::new(), from, None)? else { return Ok(None) };
-                Ok(if from_field == "id" { Some(Value::String(id.to_string())) } else { reader.point(from, id.as_str())?.and_then(|row| row.get(from_field).filter(|value| !value.is_null()).cloned()) })
-            })?;
-            if let Some(value) = found {
-                values.insert(field.clone(), value);
-            }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, DbError> {

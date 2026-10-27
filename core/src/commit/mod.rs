@@ -180,6 +180,7 @@ pub struct CommitEnvelope {
     pub origin: WriteOrigin,
     pub generation: Generation,
     pub writes_local: bool,
+    pub node_reread: bool,
     pub pending_locals: Vec<PendingLocal>,
     pub cloud: Option<crate::cloud::CloudBook>,
 }
@@ -221,6 +222,7 @@ impl CommitEnvelope {
             origin,
             generation,
             writes_local: false,
+            node_reread: false,
             pending_locals: Vec::new(),
             cloud: None,
         }

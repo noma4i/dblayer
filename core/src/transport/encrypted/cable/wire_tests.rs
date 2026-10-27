@@ -179,7 +179,7 @@ async fn authenticated_error_retryability_controls_feed_until_resume() {
         let sync = crate::sync::Sync::new(db, transport, clock, Default::default());
         sync.register(crate::sync::OperationDef::new("ItemEvents", "subscription ItemEvents { itemEvent { id } }", "itemEvent"));
         let _watch = sync.watch("Item", "all", &Default::default()).unwrap();
-        let status = || sync.inner.lives.lock().unwrap()["Item|ItemEvents"].subscription.as_ref().unwrap().status();
+        let status = || sync.inner.lives.lock().unwrap()["ItemEvents|{}"].subscription.as_ref().unwrap().status();
         let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key: [0;32], sequence: 0 };
         peer.handshake(&kat, &config, challenge.clone()).await;
         let subscribe = within(peer.next()).await;

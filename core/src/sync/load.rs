@@ -63,6 +63,7 @@ impl LoadOutcome {
 }
 
 pub(crate) struct Resolved<'a> {
+    pub node_reread: bool,
     pub model: String,
     pub relation: String,
     pub remote: &'a RemoteSpec,
@@ -151,7 +152,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
+        Ok(Resolved { node_reread: false, model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
     }
 
     pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
@@ -196,10 +197,11 @@ impl Inner {
     }
 
     pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
-        let flight_key = match &cursor {
+        let mut flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
             None => resolved.window_key.clone(),
         };
+        if resolved.node_reread { flight_key.push_str("|node-reread"); }
         let forced = force || cursor.is_some();
         loop {
             if !self.connectivity.is_online() {
@@ -297,6 +299,7 @@ impl Inner {
         let plans_as_first = is_first_page && (resolved.is_connection() || resolved.remote.coverage() == Coverage::Complete);
         let has_next = extracted.page_info.as_ref().is_some_and(|info| info.has_next_page);
         let landing = Landing {
+            node_reread: resolved.node_reread,
             model: resolved.model.clone(),
             scope: resolved.scope.clone(),
             window_key: resolved.window_key.clone(),

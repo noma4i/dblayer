@@ -49,4 +49,6 @@ step_artifacts() {
   esac
 }
 
-[ "${BASH_SOURCE[0]}" != "$0" ] || run_checks "$@"
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  run_bounded 300 check-dblayer run_checks "$@"
+fi

@@ -28,6 +28,16 @@ fn without_mapping_names_pass_through_and_the_temp_id_is_dropped() {
 }
 
 #[test]
+fn local_sources_never_become_mutation_variables_with_or_without_mapping() {
+    for mapping in [vec![], vec![("body", "text"), ("author", "authorId"), ("region", "regionId")]] {
+        let mut declared = declaration(&mapping);
+        declared.local = vec!["authorId".into(), "regionId".into()];
+        let variables = mutation_variables(&declared, &json!({"text":"hello", "authorId":"u1", "regionId":"r1"}), None, &no_ids);
+        assert_eq!(variables, if mapping.is_empty() { json!({"text":"hello"}) } else { json!({"body":"hello"}) });
+    }
+}
+
+#[test]
 fn integer_ids_travel_as_numbers_so_int_and_id_arguments_both_accept_them() {
     let is_id = |field: &str| field == "replyToId" || field == "chatId";
     let input = json!({"chatId": "427014", "replyToId": "477867", "body": "12"});

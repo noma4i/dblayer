@@ -233,6 +233,11 @@ A local edit that is not confirmed yet is never replaced, with or without a rule
 
 ## Local fields
 
+Inside `operation :create`, repeat `local` for different attributes and singleton sources.
+Each destination occurs once per operation. Duplicate destinations and incompatible source types fail generation.
+An explicit non-null argument wins. An absent source leaves the attribute unset.
+Sources share one read snapshot. `operation :update` accepts plain `local` and rejects `local from:`.
+
 A local field is written by the app and stored with the row. The server never sends it: it is not in the sync diff, no mutation carries it, and no answer, page, event or refresh replaces or clears it. It reads `nil` until it is written, survives a restart, and goes with the row when the row is destroyed. Every subscription of the row delivers it together with the server fields.
 
 ```ruby
@@ -396,7 +401,7 @@ model User do
   end
   scope :profile do
     query "UserProfile"
-    subscribe "PresenceSignal", from: "presenceSignal", id: "userId", apply: { effect: :ephemeral, fields: { typing: "active" }, matches: { kind: "ACTIVE" } }
+    subscribe "PresenceSignal", from: "presenceSignal", id: "userId", apply: { effect: :ephemeral, fields: { typing: "active" }, matches: { kind: ["ACTIVE"] } }
   end
 end
 ```
@@ -528,7 +533,23 @@ model Note do
 end
 ```
 
-`insert_on: [:event, :response]` adds event rows and operation response rows to matching loaded windows, including cached rows absent from those windows. Existing members keep their places. Events need `where` columns to match, so a scope with a parameter that has no `where` stops the run with `insert_on: [:event]`. The window reloads from the server when it is stale or marked by `refetch`, and the new answer replaces its members.
+`insert_on: [:event, :response]` adds event and operation response rows to matching loaded windows, including cached rows absent from those windows.
+Add `:node` to include node rereads started by `changed_by`. A manual node read does not acquire this insertion intent.
+Every parameter needs `where` or `membership`. Hidden server parameters still prohibit automatic insertion.
+Use `membership list: { contains: :lists }` when a row belongs to several lists.
+Use `membership list: { equals: :status }` for scalar membership.
+Rules combine with AND. The parameter type must match the scalar field or array element, including the enum name.
+Missing membership fields after merging the stored row fail application. An empty array removes previous membership.
+Missing members join the head once. Existing members keep their places. Unloaded windows are not created.
+Membership and row changes share one commit. Pages retain their server membership, cursors and revision protection.
+
+```ruby
+scope :list, insert_on: [:event, :response, :node] do
+  parameter :list, ChatList
+  membership list: { contains: :lists }
+  query "Chats"
+end
+```
 
 | Line | Meaning | Default |
 | ---- | ------- | ------- |
@@ -735,13 +756,20 @@ DBlayer.open(context, endpoint = endpoint, modelsJson = modelsJSON, operations =
 The generated Swift and Kotlin model declarations carry identical subscription data.
 `subscribe` accepts `apply` to select an action for a subscription response.
 Without `apply`, the event follows the normal row upsert behavior.
-`matches` compares response paths against exact strings supplied by the application. Nonmatching events do nothing.
+`matches: { kind: ["TYPING", "RECORDING_AUDIO"] }` accepts any listed string.
+`matches: { kind: { not: ["SCREENSHOT"] } }` accepts other strings.
+Fields combine with AND. Missing, null and nonstring fields never match, including `not`.
+Empty lists, duplicate paths, mixed types and unknown predicate keys fail generation. A single string is invalid.
+Filters run before normalization, deletion and writes for every effect.
+Declarations with the same operation, variables and account share one incoming stream.
+All matching row declarations apply in one commit. `ephemeral` and `reread` effects run separately before that commit.
+Model-level subscriptions also expose generated `events()` without replay.
 `effect: :ephemeral` copies the response paths in `fields` into declared ephemeral attributes without changing stored columns.
 `effect: :reread, via: :node` rereads the declared node with the event ID. A singleton read needs no ID.
 `effect: :upsert` writes the row, with `values:` for ephemeral attributes, `delete_if:` for a payload path that deletes the row when it is true and `delete_unless:` for a path that deletes the row when it is present and false. `effect: :delete` deletes it. `effect: :ignore` discards the event. Unknown effects, keys that do not fit the effect, empty ephemeral fields and missing reread destinations produce generator errors.
 
 ```ruby
-subscribe "PresenceSignal", from: "presenceSignal", id: "memberId", apply: { effect: :ephemeral, fields: { typing: "active" }, matches: { kind: "ACTIVE" } }
+subscribe "PresenceSignal", from: "presenceSignal", id: "memberId", apply: { effect: :ephemeral, fields: { typing: "active" }, matches: { kind: ["ACTIVE"] } }
 subscribe "RecordSignal", from: "recordSignal", id: "recordId", apply: { effect: :reread, via: :node }
 ```
 

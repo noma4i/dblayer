@@ -69,9 +69,11 @@ pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCal
             names.push(name);
         }
     }
-    for kind in models.iter().flat_map(|model| &model.relations).flat_map(|relation| relation.text_types.values()) {
-        if !names.contains(kind) {
-            names.push(kind.clone());
+    for relation in models.iter().flat_map(|model| &model.relations) {
+        for (parameter, kind) in &relation.text_types {
+            if !relation.membership.contains_key(parameter) && !names.contains(kind) {
+                names.push(kind.clone());
+            }
         }
     }
     names

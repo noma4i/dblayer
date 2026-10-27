@@ -44,6 +44,7 @@ impl Inner {
 }
 
 pub(crate) struct Landing {
+    pub node_reread: bool,
     pub model: String,
     pub scope: ScopeRef,
     pub window_key: String,
@@ -153,7 +154,7 @@ impl Inner {
 
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
-        let Landing { model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
+        let Landing { node_reread, model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
         let generation = attempt.generation;
         if !attempt.applies_to(self.db.generation()) {
             return Ok(Landed::Discarded(DiscardReason::StaleGeneration));
@@ -208,6 +209,7 @@ impl Inner {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, generation);
             envelope.entity_ops = self.related_upserts(reader, attempt.base_revision, &normalized.related, &planned, &mut drops)?;
             envelope.entity_ops.extend(plan.entity_ops);
+            envelope.node_reread = node_reread;
             envelope.scope_ops = plan.scope_ops;
             envelope.edge_writes = edge_writes(&scope, &edge_fields, &roots, &normalized.edges);
             envelope.window = Some(WindowSave {

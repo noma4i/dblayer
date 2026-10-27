@@ -743,6 +743,7 @@ fn insert_on(cx: &mut Cx, pair: &Pair) -> Option<Spanned<Vec<InsertOn>>> {
             Value::Symbol(name) if name == "create" => InsertOn::Create,
             Value::Symbol(name) if name == "event" => InsertOn::Event,
             Value::Symbol(name) if name == "response" => InsertOn::Response,
+            Value::Symbol(name) if name == "node" => InsertOn::Node,
             _ => {
                 cx.fail(at(item), "`insert_on` takes `:create`, `:event` and `:response`");
                 continue;
@@ -784,7 +785,7 @@ fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = ScopeDecl {
-        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, parameters: Vec::new(), where_: None, order: None, query: None, variables: None,
+        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, parameters: Vec::new(), where_: None, membership: Vec::new(), order: None, query: None, variables: None,
         response: None, paginate: None, freshness: None, preload: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
     };
     let remote = lines.iter().any(|candidate| candidate.word == "query");
@@ -812,6 +813,22 @@ fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
     let mut line = Line::of(call);
     match call.word.as_str() {
         "parameter" => decl.parameters.extend(parameter(cx, call)),
+        "membership" => {
+            no_block(cx, call);
+            line.no_args(cx);
+            line.used.iter_mut().for_each(|used| *used = true);
+            if call.options.is_empty() { cx.fail(line.pos, "`membership` needs parameter rules"); }
+            for pair in &call.options {
+                let Some(rules) = hash_pairs(cx, &pair.value, "a membership rule") else { continue };
+                if rules.len() != 1 || !matches!(rules[0].key.as_str(), "contains" | "equals") {
+                    cx.fail(pair_pos(pair), "membership needs exactly one `contains` or `equals` field");
+                    continue;
+                }
+                let Some(field) = symbol(cx, &rules[0].value, "a membership field") else { continue };
+                let rule = if rules[0].key == "contains" { dblayer::schema::Membership::Contains(field) } else { dblayer::schema::Membership::Equals(field) };
+                decl.membership.push((pair.key.clone(), rule, pair_pos(pair)));
+            }
+        }
         "where" => {
             no_block(cx, call);
             line.no_args(cx);
@@ -1038,8 +1055,24 @@ fn apply(cx: &mut Cx, pair: &Pair) -> Option<ApplyDecl> {
                     for matched in inner {
                         if matched.key.split('.').any(str::is_empty) {
                             cx.fail(pair_pos(matched), "apply matches requires nonempty paths");
-                        } else if let Some(text) = string(cx, &matched.value, "a `matches` value") {
-                            decl.matches.push((matched.key.clone(), text, pair_pos(matched)));
+                        } else if decl.matches.iter().any(|(path, _, _)| path == &matched.key) {
+                            cx.fail(pair_pos(matched), format!("apply matches path `{}` is declared twice", matched.key));
+                        } else {
+                            let (value, except) = match &matched.value.item {
+                                Value::Hash(parts) if parts.len() == 1 && parts[0].key == "not" => (&parts[0].value, true),
+                                _ => (&matched.value, false),
+                            };
+                            let Value::Array(items) = &value.item else {
+                                cx.fail(at(value), format!("matches `{}` needs a nonempty string list or `not` list", matched.key));
+                                continue;
+                            };
+                            if items.is_empty() {
+                                cx.fail(at(value), format!("matches `{}` needs a nonempty string list", matched.key));
+                                continue;
+                            }
+                            let values = items.iter().filter_map(|item| string(cx, item, "a `matches` list item")).collect();
+                            let predicate = if except { dblayer::schema::MatchValues::Except { not: values } } else { dblayer::schema::MatchValues::OneOf(values) };
+                            decl.matches.push((matched.key.clone(), predicate, pair_pos(matched)));
                         }
                     }
                 }
@@ -1390,7 +1423,7 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = OperationDecl {
-        pos: line.pos, name: name.clone(), kind, upload, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), wrap: None, response: None, match_by: None,
+        pos: line.pos, name: name.clone(), kind, upload, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
         on_failure: None, optimistic: None, effects: Vec::new(), upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
     };
     let mut seen: Vec<&str> = Vec::new();
@@ -1407,7 +1440,7 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
             cx.fail(Pos::of(item), format!("`{word}` does not apply to operation `{name}`"));
             continue;
         }
-        if !matches!(word, "parameter" | "upsert" | "refetch" | "add_to" | "remove_from" | "create_row" | "change_row") && seen.contains(&word) {
+        if !matches!(word, "parameter" | "local" | "upsert" | "refetch" | "add_to" | "remove_from" | "create_row" | "change_row") && seen.contains(&word) {
             cx.fail(Pos::of(item), format!("`{word}` is declared twice"));
             continue;
         }
@@ -1456,8 +1489,18 @@ fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl) {
                 cx.fail(line.pos, "`local` needs 1 or more attribute names");
             }
             if let Some(source) = from {
+                if decl.kind == OperationKind::Update {
+                    cx.fail(line.pos, "`local from:` is supported only in `create`");
+                }
                 decl.local_from.extend(names.iter().map(|name| (name.clone(), source.clone(), line.pos)));
             }
+            for name in &names {
+                if decl.local.as_ref().is_some_and(|local| local.contains(name)) || names.iter().filter(|other| *other == name).count() > 1 {
+                    let first = decl.local_sites.iter().find(|(field, _)| field == name).map_or(line.pos, |(_, pos)| *pos);
+                    cx.fail(line.pos, format!("local attribute `{name}` is declared twice, first declaration at {}:{}", first.line, first.column));
+                }
+            }
+            decl.local_sites.extend(names.iter().map(|name| (name.clone(), line.pos)));
             decl.local.get_or_insert_with(Vec::new).extend(names);
         }
         "wrap" => {

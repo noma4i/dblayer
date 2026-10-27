@@ -7,7 +7,7 @@ use super::super::rig::*;
 use crate::transport::SubscriptionEvent;
 use crate::transport::Response;
 
-const KEY: &str = "moments|MomentEvents";
+const KEY: &str = "MomentEvents|{}";
 
 #[tokio::test(start_paused = true)]
 async fn memory_scope_events_follow_readers_and_expire_without_http() {
