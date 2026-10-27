@@ -39,6 +39,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 
 ## Documentation
 
+- [Releasing](docs/releasing.md)
 - [Getting started](docs/getting-started.md)
 - [Describing models](docs/models.md)
 - [Local and synced models](docs/storage-models.md)
