@@ -76,13 +76,13 @@ let package = Package(
   ],
   targets: [
     .binaryTarget(
-      name: "DBlayerFFI",
+      name: "dblayerFFI",
       url: "https://github.com/noma4i/dblayer/releases/download/$version/DBlayerFFI.xcframework.zip",
       checksum: "$checksum"
     ),
     .target(
       name: "DBlayer",
-      dependencies: ["DBlayerFFI"],
+      dependencies: ["dblayerFFI"],
       path: "swift/Sources/DBlayer",
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
