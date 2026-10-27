@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.11.0 - 2026-10-27
 
 ### Added
 - `openTesting(listening: false)` holds model subscriptions until `setListening(true)`.
