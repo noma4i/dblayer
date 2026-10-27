@@ -78,9 +78,9 @@ extension BridgeProbeTests {
   func aStaleModelEndsTheEventsWithTheDecodeFailure() async throws {
     let transport = MockTransport()
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"},{"name":"ContainerNode","document":"query ContainerNode($id: ID!) { node(id: $id) { id title } }","rootPath":"node"}]"#)
+    try DB.database.registerOperations(defsJson: #"[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"},{"name":"ContainerNode","document":"query ContainerNode($id: ID!) { node(id: $id) { id title shelves } }","rootPath":"node"}]"#)
     let events = try await StaleContainer.openEvents()
-    transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"received"}}}"#)
+    transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"received","shelves":["PRIMARY"]}}}"#)
     try transport.emit("RecordEvents", json: #"{"data":{"recordEvents":{"entries":[{"topic":"CONTAINER","action":"UPDATED","recordId":"c1"}]}}}"#)
     let cursor = Cursor(events)
     guard case .failed(let error)? = await cursor.next("the decode failure") else {

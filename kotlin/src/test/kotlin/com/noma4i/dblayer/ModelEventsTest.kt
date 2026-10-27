@@ -72,10 +72,10 @@ class ModelEventsTest {
     fun aStaleModelEndsTheEventsWithTheDecodeFailure() = bounded {
         val transport = MockTransport()
         reopen(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"},{"name":"ContainerNode","document":"query ContainerNode(${'$'}id: ID!) { node(id: ${'$'}id) { id title } }","rootPath":"node"}]""")
+        DBlayer.database.registerOperations("""[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"},{"name":"ContainerNode","document":"query ContainerNode(${'$'}id: ID!) { node(id: ${'$'}id) { id title shelves } }","rootPath":"node"}]""")
         val stale = object : ModelDecoder<Container> by Container { override val layout = "stale" }
         val events = stale.openEvents()
-        transport.enqueue("ContainerNode", """{"data":{"node":{"id":"c1","title":"received"}}}""")
+        transport.enqueue("ContainerNode", """{"data":{"node":{"id":"c1","title":"received","shelves":["PRIMARY"]}}}""")
         transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"CONTAINER","action":"UPDATED","recordId":"c1"}]}}}""")
         val items = events.toList()
         assertEquals(1, items.size)
