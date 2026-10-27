@@ -97,6 +97,8 @@ Use `dblayer-gen explain models/*.dbl` to inspect generated tables, indexes and 
 
 ## What using it looks like
 
+See [release dependency examples](docs/getting-started.md#use-a-release) for Swift and Kotlin.
+
 The generated bindings give you a live property. Declare the query, use the rows, the screen updates itself. Writes are one line and need no reload code.
 
 ### Swift

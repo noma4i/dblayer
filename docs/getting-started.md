@@ -13,7 +13,25 @@ Android 13 (API 33) or newer.
 
 ## Use a release
 
-Every release tag has compiled files on the [releases page](https://github.com/noma4i/dblayer/releases). Pick the tag and download:
+Add the selected release to SwiftPM:
+
+```swift
+.package(url: "https://github.com/noma4i/dblayer.git", exact: "X.Y.Z")
+```
+
+Add the Maven repository and dependency to the Android project:
+
+```kotlin
+repositories {
+    maven { url = uri("https://raw.githubusercontent.com/noma4i/dblayer/maven") }
+}
+
+dependencies {
+    implementation("com.noma4i:dblayer:X.Y.Z")
+}
+```
+
+Every release tag also has these compiled files on the [releases page](https://github.com/noma4i/dblayer/releases):
 
 | Platform | File | Install |
 | -------- | ---- | ------- |

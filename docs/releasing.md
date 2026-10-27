@@ -6,29 +6,29 @@ The owner chooses each version and authorizes publication. Use a minor version f
 
 1. Replace `## Unreleased` in `CHANGELOG.md` with `## X.Y.Z - YYYY-MM-DD`. Keep only non-empty `### Added`, `### Changed`, `### Fixed`, `### Removed` sections, in that order, one sentence of at most 15 words per entry.
 2. Set the version in `core/Cargo.toml` and the `dblayer` entry in `Cargo.lock`.
-3. Commit those three files as `Release X.Y.Z` on `master`. Exactly one commit with that subject must exist since the previous tag. Commit any other pending work before publishing: the tree must be clean.
-4. Run `make release VERSION=X.Y.Z`. It checks the version, changelog, documentation, invariants and consistency, builds Apple, Android, JVM and generator outputs, packages them into `target/release-X.Y.Z`, and checks architectures, Android ABIs and checksums. It publishes nothing. Remove `target/release-X.Y.Z` before a rerun.
-5. After the owner agrees, run `make release-publish VERSION=X.Y.Z`. It tags the current commit, pushes `master` and the tag, creates the GitHub Release marked latest, then downloads the files and checks their checksums.
+3. Commit those three files as `Release X.Y.Z` on `master`. Exactly one commit with that subject must exist since the previous tag. Keep the tree clean.
+4. Run `make release VERSION=X.Y.Z` for a dry run. It builds the five release files, stages Maven artifacts, prints the generated `Package.swift`, and checks that manifest in a temporary copy.
+5. After the owner agrees, run `make release-publish VERSION=X.Y.Z`. It writes `Package.swift`, adds the generated `dblayer.swift`, and commits both as `Package release X.Y.Z` after the `Release` commit.
+6. The release script tags the packaging commit, pushes `master` and the tag, publishes the staged Maven files to the orphan `maven` branch, then creates the GitHub Release with the five release files.
 
-If a step fails before the tag, fix the cause and rerun. After the tag, publish a new patch version instead of moving the tag.
+The root `Package.swift` pins the tag URL and the checksum of `DBlayerFFI.xcframework.zip`. Keep `swift/Package.swift` and `scripts/build_ios.sh` for local development.
+
+Android coordinates are `com.noma4i:dblayer:X.Y.Z`. The Maven branch contains `com/noma4i/dblayer/X.Y.Z/` at its root. Consumers use the raw branch URL and dependency shown in [Getting started](getting-started.md#use-a-release). Publication uses a local staging directory and does not need credentials.
+
+The release script checks for exactly one `Release X.Y.Z` commit since the previous tag. The additional `Package release X.Y.Z` commit follows it. A rerun after removing the tag reuses the packaging commit and existing Maven version.
 
 ## Release page
 
-The title is the version. The text is the `CHANGELOG.md` section of that version and nothing else: no list of files, no checksums, no instructions. The script writes it.
+The title is the version. The text is the `CHANGELOG.md` section of that version and nothing else. The script writes it.
 
-## Files on the release page
+## Release files
 
 | File | Contents | Where it goes |
 | --- | --- | --- |
-| `DBlayerFFI.xcframework.zip` | Apple device, simulator and macOS libraries | Unzip into `swift/` |
-| `dblayer.swift` | Generated Swift bindings | `swift/Sources/DBlayer/` |
+| `DBlayerFFI.xcframework.zip` | Apple device, simulator and macOS libraries | SwiftPM downloads it |
+| `dblayer.swift` | Generated Swift bindings | Committed for the tagged release |
 | `dblayer-android.zip` | Four Android ABI libraries and Kotlin bindings | Unzip into `kotlin/` |
 | `dblayer-gen-macos-universal` | Model generator for macOS arm64 and x86_64 | Run as `dblayer-gen` |
 | `libdblayer-macos-universal.dylib` | JVM library for macOS arm64 and x86_64 | JVM native library path |
 
-GitHub shows a SHA-256 digest for every file. Nothing else is attached.
-
-## Check a publication
-
-1. `gh release view X.Y.Z --repo noma4i/dblayer --json assets` lists the five files.
-2. `git ls-remote --tags origin X.Y.Z` shows the tag.
+Only these five files are release attachments.

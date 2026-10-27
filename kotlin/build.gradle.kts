@@ -2,7 +2,11 @@ plugins {
   id("com.android.library") version "9.4.1"
   id("org.jetbrains.kotlin.plugin.serialization") version "2.4.21"
   id("org.jetbrains.kotlin.plugin.compose") version "2.4.21"
+  id("maven-publish")
 }
+
+group = "com.noma4i"
+version = providers.gradleProperty("releaseVersion").orNull ?: "0.0.0"
 
 android {
   namespace = "com.noma4i.dblayer"
@@ -14,6 +18,10 @@ android {
     ndk {
       abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
     }
+  }
+
+  publishing {
+    singleVariant("release")
   }
 
   buildTypes {
@@ -46,4 +54,25 @@ dependencies {
   testImplementation("org.robolectric:robolectric:4.17")
   testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+}
+
+if (providers.gradleProperty("releaseVersion").isPresent && providers.gradleProperty("stagingRepo").isPresent) {
+  afterEvaluate {
+    publishing {
+      publications {
+        register<MavenPublication>("release") {
+          groupId = "com.noma4i"
+          artifactId = "dblayer"
+          version = providers.gradleProperty("releaseVersion").get()
+          from(components["release"])
+        }
+      }
+      repositories {
+        maven {
+          name = "staging"
+          url = uri(providers.gradleProperty("stagingRepo").get())
+        }
+      }
+    }
+  }
 }
