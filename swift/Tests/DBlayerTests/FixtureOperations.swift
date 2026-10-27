@@ -104,6 +104,55 @@ public struct Inbox: DBModel {
     }
 }
 
+public struct MediaEntry: DBModel {
+    public static let modelName = "MediaEntry"
+    public let id: String
+    public let text: String?
+    public let sequenceNumber: Int
+    public let sync: SyncInfo
+    public let uploads: [String: UploadInfo]
+
+    public init(id: String, text: String? = nil, sequenceNumber: Int, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
+        self.id = id
+        self.text = text
+        self.sequenceNumber = sequenceNumber
+        self.sync = sync
+        self.uploads = uploads
+    }
+
+    public static let wireLayout = "3d888c449b3a4c344c639a31a082e38e5a5856b16d4b932bfd615e243785441d"
+
+    public init(wire row: WireRow) throws {
+        let r = CellReader(row.cells)
+        self.id = row.id
+        self.text = try r.opt(0, \.asText)
+        self.sequenceNumber = try r.req(1, \.asInt)
+        self.sync = SyncInfo(wire: row.sync)
+        self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
+    }
+
+    public static let text = Column<MediaEntry, String?>("text")
+    public static let sequenceNumber = Column<MediaEntry, Int>("sequenceNumber")
+    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
+    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
+    public static func media(_ chatId: String) throws -> Query<Self> {
+        let built = Query<Self>(relation: "media", params: ["chatId": try JSONValue.encode(chatId)])
+        return built
+    }
+    @concurrent public static func create(text: String? = nil, sequenceNumber: Int) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = text { values["text"] = try JSONValue.encode(value) }
+        values["sequenceNumber"] = try JSONValue.encode(sequenceNumber)
+        return try await create(values: values)
+    }
+    @concurrent public func update(text: String?? = nil, sequenceNumber: Int? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = text { values["text"] = try JSONValue.encode(value) }
+        if let value = sequenceNumber { values["sequenceNumber"] = try JSONValue.encode(value) }
+        return try await update(values: values)
+    }
+}
+
 public struct Roster: DBModel {
     public static let modelName = "Roster"
     public let id: String

@@ -1,5 +1,20 @@
 # Live data and queries
 
+## Медиатека с marker и tail
+
+Свежий scope не отправляет запросов. Устаревший сначала читает marker с `upToSequence`, равным сохранённому sequence.
+Совпадение revision и счётчиков префикса сохраняет покрытие. Если sequence вырос, ядро читает весь tail по курсорам.
+Несовпадение или отсутствие сохранённой метки запускает полную цепочку.
+`hasNextPage == false` завершает цепочку. Отсутствующий или повторный курсор отклоняет загрузку.
+После загрузки ядро повторно читает marker. При росте sequence оно также сохраняет счётчики нового покрытого префикса.
+Строки и подтверждённая метка попадают в одну транзакцию SQLite.
+Ошибка или отмена сохраняет прежние строки и метку. Снимок показывает ошибку существующей машины загрузки.
+Изменение marker во время чтения сохраняет окно устаревшим до следующего события, без немедленного повтора.
+Сброс базы и поздние ответы проходят проверки generation и base_revision в существующем land.
+Метка разделена по модели, scope, параметрам, направлению и поколению базы.
+`LiveList` со сгенерированным scope работает одинаково на Swift и Kotlin. Ручное сравнение полей Chat удаляется из приложения.
+В покое нет периодических запросов и пробуждений. Чтение tail затрагивает новые строки и индексные поиски.
+
 Server lists and connections store each model ID once, combining selected fields from repeated rows before notifying observers.
 The last supplied field value wins. Declared merge rules still apply against stored data.
 The `nodes` result retains repeated IDs in server order, while stored list membership remains unique.

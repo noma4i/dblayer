@@ -1,4 +1,4 @@
-type Query { keywordCall(class: String!): KeywordResult!, ping: Int, inbox(list: ContainerShelfKind, first: Int, after: String): InboxConnection!, containerMembers(containerId: ID!, order: ContainerMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]!, containerMedia(containerId: ID!, upToSequence: Int): ContainerMedia }
+type Query { keywordCall(class: String!): KeywordResult!, ping: Int, inbox(list: ContainerShelfKind, first: Int, after: String): InboxConnection!, containerMembers(containerId: ID!, order: ContainerMemberOrder = JOINED, first: Int, after: String): InboxConnection!, pricing: Pricing, giphy(type: String!, limit: Int): [Giphy!]!, containerMedia(containerId: ID!, upToSequence: Int): ContainerMedia, node(id: ID!): MediaNode }
 type KeywordResult { default: String!, when: String!, container: String!, r: String! }
 type Mutation { qrCodeCreate(input: CreateQrCodeInput!): QrCode, signOut: Boolean, stickerSend(input: StickerInput!): Sticker, momentCreate(input: MomentInput!): MomentCreated, widgetsSend(widgets: [StickerWidgetInput!]): Sticker, clipCreate(signedId: String!, widgets: [StickerWidgetInput!]): ClipCreated, inboxMove(id: ID!, list: ContainerShelfKind!): Inbox }
 type ClipCreated { clip: Clip }
@@ -37,3 +37,9 @@ type InboxEdge { cursor: String!, node: Inbox! }
 type InboxPageInfo { hasNextPage: Boolean!, endCursor: String }
 enum ContainerMemberOrder { JOINED OWNER_FIRST }
 type ContainerMedia { visualCount: Int!, audioCount: Int!, rewardCount: Int!, latestSequence: Int }
+scalar Int64
+interface MediaNode { id: ID! }
+type Chat implements MediaNode { id: ID!, mediaLibrary(upToSequence: Int): ChatMediaLibrary!, messages(afterSequence: Int, first: Int, after: String): MediaConnection! }
+type ChatMediaLibrary { revision: Int64!, visualCount: Int!, audioCount: Int!, giftCount: Int!, latestSequence: Int! }
+type MediaEntry { id: ID!, text: String, sequenceNumber: Int! }
+type MediaConnection { nodes: [MediaEntry!]!, pageInfo: InboxPageInfo! }

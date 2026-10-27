@@ -137,7 +137,7 @@ async fn members_complete_chain() {
             live.cancel();
             continue;
         }
-        spin_until("partial members", || shown(&tape).len() == 2 && transport.queries.load(Ordering::SeqCst) == 2);
+        spin_until("partial members with their load state", || shown(&tape).len() == 2 && transport.queries.load(Ordering::SeqCst) == 2 && last(&tape).phase != Some(super::LivePhase::NotLoaded));
         assert_eq!(last(&tape).phase, Some(super::LivePhase::Loading));
         assert!(!last(&tape).complete);
         assert_eq!(transport.variables.lock().unwrap()[1]["after"], "c0");
@@ -157,8 +157,9 @@ async fn members_complete_chain() {
         }
         if ending == "reset" {
             db.db.reset_all().unwrap();
+            let reset_revision = db.db.revision_seq().unwrap();
             transport.permits.add_permits(1);
-            spin_until("reset ends the chain", || last(&tape).error.is_some());
+            spin_until("reset rows and ended chain", || { let shown = last(&tape); shown.error.is_some() && shown.revision >= reset_revision });
             assert!(!last(&tape).complete);
             assert!(shown(&tape).is_empty());
             live.cancel();

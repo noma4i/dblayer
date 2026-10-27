@@ -16,7 +16,7 @@ fn saving_a_page_has_constant_sql_work() {
         let members = (0..size).map(|n| append(&target, &format!("m{n:05}"), &format!("{n:05}"))).collect();
         store.commit(envelope(&store, rows, members)).unwrap();
         let mut page = envelope(&store, vec![upsert("messages", message("new", "1"))], vec![append(&target, "new", "z")]);
-        page.window = Some(WindowSave { key: "page".into(), scope: target, cursor: Some("new".into()), has_next: false, total: None, pages: 1,
+        page.window = Some(WindowSave { marker: None, invalidated: false, key: "page".into(), scope: target, cursor: Some("new".into()), has_next: false, total: None, pages: 1,
             tail: Some(WindowTail { anchor: "m00000".into(), cursor: Some("kept".into()), has_next: true }), issued: 1, applied: 1, cleared_at: None });
         let steps = Arc::new(AtomicUsize::new(0));
         let counter = steps.clone();

@@ -115,6 +115,56 @@ data class Inbox(
 }
 
 @Immutable
+data class MediaEntry(
+    override val id: String,
+    val text: String? = null,
+    val sequenceNumber: Long,
+    override val sync: SyncInfo = SyncInfo(),
+    override val uploads: Map<String, UploadInfo> = emptyMap()
+) : DBModel {
+    override val modelName get() = "MediaEntry"
+    companion object : ModelDecoder<MediaEntry> {
+        override val layout = "3d888c449b3a4c344c639a31a082e38e5a5856b16d4b932bfd615e243785441d"
+        override val modelName = "MediaEntry"
+        override fun decode(row: WireRow): MediaEntry {
+            val r = CellReader(row.cells)
+            return MediaEntry(
+                id = row.id,
+                text = r.opt(0, Cell::asText),
+                sequenceNumber = r.req(1, Cell::asInt),
+                sync = SyncInfo.of(row.sync),
+                uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+            )
+        }
+
+        val text = Column<MediaEntry, String?>("text")
+        val sequenceNumber = Column<MediaEntry, Long>("sequenceNumber")
+        fun find(id: String) = Query("MediaEntry", this).find(id)
+        fun where(condition: Condition) = Query("MediaEntry", this).where(condition)
+        fun ids(ids: List<String>) = idsQuery("MediaEntry", this, ids)
+        fun entity(id: String) = entityOf("MediaEntry", this, id)
+        fun media(chatId: String): Query<MediaEntry> {
+            var built = Query("MediaEntry", this, relation = "media", params = buildJsonObject { put("chatId", jsonValue(chatId)) })
+            return built
+        }
+        suspend fun create(text: String? = null, sequenceNumber: Long): MediaEntry = offCaller {
+            val values = buildJsonObject {
+                text?.let { put("text", jsonValue(it)) }
+                put("sequenceNumber", jsonValue(sequenceNumber))
+            }
+            read(DBlayer.database.create("MediaEntry", values.jsonText(), "{}"))
+        }
+    }
+    suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, sequenceNumber: Long? = null): MediaEntry = offCaller {
+        val values = buildJsonObject {
+            put("text", text)
+            sequenceNumber?.let { put("sequenceNumber", jsonValue(it)) }
+        }
+        MediaEntry.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+    }
+}
+
+@Immutable
 data class Roster(
     override val id: String,
     val title: String,

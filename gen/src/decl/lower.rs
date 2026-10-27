@@ -787,7 +787,7 @@ fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
     let lines = block(cx, call)?;
     let mut decl = ScopeDecl {
         pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, members_complete, parameters: Vec::new(), where_: None, membership: Vec::new(), order: None, query: None, variables: None,
-        response: None, paginate: None, freshness: None, preload: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
+        response: None, paginate: None, freshness: None, preload: None, marker: None, tail: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
     };
     let remote = lines.iter().any(|candidate| candidate.word == "query");
     let mut seen: Vec<&str> = Vec::new();
@@ -880,6 +880,33 @@ fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
             if let Some(expires_in) = require(cx, &line, "expires_in", expires) {
                 decl.freshness = Some(FreshnessDecl { pos: line.pos, expires_in, empty_in: empty });
             }
+        }
+        "marker" => {
+            no_block(cx, call);
+            let operation = exactly_one_arg(cx, &line, "an operation name").and_then(|arg| string(cx, arg, "the marker operation"));
+            let from = line.opt(cx, "from").and_then(|pair| path(cx, &pair.value, "`from`"));
+            let sequence = line.opt(cx, "sequence").and_then(|pair| symbol(cx, &pair.value, "the sequence field").map(|value| Spanned::new(value, at(&pair.value))));
+            let mut fields = Vec::new();
+            if let Some(pair) = line.opt(cx, "fields") {
+                if let Value::Array(values) = &pair.value.item {
+                    for value in values {
+                        if let Some(name) = symbol(cx, value, "a marker field") { fields.push(Spanned::new(name, at(value))); }
+                    }
+                } else { cx.fail(at(&pair.value), "marker fields must be an array of symbols"); }
+            }
+            if fields.is_empty() { cx.fail(line.pos, "marker needs numeric fields including revision"); }
+            let from = require(cx, &line, "from", from);
+            let sequence = require(cx, &line, "sequence", sequence);
+            line.finish(cx);
+            if let (Some(operation), Some(from), Some(sequence)) = (operation, from, sequence) { decl.marker = Some(MarkerDecl { pos: line.pos, operation, from, fields, sequence }); }
+        }
+        "tail" => {
+            no_block(cx, call);
+            let operation = exactly_one_arg(cx, &line, "an operation name").and_then(|arg| string(cx, arg, "the tail operation"));
+            let after = line.opt(cx, "after").and_then(|pair| symbol(cx, &pair.value, "the tail variable").map(|value| Spanned::new(value, at(&pair.value))));
+            let after = require(cx, &line, "after", after);
+            line.finish(cx);
+            if let (Some(operation), Some(after)) = (operation, after) { decl.tail = Some(TailDecl { pos: line.pos, operation, after }); }
         }
         "preload" => {
             no_block(cx, call);

@@ -1,5 +1,20 @@
 # App migration
 
+## Метка медиатеки
+
+В scope медиатеки добавить `marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :visualCount, :audioCount, :giftCount], sequence: :latestSequence`.
+Добавить `tail "chatMedia", after: :afterSequence` рядом с существующими `query`, `response`, `paginate` и `freshness`.
+Запрос `chatMediaState` принимает `chatId` и `upToSequence`, выбирает все поля метки и `latestSequence`.
+Запрос `chatMedia` принимает `afterSequence`, `first`, `after` и возвращает сообщения по возрастанию sequence.
+Источник `revision` - `ChatMediaLibrary.revision`, серверный `chats.media_revision`. `Chat.revision` не заменяет эту метку.
+Перегенерировать модели Swift и Kotlin с GraphQL schema и документами запросов.
+Открывать `LiveList(try ChatMedia.media(chatId))` / `LiveList(ChatMedia.media(chatId), scope)`.
+Удалить локальные поля Chat: `mediaSequence`, `mediaVisualCount`, `mediaAudioCount`, `mediaGiftCount`.
+Их заменяет типизированная метка SQLite, принадлежащая ядру.
+Удалить сравнение счётчиков и ручную загрузку tail из ChatMediaModel на обеих платформах.
+Существующие snapshot и refresh передают строки, полноту и ошибку. Дополнительных вызовов приложения нет.
+Rust: существующие литералы `WindowSave` добавляют `marker: None`, `invalidated: false`, если они не подтверждают метку медиатеки.
+
 ## Preloading and members
 
 Derived preload: `preload vibeId: { from: "Compass.rows" }, limit: 40`.

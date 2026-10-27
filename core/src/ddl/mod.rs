@@ -19,9 +19,9 @@ pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
-const CACHE_TABLES: [&str; 4] = ["scope_member", "scope_edge", "tombstone", "query_window"];
+const CACHE_TABLES: [&str; 5] = ["window_marker", "scope_member", "scope_edge", "tombstone", "query_window"];
 
-const CACHE_STATEMENTS: [&str; 11] = [
+const CACHE_STATEMENTS: [&str; 12] = [
     "CREATE TABLE IF NOT EXISTS scope_member (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,
@@ -70,6 +70,14 @@ END",
   landed_at INTEGER NOT NULL,
   invalidated INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1))
 ) STRICT",
+    "CREATE TABLE IF NOT EXISTS window_marker (
+  window_key TEXT NOT NULL,
+  generation INTEGER NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  field TEXT NOT NULL,
+  value INTEGER NOT NULL,
+  PRIMARY KEY (window_key, generation, field)
+) STRICT, WITHOUT ROWID",
 ];
 
 const CORE_STATEMENTS: [&str; 40] = [

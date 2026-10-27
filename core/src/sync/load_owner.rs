@@ -285,6 +285,7 @@ impl LoadOwner {
 }
 
 pub(crate) struct FlightTicket<'a> {
+    cancel_failed: bool,
     owner: &'a LoadOwner,
     window: String,
     flight: FlightId,
@@ -294,8 +295,10 @@ pub(crate) struct FlightTicket<'a> {
 impl<'a> FlightTicket<'a> {
     pub(crate) fn new(owner: &'a LoadOwner, window: &str, target: Target, cursor: bool, seed: Option<Stored>) -> Self {
         let flight = owner.begin_flight(window, target, cursor, seed);
-        Self { owner, window: window.to_string(), flight, ended: false }
+        Self { cancel_failed: false, owner, window: window.to_string(), flight, ended: false }
     }
+
+    pub(crate) fn cancel_failed(mut self) -> Self { self.cancel_failed = true; self }
 
     fn end(mut self, event: impl FnOnce(String, FlightId) -> Event) {
         self.ended = true;
@@ -321,6 +324,6 @@ impl Drop for FlightTicket<'_> {
             return;
         }
         let (window, flight) = (self.window.clone(), self.flight);
-        self.owner.submit(if std::thread::panicking() { Event::Panicked { window, flight } } else { Event::Abandoned { window, flight } });
+        self.owner.submit(if std::thread::panicking() { Event::Panicked { window, flight } } else if self.cancel_failed { Event::Failed { window, flight, error: LoadError::of(&super::SyncError::Cancelled) } } else { Event::Abandoned { window, flight } });
     }
 }

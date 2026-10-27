@@ -168,6 +168,16 @@ fn check_subscription(update: &SubscribeDecl, report: &mut impl FnMut(Pos, Strin
 
 fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
     let name = &scope.name;
+    if scope.marker.is_some() || scope.tail.is_some() {
+        if scope.marker.is_none() || scope.tail.is_none() || scope.paginate.is_none() || !scope.is_remote() || scope.node.is_some() {
+            report(scope.pos, "marker and tail need one paginated remote scope".into());
+        }
+        if scope.paginate.as_ref().is_some_and(|page| page.max_pages.is_some()) { report(scope.pos, "marker coverage cannot stop at max_pages".into()); }
+        if let Some(marker) = &scope.marker {
+            let names: HashSet<_> = marker.fields.iter().map(|field| &field.item).collect();
+            if names.len() != marker.fields.len() || !names.iter().any(|name| name.as_str() == "revision") { report(marker.pos, "marker fields must be unique and include revision".into()); }
+        }
+    }
     let mut names = HashSet::new();
     for parameter in &scope.parameters {
         if !names.insert(parameter.name.as_str()) {

@@ -57,12 +57,13 @@ pub struct LoadOutcome {
 }
 
 impl LoadOutcome {
-    fn of(status: LoadStatus) -> Self {
+    pub(super) fn of(status: LoadStatus) -> Self {
         Self { status, rows: 0, dropped: 0, has_next: false, attempts: 0, kept_error: None }
     }
 }
 
 pub(crate) struct Resolved<'a> {
+    pub media: Option<&'a crate::schema::MediaSpec>,
     pub members_complete: bool,
     pub node_reread: bool,
     pub model: String,
@@ -86,7 +87,7 @@ impl Resolved<'_> {
     }
 }
 
-enum Executed {
+pub(super) enum Executed {
     Landed(LoadOutcome, i64),
     Kept(SyncError),
     Failed(SyncError),
@@ -121,7 +122,7 @@ impl Drop for FlightGuard<'_> {
 
 impl Inner {
     pub(crate) async fn load_scope(self: &Arc<Self>, resolved: &Resolved<'_>, force: bool) -> FlightResult {
-        if resolved.members_complete {
+        if resolved.members_complete || resolved.media.is_some() {
             self.load_members(resolved, force).await?;
             return Ok(LoadOutcome::of(LoadStatus::Loaded));
         }
@@ -162,7 +163,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { members_complete: declared.members_complete, node_reread: false, model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
+        Ok(Resolved { media: declared.media.as_ref(), members_complete: declared.members_complete, node_reread: false, model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
     }
 
     pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
@@ -244,6 +245,7 @@ impl Inner {
                 Ok(sender) => {
                     let mut guard = FlightGuard { inner: self, key: flight_key, sender };
                     let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved));
+                    let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
                     let result = match self.execute(resolved, cursor, force).await {
                         Executed::Landed(outcome, revision) => {
                             match outcome.status {
@@ -274,7 +276,8 @@ impl Inner {
     }
 
     async fn execute(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> Executed {
-        match self.run(resolved, cursor, force).await {
+        let loaded = if let Some(media) = resolved.media { self.media_load(resolved, media).await } else { self.run(resolved, cursor, force).await };
+        match loaded {
             Ok(executed) => executed,
             Err(error) => Executed::Failed(error),
         }
@@ -311,6 +314,8 @@ impl Inner {
         let plans_as_first = is_first_page && (resolved.is_connection() || resolved.remote.coverage() == Coverage::Complete);
         let has_next = extracted.page_info.as_ref().is_some_and(|info| info.has_next_page);
         let landing = Landing {
+            marker: None,
+            leave_stale: false,
             node_reread: locked(&self.flights).node_rereads.contains(&resolved.window_key),
             model: resolved.model.clone(),
             scope: resolved.scope.clone(),
@@ -428,7 +433,7 @@ impl Sync {
     }
 }
 
-fn stamp_scope_values(mut nodes: Vec<Map<String, Value>>, values: &Map<String, Value>) -> Vec<Map<String, Value>> {
+pub(super) fn stamp_scope_values(mut nodes: Vec<Map<String, Value>>, values: &Map<String, Value>) -> Vec<Map<String, Value>> {
     for node in &mut nodes {
         for (column, value) in values {
             node.entry(column.clone()).or_insert_with(|| value.clone());

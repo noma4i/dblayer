@@ -1,0 +1,113 @@
+[
+  {
+    "key": "MediaEntry",
+    "fields": [
+      {
+        "name": "id",
+        "kind": {
+          "type": "scalar",
+          "kind": "id"
+        },
+        "nullable": false,
+        "optional": false,
+        "default": null,
+        "indexed": false,
+        "id_from_parent": null,
+        "from": null,
+        "app_type": null,
+        "merge": null
+      },
+      {
+        "name": "text",
+        "kind": {
+          "type": "scalar",
+          "kind": "str"
+        },
+        "nullable": true,
+        "optional": false,
+        "default": null,
+        "indexed": false,
+        "id_from_parent": null,
+        "from": null,
+        "app_type": null,
+        "merge": null
+      },
+      {
+        "name": "sequenceNumber",
+        "kind": {
+          "type": "scalar",
+          "kind": "int"
+        },
+        "nullable": false,
+        "optional": false,
+        "default": null,
+        "indexed": false,
+        "id_from_parent": null,
+        "from": null,
+        "app_type": null,
+        "merge": null
+      }
+    ],
+    "associations": [],
+    "relations": [
+      {
+        "name": "media",
+        "by_columns": [],
+        "text_params": [
+          "chatId"
+        ],
+        "remote": {
+          "operation": "chatMedia",
+          "shape": {
+            "type": "connection",
+            "direction": "forward",
+            "coverage": "page",
+            "max_pages": null,
+            "cursor": null
+          },
+          "stale_time": "5.minutes",
+          "empty_stale_time": null,
+          "selects_page_info": true,
+          "page_size": 2,
+          "variables": {},
+          "root": "node.messages"
+        },
+        "is_global": false,
+        "sort": "server_order",
+        "joins_events": false,
+        "joins_created": false,
+        "media": {
+          "marker": "chatMediaState",
+          "from": "node.mediaLibrary",
+          "fields": [
+            "revision",
+            "visualCount",
+            "audioCount",
+            "giftCount"
+          ],
+          "sequence": "latestSequence",
+          "tail": "chatMedia",
+          "after": "afterSequence",
+          "marker_variables": {
+            "chatId": {
+              "from": "param",
+              "name": "chatId"
+            }
+          },
+          "tail_variables": {
+            "chatId": {
+              "from": "param",
+              "name": "chatId"
+            }
+          }
+        }
+      }
+    ],
+    "indexes": [],
+    "actions": [],
+    "ephemeral": [],
+    "storage": "disk",
+    "expire_after": null,
+    "listens": []
+  }
+]

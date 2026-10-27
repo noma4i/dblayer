@@ -1,0 +1,18 @@
+query chatMediaState($chatId: ID!, $upToSequence: Int) {
+  node(id: $chatId) {
+    ... on Chat {
+      mediaLibrary(upToSequence: $upToSequence) { revision visualCount audioCount giftCount latestSequence }
+    }
+  }
+}
+
+query chatMedia($chatId: ID!, $afterSequence: Int, $first: Int, $after: String) {
+  node(id: $chatId) {
+    ... on Chat {
+      messages(afterSequence: $afterSequence, first: $first, after: $after) {
+        nodes { id text sequenceNumber }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}

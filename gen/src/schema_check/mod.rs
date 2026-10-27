@@ -13,6 +13,7 @@ mod inputs;
 #[cfg(test)]
 mod idempotency_tests;
 mod paths;
+mod media;
 mod standalone;
 
 pub use inputs::{InputField, InputObject, SchemaTypes, Ty, TyKind};
@@ -30,6 +31,7 @@ enum Body<'a> {
 type Declared<'a> = HashMap<&'a str, (usize, Body<'a>)>;
 
 pub struct Outcome {
+    pub variables: HashMap<String, HashSet<String>>,
     pub notes: Vec<String>,
     pub idempotent_inputs: HashSet<(String, String)>,
 }
@@ -61,7 +63,8 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
             schema.input_fields(ty.name()).filter(|fields| fields.contains_key("clientMutationId"))
                 .map(|_| (name.clone(), variable.clone()))
         })).collect();
-    Ok(Outcome { notes: run.notes, idempotent_inputs })
+    let variables = documents.named.iter().map(|(name, operation)| (name.clone(), operation.variables.keys().cloned().collect())).collect();
+    Ok(Outcome { variables, notes: run.notes, idempotent_inputs })
 }
 
 fn operation_files(paths: &[PathBuf]) -> Vec<PathBuf> {
@@ -204,6 +207,7 @@ impl<'a> Run<'a> {
             self.list_unmodeled(node, remote, &element, &covered);
         }
         for scope in node.scopes.iter().filter(|scope| scope.is_remote()) {
+            self.check_media(node, scope);
             self.check_subscription_args(node, scope);
         }
         self.check_mutation_args(node);

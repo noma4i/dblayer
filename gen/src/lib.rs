@@ -81,6 +81,9 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
         file: schema.unwrap().display().to_string(), error: ParseError::new(0, 0, message),
     }])?;
     let models = decl::lower_models(&parsed.models, loaded.as_ref()).map_err(&locate)?;
+    if loaded.is_none() && models.iter().flat_map(|model| &model.scopes).any(|scope| scope.marker.is_some()) {
+        return Err(vec![FileError { file: names[0].clone(), error: ParseError::new(1, 1, "marker and tail require --schema and operation documents") }]);
+    }
     let mut call_errors = Vec::new();
     let calls = decl::lower_calls(&parsed.operations, &mut call_errors);
     if !call_errors.is_empty() {
@@ -89,6 +92,10 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let checked = loaded.as_ref().map(|schema| schema_check::check_schema(schema, &scalars, operations, &names, &models, &calls)).transpose()?;
     let mut declared = build_declarations(&models, &calls).map_err(locate)?;
     if let Some(checked) = &checked {
+        for media in declared.models.iter_mut().flat_map(|model| &mut model.relations).filter_map(|scope| scope.media.as_mut()) {
+            media.marker_variables.retain(|name, _| checked.variables.get(&media.marker).is_some_and(|variables| variables.contains(name)));
+            media.tail_variables.retain(|name, _| checked.variables.get(&media.tail).is_some_and(|variables| variables.contains(name)));
+        }
         for action in declared.models.iter_mut().flat_map(|model| &mut model.actions) {
             action.client_mutation_id = action.mutation.as_ref().is_some_and(|name| checked.idempotent_inputs.contains(&(name.clone(), action.wrap.clone().unwrap_or_else(|| "input".into()))));
         }
@@ -250,6 +257,8 @@ mod scalar_param_tests;
 mod order_stable_tests;
 #[cfg(test)]
 mod scope_default_tests;
+#[cfg(test)]
+mod media_tests;
 
 #[cfg(test)]
 mod enum_position_tests;

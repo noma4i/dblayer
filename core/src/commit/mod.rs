@@ -154,7 +154,15 @@ pub struct WindowTail {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct WindowMarker {
+    pub sequence: i64,
+    pub values: BTreeMap<String, i64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct WindowSave {
+    pub marker: Option<WindowMarker>,
+    pub invalidated: bool,
     pub key: String,
     pub scope: ScopeRef,
     pub cursor: Option<String>,

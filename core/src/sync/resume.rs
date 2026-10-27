@@ -220,7 +220,7 @@ impl Inner {
                 let inner = self.clone();
                 loads.spawn(async move {
                     let resolved = inner.resolve(&model, &relation, &params)?;
-                    if resolved.members_complete {
+                    if resolved.members_complete || resolved.media.is_some() {
                         tokio::select! {
                             _ = inner.owner.unobserved(&resolved.window_key) => Err(SyncError::Cancelled),
                             result = inner.load_scope(&resolved, true) => result,

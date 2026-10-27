@@ -724,6 +724,20 @@ pub struct RelationSpec {
     pub preload_order: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub members_complete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<MediaSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaSpec {
+    pub marker: String,
+    pub from: String,
+    pub fields: Vec<String>,
+    pub sequence: String,
+    pub tail: String,
+    pub after: String,
+    pub marker_variables: BTreeMap<String, VariableSource>,
+    pub tail_variables: BTreeMap<String, VariableSource>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -764,6 +778,7 @@ impl RelationSpec {
             preload_limit: None,
             preload_order: Vec::new(),
             members_complete: false,
+            media: None,
         }
     }
 

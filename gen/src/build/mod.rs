@@ -238,6 +238,18 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
     relation.order_stable = scope.stable_order.is_some();
     relation.refresh_on_foreground = scope.refresh_on_foreground.is_some();
     relation.members_complete = scope.members_complete;
+    if let (Some(marker), Some(tail)) = (&scope.marker, &scope.tail) {
+        let column = |name: &str| scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == name).map_or_else(|| name.to_string(), |(column, _)| column.item.clone());
+        let mut variables: std::collections::BTreeMap<String, VariableSource> = scope.parameters.iter().map(|param| (param.name.clone(), VariableSource::Param { name: column(&param.name) })).collect();
+        for binding in scope.variables.iter().flatten() {
+            let source = match &binding.value {
+                VariableValue::Parameter(name) => VariableSource::Param { name: column(name) },
+                VariableValue::Constant(value) => VariableSource::Constant { value: value.clone() },
+            };
+            variables.insert(binding.name.clone(), source);
+        }
+        relation.media = Some(dblayer::schema::MediaSpec { marker: marker.operation.clone(), from: marker.from.item.clone(), fields: marker.fields.iter().map(|field| field.item.clone()).collect(), sequence: marker.sequence.item.clone(), tail: tail.operation.clone(), after: tail.after.item.clone(), marker_variables: variables.clone(), tail_variables: variables });
+    }
     relation.preload_limit = scope.preload.as_ref().and_then(|preload| preload.limit);
     relation.preload_order = scope.preload.iter().flat_map(|preload| &preload.values).map(|(parameter, _)| {
         scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone())

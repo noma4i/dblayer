@@ -1,0 +1,13 @@
+model MediaEntry do
+  attribute :text, :string, null: true
+  attribute :sequenceNumber, :int
+  scope :media do
+    parameter :chatId, :id
+    query "chatMedia"
+    response from: "node.messages"
+    paginate size: 2, direction: :forward
+    freshness expires_in: 5.minutes
+    marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :visualCount, :audioCount, :giftCount], sequence: :latestSequence
+    tail "chatMedia", after: :afterSequence
+  end
+end

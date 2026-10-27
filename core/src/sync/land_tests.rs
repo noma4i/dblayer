@@ -11,6 +11,8 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
     let scope_key = key.trim_end_matches(":forward").to_string();
     let roots = ids.iter().map(|id| moment(id, &format!("issued {issued}")).as_object().unwrap().clone()).collect();
     Landing {
+        marker: None,
+        leave_stale: false,
         node_reread: false,
         model: "moments".to_string(),
         scope: ScopeRef::new(ModelKey::new("moments"), crate::identity::ListKey::from_raw(&scope_key)),

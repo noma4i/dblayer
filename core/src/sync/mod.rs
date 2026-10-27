@@ -28,6 +28,9 @@ mod load_machine_oracle_tests;
 #[cfg(test)]
 mod load_wiring_tests;
 mod model_event;
+mod media;
+#[cfg(test)]
+mod media_tests;
 mod node;
 mod normalize;
 mod online;

@@ -275,7 +275,25 @@ pub struct SubscribeDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct MarkerDecl {
+    pub pos: Pos,
+    pub operation: String,
+    pub from: Spanned<String>,
+    pub fields: Vec<Spanned<String>>,
+    pub sequence: Spanned<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TailDecl {
+    pub pos: Pos,
+    pub operation: String,
+    pub after: Spanned<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScopeDecl {
+    pub marker: Option<MarkerDecl>,
+    pub tail: Option<TailDecl>,
     pub pos: Pos,
     pub name: String,
     pub node: Option<NodeRead>,

@@ -1,5 +1,29 @@
 # Describing models
 
+## Метка и хвост медиатеки
+
+```ruby
+scope :media do
+  parameter :chatId, :id
+  query "chatMedia"
+  response from: "node.messages"
+  paginate size: 100, direction: :forward
+  freshness expires_in: 5.minutes
+  marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :visualCount, :audioCount, :giftCount], sequence: :latestSequence
+  tail "chatMedia", after: :afterSequence
+end
+```
+
+`marker` и `tail` объявляются парой внутри удалённого scope с курсорной пагинацией.
+`from` задаёт выбранный объект ответа marker. Поля и sequence имеют ненулевой тип `Int` или `Int64`.
+`Int64` принимает десятичную строку ответа сервера. SQLite хранит числовые значения, без JSON.
+Генератор требует schema, документы обоих запросов, пути ответа и совместимые переменные.
+Параметры scope и существующий `variables` связывают переменные обоих запросов.
+Ядро передаёт `upToSequence` в marker, объявленную переменную `after` в tail и обычные переменные пагинации.
+Запрос tail возвращает тот же connection и поля модели, в порядке возрастания sequence.
+`latestSequence` относится ко всей медиатеке. Счётчики marker относятся к префиксу `upToSequence`.
+`revision` берётся из `ChatMediaLibrary.revision`, соответствующего `chats.media_revision`.
+
 A model is described once in a `.dbl` file. The syntax follows Ruby on Rails: a word, a symbol name, then named options after colons and commas. Order of options does not matter.
 
 ## Attributes

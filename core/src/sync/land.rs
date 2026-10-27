@@ -44,6 +44,8 @@ impl Inner {
 }
 
 pub(crate) struct Landing {
+    pub marker: Option<crate::commit::WindowMarker>,
+    pub leave_stale: bool,
     pub node_reread: bool,
     pub model: String,
     pub scope: ScopeRef,
@@ -154,7 +156,7 @@ impl Inner {
 
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
-        let Landing { node_reread, model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
+        let Landing { marker, leave_stale, node_reread, model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
         let generation = attempt.generation;
         if !attempt.applies_to(self.db.generation()) {
             return Ok(Landed::Discarded(DiscardReason::StaleGeneration));
@@ -187,6 +189,7 @@ impl Inner {
             let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
             invalid_roots = invalid;
+            if marker.is_some() && invalid != 0 { return Err(SyncError::Malformed("media coverage contains invalid rows".into())); }
             let plan = if plans_as_first {
                 let mut request = ReplaceRequest::new(scope.clone(), coverage);
                 request.replace_all = replace_window;
@@ -213,6 +216,8 @@ impl Inner {
             envelope.scope_ops = plan.scope_ops;
             envelope.edge_writes = edge_writes(&scope, &edge_fields, &roots, &normalized.edges);
             envelope.window = Some(WindowSave {
+                marker: marker.clone(),
+                invalidated: leave_stale,
                 key: window_key.clone(),
                 scope: scope.clone(),
                 cursor: page_info.as_ref().and_then(|info| info.end_cursor.clone()),
@@ -222,7 +227,7 @@ impl Inner {
                 tail: tail.clone(),
                 issued: attempt.issued,
                 applied,
-                cleared_at: is_first_page.then(|| self.now_ms()),
+                cleared_at: (!leave_stale && (is_first_page || marker.is_some())).then(|| self.now_ms()),
             });
             Ok::<_, SyncError>(Some(envelope))
         });

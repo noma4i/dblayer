@@ -66,7 +66,7 @@ impl Inner {
         runtime.spawn(self.until_closed(async move {
             let Some(inner) = inner.upgrade() else { return };
             let Ok(resolved) = inner.resolve(&target.model, &target.relation, &target.params) else { return };
-            if resolved.members_complete {
+            if resolved.members_complete || resolved.media.is_some() {
                 tokio::select! {
                     _ = inner.owner.unobserved(&resolved.window_key) => {},
                     _ = inner.load_members(&resolved, false) => {},

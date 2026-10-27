@@ -83,6 +83,20 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
 }
 
 impl Store {
+    pub(crate) fn marker(&self, key: &str, generation: i64) -> Result<Option<crate::commit::WindowMarker>, StoreError> {
+        let inner = self.lock();
+        inner.ensure_healthy()?;
+        let mut statement = inner.connection.prepare_cached("SELECT m.sequence, m.field, m.value FROM window_marker m JOIN query_window w ON w.key = m.window_key AND w.generation = m.generation WHERE m.window_key = ?1 AND m.generation = ?2 AND w.has_next = 0")?;
+        let mut rows = statement.query(params![key, generation])?;
+        let mut marker = None;
+        while let Some(row) = rows.next()? {
+            let found = marker.get_or_insert_with(|| crate::commit::WindowMarker { sequence: 0, values: Default::default() });
+            found.sequence = row.get(0)?;
+            found.values.insert(row.get(1)?, row.get(2)?);
+        }
+        Ok(marker)
+    }
+
     #[cfg(test)]
     pub fn save_window(&self, record: &WindowRecord) -> Result<(), StoreError> {
         let inner = self.lock();
