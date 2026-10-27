@@ -48,7 +48,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
 struct CountingFeed(Arc<std::sync::atomic::AtomicUsize>);
 
 #[tokio::test]
-async fn uploads_with_empty_operations_explain_the_cause_and_the_fix() {
+async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_fix() {
     use super::super::database_tests::Plain;
     use super::super::upload_wire::{WireUploadOperation, WireUploadOperations};
     let slot = OpenDatabase::new();

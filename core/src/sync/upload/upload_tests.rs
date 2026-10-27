@@ -130,6 +130,25 @@ pub(super) fn stored_state(rig: &Rig) -> UploadState {
 pub(super) const TWELVE: &[u8] = b"0123456789ab";
 
 #[tokio::test(start_paused = true)]
+async fn inv_upload_14_a_temp_record_upload_reports_its_size_before_create_and_sends_the_confirmed_id() {
+    let rig = upload_rig(small());
+    let local = rig.db.create("moments", params(json!({"text": "hi"}))).unwrap();
+    let source = file(b"abcdef");
+    rig.sync.upload("moments", &local.id, "upload", input(&source).variable("id", json!(local.id.as_str()))).await.unwrap();
+    let waiting = upload_of(&rig, local.id.as_str()).unwrap();
+    assert_eq!((waiting.status, waiting.wait_reason, waiting.total_bytes, waiting.sent_bytes, waiting.fraction()), (UploadStatus::Waiting, Some(WaitReason::CreateUnconfirmed), 6, 0, 0.0));
+    assert!(rig.transport.calls().is_empty());
+    rig.transport.enqueue("CreateMoment", created("m77"));
+    rig.transport.enqueue("CreateBlob", blob());
+    rig.transport.enqueue("CreateMoment", created("m77"));
+    rig.sync.flush().await.unwrap();
+    rig.sync.wait_uploads().await;
+    assert_eq!(variables(&rig, "CreateMoment")[1], json!({"id": "m77", "text": "clip", "signedId": "sid"}));
+    assert!(rig.db.outbox().unwrap().is_empty());
+    assert!(upload_of(&rig, "m77").is_none());
+}
+
+#[tokio::test(start_paused = true)]
 async fn inv_upload_16_complete_failure_keeps_parts_through_queue_restart_and_retry() {
     let rig = upload_rig(small());
     rig.transport.enqueue("InitMultipart", init());

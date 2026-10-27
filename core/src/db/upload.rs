@@ -14,13 +14,14 @@ pub(crate) struct UploadFiles<'a> {
 }
 
 impl UploadFiles<'_> {
-    pub(crate) fn prepare(&mut self, model: &str, row: RowId, client_key: String, mut input: UploadInput, state: UploadState) -> Result<UploadAdmission, DbError> {
+    pub(crate) fn prepare(&mut self, model: &str, row: RowId, client_key: String, mut input: UploadInput, mut state: UploadState) -> Result<UploadAdmission, DbError> {
         let id = uuid::Uuid::new_v4().to_string();
         let name = input.name.clone().unwrap_or_else(|| Path::new(&input.path).file_name().unwrap_or_default().to_string_lossy().into_owned());
         let mime = input.mime.clone().unwrap_or_else(|| crate::upload::mime_of(&name).into());
         let source = match self.files.copy_source(&id, Path::new(&input.path)).map_err(super::files::io_fault)? {
             CopiedSource::Unreadable(error) => Err(error),
             CopiedSource::Ready { size, sha256, data, location } => {
+                state.total_bytes = size;
                 if location == Location::Directory { self.owned.push(id.clone()); }
                 Ok(FileRecord {
                     descriptor: FileDescriptor { id: id.clone(), size, name: Some(name.clone()), mime: Some(mime.clone()), sha256: Some(sha256) },

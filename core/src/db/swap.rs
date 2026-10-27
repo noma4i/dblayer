@@ -1,5 +1,3 @@
-use serde_json::Value;
-
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, OperationTransition};
 use crate::identity::{ModelKey, RowId};
 use crate::operation::Operation;
@@ -56,14 +54,18 @@ impl Db {
         envelope.operation_transitions.extend(outbox.iter().filter(|other| other.operation.id.0 != own).filter_map(|other| retarget(other, &swap)));
         for ReferencingRow { model: owner, field, mut row } in self.rows_referencing(reader, &references, temp)? {
             let Some(child) = row.get("id").and_then(read_id) else { continue };
-            row.insert(field.clone(), Value::String(real.to_string()));
+            if let Some(value) = row.get_mut(&field) { swap_id(value, temp, real); }
             let landing = envelope.entity_ops.iter_mut().find_map(|op| match op {
                 EntityOp::Upsert { model: holder, id, row } if holder.as_str() == owner && *id == child => Some(row),
                 _ => None,
             });
             match landing {
                 Some(landing) => {
-                    landing.insert(field, Value::String(real.to_string()));
+                    if let Some(value) = landing.get_mut(&field) {
+                        swap_id(value, temp, real);
+                    } else if let Some(value) = row.remove(&field) {
+                        landing.insert(field, value);
+                    }
                 }
                 None => envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(&owner), id: child, row }),
             }

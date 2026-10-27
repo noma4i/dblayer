@@ -2,7 +2,7 @@ use super::fixtures::*;
 use crate::query::Query;
 
 #[test]
-fn reset_all_wipes_the_rows_and_the_row_cache() {
+fn inv_row_11_reset_all_wipes_the_rows_and_the_row_cache() {
     let db = booted();
     seed_tree(&db);
     assert!(db.find("moments", &rid("m1")).unwrap().is_some());
@@ -12,11 +12,14 @@ fn reset_all_wipes_the_rows_and_the_row_cache() {
 }
 
 #[test]
-fn reset_of_models_keeps_the_other_models() {
+fn inv_row_11_reset_of_models_keeps_the_other_models() {
     let db = booted();
     seed_tree(&db);
+    assert!(db.find("moments", &rid("m1")).unwrap().is_some());
+    assert!(db.peek_row("moments", &rid("m1")).is_some());
     db.reset(&["moments"]).unwrap();
     assert!(db.find("moments", &rid("m1")).unwrap().is_none());
+    assert!(db.query(&Query::new("moments")).unwrap().is_empty());
     assert!(db.find("users", &rid("u1")).unwrap().is_some());
 }
 

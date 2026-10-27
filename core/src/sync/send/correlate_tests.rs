@@ -34,7 +34,7 @@ fn ids(rig: &Rig) -> Vec<String> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_row_that_lands_before_the_answer_replaces_the_sent_temp_row() {
+async fn inv_id_08_a_row_that_lands_before_the_answer_replaces_the_sent_temp_row() {
     let rig = correlating_rig();
     put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
     let temp = rig.db.create("moments", params(json!({"text": "hi", "userId": "u1"}))).unwrap();
@@ -47,6 +47,7 @@ async fn a_row_that_lands_before_the_answer_replaces_the_sent_temp_row() {
     landed(&rig, "m9", "hi", json!("u1"));
     assert_eq!(ids(&rig), ["m9"]);
     assert!(rig.db.find("moments", &temp.id).unwrap().is_none());
+    assert_eq!(rig.db.outbox().unwrap().len(), 1);
     tokio::time::sleep(Duration::from_secs(2)).await;
     flush.await.unwrap().unwrap();
     assert_eq!(ids(&rig), ["m9"]);

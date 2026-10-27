@@ -173,7 +173,7 @@ fn authored_notes() -> Db {
 }
 
 #[test]
-fn a_create_fills_a_local_attribute_from_the_singleton_row_and_skips_it_without_one() {
+fn inv_dsl_09_a_create_fills_a_local_attribute_from_the_singleton_row_and_skips_it_without_one() {
     let db = authored_notes();
     let author = |db: &Db, values: serde_json::Value| db.create("notes", obj(values)).unwrap().get("authorId").cloned().filter(|value| !value.is_null());
     assert_eq!(author(&db, json!({"roomId": "a"})), None);

@@ -46,6 +46,7 @@ You do not decide where bytes live. Small files are kept inside the database, la
 An upload sends a local file to storage and then runs one content mutation with the stored blob. It is an operation of the library: it lives in the same queue as other pending operations, survives restarts, and shows its state on the record.
 
 After the upload call returns, the library owns a copy of the source. The application can delete its temporary file.
+The upload reports the copied file size as `totalBytes` before transfer starts, including while its record awaits create confirmation.
 Source copying and SHA-256 calculation run before the SQLite write, on a blocking task, in 1 MiB chunks.
 For file databases, sources larger than 256 KiB stay beside the database. Smaller sources and in-memory databases use SQLite bytes.
 Resumed transfers read the owned disk file directly. A rejected admission removes its prepared files.

@@ -24,6 +24,8 @@
 - Give each event collection an independent reader, including after cancellation or completion.
 - Wait for connectivity and server confirmation when opening model events.
 - Wake every waiting event read on close and preserve opening error kinds.
+- Rewrite temporary ids in reference arrays when their records are confirmed.
+- Report upload file sizes before transfer starts, including while create confirmation is pending.
 
 ## 6.11.0 - 2026-10-27
 

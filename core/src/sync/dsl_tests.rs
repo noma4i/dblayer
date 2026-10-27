@@ -67,7 +67,7 @@ async fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetim
 }
 
 #[tokio::test(start_paused = true)]
-async fn apply_not_values_require_a_present_string_before_any_write_or_delete() {
+async fn inv_dsl_10_apply_not_values_require_a_present_string_before_any_write_or_delete() {
     let rig = rig_on(Db::open_in_memory(vec![action_model("actions", json!({"not":["SCREENSHOT"]}), "8.seconds")], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(OperationDef::new("Signal", "subscription Signal { signal { chatId userId kind active } }", "signal"));
     rig.sync.inner.listen_all();
@@ -82,7 +82,7 @@ async fn apply_not_values_require_a_present_string_before_any_write_or_delete() 
 }
 
 #[tokio::test(start_paused = true)]
-async fn unchanged_event_node_joins_loaded_membership_heads_and_manual_nodes_do_not() {
+async fn inv_dsl_11_unchanged_event_node_joins_loaded_membership_heads_and_manual_nodes_do_not() {
     let original = super::node_tests::node_rig();
     let mut models: Vec<_> = original.db.shared.specs.values().cloned().collect();
     let chat = models.iter_mut().find(|model| model.key.as_str() == "chats").unwrap();
