@@ -13,13 +13,16 @@ Android 13 (API 33) or newer.
 
 ## Use a release
 
-Download the required files with `gh release download <tag> --repo noma4i/dblayer --pattern <asset>`. Download all assets before running `shasum -a 256 -c SHA256SUMS`.
+Every release tag has compiled files on the [releases page](https://github.com/noma4i/dblayer/releases). Pick the tag and download:
 
-For Swift, extract `DBlayerFFI.xcframework.zip` into `swift/` and copy `dblayer.swift` into the `Sources/DBlayer` directory of the Swift package. The archive checksum appears in the release notes.
+| Platform | File | Install |
+| -------- | ---- | ------- |
+| Swift | `DBlayerFFI.xcframework.zip`, `dblayer.swift` | Unzip into `swift/`, copy `dblayer.swift` into `swift/Sources/DBlayer/` |
+| Kotlin | `dblayer-android.zip` | Unzip into `kotlin/` |
+| Models | `dblayer-gen-macos-universal` | Run as `dblayer-gen` |
+| JVM tests on macOS | `libdblayer-macos-universal.dylib` | Put on the JVM native library path |
 
-For Kotlin, extract `dblayer-android.zip` into the `kotlin/` module directory. It holds the four Android libraries and the Kotlin bindings.
-
-Download the generator with `gh release download <tag> --repo noma4i/dblayer --pattern dblayer-gen-macos-universal`. Run it with `dblayer-gen --internal --schema <schema.graphql> swift|kotlin <files.dbl>`.
+`gh release download <tag> --repo noma4i/dblayer` fetches all files. `SHA256SUMS` lists their checksums.
 
 Use the `rustup` toolchain, not a plain `cargo` from Homebrew, because only `rustup` has the iOS and Android targets:
 
