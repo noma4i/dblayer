@@ -60,6 +60,22 @@ for archive in "${archives[@]}"; do unzip -l "$stage/$archive"; done
 for abi in arm64-v8a armeabi-v7a x86_64 x86; do [ -f "$tmp/dblayer-android.zip/src/main/jniLibs/$abi/libdblayer.so" ] || fail "missing Android ABI $abi"; done
 [ -f "$tmp/dblayer-android.zip/src/main/kotlin/com/noma4i/dblayer/dblayer.kt" ] || fail 'missing Kotlin bindings'
 
+gradle="${GRADLE:-$(ls -d "$HOME"/.gradle/wrapper/dists/gradle-9.*-bin/*/gradle-9.*/bin/gradle 2>/dev/null | sort -V | tail -1)}"
+[ -x "$gradle" ] || fail 'Gradle 9 not found: set GRADLE'
+staging="$tmp/maven-staging"
+mkdir -p "$staging"
+"$gradle" -p kotlin -PreleaseVersion="$version" -PstagingRepo="$staging" publishReleasePublicationToStagingRepository
+artifact_dir="$staging/com/noma4i/dblayer/$version"
+for file in dblayer-$version.aar dblayer-$version.pom dblayer-$version.module; do
+  [ -s "$artifact_dir/$file" ] || fail "missing Maven artifact $file"
+done
+mkdir "$tmp/maven-aar"
+(cd "$tmp/maven-aar" && unzip -q "$artifact_dir/dblayer-$version.aar")
+for abi in arm64-v8a armeabi-v7a x86_64 x86; do [ -s "$tmp/maven-aar/jni/$abi/libdblayer.so" ] || fail "missing Maven ABI $abi"; done
+mkdir "$tmp/maven-classes"
+(cd "$tmp/maven-classes" && unzip -q "$tmp/maven-aar/classes.jar")
+[ -n "$(find "$tmp/maven-classes/com/noma4i/dblayer" -name '*.class' -print -quit 2>/dev/null)" ] || fail 'missing Kotlin classes in Maven AAR'
+
 checksum="$(swift package compute-checksum "$stage/DBlayerFFI.xcframework.zip")"
 write_package() {
   cat <<EOF
@@ -125,19 +141,6 @@ else
   swift package --package-path "$tmp/package" dump-package > "$tmp/package.json"
 fi
 
-staging="$tmp/maven-staging"
-mkdir -p "$staging"
-gradle -p kotlin -PreleaseVersion="$version" -PstagingRepo="$staging" publishReleasePublicationToStagingRepository
-artifact_dir="$staging/com/noma4i/dblayer/$version"
-for file in dblayer-$version.aar dblayer-$version.pom dblayer-$version.module; do
-  [ -s "$artifact_dir/$file" ] || fail "missing Maven artifact $file"
-done
-mkdir "$tmp/maven-aar"
-(cd "$tmp/maven-aar" && unzip -q "$artifact_dir/dblayer-$version.aar")
-for abi in arm64-v8a armeabi-v7a x86_64 x86; do [ -s "$tmp/maven-aar/jni/$abi/libdblayer.so" ] || fail "missing Maven ABI $abi"; done
-mkdir "$tmp/maven-classes"
-(cd "$tmp/maven-classes" && unzip -q "$tmp/maven-aar/classes.jar")
-[ -n "$(find "$tmp/maven-classes/com/noma4i/dblayer" -name '*.class' -print -quit 2>/dev/null)" ] || fail 'missing Kotlin classes in Maven AAR'
 printf 'release artifacts: %s\n' "$stage"
 
 push_maven_branch() {
