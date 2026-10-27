@@ -1,21 +1,43 @@
 package com.noma4i.dblayer
 
-import com.noma4i.dblayer.models.Record
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import java.util.concurrent.LinkedBlockingQueue
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.CopyOnWriteArrayList
 
 class ListWindowTest {
     private val byText get() = Query("Moment", Moment).order(Order("text", "asc"))
 
     private suspend fun open() {
         reopen(Config(null, null, 64u), modelsJSON, null)
+    }
+
+    private class WindowSnapshots {
+        private val subscribed = CompletableDeferred<(Snapshot<Moment>) -> Unit>()
+        val source = LiveSource<Snapshot<Moment>>(Snapshot(emptyList(), emptyMap())) { emit ->
+            subscribed.complete(emit)
+            ({})
+        }
+        suspend fun emit(snapshot: Snapshot<Moment>) {
+            val emit = awaitWithin("the window source") { subscribed.await() }
+            emit(snapshot)
+        }
+    }
+
+    private suspend fun shown(live: LiveWindow<Moment>, seq: ULong) {
+        awaitWithin("window snapshot $seq") { live.snapshot.first { it.seq == seq } }
     }
 
     @Test
@@ -71,5 +93,53 @@ class ListWindowTest {
         eventually("the shrunk window") { live.rows.value.size == 5 }
         assertEquals((25 until 30).map { "t%05d".format(it) }, live.rows.value.map { it.text })
         scope.cancel()
+    }
+
+    @Test
+    fun a_live_window_content_change_only_emits_its_rows() = bounded {
+        val scope = CoroutineScope(Dispatchers.Default)
+        try {
+            val source = WindowSnapshots()
+            val live = LiveWindow(byText.window(tail = 1), scope, source.source)
+            val row = Moment(id = "one", uuid = "one", text = "before", likedByMe = false, media = JsonObject(emptyMap()), createdAt = "x")
+            val first = Snapshot(listOf(row), emptyMap(), reordered = true, window = WindowEdges(true, false, 20), seq = 1uL, phase = LoadPhase.Loaded, error = IllegalStateException("same"))
+            source.emit(first)
+            shown(live, 1uL)
+            val ids = CopyOnWriteArrayList<List<String>>()
+            val edges = CopyOnWriteArrayList<WindowEdges>()
+            val failures = CopyOnWriteArrayList<Throwable?>()
+            val replacements = CopyOnWriteArrayList<Map<String, String>>()
+            val rows = Channel<String>(Channel.UNLIMITED)
+            scope.launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) { live.ids.collect { ids.add(it) } }
+            scope.launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) { live.edges.collect { edges.add(it) } }
+            scope.launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) { live.failure.collect { failures.add(it) } }
+            scope.launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) { live.replaced.collect { replacements.add(it) } }
+            scope.launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) { live.rows.collect { rows.trySend(it.firstOrNull()?.text.orEmpty()) } }
+            assertEquals("before", awaitWithin("initial content") { rows.receive() })
+            source.emit(first.copy(rows = listOf(row.copy(text = "after")), reordered = false, seq = 2uL))
+            assertEquals("after", awaitWithin("changed content") { rows.receive() })
+            shown(live, 2uL)
+            assertEquals(listOf(1, 1, 1, 1), listOf(ids.size, edges.size, failures.size, replacements.size))
+            source.emit(first.copy(rows = listOf(row.copy(id = "two", uuid = "two", text = "last")), replaced = mapOf("two" to "one"), window = WindowEdges(false, true, 30), seq = 3uL, error = IllegalStateException("changed")))
+            assertEquals("last", awaitWithin("changed order and state") { rows.receive() })
+            shown(live, 3uL)
+            assertEquals(listOf(2, 2, 2, 2), listOf(ids.size, edges.size, failures.size, replacements.size))
+            assertEquals(listOf("two"), live.ids.value)
+        } finally { scope.coroutineContext[Job]?.cancelAndJoin() }
+    }
+
+    @Test
+    fun a_live_window_keeps_its_edges_when_the_snapshot_has_none() = bounded {
+        val scope = CoroutineScope(Dispatchers.Default)
+        try {
+            val source = WindowSnapshots()
+            val live = LiveWindow(byText.window(tail = 1), scope, source.source)
+            val row = Moment(id = "one", uuid = "one", likedByMe = false, media = JsonObject(emptyMap()), createdAt = "x")
+            source.emit(Snapshot(listOf(row), emptyMap(), reordered = true, window = WindowEdges(true, true, 20), seq = 1uL, phase = LoadPhase.Loaded))
+            shown(live, 1uL)
+            source.emit(Snapshot(listOf(row), emptyMap(), seq = 2uL, phase = LoadPhase.Loaded))
+            shown(live, 2uL)
+            assertEquals(WindowEdges(true, true, 20), live.edges.value)
+        } finally { scope.coroutineContext[Job]?.cancelAndJoin() }
     }
 }

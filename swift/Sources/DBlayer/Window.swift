@@ -104,13 +104,13 @@ public struct RelatedWindow<Target: DBModel>: Sendable {
 @Observable
 public final class LiveWindow<Model: DBModel> {
   public private(set) var snapshot = Snapshot<Model>(rows: [], replaced: [:])
-  public var rows: [Model] { snapshot.rows }
-  public var ids: [String] { snapshot.rows.map(\.id) }
-  public var replaced: [String: String] { snapshot.replaced }
-  public var hasBefore: Bool { snapshot.window?.hasBefore ?? false }
-  public var hasAfter: Bool { snapshot.window?.hasAfter ?? false }
-  public var total: Int? { snapshot.window?.total }
-  public var failure: (any Error)? { snapshot.error }
+  public private(set) var rows: [Model] = []
+  public private(set) var ids: [String] = []
+  public private(set) var replaced: [String: String] = [:]
+  public private(set) var hasBefore = false
+  public private(set) var hasAfter = false
+  public private(set) var total: Int?
+  public private(set) var failure: (any Error)?
   @ObservationIgnored private let window: Window<Model>
   @ObservationIgnored let updates = ListUpdates<Model>()
   @ObservationIgnored private var task: Task<Void, Never>?
@@ -136,6 +136,18 @@ public final class LiveWindow<Model: DBModel> {
   }
 
   private func show(_ snapshot: Snapshot<Model>) {
+    if rows != snapshot.rows { rows = snapshot.rows }
+    if snapshot.reordered {
+      let ids = snapshot.rows.map(\.id)
+      if self.ids != ids { self.ids = ids }
+    }
+    if replaced != snapshot.replaced { replaced = snapshot.replaced }
+    if let edges = snapshot.window {
+      if hasBefore != edges.hasBefore { hasBefore = edges.hasBefore }
+      if hasAfter != edges.hasAfter { hasAfter = edges.hasAfter }
+      if total != edges.total { total = edges.total }
+    }
+    if failure.map({ $0 as NSError }) != snapshot.error.map({ $0 as NSError }) { failure = snapshot.error }
     self.snapshot = snapshot
   }
 
