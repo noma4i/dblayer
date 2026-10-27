@@ -12,6 +12,13 @@ async fn inv_upload_15_every_step_of_an_upload_reaches_the_observer_with_current
     let sink = seen.clone();
     let _observer = rig.db.observe_row("moments", &rid("m1"), move |change| sink.lock().unwrap().push(change.rows.first().and_then(|row| row.sync.uploads.get("upload").cloned()))).unwrap();
     multipart_replies(&rig);
+    let db = rig.db.clone();
+    rig.transport.respond_with(move |_| {
+        db.await_revision(db.revision_seq().unwrap());
+        None
+    });
+    let db = rig.db.clone();
+    rig.transport.on_put_progress(move || db.await_revision(db.revision_seq().unwrap()));
     for number in 1..=3 {
         rig.transport.enqueue_put(&format!("https://s3/p{number}"), PutReply::etag("e").after(Duration::from_secs(2)));
     }

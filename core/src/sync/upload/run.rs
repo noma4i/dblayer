@@ -302,12 +302,11 @@ impl Runner {
         let Some(entry) = self.inner.outbox_operation(self.seq).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))? else {
             return Err(Stop::Superseded);
         };
-        let spec = self.inner.db.spec(&self.model).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
-        let declaration = spec.actions.iter().find(|action| action.mutation.as_deref() == Some(&operation.name));
+        let action = crate::operation::Operation::upload_action(&entry.operation.action_key).ok_or_else(|| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, "the upload has no declared action")))?.1;
         let sending = Sending {
             entry: &entry,
             model: self.model.clone(),
-            action: declaration.map_or_else(|| operation.name.clone(), |action| action.name.clone()),
+            action,
             generation: self.inner.db.generation(),
             base_revision: self.inner.db.revision_seq().unwrap_or_default(),
         };

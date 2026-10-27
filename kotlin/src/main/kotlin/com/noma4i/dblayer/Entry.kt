@@ -142,7 +142,7 @@ object DBlayer {
         ready.complete(made)
     }
 
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock, preload: Boolean): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock, preload) }
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock, preload: Boolean, listening: Boolean = true): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock, preload, listening) }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }

@@ -24,7 +24,7 @@ fn request(variables_json: String) -> WireUploadRequest {
 fn json_calls() -> Vec<(&'static str, Call)> {
     let moment = || "Moment".to_string();
     vec![
-        ("upload", Box::new(move |db, bad| Box::pin(async move { db.upload(moment(), "r1".into(), "upload".into(), request(bad)).await }))),
+        ("upload", Box::new(move |db, bad| Box::pin(async move { db.upload(moment(), "r1".into(), "upload".into(), request(bad)).await.map(drop) }))),
         ("upload_create", Box::new(move |db, bad| Box::pin(async move { db.upload_create(moment(), "upload".into(), bad, request("{}".into())).await.map(drop) }))),
         ("upload_create_batch", Box::new(move |db, bad| {
             Box::pin(async move {

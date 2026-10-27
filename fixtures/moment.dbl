@@ -54,6 +54,9 @@ model Moment do
   operation :upload_clip, upload: true do
     mutation "CreateMoment"
     optimistic false
+    returns do
+      attribute :successMessage, :string
+    end
     response from: "createMoment"
   end
   operation :destroy do

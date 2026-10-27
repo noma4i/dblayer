@@ -155,6 +155,9 @@ impl Inner {
 
     pub(crate) fn upload_operations(&self) -> Result<&UploadOperations, crate::db::DbError> {
         let uploads = self.config.uploads.as_ref().ok_or_else(|| crate::db::DbError::InvalidUpload("upload operations are not declared: pass UploadOperations to open".into()))?;
+        if locked(&self.operations).is_empty() {
+            return Err(crate::db::DbError::InvalidUpload("uploads are declared but operations is empty: pass the upload GraphQLOperation definitions in operations to open or openTesting".into()));
+        }
         uploads.check(|name| locked(&self.operations).contains_key(name)).map_err(crate::db::DbError::InvalidUpload)?;
         Ok(uploads)
     }

@@ -13,6 +13,30 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ModelEventsTest {
+    private object RecordEvents : GraphQLOperation {
+        override val operationName = "RecordEvents"
+        override val document = "subscription RecordEvents { recordEvents { entries { topic action recordId } } }"
+    }
+
+    @OptIn(DBlayerTestingApi::class)
+    @Test
+    fun openTestingHoldsSubscriptionsUntilRegistrationCompletes() = bounded {
+        DBlayer.close()
+        try {
+            val transport = MockTransport()
+            DBlayer.openTesting(transport, modelsJSON, operations = listOf(RecordEvents), listening = false)
+            DBlayer.resume()
+            assertEquals(emptyList<String>(), transport.calls.map { it.operationName })
+            DBlayer.setListening(true)
+            eventually("registration complete starts the subscription") { transport.calls.size == 1 }
+            DBlayer.setListening(true)
+            DBlayer.resume()
+            assertEquals(listOf("RecordEvents"), transport.calls.map { it.operationName })
+        } finally {
+            DBlayer.close()
+        }
+    }
+
     @Test
     fun declaredChangeEventsReachTheTypedFlowAndTheFlowEndsOnCancel() = bounded {
         val transport = MockTransport()

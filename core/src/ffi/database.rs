@@ -464,15 +464,14 @@ impl Database {
         Ok(())
     }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), online: self.db.connectivity() })) }
-    pub async fn upload(&self, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<(), DbError> {
+    pub async fn upload(&self, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<i64, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
         on_executor(async move {
             let file = request.into_file()?;
             Ok::<_, DbError>(sync.upload(&model, &row, &action, file).await?)
         })
-        .await?;
-        Ok(())
+        .await
     }
     pub async fn upload_create(&self, model: String, action: String, values_json: String, request: WireUploadRequest) -> Result<WireRow, DbError> {
         let sync = self.sync()?.clone();

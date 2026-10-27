@@ -85,7 +85,10 @@ extension DBModel {
     try decode(try await DB.database.uploadCreate(model: modelName, action: action, valuesJson: JSONValue.object(values).text, request: request.wire))
   }
 
-  @concurrent public func upload(action: String, _ request: UploadRequest) async throws { try await DB.database.upload(model: Self.modelName, rowId: id, action: action, request: request.wire) }
+  @concurrent public func upload<Answer: Decodable & Sendable>(action: String, _ request: UploadRequest) async throws -> ActionAnswer<Self, Answer> {
+    let operation = try await DB.database.upload(model: Self.modelName, rowId: id, action: action, request: request.wire)
+    return ActionAnswer(model: self, operation: operation)
+  }
 
   @concurrent public func cancelUpload(action: String) async throws -> Bool { try await DB.database.cancelUpload(model: Self.modelName, rowId: id, action: action) }
 }

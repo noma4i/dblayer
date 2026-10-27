@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `openTesting(listening: false)` holds model subscriptions until `setListening(true)`.
+- Upload actions return `ActionAnswer` with the declared fields of the final mutation.
+
+### Changed
+- Uploads with empty operations report the cause and the required operation definitions.
+
 ## 6.10.2 - 2026-10-27
 
 ### Added

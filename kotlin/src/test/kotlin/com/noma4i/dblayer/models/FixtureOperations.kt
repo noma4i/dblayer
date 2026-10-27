@@ -56,7 +56,12 @@ data class Clip(
         }
         Clip.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
+    suspend fun createFile(request: UploadRequest): ActionAnswer<Clip, ClipCreateFileResult> = upload("create_file", request, ClipCreateFileResult.serializer())
 }
+
+@Immutable
+@Serializable
+class ClipCreateFileResult
 
 @Immutable
 data class Inbox(

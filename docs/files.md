@@ -136,6 +136,13 @@ moment.uploads["upload_clip"]?.percent      // 42.0
 moment.confirmedId()
 ```
 
+Each generated upload method returns `ActionAnswer`, like an action declared with `returns`.
+Call `answer()` to wait for the file transfer and final mutation, then read the declared response fields.
+Fields the server omitted are `nil` in Swift and `null` in Kotlin.
+For example, `moment.uploadClip(request).answer()` returns the fields declared by `upload_clip`.
+Swift calls use `try await` and Kotlin calls run in a coroutine.
+The generic `upload` also returns `ActionAnswer` and takes the answer type, like `actAnswering`.
+
 ### Create several records with uploads
 
 A batch creates all temporary records and owns their source files in one commit.

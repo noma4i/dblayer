@@ -358,8 +358,11 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             let args = action.args.keys().map(|arg| format!("\"{arg}\": try JSONValue.encode({printed})", printed = identifier(arg, true))).collect::<Vec<_>>().join(", ");
             writeln!(out, "        return try await {}(\"{}\", values: {values}, args: [{}])\n    }}", if action.result.is_empty() { "act" } else { "actAnswering" }, action.name, if args.is_empty() { ":" } else { &args }).unwrap();
         }
+        for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
+            writeln!(out, "    @concurrent public func {}(_ request: UploadRequest) async throws -> ActionAnswer<Self, {}> {{\n        try await upload(action: \"{}\", request)\n    }}", identifier(&name(&action.name), true), result_type(class, &action.name), action.name).unwrap();
+        }
         out.push_str("}\n\n");
-        for action in model.actions.iter().filter(|action| !action.result.is_empty()) {
+        for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || !action.result.is_empty()) {
             writeln!(out, "public struct {}: Codable, Sendable {{", result_type(class, &action.name)).unwrap();
             for (field, kind) in &action.result { writeln!(out, "    public let {}: {}?", identifier(field, true), arg_type(kind, true)).unwrap(); }
             out.push_str("}\n\n");
@@ -477,6 +480,10 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
                 writeln!(out, "    suspend fun {}({params}): ActionAnswer<{class}, {result}> = actAnswering({call}, {result}.serializer())", identifier(&name(&action.name), false)).unwrap();
             }
         }
+        for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
+            let result = result_type(class, &action.name);
+            writeln!(out, "    suspend fun {}(request: UploadRequest): ActionAnswer<{class}, {result}> = upload(\"{}\", request, {result}.serializer())", identifier(&name(&action.name), false), action.name).unwrap();
+        }
         for association in &model.associations { writeln!(out, "    val {} get() = related(\"{}\", {})", identifier(&association.name, false), association.name, association.target).unwrap(); }
         if !model.associations.is_empty() {
             out.push_str("    object Relations {\n");
@@ -484,9 +491,10 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             out.push_str("    }\n");
         }
         out.push_str("}\n\n");
-        for action in model.actions.iter().filter(|action| !action.result.is_empty()) {
+        for action in model.actions.iter().filter(|action| (action.upload && action.batch.is_none()) || !action.result.is_empty()) {
             let fields = action.result.iter().map(|(field, kind)| format!("val {}: {}? = null", identifier(field, false), arg_type(kind, false))).collect::<Vec<_>>().join(", ");
-            writeln!(out, "@Immutable\n@Serializable\ndata class {}({fields})\n", result_type(class, &action.name)).unwrap();
+            let declaration = if fields.is_empty() { format!("class {}", result_type(class, &action.name)) } else { format!("data class {}({fields})", result_type(class, &action.name)) };
+            writeln!(out, "@Immutable\n@Serializable\n{declaration}\n").unwrap();
         }
     }
     out.push_str(&edge_types);

@@ -118,6 +118,7 @@ struct MockState {
     cancellations: HashMap<String, usize>,
     calls: Vec<RecordedCall>,
     responder: Option<Responder>,
+    put_progress: Option<Arc<dyn Fn() + Send + Sync>>,
     session: Option<Result<Option<String>, TransportError>>,
 }
 
@@ -155,6 +156,10 @@ impl MockTransport {
 
     pub fn respond_with(&self, responder: impl Fn(&GraphQLRequest) -> Option<Reply> + Send + Sync + 'static) {
         self.lock().responder = Some(Arc::new(responder));
+    }
+
+    pub fn on_put_progress(&self, progress: impl Fn() + Send + Sync + 'static) {
+        self.lock().put_progress = Some(Arc::new(progress));
     }
 
     pub fn script_subscription(&self, operation_name: &str, events: Vec<SubscriptionEvent>) {
@@ -316,12 +321,14 @@ impl MockTransport {
             }
         };
         let reply = reply.unwrap_or_else(|| PutReply::etag(&format!("etag:{}", request.url)));
+        let progress = self.lock().put_progress.clone();
         let run = async {
             for step in 1..=PUT_STEPS {
                 if !reply.delay.is_zero() {
                     tokio::time::sleep(reply.delay / PUT_STEPS).await;
                 }
                 (request.sent)(length * u64::from(step) / u64::from(PUT_STEPS));
+                if let Some(progress) = &progress { progress(); }
             }
             reply.result.clone()
         };

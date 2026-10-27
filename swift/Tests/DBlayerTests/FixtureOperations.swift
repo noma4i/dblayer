@@ -43,6 +43,12 @@ public struct Clip: DBModel {
         if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await update(values: values)
     }
+    @concurrent public func createFile(_ request: UploadRequest) async throws -> ActionAnswer<Self, ClipCreateFileResult> {
+        try await upload(action: "create_file", request)
+    }
+}
+
+public struct ClipCreateFileResult: Codable, Sendable {
 }
 
 public struct Inbox: DBModel {

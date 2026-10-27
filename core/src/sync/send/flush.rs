@@ -573,7 +573,7 @@ impl Inner {
 
     fn keep_answer(&self, spec: &crate::schema::ModelSpec, sending: &Sending<'_>, operation: &OperationDef, data: &Value) {
         let Some(declared) = spec.actions.iter().find(|declared| declared.name == sending.action).cloned() else { return };
-        if declared.result.is_empty() {
+        if declared.result.is_empty() && !declared.upload {
             return;
         }
         let root = declared.root.as_deref().unwrap_or(&operation.root_path);

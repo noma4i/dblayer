@@ -113,7 +113,7 @@ class MainThreadTest {
         val moment = Moment.create(text = "a")
         val request = UploadRequest("/nonexistent", variables = recording("v"))
 
-        runCatching { withContext(main) { moment.upload("upload_clip", request) } }
+        runCatching { withContext(main) { moment.uploadClip(request) } }
         runCatching { withContext(main) { uploadCreate("Moment", "upload_clip", recording("v"), request, Moment) } }
         runCatching { withContext(main) { Asset.uploadCreate(listOf(UploadItem(recording("v"), "/nonexistent")), UploadBatchRequest("create_files")) } }
 

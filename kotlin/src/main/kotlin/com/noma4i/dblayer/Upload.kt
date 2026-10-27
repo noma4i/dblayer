@@ -27,7 +27,10 @@ data class UploadRequest(
 suspend fun <Model : DBModel> uploadCreate(modelName: String, action: String, values: JsonObject, request: UploadRequest, decoder: ModelDecoder<Model>): Model =
     offCaller { decoder.read(DBlayer.database.uploadCreate(modelName, action, values.jsonText(), request.wire())) }
 
-suspend fun DBModel.upload(action: String, request: UploadRequest) { offCaller { DBlayer.database.upload(modelName, id, action, request.wire()) } }
+suspend fun <Model : DBModel, Answer> Model.upload(action: String, request: UploadRequest, answerSerializer: kotlinx.serialization.KSerializer<Answer>): ActionAnswer<Model, Answer> {
+    val operation = offCaller { DBlayer.database.upload(modelName, id, action, request.wire()) }
+    return ActionAnswer(this, operation, answerSerializer)
+}
 
 suspend fun DBModel.cancelUpload(action: String): Boolean = offCaller { DBlayer.database.cancelUpload(modelName, id, action) }
 

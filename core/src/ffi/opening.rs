@@ -46,11 +46,16 @@ impl OpenDatabase {
         Ok(database)
     }
 
-    pub async fn open_with_clock(&self, config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<WireUploadOperations>, clock: Arc<TestClock>, preload: bool) -> Result<Arc<Database>, DbError> {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn open_with_clock(&self, config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<WireUploadOperations>, clock: Arc<TestClock>, preload: bool, listening: bool) -> Result<Arc<Database>, DbError> {
         let lease = self.slot.acquire()?;
         let database = Database::open_with_clock(config, models_json, transport, uploads.map(Into::into), clock).await?;
         database.hold(lease);
-        if let Ok(sync) = database.sync() { sync.set_preload(preload); }
+        if let Ok(sync) = database.sync() {
+            sync.set_preload(preload);
+            let _entered = super::database::executor()?.enter();
+            sync.set_listening(listening);
+        }
         Ok(database)
     }
 }

@@ -47,6 +47,24 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
 
 struct CountingFeed(Arc<std::sync::atomic::AtomicUsize>);
 
+#[tokio::test]
+async fn uploads_with_empty_operations_explain_the_cause_and_the_fix() {
+    use super::super::database_tests::Plain;
+    use super::super::upload_wire::{WireUploadOperation, WireUploadOperations};
+    let slot = OpenDatabase::new();
+    let options = OpenOptions {
+        uploads: Some(WireUploadOperations { create_blob: Some(WireUploadOperation { name: "CreateBlob".into(), root_path: None }), multipart: None }),
+        ..options()
+    };
+    let opened = slot.open(config(), "[]".into(), options, Some(Arc::new(Plain)), None, None, None, None).await;
+    let error = match opened {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("uploads with empty operations were accepted"),
+    };
+    assert!(error.ends_with("invalid upload: uploads are declared but operations is empty: pass the upload GraphQLOperation definitions in operations to open or openTesting"), "{error}");
+    assert!(open(&slot).await.is_ok(), "the refused open must release its slot");
+}
+
 #[async_trait::async_trait]
 impl Transport for CountingFeed {
     async fn open_cable(&self, _: Arc<super::super::CableLease>) -> Result<(), DbError> { unreachable!() }
@@ -145,7 +163,7 @@ async fn preload_off_sends_no_request_on_any_event_and_on_loads() {
         let slot = OpenDatabase::new();
         let transport: Arc<dyn Transport> = Arc::new(CountingFeed(requests.clone()));
         let database = if clocked {
-            let database = slot.open_with_clock(config(), models.clone(), Some(transport), None, super::super::TestClock::new(1_000_000), preload).await.unwrap();
+            let database = slot.open_with_clock(config(), models.clone(), Some(transport), None, super::super::TestClock::new(1_000_000), preload, true).await.unwrap();
             database.register_operations(operations.into()).unwrap();
             database
         } else {
