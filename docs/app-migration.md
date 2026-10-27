@@ -1,5 +1,9 @@
 # App migration
 
+## Lost session state
+
+Replace the lost-state message comparison with `DbError.Session` code `.stateLost` on Swift or `DbException.Session` code `SessionCode.STATE_LOST` on Kotlin.
+
 ## Event payloads
 
 Replace Chat's MESSAGE `id_of: { of: Message, field: :chatId }` declaration with `payload: "chat"` on its node scope.

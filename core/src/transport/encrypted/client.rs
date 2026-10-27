@@ -11,7 +11,7 @@ use super::state::{self, Pending};
 use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
 use crate::pacing::{Clock, RetryPolicy};
-use crate::transport::TransportError;
+use crate::transport::{SessionCode, TransportError};
 use crate::transport::retry::{RetryClass, RetryCalls, Retrying};
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -348,7 +348,7 @@ impl EncryptedClient {
         let session = self.with_connection(state::session)?;
         let credential = match stored {
             Some(credential) if session.as_ref().is_some_and(|session| session.credential_digest == digest_of(&credential)) => credential,
-            Some(_) => return Err(TransportError::Decode("lost session sequence state for the stored credential".into())),
+            Some(_) => return Err(TransportError::Session { code: SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }),
             None => {
                 let credential = random_token();
                 self.credentials.set(&credential)?;

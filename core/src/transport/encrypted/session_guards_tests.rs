@@ -171,9 +171,10 @@ async fn a_stored_credential_without_matching_sequence_state_is_reported_without
         }
         let before = (rig.touched(), rig.credentials.inner.value(), rows(&db), rig.server.seen().len());
 
-        let outcome = client.mutate(SOCIAL, signed_in()).await;
+        let error = client.mutate(SOCIAL, signed_in()).await.unwrap_err();
 
-        assert_eq!(outcome, Err(TransportError::Decode("lost session sequence state for the stored credential".into())), "{case}");
+        assert_eq!(crate::transport::retry::RetryClass::of_error(&error), crate::transport::retry::RetryClass::Fatal, "{case}");
+        assert_eq!(crate::ffi::DbError::from(crate::sync::SyncError::Transport(error)), crate::ffi::DbError::Session { code: crate::transport::SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }, "{case}");
         assert_eq!((rig.touched(), rig.credentials.inner.value(), rows(&db), rig.server.seen().len()), before, "{case}");
     }
 }

@@ -428,7 +428,7 @@ async fn a_pending_request_of_a_replaced_credential_is_reported_and_never_sent()
     rig.credentials.set(&"r".repeat(43)).unwrap();
 
     let before = rows(&db);
-    assert_eq!(restored.resume().await, Err(TransportError::Decode("lost session sequence state for the stored credential".into())));
+    assert_eq!(restored.resume().await, Err(TransportError::Session { code: SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }));
 
     assert_eq!(rig.credentials.value(), Some("r".repeat(43)));
     assert_eq!((rig.server.seen().len(), rows(&db)), (0, before));

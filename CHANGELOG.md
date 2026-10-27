@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Report lost session state as the typed session code StateLost.
+
 ### Fixed
 - Preserve exact large-integer ordering in merges, sequence selection, and sorted lists.
 - Preserve original parameter values during cross binding and distinguish typed scope keys.

@@ -5,7 +5,7 @@ import Testing
 
 private let sessionCodes: [SessionCode] = [
   .sequenceConflict, .replayedRequest, .rateLimited, .accountUnavailable, .unauthenticated, .sessionEnded,
-  .invalidCode, .invalidPhone, .invalidProvider, .providerRejected, .alreadyAuthenticated
+  .invalidCode, .invalidPhone, .invalidProvider, .providerRejected, .alreadyAuthenticated, .stateLost
 ]
 
 private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#

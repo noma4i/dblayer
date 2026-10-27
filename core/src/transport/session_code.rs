@@ -12,10 +12,11 @@ pub enum SessionCode {
     ProviderRejected,
     AlreadyAuthenticated,
     ServerKeyMismatch,
+    StateLost,
     Other,
 }
 
-const NAMES: [(&str, SessionCode); 13] = [
+const NAMES: [(&str, SessionCode); 14] = [
     ("SEQUENCE_CONFLICT", SessionCode::SequenceConflict),
     ("REPLAYED_REQUEST", SessionCode::ReplayedRequest),
     ("RATE_LIMITED", SessionCode::RateLimited),
@@ -28,6 +29,7 @@ const NAMES: [(&str, SessionCode); 13] = [
     ("PROVIDER_REJECTED", SessionCode::ProviderRejected),
     ("ALREADY_AUTHENTICATED", SessionCode::AlreadyAuthenticated),
     ("SERVER_KEY_MISMATCH", SessionCode::ServerKeyMismatch),
+    ("STATE_LOST", SessionCode::StateLost),
     ("OTHER", SessionCode::Other),
 ];
 
@@ -45,7 +47,7 @@ impl SessionCode {
     }
 
     pub fn from_wire(code: &str) -> Option<Self> {
-        Self::named(code).filter(|code| !matches!(code, Self::ServerKeyMismatch | Self::Other))
+        Self::named(code).filter(|code| !matches!(code, Self::ServerKeyMismatch | Self::StateLost | Self::Other))
     }
 
     pub fn of(code: &str) -> Self {

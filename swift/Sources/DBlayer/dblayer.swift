@@ -11400,6 +11400,7 @@ public enum SessionCode: Equatable, Hashable {
     case providerRejected
     case alreadyAuthenticated
     case serverKeyMismatch
+    case stateLost
     case other
 
 
@@ -11446,7 +11447,9 @@ public struct FfiConverterTypeSessionCode: FfiConverterRustBuffer {
         
         case 12: return .serverKeyMismatch
         
-        case 13: return .other
+        case 13: return .stateLost
+
+        case 14: return .other
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -11504,9 +11507,13 @@ public struct FfiConverterTypeSessionCode: FfiConverterRustBuffer {
             writeInt(&buf, Int32(12))
         
         
-        case .other:
+        case .stateLost:
             writeInt(&buf, Int32(13))
-        
+
+
+        case .other:
+            writeInt(&buf, Int32(14))
+
         }
     }
 }
