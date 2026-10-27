@@ -1094,6 +1094,8 @@ pub struct ModelSpec {
     pub changes: Vec<ChangeRead>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub change_feed: Option<ChangeFeed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_revision: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cloud: Vec<String>,
 }
@@ -1118,6 +1120,8 @@ pub struct ChangeRead {
     pub observed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_of: Option<ChangeIdOf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1163,6 +1167,7 @@ impl ModelSpec {
             listens: Vec::new(),
             changes: Vec::new(),
             change_feed: None,
+            server_revision: None,
             cloud: Vec::new(),
         }
     }

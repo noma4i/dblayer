@@ -12,6 +12,8 @@ mod graphql;
 mod inputs;
 #[cfg(test)]
 mod idempotency_tests;
+#[cfg(test)]
+mod event_payload_tests;
 mod paths;
 mod media;
 mod standalone;
@@ -52,6 +54,7 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     let mut run = Run { schema, scalars, operations: &documents, files, declared, found: Vec::new(), notes: Vec::new(), edge: None };
     for node in nodes.iter().filter(|node| node.storage != dblayer::schema::Storage::Local) {
         run.check_model(node);
+        run.check_change_payloads(node, nodes);
     }
     for node in standalone { run.check_standalone(node); }
     let mut found = run.found;

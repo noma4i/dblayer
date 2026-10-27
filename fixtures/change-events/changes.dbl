@@ -1,13 +1,15 @@
 model Notebook do
   changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
   attribute :title, :string
+  attribute :serverRevision, :int, from: "revision"
+  server_revision :serverRevision
   scope :node, node: :one do
     parameter :id, :id
     query "NotebookNode"
     variables id: :id
   end
   changed_by "NOTEBOOK", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
-  changed_by "ENTRY", via: :node, id_of: { of: Entry, field: :notebookId }
+  changed_by "ENTRY", via: :node, payload: "notebook"
 end
 
 model Entry do
@@ -18,7 +20,7 @@ model Entry do
     query "EntryNode"
     variables id: :id
   end
-  changed_by "ENTRY", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
+  changed_by "ENTRY", via: :node, payload: "entry", removes_on: ["DELETED", "ACCESS_REVOKED"]
   changed_by "REACTION", via: :node
 end
 

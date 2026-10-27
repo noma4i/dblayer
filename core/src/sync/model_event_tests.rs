@@ -20,7 +20,7 @@ fn chat_rig() -> Rig {
     let original = super::node_tests::node_rig();
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
     let chats = specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap();
-    chats.changes.push(ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None, removes_on: vec!["DELETED".into()], observed: false, id_of: None });
+    chats.changes.push(ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None, removes_on: vec!["DELETED".into()], observed: false, payload: None, id_of: None });
     chats.change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
     for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register((**operation).clone()); }
@@ -194,7 +194,7 @@ async fn a_full_queue_reports_the_dropped_count_and_never_holds_back_the_next_ev
 #[tokio::test(start_paused = true)]
 async fn observed_event_rereads_every_watched_parameterized_read_once_and_no_other() {
     let mut moments = moments_spec();
-    moments.changes.push(ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, id_of: None });
+    moments.changes.push(ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, payload: None, id_of: None });
     moments.change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
@@ -265,8 +265,8 @@ async fn rows_are_read_for_an_event_only_while_the_model_has_a_reader() {
 #[tokio::test(start_paused = true)]
 async fn a_model_gets_the_events_of_a_changes_source_that_another_model_declares() {
     for (change, area) in [
-        (ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, id_of: None }, "WALLET"),
-        (ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, id_of: None }, "MOOD"),
+        (ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, payload: None, id_of: None }, "WALLET"),
+        (ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, payload: None, id_of: None }, "MOOD"),
     ] {
         let (mut users, mut moments) = (users_spec(), moments_spec());
         users.change_feed = Some(change_feed());
@@ -289,7 +289,7 @@ async fn a_model_gets_the_events_of_a_changes_source_that_another_model_declares
 async fn an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_one_is_delivered() {
     let (mut users, mut moments) = (users_spec(), moments_spec());
     users.change_feed = Some(change_feed());
-    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, id_of: None });
+    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, payload: None, id_of: None });
     let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
@@ -307,7 +307,7 @@ async fn an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_on
 async fn one_event_of_an_area_shared_by_two_models_rereads_both_and_reaches_both_event_streams() {
     let (mut users, mut moments) = (users_spec(), moments_spec());
     for spec in [&mut users, &mut moments] {
-        spec.changes.push(ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, id_of: None });
+        spec.changes.push(ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, payload: None, id_of: None });
     }
     users.change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
@@ -332,8 +332,8 @@ async fn one_event_of_an_area_shared_by_two_models_rereads_both_and_reaches_both
 async fn two_reads_on_one_area_reread_once_each_and_deliver_one_event() {
     let (mut users, mut moments) = (users_spec(), moments_spec());
     users.change_feed = Some(change_feed());
-    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, id_of: None });
-    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, id_of: None });
+    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, payload: None, id_of: None });
+    moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, payload: None, id_of: None });
     let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();

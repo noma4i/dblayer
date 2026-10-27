@@ -68,6 +68,34 @@ fn is_truthy(value: &Value) -> bool {
     }
 }
 
+fn validate_payload(fields: &[crate::schema::FieldSpec], input: &Map<String, Value>) -> Result<(), SyncError> {
+    for field in fields.iter().filter(|field| !field.is_local()) {
+        let Some(value) = field.read(input) else {
+            if field.optional { continue; }
+            return Err(SyncError::Event(format!("incomplete payload: missing {}", field.name)));
+        };
+        if value.is_null() && field.nullable { continue; }
+        if field.decode(&value).is_none() {
+            return Err(SyncError::Event(format!("invalid payload field {}", field.name)));
+        }
+        if field.fields.is_empty() { continue; }
+        let values = match &value { Value::Array(values) => values.iter().collect(), other => vec![other] };
+        for value in values {
+            let object = value.as_object().ok_or_else(|| SyncError::Event(format!("invalid payload object {}", field.name)))?;
+            if matches!(field.kind, crate::schema::FieldKind::Union | crate::schema::FieldKind::UnionArray) {
+                let typename = object.get("__typename").and_then(Value::as_str);
+                let variant = field.fields.iter().find(|variant| variant.app_type.as_deref() == typename)
+                    .ok_or_else(|| SyncError::Event(format!("unknown payload variant {}", field.name)))?;
+                validate_payload(&field.shared, object)?;
+                validate_payload(&variant.fields, object)?;
+            } else {
+                validate_payload(&field.fields, object)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SubscriptionStatus {
     pub connects: u32,
@@ -143,9 +171,10 @@ impl Feed {
         }
     }
 
-    async fn invalidation(&self, response: &Response) -> bool {
+    async fn invalidation(&self, response: &Response, generation: Generation) -> bool {
         let Some(data) = response.data.as_ref() else { return false };
         let Some((_, feed)) = self.inner.change_feed().filter(|(_, feed)| feed.subscription == self.def.operation) else { return false };
+        if generation != self.inner.db.generation() { return true; }
         let Some(changes) = root_value(data, &feed.root).and_then(Value::as_array) else {
             locked(&self.status).rejected += 1;
             return true;
@@ -155,15 +184,10 @@ impl Feed {
                 locked(&self.status).rejected += 1;
                 continue;
             };
-            let mut targets: BTreeMap<String, Vec<crate::schema::ChangeRead>> = BTreeMap::new();
-            for spec in self.inner.db.shared.specs.values() {
-                let reads: Vec<_> = spec.changes.iter().filter(|read| read.area == area).cloned().collect();
-                if !reads.is_empty() { targets.insert(spec.key.to_string(), reads); }
-            }
-            if targets.is_empty() {
+            let Some(targets) = self.inner.change_targets.get(area) else {
                 locked(&self.status).rejected += 1;
                 continue;
-            }
+            };
             let Ok(row_id) = RowId::new(id) else {
                 locked(&self.status).rejected += 1;
                 continue;
@@ -171,8 +195,22 @@ impl Feed {
             let derived: Vec<(String, crate::schema::ChangeRead)> = targets.iter().flat_map(|(model, reads)| reads.iter().filter(|read| read.id_of.is_some()).map(|read| (model.clone(), read.clone()))).collect();
             let sources_before: Vec<Option<RowId>> = derived.iter().map(|(_, read)| self.source_id(read, &row_id)).collect();
             let mut settled: BTreeMap<String, bool> = BTreeMap::new();
-            for (model, reads) in &targets {
-                let direct: Vec<_> = reads.iter().filter(|read| read.id_of.is_none()).cloned().collect();
+            for (model, reads) in targets {
+                for read in reads.iter().filter(|read| read.payload.is_some()) {
+                    let result = self.payload_target(model, read, change, area, kind, &row_id, generation).await;
+                    match result {
+                        Ok(()) => { settled.insert(model.clone(), true); }
+                        Err(_) => {
+                            settled.insert(model.clone(), false);
+                            locked(&self.status).rejected += 1;
+                            self.inner.publish_model_gap(model);
+                        }
+                    }
+                }
+            }
+            for (model, reads) in targets {
+                if generation != self.inner.db.generation() { return true; }
+                let direct: Vec<_> = reads.iter().filter(|read| read.id_of.is_none() && read.payload.is_none()).cloned().collect();
                 if direct.is_empty() { continue; }
                 let ok = self.reread_target(model, &direct, area, kind, id, &row_id).await;
                 settled.insert(model.clone(), ok);
@@ -195,6 +233,33 @@ impl Feed {
             }
         }
         true
+    }
+
+    async fn payload_target(&self, model: &str, read: &crate::schema::ChangeRead, change: &Value, area: &str, kind: &str, event_id: &RowId, generation: Generation) -> Result<(), SyncError> {
+        let terminal = read.removes_on.iter().any(|removal| removal == kind);
+        let node = if terminal { Map::new() } else {
+            let path = read.payload.as_deref().ok_or_else(|| SyncError::Event("missing payload path".into()))?;
+            root_value(change, path).and_then(Value::as_object).cloned().ok_or_else(|| SyncError::Event(format!("missing full payload {model}.{path}")))?
+        };
+        let id = if terminal { event_id.clone() } else {
+            node.get("id").and_then(read_id).ok_or_else(|| SyncError::Event(format!("missing payload id for {model}")))?
+        };
+        let before = self.inner.has_event_readers(model).then(|| self.inner.db.find(model, &id));
+        if !terminal {
+            let spec = self.inner.db.spec(model)?;
+            let mut related = Vec::new();
+            let input = super::normalize::nested_input(&self.inner.db, model, &node, &mut related)?;
+            validate_payload(&spec.fields, &input)?;
+        }
+        let definition = Arc::new(SubscriptionDef { model: model.to_string(), effect: if terminal { EventEffect::Destroy } else { EventEffect::Upsert }, ..(*self.def).clone() });
+        let (_, held_files) = self.try_apply(vec![Pending { definition, bucket: String::new(), id: id.clone(), node, generation }], generation)?;
+        self.inner.discard_files(held_files).await?;
+        if let Some(before) = before {
+            if !self.inner.publish_rows(model, area, kind, id.as_str(), before, self.inner.db.find(model, &id)) {
+                return Err(SyncError::Event("payload event could not be published".into()));
+            }
+        }
+        Ok(())
     }
 
     fn source_id(&self, read: &crate::schema::ChangeRead, event_id: &RowId) -> Option<RowId> {
@@ -491,6 +556,7 @@ impl Feed {
     }
 
     async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle) -> SubscriptionFailureKind {
+        let generation = self.inner.db.generation();
         let mut pending: Vec<(Arc<SubscriptionDef>, Duration, Vec<Pending>)> = Vec::new();
         loop {
             let deadline = pending.iter().map(|(_, deadline, _)| *deadline).min();
@@ -513,7 +579,7 @@ impl Feed {
                     Some(SubscriptionEvent::Next(response)) => {
                         lifecycle.handle(Event::Next);
                         self.publish(lifecycle);
-                        let invalidation = self.invalidation(&response).await;
+                        let invalidation = self.invalidation(&response, generation).await;
                         let mut items = Vec::new();
                         for feed in self.recipients() {
                             if !feed.apply_event(&response).await && !invalidation {

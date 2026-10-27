@@ -74,7 +74,7 @@ async fn shared_batch_merges_nested_partial_rows_before_admission() {
 async fn shared_changes_do_not_suppress_ephemeral_or_reread_definitions() {
     let mut users = users_spec();
     users.change_feed = Some(crate::schema::ChangeFeed { subscription:"Signal".into(), root:"signal.changes".into(), ..change_feed() });
-    users.changes.push(crate::schema::ChangeRead { area:"USER".into(), relation:"current".into(), parameter:None, removes_on:vec![], observed:false, id_of:None });
+    users.changes.push(crate::schema::ChangeRead { area:"USER".into(), relation:"current".into(), parameter:None, removes_on:vec![], observed:false, payload:None, id_of:None });
     users.listens = vec![
         serde_json::from_value(json!({"subscription":"Signal", "root":"signal.presence", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}})).unwrap(),
         serde_json::from_value(json!({"subscription":"Signal", "root":"signal.reread", "apply":{"effect":"reread", "via":"current"}})).unwrap(),
@@ -307,7 +307,7 @@ async fn declared_removals_keep_created_and_updated_node_reads() {
 async fn change_ids_reread_registered_nodes_and_count_undeclared_areas() {
     let original = super::node_tests::node_rig();
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
-    specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None, removes_on: vec![], observed: false, id_of: None });
+    specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None, removes_on: vec![], observed: false, payload: None, id_of: None });
     specs.iter_mut().find(|spec| spec.key.as_str() == "messages").unwrap().changes.push(serde_json::from_value(json!({"area":"CHAT", "relation":"transcode_status", "parameter":null, "removes_on":["DELETED"]})).unwrap());
     specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
@@ -371,8 +371,8 @@ async fn a_shared_change_area_reads_each_declared_node_once() {
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
     for spec in &mut specs {
         let relation = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One)).unwrap().name.clone();
-        spec.changes.push(crate::schema::ChangeRead { area:"REACTION".into(), relation: relation.clone(), parameter:None, removes_on: vec![], observed: false, id_of: None });
-        spec.changes.push(crate::schema::ChangeRead { area:"MESSAGE".into(), relation, parameter:None, removes_on: vec!["DELETED".into(), "ACCESS_REVOKED".into()], observed: false, id_of: None });
+        spec.changes.push(crate::schema::ChangeRead { area:"REACTION".into(), relation: relation.clone(), parameter:None, removes_on: vec![], observed: false, payload: None, id_of: None });
+        spec.changes.push(crate::schema::ChangeRead { area:"MESSAGE".into(), relation, parameter:None, removes_on: vec!["DELETED".into(), "ACCESS_REVOKED".into()], observed: false, payload: None, id_of: None });
     }
     specs[0].change_feed = Some(change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
@@ -837,7 +837,7 @@ async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_
         let directory = tempfile::tempdir().unwrap();
         let mut specs = specs();
         let moments = specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap();
-        moments.changes.push(crate::schema::ChangeRead { area: "MOMENT".into(), relation: "by_user".into(), parameter: None, removes_on: Vec::new(), observed: false, id_of: None });
+        moments.changes.push(crate::schema::ChangeRead { area: "MOMENT".into(), relation: "by_user".into(), parameter: None, removes_on: Vec::new(), observed: false, payload: None, id_of: None });
         moments.change_feed = Some(change_feed());
         let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
         rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));

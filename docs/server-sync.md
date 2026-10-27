@@ -522,7 +522,19 @@ What a refresh does, in one commit:
 - Rows that are missing from the response leave the list but stay in the database, because they may belong to other lists. A row is deleted when the server says so (`delete_if:`, a null node, a delete event).
 - A failed request changes nothing.
 
-The encrypted event carries identifiers. `changed_by` selects the HTTP reread, and its response updates the database in the usual way.
+An event can carry identifiers or full model rows. Without `payload`, `changed_by` always forces its declared HTTP reread, regardless of freshness.
+`changed_by "MESSAGE", via: :node, payload: "chat"` applies the full Chat at the event item's `chat` path.
+Declare `payload: "message"` on Message too for zero node requests when both rows are present.
+All payload targets commit before any declared HTTP target, including targets derived through `id_of`.
+The core indexes targets by area when the models are registered, without scanning unrelated models for each event.
+Missing or incomplete payloads are rejected as application errors. They never trigger an HTTP fallback.
+An active model event reader receives a missed-event notice when its payload cannot be applied.
+`removes_on` handles terminal kinds before reading their payload, so a deleted Message can carry null while its Chat still updates.
+Declare `server_revision :serverRevision` with a required integer attribute on a versioned model.
+The core drops a server row whose revision is lower than its stored revision. Equal or higher revisions apply.
+The same comparison covers payloads, node responses and pages. The integer remains exact through SQLite, Swift and Kotlin.
+Payloads from a subscription's previous database generation are discarded after reset.
+Remove manual Chat rereads and list refetches after MESSAGE when these payload declarations supply both rows.
 Events of the plain transport with a full row save that row directly. `insert_on: [:event, :response]` adds such a row to loaded selections that match its `where` columns, and does the same for rows from operation responses (`upsert`), including cached rows absent from matching loaded windows. Existing members keep their places.
 A scope parameter without `where` needs explicit `membership` to accept event rows.
 `membership list: { contains: :lists }` selects windows whose list parameter occurs in the row array.

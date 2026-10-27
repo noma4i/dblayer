@@ -60,6 +60,7 @@ pub enum TypeKind {
 pub struct Schema {
     pub types: HashMap<String, TypeKind>,
     pub query: String,
+    pub subscription: String,
     pub implementers: HashMap<String, Vec<String>>,
     pub one_of: std::collections::HashSet<String>,
 }
@@ -68,13 +69,14 @@ impl Schema {
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let document = schema::parse_schema::<String>(&text).map_err(|error| error.to_string())?;
-        let mut loaded = Self { query: "Query".to_string(), ..Self::default() };
+        let mut loaded = Self { query: "Query".to_string(), subscription: "Subscription".to_string(), ..Self::default() };
         for definition in &document.definitions {
             match definition {
                 Definition::SchemaDefinition(declared) => {
                     if let Some(name) = &declared.query {
                         loaded.query = name.clone();
                     }
+                    if let Some(name) = &declared.subscription { loaded.subscription = name.clone(); }
                 }
                 Definition::TypeDefinition(declared) => loaded.add(declared),
                 _ => {}

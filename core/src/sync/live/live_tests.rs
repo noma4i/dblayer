@@ -148,7 +148,7 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
 #[tokio::test(start_paused = true)]
 async fn changes_declarations_share_one_subscription_until_the_last_reader_leaves() {
     let mut spec = users_spec();
-    spec.changes.push(crate::schema::ChangeRead { area: "USER".into(), relation: "current".into(), parameter: None, removes_on: vec![], observed: false, id_of: None });
+    spec.changes.push(crate::schema::ChangeRead { area: "USER".into(), relation: "current".into(), parameter: None, removes_on: vec![], observed: false, payload: None, id_of: None });
     let mut serialized = serde_json::to_value(spec).unwrap();
     serialized["change_feed"] = json!({"subscription":"RecordEvents", "root":"recordEvents.entries", "area":"topic", "kind":"action", "id":"recordId"});
     let spec = serde_json::from_value(serialized).unwrap();

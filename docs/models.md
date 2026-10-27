@@ -749,7 +749,67 @@ model Chat do
   changed_by "CHAT", via: :observed
 end
 ```
-An event that names a row of another model rereads the node of the row that row points to. `id_of: { of: Message, field: :chatId }` makes the event of a message reread `Chat.node(chatId)`:
+Full event rows use `payload` paths relative to each item in `changes`:
+
+```ruby
+model Chat do
+  attribute :title, :string
+  attribute :serverRevision, :int, from: "revision"
+  server_revision :serverRevision
+  attribute :lists, [:string]
+  scope :node, node: :one do
+    parameter :id, :id
+    query "ChatNode"
+    variables id: :id
+  end
+  changes "RecordEvents", from: "recordEvents.entries", area: "topic", kind: "action", id: "recordId"
+  changed_by "MESSAGE", via: :node, payload: "chat"
+  scope :list, insert_on: [:event, :response, :node] do
+    parameter :list, :string
+    membership list: { contains: :lists }
+    query "ChatList"
+    response from: "chats", shape: :list
+  end
+end
+
+model Message do
+  attribute :chatId, :id
+  attribute :text, :string
+  scope :node, node: :one do
+    parameter :id, :id
+    query "MessageNode"
+    variables id: :id
+  end
+  changed_by "MESSAGE", via: :node, payload: "message", removes_on: ["DELETED", "ACCESS_REVOKED"]
+end
+```
+
+Pass the GraphQL schema and subscription documents to the generator.
+It checks payload paths, the target model type, id selection and declared fields, including nested objects.
+The payload must contain every required model field, including nullable fields. Missing data rejects the event without an HTTP fallback.
+`payload` requires a node scope and cannot combine with `id_of`, `parameter` or `via: :observed`.
+`server_revision` names one required, non-local integer attribute. The generator rejects other fields and repeated declarations.
+Map GraphQL Int64 with `scalar :Int64, as: :long`.
+SQLite stores the attribute as an integer, Swift reads a 64-bit `Int`, and Kotlin reads `Long`.
+An incoming server revision below the stored value drops the row before writing data or membership.
+An equal or greater revision applies. A row without a stored revision accepts its first version.
+Payload, node and page responses use this comparison. Optimistic writes retain their existing rules.
+Payloads commit before HTTP rereads. A reset rejects events from the old subscription generation.
+Terminal kinds in `removes_on` delete the row without requiring a payload.
+Both payload declarations remove all MESSAGE node requests. Model events retain their active-reader snapshots and never replay earlier events.
+
+```swift
+let events = try await Chat.events()
+let chats = try Chat.list("PRIMARY")
+```
+
+```kotlin
+val events = Chat.events()
+val chats = Chat.list("PRIMARY")
+```
+
+No app refetch follows a MESSAGE.
+For an identifier-only event, explicitly declare `id_of: { of: Message, field: :chatId }` to reread `Chat.node(chatId)`:
 
 ```ruby
 model Chat do

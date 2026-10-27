@@ -66,7 +66,7 @@ pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
 pub use subscribe::{EventEffect, Updates, SubscriptionDef, SubscriptionStatus};
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::AtomicI64;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
@@ -129,6 +129,7 @@ pub(crate) struct Inner {
     pub config: SyncConfig,
     pub operations: Mutex<HashMap<String, Arc<OperationDef>>>,
     pub change_feed: Option<(String, crate::schema::ChangeFeed)>,
+    pub change_targets: BTreeMap<String, BTreeMap<String, Vec<crate::schema::ChangeRead>>>,
     pub flights: Mutex<Flights>,
     pub counters: Mutex<Counters>,
     pub landing: Mutex<()>,
@@ -208,6 +209,12 @@ impl Sync {
         let lifetime = Lifetime { _stop: stop, owner: owner.clone() };
         let connectivity = db.connectivity();
         let change_feed = db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| (spec.key.to_string(), feed.clone())));
+        let mut change_targets: BTreeMap<String, BTreeMap<String, Vec<crate::schema::ChangeRead>>> = BTreeMap::new();
+        for spec in db.shared.specs.values() {
+            for read in &spec.changes {
+                change_targets.entry(read.area.clone()).or_default().entry(spec.key.to_string()).or_default().push(read.clone());
+            }
+        }
         let inner = Inner {
             stopped,
             db,
@@ -216,6 +223,7 @@ impl Sync {
             config,
             operations: Mutex::new(HashMap::new()),
             change_feed,
+            change_targets,
             flights: Mutex::new(Flights::default()),
             counters: Mutex::new(Counters::default()),
             landing: Mutex::new(()),
@@ -320,6 +328,8 @@ mod resume_tests;
 mod run_tests;
 #[cfg(test)]
 mod change_source_tests;
+#[cfg(test)]
+mod event_payload_tests;
 #[cfg(test)]
 mod subscribe_tests;
 #[cfg(test)]

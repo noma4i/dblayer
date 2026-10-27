@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Apply full event rows with `changed_by payload` on Swift and Kotlin.
+- Declare `server_revision` to reject older server rows before changing data or list membership.
 - `marker` and `tail` store media markers and automatically finish loading new pages on both platforms.
 - Limit derived preloads with `preload ..., limit: N`.
 - Scopes with `members_complete: true` automatically load all members by cursor.

@@ -1,5 +1,20 @@
 # App migration
 
+## Event payloads
+
+Replace Chat's MESSAGE `id_of: { of: Message, field: :chatId }` declaration with `payload: "chat"` on its node scope.
+Add `payload: "message"` to Message's MESSAGE node declaration and retain its terminal `removes_on` kinds.
+Add `attribute :serverRevision, :int, from: "revision"` and `server_revision :serverRevision` to Chat.
+Map the server's Int64 scalar with `scalar :Int64, as: :long`.
+Select the full Chat projection, including revision and list membership, inside `EntityChange.chat` in the subscription document.
+Select the full Message projection inside `EntityChange.message`. Terminal message events can provide null there.
+Use the same Chat revision field in node and page documents.
+Regenerate Swift and Kotlin models with the schema and operation documents.
+Remove the manual Chat reread and list refetch after MESSAGE on both platforms.
+Keep `Chat.events()` and the generated list scope. The core applies payload rows, membership and event snapshots.
+Without a payload declaration, the declared identifier-based read remains forced. There is no TTL skip or automatic fallback.
+Rust `ChangeRead` literals add `payload: None` for identifier-based reads. `ModelSpec` adds the optional `server_revision` field.
+
 ## Media library marker
 
 Add `marker "chatMediaState", from: "node.mediaLibrary", fields: [:revision, :visualCount, :audioCount, :giftCount], sequence: :latestSequence` to the media library scope.

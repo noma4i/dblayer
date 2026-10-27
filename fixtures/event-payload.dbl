@@ -1,0 +1,30 @@
+model Chat do
+  attribute :title, :string
+  attribute :serverRevision, :int, from: "revision"
+  server_revision :serverRevision
+  attribute :lists, [:string]
+  scope :node, node: :one do
+    parameter :id, :id
+    query "ChatNode"
+    variables id: :id
+  end
+  scope :list, insert_on: [:event, :response, :node] do
+    parameter :list, :string
+    membership list: { contains: :lists }
+    query "ChatList"
+    response from: "chats", shape: :list
+  end
+  changed_by "MESSAGE", via: :node, payload: "chat"
+  changed_by "CHAT", via: :node, removes_on: ["DELETED", "ACCESS_REVOKED"]
+end
+
+model Message do
+  attribute :text, :string
+  attribute :chatId, :id
+  scope :node, node: :one do
+    parameter :id, :id
+    query "MessageNode"
+    variables id: :id
+  end
+  changed_by "MESSAGE", via: :node, payload: "message", removes_on: ["DELETED", "ACCESS_REVOKED"]
+end

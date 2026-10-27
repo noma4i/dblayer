@@ -1625,7 +1625,7 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
     let owner = Owner(cx.schema.map(|_| node.name.clone()));
     let mut decl = ModelDecl {
         name: node.name.clone(), pos: Pos { line: node.line, column: node.column }, file: node.file, storage, expires_in, attributes: Vec::new(), ephemeral: Vec::new(), cloud: None,
-        indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: Vec::new(), changed_by: Vec::new(), operations: Vec::new(),
+        indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: Vec::new(), changed_by: Vec::new(), server_revision: None, operations: Vec::new(),
     };
     for call in &node.body {
         let mut line = Line::of(call);
@@ -1689,6 +1689,14 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
                     decl.changes.push(ChangesDecl { pos: line.pos, subscription, from, area, kind, id });
                 }
             }
+            "server_revision" => {
+                no_block(cx, call);
+                let arg = exactly_one_arg(cx, &line, "an integer attribute");
+                let field = arg.and_then(|arg| symbol(cx, arg, "server revision"));
+                if decl.server_revision.is_some() { cx.fail(line.pos, "duplicate server_revision"); }
+                decl.server_revision = field;
+                line.finish(cx);
+            }
             "changed_by" => {
                 no_block(cx, call);
                 let arg = exactly_one_arg(cx, &line, "a server area like `changed_by \"CHAT\"`");
@@ -1696,6 +1704,7 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
                 let via = line.opt(cx, "via").and_then(|pair| symbol(cx, &pair.value, "`via`"));
                 let parameter = line.opt(cx, "parameter").and_then(|pair| symbol(cx, &pair.value, "`parameter`"));
                 let removes_on = line.opt(cx, "removes_on").and_then(|pair| string_list(cx, &pair.value, "`removes_on`"));
+                let payload = line.opt(cx, "payload").and_then(|pair| string(cx, &pair.value, "`payload`"));
                 let id_of = line.opt(cx, "id_of").and_then(|pair| match &pair.value.item {
                     Value::Hash(parts) if parts.len() == 2 && parts.iter().any(|part| part.key == "of") && parts.iter().any(|part| part.key == "field") => {
                         let model = parts.iter().find(|part| part.key == "of").and_then(|part| konst(cx, &part.value, "`of:`"));
@@ -1710,7 +1719,7 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
                 line.finish(cx);
                 let via = require(cx, &line, "via", via);
                 if let (Some(area), Some(via)) = (area, via) {
-                    decl.changed_by.push(ChangedByDecl { pos: line.pos, area, via, parameter, removes_on, id_of });
+                    decl.changed_by.push(ChangedByDecl { pos: line.pos, area, via, parameter, removes_on, id_of, payload });
                 }
             }
             "operation" => decl.operations.extend(operation(cx, call)),

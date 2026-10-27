@@ -84,6 +84,7 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
         kind: feed.kind.item.clone(),
         id: feed.id.item.clone(),
     });
+    model.server_revision = node.server_revision.clone();
     model.changes = node.changed_by.iter().map(|change| dblayer::schema::ChangeRead {
         area: change.area.clone(),
         relation: change.via.clone(),
@@ -91,6 +92,7 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
         removes_on: change.removes_on.clone().unwrap_or_default(),
         observed: change.via == "observed",
         id_of: change.id_of.as_ref().map(|(model, field)| dblayer::schema::ChangeIdOf { model: model.clone(), field: field.clone() }),
+        payload: change.payload.clone(),
     }).collect();
     model.actions = node.operations.iter().map(|operation| build_operation(operation, &node.name)).collect();
     if model.field("id").is_none() {

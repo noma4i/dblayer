@@ -11,6 +11,11 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
     }
     let mut seen: std::collections::HashMap<(usize, &str, bool), (usize, usize, usize)> = std::collections::HashMap::new();
     for (index, (node, model)) in nodes.iter().zip(models).enumerate() {
+        if let Some(field) = &model.server_revision {
+            if !model.field(field).is_some_and(|field| matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Int }) && !field.optional && !field.nullable && !field.is_local()) {
+                errors.push(at(node.file, node.pos, "server_revision requires a required integer attribute"));
+            }
+        }
         for (decl, change) in node.changed_by.iter().zip(&model.changes) {
             let mut report = |message: String| errors.push(at(node.file, decl.pos, message));
             if let Some((file, line, column)) = seen.get(&(index, change.area.as_str(), change.observed)) {
@@ -20,6 +25,12 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
             }
             if feeds.is_empty() {
                 report("changed_by requires a changes subscription".into());
+            }
+            if let Some(path) = &change.payload {
+                if path.split('.').any(str::is_empty) { report("payload path has an empty segment".into()); }
+                if change.observed || change.id_of.is_some() || change.parameter.is_some() {
+                    report("payload requires a node read without id_of or parameter".into());
+                }
             }
             if change.observed {
                 if decl.removes_on.is_some() { report("removes_on cannot be combined with `via: :observed`".into()); }
@@ -35,6 +46,7 @@ pub(super) fn check_changes(nodes: &[ModelDecl], models: &[ModelSpec], errors: &
                 report(format!("relation `{}` has no remote read", change.relation));
             }
             let node_read = relation.node == Some(NodeRead::One);
+            if change.payload.is_some() && !node_read { report("payload requires a via scope declared with `node: :one`".into()); }
             if decl.removes_on.is_some() && !node_read {
                 report("removes_on requires a via scope declared with `node: :one`".into());
             }

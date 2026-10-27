@@ -14,6 +14,13 @@ impl Db {
             return Ok(Some(patch.clone()));
         }
         let stored = reader.stored_row(model, id.as_str())?;
+        let spec = self.shared.spec(model)?;
+        let versioned = spec.server_revision.as_ref().and_then(|field| patch.get(field)).and_then(Value::as_i64);
+        let current = spec.server_revision.as_ref().and_then(|field| stored.as_ref()?.row.get(field)).and_then(Value::as_i64);
+        if matches!((versioned, current), (Some(incoming), Some(current)) if incoming < current) {
+            *drops += 1;
+            return Ok(None);
+        }
         let tombstone = reader.tombstone_seq(model, id.as_str())?;
         let (mut row, mut dropped) = match admit_upsert(base, stored.as_ref(), tombstone, patch.clone()) {
             UpsertAdmission::Row { row, dropped_fields } => (row, !dropped_fields.is_empty()),

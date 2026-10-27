@@ -341,6 +341,7 @@ pub struct ChangedByDecl {
     pub parameter: Option<String>,
     pub removes_on: Option<Vec<String>>,
     pub id_of: Option<(String, String)>,
+    pub payload: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -496,6 +497,7 @@ pub struct ModelDecl {
     pub subscriptions: Vec<SubscribeDecl>,
     pub changes: Vec<ChangesDecl>,
     pub changed_by: Vec<ChangedByDecl>,
+    pub server_revision: Option<String>,
     pub operations: Vec<OperationDecl>,
 }
 

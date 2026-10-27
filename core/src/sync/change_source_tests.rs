@@ -12,8 +12,8 @@ async fn chat_of_message_rig() -> (Rig, super::subscribe::Updates) {
     let original = node_rig();
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
     let id_of = Some(ChangeIdOf { model: "messages".into(), field: "chatId".into() });
-    specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "MESSAGE".into(), relation: "node".into(), parameter: None, removes_on: vec![], observed: false, id_of });
-    specs.iter_mut().find(|spec| spec.key.as_str() == "messages").unwrap().changes.push(crate::schema::ChangeRead { area: "MESSAGE".into(), relation: "transcode_status".into(), parameter: None, removes_on: vec!["DELETED".into()], observed: false, id_of: None });
+    specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "MESSAGE".into(), relation: "node".into(), parameter: None, removes_on: vec![], observed: false, payload: None, id_of });
+    specs.iter_mut().find(|spec| spec.key.as_str() == "messages").unwrap().changes.push(crate::schema::ChangeRead { area: "MESSAGE".into(), relation: "transcode_status".into(), parameter: None, removes_on: vec!["DELETED".into()], observed: false, payload: None, id_of: None });
     specs[0].change_feed = Some(super::subscribe_tests::change_feed());
     let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
     for operation in original.sync.inner.operations.lock().unwrap().values() { rig.sync.register((**operation).clone()); }

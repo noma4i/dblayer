@@ -67,7 +67,7 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     model.relations.push(relation);
     let mut models = vec![model];
     if shared_changes {
-        models[0].changes.push(crate::schema::ChangeRead { area: "NOTICE".into(), relation: "recent".into(), parameter: None, removes_on: vec![], observed: false, id_of: None });
+        models[0].changes.push(crate::schema::ChangeRead { area: "NOTICE".into(), relation: "recent".into(), parameter: None, removes_on: vec![], observed: false, payload: None, id_of: None });
         let mut other = models[0].clone();
         other.key = crate::identity::ModelKey::new("AnotherNotice");
         models.push(other);

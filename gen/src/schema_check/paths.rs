@@ -8,6 +8,59 @@ pub(super) fn segments_of(path: &str) -> Option<Vec<&str>> {
 }
 
 impl<'a> Run<'a> {
+    pub(super) fn check_change_payloads(&mut self, node: &'a ModelDecl, nodes: &'a [ModelDecl]) {
+        let Some(feed) = nodes.iter().find_map(|node| node.changes.first()) else { return };
+        let operation = feed.subscription.as_str();
+        for change in node.changed_by.iter().filter(|change| change.payload.is_some()) {
+            let path = change.payload.as_deref().unwrap_or_default();
+            let Some(event) = self.follow_operation(node.file, change.pos, "changes", operation, &feed.from.item) else {
+                self.fail(node.file, change.pos, format!("payload requires subscription document `{operation}`"));
+                continue;
+            };
+            let mut current = self.schema.subscription.clone();
+            let mut valid = true;
+            for name in &event.names {
+                match self.schema.field(&current, name) {
+                    Ok(ty) => current = ty.name().to_string(),
+                    Err(message) => { self.fail(node.file, change.pos, message); valid = false; break; }
+                }
+            }
+            if !valid { continue; }
+            let prefix: Vec<_> = feed.from.item.split('.').collect();
+            let Some(payload) = self.follow_inside(node.file, change.pos, "payload", operation, &prefix, &event.selects, path) else { continue };
+            let mut reached = None;
+            for name in &payload.names {
+                match self.schema.field(&current, name) {
+                    Ok(ty) if !ty.is_list() => { current = ty.name().to_string(); reached = Some(ty); }
+                    Ok(_) => { self.fail(node.file, change.pos, "payload must name one model object".into()); valid = false; break; }
+                    Err(message) => { self.fail(node.file, change.pos, message); valid = false; break; }
+                }
+            }
+            if !valid || reached.is_none() { continue; }
+            let expected = node.scopes.iter().find(|scope| scope.name == change.via).and_then(|scope| self.resolve(node, scope));
+            if expected.as_deref() != Some(current.as_str()) {
+                self.fail(node.file, change.pos, format!("payload `{path}` returns `{current}`, expected model `{}`", node.name));
+                continue;
+            }
+            let deeper: Vec<_> = prefix.iter().copied().chain(path.split('.')).collect();
+            self.follow_inside(node.file, change.pos, "payload id", operation, &deeper, &payload.selects, "id");
+            self.require_payload_fields(node, &node.attributes, operation, &deeper, &payload.selects);
+            let fields: Vec<_> = node.attributes.iter().collect();
+            self.check_fields(node, &fields, &current, &Scope::inside(node.file, payload.selects), &mut BTreeSet::new(), &mut Vec::new());
+        }
+    }
+
+    fn require_payload_fields(&mut self, node: &'a ModelDecl, fields: &'a [AttributeDecl], operation: &str, prefix: &[&str], starts: &[&'a Select]) {
+        for field in fields.iter().filter(|field| !field.local) {
+            let Some(path) = self.path_of(node, field, &field.name).map(|path| path.join(".")) else { continue };
+            let Some(found) = self.follow_inside(node.file, field.pos, "payload field", operation, prefix, starts, &path) else { continue };
+            if let Some((_, Body::Fields(children))) = self.body_of(field, node.file) {
+                let deeper: Vec<_> = prefix.iter().copied().chain(path.split('.')).collect();
+                self.require_payload_fields(node, children, operation, &deeper, &found.selects);
+            }
+        }
+    }
+
     pub(super) fn follow_quiet(&self, operation: &str, starts: Option<&[&'a Select]>, segments: &[&str]) -> Option<Result<Followed<'a>, Miss>> {
         let documents: &'a Operations = self.operations;
         let top;
