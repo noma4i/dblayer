@@ -17,8 +17,6 @@ The owner chooses each version and authorizes publication. Use a minor version f
 3. After the owner authorizes publication, run `make release-publish VERSION=X.Y.Z`. This creates and pushes the tag, pushes `master`, creates the GitHub Release, checks its assets, downloads them, and verifies their checksums.
 4. A failure before the tag can be fixed and rerun. After the tag, fix forward with a new patch version. Never move a published tag.
 
-The repository is private. Set a valid token in `GH_TOKEN` for downloads and GitHub operations. Never write the token to a file or release text.
-
 ## Release text
 
 Use the version's `CHANGELOG.md` section without its heading. Follow it with a `## Compiled parts` block listing each file, its contents, its destination, the SwiftPM checksum for the Apple archive, and the checksum command. The script generates the release notes and checksum data.
