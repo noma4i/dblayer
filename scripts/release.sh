@@ -20,26 +20,29 @@ for check in check_docs check_invariants check_zoo; do bash "scripts/$check.sh" 
 bash scripts/build_ios.sh
 bash scripts/build_kotlin.sh --abis
 bash scripts/build_kotlin.sh --jvm
-cargo build --manifest-path Cargo.toml -p dblayer-gen
+for target in aarch64-apple-darwin x86_64-apple-darwin; do
+  cargo build --release --manifest-path Cargo.toml -p dblayer-gen --target "$target"
+done
 
 stage="$root/target/release-$version"
 [ ! -e "$stage" ] || fail "output already exists: $stage"
 mkdir -p "$stage"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
 (cd swift && zip -qry "$stage/DBlayerFFI.xcframework.zip" DBlayerFFI.xcframework)
 cp swift/Sources/DBlayer/dblayer.swift "$stage/dblayer.swift"
 (cd kotlin && zip -q "$stage/dblayer-android.zip" src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86_64,x86}/libdblayer.so src/main/kotlin/com/noma4i/dblayer/dblayer.kt)
-cp target/debug/dblayer-gen "$stage/dblayer-gen-macos-arm64"
-chmod +x "$stage/dblayer-gen-macos-arm64"
+lipo -create target/{aarch64-apple-darwin,x86_64-apple-darwin}/release/dblayer-gen -output "$stage/dblayer-gen-macos-universal"
+chmod +x "$stage/dblayer-gen-macos-universal"
 cp target/jvm-build/libdblayer.dylib "$stage/libdblayer-macos-universal.dylib"
-attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblayer-gen-macos-arm64 libdblayer-macos-universal.dylib)
+attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblayer-gen-macos-universal libdblayer-macos-universal.dylib)
 manifest="MANIFEST-$version.txt"
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-for archive in DBlayerFFI.xcframework.zip dblayer-android.zip; do mkdir -p "$tmp/$archive"; unzip -q "$stage/$archive" -d "$tmp/$archive"; done
+archives=(DBlayerFFI.xcframework.zip dblayer-android.zip)
+for archive in "${archives[@]}"; do mkdir -p "$tmp/$archive"; unzip -q "$stage/$archive" -d "$tmp/$archive"; done
 {
   printf 'tag %s\ncommit %s\n' "$version" "$(git rev-parse HEAD)"
   for file in "${attachments[@]}"; do printf '%s %s %s\n' "$(shasum -a 256 "$stage/$file" | cut -d ' ' -f1)" "$(wc -c < "$stage/$file" | tr -d ' ')" "$file"; done
-  for archive in DBlayerFFI.xcframework.zip dblayer-android.zip; do
+  for archive in "${archives[@]}"; do
     while IFS= read -r -d '' file; do printf '%s %s %s:%s\n' "$(shasum -a 256 "$file" | cut -d ' ' -f1)" "$(wc -c < "$file" | tr -d ' ')" "$archive" "${file#"$tmp/$archive/"}"; done < <(find "$tmp/$archive" -type f -print0 | LC_ALL=C sort -z)
   done
 } > "$stage/$manifest"
@@ -53,7 +56,7 @@ cat >> "$stage/NOTES.md" <<NOTES
 - DBlayerFFI.xcframework.zip: Apple libraries. Place in swift/DBlayerFFI.xcframework. SwiftPM checksum: $checksum
 - dblayer.swift: Swift bindings. Place in swift/Sources/DBlayer/dblayer.swift.
 - dblayer-android.zip: four Android ABI libraries and Kotlin bindings. Extract into the Kotlin module.
-- dblayer-gen-macos-arm64: model generator for macOS arm64. Run to generate models.
+- dblayer-gen-macos-universal: release model generator for macOS arm64 and x86_64. Install as dblayer-gen and run to generate models.
 - libdblayer-macos-universal.dylib: JVM library for macOS arm64 and x86_64. Place on the JVM native library path.
 - $manifest: tag, commit, sizes and hashes. Use for inventory.
 - SHA256SUMS: attachment hashes. Check with \`shasum -a 256 -c SHA256SUMS\`.
@@ -69,7 +72,8 @@ check_archs "$tmp/DBlayerFFI.xcframework.zip/DBlayerFFI.xcframework/macos-arm64_
 check_archs "$tmp/DBlayerFFI.xcframework.zip/DBlayerFFI.xcframework/ios-arm64_x86_64-simulator/libdblayer.a" 'arm64 x86_64'
 check_archs "$tmp/DBlayerFFI.xcframework.zip/DBlayerFFI.xcframework/ios-arm64/libdblayer.a" 'arm64'
 check_archs "$stage/libdblayer-macos-universal.dylib" 'arm64 x86_64'
-for archive in DBlayerFFI.xcframework.zip dblayer-android.zip; do unzip -l "$stage/$archive"; done
+check_archs "$stage/dblayer-gen-macos-universal" 'arm64 x86_64'
+for archive in "${archives[@]}"; do unzip -l "$stage/$archive"; done
 for abi in arm64-v8a armeabi-v7a x86_64 x86; do [ -f "$tmp/dblayer-android.zip/src/main/jniLibs/$abi/libdblayer.so" ] || fail "missing Android ABI $abi"; done
 [ -f "$tmp/dblayer-android.zip/src/main/kotlin/com/noma4i/dblayer/dblayer.kt" ] || fail 'missing Kotlin bindings'
 printf 'release artifacts: %s\n' "$stage"

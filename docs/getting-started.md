@@ -11,6 +11,16 @@ Android 13 (API 33) or newer.
 | `cargo-ndk` and Android NDK | Android libraries |
 | JDK 17 and Gradle 9 | Kotlin module |
 
+## Use a release
+
+Download the required files with `gh release download <tag> --repo noma4i/dblayer --pattern <asset>`. Download all assets before running `shasum -a 256 -c SHA256SUMS`.
+
+For Swift, extract `DBlayerFFI.xcframework.zip` into `swift/` and install `dblayer.swift` at `swift/Sources/DBlayer/dblayer.swift`. The archive checksum appears in the release notes.
+
+For Kotlin, extract `dblayer-android.zip` into the `kotlin/` module directory. It holds the four Android libraries and the Kotlin bindings.
+
+Download the generator with `gh release download <tag> --repo noma4i/dblayer --pattern dblayer-gen-macos-universal`. Run it with `dblayer-gen --internal --schema <schema.graphql> swift|kotlin <files.dbl>`.
+
 Use the `rustup` toolchain, not a plain `cargo` from Homebrew, because only `rustup` has the iOS and Android targets:
 
 ```sh

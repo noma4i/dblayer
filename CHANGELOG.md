@@ -3,6 +3,7 @@
 ## 6.12.0 - 2026-10-27
 
 ### Added
+- Attach compiled libraries and a universal generator to GitHub releases.
 - Ship Intel macOS and Intel simulator slices and a universal JVM library.
 - Apply full event rows with `changed_by payload` on Swift and Kotlin.
 - Declare `server_revision` to reject older server rows before changing data or list membership.
