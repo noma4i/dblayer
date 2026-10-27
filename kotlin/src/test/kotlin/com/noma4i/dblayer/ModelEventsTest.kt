@@ -8,11 +8,42 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ModelEventsTest {
+    @Test
+    fun theSameEventsFlowSupportsConcurrentCompletedAndCancelledCollections() = bounded {
+        val transport = MockTransport()
+        reopen(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"}]""")
+        val events = Container.events()
+        val ready = java.util.concurrent.atomic.AtomicIntegerArray(4)
+        fun emit(id: String) = transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"CONTAINER","action":"DELETED","recordId":"$id"}]}}}""")
+        fun collect(reader: Int) = async {
+            events.first { item ->
+                if (item is ModelEventItem.Event && item.event.id == "probe") ready.set(reader, 1)
+                item is ModelEventItem.Event && item.event.id == "target"
+            }
+        }
+        val first = collect(0)
+        val second = collect(1)
+        eventually("both independent readers attach") { emit("probe"); ready.get(0) == 1 && ready.get(1) == 1 }
+        emit("target")
+        assertEquals("target", (first.await() as ModelEventItem.Event).event.id)
+        assertEquals("target", (second.await() as ModelEventItem.Event).event.id)
+        val cancelled = collect(2)
+        eventually("a completed flow can be collected again") { emit("probe"); ready.get(2) == 1 }
+        cancelled.cancelAndJoin()
+        val restarted = collect(3)
+        eventually("a cancelled flow can be collected again") { emit("probe"); ready.get(3) == 1 }
+        emit("target")
+        assertEquals("target", (restarted.await() as ModelEventItem.Event).event.id)
+        assertEquals(listOf("RecordEvents"), transport.calls.map { it.operationName })
+    }
+
     private object RecordEvents : GraphQLOperation {
         override val operationName = "RecordEvents"
         override val document = "subscription RecordEvents { recordEvents { entries { topic action recordId } } }"

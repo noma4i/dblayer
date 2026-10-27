@@ -468,6 +468,7 @@ impl Feed {
                         return SubscriptionFailureKind::Transport;
                     }
                     Some(SubscriptionEvent::Ready) => {
+                        self.opening(Ok(()));
                         lifecycle.handle(Event::Ready);
                         if lifecycle.take_reload() {
                             let models: Vec<_> = self.inner.db.shared.specs.values().filter(|spec| !spec.changes.is_empty() || spec.key.as_str() == self.def.model).map(|spec| spec.key.to_string()).collect();
@@ -521,7 +522,6 @@ impl Feed {
             };
             let kind = match attempt {
                 Ok(mut connection) => {
-                    self.opening(Ok(()));
                     let reconnected = {
                         let mut status = locked(&self.status);
                         status.connects += 1;
@@ -583,12 +583,6 @@ impl Inner {
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
         let first = if self.connectivity.is_online() { self.open_subscription(request.clone()).await } else { None };
-        let opening = match &first {
-            Some(Ok(_)) => Ok(()),
-            Some(Err(error)) => Err(SyncError::Transport(error.clone())),
-            None if self.connectivity.is_online() => Err(SyncError::Cancelled),
-            None => Err(SyncError::Offline),
-        };
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let definition = def.clone();
         let def_root = def.root.clone();
@@ -611,7 +605,6 @@ impl Inner {
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
         let recipients = recipients.into_iter().map(|target| Feed { inner: self.clone(), root_path: target.root.clone().unwrap_or_else(|| operation.root_path.clone()), def: Arc::new(target), recipients: Vec::new(), status: status.clone(), backoff, ready: None }).collect();
         let feed = Feed { inner: self.clone(), def: Arc::new(def), recipients, root_path, status: status.clone(), backoff, ready };
-        feed.opening(opening);
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }

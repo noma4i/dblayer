@@ -31,6 +31,11 @@ Use `matches: { kind: { not: ["SCREENSHOT"] } }` for exclusion.
 Declare ChatAction with the five accepted activity kinds. Declare ChatActivityNotice with `["SCREENSHOT"]` on the same subscription.
 Remove app-side kind switches, receive/stop calls and notice copying. Regenerate both platforms.
 Model-level subscription declarations expose `Model.events()` on Swift and Kotlin.
+Regenerate both platforms and replace the `events` property with `try await Model.events()` on Swift or `Model.events()` on Kotlin.
+Start actions after this call returns: the first reader and server subscription are ready.
+Remove offline retry loops around this call. The library waits for connectivity and owns cancellation and reader release.
+Reusing the returned stream creates an independent reader for each later collection, including after completion or cancellation.
+Handle opening errors with their original `DbError` kind. Later collection failures use `ModelEventItem.failed` or `ModelEventItem.Failed`.
 
 ## Node membership
 

@@ -366,7 +366,7 @@ impl Transport for MockTransport {
         let mut state = self.lock();
         let index = state.streams.len();
         state.streams.push(Stream { operation_name: name.clone(), sent: 0, received: 0, entered: 0, waiting: false, open: true });
-        for event in state.scripts.get(&name).cloned().unwrap_or_default() {
+        for event in state.scripts.get(&name).cloned().unwrap_or_else(|| vec![SubscriptionEvent::Ready]) {
             let _ = sender.send(event);
             state.streams[index].sent += 1;
         }

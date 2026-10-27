@@ -51,6 +51,7 @@ async fn initial_offline_subscription_makes_no_transport_call() {
 #[tokio::test(start_paused = true)]
 async fn ready_then_failure_keeps_growing_backoff() {
     let rig = rig_with_subscription();
+    rig.transport.script_subscription("MomentChanged", vec![]);
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.await_calls("MomentChanged", 1).await;
     for (attempt, ceiling) in [1, 2, 4, 8, 16, 30, 30].into_iter().enumerate() {
@@ -325,6 +326,7 @@ async fn a_server_event_of_equal_values_renews_a_memory_row_and_stays_silent_for
 #[tokio::test(start_paused = true)]
 async fn inv_live_03_repeated_ready_rereads_expired_watched_queries_after_cable_reconnect() {
     let rig = rig_with_subscription();
+    rig.transport.script_subscription("MomentChanged", vec![]);
     for name in ["before", "after"] {
         rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":name}})));
     }
@@ -359,6 +361,7 @@ async fn reconnect_reads_only_expired_watched_nodes() {
                 let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
                 rig.sync.register(super::OperationDef::from_document("MomentNode", "query moment($id: ID!) { node(id: $id) { id text } }").unwrap());
                 rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+                rig.transport.script_subscription("MomentChanged", vec![]);
                 let mut watches = Vec::new();
                 for index in 0..count {
                     let id = format!("m{index}");
@@ -526,6 +529,7 @@ async fn inv_live_03_offline_subscription_waits_without_spending_attempts_and_re
 #[tokio::test(start_paused = true)]
 async fn inv_live_04_repeated_transport_failures_stay_degraded_until_next_after_ready() {
     let rig = rig_with_subscription();
+    rig.transport.script_subscription("MomentChanged", vec![]);
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     for failures in 1..=4 {
         rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));

@@ -5,6 +5,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.coroutines.ensureActive
 
 @Serializable
 enum class SyncState {
@@ -118,10 +119,14 @@ sealed interface ModelEventItem<out Model : DBModel> {
 }
 
 suspend fun <Model : DBModel> ModelDecoder<Model>.openEvents(): kotlinx.coroutines.flow.Flow<ModelEventItem<Model>> {
-    val feed = offCaller { DBlayer.database.openModelEvents(modelName) }
+    val first = java.util.concurrent.atomic.AtomicReference(offCaller { DBlayer.database.openModelEvents(modelName) })
     return kotlinx.coroutines.flow.flow {
+        val feed = first.getAndSet(null) ?: try {
+            offCaller { DBlayer.database.openModelEvents(modelName) }
+        } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Throwable) { emit(ModelEventItem.Failed(error)); return@flow }
         feed.use {
             try {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 while (true) {
                     val next = try {
                         when (val item = it.next() ?: break) {

@@ -71,6 +71,23 @@ extension DBModel {
 
   @concurrent public static func openEvents() async throws -> LiveStream<ModelEventItem<Self>> {
     let feed = try await DB.database.openModelEvents(model: modelName)
+    let first = eventStream(feed)
+    guard !Task.isCancelled else { first.cancel(); throw CancellationError() }
+    return LiveStream(first: first) {
+      do { return eventStream(try await DB.database.openModelEvents(model: modelName)) }
+      catch {
+        let latest = Latest<ModelEventItem<Self>>(merge: nil)
+        latest.put(.failed(error))
+        return LiveStream(receive: {
+          let item = await latest.next()
+          latest.close()
+          return item
+        }, cancel: { latest.close() })
+      }
+    }
+  }
+
+  private static func eventStream(_ feed: ModelEventFeed) -> LiveStream<ModelEventItem<Self>> {
     return LiveStream(receive: {
       let item: WireModelEventItem?
       do { item = try await feed.next() } catch {

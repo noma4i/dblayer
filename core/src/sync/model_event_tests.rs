@@ -64,11 +64,89 @@ async fn opening_events_establishes_the_subscription_or_returns_its_failure() {
     let opened = tokio::time::timeout(std::time::Duration::from_secs(5), failed.sync.open_model_events("chats")).await.expect("opening must report a failed subscription");
     assert!(matches!(opened, Err(super::SyncError::UnknownOperation(operation)) if operation == "Changes"));
     assert!(!failed.sync.inner.has_event_readers("chats"));
+}
 
-    let offline = chat_rig();
-    offline.sync.set_online(false);
-    let opened = tokio::time::timeout(std::time::Duration::from_secs(5), offline.sync.open_model_events("chats")).await.expect("opening offline must not wait for the network");
-    assert!(matches!(opened, Err(super::SyncError::Offline)));
+#[tokio::test(start_paused = true)]
+async fn offline_open_waits_for_connectivity_and_delivers_without_another_open() {
+    let rig = chat_rig();
+    rig.sync.set_online(false);
+    let mut opening = Box::pin(rig.sync.open_model_events("chats"));
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
+    assert_eq!(rig.transport.call_count("Changes"), 0);
+    rig.sync.set_online(true);
+    let events = tokio::time::timeout(std::time::Duration::from_secs(5), opening).await.unwrap().unwrap();
+    emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
+    assert_eq!(expect_event(within(&events).await).id, "c1");
+    assert_eq!(rig.transport.call_count("Changes"), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn opening_waits_for_server_ready_and_reports_a_refusal_before_ready() {
+    for refused in [false, true] {
+        let rig = chat_rig();
+        rig.transport.script_subscription("Changes", vec![]);
+        let mut opening = Box::pin(rig.sync.open_model_events("chats"));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
+        rig.transport.await_consumed("Changes").await;
+        if refused {
+            let error = crate::transport::TransportError::Http { status: 403, body: "refused".into() };
+            rig.transport.emit("Changes", SubscriptionEvent::Failed(crate::transport::SubscriptionFailure::from_error(error.clone())));
+            assert!(matches!(opening.await, Err(super::SyncError::Transport(seen)) if seen == error));
+            assert!(!rig.sync.inner.has_event_readers("chats"));
+        } else {
+            rig.transport.emit("Changes", SubscriptionEvent::Ready);
+            let events = opening.await.unwrap();
+            emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
+            assert_eq!(expect_event(within(&events).await).id, "c1");
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn closing_a_feed_wakes_every_pending_next() {
+    use std::future::Future;
+    use std::task::Poll;
+    let rig = chat_rig();
+    let events = std::sync::Arc::new(rig.sync.open_model_events("chats").await.unwrap());
+    let (waiting, mut ready) = tokio::sync::mpsc::unbounded_channel();
+    let mut readers = tokio::task::JoinSet::new();
+    for _ in 0..2 {
+        let (events, waiting) = (events.clone(), waiting.clone());
+        readers.spawn(async move {
+            let mut next = Box::pin(events.next());
+            std::future::poll_fn(|cx| {
+                assert!(next.as_mut().poll(cx).is_pending());
+                Poll::Ready(())
+            }).await;
+            waiting.send(()).unwrap();
+            next.await
+        });
+    }
+    for _ in 0..2 { tokio::time::timeout(std::time::Duration::from_secs(5), ready.recv()).await.unwrap().unwrap(); }
+    events.close();
+    for _ in 0..2 {
+        let next = tokio::time::timeout(std::time::Duration::from_secs(5), readers.join_next()).await.expect("close must wake each reader").unwrap().unwrap();
+        assert!(next.is_none());
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn abandoning_a_prepared_or_pending_feed_releases_its_subscription() {
+    for pending in [false, true] {
+        let rig = chat_rig();
+        if pending { rig.transport.script_subscription("Changes", vec![]); }
+        let mut opening = Box::pin(rig.sync.open_model_events("chats"));
+        if pending {
+            assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
+            drop(opening);
+        } else {
+            drop(opening.await.unwrap());
+        }
+        assert!(!rig.sync.inner.has_event_readers("chats"));
+        tokio::time::advance(rig.sync.inner.config.live_linger).await;
+        rig.transport.await_cancellations("Changes", 1).await;
+        assert_eq!(rig.sync.inner.live_status("Changes|{}"), None);
+    }
 }
 
 #[tokio::test(start_paused = true)]

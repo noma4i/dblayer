@@ -19,7 +19,67 @@ private struct StaleContainer: DBModel {
   init(wire: WireRow) throws { row = try Container(wire: wire) }
 }
 
+private final class EventReceipts: @unchecked Sendable {
+  private let lock = NSLock()
+  private var seen: [Int: Set<String>] = [:]
+  func record(_ reader: Int, _ id: String) { lock.withLock { _ = seen[reader, default: []].insert(id) } }
+  func contains(_ readers: [Int], _ id: String) -> Bool { lock.withLock { readers.allSatisfy { seen[$0]?.contains(id) == true } } }
+}
+
 extension BridgeProbeTests {
+  @Test(.timeLimit(.minutes(1)))
+  func theSameEventsStreamSupportsConcurrentCompletedAndCancelledIterations() async throws {
+    let transport = MockTransport()
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"}]"#)
+    let events = try await Container.events()
+    let receipts = EventReceipts()
+    func emit(_ id: String) throws {
+      try transport.emit("RecordEvents", json: "{\"data\":{\"recordEvents\":{\"entries\":[{\"topic\":\"CONTAINER\",\"action\":\"DELETED\",\"recordId\":\"\(id)\"}]}}}")
+    }
+    func collect(_ reader: Int) -> Task<Void, Never> {
+      Task {
+        let cursor = Cursor(events)
+        _ = await cursor.first("the reader receives its event") { item in
+          if case .event(let event) = item {
+            receipts.record(reader, event.id)
+            return event.id == (reader == 2 ? "probe" : "target")
+          }
+          return false
+        }
+        if reader == 2 { try? await parkUntilCancelled() }
+      }
+    }
+    let first = collect(0)
+    let second = collect(1)
+    defer { first.cancel(); second.cancel() }
+    await eventually("both independent readers attach") {
+      try? emit("probe")
+      return receipts.contains([0, 1], "probe")
+    }
+    try emit("target")
+    await eventually("both readers receive the same event") { receipts.contains([0, 1], "target") }
+    await first.value
+    await second.value
+    let cancelled = collect(2)
+    await eventually("a completed stream can be collected again") {
+      try? emit("probe")
+      return receipts.contains([2], "probe")
+    }
+    cancelled.cancel()
+    await cancelled.value
+    let restarted = collect(3)
+    defer { restarted.cancel() }
+    await eventually("a cancelled stream can be collected again") {
+      try? emit("probe")
+      return receipts.contains([3], "probe")
+    }
+    try emit("target")
+    await eventually("the restarted reader receives the event") { receipts.contains([3], "target") }
+    await restarted.value
+    #expect(transport.calls.map(\.operationName) == ["RecordEvents"])
+  }
+
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func openTestingHoldsSubscriptionsUntilRegistrationCompletes() async throws {

@@ -20,6 +20,11 @@
 - Replace single-string subscription matches with lists of values.
 - Replace the `events` property with the suspending `events()` call on Swift and Kotlin.
 
+### Fixed
+- Give each event collection an independent reader, including after cancellation or completion.
+- Wait for connectivity and server confirmation when opening model events.
+- Wake every waiting event read on close and preserve opening error kinds.
+
 ## 6.11.0 - 2026-10-27
 
 ### Added

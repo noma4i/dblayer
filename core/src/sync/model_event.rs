@@ -128,7 +128,7 @@ impl ModelEvents {
 
     pub fn close(&self) {
         locked(&self.queue.state).closed = true;
-        self.queue.ready.notify_one();
+        self.queue.ready.notify_waiters();
         for key in locked(&self.keys).drain(..) { self.inner.release_live(&key); }
     }
 }

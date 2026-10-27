@@ -66,9 +66,11 @@ public struct LiveStream<Value: Sendable>: AsyncSequence, Sendable {
   let cancel: @Sendable () -> Void
   let attachment: Attachment?
   let pending: @Sendable () -> Bool
+  private let iterator: (@Sendable () -> AsyncIterator)?
   var hasPending: Bool { pending() }
 
   init(latest: Latest<Value>, attachment: Attachment?) {
+    iterator = nil
     receive = { await latest.next() }
     cancel = { latest.close(); attachment?.cancel() }
     pending = { latest.hasPending }
@@ -76,6 +78,7 @@ public struct LiveStream<Value: Sendable>: AsyncSequence, Sendable {
   }
 
   init(receive: @escaping @Sendable () async -> Value?, cancel: @escaping @Sendable () -> Void) {
+    iterator = nil
     self.receive = receive
     pending = { false }
     let attachment = Attachment(cancel)
@@ -85,16 +88,41 @@ public struct LiveStream<Value: Sendable>: AsyncSequence, Sendable {
 
   static var ended: LiveStream { LiveStream(receive: { nil }, cancel: {}) }
 
+  init(first: LiveStream, reopen: @escaping @Sendable () async -> LiveStream) {
+    let readers = StreamReaders(first)
+    receive = { nil }
+    cancel = { readers.cancel() }
+    attachment = nil
+    pending = { false }
+    iterator = { AsyncIterator(stream: readers.take(), open: reopen) }
+  }
+
   public struct AsyncIterator: AsyncIteratorProtocol {
-    let stream: LiveStream
+    var stream: LiveStream?
+    var open: (@Sendable () async -> LiveStream)? = nil
     public mutating func next() async -> Value? {
-      let stream = stream
+      guard !Task.isCancelled else { stream?.cancel(); return nil }
+      if stream == nil, let open {
+        stream = await open()
+        self.open = nil
+      }
+      guard let stream else { return nil }
       return await withTaskCancellationHandler { await stream.receive() } onCancel: { stream.cancel() }
     }
   }
 
-  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(stream: self) }
+  public func makeAsyncIterator() -> AsyncIterator { iterator?() ?? AsyncIterator(stream: self) }
 
+}
+
+private final class StreamReaders<Value: Sendable>: @unchecked Sendable {
+  private let lock = NSLock()
+  private var first: LiveStream<Value>?
+  private weak var attachment: Attachment?
+
+  init(_ first: LiveStream<Value>) { self.first = first; attachment = first.attachment }
+  func take() -> LiveStream<Value>? { lock.withLock { defer { first = nil }; return first } }
+  func cancel() { lock.withLock { first = nil; return attachment }?.cancel() }
 }
 
 public struct LiveSource<Value: Sendable>: Sendable {
