@@ -3,6 +3,7 @@
 ## 6.12.0 - 2026-10-27
 
 ### Added
+- Ship Intel macOS and Intel simulator slices and a universal JVM library.
 - Apply full event rows with `changed_by payload` on Swift and Kotlin.
 - Declare `server_revision` to reject older server rows before changing data or list membership.
 - Upload durable Blobs before choosing a mutation, with typed consumers, progress and restoration.

@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 bridge="$root/swift"
 build="$root/target/ios-build"
-targets=(aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim)
+targets=(aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-darwin x86_64-apple-ios)
 [ "$#" -le 1 ] || { echo "usage: build_ios.sh [--check | --device]" >&2; exit 2; }
 case "${1:-}" in
   --check) targets=(aarch64-apple-darwin aarch64-apple-ios-sim) ;;
@@ -25,6 +25,7 @@ export MACOSX_DEPLOYMENT_TARGET=14.0
 stamp="$build/SOURCE_HASH"
 outputs=("$bridge/DBlayerFFI.xcframework" "$bridge/Sources/DBlayer/dblayer.swift")
 for target in "${targets[@]}"; do outputs+=("$root/target/$target/release/libdblayer.a"); done
+if [ "$#" -eq 0 ]; then outputs+=("$build/macos/libdblayer.a" "$build/simulator/libdblayer.a"); fi
 if bash "$root/scripts/native_source_hash.sh" --fresh "$stamp" ios "${targets[@]}" -- "${outputs[@]}"; then
   exit 0
 fi
@@ -59,9 +60,16 @@ mv "$generated.gated" "$generated"
 [ "$(grep -cxF -- '    gate.finish()' "$generated")" = 2 ] || { echo "build_ios.sh: the foreign future gate was not inserted twice into dblayer.swift" >&2; exit 1; }
 
 arguments=()
-for target in "${targets[@]}"; do
-  arguments+=(-library "$root/target/$target/release/libdblayer.a" -headers "$build/headers")
-done
+if [ "$#" -eq 0 ]; then
+  mkdir -p "$build/macos" "$build/simulator"
+  lipo -create "$root/target/aarch64-apple-darwin/release/libdblayer.a" "$root/target/x86_64-apple-darwin/release/libdblayer.a" -output "$build/macos/libdblayer.a"
+  lipo -create "$root/target/aarch64-apple-ios-sim/release/libdblayer.a" "$root/target/x86_64-apple-ios/release/libdblayer.a" -output "$build/simulator/libdblayer.a"
+  libraries=("$build/macos/libdblayer.a" "$root/target/aarch64-apple-ios/release/libdblayer.a" "$build/simulator/libdblayer.a")
+else
+  libraries=()
+  for target in "${targets[@]}"; do libraries+=("$root/target/$target/release/libdblayer.a"); done
+fi
+for library in "${libraries[@]}"; do arguments+=(-library "$library" -headers "$build/headers"); done
 xcodebuild -create-xcframework "${arguments[@]}" -output "$bridge/DBlayerFFI.xcframework"
 printf '%s\n' "$hash" > "$stamp"
 echo "xcframework: $bridge/DBlayerFFI.xcframework"

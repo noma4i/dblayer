@@ -7,7 +7,7 @@ Android 13 (API 33) or newer.
 | Tool | Why |
 | ---- | --- |
 | Xcode (iOS 17+, macOS 14+) | Swift package and iOS simulator build |
-| Homebrew `rustup` with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `aarch64-apple-darwin`, `aarch64-linux-android`, `x86_64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android` | Rust core for every platform |
+| Homebrew `rustup` with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`, `aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-linux-android`, `x86_64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android` | Rust core for every platform |
 | `cargo-ndk` and Android NDK | Android libraries |
 | JDK 17 and Gradle 9 | Kotlin module |
 
@@ -45,12 +45,13 @@ The native build fingerprint includes both deployment versions.
 | Command | Does |
 | ------- | ---- |
 | `cargo test` | Rust core and generator tests |
-| `bash scripts/build_ios.sh` | Builds macOS, iOS device and arm64 simulator slices, and generates Swift bindings. No x86_64 simulator slice |
+| `bash scripts/build_ios.sh` | Builds universal macOS and simulator slices, an arm64 iOS device slice, and Swift bindings |
 | `bash scripts/build_ios.sh --device` | CI: builds only the iOS device release slice and Swift bindings |
 | `bash scripts/build_ios.sh --check` | Builds macOS and arm64 simulator release slices for checks |
 | `bash scripts/build_kotlin.sh --release` | CI: builds arm64-v8a and armeabi-v7a release libraries and Kotlin bindings. This is also the default |
 | `bash scripts/build_kotlin.sh --abis` | Local development: explicitly builds all 4 Android ABIs and Kotlin bindings |
 | `bash scripts/build_kotlin.sh --host` | Builds the host debug library and Kotlin bindings for JNA unit tests |
+| `bash scripts/build_kotlin.sh --jvm` | Builds a universal macOS release library for JVM without changing Kotlin bindings |
 | `bash scripts/generate_kotlin_bindings.sh --bindgen <uniffi-bindgen> --library <libdblayer.a or .so> --config <uniffi.toml> --out <directory>` | Generates `dblayer.kt` from a built library and inserts `ProcessOwner.claim()`. Needs no DBlayer checkout layout: copy this one file and pass the paths. `build_kotlin.sh` uses it too |
 | `bash scripts/check_android_artifacts.sh --release` | Checks release ABI files and the fingerprint. Use `--abis` to check all 4 ABIs |
 | `bash scripts/check_zoo.sh` | Finds duplicate mechanisms and names (see [architecture](architecture.md)) |

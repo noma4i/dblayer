@@ -36,7 +36,7 @@ fingerprint() {
   cargo -V 2>&1 || true
   case "$kind" in
     android*) cargo ndk --version 2>&1 || true; echo "ndk ${ANDROID_NDK_HOME:-}" | sed 's|/.*/||' ;;
-    ios*) xcodebuild -version 2>&1 || true ;;
+    ios*|jvm*) xcodebuild -version 2>&1 || true ;;
   esac
   env | grep -E '^(RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_PROFILE_|CARGO_BUILD_TARGET|CARGO_TARGET_|IPHONEOS_DEPLOYMENT_TARGET|MACOSX_DEPLOYMENT_TARGET)' | sort || true
 }
