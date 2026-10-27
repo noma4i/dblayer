@@ -19,6 +19,17 @@ pub(crate) struct Live {
     pub(crate) subscription: Option<Updates>,
     starting: Option<AbortHandle>,
     closing: Option<AbortHandle>,
+    ready: tokio::sync::watch::Sender<Option<Result<(), super::SyncError>>>,
+}
+
+impl Live {
+    fn started(&mut self, started: Result<Updates, super::SyncError>) {
+        self.starting = None;
+        match started {
+            Ok(subscription) => self.subscription = Some(subscription),
+            Err(error) => { self.ready.send_replace(Some(Err(error))); }
+        }
+    }
 }
 
 impl Drop for Live {
@@ -41,13 +52,14 @@ impl Inner {
             }) else { continue };
             let definition = subscription.definition.clone();
             live.subscription = None;
+            live.ready.send_replace(None);
             let inner = self.clone();
             let slot = key.clone();
+            let ready = live.ready.clone();
             let task = tokio::spawn(self.until_closed(async move {
-                let started = inner.subscribe(definition).await;
+                let started = inner.subscribe(definition, Some(ready)).await;
                 if let Some(live) = locked(&inner.lives).get_mut(&slot) {
-                    live.starting = None;
-                    live.subscription = started.ok();
+                    live.started(started);
                 }
             }));
             live.starting = Some(task.abort_handle());
@@ -92,6 +104,19 @@ impl Inner {
         Some(self.acquire_one(&model, UpdatesSpec { apply: None, subscription: feed.subscription, deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() }, None))
     }
 
+    pub(crate) async fn changes_ready(&self, key: &str) -> Result<(), super::SyncError> {
+        let mut ready = locked(&self.lives).get(key).ok_or(super::SyncError::Cancelled)?.ready.subscribe();
+        let mut stopped = self.stopped.clone();
+        loop {
+            if stopped.has_changed().is_err() { return Err(super::SyncError::Cancelled); }
+            if let Some(result) = ready.borrow_and_update().clone() { return result; }
+            tokio::select! {
+                result = ready.changed() => { result.map_err(|_| super::SyncError::Cancelled)?; }
+                _ = stopped.changed() => return Err(super::SyncError::Cancelled),
+            }
+        }
+    }
+
     fn subscription_scope(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Option<(String, Value)> {
         if params.is_empty() { return None; }
         let resolved = self.resolve(model, relation, params).ok()?;
@@ -115,9 +140,11 @@ impl Inner {
         if live.subscription.is_some() || live.starting.is_some() {
             return key;
         }
+        live.ready.send_replace(None);
         let inner = self.clone();
         let model = model.to_string();
         let slot = key.clone();
+        let ready = live.ready.clone();
         let task = runtime.spawn(self.until_closed(async move {
             let mut event = EventSpec::new(updates.subscription.as_str());
             if let Some(interval) = updates.debounce.as_deref().and_then(parse_duration) {
@@ -132,11 +159,10 @@ impl Inner {
             def.root = updates.root;
             def.id = updates.id;
             def.apply = updates.apply;
-            let started = inner.subscribe(def).await;
+            let started = inner.subscribe(def, Some(ready)).await;
             let mut lives = locked(&inner.lives);
             let Some(live) = lives.get_mut(&slot) else { return };
-            live.starting = None;
-            live.subscription = started.ok();
+            live.started(started);
         }));
         live.starting = Some(task.abort_handle());
         key

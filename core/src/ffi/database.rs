@@ -118,7 +118,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -144,7 +144,7 @@ impl Database {
         }
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, testing: false, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -176,7 +176,10 @@ impl Database {
     }
 
     pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
-        blocking(move || Self::start(config, models_json, transport, uploads, clock.clock.clone())).await
+        blocking(move || {
+            let database = Self::start(config, models_json, transport, uploads, clock.clock.clone())?;
+            Ok(Arc::new(Self { testing: true, ..Arc::unwrap_or_clone(database) }))
+        }).await
     }
 
     pub(super) fn hold(&self, lease: Arc<OpenLease>) { let _ = self.lease.set(lease); }
@@ -456,6 +459,12 @@ impl Database {
         Ok(())
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
+
+    pub fn enter_foreground_for_testing(&self) -> Result<(), DbError> {
+        if !self.testing { return Err(DbError::Invalid { detail: "enterForegroundForTesting requires openTesting".into() }); }
+        self.online_sink()?.enter_foreground();
+        Ok(())
+    }
     pub fn set_listening(&self, allowed: bool) -> Result<(), DbError> {
         if let Some(sync) = &self.sync {
             let _entered = executor()?.enter();

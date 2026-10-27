@@ -185,8 +185,8 @@ fn only_models_with_changed_by_get_an_events_stream() {
     let models = parse_models(source).unwrap();
     let swift = crate::emit_swift(&models, &[], &Default::default());
     let kotlin = crate::emit_kotlin(&models, &[], &Default::default());
-    assert_eq!(swift.matches("static var events: LiveStream<ModelEventItem<Self>>").count(), 1);
-    assert_eq!(kotlin.matches("val events: kotlinx.coroutines.flow.Flow<ModelEventItem<Record>>").count(), 1);
+    assert_eq!(swift.matches("static func events() async throws -> LiveStream<ModelEventItem<Self>>").count(), 1);
+    assert_eq!(kotlin.matches("suspend fun events(): kotlinx.coroutines.flow.Flow<ModelEventItem<Record>>").count(), 1);
 }
 
 #[test]

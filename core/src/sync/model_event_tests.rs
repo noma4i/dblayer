@@ -44,11 +44,10 @@ fn title(row: &Option<crate::db::Row>) -> Option<&str> {
 }
 
 #[tokio::test(start_paused = true)]
-async fn node_event_carries_the_row_before_and_after_with_one_request() {
+async fn opening_events_establishes_the_subscription_or_returns_its_failure() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "before"}));
-    let events = rig.sync.model_events("chats").unwrap();
-    rig.transport.await_calls("Changes", 1).await;
+    let events = rig.sync.open_model_events("chats").await.unwrap();
     assert_eq!(rig.transport.call_count("ChatNode"), 0, "idle");
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "after"}})));
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
@@ -56,13 +55,27 @@ async fn node_event_carries_the_row_before_and_after_with_one_request() {
     assert_eq!((seen.area.as_str(), seen.kind.as_str(), seen.id.as_str()), ("CHAT", "UPDATED", "c1"));
     assert_eq!((title(&seen.before), title(&seen.after)), (Some("before"), Some("after")));
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
+    events.close();
+    tokio::time::advance(rig.sync.inner.config.live_linger).await;
+    rig.transport.await_cancellations("Changes", 1).await;
+
+    let failed = chat_rig();
+    failed.sync.inner.operations.lock().unwrap().remove("Changes");
+    let opened = tokio::time::timeout(std::time::Duration::from_secs(5), failed.sync.open_model_events("chats")).await.expect("opening must report a failed subscription");
+    assert!(matches!(opened, Err(super::SyncError::UnknownOperation(operation)) if operation == "Changes"));
+    assert!(!failed.sync.inner.has_event_readers("chats"));
+
+    let offline = chat_rig();
+    offline.sync.set_online(false);
+    let opened = tokio::time::timeout(std::time::Duration::from_secs(5), offline.sync.open_model_events("chats")).await.expect("opening offline must not wait for the network");
+    assert!(matches!(opened, Err(super::SyncError::Offline)));
 }
 
 #[tokio::test(start_paused = true)]
 async fn removal_event_has_no_after_row_and_makes_no_request() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "before"}));
-    let events = rig.sync.model_events("chats").unwrap();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.await_calls("Changes", 1).await;
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     let seen = expect_event(within(&events).await);
@@ -74,7 +87,7 @@ async fn removal_event_has_no_after_row_and_makes_no_request() {
 async fn two_events_of_one_row_arrive_in_order_and_chain_before_to_after() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "v1"}));
-    let events = rig.sync.model_events("chats").unwrap();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.await_calls("Changes", 1).await;
     for next in ["v2", "v3"] { rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": next}}))); }
     emit(&rig, vec![event("CHAT", "UPDATED", "c1"), event("CHAT", "UPDATED", "c1")]);
@@ -86,8 +99,8 @@ async fn two_events_of_one_row_arrive_in_order_and_chain_before_to_after() {
 #[tokio::test(start_paused = true)]
 async fn a_full_queue_reports_the_dropped_count_and_never_holds_back_the_next_event() {
     let rig = chat_rig();
-    let slow = rig.sync.model_events("chats").unwrap();
-    let fast = rig.sync.model_events("chats").unwrap();
+    let slow = rig.sync.open_model_events("chats").await.unwrap();
+    let fast = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.await_calls("Changes", 1).await;
     let total = EVENT_QUEUE_LIMIT + 44;
     emit(&rig, (0..total).map(|index| event("CHAT", "DELETED", &format!("c{index}"))).collect());
@@ -109,7 +122,7 @@ async fn observed_event_rereads_every_watched_parameterized_read_once_and_no_oth
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
     let _wild = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "wild"}))).unwrap();
-    let events = rig.sync.model_events("moments").unwrap();
+    let events = rig.sync.open_model_events("moments").await.unwrap();
     rig.transport.await_calls("Changes", 1).await;
     assert_eq!(rig.transport.call_count("MomentsByMood"), 0, "idle");
     for _ in 0..2 { rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "m1", "text": "a"}]}))); }
@@ -127,7 +140,7 @@ async fn observed_event_rereads_every_watched_parameterized_read_once_and_no_oth
 #[tokio::test(start_paused = true)]
 async fn a_failed_read_leaves_a_gap_in_the_queue_at_the_place_of_the_event() {
     let rig = chat_rig();
-    let events = rig.sync.model_events("chats").unwrap();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
     let failure = || crate::db::DbError::InvalidUpload("read failed".into());
     let inner = &rig.sync.inner;
     assert!(inner.publish_rows("chats", "CHAT", "UPDATED", "c1", Ok(None), Ok(None)));
@@ -143,7 +156,7 @@ async fn a_failed_read_leaves_a_gap_in_the_queue_at_the_place_of_the_event() {
 async fn a_failed_reread_leaves_a_gap_for_the_reader() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "before"}));
-    let events = rig.sync.model_events("chats").unwrap();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.await_calls("Changes", 1).await;
     rig.transport.enqueue("ChatNode", Reply::fail(crate::transport::TransportError::Http { status: 422, body: "rejected".into() }));
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
@@ -154,7 +167,7 @@ async fn a_failed_reread_leaves_a_gap_for_the_reader() {
 async fn rows_are_read_for_an_event_only_while_the_model_has_a_reader() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "v1"}));
-    let opened = rig.sync.model_events("chats").unwrap();
+    let opened = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.await_calls("Changes", 1).await;
     drop(opened);
     let finds = || crate::db::FINDS.with(std::cell::Cell::get);
@@ -163,7 +176,7 @@ async fn rows_are_read_for_an_event_only_while_the_model_has_a_reader() {
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
     rig.transport.await_consumed("Changes").await;
     let unwatched = finds() - start;
-    let events = rig.sync.model_events("chats").unwrap();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "v3"}})));
     let start = finds();
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
@@ -183,7 +196,7 @@ async fn a_model_gets_the_events_of_a_changes_source_that_another_model_declares
         let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
         rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
         let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
-        let events = rig.sync.model_events("moments").unwrap();
+        let events = rig.sync.open_model_events("moments").await.unwrap();
         rig.transport.await_calls("Changes", 1).await;
         rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "m1", "text": "a"}]})));
         emit(&rig, vec![event(area, "CREATED", "calm")]);
@@ -206,7 +219,7 @@ async fn an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_on
     for _ in 0..2 { rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "m1", "text": "a"}]}))); }
     emit(&rig, vec![event("MOOD", "CREATED", "calm")]);
     rig.transport.await_calls("MomentsByMood", 1).await;
-    let events = rig.sync.model_events("moments").unwrap();
+    let events = rig.sync.open_model_events("moments").await.unwrap();
     assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "the earlier event is not replayed");
     emit(&rig, vec![event("MOOD", "CREATED", "wild")]);
     assert_eq!(expect_event(within(&events).await).id, "wild");
@@ -223,7 +236,7 @@ async fn one_event_of_an_area_shared_by_two_models_rereads_both_and_reaches_both
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     let _me = rig.sync.watch("users", "current", &params(json!({}))).unwrap();
     let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
-    let (user_events, moment_events) = (rig.sync.model_events("users").unwrap(), rig.sync.model_events("moments").unwrap());
+    let (user_events, moment_events) = (rig.sync.open_model_events("users").await.unwrap(), rig.sync.open_model_events("moments").await.unwrap());
     rig.transport.await_calls("Changes", 1).await;
     assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByMood")), (0, 0), "idle");
     rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "a"}})));
@@ -246,7 +259,7 @@ async fn two_reads_on_one_area_reread_once_each_and_deliver_one_event() {
     let rig = rig_on(Db::open_in_memory(vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     let _calm = rig.sync.watch("moments", "by_mood", &params(json!({"mood": "calm"}))).unwrap();
-    let events = rig.sync.model_events("moments").unwrap();
+    let events = rig.sync.open_model_events("moments").await.unwrap();
     rig.transport.await_calls("Changes", 1).await;
     for _ in 0..2 { rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "m1", "text": "a"}]}))); }
     emit(&rig, vec![event("MOOD", "CREATED", "calm")]);
@@ -260,7 +273,7 @@ async fn two_reads_on_one_area_reread_once_each_and_deliver_one_event() {
 async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_in() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));
-    let events = rig.sync.model_events("chats").unwrap();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.set_session(Some("first"));
     rig.sync.session_committed();
     rig.transport.await_calls("Changes", 1).await;
@@ -281,7 +294,7 @@ async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_i
 async fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listening() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));
-    let events = rig.sync.model_events("chats").unwrap();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.await_calls("Changes", 1).await;
     rig.sync.set_listening(false);
     rig.transport.set_session(Some("first"));

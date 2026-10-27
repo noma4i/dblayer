@@ -115,10 +115,16 @@ struct Feed {
     root_path: String,
     status: SharedStatus,
     backoff: Backoff,
+    ready: Option<tokio::sync::watch::Sender<Option<Result<(), SyncError>>>>,
 }
 
 impl Feed {
+    fn opening(&self, result: Result<(), SyncError>) {
+        if let Some(ready) = &self.ready { ready.send_replace(Some(result)); }
+    }
+
     fn notify_failure(&self, failure: &SubscriptionFailure) {
+        self.opening(Err(SyncError::Transport(failure.error.clone())));
         locked(&self.status).failure = Some(failure.clone());
         if matches!(failure.error, TransportError::Session { .. }) {
             let _ = self.inner.subscription_failures.send(Some((format!("{}|{}", self.def.model, self.def.operation), failure.clone())));
@@ -435,6 +441,7 @@ impl Feed {
             tokio::select! {
                 event = connection.next() => match event {
                     None => {
+                        self.opening(Err(SyncError::Event("subscription closed".into())));
                         self.apply(std::mem::take(&mut pending), &self.def.model, self.def.effect).await;
                         return SubscriptionFailureKind::Transport;
                     }
@@ -486,6 +493,7 @@ impl Feed {
             };
             let kind = match attempt {
                 Ok(mut connection) => {
+                    self.opening(Ok(()));
                     let reconnected = {
                         let mut status = locked(&self.status);
                         status.connects += 1;
@@ -518,7 +526,7 @@ impl Feed {
 
 impl Sync {
     pub async fn subscribe(&self, def: SubscriptionDef) -> Result<Updates, SyncError> {
-        self.inner.subscribe(def).await
+        self.inner.subscribe(def, None).await
     }
 }
 
@@ -535,7 +543,7 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn subscribe(self: &Arc<Self>, def: SubscriptionDef) -> Result<Updates, SyncError> {
+    pub(crate) async fn subscribe(self: &Arc<Self>, def: SubscriptionDef, ready: Option<tokio::sync::watch::Sender<Option<Result<(), SyncError>>>>) -> Result<Updates, SyncError> {
         if let Some(fault) = def.event.fault() {
             return Err(SyncError::Event(format!("{fault:?}")));
         }
@@ -546,10 +554,17 @@ impl Inner {
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
         let first = if self.connectivity.is_online() { self.open_subscription(request.clone()).await } else { None };
+        let opening = match &first {
+            Some(Ok(_)) => Ok(()),
+            Some(Err(error)) => Err(SyncError::Transport(error.clone())),
+            None if self.connectivity.is_online() => Err(SyncError::Cancelled),
+            None => Err(SyncError::Offline),
+        };
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let definition = def.clone();
         let def_root = def.root.clone();
-        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or_else(|| operation.root_path.clone()), status: status.clone(), backoff: RetryPolicy::Subscription.backoff().randomized() };
+        let feed = Feed { inner: self.clone(), def, root_path: def_root.unwrap_or_else(|| operation.root_path.clone()), status: status.clone(), backoff: RetryPolicy::Subscription.backoff().randomized(), ready };
+        feed.opening(opening);
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }

@@ -27,10 +27,10 @@ pub struct ModelEventFeed {
 
 #[uniffi::export]
 impl Database {
-    pub fn model_events(&self, model: String) -> Result<Arc<ModelEventFeed>, DbError> {
-        let _entered = executor()?.enter();
+    pub async fn open_model_events(&self, model: String) -> Result<Arc<ModelEventFeed>, DbError> {
         let wire = self.wire(&model)?.clone();
-        let events = self.sync()?.model_events(&model)?;
+        let sync = self.sync()?.clone();
+        let events = super::database::cancellable(async move { sync.open_model_events(&model).await }).await??;
         Ok(Arc::new(ModelEventFeed { events: Arc::new(events), wire }))
     }
 }

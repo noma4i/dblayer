@@ -69,12 +69,8 @@ extension DBModel {
     try await DB.database.nodes(model: modelName, relation: relation, rowIds: ids).map(decode)
   }
 
-  public static func watchEvents() -> LiveStream<ModelEventItem<Self>> {
-    let feed: ModelEventFeed
-    do { feed = try DB.database.modelEvents(model: modelName) } catch {
-      let failure = Once(ModelEventItem<Self>.failed(error))
-      return LiveStream(receive: { failure.take() }, cancel: {})
-    }
+  @concurrent public static func openEvents() async throws -> LiveStream<ModelEventItem<Self>> {
+    let feed = try await DB.database.openModelEvents(model: modelName)
     return LiveStream(receive: {
       let item: WireModelEventItem?
       do { item = try await feed.next() } catch {
@@ -122,11 +118,4 @@ public enum ModelEventItem<Model: DBModel>: Sendable {
   case event(ModelEvent<Model>)
   case missed(UInt64)
   case failed(any Error)
-}
-
-final class Once<Value: Sendable>: @unchecked Sendable {
-  private let lock = NSLock()
-  private var value: Value?
-  init(_ value: Value) { self.value = value }
-  func take() -> Value? { lock.withLock { defer { value = nil }; return value } }
 }

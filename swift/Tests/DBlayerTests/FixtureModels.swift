@@ -242,7 +242,7 @@ public struct Container: DBModel {
     public static let shareUrl = Column<Container, String?>("shareUrl")
     public static let isPublic = Column<Container, Bool?>("isPublic")
     public static let shelves = Column<Container, [ContainerShelf]?>("shelves")
-    public static var events: LiveStream<ModelEventItem<Self>> { watchEvents() }
+    @concurrent public static func events() async throws -> LiveStream<ModelEventItem<Self>> { try await openEvents() }
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
@@ -1192,7 +1192,7 @@ public struct Record: DBModel {
     public static let reactions = Column<Record, [RecordReactionNode]>("reactions")
     public static let attachment = Column<Record, RecordAttachmentKind>("attachment")
     public static let media = Column<Record, RecordMedia?>("media")
-    public static var events: LiveStream<ModelEventItem<Self>> { watchEvents() }
+    @concurrent public static func events() async throws -> LiveStream<ModelEventItem<Self>> { try await openEvents() }
     public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func byContainer(_ containerId: String) throws -> Query<Self> {

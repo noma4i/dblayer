@@ -659,10 +659,13 @@ model WalletTransaction do
 end
 ```
 
-Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `event`, `missed` or `failed`. The generated `events` property reads `watchEvents()` in Swift and `modelEvents()` in Kotlin. Any model with `changed_by` has `events`, whichever model declares the `changes` source. A reader receives the events that arrive after it starts: Swift subscribes when `events` is read and Kotlin when the flow is collected. An earlier event is not replayed, because the rows before and after are read only while the model has a reader. An open change subscription (another model's reader, an observed read) does not show that a reader exists, so wait for your own collection to start before you trigger the event.
+Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `event`, `missed` or `failed`.
+
+Any model with `changed_by` has a suspending `events()` call, whichever model declares the `changes` source. It returns after the core reader exists and the transport has registered the shared change subscription. An opening failure throws, including when offline. Events published after the call returns reach that reader, including before iteration or collection starts. Each returned stream has one reader. An earlier event is not replayed, because rows before and after are read only while the model has a reader. Another model's reader or an observed read does not prove that your reader exists.
 
 ```swift
-for await item in Message.events {
+let events = try await Message.events()
+for await item in events {
   switch item {
   case .event(let event): show(event.before, event.after)
   case .missed(let count): resync(count)
@@ -672,7 +675,8 @@ for await item in Message.events {
 ```
 
 ```kotlin
-Message.events.collect { item -> when (item) { is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Missed -> resync(item.count); is ModelEventItem.Failed -> report(item.error) } }
+val events = Message.events()
+events.collect { item -> when (item) { is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Missed -> resync(item.count); is ModelEventItem.Failed -> report(item.error) } }
 ```
 
 The queue of a reader holds 256 events. A reader that is slower reads `missed` with the number of dropped events, and never delays the next event of other readers. A failed row read publishes no event and raises the rejected count of the subscription. A failure of the stream itself arrives as the last item `failed`. Cancelling the stream releases the shared subscription after `live_linger`. The stream needs no notice model.

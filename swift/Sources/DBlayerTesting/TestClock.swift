@@ -6,6 +6,8 @@ extension TestClock {
 }
 
 extension DB {
+  public static func enterForegroundForTesting() throws { try database.enterForegroundForTesting() }
+
   /// Opens the database on a clock that only `advance(by:)` moves, so freshness windows, retry delays and expiry run without sleeping. Scope preloads send no request unless `preload` is true.
   @discardableResult
   public static func openTesting(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], uploads: UploadOperations? = nil, startingAt start: Date = Date(), preload: Bool = false, listening: Bool = true) async throws -> TestClock {

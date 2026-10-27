@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Model event streams wait for subscription readiness and report opening failures.
+- `enterForegroundForTesting()` sends a foreground event to a database opened with `openTesting`.
+
+### Changed
+- Replace the `events` property with the suspending `events()` call on Swift and Kotlin.
+
 ## 6.11.0 - 2026-10-27
 
 ### Added

@@ -720,7 +720,7 @@ async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_
         rig.transport.enqueue("MomentsByUser", reread);
         let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
         rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
-        let events = rig.sync.model_events("moments").unwrap();
+        let events = rig.sync.open_model_events("moments").await.unwrap();
         rig.transport.await_calls("Changes", 1).await;
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         let shared = rig.db.shared.clone();

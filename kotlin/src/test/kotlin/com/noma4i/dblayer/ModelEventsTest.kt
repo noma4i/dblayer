@@ -4,9 +4,9 @@ import com.noma4i.dblayer.models.Container
 import com.noma4i.dblayer.models.Record
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -42,16 +42,16 @@ class ModelEventsTest {
         val transport = MockTransport()
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"}]""")
-        val first = async { Container.events.first() }
-        eventually("the change subscription opens") { transport.calls.size == 1 }
+        val events = Container.events()
         transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"CONTAINER","action":"DELETED","recordId":"c1"}]}}}""")
-        val seen = (first.await() as ModelEventItem.Event).event
+        val seen = (events.first() as ModelEventItem.Event).event
         assertEquals(Triple("CONTAINER", "DELETED", "c1"), Triple(seen.area, seen.kind, seen.id))
         assertNull(seen.before)
         assertNull(seen.after)
         assertEquals(listOf("RecordEvents"), transport.calls.map { it.operationName })
 
-        val collecting = launch { Container.events.collect { } }
+        val nextEvents = Container.events()
+        val collecting = launch(start = CoroutineStart.UNDISPATCHED) { nextEvents.collect { } }
         collecting.cancelAndJoin()
         assertEquals(true, collecting.isCancelled)
     }
@@ -61,12 +61,25 @@ class ModelEventsTest {
         val transport = MockTransport()
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"}]""")
-        val first = async { Record.events.first() }
-        eventually("the change subscription opens") { transport.calls.size == 1 }
+        val events = Record.events()
         transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"RECORD","action":"CREATED","recordId":"r1"}]}}}""")
-        val seen = (first.await() as ModelEventItem.Event).event
+        val seen = (events.first() as ModelEventItem.Event).event
         assertEquals(Triple("RECORD", "CREATED", "r1"), Triple(seen.area, seen.kind, seen.id))
         assertEquals(listOf("RecordEvents"), transport.calls.map { it.operationName })
+    }
+
+    @Test
+    fun aStaleModelEndsTheEventsWithTheDecodeFailure() = bounded {
+        val transport = MockTransport()
+        reopen(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId } } }","rootPath":"recordEvents"},{"name":"ContainerNode","document":"query ContainerNode(${'$'}id: ID!) { node(id: ${'$'}id) { id title } }","rootPath":"node"}]""")
+        val stale = object : ModelDecoder<Container> by Container { override val layout = "stale" }
+        val events = stale.openEvents()
+        transport.enqueue("ContainerNode", """{"data":{"node":{"id":"c1","title":"received"}}}""")
+        transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"CONTAINER","action":"UPDATED","recordId":"c1"}]}}}""")
+        val items = events.toList()
+        assertEquals(1, items.size)
+        assertEquals(true, (items.single() as ModelEventItem.Failed).error is DbException.Invalid)
     }
 
     @Test
@@ -81,10 +94,10 @@ class ModelEventsTest {
         DBlayer.setListening(true)
         DBlayer.resume()
         assertEquals(listOf("RecordEvents"), transport.calls.map { it.operationName })
-        val first = async(start = CoroutineStart.UNDISPATCHED) { Container.events.first() }
+        val events = Container.events()
         DBlayer.setListening(false)
         transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"CONTAINER","action":"DELETED","recordId":"c1"}]}}}""")
-        assertEquals("c1", (first.await() as ModelEventItem.Event).event.id)
+        assertEquals("c1", (events.first() as ModelEventItem.Event).event.id)
         assertEquals(listOf("RecordEvents"), transport.calls.map { it.operationName })
     }
 }

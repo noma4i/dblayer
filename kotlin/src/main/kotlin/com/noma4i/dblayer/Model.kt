@@ -117,19 +117,23 @@ sealed interface ModelEventItem<out Model : DBModel> {
     class Failed(val error: Throwable) : ModelEventItem<Nothing>
 }
 
-fun <Model : DBModel> ModelDecoder<Model>.modelEvents(): kotlinx.coroutines.flow.Flow<ModelEventItem<Model>> = kotlinx.coroutines.flow.flow {
-    val feed = offCaller { DBlayer.database.modelEvents(modelName) }
-    feed.use {
-        try {
-            while (true) {
-                val next = try { it.next() } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Throwable) { emit(ModelEventItem.Failed(error)); break }
-                when (val item = next ?: break) {
-                    is WireModelEventItem.Missed -> emit(ModelEventItem.Missed(item.count))
-                    is WireModelEventItem.Event -> emit(ModelEventItem.Event(ModelEvent(item.event.area, item.event.kind, item.event.id, item.event.before?.let { row -> read(row) }, item.event.after?.let { row -> read(row) })))
+suspend fun <Model : DBModel> ModelDecoder<Model>.openEvents(): kotlinx.coroutines.flow.Flow<ModelEventItem<Model>> {
+    val feed = offCaller { DBlayer.database.openModelEvents(modelName) }
+    return kotlinx.coroutines.flow.flow {
+        feed.use {
+            try {
+                while (true) {
+                    val next = try {
+                        when (val item = it.next() ?: break) {
+                            is WireModelEventItem.Missed -> ModelEventItem.Missed(item.count)
+                            is WireModelEventItem.Event -> ModelEventItem.Event(ModelEvent(item.event.area, item.event.kind, item.event.id, item.event.before?.let { row -> read(row) }, item.event.after?.let { row -> read(row) }))
+                        }
+                    } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Throwable) { emit(ModelEventItem.Failed(error)); break }
+                    emit(next)
                 }
+            } finally {
+                it.cancel()
             }
-        } finally {
-            it.cancel()
         }
     }
 }
