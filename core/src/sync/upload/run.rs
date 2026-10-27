@@ -272,7 +272,7 @@ impl Runner {
                 });
                 let data = self.retrying(UploadStage::Create, 0, || self.graphql(&steps.create, variables.clone(), true)).await?;
                 let url = text(&data, "url").map_err(stop_of)?;
-                let headers = crate::upload::parse_headers(data.get("headers"));
+                let headers = crate::upload::parse_headers(data.get("headers")).map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error)))?;
                 let (signed, blob) = (text(&data, "signedId").map_err(stop_of)?, text(&data, "blobId").map_err(stop_of)?);
                 self.save(UploadEvent::Granted { signed_id: signed, blob_id: blob, url, headers, checksum: checksum.clone(), issued_at: self.inner.clock.now().as_millis() as u64 })?;
             }

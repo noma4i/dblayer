@@ -31,6 +31,8 @@ The package ships a ready adapter for each platform. The app does not implement 
 
 The adapter moves bytes and reports errors. The core merges, retries and orders. `CloudIo` is the protocol the adapters implement: `account`, `pull(cursor, limit)` and `push(blobs)`.
 
+A corrupt stored cursor reports an error. Its hexadecimal text must contain complete ASCII byte pairs.
+
 A blob is a key and opaque bytes. The core builds both. The key is a hash of replica, model, row and attribute, so a device overwrites only its own versions and a repeated push is safe. The bytes carry a format version, and the core rejects a version it does not know. Adapters store the pair as given and return it unchanged.
 
 ```swift

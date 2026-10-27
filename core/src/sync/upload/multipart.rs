@@ -102,9 +102,12 @@ impl Runner {
         let variables = json!({"key": key, "uploadId": upload_id, "partNumbers": numbers});
         let data = self.retrying(UploadStage::Presign, 0, || self.graphql(operation, variables.clone(), true)).await?;
         let mut targets = HashMap::new();
-        for item in data.get("parts").and_then(Value::as_array).into_iter().flatten() {
-            let (Some(number), Some(url)) = (item.get("partNumber").and_then(Value::as_u64), item.get("url").and_then(Value::as_str)) else { continue };
-            targets.insert(number as u32, (url.to_string(), parse_headers(item.get("headers"))));
+        let parts = data.get("parts").and_then(Value::as_array).ok_or_else(|| stop_of(fatal(FailureKind::Unrecognized, "the presign answer has no parts list")))?;
+        for item in parts {
+            let number = item.get("partNumber").and_then(Value::as_u64).and_then(|number| u32::try_from(number).ok()).filter(|number| *number > 0);
+            let (Some(number), Some(url)) = (number, item.get("url").and_then(Value::as_str)) else { return Err(stop_of(fatal(FailureKind::Unrecognized, "the presign answer has an invalid part"))); };
+            let headers = parse_headers(item.get("headers")).map_err(|error| stop_of(fatal(FailureKind::Unrecognized, error)))?;
+            if targets.insert(number, (url.to_string(), headers)).is_some() { return Err(stop_of(fatal(FailureKind::Unrecognized, "the presign answer repeats a part"))); }
         }
         if numbers.iter().any(|number| !targets.contains_key(number)) {
             return Err(stop_of(fatal(FailureKind::Unrecognized, "the presign answer misses requested parts")));

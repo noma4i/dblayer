@@ -9,23 +9,28 @@ use super::load::{LoadOptions, LoadOutcome};
 use super::{Inner, Sync};
 
 impl Inner {
-    pub(crate) async fn reload_watched(&self, model: &str, relations: Option<&std::collections::BTreeSet<String>>, only_stale: bool) -> usize {
+    pub(crate) async fn reload_watched(&self, model: &str, relations: Option<&std::collections::BTreeSet<String>>, only_stale: bool) -> Result<usize, SyncError> {
         let targets: BTreeMap<String, (String, Map<String, Value>)> = self.db.observed_reads()
             .into_iter()
             .filter(|entry| entry.model == model && relations.is_none_or(|names| names.contains(&entry.relation)))
             .map(|entry| (entry.key, (entry.relation, entry.params)))
             .collect();
         let mut reloaded = 0;
+        let mut errors = Vec::new();
         for (key, (relation, params)) in targets {
-            let stale = self.db.shared.store.window_freshness(&key).ok().flatten().is_some_and(|freshness| freshness.invalidated);
-            if only_stale && !stale {
-                continue;
+            let result = async {
+                if only_stale && !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.invalidated) { return Ok(false); }
+                let resolved = self.resolve(model, &relation, &params)?;
+                let outcome = if only_stale { self.fetch_after_flights(&resolved).await? } else { self.fetch(&resolved, None, false).await? };
+                if let Some(error) = outcome.kept_error { return Err(error); }
+                Ok(true)
+            }.await;
+            match result {
+                Ok(loaded) => reloaded += usize::from(loaded),
+                Err(error) => errors.push(format!("{model}.{relation}: {error}")),
             }
-            let Ok(resolved) = self.resolve(model, &relation, &params) else { continue };
-            let fetched = if only_stale { self.fetch_after_flights(&resolved).await } else { self.fetch(&resolved, None, false).await };
-            reloaded += usize::from(fetched.is_ok());
         }
-        reloaded
+        if errors.is_empty() { Ok(reloaded) } else { Err(SyncError::Event(errors.join("\n"))) }
     }
 }
 

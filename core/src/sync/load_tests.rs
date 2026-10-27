@@ -432,7 +432,7 @@ async fn reading_the_stored_window_for_a_load_reads_the_same_members_at_every_li
     for size in [100, 10_000] {
         let (rig, params) = rig_with_user_list(size).await;
         let resolved = rig.sync.inner.resolve("moments", "by_user", &params).unwrap();
-        costs.push(reads_during(|| assert!(rig.sync.inner.stored(&resolved).unwrap().has_rows)));
+        costs.push(reads_during(|| assert!(rig.sync.inner.stored(&resolved).unwrap().unwrap().has_rows)));
     }
     assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");
 }

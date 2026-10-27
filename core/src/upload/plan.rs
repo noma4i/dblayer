@@ -39,17 +39,23 @@ pub fn mime_of(name: &str) -> &'static str {
     }
 }
 
-pub fn parse_headers(value: Option<&Value>) -> Vec<(String, String)> {
+pub fn parse_headers(value: Option<&Value>) -> Result<Vec<(String, String)>, String> {
+    let invalid = || "upload headers must contain string names and values".to_string();
     match value {
-        Some(Value::Object(map)) => map.iter().filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string()))).collect(),
+        Some(Value::Object(map)) => map.iter().map(|(name, value)| Ok((name.clone(), value.as_str().ok_or_else(invalid)?.to_string()))).collect(),
         Some(Value::Array(items)) => items
             .iter()
-            .filter_map(|item| {
-                let name = item.get("name").or_else(|| item.get("key"))?.as_str()?;
-                Some((name.to_string(), item.get("value")?.as_str()?.to_string()))
+            .map(|item| {
+                let name = item.get("name").or_else(|| item.get("key")).and_then(Value::as_str).ok_or_else(invalid)?;
+                let value = item.get("value").and_then(Value::as_str).ok_or_else(invalid)?;
+                Ok((name.to_string(), value.to_string()))
             })
             .collect(),
-        Some(Value::String(text)) => parse_headers(serde_json::from_str(text).ok().as_ref()),
-        _ => Vec::new(),
+        Some(Value::String(text)) => {
+            let decoded = serde_json::from_str(text).map_err(|error| format!("invalid upload headers JSON: {error}"))?;
+            match decoded { Value::Object(_) | Value::Array(_) => parse_headers(Some(&decoded)), _ => Err(invalid()) }
+        }
+        None | Some(Value::Null) => Ok(Vec::new()),
+        _ => Err(invalid()),
     }
 }

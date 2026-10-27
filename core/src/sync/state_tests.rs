@@ -10,6 +10,34 @@ fn none() -> Map<String, serde_json::Value> {
     Map::new()
 }
 
+#[tokio::test]
+async fn stored_seed_read_failures_remain_visible_with_and_without_rows() {
+    for rows in [false, true] {
+        for case in ["window", "freshness", "scope"] {
+            let rig = rig();
+            let ids: &[&str] = if rows { &["m1"] } else { &[] };
+            rig.transport.enqueue("MomentsFeed", feed_reply(ids, false, "c"));
+            rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+            let watch = if case == "scope" { Some(rig.sync.relation_state("moments", "feed", &none()).await.unwrap()) } else { None };
+            {
+                let store = rig.db.shared.store.lock();
+                let sql = match case {
+                    "window" => "ALTER TABLE query_window RENAME COLUMN cursor TO broken_cursor",
+                    "freshness" => "ALTER TABLE query_window RENAME COLUMN landed_at TO broken_landed_at",
+                    _ => "DROP TABLE scope_member",
+                };
+                store.connection.execute_batch(sql).unwrap();
+            }
+            let watch = match watch { Some(watch) => watch, None => rig.sync.relation_state("moments", "feed", &none()).await.unwrap() };
+            let resolved = rig.sync.inner.resolve("moments", "feed", &none()).unwrap();
+            assert!(rig.sync.inner.stored(&resolved).is_err(), "{case}");
+            let state = watch.borrow();
+            assert_eq!(state.phase, if rows { LoadPhase::Loaded } else { LoadPhase::Failed }, "{case}");
+            assert_eq!(state.error.as_ref().unwrap().kind, "database", "{case}");
+        }
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_relation_never_loaded_is_idle_with_nothing_more() {
     let rig = rig();

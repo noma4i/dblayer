@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 
 use super::error::SyncError;
 use super::load::Resolved;
-use super::load_machine::{Data, LoadError, Order, Stored};
+use super::load_machine::{Data, Event, LoadError, Order, Stored};
 use super::load_owner::{RelationWatch, Target};
 use super::Inner;
 use super::Sync;
@@ -27,26 +27,40 @@ impl Resolved<'_> {
 }
 
 impl Inner {
-    pub(crate) fn stored(&self, resolved: &Resolved<'_>) -> Option<Stored> {
+    pub(crate) fn stored(&self, resolved: &Resolved<'_>) -> Result<Option<Stored>, SyncError> {
         self.stored_of(&resolved.model, resolved.scope.key.as_str(), &resolved.window_key)
     }
 
-    fn stored_of(&self, model: &str, scope_key: &str, window_key: &str) -> Option<Stored> {
+    fn stored_of(&self, model: &str, scope_key: &str, window_key: &str) -> Result<Option<Stored>, SyncError> {
         let epoch = self.owner.epoch();
         let store = &self.db.shared.store;
-        let window = store.window(window_key).ok()?;
-        let freshness = store.window_freshness(window_key).ok()?;
-        let has_rows = store.read(&[model], |reader| reader.scope_first_key(model, scope_key)).ok()?.is_some();
-        Some(match (window, freshness) {
-            (Some(window), Some(freshness)) => Stored {
-                epoch,
-                order: Order { applied: window.applied, pages: window.pages },
-                data: Data::Landed { has_more: window.has_next, total: window.total, loaded_at: freshness.landed_at },
-                has_rows,
-                revision: 0,
-            },
-            _ => Stored { epoch, order: Order::NONE, data: if has_rows { Data::Local } else { Data::NotLoaded }, has_rows, revision: 0 },
-        })
+        let rows = store.read(&[model], |reader| reader.scope_first_key(model, scope_key));
+        let result = (|| {
+            let has_rows = rows.as_ref().map_err(|error| SyncError::Store(error.to_string()))?.is_some();
+            let window = store.window(window_key)?;
+            let freshness = store.window_freshness(window_key)?;
+            Ok(Some(match (window, freshness) {
+                (Some(window), Some(freshness)) => Stored {
+                    epoch,
+                    order: Order { applied: window.applied, pages: window.pages },
+                    data: Data::Landed { has_more: window.has_next, total: window.total, loaded_at: freshness.landed_at },
+                    has_rows,
+                    revision: 0,
+                },
+                _ => Stored { epoch, order: Order::NONE, data: if has_rows { Data::Local } else { Data::NotLoaded }, has_rows, revision: 0 },
+            }))
+        })();
+        if let Err(error) = &result {
+            let seed = match &rows {
+                Ok(row) => Some(Stored { epoch, order: Order::NONE, data: if row.is_some() { Data::Local } else { Data::NotLoaded }, has_rows: row.is_some(), revision: 0 }),
+                Err(_) => None,
+            };
+            self.owner.seed_observed(window_key, model.to_string(), seed);
+            self.owner.submit(Event::ReadFailed { window: window_key.to_string(), error: LoadError::of(error) });
+        } else if let Ok(Some(seed)) = &result {
+            self.owner.submit(Event::ReadOk { window: window_key.to_string(), has_rows: seed.has_rows });
+        }
+        result
     }
 }
 
@@ -57,7 +71,7 @@ impl Sync {
         let (inner, window, model, scope) = (self.inner.clone(), resolved.window_key.clone(), resolved.model.clone(), resolved.scope.key.as_str().to_string());
         let seeded = tokio::task::spawn_blocking(move || {
             let seed = inner.stored_of(&model, &scope, &window);
-            inner.owner.seed_observed(&window, model, seed);
+            if let Ok(seed) = seed { inner.owner.seed_observed(&window, model, seed); }
         });
         seeded.await.map_err(|error| SyncError::Event(error.to_string()))?;
         Ok(watch)

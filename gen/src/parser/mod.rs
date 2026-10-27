@@ -183,6 +183,9 @@ fn scalar_from(call: Call, file: usize) -> Result<ScalarNode, ParseError> {
 
 fn operation_from(call: Call, file: usize) -> Result<OperationNode, ParseError> {
     let at = |message: String| ParseError::new(call.line, call.column, message);
+    if let Some(option) = call.options.first() {
+        return Err(at(format!("operation does not accept option `{}`", option.key)));
+    }
     let name = match call.args.as_slice() {
         [Node { item: Value::Symbol(name), .. }] => name.clone(),
         _ => return Err(at("operation needs a name like `operation :qr_code_create do`".to_string())),

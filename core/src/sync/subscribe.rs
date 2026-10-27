@@ -437,10 +437,15 @@ impl Feed {
         };
         match applied {
             Ok(stale) => {
+                let mut reloaded = true;
                 for model in stale {
-                    let _ = self.inner.reload_lists_of_absent_parent(&model).await;
+                    if self.inner.reload_lists_of_absent_parent(&model).await.is_err() {
+                        self.inner.publish_model_gap(&model);
+                        locked(&self.status).rejected += 1;
+                        reloaded = false;
+                    }
                 }
-                true
+                reloaded
             }
             Err(_) => {
                 locked(&self.status).rejected += 1;
@@ -587,7 +592,12 @@ impl Feed {
                         lifecycle.handle(Event::Ready);
                         if lifecycle.take_reload() {
                             let models: Vec<_> = self.inner.db.shared.specs.values().filter(|spec| !spec.changes.is_empty() || spec.key.as_str() == self.def.model).map(|spec| spec.key.to_string()).collect();
-                            for model in models { self.inner.reload_watched(&model, None, false).await; }
+                            for model in models {
+                                if self.inner.reload_watched(&model, None, false).await.is_err() {
+                                    self.inner.publish_model_gap(&model);
+                                    locked(&self.status).rejected += 1;
+                                }
+                            }
                         }
                     }
                     Some(SubscriptionEvent::Next(response)) => {
@@ -655,7 +665,12 @@ impl Feed {
                     };
                     if reconnected {
                         let models: BTreeSet<_> = self.recipients().iter().map(|feed| feed.def.model.clone()).collect();
-                        for model in models { self.inner.reload_watched(&model, None, false).await; }
+                        for model in models {
+                            if self.inner.reload_watched(&model, None, false).await.is_err() {
+                                self.inner.publish_model_gap(&model);
+                                locked(&self.status).rejected += 1;
+                            }
+                        }
                     }
                     lifecycle.handle(Event::Connected);
                     self.pump(&mut connection, &mut lifecycle).await

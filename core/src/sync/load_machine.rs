@@ -162,7 +162,7 @@ impl WindowFacts {
             return State::loading();
         }
         if self.read_error.is_some() {
-            return State::failed();
+            return if self.has_rows { State::loaded() } else { State::failed() };
         }
         if matches!(self.last_end, LastEnd::Failed(_)) {
             return if self.has_rows { State::loaded() } else { State::failed() };

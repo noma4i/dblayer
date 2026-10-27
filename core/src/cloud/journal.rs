@@ -150,7 +150,15 @@ pub fn pending(connection: &Connection) -> Result<u64> {
 
 pub fn cursor(connection: &Connection) -> Result<Option<Vec<u8>>> {
     let text: Option<String> = connection.query_row("SELECT token FROM cloud_cursor WHERE id = 1", [], |row| row.get(0)).optional()?;
-    Ok(text.map(|text| (0..text.len() / 2).filter_map(|at| u8::from_str_radix(&text[at * 2..at * 2 + 2], 16).ok()).collect()))
+    text.map(|text| {
+        let invalid = || rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, "invalid cursor hex".into());
+        if !text.is_ascii() || !text.len().is_multiple_of(2) { return Err(invalid()); }
+        text.as_bytes().as_chunks::<2>().0.iter().map(|pair| {
+            let high = char::from(pair[0]).to_digit(16).ok_or_else(invalid)?;
+            let low = char::from(pair[1]).to_digit(16).ok_or_else(invalid)?;
+            Ok(((high << 4) | low) as u8)
+        }).collect()
+    }).transpose()
 }
 
 pub fn write_cursor(connection: &Connection, token: &[u8]) -> Result<()> {

@@ -27,9 +27,9 @@ fn mime_follows_the_extension_and_falls_back() {
 
 #[test]
 fn headers_parse_from_a_map_or_a_list() {
-    let map = json!({"Content-Type": "video/mp4", "n": 1});
-    assert_eq!(parse_headers(Some(&map)), [("Content-Type".to_string(), "video/mp4".to_string())]);
-    let list = json!([{"name": "x-a", "value": "1"}, {"key": "x-b", "value": "2"}, {"name": "bad"}]);
-    assert_eq!(parse_headers(Some(&list)), [("x-a".to_string(), "1".to_string()), ("x-b".to_string(), "2".to_string())]);
-    assert!(parse_headers(None).is_empty());
+    let map = json!({"Content-Type": "video/mp4"});
+    assert_eq!(parse_headers(Some(&map)).unwrap(), [("Content-Type".to_string(), "video/mp4".to_string())]);
+    let list = json!([{"name": "x-a", "value": "1"}, {"key": "x-b", "value": "2"}]);
+    assert_eq!(parse_headers(Some(&list)).unwrap(), [("x-a".to_string(), "1".to_string()), ("x-b".to_string(), "2".to_string())]);
+    assert!(parse_headers(None).unwrap().is_empty());
 }

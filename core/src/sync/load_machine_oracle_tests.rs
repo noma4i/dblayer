@@ -267,7 +267,8 @@ pub(super) fn expected(run: &Replay, window: &str) -> Option<RelationState> {
     let ladder = [
         (run.closed, LoadPhase::Closed),
         (!seen.open.is_empty(), LoadPhase::Loading),
-        (seen.read_error.is_some(), LoadPhase::Failed),
+        (seen.read_error.is_some() && !seen.has_rows, LoadPhase::Failed),
+        (seen.read_error.is_some(), LoadPhase::Loaded),
         (last_failure.is_some() && !seen.has_rows, LoadPhase::Failed),
         (last_failure.is_some(), LoadPhase::Loaded),
         (!landed_or_local, LoadPhase::NotLoaded),

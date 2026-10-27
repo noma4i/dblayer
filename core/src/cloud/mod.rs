@@ -27,3 +27,5 @@ mod merge_tests;
 mod run_tests;
 #[cfg(test)]
 mod wire_tests;
+#[cfg(test)]
+mod journal_tests;

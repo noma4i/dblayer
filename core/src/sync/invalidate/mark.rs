@@ -20,10 +20,12 @@ impl Inner {
         for name in &foreign {
             names.remove(name);
         }
+        let mut errors = Vec::new();
         for (target, relation) in foreign.iter().filter_map(|name| name.split_once('.')) {
-            self.mark_and_reload(target, &BTreeSet::from([relation.to_string()])).await?;
+            if let Err(error) = self.mark_and_reload(target, &BTreeSet::from([relation.to_string()])).await { errors.push(error.to_string()); }
         }
-        self.mark_and_reload(model, &names).await
+        if let Err(error) = self.mark_and_reload(model, &names).await { errors.push(error.to_string()); }
+        if errors.is_empty() { Ok(()) } else { Err(SyncError::Event(errors.join("\n"))) }
     }
 
     pub(crate) async fn reload_lists_of_absent_parent(&self, model: &str) -> Result<(), SyncError> {
@@ -44,7 +46,7 @@ impl Inner {
         for name in names {
             self.db.shared.store.invalidate_family(model, name)?;
         }
-        self.reload_watched(model, Some(names), true).await;
+        self.reload_watched(model, Some(names), true).await?;
         Ok(())
     }
 }

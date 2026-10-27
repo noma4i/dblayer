@@ -178,6 +178,10 @@ DBlayer.database.onlineSink().setOnline(true)    // waiting changes and uploads 
 
 A whole list refreshes with `refresh()`. The load phase of the relation (`LoadPhase`: `notLoaded`, `loading`, `loaded`, `empty`, `failed`) is live, see [live data](live-data.md).
 
+Stored window read failures appear in the load snapshot, including its first delivery.
+With rows, the phase is `loaded` with an error. Without rows, it is `failed`.
+When a mutation reloads watched lists, its result reports all failed reloads and freshness reads.
+
 ## Guarantees
 
 - The whole `sync` value is part of every delivery: a change of `state`, `actions`, `dirtyFields` or `error` without a data change still reaches observers, in order. The parent of an included row is delivered when the sync of that row changes.

@@ -5,6 +5,41 @@ use super::upload_tests::{blob, created, file, input, rid, single_replies, small
 use crate::transport::PutReply;
 use crate::upload::{UploadConfig, UploadStage, UploadStatus};
 
+#[tokio::test(start_paused = true)]
+async fn corrupt_upload_headers_reject_single_and_multipart_answers_before_put() {
+    use crate::transport::Reply;
+    use serde_json::{json, Value};
+    for multipart in [false, true] {
+        for headers in [json!("{"), json!({"x": 1}), json!([{"name": "x"}]), json!([{"key": 7, "value": "v"}]), json!([false]), json!(false), json!("null"), json!(null)] {
+            let rig = upload_rig(small());
+            let valid = headers.is_null();
+            if multipart {
+                rig.transport.enqueue("InitMultipart", Reply::data(json!({"initMultipart": {"key": "k1", "uploadId": "u1"}})));
+                let parts: Vec<Value> = (1..=3).map(|number| json!({"partNumber": number, "url": format!("https://s3/p{number}"), "headers": headers})).collect();
+                rig.transport.enqueue("PresignParts", Reply::data(json!({"presignParts": {"parts": parts}})));
+                rig.transport.enqueue("CompleteMultipart", Reply::data(json!({"completeMultipart": {"signedId": "sid", "blobId": "b1"}})));
+                rig.transport.enqueue("AbortMultipart", Reply::data(json!({"abortMultipart": {"ok": true}})));
+            } else {
+                rig.transport.enqueue("CreateBlob", Reply::data(json!({"createBlob": {"url": "https://s3/single", "headers": headers, "signedId": "sid", "blobId": "b1"}})));
+            }
+            rig.transport.enqueue("CreateMoment", created("m1"));
+            let source = file(if multipart { b"abcdefghijkl" } else { b"abcdef" });
+            rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
+            rig.sync.wait_uploads().await;
+            let puts = rig.transport.put_calls();
+            if valid {
+                assert_eq!(puts.len(), if multipart { 3 } else { 1 });
+                assert!(puts.iter().all(|put| put.headers.is_empty()));
+            } else {
+                assert!(puts.is_empty(), "multipart={multipart}, headers={headers}");
+                let error = rig.sync.settled("moments", &rid("m1"), Some("upload")).await.unwrap_err();
+                assert!(error.to_string().contains("headers"), "{error}");
+                assert_eq!(rig.transport.call_count("CreateMoment"), 0);
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn durable_upload_failures_reach_the_waiting_operation() {
     for case in ["transfer", "cancel", "abort", "load", "progress", "failed"] {

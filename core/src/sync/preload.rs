@@ -203,7 +203,9 @@ impl Inner {
         let Ok(windows) = self.preloaded_windows() else { return };
         for (model, relation, params) in windows {
             let Ok(resolved) = self.resolve(&model, &relation, &params) else { continue };
-            FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, self.stored(&resolved)).failed(LoadError::of(error));
+            if let Ok(seed) = self.stored(&resolved) {
+                FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, seed).failed(LoadError::of(error));
+            }
         }
     }
 

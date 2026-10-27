@@ -27,13 +27,13 @@ impl Inner {
     }
 
     pub(crate) async fn members_chain(&self, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
-        let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, self.stored(resolved));
-        let result = self.load_all(resolved, force).await;
+        let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, self.stored(resolved)?);
+        let result = match self.load_all(resolved, force).await { Ok(()) => self.stored(resolved), Err(error) => Err(error) };
         match &result {
-            Ok(()) => ticket.landed(self.stored(resolved)),
+            Ok(seed) => ticket.landed(seed.clone()),
             Err(error) => ticket.failed(LoadError::of(error)),
         }
-        result
+        result.map(|_| ())
     }
 
     fn incomplete(resolved: &Resolved<'_>, reason: &str) -> SyncError {
@@ -60,7 +60,7 @@ impl Inner {
         loop {
             self.flights_settled(resolved).await;
             let Some(window) = self.db.shared.store.window(&resolved.window_key)? else { return Err(Self::incomplete(resolved, "the window is gone")) };
-            let chain = PageChain { cursor: window.cursor.clone(), has_next: window.has_next, loaded_pages: usize::try_from(window.pages).unwrap_or_default(), is_loading: self.is_loading(resolved) };
+            let chain = PageChain { cursor: window.cursor.clone(), has_next: window.has_next, loaded_pages: usize::try_from(window.pages).map_err(|_| SyncError::Store("invalid stored window page count".into()))?, is_loading: self.is_loading(resolved) };
             match LoadMoreVerdict::of(&chain, max_pages.map(|pages| pages as usize)) {
                 LoadMoreVerdict::AlreadyLoading => continue,
                 LoadMoreVerdict::NoCursor if window.has_next => return Err(Self::incomplete(resolved, "the server reports a next page without a cursor")),

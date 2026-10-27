@@ -9,6 +9,33 @@ fn none() -> Map<String, serde_json::Value> {
     Map::new()
 }
 
+#[tokio::test(start_paused = true)]
+async fn watched_reload_aggregates_read_and_fetch_failures() {
+    for case in ["read", "reload"] {
+        let rig = rig();
+        let _feed = rig.sync.watch("moments", "feed", &none()).unwrap();
+        let _history = rig.sync.watch("moments", "history", &none()).unwrap();
+        rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
+        rig.transport.enqueue("MomentsHistory", history_reply(&["m1"]));
+        if case == "reload" {
+            rig.transport.enqueue("MomentsFeed", Reply::fail(crate::transport::TransportError::Http { status: 422, body: "feed rejected".into() }));
+            rig.transport.enqueue("MomentsHistory", Reply::fail(crate::transport::TransportError::Http { status: 422, body: "history rejected".into() }));
+        }
+        load(&rig, "feed").await;
+        load(&rig, "history").await;
+        rig.db.create("moments", params(json!({"text": "t"}))).unwrap();
+        rig.transport.enqueue("CreateMoment", created());
+        if case == "read" {
+            rig.db.shared.store.lock().connection.execute("ALTER TABLE query_window RENAME COLUMN landed_at TO broken_landed_at", []).unwrap();
+        }
+        let error = rig.sync.flush().await.unwrap_err().to_string();
+        assert!(error.contains("moments.feed:"), "{case}: {error}");
+        assert!(error.contains("moments.history:"), "{case}: {error}");
+        assert_eq!(rig.transport.call_count("MomentsFeed"), if case == "read" { 1 } else { 2 });
+        assert_eq!(rig.transport.call_count("MomentsHistory"), if case == "read" { 1 } else { 2 });
+    }
+}
+
 fn rid(text: &str) -> RowId {
     RowId::new(text).unwrap()
 }

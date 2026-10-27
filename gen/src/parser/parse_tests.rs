@@ -1,6 +1,17 @@
 use super::*;
 use crate::lexer::lex;
 
+#[test]
+fn top_level_operation_rejects_every_option_before_building() {
+    for options in ["unknown: true", "as: :string", "first: 1, second: false"] {
+        let source = format!("operation :send, {options} do\nend");
+        let error = parse(&lex(&source).unwrap(), 0).err().unwrap();
+        assert_eq!(error.line, 1);
+        assert!(error.message.contains(options.split(':').next().unwrap()), "{error:?}");
+        assert!(error.message.contains("does not accept option"));
+    }
+}
+
 fn parse_source(source: &str) -> Result<Vec<ModelNode>, ParseError> {
     parse(&lex(source).unwrap(), 0).map(|parsed| parsed.models)
 }

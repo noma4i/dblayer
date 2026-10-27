@@ -215,12 +215,21 @@ impl Inner {
         let forced = force || cursor.is_some();
         loop {
             if !self.connectivity.is_online() {
-                FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved)).failed(LoadError::of(&SyncError::Offline));
+                FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved)?).failed(LoadError::of(&SyncError::Offline));
                 return Err(SyncError::Offline);
             }
             let verdict = {
                 let mut flights = locked(&self.flights);
-                let verdict = flights.coalescing.request(&flight_key, forced, || self.window_is_fresh(resolved).unwrap_or(false));
+                let mut freshness_error = None;
+                let verdict = flights.coalescing.request(&flight_key, forced, || match self.window_is_fresh(resolved) {
+                    Ok(fresh) => fresh,
+                    Err(error) => { freshness_error = Some(error); false }
+                });
+                if let Some(error) = freshness_error {
+                    flights.coalescing.finish(&flight_key);
+                    self.owner.submit(super::load_machine::Event::ReadFailed { window: resolved.window_key.clone(), error: LoadError::of(&error) });
+                    return Err(error);
+                }
                 if resolved.node_reread && matches!(verdict, FetchVerdict::StartFetch | FetchVerdict::AwaitInFlight) {
                     flights.node_rereads.insert(flight_key.clone());
                 }
@@ -244,13 +253,17 @@ impl Inner {
             match verdict {
                 Ok(sender) => {
                     let mut guard = FlightGuard { inner: self, key: flight_key, sender };
-                    let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved));
+                    let seed = match self.stored(resolved) { Ok(seed) => seed, Err(error) => { guard.finish(Err(error.clone())); return Err(error); } };
+                    let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), seed);
                     let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
                     let result = match self.execute(resolved, cursor, force).await {
                         Executed::Landed(outcome, revision) => {
                             match outcome.status {
                                 LoadStatus::Discarded(_) => ticket.discarded(),
-                                _ => ticket.landed(self.stored(resolved).map(|stored| Stored { revision, ..stored })),
+                                _ => match self.stored(resolved) {
+                                    Ok(seed) => ticket.landed(seed.map(|stored| Stored { revision, ..stored })),
+                                    Err(error) => { ticket.failed(LoadError::of(&error)); guard.finish(Err(error.clone())); return Err(error); }
+                                },
                             }
                             Ok(outcome)
                         }
@@ -376,7 +389,7 @@ impl Inner {
         let chain = PageChain {
             cursor: window.cursor.clone(),
             has_next: window.has_next,
-            loaded_pages: usize::try_from(window.pages).unwrap_or_default(),
+            loaded_pages: usize::try_from(window.pages).map_err(|_| SyncError::Store("invalid stored window page count".into()))?,
             is_loading: self.is_loading(resolved),
         };
         let verdict = LoadMoreVerdict::of(&chain, max_pages.map(|pages| pages as usize));

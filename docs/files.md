@@ -297,6 +297,8 @@ val moment = uploadCreate("Moment", "create_file", values, request, Moment)
 
 ### Scenarios
 
+Absent headers are valid. Malformed header JSON or non-string header names and values reject the answer before PUT.
+
 | Scenario | Steps |
 | -------- | ----- |
 | single (smaller than the threshold) | `create` returns url, headers, `signedId`, `blobId`, then one PUT of the file. The answer may sit at a dotted path (`uploadCreate.directUpload`) and `headers` may be an object, a list or a JSON string |

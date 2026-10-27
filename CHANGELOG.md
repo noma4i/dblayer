@@ -5,6 +5,8 @@
 ### Fixed
 - Report corrupt stored rollback data, revisions, sync states, and pending requests as errors.
 - Report upload state persistence failures instead of continuing with unsaved transitions.
+- Report stored window and watched reload failures without treating them as missing or fresh.
+- Reject malformed cloud cursors, upload headers, and unsupported top-level operation options.
 
 ## 6.12.0 - 2026-10-27
 
