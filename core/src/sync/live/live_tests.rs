@@ -9,6 +9,106 @@ use crate::transport::Response;
 
 const KEY: &str = "MomentEvents|{}";
 
+fn shared_rig(models: Vec<crate::schema::ModelSpec>) -> Rig {
+    let rig = rig_on(crate::db::Db::open_in_memory(models, None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig::default());
+    rig.sync.register(super::super::OperationDef::new("Signal", "subscription Signal { signal { id } }", "signal"));
+    rig
+}
+
+#[tokio::test(start_paused = true)]
+async fn shared_receivers_keep_their_debounce_in_either_open_order() {
+    for reverse in [false, true] {
+        let mut users = users_spec();
+        users.relations[0].updates.push(serde_json::from_value(json!({"subscription":"Signal", "root":"first", "debounce":"100.milliseconds"})).unwrap());
+        let mut moments = moments_spec();
+        moments.relations.iter_mut().find(|relation| relation.name == "recent").unwrap().updates.push(serde_json::from_value(json!({"subscription":"Signal", "root":"second", "debounce":"300.milliseconds"})).unwrap());
+        let rig = shared_rig(vec![users, moments]);
+        let mut order = [("users", "current"), ("moments", "recent")];
+        if reverse { order.reverse(); }
+        let mut watches = Vec::new();
+        for (model, relation) in order {
+            watches.push(rig.sync.watch(model, relation, &none()).unwrap());
+            rig.transport.await_calls("Signal", 1).await;
+        }
+        for value in ["one", "two"] {
+            rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"u", "name":value}, "second":{"id":"m", "text":value, "userId":null}}))));
+            rig.transport.await_consumed("Signal").await;
+        }
+        assert_eq!(text_of(&rig, "moments", "m"), None);
+        assert!(rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().is_none());
+        let waits = rig.transport.waits("Signal");
+        rig.clock.advance(Duration::from_millis(100));
+        rig.transport.await_waits("Signal", waits + 1).await;
+        assert_eq!(rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap().text("name"), Some("two"));
+        assert_eq!(text_of(&rig, "moments", "m"), None);
+        let waits = rig.transport.waits("Signal");
+        rig.clock.advance(Duration::from_millis(200));
+        rig.transport.await_waits("Signal", waits + 1).await;
+        assert_eq!(text_of(&rig, "moments", "m"), Some("two".into()));
+        assert_eq!(rig.transport.call_count("Signal"), 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn debounced_definitions_of_one_model_apply_both_field_sets() {
+    let mut users = users_spec();
+    users.fields.push(crate::schema::FieldSpec::scalar("label", crate::value::ScalarKind::Str).optional());
+    for root in ["first", "second"] {
+        users.relations[0].updates.push(serde_json::from_value(json!({"subscription":"Signal", "root":root, "debounce":"100.milliseconds"})).unwrap());
+    }
+    let rig = shared_rig(vec![users]);
+    let _watch = rig.sync.watch("users", "current", &none()).unwrap();
+    rig.transport.await_calls("Signal", 1).await;
+    rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"u", "name":"Ann"}, "second":{"id":"u", "label":"friend"}}))));
+    rig.transport.await_consumed("Signal").await;
+    let waits = rig.transport.waits("Signal");
+    rig.clock.advance(Duration::from_millis(100));
+    rig.transport.await_waits("Signal", waits + 1).await;
+    let row = rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap();
+    assert_eq!((row.text("name"), row.text("label")), (Some("Ann"), Some("friend")));
+}
+
+#[tokio::test(start_paused = true)]
+async fn shared_feed_applies_only_active_definitions_and_reports_failure_to_each_receiver() {
+    let mut users = users_spec();
+    for (relation, root) in [("incoming_a", "first"), ("incoming_b", "second")] {
+        let mut scope = crate::schema::RelationSpec::global(relation);
+        scope.updates.push(serde_json::from_value(json!({"subscription":"Signal", "root":root})).unwrap());
+        users.relations.push(scope);
+    }
+    let rig = shared_rig(vec![users]);
+    let mut first = rig.sync.watch("users", "incoming_a", &none()).unwrap();
+    rig.transport.await_calls("Signal", 1).await;
+    let emit = |name| rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"a", "name":name}, "second":{"id":"b", "name":name}}))));
+    emit("one");
+    rig.transport.await_consumed("Signal").await;
+    let row = |id| rig.db.find("users", &crate::identity::RowId::new(id).unwrap()).unwrap();
+    assert_eq!(row("a").unwrap().text("name"), Some("one"));
+    assert!(row("b").is_none());
+    let mut second = rig.sync.watch("users", "incoming_b", &none()).unwrap();
+    emit("two");
+    rig.transport.await_consumed("Signal").await;
+    assert_eq!(row("b").unwrap().text("name"), Some("two"));
+    let mut failures = [first.failures().unwrap(), second.failures().unwrap()];
+    let refusal = crate::transport::SubscriptionFailure::from_error(crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "refused".into() });
+    rig.transport.emit("Signal", SubscriptionEvent::Failed(refusal.clone()));
+    rig.transport.await_cancellations("Signal", 1).await;
+    for failure in &mut failures {
+        let (source, seen) = tokio::time::timeout(Duration::from_secs(1), failure.receiver.recv()).await.unwrap().unwrap().unwrap();
+        assert!(failure.sources.contains(&source));
+        assert_eq!(seen, refusal);
+        assert_eq!((failure.recheck)(), Some(refusal.clone()));
+    }
+    rig.sync.resume().await.unwrap();
+    rig.transport.await_calls("Signal", 2).await;
+    drop(first);
+    emit("three");
+    rig.transport.await_consumed("Signal").await;
+    assert_eq!(row("a").unwrap().text("name"), Some("two"));
+    assert_eq!(row("b").unwrap().text("name"), Some("three"));
+    assert_eq!(rig.transport.call_count("Signal"), 2);
+}
+
 #[tokio::test(start_paused = true)]
 async fn memory_scope_events_follow_readers_and_expire_without_http() {
     use crate::schema::{FieldSpec, ModelSpec, RelationSpec, Storage, UpdatesSpec};

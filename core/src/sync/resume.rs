@@ -123,9 +123,9 @@ impl Watch {
         let failures = self.failures.take()?;
         let (inner, live) = (self.inner.clone(), self.live.clone());
         let current: Arc<dyn Fn() -> Option<crate::transport::SubscriptionFailure> + Send + std::marker::Sync> = Arc::new(move || {
-            live.iter().find_map(|key| locked(&inner.lives).get(key)?.subscription.as_ref()?.status().failure.filter(|failure| matches!(failure.error, crate::transport::TransportError::Session { .. })))
+            live.iter().find_map(|key| locked(&inner.lives).get(super::live::live_source(key))?.subscription.as_ref()?.status().failure.filter(|failure| matches!(failure.error, crate::transport::TransportError::Session { .. })))
         });
-        Some(Failures { current: current(), recheck: current, receiver: failures, sources: self.live.clone() })
+        Some(Failures { current: current(), recheck: current, receiver: failures, sources: self.live.iter().map(|key| super::live::live_source(key).to_string()).collect() })
     }
 }
 

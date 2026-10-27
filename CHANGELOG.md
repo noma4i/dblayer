@@ -21,6 +21,8 @@
 - Replace the `events` property with the suspending `events()` call on Swift and Kotlin.
 
 ### Fixed
+- Preserve each active subscription declaration's debounce, effects, nested fields, events, and failure recovery.
+- Apply the supplied definition when subscribing directly to a declared operation.
 - Give each event collection an independent reader, including after cancellation or completion.
 - Wait for connectivity and server confirmation when opening model events.
 - Wake every waiting event read on close and preserve opening error kinds.

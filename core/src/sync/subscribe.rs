@@ -113,7 +113,8 @@ struct Pending {
 struct Feed {
     inner: Arc<Inner>,
     def: Arc<SubscriptionDef>,
-    recipients: Vec<Feed>,
+    shared: bool,
+    operation_root: String,
     root_path: String,
     status: SharedStatus,
     backoff: Backoff,
@@ -121,6 +122,15 @@ struct Feed {
 }
 
 impl Feed {
+    fn recipients(&self) -> Vec<Feed> {
+        let definitions = if self.shared { self.inner.live_definitions(&self.def.operation, &self.def.variables) } else { vec![(*self.def).clone()] };
+        definitions.into_iter().map(|def| Feed {
+            inner: self.inner.clone(), root_path: def.root.clone().unwrap_or_else(|| self.operation_root.clone()),
+            def: Arc::new(def), shared: false, operation_root: self.operation_root.clone(),
+            status: self.status.clone(), backoff: self.backoff, ready: None,
+        }).collect()
+    }
+
     fn opening(&self, result: Result<(), SyncError>) {
         if let Some(ready) = &self.ready { ready.send_replace(Some(result)); }
     }
@@ -198,7 +208,7 @@ impl Feed {
         let before = watched.then(|| self.inner.db.find(model, row_id));
         if reads.iter().any(|read| read.removes_on.iter().any(|removal| removal == kind)) {
             let definition = Arc::new(SubscriptionDef { model: model.to_string(), effect: EventEffect::Destroy, ..(*self.def).clone() });
-            let removed = self.apply(vec![Pending { definition, bucket: String::new(), id: row_id.clone(), node: Map::new(), generation: self.inner.db.generation() }], model).await;
+            let removed = self.apply(vec![Pending { definition, bucket: String::new(), id: row_id.clone(), node: Map::new(), generation: self.inner.db.generation() }]).await;
             if let Some(before) = before {
                 if !removed {
                     self.inner.publish_model_gap(model);
@@ -270,6 +280,7 @@ impl Feed {
         };
         if !self.matches(node) { return true; }
         let id = self.event_id(node);
+        let before = id.as_ref().filter(|_| self.inner.has_event_readers(&self.def.model)).map(|id| self.inner.db.find(&self.def.model, id));
         let result = match &apply.action {
             SubscriptionAction::Ephemeral { fields } => {
                 let values: Option<Map<String, Value>> = fields.iter().map(|(name, path)| root_value(node, path).cloned().map(|value| (name.clone(), value))).collect();
@@ -283,8 +294,17 @@ impl Feed {
             SubscriptionAction::Upsert | SubscriptionAction::Delete => return false,
         };
         match result {
-            Ok(()) => locked(&self.status).applied += 1,
-            Err(_) => locked(&self.status).rejected += 1,
+            Ok(()) => {
+                locked(&self.status).applied += 1;
+                if let (Some(id), Some(before)) = (id.as_ref(), before) {
+                    let kind = node.get("kind").and_then(Value::as_str).unwrap_or("UPDATED");
+                    self.inner.publish_rows(&self.def.model, &self.def.operation, kind, id.as_str(), before, self.inner.db.find(&self.def.model, id));
+                }
+            }
+            Err(_) => {
+                locked(&self.status).rejected += 1;
+                if before.is_some() { self.inner.publish_model_gap(&self.def.model); }
+            }
         }
         true
     }
@@ -317,12 +337,21 @@ impl Feed {
         Some(Pending { definition: self.def.clone(), bucket: format!("{}|{}", self.def.model, self.def.event.bucket_key(id.as_str())), id, node, generation: self.inner.db.generation() })
     }
 
-    async fn apply(&self, mut items: Vec<Pending>, model: &str) -> bool {
+    async fn apply_active(&self, mut items: Vec<Pending>) -> bool {
+        if self.shared {
+            let definitions = self.inner.live_definitions(&self.def.operation, &self.def.variables);
+            items.retain(|item| definitions.contains(&item.definition));
+        }
+        self.apply(items).await
+    }
+
+    async fn apply(&self, mut items: Vec<Pending>) -> bool {
         let current = self.inner.db.generation();
         items.retain(|item| item.generation == current);
         if items.is_empty() {
             return false;
         }
+        let models: BTreeSet<_> = items.iter().map(|item| item.definition.model.clone()).collect();
         let applied = match self.try_apply(items, current) {
             Ok((stale, held_files)) => self.inner.discard_files(held_files).await.map(|()| stale),
             Err(error) => Err(error),
@@ -336,8 +365,10 @@ impl Feed {
             }
             Err(_) => {
                 locked(&self.status).rejected += 1;
-                if self.reread_observed(model).await.is_err() {
-                    self.inner.publish_model_gap(model);
+                for model in models {
+                    if self.reread_observed(&model).await.is_err() {
+                        self.inner.publish_model_gap(&model);
+                    }
                 }
                 false
             }
@@ -358,6 +389,9 @@ impl Feed {
             };
             Ok::<_, SyncError>((item, normalized))
         }).collect::<Result<Vec<_>, _>>()?;
+        let patches: BTreeMap<_, _> = crate::store::coalesce_rows(items.iter().filter_map(|(item, normalized)| normalized.as_ref().map(|normalized| (item, normalized))).flat_map(|(item, normalized)| {
+            normalized.related.iter().cloned().chain(normalized.roots.iter().cloned().map(|row| (ModelKey::new(&item.definition.model), row)))
+        })).into_iter().filter_map(|(model, row)| Some(((model.to_string(), row.get("id").and_then(read_id)?.to_string()), row))).collect();
         let change_feed = self.inner.change_feed().is_some_and(|(_, feed)| feed.subscription == self.def.operation);
         let before = items.iter().filter(|(item, _)| !change_feed && self.inner.has_event_readers(&item.definition.model)).map(|(item, _)| {
             let def = &item.definition;
@@ -387,12 +421,14 @@ impl Feed {
                     if stored.is_none() && def.effect == EventEffect::Patch {
                         continue;
                     }
-                    let Some(patch) = normalized.roots.first() else { continue };
+                    let Some(patch) = patches.get(&key) else { continue };
                     let Some(row) = db.admitted(reader, WriteOrigin::Event, None, None, model, patch, &mut 0)? else { continue };
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
                     touches.extend(db.touch_ops(reader, spec, &seen, &own)?);
                     for (related_model, patch) in &normalized.related {
+                        let Some(id) = patch.get("id").and_then(read_id) else { continue };
+                        let Some(patch) = patches.get(&(related_model.to_string(), id.to_string())) else { continue };
                         let Some(row) = db.admitted(reader, WriteOrigin::Event, None, None, related_model.as_str(), patch, &mut 0)? else { continue };
                         let Some(id) = row.get("id").and_then(read_id) else { continue };
                         operations.insert((related_model.to_string(), id.to_string()), EntityOp::Upsert { model: related_model.clone(), id, row });
@@ -455,16 +491,15 @@ impl Feed {
     }
 
     async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle) -> SubscriptionFailureKind {
-        let debounce = self.def.event.debounce_interval.map(|interval| Debounce::new(interval, |item: &Pending| item.bucket.clone()));
-        let mut pending: Vec<Pending> = Vec::new();
-        let mut deadline: Option<Duration> = None;
+        let mut pending: Vec<(Arc<SubscriptionDef>, Duration, Vec<Pending>)> = Vec::new();
         loop {
+            let deadline = pending.iter().map(|(_, deadline, _)| *deadline).min();
             let wait = deadline.unwrap_or_default().saturating_sub(self.inner.clock.now());
             tokio::select! {
                 event = connection.next() => match event {
                     None => {
                         self.opening(Err(SyncError::Event("subscription closed".into())));
-                        self.apply(std::mem::take(&mut pending), &self.def.model).await;
+                        self.apply_active(std::mem::take(&mut pending).into_iter().flat_map(|(_, _, items)| items).collect()).await;
                         return SubscriptionFailureKind::Transport;
                     }
                     Some(SubscriptionEvent::Ready) => {
@@ -478,31 +513,42 @@ impl Feed {
                     Some(SubscriptionEvent::Next(response)) => {
                         lifecycle.handle(Event::Next);
                         self.publish(lifecycle);
-                        if self.invalidation(&response).await { continue; }
+                        let invalidation = self.invalidation(&response).await;
                         let mut items = Vec::new();
-                        for feed in &self.recipients {
-                            if !feed.apply_event(&response).await {
-                                if let Some(item) = feed.parse(&response) { items.push(item); }
+                        for feed in self.recipients() {
+                            if !feed.apply_event(&response).await && !invalidation {
+                                if let Some(item) = feed.parse(&response) {
+                                    match feed.def.event.debounce_interval {
+                                        Some(interval) => {
+                                            let index = pending.iter().position(|(def, _, _)| def == &feed.def).unwrap_or_else(|| {
+                                                pending.push((feed.def.clone(), self.inner.clock.now() + interval, Vec::new()));
+                                                pending.len() - 1
+                                            });
+                                            let debounce = Debounce::new(interval, |item: &Pending| item.bucket.clone());
+                                            pending[index].2 = debounce.coalesce(std::mem::take(&mut pending[index].2), item);
+                                        }
+                                        None => items.push(item),
+                                    }
+                                }
                             }
                         }
-                        if items.is_empty() { continue; }
-                        match &debounce {
-                            Some(debounce) => {
-                                for item in items { pending = debounce.coalesce(std::mem::take(&mut pending), item); }
-                                deadline.get_or_insert_with(|| self.inner.clock.now() + debounce.interval);
-                            }
-                            None => { self.apply(items, &self.def.model).await; }
-                        }
+                        self.apply_active(items).await;
                     }
                     Some(SubscriptionEvent::Failed(failure)) => {
                         self.notify_failure(&failure);
-                        self.apply(std::mem::take(&mut pending), &self.def.model).await;
+                        self.apply_active(std::mem::take(&mut pending).into_iter().flat_map(|(_, _, items)| items).collect()).await;
                         return failure.kind;
                     }
                 },
                 _ = self.inner.clock.sleep(wait), if deadline.is_some() => {
-                    self.apply(std::mem::take(&mut pending), &self.def.model).await;
-                    deadline = None;
+                    let mut items = Vec::new();
+                    let now = self.inner.clock.now();
+                    pending.retain_mut(|(_, deadline, queued)| {
+                        if *deadline > now { return true; }
+                        items.append(queued);
+                        false
+                    });
+                    self.apply_active(items).await;
                 }
             }
         }
@@ -528,8 +574,8 @@ impl Feed {
                         status.connects > 1
                     };
                     if reconnected {
-                        let models: BTreeSet<_> = self.recipients.iter().map(|feed| feed.def.model.as_str()).collect();
-                        for model in models { self.inner.reload_watched(model, None, false).await; }
+                        let models: BTreeSet<_> = self.recipients().iter().map(|feed| feed.def.model.clone()).collect();
+                        for model in models { self.inner.reload_watched(&model, None, false).await; }
                     }
                     lifecycle.handle(Event::Connected);
                     self.pump(&mut connection, &mut lifecycle).await
@@ -586,25 +632,9 @@ impl Inner {
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let definition = def.clone();
         let def_root = def.root.clone();
-        let mut recipients = Vec::new();
-        if let Some(targets) = self.subscriptions.get(&def.operation) {
-            for (model, updates) in targets {
-                let mut target = SubscriptionDef::new(def.event.clone(), &def.operation, model, if updates.removes { EventEffect::Destroy } else { EventEffect::Upsert });
-                target.variables = def.variables.clone();
-                target.deleted_by = updates.deleted_by.clone();
-                target.deleted_unless = updates.deleted_unless.clone();
-                target.set = updates.set.clone();
-                target.root = updates.root.clone();
-                target.id = updates.id.clone();
-                target.apply = updates.apply.clone();
-                if !recipients.contains(&target) { recipients.push(target); }
-            }
-        }
-        if recipients.is_empty() { recipients.push(def.clone()); }
         let backoff = RetryPolicy::Subscription.backoff().randomized();
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
-        let recipients = recipients.into_iter().map(|target| Feed { inner: self.clone(), root_path: target.root.clone().unwrap_or_else(|| operation.root_path.clone()), def: Arc::new(target), recipients: Vec::new(), status: status.clone(), backoff, ready: None }).collect();
-        let feed = Feed { inner: self.clone(), def: Arc::new(def), recipients, root_path, status: status.clone(), backoff, ready };
+        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready };
         let task = tokio::spawn(self.until_closed(feed.run(request, first)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }

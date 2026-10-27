@@ -16,6 +16,7 @@ use super::{locked, Inner};
 pub(crate) struct Live {
     runtime: Option<Handle>,
     readers: usize,
+    receivers: Vec<(String, SubscriptionDef, usize)>,
     pub(crate) subscription: Option<Updates>,
     starting: Option<AbortHandle>,
     closing: Option<AbortHandle>,
@@ -88,11 +89,11 @@ impl Inner {
     }
 
     pub(crate) fn unlisten_all(self: &std::sync::Arc<Self>) {
-        let keys: Vec<String> = self.db.shared.specs.values().flat_map(|spec| spec.listens.iter().map(|updates| live_key(&updates.subscription, &json!({})))).collect();
+        let keys: Vec<String> = self.db.shared.specs.values().flat_map(|spec| spec.listens.iter().map(|updates| receiver_key(spec.key.as_str(), updates, &json!({})))).collect();
         for key in keys {
             self.release_live(&key);
         }
-        if let Some((_, feed)) = self.change_feed() { self.release_live(&live_key(&feed.subscription, &json!({}))); }
+        if let Some((model, feed)) = self.change_feed() { self.release_live(&receiver_key(&model, &changes_updates(feed.subscription), &json!({}))); }
     }
 
     pub(super) fn change_feed(&self) -> Option<(String, crate::schema::ChangeFeed)> {
@@ -101,11 +102,11 @@ impl Inner {
 
     pub(crate) fn acquire_changes(self: &std::sync::Arc<Self>) -> Option<String> {
         let (model, feed) = self.change_feed()?;
-        Some(self.acquire_one(&model, UpdatesSpec { apply: None, subscription: feed.subscription, deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() }, None))
+        Some(self.acquire_one(&model, changes_updates(feed.subscription), None))
     }
 
     pub(crate) async fn changes_ready(&self, key: &str) -> Result<(), super::SyncError> {
-        let mut ready = locked(&self.lives).get(key).ok_or(super::SyncError::Cancelled)?.ready.subscribe();
+        let mut ready = locked(&self.lives).get(live_source(key)).ok_or(super::SyncError::Cancelled)?.ready.subscribe();
         let mut stopped = self.stopped.clone();
         loop {
             if stopped.has_changed().is_err() { return Err(super::SyncError::Cancelled); }
@@ -125,62 +126,67 @@ impl Inner {
     }
 
     pub(super) fn acquire_one(self: &std::sync::Arc<Self>, model: &str, updates: UpdatesSpec, scoped: Option<(String, Value)>) -> String {
-        let (key, variables) = match scoped {
-            Some((_, variables)) => (live_key(&updates.subscription, &variables), variables),
-            None => (live_key(&updates.subscription, &json!({})), json!({})),
-        };
-        let Ok(runtime) = Handle::try_current() else { return key };
+        let variables = scoped.map_or_else(|| json!({}), |(_, variables)| variables);
+        let key = live_key(&updates.subscription, &variables);
+        let receiver = receiver_key(model, &updates, &variables);
+        let mut event = EventSpec::new(updates.subscription.as_str());
+        if let Some(interval) = updates.debounce.as_deref().and_then(parse_duration) {
+            event = event.debounced(interval).merged_by_row();
+        }
+        let effect = if updates.removes { EventEffect::Destroy } else { EventEffect::Upsert };
+        let mut def = SubscriptionDef::new(event, &updates.subscription, model, effect);
+        def.variables = variables;
+        def.deleted_by = updates.deleted_by;
+        def.deleted_unless = updates.deleted_unless;
+        def.set = updates.set;
+        def.root = updates.root;
+        def.id = updates.id;
+        def.apply = updates.apply;
+        let Ok(runtime) = Handle::try_current() else { return receiver };
         let mut lives = locked(&self.lives);
         let live = lives.entry(key.clone()).or_default();
         live.runtime = Some(runtime.clone());
         live.readers += 1;
+        match live.receivers.iter_mut().find(|(key, _, _)| key == &receiver) {
+            Some((_, _, readers)) => *readers += 1,
+            None => live.receivers.push((receiver.clone(), def.clone(), 1)),
+        }
         if let Some(closing) = live.closing.take() {
             closing.abort();
         }
         if live.subscription.is_some() || live.starting.is_some() {
-            return key;
+            return receiver;
         }
         live.ready.send_replace(None);
         let inner = self.clone();
-        let model = model.to_string();
         let slot = key.clone();
         let ready = live.ready.clone();
         let task = runtime.spawn(self.until_closed(async move {
-            let mut event = EventSpec::new(updates.subscription.as_str());
-            if let Some(interval) = updates.debounce.as_deref().and_then(parse_duration) {
-                event = event.debounced(interval).merged_by_row();
-            }
-            let effect = if updates.removes { EventEffect::Destroy } else { EventEffect::Upsert };
-            let mut def = SubscriptionDef::new(event, &updates.subscription, &model, effect);
-            def.variables = variables;
-            def.deleted_by = updates.deleted_by;
-            def.deleted_unless = updates.deleted_unless;
-            def.set = updates.set;
-            def.root = updates.root;
-            def.id = updates.id;
-            def.apply = updates.apply;
             let started = inner.subscribe(def, Some(ready)).await;
             let mut lives = locked(&inner.lives);
             let Some(live) = lives.get_mut(&slot) else { return };
             live.started(started);
         }));
         live.starting = Some(task.abort_handle());
-        key
+        receiver
     }
 
     pub(crate) fn release_live(self: &std::sync::Arc<Self>, key: &str) {
         let mut lives = locked(&self.lives);
-        let Some(live) = lives.get_mut(key) else { return };
+        let Some(live) = lives.get_mut(live_source(key)) else { return };
+        let Some((_, _, readers)) = live.receivers.iter_mut().find(|(receiver, _, _)| receiver == key) else { return };
+        if *readers == 0 { return; }
+        *readers -= 1;
         live.readers = live.readers.saturating_sub(1);
         if live.readers > 0 || live.closing.is_some() {
             return;
         }
         let Some(runtime) = live.runtime.clone() else {
-            lives.remove(key);
+            lives.remove(live_source(key));
             return;
         };
         let inner = self.clone();
-        let slot = key.to_string();
+        let slot = live_source(key).to_string();
         let linger: Duration = self.config.live_linger;
         let task = runtime.spawn(self.until_closed(async move {
             tokio::time::sleep(linger).await;
@@ -191,9 +197,13 @@ impl Inner {
                 }
             }
         }));
-        if let Some(live) = lives.get_mut(key) {
+        if let Some(live) = lives.get_mut(live_source(key)) {
             live.closing = Some(task.abort_handle());
         }
+    }
+
+    pub(super) fn live_definitions(&self, operation: &str, variables: &Value) -> Vec<SubscriptionDef> {
+        locked(&self.lives).get(&live_key(operation, variables)).map(|live| live.receivers.iter().filter(|(_, _, readers)| *readers > 0).map(|(_, definition, _)| definition.clone()).collect()).unwrap_or_default()
     }
 
     #[cfg(test)]
@@ -204,6 +214,18 @@ impl Inner {
 
 pub(super) fn live_key(operation: &str, variables: &Value) -> String {
     format!("{operation}|{variables}")
+}
+
+pub(super) fn live_source(key: &str) -> &str {
+    key.split_once('\n').map_or(key, |(source, _)| source)
+}
+
+fn receiver_key(model: &str, updates: &UpdatesSpec, variables: &Value) -> String {
+    format!("{}\n{}", live_key(&updates.subscription, variables), json!([model, updates]))
+}
+
+fn changes_updates(subscription: String) -> UpdatesSpec {
+    UpdatesSpec { apply: None, subscription, deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() }
 }
 
 #[cfg(test)]

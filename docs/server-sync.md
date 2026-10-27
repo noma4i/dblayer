@@ -794,6 +794,12 @@ end
 - After a dropped connection, the library reconnects and reloads expired watched relations. Offline, it waits without attempts. Returning online reconnects at once. The reconnect delay runs on the database clock: a test clock that does not move never reconnects an online subscription, so a test advances it.
 - A WebSocket close frame ends the current subscription even without a GraphQL `complete` message.
 - Bursts of events are merged into one commit.
+- Each active declaration keeps its own debounce interval and row effects, regardless of which reader opened first.
+- Declarations without readers receive no row effects, including while another declaration keeps the shared connection open.
+- Shared commits merge partial fields of the same nested row before writing it.
+- A shared batch failure rereads every receiving model and reports a gap for each failed reread.
+- Change notifications and declared ephemeral or reread effects on the same operation all run.
+- Model event readers receive before and after rows for ephemeral and reread effects too.
 
 ### Subscriptions with arguments
 

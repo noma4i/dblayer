@@ -32,6 +32,130 @@ fn upsert_def() -> SubscriptionDef {
 }
 
 #[tokio::test(start_paused = true)]
+async fn direct_subscribe_applies_the_passed_definition_instead_of_schema_declarations() {
+    let rig = rig();
+    put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
+    put(&rig, "moments", moment("u1", "keep"));
+    let mut definition = SubscriptionDef::new(EventSpec::new("custom"), "MomentEvents", "users", EventEffect::Destroy);
+    definition.root = Some("custom".into());
+    definition.id = vec!["key".into()];
+    let _subscription = rig.sync.subscribe(definition).await.unwrap();
+    rig.transport.emit("MomentEvents", SubscriptionEvent::Next(Response::data(json!({"custom":{"key":"u1"}, "momentEvent":{"id":"u1", "text":"wrong"}}))));
+    rig.transport.await_consumed("MomentEvents").await;
+    assert!(rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().is_none());
+    assert_eq!(text_of(&rig, "moments", "u1"), Some("keep".into()));
+}
+
+#[tokio::test(start_paused = true)]
+async fn shared_batch_merges_nested_partial_rows_before_admission() {
+    for stored in [false, true] {
+        let mut users = users_spec();
+        users.fields.push(FieldSpec::scalar("label", ScalarKind::Str).optional());
+        let mut moments = moments_spec();
+        moments.listens = vec![serde_json::from_value(json!({"subscription":"Signal", "root":"first"})).unwrap()];
+        let mut mirror = moments.clone();
+        mirror.key = crate::identity::ModelKey::new("mirror");
+        mirror.listens[0].root = Some("second".into());
+        let rig = rig_on(Db::open_in_memory(vec![users, moments, mirror], None).unwrap(), MockTransport::new(), SyncConfig::default());
+        if stored { put(&rig, "users", json!({"id":"u", "name":"before", "label":"before"})); }
+        rig.sync.register(super::OperationDef::new("Signal", "subscription Signal { first { id } second { id } }", "first"));
+        rig.sync.inner.listen_all();
+        rig.transport.await_calls("Signal", 1).await;
+        let revision = rig.db.revision_seq().unwrap();
+        rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"a", "author":{"id":"u", "name":"Ann"}}, "second":{"id":"b", "author":{"id":"u", "label":"friend"}}}))));
+        rig.transport.await_consumed("Signal").await;
+        let row = rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap();
+        assert_eq!((row.text("name"), row.text("label")), (Some("Ann"), Some("friend")));
+        assert_eq!(rig.db.revision_seq().unwrap(), revision + 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn shared_changes_do_not_suppress_ephemeral_or_reread_definitions() {
+    let mut users = users_spec();
+    users.change_feed = Some(crate::schema::ChangeFeed { subscription:"Signal".into(), root:"signal.changes".into(), ..change_feed() });
+    users.changes.push(crate::schema::ChangeRead { area:"USER".into(), relation:"current".into(), parameter:None, removes_on:vec![], observed:false, id_of:None });
+    users.listens = vec![
+        serde_json::from_value(json!({"subscription":"Signal", "root":"signal.presence", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}})).unwrap(),
+        serde_json::from_value(json!({"subscription":"Signal", "root":"signal.reread", "apply":{"effect":"reread", "via":"current"}})).unwrap(),
+    ];
+    let rig = rig_on(Db::open_in_memory(vec![users], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    put(&rig, "users", json!({"id":"u", "name":"before"}));
+    rig.sync.register(super::OperationDef::new("Signal", "subscription Signal { signal { id } }", "signal"));
+    for name in ["change", "effect"] { rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u", "name":name}}))); }
+    rig.sync.inner.listen_all();
+    rig.transport.await_calls("Signal", 1).await;
+    rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"signal":{"changes":[{"topic":"USER", "action":"UPDATED", "recordId":"u"}], "presence":{"id":"u", "active":true}, "reread":{"id":"u"}}}))));
+    rig.transport.await_consumed("Signal").await;
+    let row = rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap();
+    assert_eq!((rig.transport.call_count("CurrentUser"), row.text("name"), row.get("typing")), (2, Some("effect"), Some(&json!(true))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn model_ephemeral_and_reread_definitions_publish_before_and_after_events() {
+    for effect in ["ephemeral", "reread"] {
+        let mut users = users_spec();
+        let apply = if effect == "ephemeral" { json!({"effect":effect, "fields":{"typing":"active"}}) } else { json!({"effect":effect, "via":"current"}) };
+        users.listens.push(serde_json::from_value(json!({"subscription":"Signal", "apply":apply})).unwrap());
+        let rig = rig_on(Db::open_in_memory(vec![users], None).unwrap(), MockTransport::new(), SyncConfig::default());
+        put(&rig, "users", json!({"id":"u", "name":"before"}));
+        rig.sync.register(super::OperationDef::new("Signal", "subscription Signal { signal { id active } }", "signal"));
+        rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u", "name":"after"}})));
+        let events = rig.sync.open_model_events("users").await.unwrap();
+        rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"signal":{"id":"u", "active":true}}))));
+        rig.transport.await_consumed("Signal").await;
+        let item = tokio::time::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
+        let super::ModelEventItem::Event(event) = item else { panic!("expected event, got {item:?}"); };
+        assert_eq!((event.id.as_str(), event.area.as_str(), event.kind.as_str()), ("u", "Signal", "UPDATED"));
+        let before = event.before.unwrap();
+        let after = event.after.unwrap();
+        if effect == "ephemeral" {
+            assert_eq!((before.get("typing"), after.get("typing")), (Some(&json!(false)), Some(&json!(true))));
+        } else {
+            assert_eq!((before.text("name"), after.text("name")), (Some("before"), Some("after")));
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn refused_shared_batch_rereads_every_model_and_records_each_failed_recovery() {
+    for reread_fails in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let mut users = users_spec();
+        users.listens.push(serde_json::from_value(json!({"subscription":"Signal", "root":"first"})).unwrap());
+        let mut moments = moments_spec();
+        moments.listens = vec![serde_json::from_value(json!({"subscription":"Signal", "root":"second"})).unwrap()];
+        let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), vec![users, moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
+        rig.sync.register(super::OperationDef::new("Signal", "subscription Signal { first { id } second { id } }", "first"));
+        rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u", "name":"before"}})));
+        rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
+        for (operation, reply) in [("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u", "name":"after"}}))), ("MomentsByUser", user_list(&["m1", "m2"]))] {
+            rig.transport.enqueue(operation, if reread_fails { crate::transport::Reply::fail(crate::transport::TransportError::Http { status:422, body:"refused".into() }) } else { reply });
+        }
+        let params = params(json!({"userId":"u"}));
+        let _users = rig.sync.watch("users", "current", &Default::default()).unwrap();
+        let _moments = rig.sync.watch("moments", "by_user", &params).unwrap();
+        rig.sync.load("users", "current", &Default::default(), Default::default()).await.unwrap();
+        rig.sync.load("moments", "by_user", &params, Default::default()).await.unwrap();
+        let users_events = rig.sync.open_model_events("users").await.unwrap();
+        let moments_events = rig.sync.open_model_events("moments").await.unwrap();
+        let shared = rig.db.shared.clone();
+        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { let mut inner = shared.store.lock(); inner.generation = inner.generation.next(); }));
+        rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"u", "name":"event"}, "second":{"id":"m9", "text":"event", "userId":"u"}}))));
+        rig.transport.await_consumed("Signal").await;
+        assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByUser")), (2, 2));
+        assert!(rig.db.find("moments", &crate::identity::RowId::new("m9").unwrap()).unwrap().is_none());
+        for events in [&users_events, &moments_events] {
+            let item = tokio::time::timeout(Duration::from_millis(1), events.next()).await;
+            if reread_fails { assert!(matches!(item, Ok(Some(super::ModelEventItem::Missed(1))))); } else { assert!(item.is_err()); }
+        }
+        let name = rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap().text("name").unwrap().to_string();
+        assert_eq!(name, if reread_fails { "before" } else { "after" });
+        assert_eq!(member_ids(&rig, "moments", "by_user", &params), if reread_fails { vec!["m1"] } else { vec!["m1", "m2"] });
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn initial_offline_subscription_makes_no_transport_call() {
     let rig = rig_with_subscription();
     rig.sync.set_online(false);
