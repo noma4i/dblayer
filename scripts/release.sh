@@ -11,7 +11,9 @@ publish="${2:-}"
 [ -z "$publish" ] || [ "$publish" = --publish ] || fail 'usage: release.sh <version> [--publish]'
 [ -z "$(git status --porcelain)" ] || fail 'working tree is not clean'
 [ "$(git branch --show-current)" = master ] || fail 'branch must be master'
-[ "$(git log -1 --format=%s)" = "Release $version" ] || fail 'HEAD subject does not match version'
+previous_tag="$(git describe --tags --abbrev=0)" || fail 'previous tag not found'
+subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read commits since previous tag'
+[ "$(printf '%s\n' "$subjects" | grep -Fxc "Release $version" || true)" = 1 ] || fail "expected exactly one Release $version commit since $previous_tag"
 [ "$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"$/\1/p' core/Cargo.toml)" = "$version" ] || fail 'core version does not match'
 grep -Fq "## $version - " CHANGELOG.md || fail 'changelog heading missing'
 for check in check_docs check_invariants check_zoo; do bash "scripts/$check.sh" || fail "$check failed"; done
