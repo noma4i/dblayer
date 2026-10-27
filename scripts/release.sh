@@ -78,5 +78,5 @@ if [ "$publish" = --publish ]; then
   for file in "${attachments[@]}"; do grep -Fxq "$file" "$tmp/assets" || fail "missing published attachment: $file"; done
   mkdir "$tmp/download"
   gh release download "$version" --repo noma4i/dblayer --dir "$tmp/download"
-  (cd "$tmp/download" && shasum -a 256 -c SHA256SUMS)
+  (cd "$tmp/download" && shasum -a 256 -c "$stage/SHA256SUMS")
 fi
