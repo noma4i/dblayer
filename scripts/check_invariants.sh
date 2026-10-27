@@ -150,21 +150,18 @@ for entry in $doc_paths; do
   [ -e "$root/$entry" ] && mentioned="$mentioned$(grep -rhoE 'INV-[A-Z]+-[0-9]+' "$root/$entry" 2> /dev/null | sort -u | tr '\n' ' ' || true)"
 done
 mentioned="$mentioned$(grep -hoE 'INV-[A-Z]+-[0-9]+' "$spec" | sort -u | tr '\n' ' ' || true)"
-missing_rows=""
 cut -f1 "$work/registry.txt" > "$work/registry_ids.txt"
-for id in $(printf '%s\n' $mentioned | sort -u); do
-  grep -qx "$id" "$work/registry_ids.txt" || missing_rows="$missing_rows$id "
-done
+missing_rows="$(printf '%s\n' $mentioned | sort -u | awk 'NR == FNR { known[$0] = 1; next } !($0 in known) { printf "%s ", $0 }' "$work/registry_ids.txt" -)"
 
 awk -F'\t' '{print tolower($1)}' "$work/registry.txt" | tr '-' '_' > "$work/known.txt"
-orphans=""
-while IFS=$'\t' read -r name _; do
-  [ -z "$name" ] && continue
-  for part in $(printf '%s\n' "$name" | grep -oE 'inv_[a-z]+_[0-9]{2}_' || true); do
-    id="${part%_}"
-    grep -qx "$id" "$work/known.txt" || orphans="$orphans$name (unknown invariant $id)"$'\n'
-  done
-done < "$work/tests.txt"
+orphans="$(awk -F'\t' 'NR == FNR { known[$0] = 1; next } {
+  name = $1; remaining = name
+  while (match(remaining, /inv_[a-z]+_[0-9][0-9]_/)) {
+    id = substr(remaining, RSTART, RLENGTH - 1)
+    if (!(id in known)) print name " (unknown invariant " id ")"
+    remaining = substr(remaining, RSTART + RLENGTH)
+  }
+}' "$work/known.txt" "$work/tests.txt")"
 
 [ -n "$dups" ] && echo "duplicate invariant ids in registry: $dups"
 [ -n "$missing_rows" ] && echo "named by docs, specs or the registry but without a row: $missing_rows"

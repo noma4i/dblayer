@@ -1,2 +1,0 @@
-# file<TAB>pattern of Type.function<TAB>owner<TAB>reason. The first rule that matches the scope of a never-executed line gives its reason.
-UrlSessionCable.swift	^UrlSessionCable\.next$	Foundation	macOS 27.2 SDK declares only data and string cases. A future Foundation case cannot be constructed here.

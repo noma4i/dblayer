@@ -128,20 +128,6 @@ UniFFI 0.32.2 rejects a symbol-stripped shared library with `No UniFFI metadata 
 Android binding generation now reads the existing static archive. Its generated Kotlin bytes match the host-generated bindings.
 The host debug mode remains unchanged. The iOS generator already uses a static archive.
 
-## Reproduce
-
-Run each command through the build slot with `LC_ALL=C`.
-
-```sh
-python3 scripts/measure_release_profiles.py build
-python3 scripts/measure_release_profiles.py cpu-build
-python3 scripts/measure_release_profiles.py measure
-python3 scripts/measure_release_profiles.py sizes
-```
-
-The build step removes only `target/profile-measurements/build` between candidates.
-For a fresh experiment, remove the owned `target/profile-measurements` directory before starting.
-The script writes raw logs and JSON samples there.
 The default release build before this change produced 12230856 and 9500604 byte Android libraries.
 Those default artifacts differ from explicit `strip=none`, which retains additional standard-library debug data.
 The compiler describes stripping as a linking operation: <https://doc.rust-lang.org/rustc/codegen-options/index.html#strip>.

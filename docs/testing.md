@@ -128,7 +128,7 @@ Test conventions:
 
 ## Stress stand
 
-A separate program runs random operations from several threads against one database. A fake server delays, refuses and repeats answers, goes offline and sends late events. The `features` step in `scripts/check_dblayer.sh` compiles all core targets with all features. The `cargo-test-stress` step tests the stress checks, including injected read failures. Run these tests separately with `cargo test -p dblayer --features stress sync::stress`. Race runs and Clippy remain manual checks.
+A separate program runs random operations from several threads against one database. A fake server delays, refuses and repeats answers, goes offline and sends late events. The `cargo-test-workspace` step in `scripts/check_dblayer.sh` tests the workspace with all features, including stress checks and injected read failures. Run these tests separately with `cargo test -p dblayer --features stress sync::stress`. Race runs and Clippy remain manual checks.
 
 ```sh
 cargo run -p dblayer --features stress --bin stress -- --seed 7 --threads 4 --seconds 20

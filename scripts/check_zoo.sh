@@ -19,18 +19,19 @@ if allowlist_path.exists():
             allowed.add(line)
 
 files = [path for path in source.rglob("*.rs") if not path.name.endswith("_tests.rs")]
+contents = {path: path.read_text() for path in files}
 findings = []
 
 definitions = defaultdict(list)
 pattern = re.compile(r"^\s*pub (?:struct|enum|trait|type) ([A-Z][A-Za-z0-9]*)", re.M)
 for path in files:
-    for name in pattern.findall(path.read_text()):
+    for name in pattern.findall(contents[path]):
         definitions[name].append(str(path.relative_to(root)))
 for name, places in sorted(definitions.items()):
     if len(places) > 1 and f"type:{name}" not in allowed:
         findings.append(f"Z2 duplicate public type {name}: {', '.join(sorted(places))}")
 
-clocks = [str(path.relative_to(root)) for path in files if re.search(r"^\s*pub fn set_clock\b", path.read_text(), re.M)]
+clocks = [str(path.relative_to(root)) for path in files if re.search(r"^\s*pub fn set_clock\b", contents[path], re.M)]
 if len(clocks) > 1 and "set_clock" not in allowed:
     findings.append(f"Z1 several set_clock methods: {', '.join(sorted(clocks))}")
 
@@ -40,7 +41,7 @@ if len(supports) > 1 and "support" not in allowed:
 
 diagnostics = []
 for path in files:
-    for name in re.findall(r"^\s*pub struct ([A-Za-z]*(?:Counters|Diagnostics|Stats))\b", path.read_text(), re.M):
+    for name in re.findall(r"^\s*pub struct ([A-Za-z]*(?:Counters|Diagnostics|Stats))\b", contents[path], re.M):
         diagnostics.append(f"{name} ({path.relative_to(root)})")
 if len(diagnostics) > 1 and "diagnostics" not in allowed:
     findings.append("Z1 several diagnostics structs: " + ", ".join(sorted(diagnostics)))
@@ -49,28 +50,28 @@ for path in files:
     relative = str(path.relative_to(root))
     if "/store/" in relative or relative.endswith(("db/commit.rs", "fixtures.rs")):
         continue
-    if re.search(r"\.commit_with\(|\bstore\s*\.commit\(", path.read_text()) and f"commit:{relative}" not in allowed:
+    if re.search(r"\.commit_with\(|\bstore\s*\.commit\(", contents[path]) and f"commit:{relative}" not in allowed:
         findings.append(f"Z7 commit outside db/commit.rs skips the parent pointer: {relative}")
 
 for path in files:
     relative = str(path.relative_to(root))
     if relative.endswith("db/merge.rs") or "/schema/" in relative:
         continue
-    if re.search(r"(?<!\bdb)(?<!\bself)\.merged\(", path.read_text()):
+    if re.search(r"(?<!\bdb)(?<!\bself)\.merged\(", contents[path]):
         findings.append(f"Z8 server rows merge through Db::merged only: {relative}")
 
 for path in files:
     relative = str(path.relative_to(root))
     if relative.endswith(("db/swap.rs", "commit/mod.rs")):
         continue
-    if re.search(r"Replaced \{ by:", path.read_text()):
+    if re.search(r"Replaced \{ by:", contents[path]):
         findings.append(f"Z9 a temp row is replaced in db/swap.rs only: {relative}")
 
 for path in files:
     relative = str(path.relative_to(root))
     if "/sync/invalidate/" in relative:
         continue
-    if re.search(r"\binvalidate_model\(", path.read_text()):
+    if re.search(r"\binvalidate_model\(", contents[path]):
         findings.append(f"Z10 lists are marked stale and reloaded in sync/invalidate only: {relative}")
 
 test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs")
@@ -80,7 +81,7 @@ for path in files:
     relative = str(path.relative_to(root))
     if any(marker in "/" + relative for marker in test_only):
         continue
-    for number, line in enumerate(path.read_text().splitlines(), 1):
+    for number, line in enumerate(contents[path].splitlines(), 1):
         calls = panic_call.findall(line)
         if not calls:
             continue
