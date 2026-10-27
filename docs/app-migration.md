@@ -1,21 +1,21 @@
 # App migration
 
-## Предзагрузка и участники
+## Preloading and members
 
-Производная предзагрузка: `preload vibeId: { from: "Compass.rows" }, limit: 40`.
-`limit` обязателен для `from`, положительный, общий для произведения параметров. Порядок параметров соответствует декларации, id - исходному scope.
-Удалить объявления `preload ... { from: ... }` без `limit`. `limit` теперь служебный ключ строки `preload`.
-Scope полного состава: `scope :chat_members, members_complete: true do`, существующие `query`, `response`, `paginate size: 100, direction: :forward`.
-`max_pages` несовместим с `members_complete`. Серверный предел страницы участников - 100.
+Derived preload: `preload vibeId: { from: "Compass.rows" }, limit: 40`.
+`limit` is required for `from`, is positive, and applies to the parameter product. Parameters follow declaration order, and ids follow the source scope.
+Remove `preload ... { from: ... }` declarations without `limit`. `limit` is now a reserved key of the `preload` line.
+Full membership scope: `scope :chat_members, members_complete: true do`, existing `query`, `response`, `paginate size: 100, direction: :forward`.
+`max_pages` is incompatible with `members_complete`. The server limit for a members page is 100.
 Swift: `LiveWindow(try User.chatMembers(chatId).window(tail: 50, max: 200))`.
 Kotlin: `LiveWindow(User.chatMembers(chatId).window(tail = 50, max = 200), scope)`.
-Читать `snapshot.phase`, `snapshot.error`, `snapshot.complete`, в Kotlin - через `snapshot.value`.
-Полнота наступает только после `hasNextPage == false`. Короткая или пустая промежуточная страница не завершает цепочку.
-При ошибке частичные строки сохраняются: `Loaded` с `error`, `complete = false`. Без строк - `Failed`.
-Последний читатель отменяет запрос. Следующий продолжает сохранённый курсор. Возврат сети продолжает наблюдаемую упавшую цепочку.
-Удалить `CompassRowLoads`, ручной `loadAll`, флаг полноты `ChatGroupDetails`, второй список и нарезку строк приложения.
-Оставить `expand(before: 40)` / `expand(before = 40)`. Полный состав хранит SQLite, UI получает максимум 200 строк.
-`rows`, `failure` и edges `LiveWindow` читают тот же снимок. Перегенерировать модели обеих платформ.
+Read `snapshot.phase`, `snapshot.error`, `snapshot.complete`, through `snapshot.value` in Kotlin.
+Completeness occurs only after `hasNextPage == false`. A short or empty intermediate page does not end the chain.
+On error, partial rows remain: `Loaded` with `error`, `complete = false`. Without rows, the phase is `Failed`.
+The last reader cancels the request. The next reader continues from the saved cursor. Network return continues a failed chain with readers.
+Remove `CompassRowLoads`, manual `loadAll`, the completeness flag of `ChatGroupDetails`, the second list and app-side row slicing.
+Keep `expand(before: 40)` / `expand(before = 40)`. SQLite stores the full membership, and the UI receives at most 200 rows.
+`rows`, `failure` and edges of `LiveWindow` read the same snapshot. Regenerate models for both platforms.
 
 ## Create sources
 
