@@ -28,6 +28,9 @@ pub fn session(connection: &Connection) -> rusqlite::Result<Option<Session>> {
 
 pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Result<()> {
     let transaction = connection.unchecked_transaction()?;
+    if session(&transaction)?.is_some_and(|session| session.credential_digest == credential_digest) {
+        return transaction.commit();
+    }
     transaction.execute("DELETE FROM encrypted_pending", [])?;
     transaction.execute(
         "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, ?1, 0)
@@ -35,6 +38,14 @@ pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Resu
         [credential_digest],
     )?;
     transaction.commit()
+}
+
+pub(crate) fn restore_session(connection: &Connection, session: &Session) -> rusqlite::Result<()> {
+    connection.execute(
+        "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, ?1, ?2)",
+        params![session.credential_digest, session.sequence],
+    )?;
+    Ok(())
 }
 
 pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {

@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, ErrorCode};
 
-use crate::ddl::{migrate_core, prepare_connection, recreate_reason, DdlError, RecreateReason};
+use crate::ddl::{create_core_tables, migrate_core, prepare_connection, recreate_reason, sql_ident, DdlError, RecreateReason};
 use crate::files::FileDirectories;
+use crate::transport::encrypted::state;
 
 use super::{Store, StoreError};
 
@@ -19,13 +20,45 @@ fn probe(path: &Path) -> Result<Result<Store, RecreateReason>, StoreError> {
     match outcome {
         Err(error) if is_unreadable(&error) => return Ok(Err(RecreateReason::UnreadableFile)),
         Err(error) => return Err(error),
-        Ok(Some(reason)) => return Ok(Err(reason)),
+        Ok(Some(reason)) => {
+            recreate(&connection)?;
+            FileDirectories::beside(path).remove_all()?;
+            let mut store = Store::from_connection(connection);
+            store.readers = Some(super::readers::Readers::open(path)?);
+            store.recreated = Some(reason);
+            return Ok(Ok(store));
+        }
         Ok(None) => {}
     }
     migrate_core(&connection)?;
     let mut store = Store::from_connection(connection);
     store.readers = Some(super::readers::Readers::open(path)?);
     Ok(Ok(store))
+}
+
+fn recreate(connection: &Connection) -> Result<(), StoreError> {
+    let transaction = connection.unchecked_transaction()?;
+    let tables: Vec<String> = transaction
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    let session = if tables.iter().any(|table| table == "encrypted_session") { state::session(&transaction)? } else { None };
+    let pending = if tables.iter().any(|table| table == "encrypted_pending") { state::pending(&transaction)? } else { None };
+    for table in &tables {
+        transaction.execute_batch(&format!("DROP TABLE IF EXISTS {}", sql_ident(table)))?;
+    }
+    create_core_tables(&transaction)?;
+    if let Some(session) = session {
+        state::restore_session(&transaction, &session)?;
+    }
+    if let Some(pending) = pending {
+        state::store_pending(&transaction, &pending)?;
+        if let Some(owner) = pending.owner {
+            transaction.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('op', ?1)", [owner.seq])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 fn remove_database(path: &Path) -> Result<(), StoreError> {

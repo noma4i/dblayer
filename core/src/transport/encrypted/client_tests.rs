@@ -418,7 +418,7 @@ async fn a_confirmed_retry_that_exceeds_the_size_limit_does_not_poison_pending()
 }
 
 #[tokio::test]
-async fn a_pending_request_of_a_replaced_credential_is_dropped_and_never_sent() {
+async fn a_pending_request_of_a_replaced_credential_is_reported_and_never_sent() {
     let rig = Rig::new();
     let db = memory_db();
     let client = rig.client(&db);
@@ -427,10 +427,11 @@ async fn a_pending_request_of_a_replaced_credential_is_dropped_and_never_sent() 
     let restored = rig.client(&db);
     rig.credentials.set(&"r".repeat(43)).unwrap();
 
-    assert_eq!(restored.resume().await, Ok(None));
+    let before = rows(&db);
+    assert_eq!(restored.resume().await, Err(TransportError::Decode("lost session sequence state for the stored credential".into())));
 
-    assert_ne!(rig.credentials.value(), Some("r".repeat(43)));
-    assert_eq!((rig.server.seen().len(), rows(&db).1), (0, None));
+    assert_eq!(rig.credentials.value(), Some("r".repeat(43)));
+    assert_eq!((rig.server.seen().len(), rows(&db)), (0, before));
 }
 
 #[tokio::test]

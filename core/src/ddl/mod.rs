@@ -616,11 +616,16 @@ pub fn prepare_connection(connection: &Connection) -> Result<(), DdlError> {
 
 pub fn migrate_core(connection: &Connection) -> Result<(), DdlError> {
     let transaction = connection.unchecked_transaction()?;
-    for statement in CORE_STATEMENTS.iter().chain(CACHE_STATEMENTS.iter()) {
-        transaction.execute_batch(statement)?;
-    }
-    transaction.execute_batch(&format!("pragma user_version = {SCHEMA_VERSION}"))?;
+    create_core_tables(&transaction)?;
     Ok(transaction.commit()?)
+}
+
+pub(crate) fn create_core_tables(connection: &Connection) -> Result<(), DdlError> {
+    for statement in CORE_STATEMENTS.iter().chain(CACHE_STATEMENTS.iter()) {
+        connection.execute_batch(statement)?;
+    }
+    connection.execute_batch(&format!("pragma user_version = {SCHEMA_VERSION}"))?;
+    Ok(())
 }
 
 pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>, DdlError> {

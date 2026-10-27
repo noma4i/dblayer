@@ -341,14 +341,15 @@ impl EncryptedClient {
 
     pub(super) fn credential(&self) -> Result<String, TransportError> {
         let mut cached = crate::db::locked(&self.credential);
-        if let Some(credential) = cached.as_ref() {
-            return Ok(credential.clone());
-        }
-        let stored = self.credentials.get()?;
+        let stored = match cached.as_ref() {
+            Some(credential) => Some(credential.clone()),
+            None => self.credentials.get()?,
+        };
         let session = self.with_connection(state::session)?;
         let credential = match stored {
             Some(credential) if session.as_ref().is_some_and(|session| session.credential_digest == digest_of(&credential)) => credential,
-            _ => {
+            Some(_) => return Err(TransportError::Decode("lost session sequence state for the stored credential".into())),
+            None => {
                 let credential = random_token();
                 self.credentials.set(&credential)?;
                 self.with_connection(|connection| state::start(connection, &digest_of(&credential)))?;

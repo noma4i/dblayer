@@ -418,7 +418,11 @@ Rules of the session:
 - The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call or an explicit `sessionResume()` sends the identical request again, including after restart. The server answers from its record. Only the time stamp changes. A GraphQL call that was stored with its document after a miss counts as the same call when you repeat it.
 - While a request is pending, a different mutation fails with a network error and sends nothing. `sessionResume()` sends the pending request and returns its answer. When a queued operation owns the request, the answer also closes that operation.
 - A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
-- A credential with no matching session state (for example a restored Keychain with a new database file) is replaced by a new credential. The next call is unauthenticated.
+- Database format changes, model resets and reopening preserve the credential digest, confirmed sequence and complete pending request in SQLite.
+- Changes to the session tables migrate their stored values within the same transaction that recreates the database tables.
+- A stored credential without matching sequence state returns `Decode` with `lost session sequence state for the stored credential` before sending.
+- This error preserves the credential and pending request. The application decides how to recover. The core never guesses sequence numbers.
+- Only an absent credential creates a new credential. Explicit `sessionReset()` and confirmed logout clear the credential, session row and pending request.
 - HTTP 503 and a lost connection wait for automatic retry. HTTP 400 returns immediately.
 
 The JWE size is checked before the pending row is saved and before the HTTP send.

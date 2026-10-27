@@ -13,7 +13,7 @@ mod graphql;
 mod jwe;
 mod key;
 mod origin;
-mod state;
+pub(crate) mod state;
 #[cfg(test)]
 pub(crate) mod vectors_tests;
 
