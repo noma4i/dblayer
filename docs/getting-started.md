@@ -22,7 +22,7 @@ Every release tag has compiled files on the [releases page](https://github.com/n
 | Models | `dblayer-gen-macos-universal` | Run as `dblayer-gen` |
 | JVM tests on macOS | `libdblayer-macos-universal.dylib` | Put on the JVM native library path |
 
-`gh release download <tag> --repo noma4i/dblayer` fetches all files. `SHA256SUMS` lists their checksums.
+`gh release download <tag> --repo noma4i/dblayer` fetches all files.
 
 Use the `rustup` toolchain, not a plain `cargo` from Homebrew, because only `rustup` has the iOS and Android targets:
 

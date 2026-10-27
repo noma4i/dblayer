@@ -12,7 +12,7 @@ publish="${2:-}"
 [ -z "$publish" ] || [ "$publish" = --publish ] || fail 'usage: release.sh <version> [--publish]'
 [ -z "$(git status --porcelain)" ] || fail 'working tree is not clean'
 [ "$(git branch --show-current)" = master ] || fail 'branch must be master'
-previous_tag="$(git describe --tags --abbrev=0)" || fail 'previous tag not found'
+previous_tag="$(git describe --tags --abbrev=0 --exclude "$version")" || fail 'previous tag not found'
 subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read commits since previous tag'
 [ "$(printf '%s\n' "$subjects" | grep -Fxc "Release $version" || true)" = 1 ] || fail "expected exactly one Release $version commit since $previous_tag"
 [ "$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"$/\1/p' core/Cargo.toml)" = "$version" ] || fail 'core version does not match'
@@ -37,17 +37,9 @@ lipo -create target/{aarch64-apple-darwin,x86_64-apple-darwin}/release/dblayer-g
 chmod +x "$stage/dblayer-gen-macos-universal"
 cp target/jvm-build/libdblayer.dylib "$stage/libdblayer-macos-universal.dylib"
 attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblayer-gen-macos-universal libdblayer-macos-universal.dylib)
-manifest="MANIFEST-$version.txt"
 archives=(DBlayerFFI.xcframework.zip dblayer-android.zip)
 for archive in "${archives[@]}"; do mkdir -p "$tmp/$archive"; unzip -q "$stage/$archive" -d "$tmp/$archive"; done
-{
-  printf 'tag %s\ncommit %s\n' "$version" "$(git rev-parse HEAD)"
-  for file in "${attachments[@]}"; do printf '%s %s %s\n' "$(shasum -a 256 "$stage/$file" | cut -d ' ' -f1)" "$(wc -c < "$stage/$file" | tr -d ' ')" "$file"; done
-  for archive in "${archives[@]}"; do
-    while IFS= read -r -d '' file; do printf '%s %s %s:%s\n' "$(shasum -a 256 "$file" | cut -d ' ' -f1)" "$(wc -c < "$file" | tr -d ' ')" "$archive" "${file#"$tmp/$archive/"}"; done < <(find "$tmp/$archive" -type f -print0 | LC_ALL=C sort -z)
-  done
-} > "$stage/$manifest"
-(cd "$stage" && shasum -a 256 "${attachments[@]}" "$manifest" > SHA256SUMS)
+(cd "$stage" && shasum -a 256 "${attachments[@]}" > SHA256SUMS)
 checksum="$(swift package compute-checksum "$stage/DBlayerFFI.xcframework.zip")"
 awk -v heading="## $version - " 'index($0, heading)==1 {found=1; next} found && /^## / {exit} found {print}' CHANGELOG.md > "$stage/NOTES.md"
 cat >> "$stage/NOTES.md" <<NOTES
@@ -59,8 +51,6 @@ cat >> "$stage/NOTES.md" <<NOTES
 - dblayer-android.zip: four Android ABI libraries and Kotlin bindings. Extract into the Kotlin module.
 - dblayer-gen-macos-universal: release model generator for macOS arm64 and x86_64. Install as dblayer-gen and run to generate models.
 - libdblayer-macos-universal.dylib: JVM library for macOS arm64 and x86_64. Place on the JVM native library path.
-- $manifest: tag, commit, sizes and hashes. Use for inventory.
-- SHA256SUMS: attachment hashes. Check with \`shasum -a 256 -c SHA256SUMS\`.
 NOTES
 (cd "$stage" && shasum -a 256 -c SHA256SUMS)
 check_archs() {
@@ -82,10 +72,10 @@ if [ "$publish" = --publish ]; then
   git tag -a "$version" -m "$version"
   git push origin master
   git push origin "$version"
-  files=(); for file in "${attachments[@]}" "$manifest" SHA256SUMS; do files+=("$stage/$file"); done
+  files=(); for file in "${attachments[@]}"; do files+=("$stage/$file"); done
   gh release create "$version" --repo noma4i/dblayer --title "$version" --notes-file "$stage/NOTES.md" --latest "${files[@]}"
   gh release view "$version" --repo noma4i/dblayer --json assets --jq '.assets[].name' > "$tmp/assets"
-  for file in "${attachments[@]}" "$manifest" SHA256SUMS; do grep -Fxq "$file" "$tmp/assets" || fail "missing published attachment: $file"; done
+  for file in "${attachments[@]}"; do grep -Fxq "$file" "$tmp/assets" || fail "missing published attachment: $file"; done
   mkdir "$tmp/download"
   gh release download "$version" --repo noma4i/dblayer --dir "$tmp/download"
   (cd "$tmp/download" && shasum -a 256 -c SHA256SUMS)
