@@ -15,7 +15,7 @@ Android 13 (API 33) or newer.
 
 Download the required files with `gh release download <tag> --repo noma4i/dblayer --pattern <asset>`. Download all assets before running `shasum -a 256 -c SHA256SUMS`.
 
-For Swift, extract `DBlayerFFI.xcframework.zip` into `swift/` and install `dblayer.swift` at `swift/Sources/DBlayer/dblayer.swift`. The archive checksum appears in the release notes.
+For Swift, extract `DBlayerFFI.xcframework.zip` into `swift/` and copy `dblayer.swift` into the `Sources/DBlayer` directory of the Swift package. The archive checksum appears in the release notes.
 
 For Kotlin, extract `dblayer-android.zip` into the `kotlin/` module directory. It holds the four Android libraries and the Kotlin bindings.
 
