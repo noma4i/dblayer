@@ -38,7 +38,7 @@ Every release tag also has these compiled files on the [releases page](https://g
 | Swift | `DBlayerFFI.xcframework.zip`, `dblayer.swift` | Unzip into `swift/`, copy `dblayer.swift` into `swift/Sources/DBlayer/` |
 | Kotlin | `dblayer-android.zip` | Unzip into `kotlin/` |
 | Models | `dblayer-gen-macos-universal` | Run as `dblayer-gen` |
-| JVM tests on macOS | `libdblayer-macos-universal.dylib` | Put on the JVM native library path |
+| JVM tests on macOS | `make build-jvm` | Build the local JVM library |
 
 `gh release download <tag> --repo noma4i/dblayer` fetches all files.
 

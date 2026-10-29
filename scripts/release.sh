@@ -20,7 +20,6 @@ grep -Fq "## $version - " CHANGELOG.md || fail 'changelog heading missing'
 for check in check_docs check_invariants check_zoo; do bash "scripts/$check.sh" || fail "$check failed"; done
 bash scripts/build_ios.sh
 bash scripts/build_kotlin.sh --abis
-bash scripts/build_kotlin.sh --jvm
 for target in aarch64-apple-darwin x86_64-apple-darwin; do
   cargo build --release --manifest-path Cargo.toml -p dblayer-gen --target "$target"
 done
@@ -28,7 +27,7 @@ done
 stage="$root/target/release-$version"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblayer-gen-macos-universal libdblayer-macos-universal.dylib)
+attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblayer-gen-macos-universal)
 archives=(DBlayerFFI.xcframework.zip dblayer-android.zip)
 if [ -d "$stage" ]; then
   for file in "${attachments[@]}" SHA256SUMS; do [ -s "$stage/$file" ] || fail "incomplete existing output: $stage/$file"; done
@@ -40,7 +39,6 @@ else
   (cd kotlin && zip -q "$stage/dblayer-android.zip" src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86_64,x86}/libdblayer.so src/main/kotlin/com/noma4i/dblayer/dblayer.kt)
   lipo -create target/{aarch64-apple-darwin,x86_64-apple-darwin}/release/dblayer-gen -output "$stage/dblayer-gen-macos-universal"
   chmod +x "$stage/dblayer-gen-macos-universal"
-  cp target/jvm-build/libdblayer.dylib "$stage/libdblayer-macos-universal.dylib"
   (cd "$stage" && shasum -a 256 "${attachments[@]}" > SHA256SUMS)
 fi
 for archive in "${archives[@]}"; do mkdir -p "$tmp/$archive"; unzip -q "$stage/$archive" -d "$tmp/$archive"; done
@@ -54,7 +52,6 @@ check_archs() {
 check_archs "$tmp/DBlayerFFI.xcframework.zip/DBlayerFFI.xcframework/macos-arm64_x86_64/libdblayer.a" 'arm64 x86_64'
 check_archs "$tmp/DBlayerFFI.xcframework.zip/DBlayerFFI.xcframework/ios-arm64_x86_64-simulator/libdblayer.a" 'arm64 x86_64'
 check_archs "$tmp/DBlayerFFI.xcframework.zip/DBlayerFFI.xcframework/ios-arm64/libdblayer.a" 'arm64'
-check_archs "$stage/libdblayer-macos-universal.dylib" 'arm64 x86_64'
 check_archs "$stage/dblayer-gen-macos-universal" 'arm64 x86_64'
 for archive in "${archives[@]}"; do unzip -l "$stage/$archive"; done
 for abi in arm64-v8a armeabi-v7a x86_64 x86; do [ -f "$tmp/dblayer-android.zip/src/main/jniLibs/$abi/libdblayer.so" ] || fail "missing Android ABI $abi"; done

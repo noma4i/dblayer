@@ -18,6 +18,7 @@ steps=(
   "cheap|zoo|120|*|bash scripts/check_zoo.sh"
   "cheap|protocol-config|120|*|bash scripts/check_protocol_config.sh && bash scripts/check_protocol_config.sh --selftest"
   "cheap|build-modes|120|*|bash scripts/check_build_modes.sh"
+  "cheap|release-modes|120|*|bash scripts/check_release_modes.sh"
   "cheap|docs|120|*|bash scripts/check_docs.sh"
   "cheap|invariants|120|*|bash scripts/check_invariants.sh"
   "cheap|invariants-selftest|120|*|bash scripts/check_invariants_selftest.sh"

@@ -16,6 +16,9 @@
 - Report stored window and watched reload failures without treating them as missing or fresh.
 - Reject malformed cloud cursors, upload headers, and unsupported top-level operation options.
 
+### Removed
+- Release attachments no longer include the macOS dylib.
+
 ## 6.12.0 - 2026-10-27
 
 ### Added
