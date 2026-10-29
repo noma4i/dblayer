@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.13.0 - 2026-10-29
 
 ### Added
 - Report lost session state as the typed session code StateLost.
