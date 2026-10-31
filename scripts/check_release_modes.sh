@@ -159,11 +159,13 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     subjects = subprocess.check_output([real_git, "-C", str(repo), "log", "--format=%s", "1.2.2..HEAD"], text=True)
     assert subjects.splitlines().count(f"Package release {version}") == 1
     assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip() == subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    assert subprocess.check_output([real_git, "-C", str(repo), "cat-file", "-t", version], text=True).strip() == "commit"
     events = (base / "events").read_text().splitlines()
     assert any(line.startswith("git -C ") and line.endswith("push -u origin maven") for line in events), events
     assert any(line.startswith("gh release create 1.2.3 ") and all(name in line for name in attachments) for line in events), events
     assert any(line.startswith("gh release download 1.2.3 ") for line in events), events
     print("ok publish uses four checksummed files and repeat reuses the tagged package commit")
+    print("ok release tag is a lightweight tag")
 
     wrong, wrong_env = fixture(base / "wrong")
     subprocess.run([real_git, "-C", str(wrong), "commit", "--amend", "-m", "Release 9.9.9"], check=True, capture_output=True)

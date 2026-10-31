@@ -125,7 +125,7 @@ if [ "$publish" = --publish ]; then
   else
     fail "unexpected Package release $version commit state"
   fi
-  git tag -a "$version" -m "$version" 2>/dev/null || {
+  git tag "$version" 2>/dev/null || {
     [ "$(git rev-parse "$version^{commit}")" = "$(git rev-parse HEAD)" ] || fail "tag $version already points elsewhere"
   }
 else

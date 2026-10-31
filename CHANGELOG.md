@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Release tags are lightweight tags.
+
 ## 6.13.0 - 2026-10-29
 
 ### Added
