@@ -21,6 +21,10 @@ use super::open::{locked, Shared};
 use super::row::Row;
 use super::window::{WindowEdge, WindowPart, WindowSeed, WindowSpec};
 
+type ChildLinks = HashMap<String, HashMap<RowId, Vec<RowId>>>;
+type ParentRows = Vec<(RowId, Vec<Row>)>;
+type WantedLinks = Vec<(RowId, Vec<RowId>)>;
+
 const MAX_STEP_IDS: usize = 500;
 
 pub type Related = BTreeMap<String, BTreeMap<RowId, Vec<Row>>>;
@@ -58,7 +62,7 @@ impl Change {
         let removed = self.diff.removed.iter().map(|id| (id, false));
         let moved = self.diff.moved.iter().map(|id| (id, true));
         let mut leaving: Vec<(usize, &RowId, bool)> = removed.chain(moved).filter_map(|(id, kept)| self.diff.was.get(id).map(|at| (*at, id, kept))).collect();
-        leaving.sort_unstable_by(|left, right| right.0.cmp(&left.0));
+        leaving.sort_unstable_by_key(|left| std::cmp::Reverse(left.0));
         let mut taken: HashMap<&RowId, Row> = HashMap::new();
         for (at, id, kept) in leaving {
             let row = rows.remove(at);
@@ -270,7 +274,7 @@ impl RowsBody {
 }
 
 pub(crate) enum Body {
-    Rows(RowsBody),
+    Rows(Box<RowsBody>),
     Count(i64),
 }
 
@@ -309,7 +313,7 @@ impl Version {
                 }
                 let (rows, related) = changed_rows(&diff, &mut loaded.rows, &mut loaded.related);
                 let step = Step { from: previous.position(), diff, rows, related, touched: new.changed.clone() };
-                Some(Version { revision: self.revision, epoch: self.epoch, body: Body::Rows(RowsBody { step: Some(step), ..new }) })
+                Some(Version { revision: self.revision, epoch: self.epoch, body: Body::Rows(Box::new(RowsBody { step: Some(step), ..*new })) })
             }
             (Body::Count(old), Body::Count(new)) => (*old != new).then_some(Version { revision: self.revision, epoch: self.epoch, body: Body::Count(new) }),
             _ => None,
@@ -543,7 +547,7 @@ impl Shared {
                 .filter_map(|(slot, (id, _))| slot.or_else(|| loaded.get(id).map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, stamps.remove(&row.id).unwrap_or_default()) }))))
                 .collect();
             let body = RowsBody { links: links.clone(), link_edits, ..RowsBody::new(entries) };
-            Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(body) }, loaded: Loaded { rows: loaded, related } }))
+            Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(Box::new(body)) }, loaded: Loaded { rows: loaded, related } }))
         })?;
         match evaluated {
             Some(evaluated) => Ok(evaluated),
@@ -607,7 +611,7 @@ impl Shared {
                 next = next.without(id);
             }
             let body = RowsBody { links: links.clone(), link_edits, ..RowsBody::ranked(next, Some(changed)) };
-            Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(body) }, loaded }))
+            Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(Box::new(body)) }, loaded }))
         })
     }
 
@@ -675,7 +679,7 @@ impl Shared {
                                 continue;
                             };
                             let belongs = |child: &Row| child.get(&association.foreign_key).and_then(read_id).is_some_and(|parent| parent == row.id);
-                            let mut ids: Vec<RowId> = old.iter().filter(|child| !touched.contains(child.as_str()) || fresh_rows.get(child.as_str()).is_some_and(|row| belongs(row))).cloned().collect();
+                            let mut ids: Vec<RowId> = old.iter().filter(|child| !touched.contains(child.as_str()) || fresh_rows.get(child.as_str()).is_some_and(belongs)).cloned().collect();
                             ids.extend(fresh_rows.values().filter(|child| belongs(child) && !ids_contain(old, &child.id)).map(|child| child.id.clone()));
                             ids.sort();
                             ids.dedup();
@@ -763,7 +767,7 @@ impl Shared {
         let mut records = found.into_iter();
         let sorted = rows.iter().filter_map(|row| records.find(|record| record.id == row.id.as_str()).map(|record| ranked_entry(record, row, &statement.descending, stamps.remove(&row.id).unwrap_or_default()))).collect();
         let loaded = Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related };
-        Ok((Body::Rows(RowsBody { links, ..RowsBody::ranked(Ranked::from_sorted(sorted), None) }), loaded))
+        Ok((Body::Rows(Box::new(RowsBody { links, ..RowsBody::ranked(Ranked::from_sorted(sorted), None) })), loaded))
     }
 
     pub(crate) fn load_whole(&self, subject: &Subject, version: &Version) -> Result<Option<Loaded>, DbError> {
@@ -806,7 +810,7 @@ impl Shared {
             .map(|row| Arc::new(Entry { id: row.id.clone(), stamp: Stamp::of(row, stamps.remove(&row.id).unwrap_or_default()) }))
             .collect();
         let loaded = Loaded { rows: rows.into_iter().map(|row| (row.id.to_string(), row)).collect(), related };
-        Ok((Body::Rows(RowsBody { links, ..RowsBody::new(entries) }), loaded))
+        Ok((Body::Rows(Box::new(RowsBody { links, ..RowsBody::new(entries) })), loaded))
     }
 
     fn seed_links(&self, spec: &ModelSpec, include: &[String], related: &Related, wanted: HashMap<String, HashMap<RowId, Vec<RowId>>>) -> Result<Option<Links>, DbError> {
@@ -836,14 +840,14 @@ impl Shared {
         spec: &ModelSpec,
         include: &[String],
         rows: &[Row],
-    ) -> Result<(Related, ParentStamps, HashMap<String, HashMap<RowId, Vec<RowId>>>), DbError> {
+    ) -> Result<(Related, ParentStamps, ChildLinks), DbError> {
         let mut related = Related::new();
         let mut stamps = ParentStamps::new();
         let mut links: HashMap<String, HashMap<RowId, Vec<RowId>>> = HashMap::new();
         for name in include {
             let association = association(spec, name)?;
             let target = association.target.as_str();
-            let (per_parent, wanted_links): (Vec<(RowId, Vec<Row>)>, Option<Vec<(RowId, Vec<RowId>)>>) = match association.kind {
+            let (per_parent, wanted_links): (ParentRows, Option<WantedLinks>) = match association.kind {
                 AssociationKind::BelongsTo => {
                     let wanted: Vec<(RowId, Vec<RowId>)> =
                         rows.iter().map(|row| (row.id.clone(), row.get(&association.foreign_key).and_then(read_id).into_iter().collect())).collect();

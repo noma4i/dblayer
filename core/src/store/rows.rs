@@ -48,13 +48,11 @@ pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[Str
         let mut partial = Vec::new();
         let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
             let cells = read_cells(row, count, 3)?;
-            let mut next = 3 + count;
             let mut field_rev = BTreeMap::new();
-            for (field, _) in revs {
+            for (next, (field, _)) in (3 + count..).zip(revs) {
                 if let Some(revision) = row.get::<_, Option<i64>>(next)? {
                     field_rev.insert(field.clone(), revision);
                 }
-                next += 1;
             }
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, cells, field_rev))
         })?;

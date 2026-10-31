@@ -21,9 +21,9 @@ fun main() = runBlocking {
             check(created.id.isNotEmpty())
             check(created.sync.state == WireSyncState.SYNCED)
             check(created.cells.contains(Cell.Text("kept")))
-            it.retain(listOf(created.id), EntityFetch.NONE)
+            it.retain(listOf(EntityRequest(created.id, 1uL, EntityFetch.NONE)))
             check(delivered.await(5, TimeUnit.SECONDS)) { "JNA callback was not delivered" }
-            check(received.get().rows.single().cells == created.cells)
+            check(received.get().snapshots.single().value?.cells == created.cells)
             check(db.peekRow("Item", created.id)?.cells == created.cells)
         }
         try {

@@ -58,7 +58,7 @@ impl OutboxOperation {
 
     pub(crate) fn rewritten(&self, row_ids: Vec<RowId>, input: Value, rollback: Option<Value>) -> OperationTransition {
         let operation = &self.operation;
-        OperationTransition::Begin(OperationRecord {
+        OperationTransition::Begin(Box::new(OperationRecord {
             seq: Some(operation.id.0),
             action_key: operation.action_key.clone(),
             status: operation.status,
@@ -71,7 +71,7 @@ impl OutboxOperation {
             dedupe_key: operation.dedupe_key.clone(),
             rollback,
             upload: None,
-        })
+        }))
     }
 }
 
@@ -218,7 +218,7 @@ impl Db {
                     envelope.scope_ops.extend(local_scope_ops(reader, spec, id, data)?);
                     envelope.entity_ops.push(EntityOp::Upsert { model: spec.key.clone(), id: id.clone(), row: data.clone() });
                 }
-                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: record.clone(), items: files.clone() });
+                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record.clone()), items: files.clone() });
                 Ok(Some(envelope))
             }).map_err(plan_fault)?;
             Ok(ids)
@@ -474,8 +474,8 @@ impl Db {
             upload: queued.upload.as_ref().map(|item| item.state.clone()),
         };
         Ok(match &queued.upload {
-            Some(item) => OperationTransition::BeginUpload { record, items: vec![item.clone()] },
-            None => OperationTransition::Begin(record),
+            Some(item) => OperationTransition::BeginUpload { record: Box::new(record), items: vec![item.clone()] },
+            None => OperationTransition::Begin(Box::new(record)),
         })
     }
 

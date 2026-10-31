@@ -234,7 +234,11 @@ impl Prior {
 
 pub(crate) fn swap_id(value: &mut Value, temp: &RowId, real: &RowId) -> bool {
     if let Value::Array(items) = value {
-        return items.iter_mut().fold(false, |changed, item| swap_id(item, temp, real) || changed);
+        let mut changed = false;
+        for item in items.iter_mut() {
+            changed |= swap_id(item, temp, real);
+        }
+        return changed;
     }
     let matches = read_id(value).as_ref() == Some(temp);
     if matches {

@@ -15,9 +15,9 @@ fn retention_removes_only_expired_values_and_caps_each_model() {
     let pool = RetentionPool::new();
     let old = pool.keep("Note".into(), "old".into(), 1, 0).selected.unwrap();
     let fresh = pool.keep("Message".into(), "fresh".into(), 1, 100).selected.unwrap();
-    let expired = pool.count("Message".into(), 120_000);
+    let (expired, expired_count) = pool.count("Message", 120_000);
     assert_eq!(expired.evicted, vec![old]);
-    assert_eq!(expired.count, 1);
+    assert_eq!(expired_count, 1);
     assert_eq!(pool.take("Message".into(), "fresh".into(), 120_001).selected, Some(fresh));
     let oldest = pool.keep("Note".into(), "0".into(), 1, 120_001).selected.unwrap();
     for index in 1..200 {
@@ -25,7 +25,7 @@ fn retention_removes_only_expired_values_and_caps_each_model() {
     }
     let change = pool.keep("Note".into(), "200".into(), 1, 120_001);
     assert_eq!(change.evicted, vec![oldest]);
-    assert_eq!(change.count, 200);
+    assert_eq!(pool.count("Note", 120_001).1, 200);
     assert_eq!(pool.clear("Note".into()).evicted.len(), 200);
-    assert_eq!(pool.count("Note".into(), 120_001).count, 0);
+    assert_eq!(pool.count("Note", 120_001).1, 0);
 }

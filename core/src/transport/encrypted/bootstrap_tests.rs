@@ -30,7 +30,7 @@ async fn offline_bootstrap_waits_without_http_and_starts_online() {
     let calls = Arc::new(Calls(AtomicUsize::new(0)));
     let config = configuration();
     let events = crate::transport::retry::RetryCalls::default();
-    let mut call = Box::pin(super::bootstrap::fetch(&config, AppPlatform::Ios, "1.2", None, calls.clone(), &clock, &events, &online));
+    let mut call = Box::pin(super::bootstrap::fetch(&config, &super::bootstrap::AppRelease { platform: AppPlatform::Ios, version: "1.2", build: None }, calls.clone(), &clock, &events, &online));
     for _ in 0..3 {
         let result = call.as_mut().poll(&mut Context::from_waker(Waker::noop()));
         assert_eq!(calls.0.load(Ordering::SeqCst), 0);
@@ -210,5 +210,5 @@ async fn fetch_needs_no_database_validates_before_http_and_distinguishes_service
 }
 
 async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn crate::pacing::Clock) -> Result<ServerConfig, TransportError> {
-    fetch(config, platform, version, build, http, clock, &crate::transport::retry::RetryCalls::default(), &crate::transport::Connectivity::new(true)).await
+    fetch(config, &super::bootstrap::AppRelease { platform, version, build }, http, clock, &crate::transport::retry::RetryCalls::default(), &crate::transport::Connectivity::new(true)).await
 }

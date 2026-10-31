@@ -396,9 +396,9 @@ async fn a_confirmed_retry_that_exceeds_the_size_limit_does_not_poison_pending()
     rig.server.clone().with_sequence(&credential, 8);
     db.shared.store.lock().connection.execute("UPDATE encrypted_session SET sequence = 8", []).unwrap();
     let mut low = 0;
-    let mut high = 256 * 1024;
+    let mut high: usize = 256 * 1024;
     while low < high {
-        let size = (low + high + 1) / 2;
+        let size = (low + high).div_ceil(2);
         rig.server.status_next(400);
         match client.mutate("/api/auth/social", json!({"payload": "x".repeat(size)})).await {
             Err(TransportError::Http { status: 400, .. }) => low = size,

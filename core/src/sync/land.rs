@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, EdgeValue, EdgeWrite, EntityOp, EnvelopeFault, ScopeOp, ScopeRef, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
-use crate::db::{Db, Prior, ReplaceRequest};
+use crate::db::{Admission, Db, Prior, ReplaceRequest};
 use crate::schema::{Coverage, FieldKind, FieldSpec};
 use crate::value::ScalarKind;
 use crate::read::{incoming_ids, plan_landing, StoredScope};
@@ -80,7 +80,7 @@ pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64
         if row.get("id").and_then(read_id).is_none() { continue; }
         let origin = if closing.is_some() { WriteOrigin::Response } else { WriteOrigin::Snapshot };
         let before = *drops;
-        match db.admitted(reader, origin, Some(base), closing, model, row, drops)? {
+        match db.admitted(reader, origin, Admission { base: Some(base), closing }, model, row, drops)? {
             Some(row) => admitted.rows.push(row),
             None if *drops == before => admitted.invalid += 1,
             None => {}

@@ -103,7 +103,7 @@ async fn inv_loadm_07_a_window_with_two_flights_stays_loading_until_both_end_in_
         first.await.unwrap().unwrap();
         let after_first = state.borrow().clone();
         assert_eq!(after_first.phase, LoadPhase::Loading, "{refresh_takes}/{more_takes}");
-        assert_eq!(after_first.refreshing && after_first.fetching_more, false);
+        assert!(!(after_first.refreshing && after_first.fetching_more));
         second.await.unwrap().unwrap();
         let done = state.borrow().clone();
         assert_eq!((done.phase, done.refreshing, done.fetching_more, done.error), (LoadPhase::Loaded, false, false, None), "{refresh_takes}/{more_takes}");

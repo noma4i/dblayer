@@ -43,6 +43,9 @@ pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;
 pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRecord};
 
+#[cfg(test)]
+type CommitCallback = Box<dyn Fn(&crate::commit::CommitResult) + Send + Sync>;
+
 pub(crate) struct ModelInfo {
     pub table: String,
     pub layout: Layout,
@@ -147,7 +150,7 @@ pub struct Store {
     #[cfg(test)]
     pub(crate) before_write: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
-    pub(crate) after_commit: Mutex<Option<Box<dyn Fn(&crate::commit::CommitResult) + Send + Sync>>>,
+    pub(crate) after_commit: Mutex<Option<CommitCallback>>,
 }
 
 impl Store {

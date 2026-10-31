@@ -107,7 +107,7 @@ impl Peer {
         let private = RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap();
         let key = private.decrypt(Oaep::new::<sha1::Sha1>(), &URL_SAFE_NO_PAD.decode(token.split('.').nth(1).unwrap()).unwrap()).unwrap();
         let plain: Value = serde_json::from_slice(&super::link_tests::decrypt(token, &key)).unwrap();
-        let server_private: Vec<u8> = kat["x25519"]["server_private"].as_str().unwrap().as_bytes().chunks_exact(2).map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap()).collect();
+        let server_private: Vec<u8> = kat["x25519"]["server_private"].as_str().unwrap().as_bytes().as_chunks::<2>().0.iter().map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap()).collect();
         let secret = x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(server_private).unwrap());
         let client_key = x25519_dalek::PublicKey::from(keys::decode(&plain["clientKey"]).unwrap());
         let mut ikm = secret.diffie_hellman(&client_key).as_bytes().to_vec();

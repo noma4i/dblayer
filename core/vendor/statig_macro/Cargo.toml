@@ -1,0 +1,24 @@
+[package]
+name = "statig_macro"
+version = "0.4.0"
+edition = "2021"
+rust-version = "1.66"
+authors = ["Maxim Deloof"]
+license = "MIT"
+description = "Macro's for `statig`"
+readme = "README.md"
+repository = "https://github.com/mdeloof/statig"
+keywords = ["fsm", "hsm", "statechart", "state-machine", "embedded"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = [
+    "full",
+    "extra-traits",
+    "visit",
+    "visit-mut",
+] }
+quote = "1.0.23"
+proc-macro2 = { version = "1.0.91", default-features = false }

@@ -297,7 +297,8 @@ fn a_rewrite_keeps_a_memory_row_alive() {
 
 #[test]
 fn a_write_of_equal_values_renews_a_memory_row_and_stays_silent_for_observers() {
-    let writers: [(&str, fn(&Db)); 2] = [
+    type Writer<'a> = (&'a str, fn(&Db));
+    let writers: [Writer; 2] = [
         ("landed", |db| put(db, "presence", json!({"id": "r1", "room": "lobby"}))),
         ("local update", |db| {
             db.update("presence", &rid("r1"), obj(json!({"room": "lobby"}))).unwrap();

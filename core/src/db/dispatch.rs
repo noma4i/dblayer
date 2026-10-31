@@ -148,7 +148,7 @@ impl Drop for OwnerPaused {
 }
 
 pub(crate) enum Work {
-    Read(CompletedRead),
+    Read(Box<CompletedRead>),
     Batch(Vec<Event>),
 }
 
@@ -199,7 +199,7 @@ impl Dispatch {
             }
             if let Some(result) = pending.reads.pop_front() {
                 pending.processing_through = Some(i64::MIN);
-                return Some(Work::Read(result));
+                return Some(Work::Read(Box::new(result)));
             }
             if !pending.events.is_empty() {
                 let batch: Vec<Event> = pending.events.drain(..).collect();
@@ -271,7 +271,7 @@ impl Dispatch {
                 while let Some(work) = dispatch.next_work() {
                     if let Some(shared) = shared.upgrade() {
                         match work {
-                            Work::Read(result) => shared.land_read(result),
+                            Work::Read(result) => shared.land_read(*result),
                             Work::Batch(batch) => shared.refresh_groups(&batch),
                         }
                     }

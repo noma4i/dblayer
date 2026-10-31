@@ -454,7 +454,7 @@ fn resolving_twice_shares_the_operation_and_the_relation_spec() {
     let first = rig.sync.inner.resolve("moments", "feed", &Map::new()).unwrap();
     let second = rig.sync.inner.resolve("moments", "feed", &Map::new()).unwrap();
     let operations: [&super::registry::OperationDef; 2] = [&first.operation, &second.operation];
-    let remotes: [&crate::schema::RemoteSpec; 2] = [&first.remote, &second.remote];
+    let remotes: [&crate::schema::RemoteSpec; 2] = [first.remote, second.remote];
     assert!(std::ptr::eq(operations[0], operations[1]), "the operation document is cloned for each resolve");
     assert!(std::ptr::eq(remotes[0], remotes[1]), "the remote spec is cloned for each resolve");
 }

@@ -107,7 +107,7 @@ fn inv_cloud_04_any_delivery_order_and_repeats_give_the_same_rows() {
         let values = [json!(null), json!("a"), json!("b"), json!(3), json!(9)];
         let mut changes = Vec::new();
         for at in 0..8 {
-            let row = if rng_seed.next() % 3 == 0 { "n2" } else { "n1" };
+            let row = if rng_seed.next().is_multiple_of(3) { "n2" } else { "n1" };
             let field = ["title", "body", "rank"][rng_seed.next() as usize % 3];
             let value = match field {
                 "rank" => json!(rng_seed.next() % 10),

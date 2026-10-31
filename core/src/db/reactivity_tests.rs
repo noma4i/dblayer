@@ -259,7 +259,8 @@ fn inv_observe_13_commits_behind_a_busy_listener_arrive_as_one_delivery_that_hol
     let released = Mutex::new(released);
     let (told_sender, told) = mpsc::channel();
     let slow_whole = Whole::default();
-    let deliveries: Arc<Mutex<Vec<Vec<(String, String)>>>> = Arc::default();
+    type Delivery = Vec<(String, String)>;
+    let deliveries: Arc<Mutex<Vec<Delivery>>> = Arc::default();
     let sink = deliveries.clone();
     let _slow = db
         .observe(Query::new("moments"), move |change| {

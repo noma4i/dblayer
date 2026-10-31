@@ -36,9 +36,7 @@ unsafe extern "C" fn pause_statement(context: *mut std::ffi::c_void) -> i32 {
 #[test]
 fn opening_leaves_the_calling_thread_free_while_sqlite_is_busy() {
     use std::future::Future;
-    use std::task::{Context, Poll, Wake, Waker};
-    struct Awake;
-    impl Wake for Awake { fn wake(self: std::sync::Arc<Self>) {} }
+    use std::task::{Context, Poll, Waker};
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().canonicalize().unwrap().join("paused.sqlite").to_string_lossy().into_owned();
     let (entered, opened) = mpsc::channel();
@@ -50,8 +48,7 @@ fn opening_leaves_the_calling_thread_free_while_sqlite_is_busy() {
     let thread = std::thread::spawn(move || {
         caller.send(std::thread::current().id()).unwrap();
         let mut opening = Box::pin(Database::open(Config { path: Some(path), data_version: None, cache_rows: 8 }, "[]".into(), None, None, None, None, None, None));
-        let waker = Waker::from(std::sync::Arc::new(Awake));
-        let pending = matches!(opening.as_mut().poll(&mut Context::from_waker(&waker)), Poll::Pending);
+        let pending = matches!(opening.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Pending);
         free.send(pending).unwrap();
         if pending { super::database::executor().unwrap().block_on(opening).unwrap(); }
     });

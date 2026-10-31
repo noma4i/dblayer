@@ -8,7 +8,9 @@ use super::*;
 
 fn runtime() -> tokio::runtime::Runtime { tokio::runtime::Builder::new_current_thread().build().unwrap() }
 
-fn start<T: uniffi::LiftReturn<UniFfiTag> + 'static>() -> (std::pin::Pin<Box<dyn std::future::Future<Output = T>>>, ForeignFutureCallback<T::ReturnType>, u64)
+type PinnedFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T>>>;
+
+fn start<T: uniffi::LiftReturn<UniFfiTag> + 'static>() -> (PinnedFuture<T>, ForeignFutureCallback<T::ReturnType>, u64)
 where
     T::ReturnType: 'static,
 {
@@ -17,19 +19,10 @@ where
     let mut future: std::pin::Pin<Box<dyn std::future::Future<Output = T>>> = Box::pin(foreign_async_call::<_, T, UniFfiTag>(move |callback, data, _| {
         seen.set((callback, data)).ok().unwrap();
     }));
-    let waker = futures_noop();
-    let mut context = std::task::Context::from_waker(&waker);
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     assert!(future.as_mut().poll(&mut context).is_pending());
     let (callback, data) = *slot.get().unwrap();
     (future, callback, data)
-}
-
-fn futures_noop() -> std::task::Waker {
-    struct Noop;
-    impl std::task::Wake for Noop {
-        fn wake(self: std::sync::Arc<Self>) {}
-    }
-    std::task::Waker::from(std::sync::Arc::new(Noop))
 }
 
 #[test]

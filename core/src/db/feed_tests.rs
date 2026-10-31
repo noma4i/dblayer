@@ -112,7 +112,7 @@ fn inv_observe_26_a_read_that_failed_reaches_the_subscriber_and_the_next_read_he
     *db.shared.store.lock().poison.lock().unwrap() = None;
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
     let after = told(&log);
-    assert_eq!(after.last().map(String::as_str).filter(|tag| tag.starts_with("reached:")).is_some(), true, "told {after:?}");
+    assert!(after.last().map(String::as_str).filter(|tag| tag.starts_with("reached:")).is_some(), "told {after:?}");
     assert!(after.iter().any(|tag| tag.starts_with("rows:") && tag.ends_with(":2")), "told {after:?}");
 }
 

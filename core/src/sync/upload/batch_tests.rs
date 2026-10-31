@@ -177,9 +177,11 @@ async fn batch_sends_ordered_items_once_and_replaces_by_key() {
     }
     sync.wait_uploads().await;
     db.await_revision(db.revision_seq().unwrap());
-    let seen = changes.lock().unwrap();
-    assert!(seen.iter().all(|(count, _)| *count == 2), "{seen:?}");
-    assert_eq!(seen.iter().map(|(_, replaced)| replaced).sum::<usize>(), 2);
+    {
+        let seen = changes.lock().unwrap();
+        assert!(seen.iter().all(|(count, _)| *count == 2), "{seen:?}");
+        assert_eq!(seen.iter().map(|(_, replaced)| replaced).sum::<usize>(), 2);
+    }
     let members = db.shared.store.scope_members("Entry", scope.as_str()).unwrap();
     assert_eq!(members.into_iter().map(|(id, _)| id).collect::<Vec<_>>(), ["e0", "e1"]);
     let calls: Vec<_> = transport.calls().into_iter().filter(|call| call.operation_name == "CreateAssets").collect();
@@ -586,7 +588,7 @@ async fn a_batch_item_that_fails_while_its_request_is_pending_is_aborted_once_th
     sync.wait_uploads().await;
     let failed: Vec<_> = crate::operation::read_upload_items(&db.shared.store.lock().connection).unwrap().into_iter().filter(|(_, state)| state.phase == crate::upload::UploadStatus::Failed && state.upload_id.is_some()).collect();
     assert_eq!(failed.len(), 1, "one item failed while its request was pending: {ids:?}");
-    let ((seq, position), state) = failed.iter().next().unwrap();
+    let ((seq, position), state) = failed.first().unwrap();
     let (seq, position) = (*seq, *position);
     assert!(state.upload_id.is_some());
     assert_eq!(transport.call_count("Abort"), 0, "the pending request may still complete");

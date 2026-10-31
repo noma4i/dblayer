@@ -60,8 +60,12 @@ impl Mailbox {
         for (from, to) in replaced {
             self.record_replacement(from, to);
         }
-        match &self.latest.as_ref().map(|latest| &latest.body) {
-            Some(Body::Rows(RowsBody { step: Some(Step { touched: Some(ids), .. }), .. })) => self.touched.extend(ids.iter().cloned()),
+        match self.latest.as_ref().map(|latest| &latest.body) {
+            Some(Body::Rows(rows)) if matches!(rows.step, Some(Step { touched: Some(_), .. })) => {
+                if let Some(Step { touched: Some(ids), .. }) = &rows.step {
+                    self.touched.extend(ids.iter().cloned());
+                }
+            }
             _ => self.unmergeable = true,
         }
         self.steps += 1;
@@ -153,7 +157,7 @@ struct Tail {
 }
 
 pub(crate) enum Feed {
-    Rows(Change),
+    Rows(Box<Change>),
     Count(CountChange),
     Reached(i64),
     Failed(String),
@@ -359,7 +363,7 @@ impl Subscriber {
         let latest = taken.latest.clone();
         let outcome = match (&self.listener, &latest.body) {
             (Listener::Rows(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| self.call_state.call(|| call(&change))),
-            (Listener::Feed(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| self.call_state.call(|| call(Feed::Rows(change)))),
+            (Listener::Feed(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| self.call_state.call(|| call(Feed::Rows(Box::new(change))))),
             (Listener::Count(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| self.call_state.call(|| call(&change))),
             (Listener::Feed(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| self.call_state.call(|| call(Feed::Count(change)))),
             _ => None,

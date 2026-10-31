@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use tokio::task::AbortHandle;
 
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, FileOp, OperationTransition, ScopeOp, WriteOrigin};
-use crate::db::{read_outbox, Prior};
+use crate::db::{read_outbox, Admission, Prior};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::pacing::{Backoff, Debounce, RetryPolicy};
 use crate::store::PlanCommitError;
@@ -130,6 +130,13 @@ impl Drop for Updates {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PayloadEvent<'a> {
+    change: &'a Value,
+    area: &'a str,
+    kind: &'a str,
+}
+
 struct Pending {
     definition: Arc<SubscriptionDef>,
     bucket: String,
@@ -180,7 +187,7 @@ impl Feed {
             return true;
         };
         for change in changes {
-            let (Some(area), Some(id), Some(kind)) = (root_value(&change, &feed.area).and_then(Value::as_str), root_value(&change, &feed.id).and_then(Value::as_str), root_value(&change, &feed.kind).and_then(Value::as_str)) else {
+            let (Some(area), Some(id), Some(kind)) = (root_value(change, &feed.area).and_then(Value::as_str), root_value(change, &feed.id).and_then(Value::as_str), root_value(change, &feed.kind).and_then(Value::as_str)) else {
                 locked(&self.status).rejected += 1;
                 continue;
             };
@@ -204,7 +211,7 @@ impl Feed {
             let mut settled: BTreeMap<String, bool> = BTreeMap::new();
             for (model, reads) in targets {
                 for read in reads.iter().filter(|read| read.payload.is_some()) {
-                    let result = self.payload_target(model, read, change, area, kind, &row_id, generation).await;
+                    let result = self.payload_target(model, read, PayloadEvent { change, area, kind }, &row_id, generation).await;
                     match result {
                         Ok(()) => { settled.insert(model.clone(), true); }
                         Err(_) => {
@@ -250,7 +257,8 @@ impl Feed {
         true
     }
 
-    async fn payload_target(&self, model: &str, read: &crate::schema::ChangeRead, change: &Value, area: &str, kind: &str, event_id: &RowId, generation: Generation) -> Result<(), SyncError> {
+    async fn payload_target(&self, model: &str, read: &crate::schema::ChangeRead, event: PayloadEvent<'_>, event_id: &RowId, generation: Generation) -> Result<(), SyncError> {
+        let PayloadEvent { change, area, kind } = event;
         let terminal = read.removes_on.iter().any(|removal| removal == kind);
         let node = if terminal { Map::new() } else {
             let path = read.payload.as_deref().ok_or_else(|| SyncError::Event("missing payload path".into()))?;
@@ -506,14 +514,14 @@ impl Feed {
                         continue;
                     }
                     let Some(patch) = patches.get(&key) else { continue };
-                    let Some(row) = db.admitted(reader, WriteOrigin::Event, None, None, model, patch, &mut 0)? else { continue };
+                    let Some(row) = db.admitted(reader, WriteOrigin::Event, Admission::default(), model, patch, &mut 0)? else { continue };
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
                     let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
                     touches.extend(db.touch_ops(reader, spec, &seen, &own)?);
                     for (related_model, patch) in &normalized.related {
                         let Some(id) = patch.get("id").and_then(read_id) else { continue };
                         let Some(patch) = patches.get(&(related_model.to_string(), id.to_string())) else { continue };
-                        let Some(row) = db.admitted(reader, WriteOrigin::Event, None, None, related_model.as_str(), patch, &mut 0)? else { continue };
+                        let Some(row) = db.admitted(reader, WriteOrigin::Event, Admission::default(), related_model.as_str(), patch, &mut 0)? else { continue };
                         let Some(id) = row.get("id").and_then(read_id) else { continue };
                         operations.insert((related_model.to_string(), id.to_string()), EntityOp::Upsert { model: related_model.clone(), id, row });
                     }

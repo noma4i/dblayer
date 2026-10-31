@@ -41,8 +41,8 @@ impl EntityCache {
     #[cfg(test)]
     pub fn count(&self, model: &str, now: u64) -> u32 {
         let mut rows = locked(&self.rows);
-        let change = self.limits.count(model.into(), now);
+        let (change, count) = self.limits.count(model, now);
         for token in change.evicted { rows.remove(&token); }
-        change.count
+        count
     }
 }

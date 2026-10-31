@@ -67,7 +67,7 @@ fn inv_observe_19_a_destroy_right_after_a_delivered_update_is_told_as_removed() 
         db.await_revision(db.revision_seq().unwrap());
         db.update("moments", &a, obj(json!({"text": "edited"}))).unwrap();
         db.await_revision(db.revision_seq().unwrap());
-        observer.release(&[a.clone()]);
+        observer.release(std::slice::from_ref(&a));
         db.update("moments", &a, obj(json!({"text": "unseen"}))).unwrap();
         db.update("moments", &b, obj(json!({"text": "seen"}))).unwrap();
         db.await_revision(db.revision_seq().unwrap());

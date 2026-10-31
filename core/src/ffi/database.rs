@@ -23,6 +23,8 @@ use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
 use super::wire::{WireModel, WireRow};
 use super::{DbError, LiveChange, LiveSubscription, LoadMoreResult, OnlineSink, QueryListener, Transport};
 
+type ParsedQuery = (Query, Option<(String, Map<String, Value>)>);
+
 pub(super) fn executor() -> Result<&'static Runtime, DbError> {
     static EXECUTOR: Starter = Starter::new();
     started(&EXECUTOR, || tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build())
@@ -554,7 +556,7 @@ impl Database {
             sync.inner.spawn_flush(Duration::ZERO);
         }
     }
-    fn parsed_query(&self, json: &str) -> Result<(Query, Option<(String, Map<String, Value>)>), DbError> {
+    fn parsed_query(&self, json: &str) -> Result<ParsedQuery, DbError> {
         let description: Value = serde_json::from_str(json)?;
         let mut query: Query = serde_json::from_value(description.clone())?;
         let remote = description["relation"].as_str().map(|name| -> Result<_, DbError> {

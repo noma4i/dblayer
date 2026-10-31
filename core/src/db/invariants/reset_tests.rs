@@ -78,7 +78,7 @@ fn inv_fresh_04_a_full_reset_leaves_no_row_in_any_data_table() {
     let filled: Vec<String> = tables
         .into_iter()
         .filter(|table| !kept.contains(&table.as_str()))
-        .filter(|table| inner.connection.query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |row| row.get::<_, i64>(0)).map_or(false, |count| count > 0))
+        .filter(|table| inner.connection.query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |row| row.get::<_, i64>(0)).is_ok_and(|count| count > 0))
         .collect();
     assert_eq!(filled, Vec::<String>::new(), "tables that still hold rows after a full reset");
 }

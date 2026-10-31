@@ -5,6 +5,7 @@ use crate::identity::Generation;
 use crate::store::{PlanCommitError, Reader};
 
 use super::error::DbError;
+use super::merge::Admission;
 use super::open::Db;
 use super::parent_pointer::Followed;
 
@@ -39,7 +40,7 @@ impl Db {
             for op in &mut envelope.entity_ops {
                 if let EntityOp::Upsert { model, id, row } = op {
                     row.insert("id".into(), serde_json::Value::String(id.to_string()));
-                    if let Some(admitted) = self.admitted(reader, envelope.origin, None, None, model.as_str(), row, &mut 0)? { *row = admitted; }
+                    if let Some(admitted) = self.admitted(reader, envelope.origin, Admission::default(), model.as_str(), row, &mut 0)? { *row = admitted; }
                 }
             }
         }

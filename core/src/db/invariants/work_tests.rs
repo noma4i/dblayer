@@ -31,7 +31,7 @@ fn with_open_operations(count: usize) -> (Db, i64) {
         rollback: None,
         upload: Some(UploadState::queued()),
     };
-    apply(&db, OperationTransition::Begin(record));
+    apply(&db, OperationTransition::Begin(Box::new(record)));
     let seq = db.outbox().unwrap().iter().find(|entry| entry.operation.upload.is_some()).unwrap().operation.id.0;
     (db, seq)
 }
@@ -42,7 +42,7 @@ fn steps_of_one_tick(open: usize) -> usize {
     let counter = steps.clone();
     db.shared.store.lock().connection.progress_handler(1, Some(move || counter.fetch_add(1, Ordering::SeqCst) == usize::MAX)).unwrap();
     let state = UploadState { phase: UploadStatus::Uploading, sent_bytes: 5, total_bytes: 10, ..UploadState::queued() };
-    apply(&db, OperationTransition::Progress { seq, item_position: 0, state });
+    apply(&db, OperationTransition::Progress { seq, item_position: 0, state: Box::new(state) });
     steps.load(Ordering::SeqCst)
 }
 

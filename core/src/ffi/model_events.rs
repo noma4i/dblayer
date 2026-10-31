@@ -15,7 +15,7 @@ pub struct WireModelEvent {
 
 #[derive(Clone, Debug, uniffi::Enum)]
 pub enum WireModelEventItem {
-    Event { event: WireModelEvent },
+    Event { event: Box<WireModelEvent> },
     Missed { count: u64 },
 }
 
@@ -46,7 +46,7 @@ impl ModelEventFeed {
         let task = executor()?.spawn(async move {
             feed.events.next().await.map(|item| match item {
                 crate::sync::ModelEventItem::Missed(count) => WireModelEventItem::Missed { count },
-                crate::sync::ModelEventItem::Event(event) => WireModelEventItem::Event { event: WireModelEvent { area: event.area, kind: event.kind, id: event.id, before: event.before.as_ref().map(|row| feed.wire.row(row)), after: event.after.as_ref().map(|row| feed.wire.row(row)) } },
+                crate::sync::ModelEventItem::Event(event) => WireModelEventItem::Event { event: Box::new(WireModelEvent { area: event.area, kind: event.kind, id: event.id, before: event.before.as_ref().map(|row| feed.wire.row(row)), after: event.after.as_ref().map(|row| feed.wire.row(row)) }) },
             })
         });
         joined(task).await

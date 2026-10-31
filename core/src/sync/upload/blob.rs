@@ -36,7 +36,7 @@ impl Sync {
                 let record = OperationRecord { seq: None, action_key: format!("@blob/{name}"), status: OperationStatus::Pending, row_ids: Vec::new(), temp_id: None, input: serde_json::Value::Null, transport_started: false, base_revision: Some(inner.db.revision_seq()?), created_at: inner.now_ms(), dedupe_key: None, rollback: None, upload: None };
                 let result = inner.commit(generation, |_| {
                     let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-                    envelope.operation_transitions.push(OperationTransition::BeginBlob { record: record.clone(), item: item.clone(), id: id.clone(), name: name.clone() });
+                    envelope.operation_transitions.push(OperationTransition::BeginBlob { record: Box::new(record.clone()), item: Box::new(item.clone()), id: id.clone(), name: name.clone() });
                     Ok(Some(envelope))
                 })?;
                 result.and_then(|result| result.operations.into_iter().next()).ok_or(SyncError::Cancelled)
@@ -76,7 +76,7 @@ impl Sync {
             if state.phase == crate::upload::UploadStatus::Failed {
                 state.apply(crate::upload::UploadEvent::Retried).map_err(|error| SyncError::Malformed(error.to_string()))?;
             }
-            envelope.operation_transitions.push(OperationTransition::Progress { seq, item_position: 0, state });
+            envelope.operation_transitions.push(OperationTransition::Progress { seq, item_position: 0, state: Box::new(state) });
             envelope.operation_transitions.push(OperationTransition::Retry { seq });
             Ok(Some(envelope))
         })?;

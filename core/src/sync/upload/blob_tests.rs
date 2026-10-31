@@ -142,7 +142,7 @@ async fn blob_seven_days() {
             if trigger == "background_refused" {
                 envelope.operation_transitions.push(crate::commit::OperationTransition::BackgroundRefused { seq, item_position: 0, detail: "refused".into() });
             } else {
-                envelope.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: 0, state });
+                envelope.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: 0, state: Box::new(state) });
                 envelope.operation_transitions.push(crate::commit::OperationTransition::Fail { seq, status: crate::operation::OperationStatus::Failed, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "failed") });
             }
             rig.db.land(envelope).unwrap();

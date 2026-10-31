@@ -187,7 +187,7 @@ impl LoadOwner {
                 match effect {
                     Effect::Publish { window, state: published } => {
                         if let Some(sender) = state.senders.get(&window) {
-                            sender.send_replace(published);
+                            sender.send_replace(*published);
                         }
                     }
                     Effect::Retry { window, kind } => state.retries.push((window, kind)),

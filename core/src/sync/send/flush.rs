@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, EnvelopeFault, FileOp, OperationTransition, WriteOrigin};
 use crate::operation::OperationStatus;
-use crate::db::{DbError, OutboxOperation, Prior};
+use crate::db::{DbError, OutboxOperation, Prior, TempReplacement};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::operation::{quarantine_add, Operation, QuarantineReason};
 use crate::schema::{ActionDeclaration, OnFailure, RemoteShape};
@@ -298,7 +298,7 @@ impl Inner {
                 for ((seq, position), state) in &states {
                     let mut state = state.clone();
                     state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
-                    envelope.operation_transitions.push(OperationTransition::Progress { seq: *seq, item_position: *position, state });
+                    envelope.operation_transitions.push(OperationTransition::Progress { seq: *seq, item_position: *position, state: Box::new(state) });
                 }
                 Ok(Some(envelope))
             })?;
@@ -327,7 +327,7 @@ impl Inner {
             state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
             self.commit(sending.generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
-                envelope.operation_transitions.push(OperationTransition::Progress { seq: entry.operation.id.0, item_position: 0, state: state.clone() });
+                envelope.operation_transitions.push(OperationTransition::Progress { seq: entry.operation.id.0, item_position: 0, state: Box::new(state.clone()) });
                 Ok(Some(envelope))
             })?;
         }
@@ -541,11 +541,11 @@ impl Inner {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
                 envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
                 if let (Some(temp), Some(real)) = (&temp, &real) {
-                    self.db.swap_temp(reader, &mut envelope, &outbox, &sending.model, temp, real, entry.operation.id.0)?;
+                    self.db.swap_temp(reader, &mut envelope, &outbox, TempReplacement { model: &sending.model, temp, real }, entry.operation.id.0)?;
                 }
                 for (temp, real) in &replacements {
                     if reader.point(&sending.model, temp.as_str())?.is_some() {
-                        self.db.swap_temp(reader, &mut envelope, &outbox, &sending.model, temp, real, entry.operation.id.0)?;
+                        self.db.swap_temp(reader, &mut envelope, &outbox, TempReplacement { model: &sending.model, temp, real }, entry.operation.id.0)?;
                     }
                 }
                 envelope.file_ops.extend(held.iter().filter_map(|file| {
@@ -561,7 +561,7 @@ impl Inner {
                             .chain(normalized.roots.iter().filter(|_| *created_model == sending.model).filter_map(|row| row.get("id").and_then(read_id)))
                             .filter(|answer| answer != created_temp && !owned.contains(answer)).collect();
                         match answers.as_slice() {
-                            [answer] => self.db.swap_temp(reader, &mut envelope, &outbox, created_model, created_temp, answer, entry.operation.id.0)?,
+                            [answer] => self.db.swap_temp(reader, &mut envelope, &outbox, TempReplacement { model: created_model, temp: created_temp, real: answer }, entry.operation.id.0)?,
                             _ => envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(created_model), id: created_temp.clone(), reason: crate::commit::DestroyReason::Expired }),
                         }
                     }

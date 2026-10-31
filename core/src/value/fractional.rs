@@ -45,7 +45,7 @@ fn midpoint(lower: &str, upper: Option<&str>) -> Result<String, OrderKeyError> {
     let low = lower.bytes().next().map_or(Ok(0), digit)?;
     let high = upper.and_then(|upper| upper.bytes().next()).map_or(Ok(ORDER_ALPHABET.len()), digit)?;
     if high - low > 1 {
-        return Ok(char::from(digit_at((low + high + 1) / 2)).to_string());
+        return Ok(char::from(digit_at((low + high).div_ceil(2))).to_string());
     }
     match upper {
         Some(upper) if upper.len() > 1 => Ok(upper[..1].to_string()),

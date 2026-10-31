@@ -57,7 +57,13 @@ pub(super) fn accept(token: &str, response_key: &str, request_id: &str, digest: 
     Ok(config)
 }
 
-pub(crate) async fn fetch(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn Clock, progress: &RetryCalls, online: &crate::transport::Connectivity) -> Result<ServerConfig, TransportError> {
+pub(crate) struct AppRelease<'a> {
+    pub platform: AppPlatform,
+    pub version: &'a str,
+    pub build: Option<&'a str>,
+}
+
+pub(crate) async fn fetch(config: &EncryptedConfig, release: &AppRelease<'_>, http: Arc<dyn HttpExchange>, clock: &dyn Clock, progress: &RetryCalls, online: &crate::transport::Connectivity) -> Result<ServerConfig, TransportError> {
     config.validate()?;
     let audience = config.origin.trim_end_matches('/');
     if !super::origin::allowed(audience) { return Err(invalid("the origin must be https or a development host without a path")); }
@@ -67,7 +73,7 @@ pub(crate) async fn fetch(config: &EncryptedConfig, platform: AppPlatform, versi
         online.online().await;
         let request_id = uuid::Uuid::new_v4().to_string();
         let response_key = zeroize::Zeroizing::new(random_token());
-        let plain = request_plain(config, platform, version, build, clock, &request_id, &response_key)?;
+        let plain = request_plain(config, release.platform, release.version, release.build, clock, &request_id, &response_key)?;
         let digest = request_digest(&plain);
         let token = seal_plain(&key, request_text(&plain).as_bytes()).map_err(authentication)?;
         let result = match http.post(&config.endpoints.bootstrap, token, false).await {

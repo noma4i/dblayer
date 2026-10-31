@@ -522,8 +522,8 @@ pub fn create_table_statement(model: &ModelSpec) -> String {
         "revision INTEGER NOT NULL".to_string(),
         "born_rev INTEGER NOT NULL".to_string(),
     ];
-    definitions.extend(plan.row_columns().into_iter().map(|(name, ty)| format!("{} {}", sql_ident(name), ty.as_sql())));
-    definitions.extend(plan.rev_columns().into_iter().map(|(_, column)| format!("{} INTEGER", sql_ident(column))));
+    definitions.extend(plan.row_columns().iter().map(|(name, ty)| format!("{} {}", sql_ident(name), ty.as_sql())));
+    definitions.extend(plan.rev_columns().iter().map(|(_, column)| format!("{} INTEGER", sql_ident(column))));
     let kind = if model.is_memory() { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
     format!(
         "{kind} IF NOT EXISTS {} (\n  {}\n) STRICT",

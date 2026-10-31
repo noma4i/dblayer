@@ -8,8 +8,6 @@ const MAX_AGE: u64 = 120_000;
 pub struct RetentionChange {
     pub selected: Option<u64>,
     pub evicted: Vec<u64>,
-    #[cfg(test)]
-    pub count: u32,
 }
 
 struct RetainedRow {
@@ -47,8 +45,8 @@ impl RetainedRows {
         }
     }
 
-    fn change(&self, model: &str, selected: Option<u64>, evicted: Vec<u64>) -> RetentionChange {
-        RetentionChange { selected, evicted, #[cfg(test)] count: self.models.get(model).map_or(0, |rows| rows.len() as u32) }
+    fn change(selected: Option<u64>, evicted: Vec<u64>) -> RetentionChange {
+        RetentionChange { selected, evicted }
     }
 }
 
@@ -69,7 +67,7 @@ impl RetentionPool {
         if let Some(&token) = rows.keys.get(&(model.clone(), id.clone())) {
             rows.remove(token, &mut evicted);
         }
-        if bytes > MAX_BYTES { return rows.change(&model, None, evicted); }
+        if bytes > MAX_BYTES { return RetainedRows::change(None, evicted); }
         rows.next += 1;
         let token = rows.next;
         rows.bytes += bytes;
@@ -83,7 +81,7 @@ impl RetentionPool {
             if rows.bytes <= MAX_BYTES { break; }
             rows.remove(oldest, &mut evicted);
         }
-        rows.change(&model, Some(token), evicted)
+        RetainedRows::change(Some(token), evicted)
     }
 
     pub fn take(&self, model: String, id: String, now: u64) -> RetentionChange {
@@ -94,15 +92,16 @@ impl RetentionPool {
         if let Some(token) = selected {
             rows.remove(token, &mut Vec::new());
         }
-        rows.change(&model, selected, evicted)
+        RetainedRows::change(selected, evicted)
     }
 
     #[cfg(test)]
-    pub fn count(&self, model: String, now: u64) -> RetentionChange {
+    pub fn count(&self, model: &str, now: u64) -> (RetentionChange, u32) {
         let mut rows = crate::db::locked(&self.rows);
         let mut evicted = Vec::new();
         rows.expire(now, &mut evicted);
-        rows.change(&model, None, evicted)
+        let count = rows.models.get(model).map_or(0, |tokens| tokens.len() as u32);
+        (RetainedRows::change(None, evicted), count)
     }
 
     pub fn clear(&self, model: String) -> RetentionChange {
@@ -110,6 +109,6 @@ impl RetentionPool {
         let tokens: Vec<_> = rows.models.get(&model).into_iter().flatten().copied().collect();
         let mut evicted = Vec::new();
         for token in tokens { rows.remove(token, &mut evicted); }
-        rows.change(&model, None, evicted)
+        RetainedRows::change(None, evicted)
     }
 }

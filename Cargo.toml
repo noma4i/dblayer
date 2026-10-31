@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["core", "gen"]
+exclude = ["core/vendor/statig_macro"]
 
 [profile.release]
 opt-level = 3
@@ -8,3 +9,6 @@ lto = false
 codegen-units = 1
 strip = "symbols"
 panic = "unwind"
+
+[patch.crates-io]
+statig_macro = { path = "core/vendor/statig_macro" }

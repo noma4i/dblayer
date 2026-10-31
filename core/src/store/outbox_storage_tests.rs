@@ -31,7 +31,7 @@ fn send(store: &Store, items: Vec<OperationTransition>) -> i64 {
 
 fn begun() -> (Store, i64) {
     let (store, _) = booted_store();
-    let seq = send(&store, vec![OperationTransition::Begin(record())]);
+    let seq = send(&store, vec![OperationTransition::Begin(Box::new(record()))]);
     (store, seq)
 }
 
@@ -70,7 +70,7 @@ fn a_failure_and_the_upload_progress_are_columns() {
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
     send(&store, vec![OperationTransition::Start { seq }]);
     send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure }]);
-    send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: upload() }]);
+    send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: Box::new(upload()) }]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('op') WHERE name LIKE 'up_%'"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op JOIN op_item USING (seq) WHERE op.error_kind = 'server' AND op.error_message = 'http 503' AND position = 0 AND phase = 'uploading' AND sent_bytes = 40"), 1);
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_part WHERE seq = {seq} AND etag IN ('a', 'b')")), 2);
@@ -99,14 +99,14 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         let store = Store::open(&path).unwrap();
         store.boot(&[messages_spec(), items_spec()], None).unwrap();
         store.mark_ready();
-        let seq = send(&store, vec![OperationTransition::Begin(record())]);
+        let seq = send(&store, vec![OperationTransition::Begin(Box::new(record()))]);
         let failure = failure(extensions.clone(), "purchase refused");
         let mut uploading = record();
         uploading.action_key = "messages:upload:file".into();
-        let upload_seq = send(&store, vec![OperationTransition::Begin(uploading)]);
+        let upload_seq = send(&store, vec![OperationTransition::Begin(Box::new(uploading))]);
         let mut state = upload();
         state.error = Some(item.clone());
-        send(&store, vec![OperationTransition::Progress { seq: upload_seq, item_position: 0, state }]);
+        send(&store, vec![OperationTransition::Progress { seq: upload_seq, item_position: 0, state: Box::new(state) }]);
         for seq in [seq, upload_seq] {
             send(&store, vec![OperationTransition::Start { seq }]);
             send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
@@ -181,7 +181,7 @@ fn row_sync_keeps_actions_and_dirty_fields_in_child_tables() {
 #[test]
 fn closing_an_operation_removes_its_child_rows() {
     let (store, seq) = begun();
-    send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: upload() }]);
+    send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: Box::new(upload()) }]);
     send(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
     for table in ["op", "op_row", "op_value", "op_error", "op_item", "op_part", "row_sync", "sync_row_error", "sync_upload_error", "sync_action", "sync_field"] {
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
@@ -196,7 +196,7 @@ fn rewriting_an_operation_replaces_its_rows_and_values() {
     next.row_ids = vec![id("m3")];
     next.input = json!({"id": "m3"});
     next.rollback = None;
-    send(&store, vec![OperationTransition::Begin(next)]);
+    send(&store, vec![OperationTransition::Begin(Box::new(next))]);
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_row WHERE seq = {seq}")), 1);
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_value WHERE seq = {seq} AND part = 'prior'")), 0);
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_value WHERE seq = {seq} AND part = 'input'")), 2);

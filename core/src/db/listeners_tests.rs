@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::test_wait::join_within;
 
 fn version(revision: i64) -> Arc<Version> {
-    Arc::new(Version { revision, epoch: 0, body: Body::Rows(RowsBody::new(Vec::new())) })
+    Arc::new(Version { revision, epoch: 0, body: Body::Rows(Box::new(RowsBody::new(Vec::new()))) })
 }
 
 #[test]

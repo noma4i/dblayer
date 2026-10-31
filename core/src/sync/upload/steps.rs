@@ -12,37 +12,43 @@ use super::super::locked;
 use super::run::Runner;
 
 pub(super) enum StepError {
-    Retry(OperationFailure),
+    Retry(Box<OperationFailure>),
     Expired,
-    Fatal(OperationFailure),
+    Fatal(Box<OperationFailure>),
     Cancelled,
 }
 
 pub(super) enum Stop {
     Cancelled,
-    Failed(OperationFailure),
+    Failed(Box<OperationFailure>),
     Expired,
     Superseded,
 }
 
+impl Stop {
+    pub(super) fn failed(failure: OperationFailure) -> Self {
+        Self::Failed(Box::new(failure))
+    }
+}
+
 pub(super) fn fatal(kind: FailureKind, message: impl Into<String>) -> StepError {
-    StepError::Fatal(OperationFailure::new(kind, message))
+    StepError::Fatal(Box::new(OperationFailure::new(kind, message)))
 }
 
 fn step_error(error: TransportError, cancelled: bool) -> StepError {
     let message = error.to_string();
     let retryable = RetryClass::of_error(&error) == RetryClass::Retriable;
     match error {
-        TransportError::Graphql { extensions, .. } if retryable => StepError::Retry(OperationFailure { kind: FailureKind::Server, message, extensions }),
+        TransportError::Graphql { extensions, .. } if retryable => StepError::Retry(Box::new(OperationFailure { kind: FailureKind::Server, message, extensions })),
         TransportError::Security { .. } | TransportError::Config { .. } => fatal(FailureKind::Unrecognized, message),
         TransportError::Interrupted(_) if cancelled => StepError::Cancelled,
-        TransportError::Network(_) | TransportError::Interrupted(_) => StepError::Retry(OperationFailure::new(FailureKind::Network, message)),
+        TransportError::Network(_) | TransportError::Interrupted(_) => StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, message))),
         TransportError::Http { status: 403, .. } => StepError::Expired,
         TransportError::Http { status, .. } if status >= 500 || status == 408 || status == 429 => {
-            StepError::Retry(OperationFailure::new(FailureKind::Server, message))
+            StepError::Retry(Box::new(OperationFailure::new(FailureKind::Server, message)))
         }
         TransportError::Session { code, detail } => fatal(FailureKind::Session(code), detail),
-        TransportError::Graphql { messages, extensions } => StepError::Fatal(OperationFailure { kind: FailureKind::Rejected, message: messages.join("\n"), extensions }),
+        TransportError::Graphql { messages, extensions } => StepError::Fatal(Box::new(OperationFailure { kind: FailureKind::Rejected, message: messages.join("\n"), extensions })),
         TransportError::RequestTooLarge { .. } | TransportError::Http { .. } | TransportError::Unscripted(_) => fatal(FailureKind::Rejected, message),
         TransportError::Decode(_) => fatal(FailureKind::Unrecognized, message),
     }
@@ -53,14 +59,14 @@ impl Runner {
         self.save(UploadEvent::RequestRemembered { request: crate::upload::UploadRequest {
             document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone(),
         } }).map_err(|stop| match stop {
-            Stop::Failed(failure) => StepError::Fatal(failure),
+            Stop::Failed(failure) => StepError::Fatal(Box::new(*failure)),
             _ => StepError::Cancelled,
         })
     }
 
     pub(super) fn has_pending_request(&self) -> Result<bool, Stop> {
         crate::transport::encrypted::pending_matches(&self.inner.db, self.seq, self.position, &crate::operation::enum_text(&self.snapshot().stage).unwrap_or_default())
-            .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))
+            .map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))
     }
 
     pub(super) async fn graphql(&self, name: &str, variables: Value, interruptible: bool) -> Result<Value, StepError> {
@@ -88,7 +94,7 @@ impl Runner {
             call.await
         };
         let response = match outcome {
-            Err(_) => return Err(StepError::Retry(OperationFailure::new(FailureKind::Network, format!("{name} timed out")))),
+            Err(_) => return Err(StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, format!("{name} timed out"))))),
             Ok(Err(error)) => {
                 return Err(match step_error(error, false) {
                     StepError::Expired => fatal(FailureKind::Rejected, format!("{name} was forbidden")),
@@ -102,9 +108,9 @@ impl Runner {
             let message = response.errors.first().map_or("empty response".to_string(), |error| error.message.clone());
             let retryable = response.errors.iter().any(|error| error.extensions.as_ref().and_then(|fields| fields.get("retryable")).and_then(Value::as_bool) == Some(true));
             return Err(if retryable || RetryClass::classify(false, None, &codes) == RetryClass::Retriable {
-                StepError::Retry(OperationFailure { kind: FailureKind::Server, message, extensions: response.extensions() })
+                StepError::Retry(Box::new(OperationFailure { kind: FailureKind::Server, message, extensions: response.extensions() }))
             } else {
-                StepError::Fatal(OperationFailure { kind: FailureKind::Rejected, message, extensions: response.extensions() })
+                StepError::Fatal(Box::new(OperationFailure { kind: FailureKind::Rejected, message, extensions: response.extensions() }))
             });
         }
         response
@@ -161,7 +167,7 @@ impl Runner {
             let _ = std::fs::remove_file(&file.path);
         }
         match sent {
-            Err(_) => Err(StepError::Retry(OperationFailure::new(FailureKind::Network, "put timed out"))),
+            Err(_) => Err(StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, "put timed out")))),
             Ok(outcome) => outcome.map_err(|error| step_error(error, self.token.is_cancelled())),
         }
     }
@@ -177,7 +183,7 @@ impl Runner {
                 }
                 PutTaskState::Failed { detail } => {
                     self.inner.forget_put(tag);
-                    return Some(Err(StepError::Retry(OperationFailure::new(FailureKind::Network, detail))));
+                    return Some(Err(StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, detail)))));
                 }
                 PutTaskState::Running => tokio::select! {
                     changed = states.changed() => if changed.is_err() { return None },
@@ -202,12 +208,12 @@ impl Runner {
                 }
                 Err(StepError::Cancelled) => return Err(Stop::Cancelled),
                 Err(StepError::Expired) => return Err(Stop::Expired),
-                Err(StepError::Fatal(failure)) => return Err(Stop::Failed(failure)),
+                Err(StepError::Fatal(failure)) => return Err(Stop::failed(*failure)),
                 Err(StepError::Retry(failure)) => {
                     if !self.inner.connectivity.is_online() {
                         continue;
                     }
-                    self.pause_retry(stage, part_number, failure).await?;
+                    self.pause_retry(stage, part_number, *failure).await?;
                 }
             }
         }
@@ -218,7 +224,7 @@ impl Runner {
         let attempt = self.snapshot().retries.iter().find(|retry| retry.stage == stage && retry.part_number == part_number).map_or(0, |retry| retry.attempts);
         let backoff = self.inner.config.upload.backoff;
         if !backoff.allows(attempt) {
-            return Err(Stop::Failed(failure));
+            return Err(Stop::failed(failure));
         }
         let delay = backoff.delay(attempt);
         self.save(UploadEvent::RetryScheduled { stage, part_number, attempts: attempt + 1, retry_at: (self.inner.clock.now() + delay).as_millis() as u64, failure })?;

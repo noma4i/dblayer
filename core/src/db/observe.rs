@@ -16,6 +16,8 @@ use super::reads::{CompletedRead, ReadJob, ReadResult, ReadRows, ReadTarget};
 use super::window::WindowSeed;
 use super::watch::{Body, Change, CountChange, Deps, Evaluated, Loaded, RowsBody, Step, Subject, Version};
 
+type TouchedModel = (String, ModelKey, BTreeSet<RowId>);
+
 const MAX_PROBED_ROWS: usize = 8;
 
 type Subscribers = Vec<(u64, Arc<Subscriber>)>;
@@ -472,7 +474,7 @@ impl Shared {
     }
 
     pub(crate) fn plan_refresh(&self, batch: &[Event]) -> Refresh {
-        let (due, touched): (Vec<Due>, Vec<(String, ModelKey, BTreeSet<RowId>)>) = {
+        let (due, touched): (Vec<Due>, Vec<TouchedModel>) = {
             let mut observers = self.observers();
             for opening in observers.opening.values_mut() {
                 opening.missed |= batch.iter().any(|event| opening.deps.hit(event));
@@ -583,7 +585,7 @@ impl Shared {
                 target,
                 run: Box::new(move |shared| {
                     locked(&shared.counters).observation_reads += 1;
-                    shared.evaluate_seeded(&subject, seed.as_ref()).map(ReadRows::Evaluated)
+                    shared.evaluate_seeded(&subject, seed.as_ref()).map(|evaluated| ReadRows::Evaluated(Box::new(evaluated)))
                 }),
             },
         ) {
@@ -648,7 +650,7 @@ impl Shared {
             }
             _ => self.evaluate(subject),
         };
-        evaluated.map(ReadRows::Evaluated)
+        evaluated.map(|evaluated| ReadRows::Evaluated(Box::new(evaluated)))
     }
 
     fn cannot_enter(&self, query: &Query, previous: &Version, touched: &HashSet<String>) -> Result<bool, DbError> {
@@ -704,13 +706,13 @@ impl Shared {
                 (ReadTarget::Publish { key, token, previous, grow }, rows) => self.apply_publish(&key, token, &previous, grow, rows),
                 (ReadTarget::Join { key, token, joiners }, ReadRows::Whole(loaded)) => self.apply_join(&key, token, &joiners, loaded),
                 (ReadTarget::Join { key, token, .. }, ReadRows::Moved) => self.rejoin_after_publish(&key, token),
-                (ReadTarget::Open { key, token }, ReadRows::Evaluated(evaluated)) => self.apply_open(&key, token, evaluated),
+                (ReadTarget::Open { key, token }, ReadRows::Evaluated(evaluated)) => self.apply_open(&key, token, *evaluated),
                 (ReadTarget::Entities { key, ids, leases }, ReadRows::Entities { position, loaded }) => self.apply_entities(&key, &ids, &leases, Ok((position, loaded))),
                 _ => {}
             },
             ReadResult::ReadFailed { target, error } => {
                 match target {
-                    ReadTarget::Entities { key, ids, leases } => return self.apply_entities(&key, &ids, &leases, Err(error)),
+                    ReadTarget::Entities { key, ids, leases } => self.apply_entities(&key, &ids, &leases, Err(error)),
                     ReadTarget::Publish { key, token, .. } | ReadTarget::Join { key, token, .. } => {
                         locked(&self.counters).query_reads_failed += 1;
                         let mut observers = self.observers();
@@ -742,11 +744,15 @@ impl Shared {
         #[cfg(test)]
         self.panic_at(key);
         let evaluated = match rows {
-            ReadRows::Evaluated(Evaluated { version: next, loaded }) => {
+            ReadRows::Evaluated(evaluated) => {
+                let Evaluated { version: next, loaded } = *evaluated;
                 let replaced = self.dispatch.replaced_between(previous.position().0, next.revision);
                 let position = next.position();
                 let link_edits = match &next.body {
-                    Body::Rows(RowsBody { links: Some(links), link_edits, .. }) if !link_edits.is_empty() => Some((links.clone(), link_edits.clone())),
+                    Body::Rows(rows) => match &**rows {
+                        RowsBody { links: Some(links), link_edits, .. } if !link_edits.is_empty() => Some((links.clone(), link_edits.clone())),
+                        _ => None,
+                    },
                     _ => None,
                 };
                 let published = next.succeeding(previous, replaced.as_slice(), loaded).map(Arc::new);

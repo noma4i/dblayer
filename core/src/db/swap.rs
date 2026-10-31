@@ -41,8 +41,15 @@ pub(super) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Result<Optio
     Ok(changed.then(|| entry.rewritten(row_ids, input, rollback)))
 }
 
+pub(crate) struct TempReplacement<'a> {
+    pub model: &'a str,
+    pub temp: &'a RowId,
+    pub real: &'a RowId,
+}
+
 impl Db {
-    pub(crate) fn swap_temp(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope, outbox: &[OutboxOperation], model: &str, temp: &RowId, real: &RowId, own: i64) -> Result<(), DbError> {
+    pub(crate) fn swap_temp(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), DbError> {
+        let TempReplacement { model, temp, real } = replacement;
         let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);
         if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {
             envelope.entity_ops.retain(|operation| !matches!(operation, EntityOp::Upsert { model: owner, id, .. } if owner.as_str() == model && id == real));

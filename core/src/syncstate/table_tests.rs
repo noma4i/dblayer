@@ -25,8 +25,8 @@ fn insert(connection: &Connection, action_key: &str, status: &str, started: i64,
         .unwrap();
     let seq = connection.last_insert_rowid();
     let ids: Vec<crate::identity::RowId> = serde_json::from_str(row_ids).unwrap();
-    crate::operation::write_rows(&connection, seq, &ids).unwrap();
-    crate::operation::write_value(&connection, seq, "input", Some(&serde_json::from_str(input).unwrap())).unwrap();
+    crate::operation::write_rows(connection, seq, &ids).unwrap();
+    crate::operation::write_value(connection, seq, "input", Some(&serde_json::from_str(input).unwrap())).unwrap();
     seq
 }
 

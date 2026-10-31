@@ -260,19 +260,24 @@ fn prefetch_stored(connection: &Connection, models: &BTreeMap<String, ModelInfo>
     Ok(found)
 }
 
+struct Landing<'a> {
+    revision: i64,
+    hidden: &'a HiddenRows,
+    prefetched: &'a mut Prefetched,
+    result: &'a mut RowChanges,
+    moves: &'a mut Vec<ScopeOp>,
+    heads: &'a mut Vec<(ScopeRef, crate::identity::RowId)>,
+}
+
 fn apply_upsert(
     connection: &Connection,
     info: &ModelInfo,
     model: &ModelKey,
     row: &Map<String, Value>,
     envelope: &CommitEnvelope,
-    revision: i64,
-    hidden: &HiddenRows,
-    prefetched: &mut Prefetched,
-    result: &mut RowChanges,
-    moves: &mut Vec<ScopeOp>,
-    heads: &mut Vec<(ScopeRef, crate::identity::RowId)>,
+    landing: Landing<'_>,
 ) -> Result<(), StoreError> {
+    let Landing { revision, hidden, prefetched, result, moves, heads } = landing;
     let Some(id) = row.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_string) else { return Ok(()) };
     if hidden.contains(&(model.to_string(), id.clone())) {
         return Ok(());
@@ -303,7 +308,7 @@ fn apply_upsert(
         }
     }
     let row = &next;
-    declared_membership(connection, info, model, &id, old_row, row, envelope, moves, heads)?;
+    declared_membership(connection, info, model, &id, RowVersions { old: old_row, new: row }, envelope, MembershipLog { moves: &mut *moves, heads: &mut *heads })?;
     let (born_rev, mut field_rev, changed, kind) = match &existing {
         Some(stored) => {
             let changed = diff_fields(&stored.row, row);
@@ -321,7 +326,7 @@ fn apply_upsert(
         field_rev.insert(field.clone(), revision);
     }
     field_rev.retain(|field, _| row.contains_key(field));
-    write_row(connection, info, &id, row, existing.is_some(), &changed, &field_rev, revision, born_rev)?;
+    write_row(connection, info, &id, row, RowRevisions { exists: existing.is_some(), changed: &changed, field_rev: &field_rev, revision, born_rev })?;
     if !info.search.is_empty() && (existing.is_none() || touches_search(info, &changed)) {
         reindex(connection, info, &id, row)?;
     }
@@ -360,17 +365,16 @@ fn canonicalize(info: &ModelInfo, row: &mut Map<String, Value>) {
     }
 }
 
-fn write_row(
-    connection: &Connection,
-    info: &ModelInfo,
-    id: &str,
-    row: &Map<String, Value>,
+struct RowRevisions<'a> {
     exists: bool,
-    changed: &BTreeSet<String>,
-    field_rev: &BTreeMap<String, i64>,
+    changed: &'a BTreeSet<String>,
+    field_rev: &'a BTreeMap<String, i64>,
     revision: i64,
     born_rev: i64,
-) -> Result<(), StoreError> {
+}
+
+fn write_row(connection: &Connection, info: &ModelInfo, id: &str, row: &Map<String, Value>, revisions: RowRevisions<'_>) -> Result<(), StoreError> {
+    let RowRevisions { exists, changed, field_rev, revision, born_rev } = revisions;
     let layout = &info.layout;
     let mut names: Vec<String> = vec!["revision".into()];
     let mut values: Vec<rusqlite::types::Value> = vec![revision.into()];
@@ -454,7 +458,19 @@ fn membership_moves(info: &ModelInfo, model: &ModelKey, id: &str, old: &Map<Stri
     heads.extend(after.iter().filter(|key| !before.contains(key)).map(|key| (ScopeRef::new(model.clone(), key.clone()), row.clone())));
 }
 
-fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, old: Option<&Map<String, Value>>, new: &Map<String, Value>, envelope: &CommitEnvelope, moves: &mut Vec<ScopeOp>, heads: &mut Vec<(ScopeRef, crate::identity::RowId)>) -> Result<(), StoreError> {
+struct RowVersions<'a> {
+    old: Option<&'a Map<String, Value>>,
+    new: &'a Map<String, Value>,
+}
+
+struct MembershipLog<'a> {
+    moves: &'a mut Vec<ScopeOp>,
+    heads: &'a mut Vec<(ScopeRef, crate::identity::RowId)>,
+}
+
+fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, versions: RowVersions<'_>, envelope: &CommitEnvelope, log: MembershipLog<'_>) -> Result<(), StoreError> {
+    let RowVersions { old, new } = versions;
+    let MembershipLog { moves, heads } = log;
     use crate::schema::{Membership, RemoteShape, PageDirection};
     let row = crate::identity::RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
     for relation in info.spec.relations.iter().filter(|relation| (!relation.membership.is_empty() || envelope.node_reread) && (if envelope.node_reread { relation.joins_node } else { relation.joins_events && matches!(envelope.origin, WriteOrigin::Event | WriteOrigin::Response) })) {
@@ -541,7 +557,7 @@ pub(crate) fn apply_envelope(
         match operation {
             EntityOp::Upsert { model, row, .. } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
-                apply_upsert(connection, info, model, row, envelope, revision, &hidden, &mut prefetched, &mut changes, &mut moves, &mut heads)?;
+                apply_upsert(connection, info, model, row, envelope, Landing { revision, hidden: &hidden, prefetched: &mut prefetched, result: &mut changes, moves: &mut moves, heads: &mut heads })?;
             }
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;

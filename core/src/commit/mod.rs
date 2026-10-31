@@ -132,10 +132,10 @@ pub struct UploadAdmission {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperationTransition {
-    BeginBlob { record: OperationRecord, item: UploadAdmission, id: String, name: String },
+    BeginBlob { record: Box<OperationRecord>, item: Box<UploadAdmission>, id: String, name: String },
     RetireBlob { id: String, expired: bool },
-    Begin(OperationRecord),
-    BeginUpload { record: OperationRecord, items: Vec<UploadAdmission> },
+    Begin(Box<OperationRecord>),
+    BeginUpload { record: Box<OperationRecord>, items: Vec<UploadAdmission> },
     RemoveUploadItem { seq: i64, position: i64, inputs: Vec<(i64, crate::upload::UploadInput)> },
     SeparateUploads { seq: i64, single_action: String, single_mutation: String },
     Close { seq: i64, status: OperationStatus },
@@ -143,7 +143,7 @@ pub enum OperationTransition {
     Fail { seq: i64, status: OperationStatus, failure: OperationFailure },
     Retry { seq: i64 },
     Postpone { seq: i64, failure: OperationFailure },
-    Progress { seq: i64, item_position: i64, state: UploadState },
+    Progress { seq: i64, item_position: i64, state: Box<UploadState> },
     BackgroundRefused { seq: i64, item_position: i64, detail: String },
     Remove { seq: i64, expected: Option<OperationStatus> },
 }
@@ -263,9 +263,9 @@ impl CommitEnvelope {
         let member_keys: Vec<(ScopeRef, RowId)> = self
             .scope_ops
             .iter()
-            .filter_map(|operation| match operation {
+            .map(|operation| match operation {
                 ScopeOp::Append { scope, row, .. } | ScopeOp::Move { scope, row, .. } | ScopeOp::Detach { scope, row } => {
-                    Some((scope.clone(), row.clone()))
+                    (scope.clone(), row.clone())
                 }
             })
             .collect();

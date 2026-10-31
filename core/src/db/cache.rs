@@ -25,7 +25,7 @@ fn value_bytes(value: &Value) -> usize {
 
 pub(crate) fn row_bytes(model: &str, row: &super::Record) -> usize {
     let strings = |values: &Vec<String>| values.capacity() * size_of::<String>() + values.iter().map(String::capacity).sum::<usize>();
-    size_of::<super::row::Record>() + size_of::<(String, String)>() + 8 * size_of::<usize>()
+    size_of::<super::row::Record>() + size_of::<(String, String)>() + usize::BITS as usize
         + model.len() + 2 * row.id.as_str().len() + object_bytes(&row.data)
         + strings(&row.sync.actions) + strings(&row.sync.dirty_fields)
         + row.sync.error.as_ref().map_or(0, |error| error.message.capacity())

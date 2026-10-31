@@ -21,12 +21,12 @@ impl Runner {
             .steps
             .multipart
             .clone()
-            .ok_or_else(|| Stop::Failed(OperationFailure::new(FailureKind::Rejected, "the upload has no multipart steps")))?;
+            .ok_or_else(|| Stop::failed(OperationFailure::new(FailureKind::Rejected, "the upload has no multipart steps")))?;
         let config = &self.inner.config.upload;
         if self.snapshot().upload_id.is_none() {
             self.save(UploadEvent::InitStarted)?;
             let checksum = md5_base64(std::path::Path::new(&self.input.path), &self.token).await
-                .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
+                .map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Rejected, format!("source file is unreadable: {error}"))))?;
             let variables = json!({"filename": self.file_name(), "contentType": self.content_type(), "byteSize": total, "checksum": checksum});
             let data = self.retrying(UploadStage::Init, 0, || self.graphql(&steps.init, variables.clone(), true)).await?;
             let (key, upload_id) = (text(&data, "key").map_err(stop_of)?, text(&data, "uploadId").map_err(stop_of)?);
@@ -34,7 +34,7 @@ impl Runner {
         }
         let stored = self.snapshot();
         let (Some(key), Some(upload_id)) = (stored.key.clone(), stored.upload_id.clone()) else {
-            return Err(Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, "the multipart upload has no id")));
+            return Err(Stop::failed(OperationFailure::new(FailureKind::Unrecognized, "the multipart upload has no id")));
         };
         let finished: BTreeMap<u32, String> = stored.parts.iter().map(|part| (part.number, part.etag.clone())).collect();
         let size = |number: u32| part_range(total, config.part_size, number).1;
@@ -51,7 +51,7 @@ impl Runner {
             if !queue.is_empty() && (targets.is_empty() || aged) {
                 let numbers: Vec<u32> = self.snapshot().request.filter(|request| request.name == steps.presign && super::super::locked(&self.resumed).is_some())
                     .map(|request| serde_json::from_value(request.variables["partNumbers"].clone())).transpose()
-                    .map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?
+                    .map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?
                     .unwrap_or_else(|| queue.iter().copied().collect());
                 targets.extend(self.presign(&steps.presign, &key, &upload_id, &numbers).await?);
                 presigned_at = self.inner.clock.now();
@@ -68,14 +68,14 @@ impl Runner {
                 });
             }
             let Some(joined) = flight.join_next().await else { break };
-            let (number, outcome) = joined.map_err(|error| Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+            let (number, outcome) = joined.map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
             match outcome {
                 Ok(Some(etag)) => {
                     self.progress().finish(number, size(number));
                     let sent = self.progress().sent();
                     self.save(UploadEvent::PartConfirmed { part: UploadPart { number, etag, confirmed_bytes: size(number) }, sent })?;
                 }
-                Ok(None) => return self.stop_flight(flight, Stop::Failed(OperationFailure::new(FailureKind::Unrecognized, "the part answer has no etag"))).await,
+                Ok(None) => return self.stop_flight(flight, Stop::failed(OperationFailure::new(FailureKind::Unrecognized, "the part answer has no etag"))).await,
                 Err(Stop::Expired) => {
                     if let Err(stop) = self.pause_retry(UploadStage::Part, number, OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await {
                         return self.stop_flight(flight, stop).await;

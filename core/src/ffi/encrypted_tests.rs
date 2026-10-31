@@ -185,11 +185,12 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         let second = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(second.unwrap(), "{}"); }
         else { assert!(matches!(second, Err(DbError::Http { status: 400, .. })), "{second:?}"); }
-        let inner = database.db.shared.store.lock();
-        let counts: (i64, i64) = inner.connection.query_row("SELECT (SELECT count(*) FROM encrypted_session), (SELECT count(*) FROM encrypted_pending)", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
-        assert_eq!(counts, (0, 0), "status {status}");
-        assert_eq!(credentials.value(), None);
-        drop(inner);
+        {
+            let inner = database.db.shared.store.lock();
+            let counts: (i64, i64) = inner.connection.query_row("SELECT (SELECT count(*) FROM encrypted_session), (SELECT count(*) FROM encrypted_pending)", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+            assert_eq!(counts, (0, 0), "status {status}");
+            assert_eq!(credentials.value(), None);
+        }
         assert_eq!(database.session_call("social".into(), "{}".into()).await.unwrap(), "{}");
     }
 }

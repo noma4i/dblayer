@@ -241,7 +241,7 @@ impl Shared {
             .collect();
         let edge = edge_of(start, end, index.len(), unmet);
         let body = RowsBody { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: Some(WindowPart { bounded: None, index, span, edge, shape }), links: None, link_edits: Default::default() };
-        Ok((Body::Rows(body), Loaded { rows: loaded, related: Related::new() }))
+        Ok((Body::Rows(Box::new(body)), Loaded { rows: loaded, related: Related::new() }))
     }
 
     pub(crate) fn window_step(&self, query: &Query, previous: &Version, touched: &HashSet<String>, horizon: (i64, u64), grow: (usize, usize)) -> Result<Option<Evaluated>, DbError> {
@@ -281,7 +281,7 @@ impl Shared {
                 let edge = edge_of(start, end, index.len(), 0);
                 let part = WindowPart { bounded: None, index, span, edge, shape: part.shape };
                 let body = RowsBody { list: Listing::Whole(shown.clone()), changed: None, step: None, window: Some(part), links: None, link_edits: Default::default() };
-                return Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(body) }, loaded: Loaded::default() }));
+                return Ok(Some(Evaluated { version: Version { revision, epoch, body: Body::Rows(Box::new(body)) }, loaded: Loaded::default() }));
             }
             let (span, shape) = if grow == (0, 0) { (span, (part.shape, 0)) } else { let (grown, unmet) = span.grown(&index, grow.0, grow.1); (grown, (part.shape + 1, unmet)) };
             let (body, loaded) = self.windowed(reader, query, index, span, Some((old, &changed)), shape)?;
@@ -327,7 +327,7 @@ impl Shared {
         let span = Span::Tail { size, initial, max: Some(max), paged: false };
         let index = Ranked::from_sorted(Vec::new());
         let body = RowsBody { list: Listing::Whole(Shown::of(entries)), changed: None, step: None, window: Some(WindowPart { bounded: Some((size, initial, max)), index, span, edge, shape }), links: None, link_edits: Default::default() };
-        Ok((Body::Rows(body), Loaded { rows: loaded, related: Related::new() }))
+        Ok((Body::Rows(Box::new(body)), Loaded { rows: loaded, related: Related::new() }))
     }
 }
 

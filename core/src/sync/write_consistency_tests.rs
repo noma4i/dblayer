@@ -300,7 +300,7 @@ async fn removing_upload_item_rewrites_mapped_values() {
         let mut state = crate::upload::UploadState::queued();
         state.transferred = true;
         state.signed_id = Some(format!("signed-{position}"));
-        transferred.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: position, state });
+        transferred.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: position, state: Box::new(state) });
     }
     db.land(transferred).unwrap();
     db.remove_upload_item("Record", &ids[1], seq, true).unwrap();
@@ -325,7 +325,7 @@ async fn waiters_woken_by_the_commit_of_a_batch_get_the_real_ids() {
         let mut state = crate::upload::UploadState::queued();
         state.transferred = true;
         state.signed_id = Some(format!("signed-{position}"));
-        transferred.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: position, state });
+        transferred.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: position, state: Box::new(state) });
     }
     db.land(transferred).unwrap();
     let entry = db.outbox().unwrap().remove(0);

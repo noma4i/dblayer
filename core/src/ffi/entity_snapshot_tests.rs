@@ -51,16 +51,18 @@ async fn entity_snapshot_order() {
     let current = next(&mut receiver, EntityStage::Present).await;
     revisions.push(current.revision);
     assert!(revisions.windows(2).all(|pair| pair[0] <= pair[1]), "{revisions:?}");
-    let mut state = locked(&live.state);
-    let mut single = Entry::new(3, true, live.generation(), live.epoch());
-    let first = single.verdict.feed;
-    single.accept(current.revision, current.value.clone(), Some(first));
-    single.verdict = single.machine.reset();
-    single.clear_value();
-    single.verdict = single.machine.begin_feed();
-    let second = single.verdict.feed;
-    state.singleton = Some(Singleton { entry: single, query: String::new(), subscription: None });
-    drop(state);
+    let (first, second) = {
+        let mut state = locked(&live.state);
+        let mut single = Entry::new(3, true, live.generation(), live.epoch());
+        let first = single.verdict.feed;
+        single.accept(current.revision, current.value.clone(), Some(first));
+        single.verdict = single.machine.reset();
+        single.clear_value();
+        single.verdict = single.machine.begin_feed();
+        let second = single.verdict.feed;
+        state.singleton = Some(Singleton { entry: single, query: String::new(), subscription: None });
+        (first, second)
+    };
     live.single_changed(first, LiveChange::whole(i64::MAX, current.value.clone().into_iter().collect()));
     assert!(receiver.try_recv().is_err());
     live.single_changed(second, LiveChange::whole(current.revision, current.value.into_iter().collect()));

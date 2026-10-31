@@ -402,7 +402,7 @@ fn transitions(store: &Store, items: Vec<OperationTransition>) -> crate::commit:
 #[test]
 fn begin_writes_operation_row_with_assigned_seq() {
     let (store, _) = booted_store();
-    let result = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
+    let result = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
     assert_eq!(result.operations.len(), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE status = 'pending' AND dedupe_key = 'k'"), 1);
     assert_eq!(result.revision, Some(1));
@@ -411,9 +411,9 @@ fn begin_writes_operation_row_with_assigned_seq() {
 #[test]
 fn begin_with_existing_seq_replaces_the_row() {
     let (store, _) = booted_store();
-    let first = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))]);
+    let first = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *first.operations.iter().next().unwrap();
-    transitions(&store, vec![OperationTransition::Begin(record(Some(seq), OperationStatus::Failed, Some("k")))]);
+    transitions(&store, vec![OperationTransition::Begin(Box::new(record(Some(seq), OperationStatus::Failed, Some("k"))))]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE dedupe_key IS NULL AND status = 'failed'"), 1);
 }
@@ -427,7 +427,7 @@ fn closing_an_operation_follows_its_status() {
     ];
     for (case, status, operations_sql, operations) in cases {
         let (store, _) = booted_store();
-        let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
+        let started = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
         let seq = *started.operations.iter().next().unwrap();
         let closing = if status.is_terminal() { OperationTransition::Close { seq, status } } else { OperationTransition::Fail { seq, status, failure: OperationFailure::new(FailureKind::Rejected, "no") } };
         transitions(&store, vec![closing]);
@@ -438,7 +438,7 @@ fn closing_an_operation_follows_its_status() {
 #[test]
 fn operation_transitions_apply_only_from_the_statuses_the_machine_accepts() {
     let (store, _) = booted_store();
-    let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
+    let started = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
     let seq = *started.operations.iter().next().unwrap();
     let rejected = || OperationFailure::new(FailureKind::Rejected, "no");
     let row = || text(&store, "SELECT status || ':' || transport_started || ':' || attempts FROM op").unwrap_or_default();
@@ -475,7 +475,7 @@ fn closing_unknown_operation_counts_ack_and_still_applies_the_envelope() {
 #[test]
 fn remove_respects_expected_status() {
     let (store, _) = booted_store();
-    let started = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))]);
+    let started = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *started.operations.iter().next().unwrap();
     let wrong = transitions(&store, vec![OperationTransition::Remove { seq, expected: Some(OperationStatus::Failed) }]);
     assert_eq!(wrong.unknown_operation_acks, 1);
@@ -487,13 +487,13 @@ fn remove_respects_expected_status() {
 #[test]
 fn open_dedupe_key_is_unique_and_failed_frees_it() {
     let (store, _) = booted_store();
-    let first = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
+    let first = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
     let mut duplicate = envelope(&store, vec![], vec![]);
-    duplicate.operation_transitions = vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))];
+    duplicate.operation_transitions = vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))];
     assert!(matches!(store.commit(duplicate), Err(StoreError::Constraint(_))));
     let seq = *first.operations.iter().next().unwrap();
     transitions(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Rejected, "no") }]);
-    transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, Some("k")))]);
+    transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 2);
 }
 
@@ -501,7 +501,7 @@ fn open_dedupe_key_is_unique_and_failed_frees_it() {
 fn rows_and_operation_transition_commit_together() {
     let (store, _) = booted_store();
     let mut both = envelope(&store, vec![upsert("messages", message("temp-1", "c1"))], vec![]);
-    both.operation_transitions = vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))];
+    both.operation_transitions = vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))];
     let result = store.commit(both).unwrap();
     assert_eq!(result.revision, Some(1));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
@@ -577,7 +577,7 @@ fn synced_rows(result: &crate::commit::CommitResult) -> Vec<(String, RowChangeKi
 #[test]
 fn begin_writes_row_sync_in_the_same_commit_and_reports_the_row_as_synced_when_it_has_no_entity_change() {
     let (store, _) = booted_store();
-    let result = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))]);
+    let result = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));
     assert_eq!(synced_rows(&result), [("temp-1".to_string(), RowChangeKind::Synced)]);
     assert!(result.scopes.is_empty());
@@ -587,7 +587,7 @@ fn begin_writes_row_sync_in_the_same_commit_and_reports_the_row_as_synced_when_i
 fn begin_with_an_entity_change_reports_the_row_once_with_its_own_kind() {
     let (store, _) = booted_store();
     let mut mixed = envelope(&store, vec![upsert("messages", message("temp-1", "c1"))], vec![]);
-    mixed.operation_transitions = vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))];
+    mixed.operation_transitions = vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))];
     let result = store.commit(mixed).unwrap();
     assert_eq!(synced_rows(&result), [("temp-1".to_string(), RowChangeKind::Inserted)]);
     assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));
@@ -597,7 +597,7 @@ fn begin_with_an_entity_change_reports_the_row_once_with_its_own_kind() {
 fn inv_op_12_start_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_row() {
     use crate::syncstate::{FailureKind, OperationFailure};
     let (store, _) = booted_store();
-    let begun = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))]);
+    let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *begun.operations.iter().next().unwrap();
     let started = transitions(&store, vec![OperationTransition::Start { seq }]);
     assert_eq!((sync_row(&store, "temp-1"), synced_rows(&started)), (Some("sending:1".into()), vec![("temp-1".to_string(), RowChangeKind::Synced)]));
@@ -613,7 +613,7 @@ fn inv_op_12_start_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_r
 #[test]
 fn start_only_applies_to_a_pending_operation_and_retry_only_to_a_stuck_one() {
     let (store, _) = booted_store();
-    let begun = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))]);
+    let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *begun.operations.iter().next().unwrap();
     let retried = transitions(&store, vec![OperationTransition::Retry { seq }]);
     assert!(retried.is_noop());
@@ -627,7 +627,7 @@ fn start_only_applies_to_a_pending_operation_and_retry_only_to_a_stuck_one() {
 #[test]
 fn closing_the_operation_removes_row_sync_and_reports_the_row() {
     let (store, _) = booted_store();
-    let begun = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))]);
+    let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *begun.operations.iter().next().unwrap();
     let closed = transitions(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
     assert_eq!(sync_row(&store, "temp-1"), None);
@@ -637,12 +637,12 @@ fn closing_the_operation_removes_row_sync_and_reports_the_row() {
 #[test]
 fn retargeting_an_operation_moves_row_sync_to_the_new_id() {
     let (store, _) = booted_store();
-    let begun = transitions(&store, vec![OperationTransition::Begin(record(None, OperationStatus::Pending, None))]);
+    let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *begun.operations.iter().next().unwrap();
     let mut moved = record(Some(seq), OperationStatus::Pending, None);
     moved.row_ids = vec![id("m7")];
     moved.temp_id = None;
-    let result = transitions(&store, vec![OperationTransition::Begin(moved)]);
+    let result = transitions(&store, vec![OperationTransition::Begin(Box::new(moved))]);
     assert_eq!((sync_row(&store, "temp-1"), sync_row(&store, "m7")), (None, Some("pending:0".into())));
     assert_eq!(result.rows.len(), 2);
 }
@@ -654,7 +654,7 @@ fn row_sync_change_reaches_the_scopes_that_hold_the_row() {
     let mut moved = record(None, OperationStatus::Pending, None);
     moved.row_ids = vec![id("m1")];
     moved.temp_id = None;
-    let result = transitions(&store, vec![OperationTransition::Begin(moved)]);
+    let result = transitions(&store, vec![OperationTransition::Begin(Box::new(moved))]);
     assert_eq!(result.scopes, [scope("messages", "thread")].into());
 }
 

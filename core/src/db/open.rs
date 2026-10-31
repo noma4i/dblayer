@@ -23,6 +23,9 @@ use super::prior::Prior;
 use super::observe::{ObserverCensus, Observers};
 use super::reads::ReadPool;
 
+#[cfg(test)]
+type RowBuildHook = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
 const RESERVED_MEMBERS: [&str; 12] = ["id", "find", "where", "save", "count", "exists", "first", "observe", "order", "sync", "retry", "discard"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +50,7 @@ pub(crate) struct Shared {
     pub observed_reads: Mutex<super::observed_reads::ObservedReads>,
     pub warm: Mutex<Warm>,
     #[cfg(test)]
-    pub row_build_hook: Mutex<Option<std::sync::Arc<dyn Fn(&str) + Send + Sync>>>,
+    pub row_build_hook: Mutex<Option<RowBuildHook>>,
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
@@ -234,7 +237,7 @@ impl Db {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(cache.clone(), dispatch.clone(), ephemeral.clone(), outbox_changes.clone(), replaced_ids.clone(), operation_queues.clone(), cloud_changes.clone(), reset_listeners.clone()));
+        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), replaced_ids: replaced_ids.clone(), operation_queues: operation_queues.clone(), cloud_changes: cloud_changes.clone(), reset_listeners: reset_listeners.clone() }));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -322,7 +325,19 @@ impl Db {
     }
 }
 
-fn commit_hook(cache: Arc<Mutex<RowCache>>, dispatch: Arc<Dispatch>, ephemeral: Arc<Ephemerals>, outbox_changes: Arc<tokio::sync::watch::Sender<u64>>, replaced_ids: Arc<Mutex<HashMap<String, String>>>, operation_queues: Arc<crate::operation::OperationQueues>, cloud_changes: Arc<tokio::sync::watch::Sender<u64>>, reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>) -> crate::store::StoreHook {
+struct CommitTargets {
+    cache: Arc<Mutex<RowCache>>,
+    dispatch: Arc<Dispatch>,
+    ephemeral: Arc<Ephemerals>,
+    outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
+    replaced_ids: Arc<Mutex<HashMap<String, String>>>,
+    operation_queues: Arc<crate::operation::OperationQueues>,
+    cloud_changes: Arc<tokio::sync::watch::Sender<u64>>,
+    reset_listeners: Arc<Mutex<Vec<super::reset::ResetListener>>>,
+}
+
+fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
+    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, replaced_ids, operation_queues, cloud_changes, reset_listeners } = targets;
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             locked(&replaced_ids).extend(result.replaced.iter().map(|(from, to)| (format!("{}\0{}", from.model.as_str(), from.id.as_str()), to.to_string())));

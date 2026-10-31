@@ -20,7 +20,7 @@ fn steps_to_read_30_members(size: usize) -> i32 {
     }
     db.land(envelope).unwrap();
     let ids: Vec<String> = (0..30).map(|index| format!("m{:05}", index * size / 30)).collect();
-    let statement = compile_ranked(&query, &db.spec("messages").unwrap(), Some(&ids)).unwrap().statement;
+    let statement = compile_ranked(&query, db.spec("messages").unwrap(), Some(&ids)).unwrap().statement;
     let inner = db.shared.store.lock();
     let mut prepared = inner.connection.prepare(&statement.sql).unwrap();
     let found = prepared.query_map(rusqlite::params_from_iter(statement.bindings.iter()), |row| row.get::<_, String>(0)).unwrap().count();

@@ -25,7 +25,8 @@ fn released_list() -> (Arc<Mutex<Vec<String>>>, TokenLease) {
 #[test]
 fn every_order_of_open_abandon_and_take_releases_each_token_exactly_once() {
     use Step::*;
-    let table: [(&str, Vec<Step>, Vec<bool>, Vec<&str>, Vec<Option<&str>>); 9] = [
+    type Case<'a> = (&'a str, Vec<Step>, Vec<bool>, Vec<&'a str>, Vec<Option<&'a str>>);
+    let table: [Case; 9] = [
         ("opened then abandoned", vec![Opened("a"), Abandon], vec![true], vec!["a"], vec![]),
         ("abandoned then opened", vec![Abandon, Opened("a")], vec![true], vec!["a"], vec![]),
         ("abandoned twice", vec![Abandon, Abandon], vec![], vec![], vec![]),
@@ -104,7 +105,8 @@ fn the_release_work_runs_detached_from_the_caller() {
 #[test]
 fn the_same_token_reported_again_is_never_closed_twice() {
     use Step::*;
-    let table: [(&str, Vec<Step>, Vec<bool>, Vec<&str>); 4] = [
+    type Case<'a> = (&'a str, Vec<Step>, Vec<bool>, Vec<&'a str>);
+    let table: [Case; 4] = [
         ("twice while open", vec![Opened("a"), Opened("a"), Abandon], vec![true, false], vec!["a"]),
         ("after abandon released it", vec![Opened("a"), Abandon, Opened("a")], vec![true, false], vec!["a"]),
         ("after a late open", vec![Abandon, Opened("a"), Opened("a")], vec![true, false], vec!["a"]),

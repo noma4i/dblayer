@@ -206,7 +206,7 @@ impl WindowFacts {
         let view = self.view(phase);
         if self.published.as_ref() != Some(&view) {
             self.published = Some(view.clone());
-            context.effects.push(Effect::Publish { window: self.window.clone(), state: view });
+            context.effects.push(Effect::Publish { window: self.window.clone(), state: Box::new(view) });
         }
     }
 
@@ -433,7 +433,7 @@ impl Event {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Effect {
-    Publish { window: String, state: RelationState },
+    Publish { window: String, state: Box<RelationState> },
     Retry { window: String, kind: LoadKind },
 }
 

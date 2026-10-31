@@ -6,6 +6,8 @@ use crate::operation::Operation;
 use crate::upload::{BlobSnapshot, BlobState, UploadState, BLOB_LIFETIME_MS};
 use super::{ModelInfo, StoreError};
 
+type BlobUploadRow = (Option<i64>, Option<i64>, Option<i64>, bool);
+
 pub(crate) fn snapshot(connection: &Connection, id: &str) -> Result<Option<BlobSnapshot>, StoreError> {
     let row: Option<(Option<i64>, Option<i64>, bool, bool)> = connection.query_row("SELECT seq, consumer_seq, expired, ready FROM blob_upload WHERE id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional()?;
     let Some((seq, consumer, expired, ready)) = row else { return Ok(None) };
@@ -28,7 +30,7 @@ pub(crate) fn pin(connection: &Connection, seq: i64, record: &OperationRecord, m
     let Some(declaration) = models.get(&model).and_then(|model| model.spec.actions.iter().find(|declared| declared.name == action)) else { return Ok(()) };
     for (parameter, _) in declaration.args.iter().filter(|(_, kind)| kind.as_str() == "blob") {
         let id = record.input.get(parameter).and_then(Value::as_str).ok_or_else(|| StoreError::Constraint(format!("{parameter} requires a Blob")))?;
-        let row: Option<(Option<i64>, Option<i64>, Option<i64>, bool)> = connection.query_row("SELECT seq, consumer_seq, created_at, expired FROM blob_upload WHERE id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional()?;
+        let row: Option<BlobUploadRow> = connection.query_row("SELECT seq, consumer_seq, created_at, expired FROM blob_upload WHERE id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).optional()?;
         let Some((upload, owner, created, expired)) = row else { return Err(StoreError::Constraint("unknown Blob in this database".into())) };
         if expired || created.is_some_and(|created| now.saturating_sub(created) >= BLOB_LIFETIME_MS) && owner.is_none() && snapshot(connection, id)?.is_some_and(|blob| blob.state == BlobState::Uploaded) { return Err(StoreError::Constraint("Blob has expired".into())); }
         if upload.is_none() { return Err(StoreError::Constraint("Blob was discarded".into())); }

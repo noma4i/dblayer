@@ -232,7 +232,8 @@ fn nothing(_db: &Db, _size: usize) -> Vec<String> {
 fn the_work_of_one_change_in_the_window_does_not_depend_on_the_list_size() {
     let table: Vec<_> = SIZES.iter().map(|size| (cost(*size, inside, (0, 0)), cost(*size, outside, (0, 0)), cost(*size, nothing, (5, 0)))).collect();
     println!("size | inside (touches, rows) | outside | expand\n{}", SIZES.iter().zip(&table).map(|(size, (a, b, c))| format!("{size} | {a:?} | {b:?} | {c:?}")).collect::<Vec<_>>().join("\n"));
-    let spread = |pick: fn(&((usize, usize), (usize, usize), (usize, usize))) -> usize| table.iter().map(pick).max().unwrap() - table.iter().map(pick).min().unwrap();
+    type Cell = (usize, usize);
+    let spread = |pick: fn(&(Cell, Cell, Cell)) -> usize| table.iter().map(pick).max().unwrap() - table.iter().map(pick).min().unwrap();
     assert_eq!(spread(|row| row.0 .0) + spread(|row| row.1 .0), 0, "touches of a change inside and outside, per size 20, 200, 2000: {table:?}");
     assert!(spread(|row| row.2 .0) <= 16, "touches of an expand differ only by hash collisions: {table:?}");
     assert!(table.iter().all(|row| (row.0 .1, row.1, row.2 .1) == (table[0].0 .1, table[0].1, table[0].2 .1)), "rows loaded per size: {table:?}");
@@ -369,7 +370,7 @@ fn run_sequence(seed: u64) {
     }
     let listed: Vec<String> = db.query(&query).unwrap().iter().map(|row| row.id.to_string()).collect();
     let mut want = match listed.get(dice.below(listed.len().max(1))) {
-        Some(id) if seed % 3 == 0 => Want::Around { id: id.clone(), before: dice.below(4), after: dice.below(4) },
+        Some(id) if seed.is_multiple_of(3) => Want::Around { id: id.clone(), before: dice.below(4), after: dice.below(4) },
         _ => Want::Tail(1 + dice.below(6)),
     };
     let keep = if let Want::Around { id, .. } = &want { id.clone() } else { String::new() };

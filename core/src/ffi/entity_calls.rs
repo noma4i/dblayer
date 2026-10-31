@@ -23,3 +23,9 @@ impl EntityCallProbe {
         crate::db::locked(CALLS.get_or_init(Mutex::default)).get(&self.thread).copied().unwrap_or(0).saturating_sub(self.before)
     }
 }
+
+impl Default for EntityCallProbe {
+    fn default() -> Self {
+        Self::new()
+    }
+}

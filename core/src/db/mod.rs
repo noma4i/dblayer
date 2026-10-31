@@ -65,7 +65,9 @@ pub use warm::Peeked;
 pub(crate) use listeners::{CallState, Feed};
 pub(crate) use local_write::{plan_fault, read_outbox};
 pub(crate) use open::locked;
+pub(crate) use merge::Admission;
 pub(crate) use prior::Prior;
+pub(crate) use swap::TempReplacement;
 pub use watch::{Change, CountChange, Related};
 pub use window::{Page, Slice, WindowEdge, WindowHandle, WindowSpec};
 

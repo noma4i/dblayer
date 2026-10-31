@@ -10,6 +10,8 @@ use super::open::Shared;
 use super::row::Row;
 use super::watch::{Evaluated, Loaded, Version};
 
+type ReadRun = Box<dyn FnOnce(&Shared) -> Result<ReadRows, DbError> + Send>;
+
 const READERS: usize = 2;
 
 pub(crate) type Position = (i64, u64);
@@ -23,7 +25,7 @@ pub(crate) enum ReadTarget {
 
 pub(crate) enum ReadRows {
     Skipped { revision: i64, epoch: u64 },
-    Evaluated(Evaluated),
+    Evaluated(Box<Evaluated>),
     Whole(Loaded),
     Moved,
     Entities { position: Position, loaded: HashMap<String, Row> },
@@ -45,7 +47,7 @@ impl ReadResult {
 
 pub(crate) struct ReadJob {
     pub target: ReadTarget,
-    pub run: Box<dyn FnOnce(&Shared) -> Result<ReadRows, DbError> + Send>,
+    pub run: ReadRun,
 }
 
 pub(crate) struct ReadPermit(Arc<AtomicUsize>);

@@ -7,8 +7,15 @@ use crate::value::read_id;
 use super::error::DbError;
 use super::open::Db;
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Admission {
+    pub base: Option<i64>,
+    pub closing: Option<i64>,
+}
+
 impl Db {
-    pub(crate) fn admitted(&self, reader: &Reader<'_>, origin: WriteOrigin, base: Option<i64>, closing: Option<i64>, model: &str, patch: &Map<String, Value>, drops: &mut usize) -> Result<Option<Map<String, Value>>, DbError> {
+    pub(crate) fn admitted(&self, reader: &Reader<'_>, origin: WriteOrigin, admission: Admission, model: &str, patch: &Map<String, Value>, drops: &mut usize) -> Result<Option<Map<String, Value>>, DbError> {
+        let Admission { base, closing } = admission;
         let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
         if origin == WriteOrigin::Optimistic {
             return Ok(Some(patch.clone()));

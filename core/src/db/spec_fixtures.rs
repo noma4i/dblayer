@@ -74,7 +74,7 @@ pub fn rooms_spec() -> ModelSpec {
     spec.relations.push(open);
     let room = ("roomId", EffectSource::Owner("id".to_string()));
     let mut leave = action("leave", "LeaveRoom", &[], vec![ActionEffect::Remove(selection("rooms", "open", None, &[]))]);
-    let mut add = action("add_members", "AddMembers", &[("personIds", "ids")], vec![ActionEffect::Add(selection("people", "roster", Some("personIds"), &[room.clone()]))]);
+    let mut add = action("add_members", "AddMembers", &[("personIds", "ids")], vec![ActionEffect::Add(selection("people", "roster", Some("personIds"), std::slice::from_ref(&room)))]);
     let mut remove = action(
         "remove_members",
         "RemoveMembers",

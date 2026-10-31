@@ -93,14 +93,12 @@ pub(crate) struct Runner {
 }
 
 impl Runner {
-    pub(crate) fn run(self) -> impl std::future::Future<Output = ()> + Send + 'static {
-        async move {
-            let mut cause = Some(self.first);
-            while let Some(current) = cause {
-                let Some(inner) = self.inner.upgrade() else { return };
-                let outcome = inner.resume_windows(current).await;
-                cause = inner.resume.finish(self.id, outcome);
-            }
+    pub(crate) async fn run(self) {
+        let mut cause = Some(self.first);
+        while let Some(current) = cause {
+            let Some(inner) = self.inner.upgrade() else { return };
+            let outcome = inner.resume_windows(current).await;
+            cause = inner.resume.finish(self.id, outcome);
         }
     }
 }
