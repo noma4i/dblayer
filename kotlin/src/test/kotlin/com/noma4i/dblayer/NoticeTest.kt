@@ -5,6 +5,7 @@ import com.noma4i.dblayer.models.ChatAction
 import com.noma4i.dblayer.models.ChatActivityNotice
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -17,14 +18,18 @@ class NoticeTest {
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
         val events = ChatActivityNotice.events()
-        val typing = async { ChatAction.byChat("c").live.flow.first { it.isNotEmpty() } }
+        val seen = MutableStateFlow<List<ChatAction>?>(null)
+        val collecting = async { ChatAction.byChat("c").live.flow.collect { seen.value = it } }
+        awaitWithin("the live action query attaches") { seen.first { it != null } }
+        eventually("the signal subscription opens") { transport.calls.size == 1 }
         transport.emit("ChatActionSignal", """{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":true}}}""")
-        assertEquals("TYPING", typing.await().first().kind)
+        assertEquals("TYPING", awaitWithin("typing arrives") { seen.first { it?.isNotEmpty() == true } }!!.first().kind)
         transport.emit("ChatActionSignal", """{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"SCREENSHOT","active":true}}}""")
-        val notice = (events.first() as ModelEventItem.Event).event
+        val notice = (awaitWithin("the screenshot notice arrives") { events.first() } as ModelEventItem.Event).event
         assertEquals("SCREENSHOT", notice.after?.kind)
         transport.emit("ChatActionSignal", """{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":false}}}""")
-        ChatAction.byChat("c").live.flow.first { it.isEmpty() }
+        awaitWithin("typing stops") { seen.first { it?.isEmpty() == true } }
+        collecting.cancel()
         assertEquals(1, transport.calls.count { it.operationName == "ChatActionSignal" })
     }
 

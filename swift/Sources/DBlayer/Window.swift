@@ -124,23 +124,21 @@ public final class LiveWindow<Model: DBModel> {
       let stream: LiveStream<Snapshot<Model>>
       do { stream = try await snapshots.stream() } catch { await self?.fail(error); return }
       for await snapshot in stream {
+        let ids = snapshot.reordered ? snapshot.rows.map(\.id) : nil
         updates.publish(snapshot)
         guard let self else { return }
-        await self.show(snapshot)
+        await self.show(snapshot, ids: ids)
       }
     }
   }
 
   private func fail(_ error: Error) {
-    show(Snapshot(rows: snapshot.rows, replaced: snapshot.replaced, window: snapshot.window, phase: snapshot.rows.isEmpty ? .failed : .loaded, error: error, errorKind: "subscription"))
+    show(Snapshot(rows: snapshot.rows, replaced: snapshot.replaced, window: snapshot.window, phase: snapshot.rows.isEmpty ? .failed : .loaded, error: error, errorKind: "subscription"), ids: nil)
   }
 
-  private func show(_ snapshot: Snapshot<Model>) {
+  private func show(_ snapshot: Snapshot<Model>, ids: [String]?) {
     if rows != snapshot.rows { rows = snapshot.rows }
-    if snapshot.reordered {
-      let ids = snapshot.rows.map(\.id)
-      if self.ids != ids { self.ids = ids }
-    }
+    if let ids, self.ids != ids { self.ids = ids }
     if replaced != snapshot.replaced { replaced = snapshot.replaced }
     if let edges = snapshot.window {
       if hasBefore != edges.hasBefore { hasBefore = edges.hasBefore }

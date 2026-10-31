@@ -159,7 +159,16 @@ public final class Entities<Model: DBModel> {
 
   public func reset() { core.reset() }
   fileprivate func delivered() async { await core.delivered() }
-  func close() { pending = [:]; core.close() }
+  func close() {
+    pending = [:]
+    core.close()
+    let held = live.values.compactMap(\.entity) + [single].compactMap { $0 }
+    live = [:]
+    single = nil
+    for entity in held {
+      entity.publish(EntitySnapshot(value: nil, phase: .closed, read: entity.snapshot.read, revision: entity.snapshot.revision, isStale: false, settled: true))
+    }
+  }
   fileprivate func resume() { core.resume() }
 }
 

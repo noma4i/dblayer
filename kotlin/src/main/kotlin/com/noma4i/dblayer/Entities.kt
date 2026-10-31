@@ -139,7 +139,14 @@ class Entities<Model : DBModel> internal constructor(private val modelName: Stri
 
     fun reset() = core.reset()
     internal suspend fun delivered() = core.delivered()
-    internal fun close() { synchronized(lock) { pending.clear() }; core.close() }
+    internal fun close() {
+        val held = synchronized(lock) {
+            pending.clear()
+            (live.values.mapNotNull { it.get() } + listOfNotNull(single)).also { live.clear(); single = null }
+        }
+        core.close()
+        held.forEach { it.publish(EntitySnapshot(null, EntityPhase.Closed, it.snapshot.value.read, it.snapshot.value.revision, false, true)) }
+    }
     internal fun resume() = core.resume()
 
     companion object {
