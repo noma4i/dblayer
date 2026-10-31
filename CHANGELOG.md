@@ -1,9 +1,14 @@
 # Changelog
 
-## Unreleased
+## 6.13.1 - 2026-10-31
 
 ### Changed
 - Release tags are lightweight tags.
+
+### Fixed
+- Held entities receive the closed phase as soon as the database closes.
+- Live windows compute their row ids off the main actor.
+- Builds print no compiler warnings and no future-incompatibility notice.
 
 ## 6.13.0 - 2026-10-29
 
