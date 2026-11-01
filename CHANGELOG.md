@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Settled returns the refusal of an action that was rolled back.
+
 ## 6.13.1 - 2026-10-31
 
 ### Changed

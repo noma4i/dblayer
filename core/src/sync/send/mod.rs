@@ -152,6 +152,8 @@ mod outcomes_tests;
 #[cfg(test)]
 mod pass_tests;
 #[cfg(test)]
+mod refusal_window_tests;
+#[cfg(test)]
 mod reset_tests;
 #[cfg(test)]
 mod settle_wait_tests;

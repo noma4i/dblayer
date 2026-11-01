@@ -152,6 +152,8 @@ pub(crate) struct Inner {
     pub outcomes: Mutex<send::Outcomes>,
     #[cfg(test)]
     pub(crate) landed_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
+    #[cfg(test)]
+    pub(crate) refused_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     pub final_attempts: Mutex<send::FinalAttempts>,
 }
 
@@ -247,6 +249,8 @@ impl Sync {
             outcomes: Mutex::new(send::Outcomes::default()),
             #[cfg(test)]
             landed_probe: Mutex::new(None),
+            #[cfg(test)]
+            refused_probe: Mutex::new(None),
             final_attempts: Mutex::new(send::FinalAttempts::default()),
         };
         let this = Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) };

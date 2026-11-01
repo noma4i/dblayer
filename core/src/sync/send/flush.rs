@@ -145,17 +145,41 @@ impl Inner {
         while let Some(entry) = self.next_ready(&mut cursor, &mut report)? {
             locked(self.operation_queue()?).attempted(entry.operation.id.0);
             let result = self.send(&entry, None).await?;
-            self.record_outcome(&entry, &result);
+            self.keep_discarded(&entry, &result);
             report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
         }
         locked(self.operation_queue()?).begin_pass();
         Ok(report)
     }
 
-    fn record_outcome(&self, entry: &OutboxOperation, result: &SendResult) {
+    fn keep_outcome(&self, entry: &OutboxOperation, result: &SendResult) {
         let Some((model, _)) = Operation::split_action_key(&entry.operation.action_key) else { return };
         let rows = entry.operation.row_ids.iter().cloned().chain(entry.operation.temp_id.clone()).collect();
         locked(&self.outcomes).keep(entry.operation.id.0, &model, &entry.operation.action_key, rows, result);
+    }
+
+    fn keep_discarded(&self, entry: &OutboxOperation, result: &SendResult) {
+        if *result == SendResult::Discarded {
+            self.keep_outcome(entry, result);
+        }
+    }
+
+    fn keep_refusal(&self, entry: &OutboxOperation, result: &SendResult) -> super::outcomes::KeptRefusal<'_> {
+        self.keep_outcome(entry, result);
+        super::outcomes::KeptRefusal::new(&self.outcomes, entry.operation.id.0)
+    }
+
+    fn refused(&self) {
+        #[cfg(test)]
+        if let Some(probe) = locked(&self.refused_probe).as_ref() { probe(); }
+    }
+
+    fn roll_back_refused(&self, sending: &Sending<'_>, generation: Generation, failure: &OperationFailure) -> Result<(), DbError> {
+        let mut kept = self.keep_refusal(sending.entry, &SendResult::Rejected(failure.clone()));
+        self.db.roll_back_at(sending.entry.operation.id.0, generation)?;
+        kept.landed();
+        self.refused();
+        Ok(())
     }
 
     pub(crate) fn operation_queue(&self) -> Result<&std::sync::Arc<std::sync::Mutex<crate::operation::OperationQueue>>, SyncError> {
@@ -345,7 +369,7 @@ impl Inner {
             return Ok(());
         }
         let sent = self.send(&entry, Some(result)).await?;
-        self.record_outcome(&entry, &sent);
+        self.keep_discarded(&entry, &sent);
         Ok(())
     }
 
@@ -376,12 +400,11 @@ impl Inner {
     }
 
     fn park_operation(&self, sending: &Sending<'_>, failure: OperationFailure, deferred: bool, rejected: bool, stays_failed: bool) -> Result<SendResult, SyncError> {
-        let seq = sending.entry.operation.id.0;
         for _ in 0..SETTLE_ATTEMPTS {
             let generation = self.db.generation();
             if rejected && !stays_failed {
-                match self.db.roll_back_at(seq, generation) {
-                    Ok(_) => return Ok(SendResult::Rejected(failure)),
+                match self.roll_back_refused(sending, generation, &failure) {
+                    Ok(()) => return Ok(SendResult::Rejected(failure)),
                     Err(DbError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => continue,
                     Err(DbError::UnknownOperation(_)) => return Ok(SendResult::Discarded),
                     Err(error) => return Err(error.into()),
@@ -526,6 +549,7 @@ impl Inner {
             return self.quarantine(sending, &data);
         }
         self.keep_answer(spec, sending, operation, &data);
+        self.keep_outcome(entry, &SendResult::Committed);
         let mut kept = super::outcomes::KeptAnswer::new(&self.outcomes, entry.operation.id.0);
         let held = Prior::of(entry)?.map(|prior| prior.held_files()).unwrap_or_default();
         let owned: Vec<RowId> = entry.operation.row_ids.iter().chain(&temp).cloned().collect();
@@ -649,6 +673,7 @@ impl Inner {
 
     fn fail(&self, sending: &Sending<'_>, status: OperationStatus, failure: OperationFailure, result: SendResult) -> Result<SendResult, SyncError> {
         let seq = sending.entry.operation.id.0;
+        let mut kept = self.keep_refusal(sending.entry, &result);
         let committed = self.commit(sending.generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             if status == OperationStatus::Failed && sending.action == "destroy" {
@@ -659,12 +684,17 @@ impl Inner {
             envelope.operation_transitions.push(OperationTransition::Fail { seq, status, failure: failure.clone() });
             Ok(Some(envelope))
         })?;
-        Ok(if committed.is_some() { result } else { SendResult::Discarded })
+        if committed.is_none() {
+            return Ok(SendResult::Discarded);
+        }
+        kept.landed();
+        self.refused();
+        Ok(result)
     }
 
     async fn roll_back(&self, sending: &Sending<'_>, failure: OperationFailure) -> Result<SendResult, SyncError> {
-        match self.db.roll_back_at(sending.entry.operation.id.0, sending.generation) {
-            Ok(_) => {}
+        match self.roll_back_refused(sending, sending.generation, &failure) {
+            Ok(()) => {}
             Err(DbError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration)) | DbError::UnknownOperation(_)) => return Ok(SendResult::Discarded),
             Err(error) => return Err(error.into()),
         }

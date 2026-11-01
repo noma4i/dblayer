@@ -39,6 +39,12 @@ impl Outcomes {
         }
     }
 
+    fn forget_refusal(&mut self, sequence: i64) {
+        if self.unread.get(&sequence).is_some_and(|outcome| outcome.answer.is_none()) {
+            self.unread.remove(&sequence);
+        }
+    }
+
     pub(crate) fn answered(&mut self, sequence: i64, model: &str, action_key: &str, rows: Vec<RowId>, answer: Value) {
         self.insert(sequence, Outcome { model: model.to_string(), action_key: action_key.to_string(), rows, result: SendResult::Committed, answer: Some(answer) });
     }
@@ -107,6 +113,30 @@ impl Drop for KeptAnswer<'_> {
     fn drop(&mut self) {
         if !self.committed {
             super::super::locked(self.outcomes).forget_answer(self.sequence);
+        }
+    }
+}
+
+pub(super) struct KeptRefusal<'a> {
+    outcomes: &'a Mutex<Outcomes>,
+    sequence: i64,
+    landed: bool,
+}
+
+impl<'a> KeptRefusal<'a> {
+    pub(super) fn new(outcomes: &'a Mutex<Outcomes>, sequence: i64) -> Self {
+        Self { outcomes, sequence, landed: false }
+    }
+
+    pub(super) fn landed(&mut self) {
+        self.landed = true;
+    }
+}
+
+impl Drop for KeptRefusal<'_> {
+    fn drop(&mut self) {
+        if !self.landed {
+            super::super::locked(self.outcomes).forget_refusal(self.sequence);
         }
     }
 }
