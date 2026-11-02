@@ -5,6 +5,7 @@ use super::rig::*;
 use crate::commit::ScopeRef;
 use crate::identity::ModelKey;
 use crate::transport::FetchAttempt;
+use std::sync::{Arc, Mutex, mpsc};
 
 fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
     let key = rig.sync.window_key("moments", "feed", &serde_json::Map::new()).unwrap();
@@ -28,6 +29,63 @@ fn landing(rig: &Rig, issued: i64, ids: &[&str]) -> Landing {
         keeps_total: false,
         attempt: FetchAttempt::new(key, issued, rig.db.generation(), rig.db.revision_seq().unwrap()),
     }
+}
+
+#[test]
+fn landing_announces_after_releasing_the_latch() {
+    for rows_only in [false, true] {
+        let rig = rig();
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let seen = observed.clone();
+        let inner = rig.sync.inner.clone();
+        *rig.db.shared.store.after_commit.lock().unwrap() = Some(Box::new(move |_| {
+            seen.lock().unwrap().push(inner.landing.try_lock().is_ok());
+        }));
+        let input = landing(&rig, 100, &["m1"]);
+        if rows_only {
+            rig.sync.inner.land_rows("moments", &input.normalized, &input.attempt).unwrap();
+        } else {
+            rig.sync.inner.land(input).unwrap();
+        }
+        assert_eq!(*observed.lock().unwrap(), [true], "rows_only={rows_only}");
+        *rig.db.shared.store.after_commit.lock().unwrap() = None;
+    }
+}
+
+#[test]
+fn concurrent_landings_announce_in_commit_order() {
+    let rig = rig();
+    let first = landing(&rig, 100, &["m1"]);
+    let second = landing(&rig, 200, &["m2"]);
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let listener = seen.clone();
+    let (entered, ready) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let released = Mutex::new(released);
+    *rig.db.shared.store.after_commit.lock().unwrap() = Some(Box::new(move |result| {
+        let revision = result.revision.unwrap();
+        let first = {
+            let mut revisions = listener.lock().unwrap();
+            revisions.push(revision);
+            revisions.len() == 1
+        };
+        if first {
+            entered.send(revision).unwrap();
+            crate::test_wait::recv_within(&released.lock().unwrap());
+        }
+    }));
+    let inner = rig.sync.inner.clone();
+    let first_task = std::thread::spawn(move || inner.land(first).unwrap());
+    let first_revision = crate::test_wait::recv_within(&ready);
+    let inner = rig.sync.inner.clone();
+    let second_task = std::thread::spawn(move || inner.land(second).unwrap());
+    crate::test_wait::spin_until("the second landing committed", || rig.db.revision_seq().unwrap() > first_revision);
+    let second_revision = rig.db.revision_seq().unwrap();
+    release.send(()).unwrap();
+    assert!(matches!(crate::test_wait::join_within(first_task), Landed::Applied { revision, .. } if revision == first_revision));
+    assert!(matches!(crate::test_wait::join_within(second_task), Landed::Applied { revision, .. } if revision == second_revision));
+    assert_eq!(*seen.lock().unwrap(), [first_revision, second_revision]);
+    *rig.db.shared.store.after_commit.lock().unwrap() = None;
 }
 
 #[test]

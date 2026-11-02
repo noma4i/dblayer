@@ -132,10 +132,10 @@ impl Inner {
     }
 
     fn land_rows_unit(&self, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
-        let _serial = locked(&self.landing);
+        let serial = locked(&self.landing);
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
-        let committed = self.db.commit_following(attempt.generation, |reader| {
+        let committed = self.db.commit_following_deferred(attempt.generation, |reader| {
             drops = 0;
             let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
@@ -148,8 +148,9 @@ impl Inner {
             }
             Ok::<_, SyncError>(Some(envelope))
         });
+        drop(serial);
         let revision = match committed {
-            Ok(result) => match result.revision { Some(revision) => revision, None => self.db.revision_seq()? },
+            Ok((committed, _)) => match committed.publish().revision { Some(revision) => revision, None => self.db.revision_seq()? },
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(Landed::Discarded(DiscardReason::StaleGeneration)),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
@@ -163,7 +164,7 @@ impl Inner {
     }
 
     fn land_unit(&self, landing: Landing) -> Result<Landed, SyncError> {
-        let _serial = locked(&self.landing);
+        let serial = locked(&self.landing);
         let Landing { marker, leave_stale, node_reread, model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
         let generation = attempt.generation;
         if !attempt.applies_to(self.db.generation()) {
@@ -192,7 +193,7 @@ impl Inner {
         let keeps_member_order = self.db.spec(&model)?.stable_order(&scope.key).is_some();
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
-        let committed = self.db.commit_following(generation, |reader| {
+        let committed = self.db.commit_following_deferred(generation, |reader| {
             drops = 0;
             let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
@@ -239,8 +240,9 @@ impl Inner {
             });
             Ok::<_, SyncError>(Some(envelope))
         });
+        drop(serial);
         let revision = match committed {
-            Ok(result) => match result.revision { Some(revision) => revision, None => self.db.revision_seq()? },
+            Ok((committed, _)) => match committed.publish().revision { Some(revision) => revision, None => self.db.revision_seq()? },
             Err(PlanCommitError::Plan(error)) => return Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => return Ok(Landed::Discarded(DiscardReason::StaleGeneration)),
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
