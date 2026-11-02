@@ -128,6 +128,12 @@ pub(crate) use debug::{assert_no_library_lock, holds, lock, lock_as, try_lock, w
 #[cfg(test)]
 pub(crate) use debug::{held_classes, is_empty};
 
+#[inline(always)]
+pub(crate) fn effect<R>(run: impl FnOnce() -> R) -> R {
+    assert_no_library_lock("effect");
+    run()
+}
+
 #[cfg(not(any(debug_assertions, test)))]
 #[inline(always)]
 pub(crate) fn lock<T>(mutex: &Mutex<T>) -> Guard<'_, T> { lock_as(mutex, std::any::type_name::<T>()) }
@@ -157,42 +163,5 @@ pub(crate) fn wait_timeout<'a, T>(condition: &Condvar, guard: Guard<'a, T>, dura
 }
 
 #[cfg(test)]
-mod tests {
-    use super::debug::{lock, lock_as};
-    use crate::db::dispatch::Effects;
-    use std::sync::Mutex;
-
-    fn message(error: Box<dyn std::any::Any + Send>) -> String {
-        error.downcast_ref::<String>().cloned().or_else(|| error.downcast_ref::<&str>().map(|text| (*text).to_string())).unwrap_or_default()
-    }
-
-    #[test]
-    fn debug_lock_graph_rejects_cycle() {
-        let first = Mutex::new(());
-        let second = Mutex::new(());
-        { let _a = lock_as(&first, "test graph first"); let _b = lock_as(&second, "test graph second"); }
-        let _b = lock_as(&second, "test graph second");
-        let result = std::panic::catch_unwind(|| { let _a = lock_as(&first, "test graph first"); });
-        let diagnostic = message(result.expect_err("the inverse acquisition must fail before blocking"));
-        assert!(diagnostic.contains("test graph first") && diagnostic.contains("test graph second"));
-    }
-
-    #[test]
-    fn same_instance_reacquire_is_diagnosed() {
-        let mutex = Mutex::new(());
-        let _guard = lock_as(&mutex, "test reacquire");
-        let result = std::panic::catch_unwind(|| { let _again = lock_as(&mutex, "test reacquire"); });
-        let diagnostic = message(result.expect_err("reacquiring the same mutex must fail before blocking"));
-        assert!(diagnostic.contains("test reacquire"));
-    }
-
-    #[test]
-    fn effect_entry_rejects_guard() {
-        struct EffectLock;
-        let mutex = Mutex::new(EffectLock);
-        let _guard = lock(&mutex);
-        let result = std::panic::catch_unwind(|| Effects::default().run());
-        let diagnostic = message(result.expect_err("effects must reject an active library guard"));
-        assert!(diagnostic.contains("EffectLock") && diagnostic.contains("Effects::run"));
-    }
-}
+#[path = "lock_tests.rs"]
+mod tests;

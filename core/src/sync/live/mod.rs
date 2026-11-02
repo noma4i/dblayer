@@ -35,14 +35,14 @@ impl Live {
 
     fn publish_ready(&self, ready: Option<Result<(), super::SyncError>>, effects: &mut Effects) {
         let sender = self.ready.clone();
-        effects.push(move || { sender.send_replace(ready); });
+        effects.push(move || { crate::db::lock::effect(|| sender.send_replace(ready)); });
     }
 }
 
 impl Drop for Live {
     fn drop(&mut self) {
         for handle in [self.starting.take(), self.closing.take()].into_iter().flatten() {
-            handle.abort();
+            crate::db::lock::effect(|| handle.abort());
         }
     }
 }
@@ -50,7 +50,7 @@ impl Drop for Live {
 impl Inner {
     pub(crate) fn restart_live(self: &std::sync::Arc<Self>, cause: super::resume_machine::Cause) {
         let explicit = cause == super::resume_machine::Cause::Explicit;
-        if explicit { let _ = self.subscription_failures.send(None); }
+        if explicit { crate::db::lock::effect(|| { let _ = self.subscription_failures.send(None); }); }
         self.live_effects.under(&self.lives, |lives, effects| {
             for (key, live) in lives.iter_mut() {
                 let Some(subscription) = live.subscription.as_ref().filter(|subscription| {
@@ -76,7 +76,7 @@ impl Inner {
     /// The task waits until the effects queued so far have run, so a reset of `ready` cannot land after the result of the start it announces.
     fn start_after(self: &std::sync::Arc<Self>, runtime: &Handle, effects: &mut Effects, work: impl std::future::Future<Output = ()> + Send + 'static) -> AbortHandle {
         let (open, gate) = tokio::sync::oneshot::channel::<()>();
-        effects.push(move || { let _ = open.send(()); });
+        effects.push(move || { crate::db::lock::effect(|| { let _ = open.send(()); }); });
         runtime.spawn(self.until_closed(async move {
             let _ = gate.await;
             work.await;
@@ -168,7 +168,7 @@ impl Inner {
                 None => live.receivers.push((receiver.clone(), def.clone(), 1)),
             }
             if let Some(closing) = live.closing.take() {
-                effects.push(move || closing.abort());
+                effects.push(move || crate::db::lock::effect(|| closing.abort()));
             }
             if live.subscription.is_some() || live.starting.is_some() {
                 return;

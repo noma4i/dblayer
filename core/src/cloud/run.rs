@@ -28,7 +28,7 @@ impl Runner {
     fn stop(&self) {
         let task = locked(&self.task).take();
         if let Some(task) = task {
-            task.abort(); // lock-ok: task extracted before abort
+            crate::db::lock::effect(|| task.abort());
         }
     }
 }
@@ -49,6 +49,10 @@ struct Inner {
     phase: Mutex<Phase>,
     effects: OrderedEffects,
     pass: tokio::sync::Mutex<()>,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("cloud::Inner::drop"); }
 }
 
 struct Failure {
@@ -92,7 +96,7 @@ impl Cloud {
     }
 
     pub fn remote_changed(&self) {
-        self.inner.wake.notify_one();
+        crate::db::lock::effect(|| self.inner.wake.notify_one());
     }
 
     pub async fn resolve_initial_merge(&self, source: MergeSource) -> Result<(), CloudError> {
@@ -114,7 +118,7 @@ impl Cloud {
             }
         }
         self.inner.db.cloud_stamp_rows(generation, &rows, source)?;
-        self.inner.wake.notify_one(); // lock-ok: no synchronous guard remains
+        crate::db::lock::effect(|| self.inner.wake.notify_one());
         Ok(())
     }
 
@@ -180,7 +184,7 @@ impl Inner {
         let state = self.state.clone();
         self.effects.under(&self.phase, |phase, effects| {
             let next = phase.handle(&event);
-            effects.push(move || { state.send_replace(next); });
+            effects.push(move || { crate::db::lock::effect(|| state.send_replace(next)); });
         });
     }
 

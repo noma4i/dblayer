@@ -74,20 +74,67 @@ for path in files:
     if re.search(r"\binvalidate_model\(", contents[path]):
         findings.append(f"Z10 lists are marked stale and reloaded in sync/invalidate only: {relative}")
 
-guard = re.compile(r"\b(?:locked|held)\(|\.lock\(")
-effect = re.compile(r"\.notify_(?:one|waiters)\(|\.wake\(|\.send\(|\.abort\(|\blistener\.changed\(")
-function = re.compile(r"\bfn\s+\w+")
+effect = re.compile(r"\.\s*(notify_one|notify_waiters|send|send_replace|send_modify|send_if_modified|abort)\s*\(")
+non_effects = {
+    ("ffi/entity_machine.rs", "self", "send"),
+    ("db/upload_round.rs", "self", "send"),
+    ("sync/send/flush.rs", "self", "send"),
+    ("sync/resume.rs", "inner.resume", "abort"),
+    ("ffi/transport.rs", "self", "send"),
+    ("transport/encrypted/cable/wire.rs", "socket", "send"),
+}
+
+def code_only(text):
+    return re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"', lambda match: re.sub(r"[^\n]", " ", match.group()), text, flags=re.S)
+
+def end_of(code, start, opening, closing):
+    depth = 1
+    for end in range(start + 1, len(code)):
+        depth += (code[end] == opening) - (code[end] == closing)
+        if depth == 0:
+            return end
+    return len(code)
+
+foreign_traits = set()
+for text in contents.values():
+    foreign_traits.update(re.findall(r"#\[uniffi::export\([^\]]*foreign[^\]]*\)\](?:\s*#\[[^\]]*\])*\s*pub trait (\w+)", text))
+
 for path in files:
-    if any(part in str(path) for part in ("/stress/", "/fixtures.rs", "/mock.rs", "/test_clock.rs", "/test_wait.rs")):
+    relative = str(path.relative_to(source))
+    if relative.startswith("sync/stress/") or relative in ("cloud/fixtures.rs", "transport/mock.rs", "test_wait.rs"):
         continue
+    text = contents[path]
+    code = code_only(text)
+    checked = [(match.end(), end_of(code, match.end() - 1, "(", ")")) for match in re.finditer(r"\b(?:crate::db::|super::)?lock::effect\s*\(", code)]
+    for match in effect.finditer(code):
+        receiver = re.search(r"\w+(?:\s*\.\s*\w+)*\s*$", code[:match.start()])
+        if receiver and (relative, re.sub(r"\s+", "", receiver.group()), match[1]) in non_effects:
+            continue
+        number = text.count("\n", 0, match.start()) + 1
+        line = text.splitlines()[number - 1]
+        if any(start <= match.start() < end for start, end in checked) or re.search(r"lock-ok:\s*\S", line):
+            continue
+        findings.append(f"Z17 unchecked effect: {path.relative_to(root)}:{number}: {line.strip()}")
+    for match in re.finditer(r"\bstruct\s+(\w+)(?:<[^;{]*>)?\s*([({])", code):
+        end = end_of(code, match.end() - 1, match[2], ")" if match[2] == "(" else "}")
+        traits = set(re.findall(r"\b(?:Arc|Box)\s*<\s*dyn\s+(\w+)\b(?!\s*::)", code[match.end():end]))
+        if relative in ("sync/mod.rs", "transport/encrypted/graphql.rs"):
+            traits.discard("Transport")
+        if not traits.intersection(foreign_traits):
+            continue
+        destructor = re.search(r"impl Drop for " + match[1] + r"\s*\{", code)
+        body = code[destructor.end():end_of(code, destructor.end() - 1, "{", "}")] if destructor else ""
+        if not re.search(r"\block::assert_no_library_lock\s*\(", body):
+            number = text.count("\n", 0, match.start()) + 1
+            findings.append(f"Z17 unchecked foreign destruction: {path.relative_to(root)}:{number}: {match[1]}")
     seen = False
-    for number, line in enumerate(contents[path].splitlines(), 1):
-        if function.search(line):
+    for number, line in enumerate(text.splitlines(), 1):
+        if re.search(r"\bfn\s+\w+", line):
             seen = False
-        if guard.search(line):
+        if re.search(r"\b(?:locked|held)\(|\.lock\(", line):
             seen = True
-        if seen and effect.search(line) and not re.search(r"lock-ok:\s*\S", line):
-            findings.append(f"Z17 review effect after guard: {path.relative_to(root)}:{number}: {line.strip()}")
+        if seen and re.search(r"\.wake\(|\blistener\.changed\(", line) and not re.search(r"lock-ok:\s*\S", line):
+            findings.append(f"Z17 review callback after guard: {path.relative_to(root)}:{number}: {line.strip()}")
 
 test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")

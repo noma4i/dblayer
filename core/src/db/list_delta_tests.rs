@@ -177,16 +177,16 @@ fn inv_observe_18_a_pair_replaced_while_the_group_is_evaluated_still_reaches_the
     let _observer = db.observe(Query::new("moments").limited(50), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let hold = crate::db::open::locked(&db.shared.observers);
-    let temp = db.create("moments", obj(json!({"text": "new"}))).unwrap();
-    let deadline = std::time::Instant::now() + WAIT;
-    while db.shared.dispatch.queued() > 0 {
-        assert!(std::time::Instant::now() < deadline, "the dispatcher never took the create event");
-        std::thread::yield_now();
-    }
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
-    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
-    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
-    db.land(envelope).unwrap();
+    let writer = db.clone();
+    let temp = crate::test_wait::join_within(std::thread::spawn(move || {
+        let temp = writer.create("moments", obj(json!({"text": "new"}))).unwrap();
+        crate::test_wait::spin_until("the dispatcher never took the create event", || writer.shared.dispatch.queued() == 0);
+        let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, writer.generation());
+        envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
+        writer.land(envelope).unwrap();
+        temp
+    }));
     drop(hold);
     db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);

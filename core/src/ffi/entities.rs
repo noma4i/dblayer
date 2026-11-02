@@ -421,6 +421,7 @@ impl super::open_streams::Closable for LiveEntities {
 
 impl Drop for LiveEntities {
     fn drop(&mut self) {
+        crate::db::lock::assert_no_library_lock("LiveEntities::drop");
         super::entity_calls::entered();
         let state = self.state.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner);
         let tokens: Vec<CancelToken> = state.entries.values_mut().filter_map(|entry| entry.cancel.take()).collect();

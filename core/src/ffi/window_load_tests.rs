@@ -132,7 +132,8 @@ async fn members_complete_chain() {
         let tape = Arc::new(Tape(Mutex::default()));
         let live = db.live_window(WINDOW.into(), 50, Some(200), tape.clone());
         if ending == "empty_error" {
-            spin_until("failure without member rows", || latest(&tape, |change| change.error.is_some()));
+            crate::test_wait::within(live.wait_for_initial_load()).await.expect_err("the member chain failed");
+            assert!(last(&tape).error.is_some());
             assert_eq!(last(&tape).phase, Some(super::LivePhase::Failed));
             assert!(!last(&tape).complete);
             assert!(shown(&tape).is_empty());
@@ -146,7 +147,8 @@ async fn members_complete_chain() {
         assert_eq!(transport.variables.lock().unwrap()[0]["first"], 100);
         if ending == "offline" {
             db.set_online(false).unwrap();
-            spin_until("offline partial members", || latest(&tape, |change| change.error.is_some()));
+            crate::test_wait::within(live.wait_for_initial_load()).await.expect_err("the member chain went offline");
+            assert!(last(&tape).error.is_some());
             assert_eq!(last(&tape).phase, Some(super::LivePhase::Loaded));
             assert!(!last(&tape).complete);
             db.set_online(true).unwrap();
@@ -169,7 +171,8 @@ async fn members_complete_chain() {
         }
         if ending == "error" {
             transport.permits.add_permits(1);
-            spin_until("failed partial chain", || latest(&tape, |change| change.error.is_some()));
+            crate::test_wait::within(live.wait_for_initial_load()).await.expect_err("the member chain failed");
+            assert!(last(&tape).error.is_some());
             assert_eq!(last(&tape).phase, Some(super::LivePhase::Loaded));
             assert!(!last(&tape).complete);
             assert_eq!(shown(&tape).len(), 2);

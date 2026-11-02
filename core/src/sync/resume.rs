@@ -69,8 +69,8 @@ impl ResumeOwner {
                 std::mem::take(&mut state.settled)
             };
             effects.push(move || {
-                for waiter in answered { let _ = waiter.send(outcome.clone()); }
-                for waiter in settled { let _ = waiter.send(()); }
+                for waiter in answered { crate::db::lock::effect(|| { let _ = waiter.send(outcome.clone()); }); }
+                for waiter in settled { crate::db::lock::effect(|| { let _ = waiter.send(()); }); }
             });
             next
         })
@@ -85,8 +85,8 @@ impl ResumeOwner {
             state.runner = None;
             let settled = std::mem::take(&mut state.settled);
             effects.push(move || {
-                for waiter in waiters { let _ = waiter.send(Err(error.clone())); }
-                for waiter in settled { let _ = waiter.send(()); }
+                for waiter in waiters { crate::db::lock::effect(|| { let _ = waiter.send(Err(error.clone())); }); }
+                for waiter in settled { crate::db::lock::effect(|| { let _ = waiter.send(()); }); }
             });
         });
     }

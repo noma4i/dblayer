@@ -80,7 +80,7 @@ pub(super) async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'st
 
 pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
     struct Cancel(tokio::task::AbortHandle);
-    impl Drop for Cancel { fn drop(&mut self) { self.0.abort(); } }
+    impl Drop for Cancel { fn drop(&mut self) { crate::db::lock::effect(|| self.0.abort()); } }
     let task = executor()?.spawn(work);
     let _cancel = Cancel(task.abort_handle());
     task.await.map_err(|error| DbError::Invalid { detail: error.to_string() })
@@ -775,7 +775,7 @@ impl Database {
                     let seed = changes.borrow_and_update().clone();
                     follower.state(seed);
                     control.resume();
-                    let _ = ready.send((sync, model, relation, params, changes.clone()));
+                    crate::db::lock::effect(|| { let _ = ready.send((sync, model, relation, params, changes.clone())); });
                     while changes.changed().await.is_ok() {
                         let current = changes.borrow_and_update().clone();
                         follower.state(current);

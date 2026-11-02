@@ -370,10 +370,10 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
                 }
             }
             if !result.operations.is_empty() {
-                outbox_changes.send_modify(|version| *version += 1);
+                crate::db::lock::effect(|| outbox_changes.send_modify(|version| *version += 1));
             }
             if result.cloud_logged {
-                cloud_changes.send_modify(|version| *version += 1);
+                crate::db::lock::effect(|| cloud_changes.send_modify(|version| *version += 1));
             }
             ephemeral.nudge();
             dispatch.push(Event::of_commit(result));
@@ -398,7 +398,7 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
                 }
             }
             ephemeral.lock().clear(models.as_deref());
-            outbox_changes.send_modify(|version| *version += 1);
+            crate::db::lock::effect(|| outbox_changes.send_modify(|version| *version += 1));
             dispatch.push(Event::of_reset(revision, models.as_deref()));
         }
     })

@@ -69,6 +69,10 @@ pub(super) struct LiveFeed {
     first_screen: Mutex<Option<crate::sync::FirstScreenHold>>,
 }
 
+impl Drop for LiveFeed {
+    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("LiveFeed::drop"); }
+}
+
 fn load_failure(error: &LoadError) -> DbError {
     if let Some(cause) = &error.cause {
         return DbError::from(cause.clone());
@@ -253,7 +257,7 @@ impl LiveFeed {
             state.ended = true;
             state.ready_pending = true;
             drop(state);
-            self.readiness.send_replace(Readiness::Ended);
+            crate::db::lock::effect(|| self.readiness.send_replace(Readiness::Ended));
             self.deliver(held(&self.state), change);
             return true;
         };
@@ -280,7 +284,7 @@ impl LiveFeed {
         let hold = held(&self.first_screen).take();
         drop(hold);
         held(&self.state).ended = true;
-        self.readiness.send_replace(Readiness::Ended);
+        crate::db::lock::effect(|| self.readiness.send_replace(Readiness::Ended));
     }
 
     fn compose<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, part: Option<LiveChange>) {
@@ -354,13 +358,13 @@ impl LiveFeed {
         if !ready {
             return;
         }
-        self.readiness.send_if_modified(|current| {
+        crate::db::lock::effect(|| self.readiness.send_if_modified(|current| {
             let waiting = *current == Readiness::Waiting;
             if waiting {
                 *current = Readiness::Ready;
             }
             waiting
-        });
+        }));
     }
 
     fn deliver<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, change: LiveChange) {
@@ -379,7 +383,7 @@ impl LiveFeed {
             };
             state.reported = false;
             drop(state);
-            self.latest.send_replace(Some(next.clone()));
+            crate::db::lock::effect(|| self.latest.send_replace(Some(next.clone())));
             let delta = !next.full;
             crate::db::lock::assert_no_library_lock("QueryListener::changed");
             self.calls.call(|| self.listener.changed(next));

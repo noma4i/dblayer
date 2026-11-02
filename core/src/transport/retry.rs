@@ -73,18 +73,18 @@ impl RetryCalls {
 
     fn record(&self, attempt: RetryAttempt, joined: &mut bool) {
         let first = !std::mem::replace(joined, true);
-        self.0.send_modify(|snapshot| {
+        crate::db::lock::effect(|| self.0.send_modify(|snapshot| {
             snapshot.active_calls += u32::from(first);
             snapshot.last_attempt = Some(attempt);
-        });
+        }));
     }
 
     fn leave(&self, joined: &mut bool) {
         if !std::mem::replace(joined, false) { return; }
-        self.0.send_modify(|snapshot| {
+        crate::db::lock::effect(|| self.0.send_modify(|snapshot| {
             snapshot.active_calls -= 1;
             if snapshot.active_calls == 0 { snapshot.last_attempt = None; }
-        });
+        }));
     }
 }
 

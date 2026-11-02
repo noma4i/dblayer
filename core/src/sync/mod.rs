@@ -202,7 +202,7 @@ struct Lifetime {
 impl Lifetime {
     fn close(&self) {
         if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) { return; }
-        self.stop.send_replace(true);
+        crate::db::lock::effect(|| self.stop.send_replace(true));
         self.owner.submit(load_machine::Event::Close);
     }
 }

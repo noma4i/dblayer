@@ -78,7 +78,7 @@ impl PreloadOwner {
 
     fn publish_busy(&self, loads: usize, effects: &mut Effects) {
         let busy = self.busy.clone();
-        effects.push(move || { busy.send_replace(loads); });
+        effects.push(move || { crate::db::lock::effect(|| busy.send_replace(loads)); });
     }
 
     fn app_loads(&self) -> usize {
@@ -184,7 +184,7 @@ impl Inner {
         let feeds = self.db.shared.specs.values().flat_map(|spec| &spec.relations).filter_map(|declared| declared.preload.as_ref()).flat_map(BTreeMap::values);
         if !feeds.into_iter().any(|choice| matches!(choice, PreloadChoice::RowsOf { from } if from.model == model && from.relation == relation)) { return; }
         locked(&self.preload.state).due = true;
-        self.preload.changed.send_modify(|revision| *revision += 1);
+        crate::db::lock::effect(|| self.preload.changed.send_modify(|revision| *revision += 1));
         if let Some(inner) = self.preload.inner.get().and_then(Weak::upgrade) { inner.preload_start(); }
     }
 
@@ -245,7 +245,7 @@ impl Inner {
             running.retain(|key, (task, window)| {
                 let borrowed = locked(&self.flights).waiting.get(window).is_some_and(|sender| sender.receiver_count() > 0);
                 let observed = self.db.observed_reads().iter().any(|read| read.key == *window);
-                if selected.contains(key) || borrowed || observed { true } else { task.abort(); false } // lock-ok: flights guard ended at statement
+                if selected.contains(key) || borrowed || observed { true } else { crate::db::lock::effect(|| task.abort()); false }
             });
             for (model, relation, params) in windows {
                 let key = format!("{model}|{relation}|{params:?}");

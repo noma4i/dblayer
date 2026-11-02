@@ -90,7 +90,7 @@ impl Drop for MembersRead {
             if chain.readers > 0 { return; }
             if let Some(chain) = state.chains.remove(&self.window) {
                 effects.push(move || {
-                    chain.task.abort();
+                    crate::db::lock::effect(|| chain.task.abort());
                     drop(chain);
                 });
             }
@@ -198,7 +198,7 @@ impl LoadOwner {
                 match effect {
                     Effect::Publish { window, state: published } => {
                         if let Some(sender) = state.senders.get(&window).cloned() {
-                            effects.push(move || { sender.send_replace(*published); });
+                            effects.push(move || { crate::db::lock::effect(|| sender.send_replace(*published)); });
                         }
                     }
                     Effect::Retry { window, kind } => state.retries.push((window, kind)),

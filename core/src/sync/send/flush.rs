@@ -134,7 +134,7 @@ impl Inner {
         let stored = self.db.shared.store.lock();
         *locked(&stored.poison) = Some(error.to_string());
         drop(stored);
-        self.db.shared.outbox_changes.send_modify(|version| *version += 1);
+        crate::db::lock::effect(|| self.db.shared.outbox_changes.send_modify(|version| *version += 1));
     }
 
     pub(crate) async fn flush(&self) -> Result<FlushReport, SyncError> {

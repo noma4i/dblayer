@@ -25,7 +25,7 @@ impl CableSession {
         let id = self.next_id.to_string();
         let (events, receiver) = mpsc::unbounded_channel();
         if let Some(failure) = self.lifecycle.refusal() {
-            let _ = events.send(SubscriptionEvent::Failed(failure.clone()));
+            crate::db::lock::effect(|| { let _ = events.send(SubscriptionEvent::Failed(failure.clone())); });
         } else {
             self.lifecycle.core.entries.insert(id.clone(), Entry { request, events });
             self.lifecycle.handle(Event::Demand);
@@ -36,7 +36,7 @@ impl CableSession {
         }
         let cancel = self.cancel.clone();
         let token = id.clone();
-        let subscription = ServerSubscription::new(receiver, ServerSubscriptionHandle::new(move || { let _ = cancel.send(token.clone()); }));
+        let subscription = ServerSubscription::new(receiver, ServerSubscriptionHandle::new(move || { crate::db::lock::effect(|| { let _ = cancel.send(token.clone()); }); }));
         (id, subscription)
     }
 
@@ -91,13 +91,13 @@ impl CableSession {
         let Some(events) = self.lifecycle.core.entries.get(id).map(|entry| entry.events.clone()) else { return Ok(()) };
         match body["t"].as_str() {
             Some("subscribed") => {
-                let _ = events.send(SubscriptionEvent::Ready);
+                crate::db::lock::effect(|| { let _ = events.send(SubscriptionEvent::Ready); });
                 self.lifecycle.handle(Event::Heard(Heard::Subscribed));
             }
             Some("next") => {
                 let response: crate::transport::Response = serde_json::from_value(body["result"].clone()).map_err(|_| CableError::Frame)?;
                 if response.shape() == crate::transport::ResponseShape::Empty { return Err(CableError::Frame); }
-                let _ = events.send(SubscriptionEvent::response(response));
+                crate::db::lock::effect(|| { let _ = events.send(SubscriptionEvent::response(response)); });
                 self.lifecycle.handle(Event::Heard(Heard::Next));
             }
             Some("error") => {
@@ -105,7 +105,7 @@ impl CableSession {
                 let error = crate::transport::TransportError::Graphql { messages: vec![code.clone()], extensions: Some(crate::transport::GraphqlExtensions { code: Some(code), transaction_disposition: None, fields: Default::default() }) };
                 let mut failure = SubscriptionFailure::from_error(error);
                 if body["retryable"] == true { failure.kind = SubscriptionFailureKind::Transport; }
-                let _ = events.send(SubscriptionEvent::Failed(failure));
+                crate::db::lock::effect(|| { let _ = events.send(SubscriptionEvent::Failed(failure)); });
                 self.finish(id);
             }
             Some("complete") => self.finish(id),

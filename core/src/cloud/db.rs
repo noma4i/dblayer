@@ -84,7 +84,7 @@ impl Db {
             }
             transaction.commit()?;
         }
-        self.shared.cloud_changes.send_modify(|version| *version += 1);
+        crate::db::lock::effect(|| self.shared.cloud_changes.send_modify(|version| *version += 1));
         Ok(())
     }
 }

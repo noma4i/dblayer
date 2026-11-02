@@ -56,7 +56,7 @@ impl Effects {
     pub(crate) fn run(self) {
         super::lock::assert_no_library_lock("Effects::run");
         for effect in self.0 {
-            effect();
+            super::lock::effect(effect);
         }
     }
 }

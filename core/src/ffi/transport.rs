@@ -62,7 +62,10 @@ impl Drop for Closing<'_> {
 struct ForeignSocket { transport: Arc<dyn Transport>, lease: Arc<CableLease>, token: String }
 
 impl Drop for ForeignSocket {
-    fn drop(&mut self) { self.lease.lease.abandon(); }
+    fn drop(&mut self) {
+        crate::db::lock::assert_no_library_lock("ForeignSocket::drop");
+        self.lease.lease.abandon();
+    }
 }
 
 #[async_trait]
@@ -121,7 +124,7 @@ impl SubscriptionSink {
     }
     fn send(&self, event: core::SubscriptionEvent) {
         let sender = crate::db::locked(&self.sender).clone();
-        if let Some(sender) = sender { let _ = sender.send(event); } // lock-ok: sender cloned after guard release
+        if let Some(sender) = sender { crate::db::lock::effect(|| { let _ = sender.send(event); }); }
     }
 }
 
@@ -179,6 +182,10 @@ impl OnlineSink {
 
 pub(super) struct ForeignTransport(pub Arc<dyn Transport>);
 
+impl Drop for ForeignTransport {
+    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("ForeignTransport::drop"); }
+}
+
 struct Calling<'a> {
     call: Pin<Box<dyn Future<Output = Result<(), DbError>> + Send + 'a>>,
     abandon: Option<Box<dyn FnOnce() + Send + 'a>>,
@@ -204,6 +211,7 @@ impl Future for Calling<'_> {
 
 impl Drop for Calling<'_> {
     fn drop(&mut self) {
+        crate::db::lock::assert_no_library_lock("Calling::drop");
         if let Some(abandon) = self.abandon.take() { abandon(); }
     }
 }

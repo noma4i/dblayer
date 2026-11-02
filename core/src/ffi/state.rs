@@ -29,7 +29,7 @@ impl StateSubscription {
     pub fn cancel(&self) {
         self.calls.cancel();
         let task = crate::db::locked(&self.task).take();
-        if let Some(task) = task { task.abort(); } // lock-ok: task extracted before abort
+        if let Some(task) = task { crate::db::lock::effect(|| task.abort()); }
     }
 }
 

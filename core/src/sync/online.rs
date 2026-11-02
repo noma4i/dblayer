@@ -15,7 +15,7 @@ impl Sync {
         self.inner.transport.set_online(online);
         if !online {
             let wake = locked(&self.inner.wake).take();
-            if let Some(wake) = wake { wake.abort(); } // lock-ok: wake extracted before abort
+            if let Some(wake) = wake { crate::db::lock::effect(|| wake.abort()); }
             self.inner.owner.submit(Event::Offline);
         }
         if online && !was_online {
@@ -42,7 +42,7 @@ impl Inner {
         let task = wake.and_then(|wait| self.spawn_flush(wait));
         let old = std::mem::replace(&mut *locked(&self.wake), task);
         if let Some(old) = old {
-            old.abort(); // lock-ok: wake extracted before abort
+            crate::db::lock::effect(|| old.abort());
         }
         Ok(())
     }

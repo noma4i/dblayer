@@ -25,6 +25,10 @@ pub trait CredentialStore: Send + Sync {
 
 struct ForeignHttp(Arc<dyn EncryptedHttp>);
 
+impl Drop for ForeignHttp {
+    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("ForeignHttp::drop"); }
+}
+
 #[async_trait]
 impl core::HttpExchange for ForeignHttp {
     async fn post(&self, path: &str, body: String, upload: bool) -> Result<core::HttpReply, core::TransportError> {
@@ -36,6 +40,10 @@ impl core::HttpExchange for ForeignHttp {
 }
 
 struct ForeignCredentials(Arc<dyn CredentialStore>);
+
+impl Drop for ForeignCredentials {
+    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("ForeignCredentials::drop"); }
+}
 
 impl core::CredentialSlot for ForeignCredentials {
     fn get(&self) -> Result<Option<String>, core::TransportError> { crate::db::lock::assert_no_library_lock("CredentialStore::get"); self.0.get().map_err(transport_error) }
@@ -147,7 +155,7 @@ pub struct RetrySubscription { task: tokio::task::AbortHandle, pub(crate) calls:
 impl RetrySubscription {
     pub fn cancel(&self) {
         self.calls.cancel();
-        self.task.abort();
+        crate::db::lock::effect(|| self.task.abort());
     }
 }
 

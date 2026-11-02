@@ -112,7 +112,7 @@ impl FlightGuard<'_> {
             flights.node_rereads.remove(&self.key);
             flights.waiting.remove(&self.key)
         };
-        sender.send_replace(Some(end));
+        crate::db::lock::effect(|| sender.send_replace(Some(end)));
         drop(waiting);
     }
 }
@@ -255,8 +255,6 @@ impl Inner {
                     }
                     FetchVerdict::AwaitInFlight => match flights.waiting.get(&flight_key) {
                         Some(receiver) => {
-                            #[cfg(test)]
-                            flights.joined.0.send_modify(|joined| *joined += 1);
                             Err(Some(receiver.subscribe()))
                         }
                         None => Err(None),
@@ -294,6 +292,11 @@ impl Inner {
                     return result;
                 }
                 Err(Some(mut receiver)) => {
+                    #[cfg(test)]
+                    {
+                        let joined = locked(&self.flights).joined.0.clone();
+                        crate::db::lock::effect(|| joined.send_modify(|joined| *joined += 1));
+                    }
                     let end = receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone());
                     if let Some(FlightEnd::Settled(result)) = end { return result; }
                 }

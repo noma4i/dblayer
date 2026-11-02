@@ -153,7 +153,7 @@ pub(super) struct LiveHandles {
 
 impl Drop for LiveHandles {
     fn drop(&mut self) {
-        for task in [self.load.take(), self.failure.take(), self.state.take()].into_iter().flatten() { task.abort(); }
+        for task in [self.load.take(), self.failure.take(), self.state.take()].into_iter().flatten() { crate::db::lock::effect(|| task.abort()); }
         if let Some(targets) = self.targets.take() {
             let retired = std::mem::take(&mut *targets.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
             drop(retired);

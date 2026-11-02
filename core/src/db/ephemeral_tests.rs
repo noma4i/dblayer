@@ -19,9 +19,13 @@ fn expiry_visits_only_due_rows_and_claims_only_candidates() {
     let mut state = held.lock();
     state.clock = clock.clone();
     state.track("presence", "due", 0);
+    drop(state);
     clock.advance(seconds(1));
+    let mut state = held.lock();
     for id in 0..1000 { state.track("presence", &id.to_string(), 0); }
+    drop(state);
     clock.advance(seconds(29));
+    let mut state = held.lock();
     state.due_visits.set(0);
     let due = state.take_due();
     assert_eq!(due.expired, vec![("presence".to_string(), "due".to_string())]);

@@ -219,7 +219,7 @@ impl Runner {
         let Some((id, name, bytes)) = locked(&self.inline_file).take() else { return Ok(()) };
         let (sent, received) = tokio::sync::oneshot::channel();
         let runner = self.clone();
-        self.inner.spawn_file_task(&self.runtime, move || { let _ = sent.send(runner.inner.db.shared.files.materialize(&id, &name, &bytes)); }); // lock-ok: file guard ended at statement
+        self.inner.spawn_file_task(&self.runtime, move || { crate::db::lock::effect(|| { let _ = sent.send(runner.inner.db.shared.files.materialize(&id, &name, &bytes)); }); });
         match received.await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(error)) => Err(Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string()))),

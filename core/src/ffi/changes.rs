@@ -56,7 +56,7 @@ impl LiveChanges {
 
     fn with_state(&self, change: impl FnOnce(&mut State)) {
         change(&mut crate::db::locked(&self.state));
-        self.ready.notify_one(); // lock-ok: state guard ended at statement
+        crate::db::lock::effect(|| self.ready.notify_one());
     }
 
     fn push(&self, change: LiveChange) {
@@ -115,7 +115,7 @@ impl LiveChanges {
             state.pending.clear();
             state.rows.clear();
         });
-        self.ready.notify_waiters(); // lock-ok: state guard ended inside with_state
+        crate::db::lock::effect(|| self.ready.notify_waiters());
     }
 }
 

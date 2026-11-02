@@ -20,7 +20,7 @@ impl Inner {
                     Ok(resolved) => inner.members_chain(&resolved, force).await,
                     Err(error) => Err(error),
                 };
-                result.send_replace(Some(loaded));
+                crate::db::lock::effect(|| result.send_replace(Some(loaded)));
             })).abort_handle()
         });
         reader.finished().await

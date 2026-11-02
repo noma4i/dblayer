@@ -14,13 +14,13 @@ impl TestClock {
 
     pub(crate) fn advance(&self, by: Duration) {
         crate::db::locked(&self.time).0 += by;
-        self.changed.notify_waiters();
+        crate::db::lock::effect(|| self.changed.notify_waiters());
     }
 
     #[cfg(test)]
     pub(crate) fn set(&self, now: Duration) {
         *crate::db::locked(&self.time) = (now, tokio::time::Instant::now());
-        self.changed.notify_waiters();
+        crate::db::lock::effect(|| self.changed.notify_waiters());
     }
 }
 

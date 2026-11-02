@@ -76,7 +76,7 @@ struct FileTask(Arc<watch::Sender<usize>>);
 
 impl Drop for FileTask {
     fn drop(&mut self) {
-        self.0.send_modify(|pending| *pending -= 1);
+        crate::db::lock::effect(|| self.0.send_modify(|pending| *pending -= 1));
     }
 }
 
@@ -289,7 +289,7 @@ impl Inner {
     }
 
     fn spawn_file_task(&self, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
-        self.file_tasks.send_modify(|pending| *pending += 1);
+        crate::db::lock::effect(|| self.file_tasks.send_modify(|pending| *pending += 1));
         let finished = FileTask(self.file_tasks.clone());
         drop(runtime.spawn_blocking(move || { task(); drop(finished); }));
     }
@@ -298,7 +298,7 @@ impl Inner {
         if ids.is_empty() { return Ok(()); }
         let (sent, received) = tokio::sync::oneshot::channel();
         let shared = self.db.shared.clone();
-        self.spawn_file_task(&tokio::runtime::Handle::current(), move || { let _ = sent.send(shared.files.discard(&ids)); });
+        self.spawn_file_task(&tokio::runtime::Handle::current(), move || { crate::db::lock::effect(|| { let _ = sent.send(shared.files.discard(&ids)); }); });
         received.await.map_err(|_| SyncError::Cancelled)?.map_err(|error| crate::store::StoreError::from(error).into())
     }
 
@@ -359,7 +359,7 @@ impl Inner {
         let mode = state.resume_mode();
         let resumed = self.with_uploads(|runs, effects| {
             if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) { return false; }
-            if let Some(active) = runs.active.remove(&(seq, owner.position)) { effects.push(move || { active.done.send_replace(true); }); }
+            if let Some(active) = runs.active.remove(&(seq, owner.position)) { effects.push(move || { crate::db::lock::effect(|| active.done.send_replace(true)); }); }
             if matches!(mode, RunMode::Transfer) {
                 runs.ready.insert((seq, owner.position), ReadyRun { resumed: Some(result) });
             } else {
@@ -401,7 +401,7 @@ impl Sync {
                 match runs.adopted.get(&task.tag) {
                     Some(sender) => {
                         let sender = sender.clone();
-                        effects.push(move || { sender.send_replace(task.state); });
+                        effects.push(move || { crate::db::lock::effect(|| sender.send_replace(task.state)); });
                     }
                     None => { runs.adopted.insert(task.tag, Arc::new(watch::channel(task.state).0)); }
                 }
@@ -514,7 +514,7 @@ impl UploadRuns {
         if self.active.get(&(seq, position)).is_none_or(|active| active.run != run) { return false; }
         let Some(active) = self.active.remove(&(seq, position)) else { return false };
         self.active_files -= usize::from(active.file_slot);
-        effects.push(move || { active.done.send_replace(true); });
+        effects.push(move || { crate::db::lock::effect(|| active.done.send_replace(true)); });
         true
     }
 

@@ -120,13 +120,13 @@ impl Updates {
     }
 
     pub fn cancel(&self) {
-        self.abort.abort();
+        crate::db::lock::effect(|| self.abort.abort());
     }
 }
 
 impl Drop for Updates {
     fn drop(&mut self) {
-        self.abort.abort();
+        crate::db::lock::effect(|| self.abort.abort());
     }
 }
 
@@ -167,14 +167,14 @@ impl Feed {
     }
 
     fn opening(&self, result: Result<(), SyncError>) {
-        if let Some(ready) = &self.ready { ready.send_replace(Some(result)); }
+        if let Some(ready) = &self.ready { crate::db::lock::effect(|| ready.send_replace(Some(result))); }
     }
 
     fn notify_failure(&self, failure: &SubscriptionFailure) {
         self.opening(Err(SyncError::Transport(failure.error.clone())));
         locked(&self.status).failure = Some(failure.clone());
         if matches!(failure.error, TransportError::Session { .. }) {
-            let _ = self.inner.subscription_failures.send(Some((super::live::live_key(&self.def.operation, &self.def.variables), failure.clone()))); // lock-ok: status guard ended at statement
+            crate::db::lock::effect(|| { let _ = self.inner.subscription_failures.send(Some((super::live::live_key(&self.def.operation, &self.def.variables), failure.clone()))); });
         }
     }
 

@@ -15,7 +15,7 @@ impl Connectivity {
     }
 
     pub fn set_online(&self, online: bool) {
-        self.sender.send_replace(online);
+        crate::db::lock::effect(|| self.sender.send_replace(online));
     }
 }
 impl Connectivity {

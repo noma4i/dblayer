@@ -228,7 +228,7 @@ impl Lifecycle {
         self.machine.handle_with_context(&event, &mut self.core);
         if let State::Refused { failure } = self.machine.state() {
             for (_, entry) in std::mem::take(&mut self.core.entries) {
-                let _ = entry.events.send(SubscriptionEvent::Failed(failure.clone()));
+                crate::db::lock::effect(|| { let _ = entry.events.send(SubscriptionEvent::Failed(failure.clone())); });
             }
         }
     }
