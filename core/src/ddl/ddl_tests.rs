@@ -343,6 +343,16 @@ fn associations_and_storage_change_the_fingerprint() {
 }
 
 #[test]
+fn a_relation_without_row_rules_keeps_the_fingerprint_text_it_had_before_row_rules_existed() {
+    let plain = ModelSpec { relations: vec![RelationSpec::new("list", &["chatId"])], ..messages() };
+    let mut ruled = plain.clone();
+    ruled.relations[0].row_rules = vec![crate::schema::RowRule { field: "kind".into(), test: crate::schema::RowTest::Equals { value: json!("text") } }];
+
+    assert!(!fingerprint_text(&plain).contains("row_rules"));
+    assert_ne!(fingerprint(&ruled), fingerprint(&plain));
+}
+
+#[test]
 fn inv_dsl_04_fingerprint_ignores_declaration_order() {
     let fields = vec![
         FieldSpec::scalar("title", ScalarKind::Str).nullable(),

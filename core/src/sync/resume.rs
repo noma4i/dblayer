@@ -53,14 +53,18 @@ impl ResumeOwner {
     fn finish(&self, runner: u64, outcome: Outcome) -> Option<Cause> {
         let mut state = locked(&self.state);
         if state.runner != Some(runner) { return None; }
-        for waiter in state.current.drain(..) { let _ = waiter.send(outcome.clone()); }
+        let answered = std::mem::take(&mut state.current);
         let next = state.machine.handle(&ResumeEvent::Finished);
-        if next.is_some() {
+        let settled = if next.is_some() {
             state.current = std::mem::take(&mut state.queued);
+            Vec::new()
         } else {
             state.runner = None;
-            for waiter in state.settled.drain(..) { let _ = waiter.send(()); }
-        }
+            std::mem::take(&mut state.settled)
+        };
+        drop(state);
+        for waiter in answered { let _ = waiter.send(outcome.clone()); }
+        for waiter in settled { let _ = waiter.send(()); }
         next
     }
 
@@ -69,10 +73,12 @@ impl ResumeOwner {
         if state.runner != Some(runner) { return; }
         let mut waiters = std::mem::take(&mut state.current);
         waiters.append(&mut state.queued);
-        for waiter in waiters { let _ = waiter.send(Err(error.clone())); }
         while !state.machine.is_idle() { state.machine.handle(&ResumeEvent::Finished); }
         state.runner = None;
-        for waiter in state.settled.drain(..) { let _ = waiter.send(()); }
+        let settled = std::mem::take(&mut state.settled);
+        drop(state);
+        for waiter in waiters { let _ = waiter.send(Err(error.clone())); }
+        for waiter in settled { let _ = waiter.send(()); }
     }
 
     #[cfg(test)]

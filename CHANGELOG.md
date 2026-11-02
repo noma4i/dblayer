@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Cancelling a live query no longer deadlocks with a delivered change.
+- Models without row rules keep the schema fingerprint they had in 6.13.1, so an upgrade does not wipe and reload their cache.
+
 ## 6.14.0 - 2026-11-02
 
 ### Added

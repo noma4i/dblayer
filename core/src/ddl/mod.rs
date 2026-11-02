@@ -673,6 +673,7 @@ struct RelationFingerprint<'a> {
     is_global: bool,
     sort: &'a Sort,
     membership: &'a BTreeMap<String, Membership>,
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
     row_rules: &'a [crate::schema::RowRule],
     joins_node: bool,
 }
@@ -688,6 +689,10 @@ struct ModelFingerprint<'a> {
 }
 
 pub fn fingerprint(model: &ModelSpec) -> String {
+    Sha256::digest(fingerprint_text(model).as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn fingerprint_text(model: &ModelSpec) -> String {
     let mut fields: Vec<&FieldSpec> = model.fields.iter().collect();
     fields.sort_by(|left, right| left.name.cmp(&right.name));
     let mut relations: Vec<RelationFingerprint> = model
@@ -712,8 +717,7 @@ pub fn fingerprint(model: &ModelSpec) -> String {
     ddl.extend(layout(&canonical).table_statements(canonical.is_memory()));
     ddl.extend(create_index_statements(&canonical));
     ddl.sort();
-    let text = serde_json::to_string(&ModelFingerprint { fields, relations, associations, storage: model.storage, indexes, ddl }).expect("fingerprint serializes");
-    Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+    serde_json::to_string(&ModelFingerprint { fields, relations, associations, storage: model.storage, indexes, ddl }).expect("fingerprint serializes")
 }
 
 pub fn fingerprint_key(model: &str) -> String {

@@ -245,8 +245,9 @@ impl LiveFeed {
             state.shown = None;
             state.ended = true;
             state.ready_pending = true;
+            drop(state);
             self.readiness.send_replace(Readiness::Ended);
-            self.deliver(state, change);
+            self.deliver(held(&self.state), change);
             return true;
         };
         state.resyncs_in_row += 1;
@@ -304,7 +305,9 @@ impl LiveFeed {
         let ready = !state.load_pending && !gated;
         state.ready_pending |= ready;
         if part.is_none() && state.shown.as_ref() == Some(&shown) {
-            self.settle_ready(&mut state);
+            let ready = Self::take_ready(&mut state);
+            drop(state);
+            self.signal_ready(ready);
             return;
         }
         let mut change = part.unwrap_or_else(|| LiveChange::empty(rows_at.max(0)));
@@ -329,8 +332,12 @@ impl LiveFeed {
         self.deliver(state, change);
     }
 
-    fn settle_ready(&self, state: &mut FeedState) {
-        if state.draining || !state.queue.is_empty() || !std::mem::take(&mut state.ready_pending) {
+    fn take_ready(state: &mut FeedState) -> bool {
+        !state.draining && state.queue.is_empty() && std::mem::take(&mut state.ready_pending)
+    }
+
+    fn signal_ready(&self, ready: bool) {
+        if !ready {
             return;
         }
         self.readiness.send_if_modified(|current| {
@@ -351,7 +358,9 @@ impl LiveFeed {
         loop {
             let Some(next) = state.queue.pop_front() else {
                 state.draining = false;
-                self.settle_ready(&mut state);
+                let ready = Self::take_ready(&mut state);
+                drop(state);
+                self.signal_ready(ready);
                 return;
             };
             state.reported = false;
@@ -359,7 +368,8 @@ impl LiveFeed {
             self.latest.send_replace(Some(next.clone()));
             let delta = !next.full;
             self.calls.call(|| self.listener.changed(next));
-            if let Some(hold) = held(&self.first_screen).take() { hold.delivered(); }
+            let hold = held(&self.first_screen).take();
+            if let Some(hold) = hold { hold.delivered(); }
             state = held(&self.state);
             if delta && !state.reported {
                 state.resyncs_in_row = 0;

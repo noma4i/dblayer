@@ -416,3 +416,28 @@ fn inv_observe_08_a_live_call_that_passed_the_cancel_check_does_not_start_after_
     join_within(delivering);
     assert!(heard(&tape).is_empty());
 }
+
+#[test]
+fn ending_the_feed_while_a_delivery_wakes_the_initial_load_waiter_finishes_with_ended() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    use crate::test_wait::{spin_until, ForeignWaker};
+    join_within(std::thread::spawn(|| {
+        let (feed, _tape) = feed();
+        let foreign = Arc::new(Mutex::new(()));
+        let waker = ForeignWaker::new(foreign.clone());
+        let mut readiness = feed.readiness.subscribe();
+        let mut waiting = Box::pin(async move { *readiness.wait_for(|readiness| *readiness != super::live_feed::Readiness::Waiting).await.unwrap() });
+        assert!(waiting.as_mut().poll(&mut Context::from_waker(&Waker::from(waker.clone()))).is_pending());
+        let task_lock = foreign.lock().unwrap();
+        let delivering = {
+            let feed = feed.clone();
+            std::thread::spawn(move || send(&feed, &Input::Rows(1, 1)))
+        };
+        spin_until("the delivery never woke the waiter", || waker.entered());
+        feed.end();
+        drop(task_lock);
+        join_within(delivering);
+        assert!(matches!(waiting.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(super::live_feed::Readiness::Ended)));
+    }));
+}

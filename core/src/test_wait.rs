@@ -1,5 +1,7 @@
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::sync::{Condvar, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
+use std::task::Wake;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -97,5 +99,27 @@ pub(crate) async fn yield_until(what: &str, mut ready: impl FnMut() -> bool) {
     while !ready() {
         assert!(Instant::now() < deadline, "{what}");
         tokio::task::yield_now().await;
+    }
+}
+
+pub(crate) struct ForeignWaker {
+    lock: Arc<Mutex<()>>,
+    entered: AtomicBool,
+}
+
+impl ForeignWaker {
+    pub(crate) fn new(lock: Arc<Mutex<()>>) -> Arc<Self> {
+        Arc::new(Self { lock, entered: AtomicBool::new(false) })
+    }
+
+    pub(crate) fn entered(&self) -> bool {
+        self.entered.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for ForeignWaker {
+    fn wake(self: Arc<Self>) {
+        self.entered.store(true, Ordering::SeqCst);
+        drop(self.lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     }
 }

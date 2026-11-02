@@ -1,7 +1,7 @@
 use super::*;
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
-use crate::test_wait::within;
+use crate::test_wait::{join_within, spin_until, within, ForeignWaker};
 
 #[tokio::test]
 async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
@@ -48,4 +48,27 @@ async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
     assert!(matches!(replacement.error, Some(DbError::Network { .. })));
     queue.cancel();
     assert!(within(queue.next()).await.is_none());
+}
+
+#[test]
+fn cancelling_while_a_delivered_change_wakes_the_reader_finishes_and_ends_the_stream() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    join_within(std::thread::spawn(|| {
+        let queue = LiveChanges::new();
+        let foreign = Arc::new(Mutex::new(()));
+        let waker = ForeignWaker::new(foreign.clone());
+        let mut next = Box::pin(queue.next());
+        assert!(next.as_mut().poll(&mut Context::from_waker(&Waker::from(waker.clone()))).is_pending());
+        let task_lock = foreign.lock().unwrap();
+        let delivering = {
+            let listener = Listener(Arc::downgrade(&queue));
+            std::thread::spawn(move || listener.changed(LiveChange::empty(1)))
+        };
+        spin_until("the delivered change never woke the reader", || waker.entered());
+        queue.cancel();
+        drop(task_lock);
+        join_within(delivering);
+        assert!(matches!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(None)));
+    }));
 }

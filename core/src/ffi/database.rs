@@ -646,16 +646,18 @@ impl Database {
                                 let mut projection = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                                 (projection.apply(&change, &target_wire), projection.take_watch_delta())
                             };
-                            let mut held = held.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                            for id in lost { held.remove(&id); }
-                            for id in gained {
-                                let (projection, sink, target_wire) = (projection.clone(), sink.clone(), target_wire.clone());
-                                let known = id.clone();
-                                if let Ok(observer) = db.observe_row(&target, &id, move |seen| {
-                                    let row = seen.rows.first().cloned();
-                                    let shown = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).target_changed(&known, row, seen.revision, &target_wire);
-                                    if let Some(shown) = shown { sink.rows(shown); }
-                                }) { held.insert(id, observer); }
+                            {
+                                let mut held = held.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                                for id in lost { held.remove(&id); }
+                                for id in gained {
+                                    let (projection, sink, target_wire) = (projection.clone(), sink.clone(), target_wire.clone());
+                                    let known = id.clone();
+                                    if let Ok(observer) = db.observe_row(&target, &id, move |seen| {
+                                        let row = seen.rows.first().cloned();
+                                        let shown = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).target_changed(&known, row, seen.revision, &target_wire);
+                                        if let Some(shown) = shown { sink.rows(shown); }
+                                    }) { held.insert(id, observer); }
+                                }
                             }
                             match shown {
                                 Some(shown) => sink.rows(shown),

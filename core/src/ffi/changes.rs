@@ -53,21 +53,26 @@ impl LiveChanges {
         Arc::new(Self { state: Mutex::new(State::default()), ready: tokio::sync::Notify::new(), subscription: Mutex::new(None) })
     }
 
-    fn push(&self, change: LiveChange) {
-        let mut state = crate::db::locked(&self.state);
-        if state.closed { return; }
-        state.apply(&change);
-        if state.pending.len() >= CHANGE_QUEUE_LIMIT {
-            let mut replacement = LiveChange::whole(change.revision, state.rows.clone());
-            replacement.error = change.error.clone();
-            replacement.window = change.window.clone();
-            replacement.carry_state(&change);
-            state.pending.clear();
-            state.pending.push_back(replacement);
-        } else {
-            state.pending.push_back(change);
-        }
+    fn with_state(&self, change: impl FnOnce(&mut State)) {
+        change(&mut crate::db::locked(&self.state));
         self.ready.notify_one();
+    }
+
+    fn push(&self, change: LiveChange) {
+        self.with_state(|state| {
+            if state.closed { return; }
+            state.apply(&change);
+            if state.pending.len() >= CHANGE_QUEUE_LIMIT {
+                let mut replacement = LiveChange::whole(change.revision, state.rows.clone());
+                replacement.error = change.error.clone();
+                replacement.window = change.window.clone();
+                replacement.carry_state(&change);
+                state.pending.clear();
+                state.pending.push_back(replacement);
+            } else {
+                state.pending.push_back(change);
+            }
+        });
     }
 }
 
@@ -96,12 +101,13 @@ impl LiveChanges {
     }
 
     pub fn cancel(&self) {
-        if let Some(subscription) = crate::db::locked(&self.subscription).take() { subscription.cancel(); }
-        let mut state = crate::db::locked(&self.state);
-        state.closed = true;
-        state.pending.clear();
-        state.rows.clear();
-        self.ready.notify_one();
+        let subscription = crate::db::locked(&self.subscription).take();
+        if let Some(subscription) = subscription { subscription.cancel(); }
+        self.with_state(|state| {
+            state.closed = true;
+            state.pending.clear();
+            state.rows.clear();
+        });
     }
 }
 

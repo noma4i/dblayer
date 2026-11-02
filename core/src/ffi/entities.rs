@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::db::{locked, EntityChange, EntityObserver};
@@ -107,7 +107,20 @@ pub struct LiveEntities {
     wire: Arc<WireModel>,
     listener: Arc<dyn EntityListener>,
     state: Mutex<State>,
+    outbox: Mutex<Outbox>,
     weak: Weak<Self>,
+}
+
+#[derive(Default)]
+struct Outbox { deliveries: VecDeque<EntityDelivery>, draining: bool }
+
+/// Declared before the `state` guard, so it drops after it: queued deliveries reach the listener with no library lock held.
+struct Delivering<'a>(&'a LiveEntities);
+
+impl Drop for Delivering<'_> {
+    fn drop(&mut self) {
+        if !std::thread::panicking() { self.0.drain(); }
+    }
 }
 
 impl LiveEntities {
@@ -115,11 +128,33 @@ impl LiveEntities {
     fn generation(&self) -> u64 { self.database.db.generation().value() }
     fn epoch(&self) -> u64 { self.database.db.shared.ephemeral.lock().epoch }
 
+    fn delivering(&self) -> Delivering<'_> { Delivering(self) }
+
     fn emit(&self, snapshots: Vec<WireEntitySnapshot>) {
-        if !snapshots.is_empty() { self.listener.changed(EntityDelivery { snapshots }); }
+        if !snapshots.is_empty() { locked(&self.outbox).deliveries.push_back(EntityDelivery { snapshots }); }
+    }
+
+    fn drain(&self) {
+        if std::mem::replace(&mut locked(&self.outbox).draining, true) { return; }
+        struct Unwinding<'a>(&'a Mutex<Outbox>);
+        impl Drop for Unwinding<'_> {
+            fn drop(&mut self) { if std::thread::panicking() { locked(self.0).draining = false; } }
+        }
+        let _unwinding = Unwinding(&self.outbox);
+        loop {
+            let next = {
+                let mut outbox = locked(&self.outbox);
+                let next = outbox.deliveries.pop_front();
+                outbox.draining = next.is_some();
+                next
+            };
+            let Some(delivery) = next else { return };
+            self.listener.changed(delivery);
+        }
     }
 
     fn changed(&self, change: &EntityChange) {
+        let _delivering = self.delivering();
         let mut state = locked(&self.state);
         if state.closed || change.epoch != self.epoch() { return; }
         let generation = self.generation();
@@ -151,6 +186,7 @@ impl LiveEntities {
     }
 
     fn refreshed(&self, id: &str, lease: u64, generation: u64, error: Option<RefreshError>) {
+        let _delivering = self.delivering();
         if generation != self.generation() { return; }
         let landed = match (&error, RowId::new(id)) {
             (None, Ok(row_id)) => Some(self.database.db.entity_row(&self.model, &row_id)),
@@ -170,6 +206,7 @@ impl LiveEntities {
     }
 
     fn reset_core(&self) {
+        let _delivering = self.delivering();
         self.database.entity_cache.clear(&self.model);
         let mut state = locked(&self.state);
         if state.closed { return; }
@@ -198,6 +235,7 @@ impl LiveEntities {
     }
 
     fn single_changed(&self, feed: u64, change: LiveChange) {
+        let _delivering = self.delivering();
         let mut state = locked(&self.state);
         if state.closed { return; }
         let Some(single) = &mut state.singleton else { return };
@@ -226,6 +264,7 @@ impl QueryListener for SingletonListener {
 impl LiveEntities {
     pub fn retain(&self, requests: Vec<EntityRequest>) -> Result<(), DbError> {
         super::entity_calls::entered();
+        let _delivering = self.delivering();
         let generation = self.generation();
         let epoch = self.epoch();
         let mut ids = Vec::new();
@@ -324,6 +363,7 @@ impl LiveEntities {
 
     pub fn shutdown(&self) {
         super::entity_calls::entered();
+        let _delivering = self.delivering();
         let mut state = locked(&self.state);
         if std::mem::replace(&mut state.closed, true) { return; }
         let mut snapshots = Vec::new();
@@ -347,6 +387,7 @@ impl LiveEntities {
 
     pub fn decode_failed(&self, lease: EntityLease, revision: i64, message: String) {
         super::entity_calls::entered();
+        let _delivering = self.delivering();
         let mut state = locked(&self.state);
         let entry = if lease.id.is_empty() { state.singleton.as_mut().map(|single| &mut single.entry) } else { state.entries.get_mut(&lease.id) };
         if let Some(entry) = entry.filter(|entry| entry.lease == lease.lease && entry.verdict.revision == revision) {
@@ -372,7 +413,7 @@ pub(super) fn open(database: Database, model: &str, wire: Arc<WireModel>, listen
     let observer = db.observe_entities(model, move |change| { if let Some(source) = seen.get().and_then(Weak::upgrade) { source.changed(change); } })?;
     let source = Arc::new_cyclic(|weak: &Weak<LiveEntities>| {
         let _ = target.set(weak.clone());
-        LiveEntities { observer, database, model: model.into(), wire, listener, state: Mutex::new(State::default()), weak: weak.clone() }
+        LiveEntities { observer, database, model: model.into(), wire, listener, state: Mutex::new(State::default()), outbox: Mutex::default(), weak: weak.clone() }
     });
     let weak = Arc::downgrade(&source);
     let name = model.to_string();
