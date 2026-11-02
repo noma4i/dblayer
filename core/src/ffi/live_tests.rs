@@ -113,7 +113,7 @@ fn inv_panic_01_live_and_state_subscriptions_cancel_after_a_poisoned_lock() {
     impl super::QueryListener for Quiet {
         fn changed(&self, _: LiveChange) {}
     }
-    let live = super::LiveSubscription { feed: super::live_feed::LiveFeed::new(Arc::new(Quiet)), handles: Mutex::new(None) };
+    let live = super::LiveSubscription { feed: super::live_feed::LiveFeed::new(Arc::new(Quiet)), handles: Mutex::new(None), registration: Default::default() };
     crate::db::fixtures::poison(&live.handles);
     live.cancel();
     let state = super::StateSubscription { task: Mutex::new(None), calls: Arc::new(crate::db::CallState::new()) };

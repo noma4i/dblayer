@@ -62,12 +62,17 @@ impl Db {
         Ok(())
     }
 
-    pub(crate) fn prepare_blob<T, E: From<DbError> + std::fmt::Display>(&self, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>) -> Result<T, E>) -> Result<T, E> {
+    // Preparation closures only copy files and reserve deferred commits; they must not publish or call foreign code.
+    pub(crate) fn prepare_blob<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
         let _gate = locked(&self.shared.files_gate);
         self.shared.store.lock().ensure_generation(generation).map_err(DbError::from)?;
         let mut files = UploadFiles { files: &self.shared.files, owned: Vec::new(), now: self.shared.store.lock().now_ms() };
-        let result = run(&mut files);
+        let mut committed = None;
+        let result = run(&mut files, &mut committed);
         if result.is_ok() { files.owned.clear(); }
+        drop(files);
+        drop(_gate);
+        if let Some(committed) = committed { committed.publish(); }
         result
     }
 
@@ -77,7 +82,7 @@ impl Db {
         crate::store::blob::snapshot(&store.connection, id)?.ok_or_else(|| DbError::InvalidUpload("unknown Blob in this database".into()))
     }
 
-    pub(crate) fn preparing_uploads<T, E: From<DbError> + std::fmt::Display>(&self, model: &str, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, Generation) -> Result<T, E>) -> Result<T, E> {
+    pub(crate) fn preparing_uploads<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, model: &str, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, Generation, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
         let spec = self.shared.spec(model)?;
         if spec.is_local() || spec.is_memory() {
             return Err(DbError::InvalidUpload("upload requires a server model".into()).into());
@@ -85,13 +90,19 @@ impl Db {
         let _gate = locked(&self.shared.files_gate);
         self.shared.store.lock().ensure_generation(generation).map_err(DbError::from)?;
         let mut files = UploadFiles { files: &self.shared.files, owned: Vec::new(), now: self.shared.store.lock().now_ms() };
-        let result = run(&mut files, generation);
+        let mut committed = None;
+        let result = run(&mut files, generation, &mut committed);
         let owned = std::mem::take(&mut files.owned);
-        if let Err(error) = &result {
+        let result = if let Err(error) = &result {
             if let Err(cleanup) = files.files.discard(&owned) {
-                return Err(super::files::io_fault(std::io::Error::other(format!("{error}; file cleanup: {cleanup}"))).into());
+                Err(super::files::io_fault(std::io::Error::other(format!("{error}; file cleanup: {cleanup}"))).into())
+            } else {
+                result
             }
-        }
+        } else { result };
+        drop(files);
+        drop(_gate);
+        if let Some(committed) = committed { committed.publish(); }
         result
     }
 }

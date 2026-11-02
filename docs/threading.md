@@ -15,6 +15,7 @@ Live results arrive from library threads. Record writes run on background thread
 - `cached()`, `cachedRow` and the edge value reads answer without the caller thread waiting for the database lock and decode their rows off the caller thread. They are `async` in Swift and `suspend` in Kotlin, as are the bridge calls `peekQuery` and `edgeValues` underneath. See [live data](live-data.md#reading-before-the-first-delivery).
 - The transports on both platforms do the whole network exchange, including reading the response body, off the caller thread: Kotlin on `Dispatchers.IO`, Swift through the async `URLSession` API. You can call them from the main thread.
 - Disk databases use WAL with 2 read-only connections and 1 writer. Each read holds a transaction across rows, nested values and synchronization metadata.
+- Reading the current database generation does not wait for the writer.
 - A read waits when both read connections are occupied. Boot and reset wait for active reads before changing tables or clearing data.
 - Reads involving temporary models use their owning connection. Entirely in-memory databases also share their connection with the writer.
 - A disk-only read uses the pool even when the database contains temporary models. Included associations participate in connection selection.

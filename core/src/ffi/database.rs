@@ -593,7 +593,7 @@ impl Database {
                 None
             }
         };
-        let subscription = Arc::new(LiveSubscription { feed, handles: Mutex::new(handles) });
+        let subscription = Arc::new(LiveSubscription { feed, handles: Mutex::new(handles), registration: Default::default() });
         self.streams.enroll(&subscription);
         subscription
     }

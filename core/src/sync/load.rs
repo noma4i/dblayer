@@ -183,6 +183,11 @@ impl Inner {
 
     fn window_is_fresh(&self, resolved: &Resolved<'_>) -> Result<bool, SyncError> {
         let store = &self.db.shared.store;
+        #[cfg(test)]
+        {
+            let probe = crate::db::locked(&store.before_freshness).take();
+            if let Some(probe) = probe { probe(); }
+        }
         let Some(freshness) = store.window_freshness(&resolved.window_key)? else { return Ok(false) };
         let is_empty = store.read(&[&resolved.model], |reader| reader.scope_last_id(&resolved.model, resolved.scope.key.as_str()))?.is_none();
         let policy = selected_policy(is_empty, &resolved.remote.stale_time, resolved.remote.empty_stale_time.as_deref());
@@ -220,10 +225,15 @@ impl Inner {
                 FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved)?).failed(LoadError::of(&SyncError::Offline));
                 return Err(SyncError::Offline);
             }
+            let started = locked(&self.flights).started;
+            let freshness = if forced { Ok(false) } else { self.window_is_fresh(resolved) };
             let verdict = {
                 let mut flights = locked(&self.flights);
+                if !forced && !flights.coalescing.in_flight().contains(&flight_key) && flights.started != started {
+                    continue;
+                }
                 let mut freshness_error = None;
-                let verdict = flights.coalescing.request(&flight_key, forced, || match self.window_is_fresh(resolved) {
+                let verdict = flights.coalescing.request(&flight_key, forced, || match freshness {
                     Ok(fresh) => fresh,
                     Err(error) => { freshness_error = Some(error); false }
                 });
@@ -238,6 +248,7 @@ impl Inner {
                 }
                 match verdict {
                     FetchVerdict::StartFetch => {
+                        flights.started = flights.started.wrapping_add(1);
                         let sender = watch::channel(None).0;
                         flights.waiting.insert(flight_key.clone(), sender.clone());
                         Ok(Some(sender))

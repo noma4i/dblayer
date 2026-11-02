@@ -177,6 +177,7 @@ impl Drop for Committed<'_> {
 
 pub struct Store {
     inner: Mutex<Inner>,
+    generation: AtomicU64,
     models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
     poison: Arc<Mutex<Option<String>>>,
     readers: Option<readers::Readers>,
@@ -193,6 +194,8 @@ pub struct Store {
     pub(crate) before_write: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
+    #[cfg(test)]
+    pub(crate) before_freshness: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Store {
@@ -211,6 +214,7 @@ impl Store {
         };
         Self {
             inner: Mutex::new(inner),
+            generation: AtomicU64::new(Generation::INITIAL.value()),
             models: RwLock::new(models),
             poison,
             readers: None,
@@ -224,6 +228,8 @@ impl Store {
             before_write: Mutex::new(None),
             #[cfg(test)]
             after_commit: Mutex::new(None),
+            #[cfg(test)]
+            before_freshness: Mutex::new(None),
             recreated: None,
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
@@ -281,15 +287,6 @@ impl Store {
         }
     }
 
-    fn announce_released(&self, inner: MutexGuard<'_, Inner>, event: StoreEvent<'_>) {
-        if let Some(log) = self.commit_log.get() {
-            log(&event);
-        }
-        let ticket = self.line.ticket();
-        drop(inner);
-        self.line.run(ticket, || self.announce(event));
-    }
-
     fn commit_announcement(&self, inner: MutexGuard<'_, Inner>, result: CommitResult) -> Committed<'_> {
         let renewal = result.is_noop();
         if renewal && result.renewed.is_empty() {
@@ -304,7 +301,14 @@ impl Store {
     }
 
     pub fn generation(&self) -> Generation {
-        self.lock().generation
+        Generation::from_value(self.generation.load(Ordering::SeqCst))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn advance_generation_for_test(&self) {
+        let mut inner = self.lock();
+        inner.generation = inner.generation.next();
+        self.generation.store(inner.generation.value(), Ordering::SeqCst);
     }
 
     #[cfg(test)]

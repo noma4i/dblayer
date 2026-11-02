@@ -15,6 +15,19 @@ fn window(rig: &Rig, relation: &str, params: &Map<String, serde_json::Value>) ->
     rig.db.shared.store.window(&key).unwrap()
 }
 
+#[tokio::test]
+async fn freshness_read_does_not_hold_the_flight_lock() {
+    let rig = rig();
+    let inner = std::sync::Arc::downgrade(&rig.sync.inner);
+    let (sent, received) = std::sync::mpsc::channel();
+    *rig.db.shared.store.before_freshness.lock().unwrap() = Some(Box::new(move || {
+        sent.send(crate::test_wait::mutex_free(&inner.upgrade().unwrap().flights)).unwrap();
+    }));
+    rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
+    crate::test_wait::within(rig.sync.load("moments", "feed", &none(), LoadOptions::default())).await.unwrap();
+    assert!(crate::test_wait::recv_within(&received));
+}
+
 #[tokio::test(start_paused = true)]
 async fn first_page_lands_rows_members_and_window() {
     let rig = rig();

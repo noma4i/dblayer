@@ -19,12 +19,13 @@ impl QueryListener for Silent {
     fn changed(&self, _: LiveChange) {}
 }
 
-struct Counting(AtomicUsize, Option<Arc<OpenStreams>>, Mutex<Vec<usize>>);
+struct Counting(AtomicUsize, Option<Arc<OpenStreams>>, Mutex<Vec<usize>>, std::sync::OnceLock<super::open_streams::Registration>);
 impl Closable for Counting {
     fn close(&self) {
         self.0.fetch_add(1, Ordering::SeqCst);
         if let Some(streams) = &self.1 { crate::db::locked(&self.2).push(streams.enrolled()); }
     }
+    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.3 }
 }
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
@@ -48,8 +49,8 @@ fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) 
 #[test]
 fn the_open_streams_close_each_member_once_and_refuses_late_members() {
     let streams = Arc::new(OpenStreams::default());
-    let first = Arc::new(Counting(AtomicUsize::new(0), Some(streams.clone()), Mutex::default()));
-    let dropped = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default()));
+    let first = Arc::new(Counting(AtomicUsize::new(0), Some(streams.clone()), Mutex::default(), Default::default()));
+    let dropped = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()));
     streams.enroll(&first);
     streams.enroll(&dropped);
     drop(dropped);
@@ -58,9 +59,24 @@ fn the_open_streams_close_each_member_once_and_refuses_late_members() {
     join_within(std::thread::spawn(move || { closing.close(); closing.close(); }));
     assert_eq!(first.0.load(Ordering::SeqCst), 1);
     assert_eq!(*crate::db::locked(&first.2), [0], "the member list was read from inside close, so the lock was free");
-    let late = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default()));
+    let late = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()));
     streams.enroll(&late);
     assert_eq!(late.0.load(Ordering::SeqCst), 1);
+    assert_eq!(streams.enrolled(), 0);
+}
+
+#[test]
+fn enrolling_a_stream_does_the_same_work_with_existing_streams() {
+    let streams = Arc::new(OpenStreams::default());
+    let members: Vec<_> = (0..128).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
+    for member in &members { streams.enroll(member); }
+    let before = streams.work();
+    let next = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()));
+    streams.enroll(&next);
+    assert_eq!(streams.work() - before, 0);
+    assert_eq!(streams.enrolled(), members.len() + 1);
+    drop(members);
+    drop(next);
     assert_eq!(streams.enrolled(), 0);
 }
 
@@ -72,7 +88,7 @@ async fn stream_close_terminates_waiters() {
     let queue = database.changes(query.into()).unwrap();
     within(queue.next()).await.expect("initial delivery");
     let waiters: Vec<_> = (0..2).map(|_| { let queue = queue.clone(); tokio::spawn(within(async move { queue.next().await })) }).collect();
-    let unopened = Arc::new(LiveSubscription { feed: LiveFeed::new(Arc::new(Silent)), handles: Mutex::new(None) });
+    let unopened = Arc::new(LiveSubscription { feed: LiveFeed::new(Arc::new(Silent)), handles: Mutex::new(None), registration: Default::default() });
     database.streams.enroll(&unopened);
     let current = { let live = unopened.clone(); tokio::spawn(within(async move { live.current().await })) };
     let initial = { let live = unopened.clone(); tokio::spawn(within(async move { live.wait_for_initial_load().await })) };
@@ -97,6 +113,26 @@ async fn closing_the_database_ends_a_waiting_model_event_next() {
     tokio::task::yield_now().await;
     database.shutdown();
     assert!(matches!(within(waiting).await.unwrap(), Ok(None)));
+}
+
+#[tokio::test]
+async fn closing_the_database_ends_a_waiting_blob_stream() {
+    use std::io::Write;
+    let transport = Arc::new(MockTransport::new());
+    let wired = transport.clone();
+    let database = Database::start_with(config(), "[]".into(), Some(crate::upload::UploadOperations::empty().create_blob("CreateBlob")), Arc::new(crate::pacing::SystemClock), move |_, _| Ok((Some(wired), None))).unwrap();
+    database.register_operations(r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { id } }","rootPath":"createBlob"}]"#.into()).unwrap();
+    database.set_online(false).unwrap();
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(b"blob").unwrap();
+    let id = database.sync.as_ref().unwrap().upload_blob("test", "CreateBlob", crate::upload::UploadFile::new(file.path().to_str().unwrap())).await.unwrap();
+    let changes = database.clone().blob_changes(id).await.unwrap();
+    assert!(within(changes.clone().next()).await.unwrap().is_some());
+    let waiting = tokio::spawn(within({ let changes = changes.clone(); async move { changes.next().await } }));
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished());
+    database.shutdown();
+    assert!(within(waiting).await.unwrap().unwrap().is_none());
 }
 
 #[tokio::test]

@@ -36,6 +36,7 @@ impl State {
 
 #[derive(uniffi::Object)]
 pub struct LiveChanges {
+    registration: std::sync::OnceLock<super::open_streams::Registration>,
     state: Mutex<State>,
     ready: tokio::sync::Notify,
     subscription: Mutex<Option<Arc<LiveSubscription>>>,
@@ -50,7 +51,7 @@ impl QueryListener for Listener {
 
 impl LiveChanges {
     fn new() -> Arc<Self> {
-        Arc::new(Self { state: Mutex::new(State::default()), ready: tokio::sync::Notify::new(), subscription: Mutex::new(None) })
+        Arc::new(Self { state: Mutex::new(State::default()), ready: tokio::sync::Notify::new(), subscription: Mutex::new(None), registration: Default::default() })
     }
 
     fn with_state(&self, change: impl FnOnce(&mut State)) {
@@ -89,6 +90,7 @@ impl Database {
 
 impl super::open_streams::Closable for LiveChanges {
     fn close(&self) { self.cancel(); }
+    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
 }
 
 #[uniffi::export]

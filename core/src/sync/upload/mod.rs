@@ -190,9 +190,9 @@ impl Inner {
             rollback: None,
             upload: Some(state.clone()),
         };
-        self.db.preparing_uploads(model, generation, |files, generation| {
+        self.db.preparing_uploads(model, generation, |files, generation, pending| {
             let item = files.prepare(model, id.clone(), uuid::Uuid::new_v4().to_string(), input.clone(), state)?;
-            let committed = self.commit(generation, |reader| {
+            let committed = self.commit_deferred(generation, |reader| {
                 if upload_entry(OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?, model, id, &family).is_some() {
                     return Err(SyncError::Params(format!("{model} {id} already has the upload {action}")));
                 }
@@ -200,7 +200,9 @@ impl Inner {
                 envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record.clone()), items: vec![item.clone()] });
                 Ok(Some(envelope))
             })?;
-            committed.and_then(|result| result.operations.into_iter().next()).ok_or(SyncError::Cancelled)
+            let seq = committed.as_ref().and_then(|result| result.result().operations.iter().next().copied()).ok_or(SyncError::Cancelled);
+            *pending = committed;
+            seq
         })
     }
 

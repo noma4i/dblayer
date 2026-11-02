@@ -16,6 +16,33 @@ use super::rows::fetch_stored;
 use super::shape::leaf_value;
 use super::{save_pending, Inner, ModelInfo, Store, StoreError, StoreEvent};
 
+pub(crate) struct ResetCommitted<'a> {
+    store: &'a Store,
+    ticket: Option<u64>,
+    revision: i64,
+    models: Option<Vec<String>>,
+    operations: Vec<crate::operation::QueueOperation>,
+    effects: Option<Effects>,
+}
+
+impl ResetCommitted<'_> {
+    pub(crate) fn run(mut self) {
+        self.announce();
+        if let Some(effects) = self.effects.take() { effects.run(); }
+    }
+
+    fn announce(&mut self) {
+        if let Some(ticket) = self.ticket.take() {
+            let event = StoreEvent::Reset { revision: self.revision, models: self.models.clone(), operations: std::mem::take(&mut self.operations) };
+            self.store.line.run(ticket, || self.store.announce(event));
+        }
+    }
+}
+
+impl Drop for ResetCommitted<'_> {
+    fn drop(&mut self) { self.announce(); }
+}
+
 fn like_pattern(prefix: &str) -> String {
     let mut pattern = String::new();
     for character in prefix.chars() {
@@ -259,7 +286,7 @@ impl Store {
         Ok(())
     }
 
-    pub(crate) fn reset_cache_only_held(&self, models: &[&str]) -> Result<Effects, StoreError> {
+    pub(crate) fn reset_cache_only_held(&self, models: &[&str]) -> Result<ResetCommitted<'_>, StoreError> {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         let tables: Vec<(String, String)> = models
@@ -267,6 +294,7 @@ impl Store {
             .map(|model| inner.model(model).map(|info| (model.to_string(), info.table.clone())))
             .collect::<Result<_, _>>()?;
         inner.generation = inner.generation.next();
+        self.generation.store(inner.generation.value(), std::sync::atomic::Ordering::SeqCst);
         let now = inner.now_ms();
         let names: Vec<String> = models.iter().map(|model| model.to_string()).collect();
         write_intent(&inner.connection, "cache_only", &names, now)?;
@@ -282,8 +310,11 @@ impl Store {
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
         let effects = self.reset_effects(Some(names.clone()));
-        self.announce_released(inner, StoreEvent::Reset { revision, models: Some(names), operations });
-        Ok(effects)
+        let event = StoreEvent::Reset { revision, models: Some(names.clone()), operations: operations.clone() };
+        if let Some(log) = self.commit_log.get() { log(&event); }
+        let ticket = self.line.ticket();
+        drop(inner);
+        Ok(ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(names), operations, effects: Some(effects) })
     }
 
     pub fn reset_incompatible(&self) -> Result<(), StoreError> {
@@ -291,10 +322,11 @@ impl Store {
         Ok(())
     }
 
-    pub(crate) fn reset_incompatible_held(&self) -> Result<Effects, StoreError> {
+    pub(crate) fn reset_incompatible_held(&self) -> Result<ResetCommitted<'_>, StoreError> {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         inner.generation = inner.generation.next();
+        self.generation.store(inner.generation.value(), std::sync::atomic::Ordering::SeqCst);
         let now = inner.now_ms();
         write_intent(&inner.connection, "incompatible", &[], now)?;
         let transaction = inner.connection.unchecked_transaction()?;
@@ -308,8 +340,11 @@ impl Store {
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
         let effects = self.reset_effects(None);
-        self.announce_released(inner, StoreEvent::Reset { revision, models: None, operations });
-        Ok(effects)
+        let event = StoreEvent::Reset { revision, models: None, operations: operations.clone() };
+        if let Some(log) = self.commit_log.get() { log(&event); }
+        let ticket = self.line.ticket();
+        drop(inner);
+        Ok(ResetCommitted { store: self, ticket: Some(ticket), revision, models: None, operations, effects: Some(effects) })
     }
 
     #[cfg(test)]

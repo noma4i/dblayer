@@ -130,3 +130,13 @@ fn a_dropped_deferred_commit_still_announces_so_the_order_never_stalls() {
     within_five_seconds(move || written(&later, "m2"));
     assert_eq!(announced.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
+
+#[test]
+fn generation_is_readable_while_the_writer_is_held() {
+    let (store, _) = booted_store();
+    let store = Arc::new(store);
+    let writer = store.lock();
+    let reader = store.clone();
+    let generation = crate::test_wait::join_within(std::thread::spawn(move || reader.generation()));
+    assert_eq!(generation, writer.generation);
+}

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- Reading the database generation no longer waits for a write.
 - Cancelling a live query no longer deadlocks with a delivered change.
 - An entity listener can retain, release, reset or close its entities from inside `changed`: refresh cancels and lease releases run after the entity registry lock is free.
 - A live query listener can cancel its subscription or change the online state from inside `changed`, for related and window queries and for relation states: no target map, projection or state snapshot is held during the call.

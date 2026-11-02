@@ -140,7 +140,7 @@ async fn refused_shared_batch_rereads_every_model_and_records_each_failed_recove
         let users_events = rig.sync.open_model_events("users").await.unwrap();
         let moments_events = rig.sync.open_model_events("moments").await.unwrap();
         let shared = rig.db.shared.clone();
-        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { let mut inner = shared.store.lock(); inner.generation = inner.generation.next(); }));
+        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.advance_generation_for_test()));
         rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"u", "name":"event"}, "second":{"id":"m9", "text":"event", "userId":"u"}}))));
         rig.transport.await_consumed("Signal").await;
         assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByUser")), (2, 2));
@@ -853,8 +853,7 @@ async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         let shared = rig.db.shared.clone();
         *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || {
-            let mut inner = shared.store.lock();
-            inner.generation = inner.generation.next();
+            shared.store.advance_generation_for_test();
         }));
         rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
         tokio::time::sleep(Duration::from_secs(3)).await;

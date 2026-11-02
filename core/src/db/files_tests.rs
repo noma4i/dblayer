@@ -41,6 +41,21 @@ fn attach(db: &Db, row: &str, field: &str, bytes: &[u8]) -> crate::files::FileDe
 }
 
 #[test]
+fn file_commits_announce_after_the_file_gate_is_released() {
+    let db = seeded();
+    let shared = std::sync::Arc::downgrade(&db.shared);
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = calls.clone();
+    *db.shared.store.after_commit.lock().unwrap() = Some(Box::new(move |_| {
+        assert!(crate::test_wait::mutex_free(&shared.upgrade().unwrap().files_gate));
+        observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    attach(&db, "m1", "media", SMALL);
+    db.detach("moments", &rid("m1"), "media").unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[test]
 fn small_file_round_trips_with_its_description() {
     let db = seeded();
     let descriptor = attach(&db, "m1", "media", SMALL);

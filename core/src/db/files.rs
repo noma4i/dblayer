@@ -58,7 +58,7 @@ impl Db {
         };
         let generation = self.generation();
         let mut replaced: Option<String> = None;
-        let committed = self.commit_following(generation, |reader| {
+        let committed = self.commit_following_deferred(generation, |reader| {
             let mut row = reader
                 .point(model, id.as_str())?
                 .ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
@@ -70,8 +70,11 @@ impl Db {
             Ok(Some(envelope))
         });
         match committed {
-            Ok(_) => {
-                self.shared.files.discard(&replaced.into_iter().collect::<Vec<_>>()).map_err(io_fault)?;
+            Ok((committed, _)) => {
+                let cleanup = self.shared.files.discard(&replaced.into_iter().collect::<Vec<_>>()).map_err(io_fault);
+                drop(_gate);
+                committed.publish();
+                cleanup?;
                 Ok(descriptor)
             }
             Err(error) => {
@@ -113,7 +116,7 @@ impl Db {
         let _gate = locked(&self.shared.files_gate);
         let generation = self.generation();
         let mut removed: Option<String> = None;
-        let result = self.commit_following(generation, |reader| {
+        let (result, _) = self.commit_following_deferred(generation, |reader| {
                 removed = None;
                 let mut row = reader
                     .point(model, id.as_str())?
@@ -137,7 +140,10 @@ impl Db {
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
-        self.shared.files.discard(&removed.into_iter().collect::<Vec<_>>()).map_err(io_fault)?;
+        let cleanup = self.shared.files.discard(&removed.into_iter().collect::<Vec<_>>()).map_err(io_fault);
+        drop(_gate);
+        let result = result.publish();
+        cleanup?;
         Ok(!result.is_noop())
     }
 }

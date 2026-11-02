@@ -22,6 +22,7 @@ impl From<BlobSnapshot> for WireBlobSnapshot {
 
 #[derive(uniffi::Object)]
 pub struct BlobChanges {
+    registration: std::sync::OnceLock<super::open_streams::Registration>,
     sync: crate::sync::Sync,
     id: String,
     changes: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
@@ -52,6 +53,7 @@ impl BlobChanges {
 
 impl super::open_streams::Closable for BlobChanges {
     fn close(&self) { self.cancel.cancel(); }
+    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
 }
 
 impl Drop for BlobChanges { fn drop(&mut self) { self.cancel.cancel(); } }
@@ -73,7 +75,7 @@ impl Database {
         let changes = self.db.outbox_changes();
         let changes = super::database::blocking(move || {
             sync.blob_snapshot(&id)?;
-            Ok(Arc::new(BlobChanges { sync, id, changes: tokio::sync::Mutex::new(changes), last: Mutex::new(None), cancel: crate::transport::CancelToken::new() }))
+            Ok(Arc::new(BlobChanges { sync, id, changes: tokio::sync::Mutex::new(changes), last: Mutex::new(None), cancel: crate::transport::CancelToken::new(), registration: Default::default() }))
         }).await?;
         self.streams.enroll(&changes);
         Ok(changes)

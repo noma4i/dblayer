@@ -31,15 +31,17 @@ impl Sync {
             uploads.check(|name| locked(&inner.operations).contains_key(name)).map_err(SyncError::Params)?;
             let input = file.with_steps(uploads.steps(""));
             let id = uuid::Uuid::new_v4().to_string();
-            let seq = inner.db.prepare_blob(generation, |files| {
+            let seq = inner.db.prepare_blob(generation, |files, pending| {
                 let item = files.prepare("", crate::identity::RowId::new(&id).map_err(|error| SyncError::Params(error.to_string()))?, id.clone(), input.clone(), UploadState::queued())?;
                 let record = OperationRecord { seq: None, action_key: format!("@blob/{name}"), status: OperationStatus::Pending, row_ids: Vec::new(), temp_id: None, input: serde_json::Value::Null, transport_started: false, base_revision: Some(inner.db.revision_seq()?), created_at: inner.now_ms(), dedupe_key: None, rollback: None, upload: None };
-                let result = inner.commit(generation, |_| {
+                let result = inner.commit_deferred(generation, |_| {
                     let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                     envelope.operation_transitions.push(OperationTransition::BeginBlob { record: Box::new(record.clone()), item: Box::new(item.clone()), id: id.clone(), name: name.clone() });
                     Ok(Some(envelope))
                 })?;
-                result.and_then(|result| result.operations.into_iter().next()).ok_or(SyncError::Cancelled)
+                let seq = result.as_ref().and_then(|result| result.result().operations.iter().next().copied()).ok_or(SyncError::Cancelled);
+                *pending = result;
+                seq
             })?;
             inner.start_uploads()?;
             inner.db.report_upload_accepted("", vec![crate::db::AcceptedUpload { seq, position: 0 }]);

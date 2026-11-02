@@ -1055,9 +1055,13 @@ fn apply_transitions(
             }
             OperationTransition::Progress { seq, item_position, state } => {
                 synced.extend(op_keys_of(connection, *seq)?);
+                let starts_blob = if matches!(state.stage, crate::upload::UploadStage::Create | crate::upload::UploadStage::Init) && state.put_url.is_none() && state.upload_id.is_none() {
+                    let previous_stage: Option<String> = connection.query_row("SELECT stage FROM op_item WHERE seq = ?1 AND position = ?2", params![seq, item_position], |row| row.get(0)).optional()?;
+                    previous_stage != crate::operation::enum_text(&state.stage)
+                } else { false };
                 let saved = crate::operation::write_upload(connection, *seq, *item_position, state)?;
                 connection.execute("UPDATE blob_upload SET ready = ?1, failed_at = ?2, signed_id = ?3, total_bytes = ?4, sent_bytes = ?5 WHERE seq = ?6", params![state.transferred, state.failed_at.map(|at| at as i64), state.signed_id, state.total_bytes as i64, state.sent_bytes as i64, seq])?;
-                if matches!(state.stage, crate::upload::UploadStage::Create | crate::upload::UploadStage::Init) && state.put_url.is_none() && state.upload_id.is_none() {
+                if starts_blob {
                     connection.execute("UPDATE blob_upload SET created_at = ?1 WHERE seq = ?2", params![now_ms, seq])?;
                 }
                 if saved == 0 {

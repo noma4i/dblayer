@@ -96,6 +96,7 @@ struct State { entries: BTreeMap<String, Entry>, singleton: Option<Singleton>, c
 
 #[derive(uniffi::Object)]
 pub struct LiveEntities {
+    registration: OnceLock<super::open_streams::Registration>,
     observer: EntityObserver,
     database: Database,
     model: String,
@@ -405,6 +406,7 @@ impl LiveEntities {
 
 impl super::open_streams::Closable for LiveEntities {
     fn close(&self) { self.shutdown(); }
+    fn registration(&self) -> &OnceLock<super::open_streams::Registration> { &self.registration }
 }
 
 impl Drop for LiveEntities {
@@ -423,7 +425,7 @@ pub(super) fn open(database: Database, model: &str, wire: Arc<WireModel>, listen
     let observer = db.observe_entities(model, move |change| { if let Some(source) = seen.get().and_then(Weak::upgrade) { source.changed(change); } })?;
     let source = Arc::new_cyclic(|weak: &Weak<LiveEntities>| {
         let _ = target.set(weak.clone());
-        LiveEntities { observer, database, model: model.into(), wire, listener, state: Mutex::new(State::default()), outbox: OrderedEffects::default(), weak: weak.clone() }
+        LiveEntities { observer, database, model: model.into(), wire, listener, state: Mutex::new(State::default()), outbox: OrderedEffects::default(), weak: weak.clone(), registration: OnceLock::new() }
     });
     let weak = Arc::downgrade(&source);
     let name = model.to_string();

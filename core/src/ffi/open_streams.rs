@@ -1,32 +1,52 @@
-use std::sync::{Arc, Mutex, Weak};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 pub(super) trait Closable: Send + Sync {
     fn close(&self);
+    fn registration(&self) -> &OnceLock<Registration>;
+}
+
+pub(super) struct Registration { streams: Weak<OpenStreams>, id: usize }
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        if let Some(streams) = self.streams.upgrade() {
+            let removed = crate::db::locked(&streams.members).open.remove(&self.id);
+            drop(removed);
+        }
+    }
 }
 
 #[derive(Default)]
 struct Members {
     closed: bool,
-    open: Vec<Weak<dyn Closable>>,
+    open: HashMap<usize, Weak<dyn Closable>>,
 }
 
 #[derive(Default)]
 pub(super) struct OpenStreams {
     members: Mutex<Members>,
+    #[cfg(test)]
+    work: std::sync::atomic::AtomicUsize,
 }
 
 impl OpenStreams {
-    pub(super) fn enroll<M: Closable + 'static>(&self, member: &Arc<M>) {
-        let late = {
+    pub(super) fn enroll<M: Closable + 'static>(self: &Arc<Self>, member: &Arc<M>) {
+        assert!(member.registration().get().is_none());
+        let registration = {
             let mut members = crate::db::locked(&self.members);
             if !members.closed {
-                members.open.retain(|held| held.strong_count() > 0);
-                members.open.push(Arc::downgrade(member) as Weak<dyn Closable>);
+                let id = Arc::as_ptr(member) as usize;
+                members.open.insert(id, Arc::downgrade(member) as Weak<dyn Closable>);
+                Some(Registration { streams: Arc::downgrade(self), id })
+            } else {
+                None
             }
-            members.closed
         };
-        if late {
-            member.close();
+        if let Some(registration) = registration {
+            assert!(member.registration().set(registration).is_ok());
+        } else {
+            member.close()
         }
     }
 
@@ -38,13 +58,18 @@ impl OpenStreams {
             }
             std::mem::take(&mut members.open)
         };
-        for member in open.iter().filter_map(Weak::upgrade) {
+        for member in open.values().filter_map(Weak::upgrade) {
+            #[cfg(test)]
+            self.work.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             member.close();
         }
     }
 
     #[cfg(test)]
     pub(super) fn enrolled(&self) -> usize {
-        crate::db::locked(&self.members).open.iter().filter(|held| held.strong_count() > 0).count()
+        crate::db::locked(&self.members).open.len()
     }
+
+    #[cfg(test)]
+    pub(super) fn work(&self) -> usize { self.work.load(std::sync::atomic::Ordering::SeqCst) }
 }

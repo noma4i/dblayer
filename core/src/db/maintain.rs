@@ -19,6 +19,8 @@ impl Db {
 
     pub fn sweep_files(&self) -> Result<usize, DbError> {
         let _gate = locked(&self.shared.files_gate);
+        let mut committed = None;
+        let result = (|| {
         let orphans = self.shared.read(&[], |reader| {
             let mut held: HashSet<String> = read_outbox(reader)?
                 .iter()
@@ -46,7 +48,9 @@ impl Db {
         })?;
         let mut removed = orphans.len();
         if !orphans.is_empty() {
-            self.remove_references(&orphans)?;
+            let (pending, cleanup) = self.remove_references(&orphans)?;
+            committed = Some(pending);
+            cleanup?;
         }
         let live = self.shared.read(&[], |reader| Ok(all_references(reader.connection())?))?;
         let live_ids: HashSet<&str> = live.iter().map(|reference| reference.id.as_str()).collect();
@@ -65,9 +69,13 @@ impl Db {
             }
         }
         Ok(removed)
+        })();
+        drop(_gate);
+        if let Some(committed) = committed { committed.publish(); }
+        result
     }
 
-    fn remove_references(&self, references: &[FileReference]) -> Result<(), DbError> {
+    fn remove_references(&self, references: &[FileReference]) -> Result<(crate::store::Committed<'_>, Result<(), DbError>), DbError> {
         let generation = self.generation();
         let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
         for reference in references {
@@ -77,9 +85,9 @@ impl Db {
                 field: reference.field.clone(),
             });
         }
-        self.commit_following(generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
+        let (committed, _) = self.commit_following_deferred(generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
         let ids: Vec<String> = references.iter().map(|reference| reference.id.clone()).collect();
-        self.shared.files.discard(&ids).map_err(super::files::io_fault)?;
-        Ok(())
+        let cleanup = self.shared.files.discard(&ids).map_err(super::files::io_fault);
+        Ok((committed, cleanup))
     }
 }

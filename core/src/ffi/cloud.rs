@@ -13,6 +13,7 @@ pub trait CloudStateListener: Send + Sync {
 #[derive(uniffi::Object)]
 pub struct CloudLink {
     pub(super) cloud: Cloud,
+    registration: std::sync::OnceLock<super::open_streams::Registration>,
 }
 
 #[uniffi::export]
@@ -21,7 +22,7 @@ impl Database {
         let _entered = executor()?.enter();
         let cloud = Cloud::attach(&self.db, io, self.clock.clone());
         cloud.start();
-        let link = Arc::new(CloudLink { cloud });
+        let link = Arc::new(CloudLink { cloud, registration: Default::default() });
         self.streams.enroll(&link);
         Ok(link)
     }
@@ -29,6 +30,7 @@ impl Database {
 
 impl super::open_streams::Closable for CloudLink {
     fn close(&self) { self.cloud.stop(); }
+    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
 }
 
 #[uniffi::export]
