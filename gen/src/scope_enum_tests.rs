@@ -72,7 +72,7 @@ fn a_scope_enum_param_names_its_schema_type_and_is_checked_against_the_document(
     for (case, model, operations, error) in [
         ("missing type", MODEL.replace("parameter :list, ChatList", "parameter :list, Ghost"), OPERATIONS.to_string(), "`Ghost`"),
         ("input object", MODEL.replace("parameter :list, ChatList", "parameter :list, ChatFilter"), OPERATIONS.to_string(), "names `ChatFilter`, which is not an enum"),
-        ("variable of another type", MODEL.to_string(), OPERATIONS.replace("query chats($list: ChatList,", "query chats($list: String,").replace("chats(list: $list", "chats(list: $list"), "param `list` is `ChatList` but the variable `$list` of `chats` is `String`"),
+        ("variable of another type", MODEL.to_string(), OPERATIONS.replace("query chats($list: ChatList,", "query chats($list: String,"), "param `list` is `ChatList` but the variable `$list` of `chats` is `String`"),
         ("variable missing", MODEL.to_string(), OPERATIONS.replace("$list: ChatList, $first", "$first").replace("chats(list: $list, first", "chats(first"), "has no variable `$list`"),
         ("nullable param over a required variable is fine only the other way", MODEL.to_string(), OPERATIONS.replace("$list: ChatList, $first", "$list: ChatList!, $first"), ""),
     ] {

@@ -82,6 +82,6 @@ fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
 
 #[test]
 fn a_list_line_without_a_result_is_named_with_its_line() {
-    let errors = parse_all(&["operation :a do\n  query \"A\"\n  response shape: :list\nend\n"]).err().expect("accepted");
+    let errors = parse_all(&["operation :a do\n  query \"A\"\n  response shape: :list\nend\n"]).expect_err("accepted");
     assert!(errors.iter().any(|(_, error)| error.message.contains("`response shape: :list` needs a `returns` block")), "{errors:?}");
 }

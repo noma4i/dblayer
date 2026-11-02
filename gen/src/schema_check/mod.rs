@@ -164,6 +164,23 @@ struct Run<'a> {
     edge: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct Spot<'l> {
+    file: usize,
+    at: Pos,
+    label: &'l str,
+}
+
+struct UnionAt<'r, 'a> {
+    node: &'a ModelDecl,
+    attribute: &'a AttributeDecl,
+    name: &'r str,
+    shared: Option<&'a [AttributeDecl]>,
+    variants: &'a [VariantDecl],
+    file: usize,
+    selects: &'r [&'a Select],
+}
+
 struct Scope<'a> {
     file: usize,
     keys: HashSet<String>,
@@ -512,7 +529,7 @@ impl<'a> Run<'a> {
         let (reached, miss) = self.follow_schema_path(node.file, query.pos, "response from", &name, &root, &path)?;
         if let Some(miss) = miss {
             let at = remote.response.as_ref().and_then(|read| read.from.as_ref()).map_or(query.pos, |found| found.pos);
-            self.report_miss(node.file, at, "response from", &name, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
+            self.report_miss(Spot { file: node.file, at, label: "response from" }, &name, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
             return None;
         }
         let paginates = remote.paginate.is_some();
@@ -540,7 +557,7 @@ impl<'a> Run<'a> {
             return None;
         }
         if let Some(miss) = miss {
-            self.report_miss(node.file, total.pos, "total", operation, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
+            self.report_miss(Spot { file: node.file, at: total.pos, label: "total" }, operation, &path, &[], &path.split('.').collect::<Vec<_>>(), miss);
             return None;
         }
         Some(())
@@ -662,7 +679,7 @@ impl<'a> Run<'a> {
                     for select in &reached.selects {
                         self.check_union_selection(scope.file, attribute, reached.ty.name(), variants, select);
                     }
-                    self.check_union(node, attribute, reached.ty.name(), shared, variants, file, &reached.selects, stack);
+                    self.check_union(&UnionAt { node, attribute, name: reached.ty.name(), shared, variants, file, selects: &reached.selects }, stack);
                 }
                 Body::Fields(children) => {
                     let type_name = match &attribute.ty {
@@ -722,7 +739,8 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn check_union(&mut self, node: &'a ModelDecl, attribute: &'a AttributeDecl, union: &str, shared: Option<&'a [AttributeDecl]>, variants: &'a [VariantDecl], file: usize, selects: &[&'a Select], stack: &mut Vec<(String, String)>) {
+    fn check_union(&mut self, at: &UnionAt<'_, 'a>, stack: &mut Vec<(String, String)>) {
+        let UnionAt { node, attribute, name: union, shared, variants, file, selects } = *at;
         let interface = self.schema.is_interface(union);
         let members: Vec<String> = match self.schema.types.get(union) {
             Some(TypeKind::Union(members)) => members.clone(),
@@ -731,7 +749,7 @@ impl<'a> Run<'a> {
         };
         let declared: Vec<&str> = variants.iter().map(|variant| variant.type_name.as_str()).collect();
         for variant in variants {
-            if !members.iter().any(|member| *member == variant.type_name) {
+            if !members.contains(&variant.type_name) {
                 let message = if interface { format!("variant `{}` is not an implementation of interface `{union}`", variant.type_name) } else { format!("variant `{}` is not a member of union `{union}`", variant.type_name) };
                 self.fail(file, variant.pos, message);
             }
@@ -742,9 +760,9 @@ impl<'a> Run<'a> {
             self.fail(file, pos, message);
         }
         if let Some(shared) = shared {
-            self.check_shared(node, shared, attribute.pos, union, &members, interface, file, selects, stack);
+            self.check_shared(at, shared, &members, interface, stack);
         }
-        for variant in variants.iter().filter(|variant| members.iter().any(|member| *member == variant.type_name)) {
+        for variant in variants.iter().filter(|variant| members.contains(&variant.type_name)) {
             let Some(block) = &variant.fields else { continue };
             let marker = (variant.type_name.clone(), union.to_string());
             if stack.contains(&marker) {
@@ -758,7 +776,9 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn check_shared(&mut self, node: &'a ModelDecl, shared: &'a [AttributeDecl], pos: Pos, union: &str, members: &[String], interface: bool, file: usize, selects: &[&'a Select], stack: &mut Vec<(String, String)>) {
+    fn check_shared(&mut self, at: &UnionAt<'_, 'a>, shared: &'a [AttributeDecl], members: &[String], interface: bool, stack: &mut Vec<(String, String)>) {
+        let UnionAt { node, attribute, name: union, file, selects, .. } = *at;
+        let pos = attribute.pos;
         if !interface {
             self.fail(file, pos, format!("`shared` needs an interface: `{union}` is a union"));
             return;

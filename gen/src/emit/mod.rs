@@ -405,7 +405,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         writeln!(out, "        fun find(id: String) = Query(\"{class}\", this).find(id)\n        fun where(condition: Condition) = Query(\"{class}\", this).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", this, ids)\n        fun entity(id: String) = entityOf(\"{class}\", this, id)").unwrap();
         for relation in &model.relations {
             let method = identifier(&name(&relation.name), false);
-            if let Some(kind) = relation.node { kotlin_node(&mut out, &class, &method, relation, kind); continue; }
+            if let Some(kind) = relation.node { kotlin_node(&mut out, class, &method, relation, kind); continue; }
             let params = relation.by_columns.iter().map(|key| format!("{}: {}", identifier(key, false), model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, false))).collect::<Vec<_>>().join(", ");
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }

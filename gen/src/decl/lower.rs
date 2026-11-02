@@ -394,7 +394,7 @@ fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> Option<Attr
     let is_named = matches!(decl.ty, TypeRef::Named(_) | TypeRef::NamedList(_));
     if let Some(pair) = line.opt(cx, "from") {
         if is_file || site == Site::Ephemeral {
-            cx.fail(pair_pos(pair), format!("`from` does not apply to this attribute"));
+            cx.fail(pair_pos(pair), "`from` does not apply to this attribute".to_string());
         } else if let Some(found) = path(cx, &pair.value, "`from`") {
             decl.from = Some(found);
         }
@@ -478,10 +478,8 @@ fn decl_is_union_block(call: &Call) -> bool {
 }
 
 fn check_site(cx: &mut Cx, decl: &AttributeDecl, site: Site) {
-    if site == Site::Returns {
-        if decl.null || decl.optional || decl.default.is_some() || decl.from.is_some() || decl.local {
-            cx.fail(decl.pos, format!("returns attribute `{}`: every returned attribute is nullable and read by name, so `null`, `optional`, `default`, `from` and `local` do not apply", decl.name));
-        }
+    if site == Site::Returns && (decl.null || decl.optional || decl.default.is_some() || decl.from.is_some() || decl.local) {
+        cx.fail(decl.pos, format!("returns attribute `{}`: every returned attribute is nullable and read by name, so `null`, `optional`, `default`, `from` and `local` do not apply", decl.name));
     }
 }
 
@@ -1500,13 +1498,13 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     let mut seen: Vec<&str> = Vec::new();
     for item in lines {
         let word = item.word.as_str();
-        let allowed = match (kind, word) {
-            (_, "mutation" | "variables" | "wrap" | "response") => true,
-            (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter") => true,
-            (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure") => true,
-            (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates" | "add_to" | "remove_from" | "create_row" | "change_row") => true,
-            _ => false,
-        };
+        let allowed = matches!(
+            (kind, word),
+            (_, "mutation" | "variables" | "wrap" | "response")
+                | (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter")
+                | (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure")
+                | (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates" | "add_to" | "remove_from" | "create_row" | "change_row")
+        );
         if !allowed {
             cx.fail(Pos::of(item), format!("`{word}` does not apply to operation `{name}`"));
             continue;

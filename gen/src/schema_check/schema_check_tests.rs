@@ -60,10 +60,12 @@ fn run(source: &str) -> Result<Vec<String>, Vec<(usize, String)>> {
     check_models_against_schema(&schema, &operations, &[scalars, file]).map_err(|errors| errors.into_iter().map(|error| (error.error.line, error.error.message)).collect())
 }
 
+type SchemaCase = (&'static str, String, Option<(usize, &'static str)>);
+
 #[test]
 fn declarations_are_checked_against_the_schema() {
     let valid = "    attribute :title, :string\n    attribute :note, :string, null: true\n    attribute :count, :int\n    attribute :tags, [:string]\n    attribute :kind, :enum, values: [\"A\", \"B\"]\n    attribute :createdAt, :date\n    attribute :ownerName, :string, null: true, from: \"owner.name\"\n    attribute :meta, MetaBox, null: true do\n      attribute :label, :string\n      attribute :inner, InnerBox, null: true do\n        attribute :x, :int\n      end\n    end\n    attribute :ghost, :string, local: true, null: true\n";
-    let cases: [(&str, String, Option<(usize, &str)>); 19] = [
+    let cases: [SchemaCase; 19] = [
         ("every kind fits", model(valid, REMOTE), None),
         ("missing field", model("    attribute :ghost, :string\n", REMOTE), Some((3, "type `Item` has no field `ghost`"))),
         ("nullable in schema, required in model", model("    attribute :note, :string\n", REMOTE), Some((3, "declare `null: true`"))),
@@ -121,7 +123,7 @@ fn action_with(lines: &str) -> String {
 fn args_are_checked_against_the_input_of_their_mutation() {
     let create = |wrap: &str, input: &str, args: &str| with_lines(&format!("  operation :create do\n    mutation \"CreateItem\"\n    {wrap}\n    variables {input}\n{}  end\n", parameters(args)));
     let wrapped = |input: &str, args: &str| create("wrap \"input\"", input, args);
-    let cases: [(&str, String, Option<(usize, &str)>); 15] = [
+    let cases: [SchemaCase; 15] = [
         ("string for String!", wrapped("title: :title, file: :file", "file: :string"), None),
         ("nullable arg for a nullable input", wrapped("title: :title, note: :note", "note: :string?"), None),
         ("a required arg may fill a nullable input", wrapped("title: :title, note: :note, file: :file", "note: :string, file: :string"), None),
@@ -151,7 +153,7 @@ fn args_are_checked_against_the_input_of_their_mutation() {
 #[test]
 fn an_optimistic_map_covers_every_value_of_its_schema_enum() {
     let kinded = |map: &str| with_lines(&format!("  operation :kinded do\n    mutation \"KindItem\"\n    parameter :kind, Kind\n    variables itemId: :id, kind: :kind\n    optimistic title: {{ from: :kind, map: {{ {map} }} }}\n  end\n"));
-    let cases: [(&str, String, Option<(usize, &str)>); 3] = [
+    let cases: [SchemaCase; 3] = [
         ("every value mapped", kinded("A: \"a\", B: \"b\""), None),
         ("a value left out", kinded("A: \"a\""), Some((6, "the map does not cover B of `Kind`"))),
         ("a key the enum lacks", kinded("A: \"a\", B: \"b\", C: \"c\""), Some((6, "C is not a value of `Kind`"))),

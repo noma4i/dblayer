@@ -88,7 +88,7 @@ pub(super) fn read_kotlin(field: &FieldSpec, at: usize) -> String {
     format!("r.{call}")
 }
 
-pub(super) fn wired<'a>(model: &'a ModelSpec) -> Vec<&'a FieldSpec> {
+pub(super) fn wired(model: &ModelSpec) -> Vec<&FieldSpec> {
     dblayer::ffi::wire::wire_fields(model)
 }
 

@@ -39,7 +39,7 @@ impl<'a> Run<'a> {
         if let Some(root) = self.operations.named.get(&marker.operation).and_then(|operation| operation.root.clone()) {
             for field in marker.fields.iter().chain([&marker.sequence]) {
                 let path = format!("{}.{}", marker.from.item, field.item);
-                if self.follow_operation(node.file, field.pos, "marker from", &marker.operation, &path).is_none() { continue; }
+                if self.follow_operation(Spot { file: node.file, at: field.pos, label: "marker from" }, &marker.operation, &path).is_none() { continue; }
                 if let Some((ty, _)) = self.follow_schema_path(node.file, field.pos, "marker from", &marker.operation, &root, &path) {
                     if ty.is_list() || ty.nullable || !matches!(ty.name(), "Int" | "Int64") {
                         self.fail(node.file, field.pos, format!("marker `{path}` must be a non-null integer/revision, got {}", ty.describe()));
@@ -49,9 +49,9 @@ impl<'a> Run<'a> {
         }
         if let Some(root) = self.operations.named.get(&tail.operation).and_then(|operation| operation.root.clone()) {
             let path = root_path(scope).unwrap_or(&root.key);
-            self.follow_operation(node.file, tail.pos, "tail response from", &tail.operation, path);
+            self.follow_operation(Spot { file: node.file, at: tail.pos, label: "tail response from" }, &tail.operation, path);
             for field in ["pageInfo.hasNextPage", "pageInfo.endCursor"] {
-                self.follow_operation(node.file, tail.pos, "tail response from", &tail.operation, &format!("{path}.{field}"));
+                self.follow_operation(Spot { file: node.file, at: tail.pos, label: "tail response from" }, &tail.operation, &format!("{path}.{field}"));
             }
             if let Some((ty, _)) = self.follow_schema_path(node.file, tail.pos, "tail response from", &tail.operation, &root, path) {
                 if ty.is_list() || self.schema.fields(ty.name()).is_none() { self.fail(node.file, tail.pos, "tail response must be a connection".into()); }

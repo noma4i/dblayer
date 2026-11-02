@@ -16,7 +16,9 @@ impl Dice {
     }
 }
 
-const KINDS: [(&str, fn() -> Value); 10] = [
+type KindCase = (&'static str, fn() -> Value);
+
+const KINDS: [KindCase; 10] = [
     ("string", || json!("text")),
     ("num", || json!(1.5)),
     ("int", || json!(3)),

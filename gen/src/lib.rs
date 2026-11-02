@@ -80,13 +80,13 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let locate = |found: Vec<(usize, ParseError)>| {
         found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect::<Vec<_>>()
     };
-    let parsed = parse_tree(&sources).map_err(&locate)?;
-    let blob_uploads = blob::lower(&parsed.blob_uploads).map_err(&locate)?;
-    let scalars = scalars::build(&parsed.scalars).map_err(&locate)?;
+    let parsed = parse_tree(&sources).map_err(locate)?;
+    let blob_uploads = blob::lower(&parsed.blob_uploads).map_err(locate)?;
+    let scalars = scalars::build(&parsed.scalars).map_err(locate)?;
     let loaded = schema.map(schema_check::Schema::load).transpose().map_err(|message| vec![FileError {
         file: schema.unwrap().display().to_string(), error: ParseError::new(0, 0, message),
     }])?;
-    let models = decl::lower_models(&parsed.models, loaded.as_ref()).map_err(&locate)?;
+    let models = decl::lower_models(&parsed.models, loaded.as_ref()).map_err(locate)?;
     if loaded.is_none() && models.iter().flat_map(|model| &model.scopes).any(|scope| scope.marker.is_some()) {
         return Err(vec![FileError { file: names[0].clone(), error: ParseError::new(1, 1, "marker and tail require --schema and operation documents") }]);
     }
@@ -112,9 +112,9 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
         }
     }
     let failed = |message: String| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }];
-    declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.models, &declared.operations).map_err(&failed)?;
-    operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(&failed)?;
-    emit::enum_decls(&declared.models, &declared.operations, &declared.inputs).map_err(&failed)?;
+    declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.models, &declared.operations).map_err(failed)?;
+    operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(failed)?;
+    emit::enum_decls(&declared.models, &declared.operations, &declared.inputs).map_err(failed)?;
     declared.scalars = scalars;
     declared.notes = checked.map_or_else(Vec::new, |checked| checked.notes);
     Ok(declared)
