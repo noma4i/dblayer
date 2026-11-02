@@ -150,7 +150,10 @@ pub(super) struct LiveHandles {
 impl Drop for LiveHandles {
     fn drop(&mut self) {
         for task in [self.load.take(), self.failure.take(), self.state.take()].into_iter().flatten() { task.abort(); }
-        if let Some(targets) = self.targets.take() { targets.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); }
+        if let Some(targets) = self.targets.take() {
+            let retired = std::mem::take(&mut *targets.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            drop(retired);
+        }
     }
 }
 
@@ -196,6 +199,13 @@ pub struct LiveSubscription {
     pub(super) handles: Mutex<Option<LiveHandles>>,
 }
 
+impl LiveSubscription {
+    fn window_control(&self) -> Option<crate::db::ObserverControl> {
+        let handles = crate::db::locked(&self.handles);
+        handles.as_ref().and_then(|handles| handles.window.as_ref()).map(WindowHandle::control)
+    }
+}
+
 #[uniffi::export]
 impl LiveSubscription {
     pub async fn wait_for_initial_load(&self) -> Result<(), super::DbError> {
@@ -225,9 +235,9 @@ impl LiveSubscription {
         }
     }
     pub fn expand_before(&self, rows: u32) {
-        if let Some(window) = crate::db::locked(&self.handles).as_ref().and_then(|handles| handles.window.as_ref()) { window.expand_before(rows as usize); }
+        if let Some(window) = self.window_control() { window.grow(rows as usize, 0); }
     }
     pub fn expand_after(&self, rows: u32) {
-        if let Some(window) = crate::db::locked(&self.handles).as_ref().and_then(|handles| handles.window.as_ref()) { window.expand_after(rows as usize); }
+        if let Some(window) = self.window_control() { window.grow(0, rows as usize); }
     }
 }

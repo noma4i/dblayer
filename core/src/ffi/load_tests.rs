@@ -126,7 +126,7 @@ pub(super) async fn rig() -> (Arc<Database>, Arc<Counting>) {
     (db, transport)
 }
 
-async fn held_rig() -> (Arc<Database>, Arc<Counting>, Arc<tokio::sync::Semaphore>) {
+pub(super) async fn held_rig()-> (Arc<Database>, Arc<Counting>, Arc<tokio::sync::Semaphore>) {
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let (db, transport, _) = open_rig(None, Some(hold.clone()), None).await;
     (db, transport, hold)

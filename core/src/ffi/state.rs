@@ -12,7 +12,8 @@ impl StateSubscription {
         let task = super::database::executor()?.spawn({
             let calls = calls.clone();
             async move {
-                calls.call(|| deliver(changes.borrow_and_update().clone()));
+                let first = changes.borrow_and_update().clone();
+                calls.call(|| deliver(first));
                 while changes.changed().await.is_ok() {
                     let state = changes.borrow_and_update().clone();
                     calls.call(|| deliver(state));
@@ -27,7 +28,8 @@ impl StateSubscription {
 impl StateSubscription {
     pub fn cancel(&self) {
         self.calls.cancel();
-        if let Some(task) = crate::db::locked(&self.task).take() { task.abort(); }
+        let task = crate::db::locked(&self.task).take();
+        if let Some(task) = task { task.abort(); }
     }
 }
 

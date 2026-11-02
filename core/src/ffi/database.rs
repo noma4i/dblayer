@@ -646,19 +646,25 @@ impl Database {
                                 let mut projection = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                                 (projection.apply(&change, &target_wire), projection.take_watch_delta())
                             };
+                            let mut retired = Vec::new();
                             {
                                 let mut held = held.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                                for id in lost { held.remove(&id); }
-                                for id in gained {
-                                    let (projection, sink, target_wire) = (projection.clone(), sink.clone(), target_wire.clone());
-                                    let known = id.clone();
-                                    if let Ok(observer) = db.observe_row(&target, &id, move |seen| {
-                                        let row = seen.rows.first().cloned();
-                                        let shown = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).target_changed(&known, row, seen.revision, &target_wire);
-                                        if let Some(shown) = shown { sink.rows(shown); }
-                                    }) { held.insert(id, observer); }
-                                }
+                                for id in lost { retired.extend(held.remove(&id)); }
                             }
+                            let opened: Vec<_> = gained.into_iter().filter_map(|id| {
+                                let (projection, sink, target_wire) = (projection.clone(), sink.clone(), target_wire.clone());
+                                let known = id.clone();
+                                db.observe_row(&target, &id, move |seen| {
+                                    let row = seen.rows.first().cloned();
+                                    let shown = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).target_changed(&known, row, seen.revision, &target_wire);
+                                    if let Some(shown) = shown { sink.rows(shown); }
+                                }).ok().map(|observer| (id, observer))
+                            }).collect();
+                            {
+                                let mut held = held.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                                for (id, observer) in opened { retired.extend(held.insert(id, observer)); }
+                            }
+                            drop(retired);
                             match shown {
                                 Some(shown) => sink.rows(shown),
                                 None => sink.reached(change.revision),
@@ -693,16 +699,21 @@ impl Database {
                             return control.resume();
                         }
                     };
-                    follower.state(changes.borrow_and_update().clone());
+                    let seed = changes.borrow_and_update().clone();
+                    follower.state(seed);
                     control.resume();
                     let _ = ready.send((sync, model, relation, params, changes.clone()));
-                    while changes.changed().await.is_ok() { follower.state(changes.borrow_and_update().clone()); }
+                    while changes.changed().await.is_ok() {
+                        let current = changes.borrow_and_update().clone();
+                        follower.state(current);
+                    }
                 }).abort_handle();
                 let load = executor()?.spawn(async move {
                     let _app_load = app_load;
                     let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
                     let result = sync.load(&model, &relation, &params, options).await;
-                    loader.state(receiver.borrow().clone());
+                    let settled = receiver.borrow().clone();
+                    loader.state(settled);
                     loader.load_finished(result.err().map(DbError::from));
                 }).abort_handle();
                 (Some(load), Some(state))
@@ -745,10 +756,13 @@ impl Database {
         let wire = self.wire(&model)?.clone();
         let sink = feed.clone();
         let observer = self.db.observe_query_feed(query, count, tracked.is_some(), move |item| match (&projection, item) {
-            (Some((projection, target)), Feed::Rows(change)) => match projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).apply(&change, target) {
-                Some(targets) => sink.rows(targets),
-                None => sink.reached(change.revision),
-            },
+            (Some((projection, target)), Feed::Rows(change)) => {
+                let shown = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).apply(&change, target);
+                match shown {
+                    Some(targets) => sink.rows(targets),
+                    None => sink.reached(change.revision),
+                }
+            }
             (Some(_), Feed::Count(_)) => {}
             (_, item) => intake(&sink, &wire, item),
         })?;

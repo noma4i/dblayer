@@ -31,6 +31,7 @@ Live results arrive from library threads. Record writes run on background thread
 - Cloned database handles and connectivity sinks keep synchronization alive until they are released. Explicitly awaited operations retain their handle until they finish.
 - A pending native call resumes your coroutine or Swift task from a library lane, never from the thread that produced the result or released the call. Cancelling a call hands the cancel and the free to that lane, so neither runs while the library holds a lock.
 - An entity listener may call `retain`, `release`, `reset`, `shutdown` and `decodeFailed` from inside `changed`. The source queues its deliveries and sends them in order after it releases its state, so a call from the listener never waits on the delivery that made it.
+- A live query listener may call `cancel`, `expandBefore`, `expandAfter` and any operation that changes the online state from inside `changed`. Related and window queries release their target observers, projection and state snapshots before they call the listener.
 - Queues are bounded. Producers wait asynchronously where work cannot be combined. Observation requests combine within each live group. Data is never dropped.
 
 ## Consistency under load
