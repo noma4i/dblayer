@@ -29,6 +29,7 @@ use tokio::task::JoinSet;
 
 use crate::commit::{CommitEnvelope, OperationRecord, OperationTransition, WriteOrigin};
 use crate::operation::OperationStatus;
+use crate::db::dispatch::Effects;
 use crate::db::OutboxOperation;
 use crate::identity::RowId;
 use crate::operation::Operation;
@@ -59,7 +60,7 @@ pub(crate) struct UploadRuns {
     active: HashMap<(i64, i64), ActiveRun>,
     next_run: u64,
     tasks: JoinSet<()>,
-    adopted: HashMap<String, watch::Sender<PutTaskState>>,
+    adopted: HashMap<String, Arc<watch::Sender<PutTaskState>>>,
 }
 
 async fn survives_panic(work: impl std::future::Future<Output = ()>) -> bool {
@@ -208,23 +209,26 @@ impl Inner {
     }
 
     pub(super) fn adopted_put(&self, tag: &str) -> Option<watch::Receiver<PutTaskState>> {
-        locked(&self.uploads).adopted.get(tag).map(watch::Sender::subscribe)
+        locked(&self.uploads).adopted.get(tag).map(|sender| sender.subscribe())
     }
 
     pub(super) fn forget_put(&self, tag: &str) {
-        locked(&self.uploads).adopted.remove(tag);
+        self.with_uploads(|runs, effects| {
+            if let Some(sender) = runs.adopted.remove(tag) { effects.release(sender); }
+        });
+    }
+
+    /// Every transition of the upload map goes through here: wakes, sender drops and the destruction of an active run run after the map is released, in transition order.
+    fn with_uploads<R>(&self, apply: impl FnOnce(&mut UploadRuns, &mut Effects) -> R) -> R {
+        self.upload_effects.under(&self.uploads, apply)
+    }
+
+    pub(super) fn running_uploads(&self, seq: i64, position: Option<i64>) -> Vec<(CancelToken, watch::Receiver<bool>)> {
+        locked(&self.uploads).active.iter().filter(|(key, _)| key.0 == seq && position.is_none_or(|position| key.1 == position)).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect()
     }
 
     fn finish_run(self: &Arc<Self>, seq: i64, position: i64, run: u64) {
-        {
-            let mut runs = locked(&self.uploads);
-            let prefix = format!("{seq}.{position}.");
-            runs.adopted.retain(|tag, _| !tag.starts_with(&prefix));
-            if runs.active.get(&(seq, position)).is_none_or(|active| active.run != run) { return; }
-            let Some(active) = runs.active.remove(&(seq, position)) else { return };
-            runs.active_files -= usize::from(active.file_slot);
-            active.done.send_replace(true);
-        }
+        if !self.with_uploads(|runs, effects| runs.finish(seq, position, run, effects)) { return; }
         let retry = (|| -> Result<(), SyncError> {
             let retried = locked(self.operation_queue()?).entries.get(&seq).is_some_and(|entry| entry.uploading && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation));
             if !retried { return Ok(()); }
@@ -345,17 +349,17 @@ impl Inner {
         };
         let Some(state) = state else { return };
         let mode = state.resume_mode();
-        {
-            let mut runs = locked(&self.uploads);
-            if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) { return; }
-            if let Some(active) = runs.active.remove(&(seq, owner.position)) { active.done.send_replace(true); }
+        let resumed = self.with_uploads(|runs, effects| {
+            if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) { return false; }
+            if let Some(active) = runs.active.remove(&(seq, owner.position)) { effects.push(move || { active.done.send_replace(true); }); }
             if matches!(mode, RunMode::Transfer) {
                 runs.ready.insert((seq, owner.position), ReadyRun { resumed: Some(result) });
             } else {
-                self.launch_run(&mut runs, seq, owner.position, mode, Some(result));
+                self.launch_run(runs, seq, owner.position, mode, Some(result));
             }
-        }
-        self.drain_uploads();
+            true
+        });
+        if resumed { self.drain_uploads(); }
     }
 }
 
@@ -384,13 +388,17 @@ impl Sync {
     }
 
     pub fn put_tasks(&self, tasks: Vec<PutTask>) {
-        let mut runs = locked(&self.inner.uploads);
-        for task in tasks {
-            match runs.adopted.get(&task.tag) {
-                Some(sender) => { sender.send_replace(task.state); }
-                None => { runs.adopted.insert(task.tag, watch::channel(task.state).0); }
+        self.inner.with_uploads(|runs, effects| {
+            for task in tasks {
+                match runs.adopted.get(&task.tag) {
+                    Some(sender) => {
+                        let sender = sender.clone();
+                        effects.push(move || { sender.send_replace(task.state); });
+                    }
+                    None => { runs.adopted.insert(task.tag, Arc::new(watch::channel(task.state).0)); }
+                }
             }
-        }
+        });
     }
 
     pub fn check_uploads(&self) -> Result<(), SyncError> {
@@ -451,7 +459,7 @@ impl Sync {
         let position = if batched {
             Some(self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get::<_, i64>(0))?))?)
         } else { None };
-        let running: Vec<_> = locked(&self.inner.uploads).active.iter().filter(|(key, _)| key.0 == seq && position.is_none_or(|position| key.1 == position)).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect();
+        let running = self.inner.running_uploads(seq, position);
         for (token, _) in &running { token.cancel(); }
         if running.is_empty() {
             for ((_, item), _) in self.inner.operation_uploads(seq)? {
@@ -490,6 +498,18 @@ impl Sync {
 }
 
 impl UploadRuns {
+    fn finish(&mut self, seq: i64, position: i64, run: u64, effects: &mut Effects) -> bool {
+        let prefix = format!("{seq}.{position}.");
+        let tags: Vec<String> = self.adopted.keys().filter(|tag| tag.starts_with(&prefix)).cloned().collect();
+        let forgotten: Vec<_> = tags.iter().filter_map(|tag| self.adopted.remove(tag)).collect();
+        if !forgotten.is_empty() { effects.release(forgotten); }
+        if self.active.get(&(seq, position)).is_none_or(|active| active.run != run) { return false; }
+        let Some(active) = self.active.remove(&(seq, position)) else { return false };
+        self.active_files -= usize::from(active.file_slot);
+        effects.push(move || { active.done.send_replace(true); });
+        true
+    }
+
     fn register(&mut self, seq: i64, position: i64, file_slot: bool) -> (u64, CancelToken) {
         self.next_run += 1;
         let run = self.next_run;
@@ -514,3 +534,5 @@ mod observe_tests;
 mod outcome_tests;
 #[cfg(test)]
 mod file_tests;
+#[cfg(test)]
+mod wake_tests;

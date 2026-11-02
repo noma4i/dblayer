@@ -89,10 +89,9 @@ impl Sync {
         let files: Vec<String> = self.inner.db.shared.read(&[], |reader| Ok(reader.connection().prepare("SELECT i.file_id FROM blob_upload b JOIN op_item i ON i.seq = b.seq WHERE b.id = ?1 AND i.file_id IS NOT NULL")?.query_map([id], |row| row.get(0))?.collect::<Result<_, _>>()?))?;
         let seq = self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT seq FROM blob_upload WHERE id = ?1", [id], |row| row.get::<_, Option<i64>>(0))?))?;
         if let Some(seq) = seq {
-            let mut waiting = Vec::new();
-            for ((operation, _), active) in &locked(&self.inner.uploads).active {
-                if *operation == seq { active.token.cancel(); waiting.push(active.done.subscribe()); }
-            }
+            let running = self.inner.running_uploads(seq, None);
+            for (token, _) in &running { token.cancel(); }
+            let waiting = running.into_iter().map(|(_, done)| done);
             for mut done in waiting { let _ = done.wait_for(|done| *done).await; }
         }
         let generation = self.inner.db.generation();

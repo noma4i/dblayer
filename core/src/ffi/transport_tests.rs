@@ -25,6 +25,30 @@ fn subscription_failures_keep_graphql_extensions() {
     assert!(matches!(failure.error, crate::transport::TransportError::Graphql { extensions: Some(found), .. } if found == extensions));
 }
 
+#[test]
+fn subscription_sink_wakes_its_receiver_with_the_sender_lock_free() {
+    use crate::test_wait::{mutex_free, ProbeWaker};
+    use std::task::{Context, Waker};
+    let (sink, mut receiver) = sink();
+    let sink = Arc::new(sink);
+    let probe = ProbeWaker::new({
+        let sink = sink.clone();
+        move || mutex_free(&sink.sender)
+    });
+    let waker = Waker::from(probe.clone());
+    let mut context = Context::from_waker(&waker);
+    assert!(receiver.poll_recv(&mut context).is_pending());
+    sink.ready();
+    assert_eq!((probe.wakes(), probe.violations()), (1, 0), "an event wakes the receiver with the sender lock free");
+    assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(Some(SubscriptionEvent::Ready))));
+    assert!(receiver.poll_recv(&mut context).is_pending());
+    sink.closed();
+    assert_eq!((probe.wakes(), probe.violations()), (2, 0), "closing wakes the receiver with the sender lock free");
+    assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(None)), "the receiver sees the end once");
+    sink.ready();
+    assert_eq!(probe.wakes(), 2, "an event after the close reaches nobody");
+}
+
 struct FakeSocket;
 
 #[async_trait::async_trait]

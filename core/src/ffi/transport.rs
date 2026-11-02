@@ -101,7 +101,7 @@ impl SubscriptionSink {
     pub fn failed(&self, error: DbError) {
         self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::from_error(transport_error(error))));
     }
-    pub fn closed(&self) { crate::db::locked(&self.sender).take(); }
+    pub fn closed(&self) { self.close(); }
     pub fn opened(&self, token: String) -> Result<(), DbError> { self.lease.opened(token) }
 }
 
@@ -111,10 +111,15 @@ impl SubscriptionSink {
     }
     fn abandon(&self) {
         self.lease.abandon();
-        crate::db::locked(&self.sender).take();
+        self.close();
+    }
+    fn close(&self) {
+        let sender = crate::db::locked(&self.sender).take();
+        drop(sender);
     }
     fn send(&self, event: core::SubscriptionEvent) {
-        if let Some(sender) = crate::db::locked(&self.sender).as_ref() { let _ = sender.send(event); }
+        let sender = crate::db::locked(&self.sender).clone();
+        if let Some(sender) = sender { let _ = sender.send(event); }
     }
 }
 
