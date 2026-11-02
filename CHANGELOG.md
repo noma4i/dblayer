@@ -1,23 +1,22 @@
 # Changelog
 
-## Unreleased
+## 6.14.1 - 2026-11-02
 
 ### Fixed
 - Reading the database generation no longer waits for a write.
 - Cancelling a live query no longer deadlocks with a delivered change.
-- An entity listener can retain, release, reset or close its entities from inside `changed`: refresh cancels and lease releases run after the entity registry lock is free.
-- A live query listener can cancel its subscription or change the online state from inside `changed`, for related and window queries and for relation states: no target map, projection or state snapshot is held during the call.
-- A reset listener can write or reset again from inside its callback: reset listeners run after the file lifecycle lock and the commit announcement turn are released, so the nested call no longer waits on itself.
-- A task woken by a relation state, a shared load or a live query readiness can call the library again from its wake: the load owner and the flight table publish after they release their locks.
-- A task woken by a resume, an app-load hold or a shared live subscription can call the library again from its wake: those states wake their waiters and release their subscriptions after they release their locks.
-- A task woken by an upload finishing, an adopted PUT update, a cancelled upload or a subscription sink can call the library again from its wake: the upload map and the sink release their locks first.
-- A credential store callback can reset the session from inside `get` or `set`, and a slow keychain no longer blocks reset: the library holds no lock while it calls the store, and a result loaded before a reset is rejected. A cloud state watcher or a stamp wake can read the store from its wake.
-- A listener that owns another subscription can be released by the library without a deadlock, and a listener thread that cannot start no longer runs the callback on the caller's thread: the refusal is counted and delivered as a failure.
-- A pending native call resumes on a library lane, so cancelling or releasing it cannot deadlock with the thread that produces its result.
-- The Swift and Kotlin adapters hold no lock while they enter the core or run your code: the online state, a row decoder, a live merge, a replaced row's release and the power state reach their receivers after the adapter lock is free, so a callback can call the library again.
-- Closing the database ends every open stream with a result, stops its cloud, refresh and synchronization work, and leaves a connectivity sink that the platform still holds inert: a waiting `next`, `current` or initial-load wait no longer hangs, and a reopened database has one owner.
-- A busy store no longer stops asynchronous control work: loads, sends, uploads and the cloud pass run their SQLite planning and commits as whole units that hand the Tokio worker over while they wait, and an upload progress save announces its commit after it releases the upload state.
-- Models without row rules keep the schema fingerprint they had in 6.13.1, so an upgrade does not wipe and reload their cache.
+- Entity listeners can retain, release, reset or close entities from inside `changed`.
+- Live query listeners can cancel their subscription or change the online state from inside `changed`.
+- Reset listeners can write or reset again from inside their callback.
+- Tasks woken by loads, relation states, resumes or uploads can call the library again.
+- A credential callback can reset the session, and a slow keychain no longer blocks reset.
+- A listener that owns another subscription can be released without a deadlock.
+- A listener thread that cannot start no longer runs the callback on the caller's thread.
+- A pending native call resumes on a library lane, so cancelling it cannot deadlock.
+- Swift and Kotlin adapters hold no lock while calling the core or your code.
+- Closing the database ends every open stream and stops its cloud and refresh work.
+- A busy store no longer stops asynchronous control work such as cancel and close.
+- Models without row rules keep their 6.13.1 schema fingerprint, so an upgrade keeps their cache.
 
 ## 6.14.0 - 2026-11-02
 
