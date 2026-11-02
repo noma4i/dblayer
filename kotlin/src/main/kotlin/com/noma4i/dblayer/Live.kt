@@ -14,15 +14,27 @@ internal class Latest<Value>(private val merge: ((Value, Value) -> Value)?) {
     private val lock = Any()
     private var pending: Value? = null
     private var has = false
+    private var version = 0
     private val wake = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
 
     val hasPending: Boolean get() = synchronized(lock) { has }
 
     fun put(value: Value) {
-        synchronized(lock) {
+        while (true) {
+            var older: Value? = null
+            var seen = 0
+            var merging = false
+            synchronized(lock) {
+                if (has && merge != null) { merging = true; older = pending; seen = version }
+                else { pending = value; has = true; version++ }
+            }
+            if (!merging) break
             @Suppress("UNCHECKED_CAST")
-            pending = if (has && merge != null) merge.invoke(pending as Value, value) else value
-            has = true
+            val combined = merge!!.invoke(older as Value, value)
+            val landed = synchronized(lock) {
+                (version == seen).also { if (it) { pending = combined; has = true; version++ } }
+            }
+            if (landed) break
         }
         wake.trySend(Unit)
     }
@@ -32,6 +44,7 @@ internal class Latest<Value>(private val merge: ((Value, Value) -> Value)?) {
             synchronized(lock) {
                 if (has) {
                     has = false
+                    version++
                     @Suppress("UNCHECKED_CAST")
                     return (pending as Value).also { pending = null }
                 }

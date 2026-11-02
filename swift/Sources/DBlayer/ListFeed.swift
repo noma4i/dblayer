@@ -55,45 +55,56 @@ final class ListFeed<Model: DBModel>: @unchecked Sendable {
   }
 
   func apply(_ change: LiveChange) -> ListApplied<Model> {
-    lock.withLock {
-      let carried: [(slot: Slot, index: Int)] = change.rows.enumerated().map { position, wire in
-        decoded += 1
-        let index = change.full ? position : Int(change.rowIndexes[position])
-        do {
-          let row = try Model.decode(wire)
-          return (Slot(id: row.id, row: row), index)
-        } catch {
-          undecodable += 1
-          lastDecodeFailure = Self.invalid(error)
-          decodeLog.error("Row of \(Model.modelName, privacy: .public) failed to decode: \(String(describing: error), privacy: .public)")
-          return (Slot(id: wire.id, row: nil), index)
-        }
+    var failed = 0
+    var failure: DbError?
+    let carried: [(slot: Slot, index: Int)] = change.rows.enumerated().map { position, wire in
+      let index = change.full ? position : Int(change.rowIndexes[position])
+      do {
+        let row = try Model.decode(wire)
+        return (Slot(id: row.id, row: row), index)
+      } catch {
+        failed += 1
+        failure = Self.invalid(error)
+        decodeLog.error("Row of \(Model.modelName, privacy: .public) failed to decode: \(String(describing: error), privacy: .public)")
+        return (Slot(id: wire.id, row: nil), index)
       }
+    }
+    var retired: [Any] = []
+    let applied = lock.withLock { () -> ListApplied<Model> in
+      decoded += carried.count
+      undecodable += failed
+      if let failure { lastDecodeFailure = failure }
       if change.full {
+        retired.append(slots)
         slots = carried.map(\.slot)
         missing = slots.reduce(0) { $0 + ($1.row == nil ? 1 : 0) }
+        retired.append(loaded)
         loaded = materialized()
         return ListApplied(rows: current, reordered: true, desynced: false, failure: decodeFailure, undecodable: missingIds)
       }
       let reordered = !change.removed.isEmpty || !change.placed.isEmpty || !change.replaced.isEmpty
       let held = missing == 0
       var edits: [ListEdit<Model>] = []
-      guard applyDelta(change, carried, edits: &edits) else {
+      guard applyDelta(change, carried, edits: &edits, retired: &retired) else {
         desynced += 1
         return ListApplied(rows: current, reordered: reordered, desynced: true, failure: decodeFailure, undecodable: missingIds)
       }
       guard held, missing == 0, edits.count <= slots.count else {
+        retired.append(loaded)
         loaded = materialized()
         return ListApplied(rows: current, reordered: reordered, desynced: false, failure: decodeFailure, undecodable: missingIds)
       }
       copied += loaded.count
-      loaded.replay(edits)
+      retired.append(loaded.replayRetiring(edits))
       return ListApplied(rows: loaded, reordered: reordered, desynced: false, edits: edits)
     }
+    withExtendedLifetime((carried, retired)) {}
+    return applied
   }
 
-  private func applyDelta(_ change: LiveChange, _ carried: [(slot: Slot, index: Int)], edits: inout [ListEdit<Model>]) -> Bool {
+  private func applyDelta(_ change: LiveChange, _ carried: [(slot: Slot, index: Int)], edits: inout [ListEdit<Model>], retired: inout [Any]) -> Bool {
     var undo: [Undo] = []
+    defer { retired.append(undo) }
     let missingBefore = missing
     func fail() -> Bool {
       for step in undo.reversed() {

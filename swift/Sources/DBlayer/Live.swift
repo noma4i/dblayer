@@ -9,8 +9,15 @@ final class ChangeListener: QueryListener, @unchecked Sendable {
 }
 
 final class Latest<Value: Sendable>: @unchecked Sendable {
+  private enum Put {
+    case done
+    case resume(CheckedContinuation<Value?, Never>)
+    case merge(Value, Int)
+  }
+
   private let lock = NSLock()
   private var pending: Value?
+  private var version = 0
   private var waiter: CheckedContinuation<Value?, Never>?
   private var closed = false
   private let merge: (@Sendable (Value, Value) -> Value)?
@@ -20,19 +27,38 @@ final class Latest<Value: Sendable>: @unchecked Sendable {
   var hasPending: Bool { lock.withLock { pending != nil } }
 
   func put(_ value: Value) {
-    let waiting: CheckedContinuation<Value?, Never>? = lock.withLock {
-      guard !closed else { return nil }
-      if let waiter { self.waiter = nil; return waiter }
-      pending = pending.flatMap { older in merge.map { $0(older, value) } } ?? value
-      return nil
+    while true {
+      var retired: Value?
+      let step = lock.withLock { () -> Put in
+        guard !closed else { return .done }
+        if let waiter { self.waiter = nil; return .resume(waiter) }
+        guard let older = pending, merge != nil else { retired = pending; pending = value; version += 1; return .done }
+        return .merge(older, version)
+      }
+      withExtendedLifetime(retired) {}
+      switch step {
+      case .done: return
+      case .resume(let waiting): waiting.resume(returning: value); return
+      case .merge(let older, let seen):
+        let combined = merge?(older, value) ?? value
+        let landed = lock.withLock { () -> Bool in
+          guard !closed else { return true }
+          guard version == seen else { return false }
+          retired = pending
+          pending = combined
+          version += 1
+          return true
+        }
+        withExtendedLifetime(retired) {}
+        if landed { return }
+      }
     }
-    waiting?.resume(returning: value)
   }
 
   func next() async -> Value? {
     await withCheckedContinuation { (continuation: CheckedContinuation<Value?, Never>) in
       let ready: Value?? = lock.withLock {
-        if let value = pending { pending = nil; return .some(value) }
+        if let value = pending { pending = nil; version += 1; return .some(value) }
         if closed { return .some(nil) }
         waiter = continuation
         return nil
@@ -42,13 +68,14 @@ final class Latest<Value: Sendable>: @unchecked Sendable {
   }
 
   func close() {
-    let waiting = lock.withLock { () -> CheckedContinuation<Value?, Never>? in
+    let (waiting, dropped) = lock.withLock { () -> (CheckedContinuation<Value?, Never>?, Value?) in
       closed = true
-      pending = nil
-      defer { waiter = nil }
-      return waiter
+      version += 1
+      defer { waiter = nil; pending = nil }
+      return (waiter, pending)
     }
     waiting?.resume(returning: nil)
+    withExtendedLifetime(dropped) {}
   }
 }
 
@@ -122,7 +149,14 @@ private final class StreamReaders<Value: Sendable>: @unchecked Sendable {
 
   init(_ first: LiveStream<Value>) { self.first = first; attachment = first.attachment }
   func take() -> LiveStream<Value>? { lock.withLock { defer { first = nil }; return first } }
-  func cancel() { lock.withLock { first = nil; return attachment }?.cancel() }
+  func cancel() {
+    let (held, live) = lock.withLock { () -> (LiveStream<Value>?, Attachment?) in
+      defer { first = nil }
+      return (first, attachment)
+    }
+    live?.cancel()
+    withExtendedLifetime(held) {}
+  }
 }
 
 public struct LiveSource<Value: Sendable>: Sendable {

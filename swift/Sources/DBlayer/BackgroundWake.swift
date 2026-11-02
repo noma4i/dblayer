@@ -20,22 +20,24 @@ final class BackgroundWake: @unchecked Sendable {
   }
 
   func attach(uploads: UrlSessionTransport?, database: Database) {
-    let drained = lock.withLock { () -> [(identifier: String, completion: @Sendable () -> Void)] in
+    let (drained, previous) = lock.withLock { () -> ([(identifier: String, completion: @Sendable () -> Void)], (UrlSessionTransport?, Database?)) in
+      let previous = (self.uploads, self.database)
       self.uploads = uploads
       self.database = database
       attached = true
       defer { waiting = [] }
-      return waiting
+      return (waiting, previous)
     }
+    withExtendedLifetime(previous) {}
     for wake in drained { run(identifier: wake.identifier, completion: wake.completion, uploads: uploads, database: database) }
   }
 
   func detach() {
-    lock.withLock {
-      uploads = nil
-      database = nil
-      attached = false
+    let released = lock.withLock { () -> (UrlSessionTransport?, Database?) in
+      defer { uploads = nil; database = nil; attached = false }
+      return (uploads, database)
     }
+    withExtendedLifetime(released) {}
   }
 
   private func run(identifier: String, completion: @escaping @Sendable () -> Void, uploads: UrlSessionTransport?, database: Database?) {

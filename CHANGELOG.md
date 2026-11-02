@@ -13,6 +13,7 @@
 - A credential store callback can reset the session from inside `get` or `set`, and a slow keychain no longer blocks reset: the library holds no lock while it calls the store, and a result loaded before a reset is rejected. A cloud state watcher or a stamp wake can read the store from its wake.
 - A listener that owns another subscription can be released by the library without a deadlock, and a listener thread that cannot start no longer runs the callback on the caller's thread: the refusal is counted and delivered as a failure.
 - A pending native call resumes on a library lane, so cancelling or releasing it cannot deadlock with the thread that produces its result.
+- The Swift and Kotlin adapters hold no lock while they enter the core or run your code: the online state, a row decoder, a live merge, a replaced row's release and the power state reach their receivers after the adapter lock is free, so a callback can call the library again.
 - Models without row rules keep the schema fingerprint they had in 6.13.1, so an upgrade does not wipe and reload their cache.
 
 ## 6.14.0 - 2026-11-02

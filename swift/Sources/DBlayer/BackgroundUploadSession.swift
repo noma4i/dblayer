@@ -20,7 +20,7 @@ final class BackgroundUploadSession: NSObject, UploadTaskSource, URLSessionTaskD
     return configuration
   }
 
-  func attach(_ events: UploadTaskEvents) { lock.withLock { self.events = events } }
+  func attach(_ events: UploadTaskEvents) { _ = lock.withLock { () -> UploadTaskEvents? in defer { self.events = events }; return self.events } }
 
   func liveTags() async -> [String] {
     await session.allTasks.compactMap { $0.state == .running || $0.state == .suspended ? $0.taskDescription : nil }

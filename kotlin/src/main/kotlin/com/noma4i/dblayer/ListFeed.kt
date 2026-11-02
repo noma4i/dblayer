@@ -50,16 +50,23 @@ internal class ListFeed<Model : DBModel>(private val decoder: ModelDecoder<Model
     private fun materialized(): List<Model> = if (missing == 0) slots.map { it.row!! }.also { copied.addAndGet(it.size) } else emptyList()
 
     @OptIn(ExperimentalSerializationApi::class)
-    @Synchronized
     fun apply(change: LiveChange): ListState<Model> {
+        var failure: DbException.Invalid? = null
         val carried = change.rows.mapIndexed { position, wire ->
             decoded.incrementAndGet()
             val index = if (change.full) position else change.rowIndexes[position].toInt()
             val row = runCatching { decoder.read(wire) }
-                .onFailure { undecodable.incrementAndGet(); lastDecodeFailure = it as? DbException.Invalid ?: DbException.Invalid(it.toString()); decodeLog.severe("Row of ${decoder.modelName} failed to decode: $it") }
+                .onFailure { undecodable.incrementAndGet(); failure = it as? DbException.Invalid ?: DbException.Invalid(it.toString()); decodeLog.severe("Row of ${decoder.modelName} failed to decode: $it") }
                 .getOrNull()
             Slot(wire.id, row) to index
         }
+        return synchronized(this) {
+            failure?.let { lastDecodeFailure = it }
+            applyDecoded(change, carried)
+        }
+    }
+
+    private fun applyDecoded(change: LiveChange, carried: List<Pair<Slot<Model>, Int>>): ListState<Model> {
         if (change.full) {
             slots.clear()
             slots.addAll(carried.map { it.first })

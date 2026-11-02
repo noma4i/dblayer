@@ -21,10 +21,11 @@ internal class OkHttpEncryptedSocket(private val origin: String, private val cli
         lateinit var socket: WebSocket
         private var ended = false
 
-        @Synchronized
         fun finish(event: EncryptedSocketEvent.Closed? = null) {
-            if (ended) return
-            ended = true
+            synchronized(this) {
+                if (ended) return
+                ended = true
+            }
             event?.let { events.trySend(it) }
             events.close()
         }

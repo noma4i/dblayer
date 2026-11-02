@@ -65,12 +65,18 @@ public enum ListEdit<Model: Sendable>: Sendable {
 
 extension Array {
   public mutating func replay(_ edits: [ListEdit<Element>]) where Element: Sendable {
+    _ = replayRetiring(edits)
+  }
+
+  mutating func replayRetiring(_ edits: [ListEdit<Element>]) -> [Element] where Element: Sendable {
+    var retired: [Element] = []
     for edit in edits {
       switch edit {
-      case .rewrite(let index, let row): self[index] = row
+      case .rewrite(let index, let row): retired.append(self[index]); self[index] = row
       case .insert(let index, let row): insert(row, at: index)
-      case .remove(let index, _): remove(at: index)
+      case .remove(let index, _): retired.append(remove(at: index))
       }
     }
+    return retired
   }
 }

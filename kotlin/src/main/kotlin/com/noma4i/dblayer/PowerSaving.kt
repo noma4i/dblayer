@@ -21,14 +21,15 @@ internal object PowerSaving {
     fun lowRam(context: Context): Boolean =
         (context.applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isLowRamDevice
 
-    @Synchronized
-    fun start(context: Context, sink: OnlineSink) {
+    fun start(context: Context, sink: OnlineSinkInterface) {
         val app = context.applicationContext
-        stop()
-        val made = receiver({ saving(app) }, sink::setPowerSaving)
-        app.registerReceiver(made, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
-        receiver = made
-        registeredOn = app
+        synchronized(this) {
+            stop()
+            val made = receiver({ saving(app) }, sink::setPowerSaving)
+            app.registerReceiver(made, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
+            receiver = made
+            registeredOn = app
+        }
         sink.setPowerSaving(saving(app))
     }
 

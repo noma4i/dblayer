@@ -86,7 +86,7 @@ final class EntityReaders<Model: DBModel>: @unchecked Sendable {
   private var next = 0
   func add(_ latest: Latest<Model?>) -> Int { lock.withLock { next += 1; readers[next] = Reader(latest: latest); return next } }
   func bind(_ key: Int, _ attachment: Attachment) { lock.withLock { readers[key]?.attachment = attachment } }
-  func remove(_ key: Int) { lock.withLock { readers[key] = nil } }
+  func remove(_ key: Int) { _ = lock.withLock { readers.removeValue(forKey: key) } }
   func put(_ value: Model?) { lock.withLock { readers.values.map(\.latest) }.forEach { $0.put(value) } }
   func closeAll() {
     let current = lock.withLock { () -> [Reader] in defer { readers = [:] }; return Array(readers.values) }
