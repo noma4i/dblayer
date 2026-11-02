@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use tokio::sync::{watch, Notify};
 
+use crate::db::dispatch::OrderedEffects;
 use crate::db::{locked, Db, DbError};
 use crate::pacing::{Backoff, Clock};
 use crate::transport::Connectivity;
@@ -24,8 +25,9 @@ struct Inner {
     clock: Arc<dyn Clock>,
     online: Arc<Connectivity>,
     wake: Notify,
-    state: watch::Sender<CloudState>,
+    state: Arc<watch::Sender<CloudState>>,
     phase: Mutex<Phase>,
+    effects: OrderedEffects,
     pass: tokio::sync::Mutex<()>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -53,8 +55,8 @@ impl Cloud {
 
     pub fn attach(db: &Db, io: Arc<dyn CloudIo>, clock: Arc<dyn Clock>) -> Cloud {
         let online = db.connectivity();
-        let state = watch::channel(CloudState::Idle).0;
-        Cloud { inner: Arc::new(Inner { db: db.clone(), io, clock, online, wake: Notify::new(), state, phase: Mutex::new(Phase::new()), pass: tokio::sync::Mutex::new(()), task: Mutex::new(None) }) }
+        let state = Arc::new(watch::channel(CloudState::Idle).0);
+        Cloud { inner: Arc::new(Inner { db: db.clone(), io, clock, online, wake: Notify::new(), state, phase: Mutex::new(Phase::new()), effects: OrderedEffects::default(), pass: tokio::sync::Mutex::new(()), task: Mutex::new(None) }) }
     }
 
     pub fn state(&self) -> CloudState {
@@ -105,7 +107,8 @@ impl Cloud {
     }
 
     pub fn stop(&self) {
-        if let Some(task) = locked(&self.inner.task).take() {
+        let task = locked(&self.inner.task).take();
+        if let Some(task) = task {
             task.abort();
         }
     }
@@ -152,8 +155,11 @@ impl Inner {
     }
 
     fn publish(&self, event: PhaseEvent) {
-        let mut phase = locked(&self.phase);
-        self.state.send_replace(phase.handle(&event));
+        let state = self.state.clone();
+        self.effects.under(&self.phase, |phase, effects| {
+            let next = phase.handle(&event);
+            effects.push(move || { state.send_replace(next); });
+        });
     }
 
     async fn pass(&self, pull: bool, attempt: Option<u32>) -> Result<(), Failure> {
@@ -209,3 +215,6 @@ impl Inner {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod wake_tests;

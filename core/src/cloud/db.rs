@@ -64,24 +64,26 @@ impl Db {
     }
 
     pub fn cloud_stamp_rows(&self, generation: Generation, rows: &[(String, String)], source: MergeSource) -> Result<(), DbError> {
-        let inner = self.shared.store.lock();
-        inner.ensure_generation(generation)?;
-        let now_ms = inner.now_ms();
-        let transaction = inner.connection.unchecked_transaction()?;
-        let replica = journal::replica(&transaction)?;
-        let reader = crate::store::Reader::new(&transaction, &inner.models);
-        for (model, id) in rows {
-            let Some(row) = reader.point(model, id)? else { continue };
-            let spec = self.shared.spec(model)?;
-            for name in &spec.cloud {
-                let stamp = match source {
-                    MergeSource::UseLocal => journal::next_stamp(&transaction, now_ms)?,
-                    MergeSource::UseCloud => Hlc::new(0, 0, &replica),
-                };
-                record_stamped(&transaction, model, id, name, &stamp, &row.get(name).cloned().unwrap_or(Value::Null))?;
+        {
+            let inner = self.shared.store.lock();
+            inner.ensure_generation(generation)?;
+            let now_ms = inner.now_ms();
+            let transaction = inner.connection.unchecked_transaction()?;
+            let replica = journal::replica(&transaction)?;
+            let reader = crate::store::Reader::new(&transaction, &inner.models);
+            for (model, id) in rows {
+                let Some(row) = reader.point(model, id)? else { continue };
+                let spec = self.shared.spec(model)?;
+                for name in &spec.cloud {
+                    let stamp = match source {
+                        MergeSource::UseLocal => journal::next_stamp(&transaction, now_ms)?,
+                        MergeSource::UseCloud => Hlc::new(0, 0, &replica),
+                    };
+                    record_stamped(&transaction, model, id, name, &stamp, &row.get(name).cloned().unwrap_or(Value::Null))?;
+                }
             }
+            transaction.commit()?;
         }
-        transaction.commit()?;
         self.shared.cloud_changes.send_modify(|version| *version += 1);
         Ok(())
     }

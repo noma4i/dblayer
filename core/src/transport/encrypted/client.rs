@@ -1,4 +1,5 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::thread::{self, ThreadId};
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -78,9 +79,31 @@ pub struct EncryptedClient {
     db: Db,
     pub(super) clock: Arc<dyn Clock>,
     pub(crate) online: Arc<crate::transport::Connectivity>,
-    credential: Mutex<Option<String>>,
+    credential: CredentialCell,
     mutations: Gate<()>,
     progress: Arc<RetryCalls>,
+}
+
+#[derive(Default)]
+struct CredentialState {
+    cached: Option<String>,
+    generation: u64,
+    loading: Option<ThreadId>,
+}
+
+#[derive(Default)]
+struct CredentialCell {
+    state: Mutex<CredentialState>,
+    settled: Condvar,
+}
+
+struct Loading<'a>(&'a CredentialCell);
+
+impl Drop for Loading<'_> {
+    fn drop(&mut self) {
+        crate::db::locked(&self.0.state).loading = None;
+        self.0.settled.notify_all();
+    }
 }
 
 pub(super) fn digest_of(credential: &str) -> String {
@@ -159,7 +182,7 @@ impl EncryptedClient {
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
         let online = db.connectivity();
-        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Mutex::new(None), mutations: Gate::new(()), progress: Arc::default() })
+        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: CredentialCell::default(), mutations: Gate::new(()), progress: Arc::default() })
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -243,7 +266,9 @@ impl EncryptedClient {
 
     pub fn reset(&self) -> Result<(), TransportError> {
         self.credentials.clear()?;
-        *crate::db::locked(&self.credential) = None;
+        let mut state = crate::db::locked(&self.credential.state);
+        state.cached = None;
+        state.generation += 1;
         self.with_connection(state::clear)
     }
 
@@ -340,23 +365,54 @@ impl EncryptedClient {
     }
 
     pub(super) fn credential(&self) -> Result<String, TransportError> {
-        let mut cached = crate::db::locked(&self.credential);
-        let stored = match cached.as_ref() {
-            Some(credential) => Some(credential.clone()),
-            None => self.credentials.get()?,
+        let cell = &self.credential;
+        let (cached, generation, _loading) = {
+            let mut state = crate::db::locked(&cell.state);
+            loop {
+                if let Some(credential) = &state.cached { break (Some(credential.clone()), state.generation, None); }
+                match state.loading {
+                    None => {
+                        state.loading = Some(thread::current().id());
+                        break (None, state.generation, Some(Loading(cell)));
+                    }
+                    Some(owner) if owner == thread::current().id() => return Err(TransportError::Network("the credential callback re-entered the credential load".into())),
+                    Some(_) => state = cell.settled.wait(state).unwrap_or_else(PoisonError::into_inner),
+                }
+            }
         };
-        let session = self.with_connection(state::session)?;
-        let credential = match stored {
-            Some(credential) if session.as_ref().is_some_and(|session| session.credential_digest == digest_of(&credential)) => credential,
-            Some(_) => return Err(TransportError::Session { code: SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }),
+        match cached {
+            Some(credential) => self.verified(credential),
+            None => self.load_credential(generation),
+        }
+    }
+
+    fn verified(&self, credential: String) -> Result<String, TransportError> {
+        match self.with_connection(state::session)? {
+            Some(session) if session.credential_digest == digest_of(&credential) => Ok(credential),
+            _ => Err(TransportError::Session { code: SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }),
+        }
+    }
+
+    fn load_credential(&self, generation: u64) -> Result<String, TransportError> {
+        let (credential, minted) = match self.credentials.get()? {
+            Some(stored) => (self.verified(stored), false),
             None => {
                 let credential = random_token();
                 self.credentials.set(&credential)?;
-                self.with_connection(|connection| state::start(connection, &digest_of(&credential)))?;
-                credential
+                (Ok(credential), true)
             }
         };
-        *cached = Some(credential.clone());
+        let mut state = crate::db::locked(&self.credential.state);
+        if state.generation != generation {
+            drop(state);
+            if minted { self.credentials.clear()?; }
+            return Err(TransportError::Network("the session was reset while its credential was loading".into()));
+        }
+        let credential = credential?;
+        if minted {
+            self.with_connection(|connection| state::start(connection, &digest_of(&credential)))?;
+        }
+        state.cached = Some(credential.clone());
         Ok(credential)
     }
 

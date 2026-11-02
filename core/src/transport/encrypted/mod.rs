@@ -45,6 +45,8 @@ pub trait CredentialSlot: Send + Sync {
 #[cfg(test)]
 mod client_tests;
 #[cfg(test)]
+mod credential_reenter_tests;
+#[cfg(test)]
 mod bootstrap_tests;
 #[cfg(test)]
 mod graphql_tests;
