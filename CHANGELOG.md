@@ -1,9 +1,12 @@
 # Changelog
 
-## Unreleased
+## 6.15.0 - 2026-11-03
 
 ### Added
 - Reset and settle testing databases without reopening them.
+
+### Fixed
+- Tasks woken by a landed load response run after the landing lock is released.
 
 ## 6.14.1 - 2026-11-02
 
