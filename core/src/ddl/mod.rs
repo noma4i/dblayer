@@ -673,6 +673,7 @@ struct RelationFingerprint<'a> {
     is_global: bool,
     sort: &'a Sort,
     membership: &'a BTreeMap<String, Membership>,
+    row_rules: &'a [crate::schema::RowRule],
     joins_node: bool,
 }
 
@@ -697,7 +698,7 @@ pub fn fingerprint(model: &ModelSpec) -> String {
             by_columns.sort_unstable();
             let mut text_params: Vec<&str> = relation.text_params.iter().map(String::as_str).collect();
             text_params.sort_unstable();
-            RelationFingerprint { name: &relation.name, by_columns, text_params, is_global: relation.is_global, sort: &relation.sort, membership: &relation.membership, joins_node: relation.joins_node }
+            RelationFingerprint { name: &relation.name, by_columns, text_params, is_global: relation.is_global, sort: &relation.sort, membership: &relation.membership, row_rules: &relation.row_rules, joins_node: relation.joins_node }
         })
         .collect();
     relations.sort_by(|left, right| left.name.cmp(right.name));

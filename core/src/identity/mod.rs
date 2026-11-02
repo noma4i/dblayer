@@ -164,7 +164,6 @@ impl ListKey {
         &self.0
     }
 
-    #[cfg(test)]
     pub fn decompose(&self) -> Option<Vec<String>> {
         let mut segments = Vec::new();
         let mut rest = self.0.as_str();

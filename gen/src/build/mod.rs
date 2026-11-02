@@ -214,6 +214,7 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
         relation.sort = Sort::Fields(order.fields.iter().map(|(column, direction, _)| SortField { column: column.clone(), direction: *direction }).collect());
     }
     relation.node = scope.node;
+    relation.row_rules = scope.row_rules.iter().map(|(rule, _)| rule.clone()).collect();
     relation.membership = scope.membership.iter().map(|(parameter, rule, _)| (parameter.clone(), rule.clone())).collect();
     if scope.node == Some(NodeRead::One) {
         relation.text_params.push(NODE_PARAM.to_string());

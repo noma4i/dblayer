@@ -569,6 +569,10 @@ Every parameter needs `where` or `membership`. Hidden server parameters still pr
 Use `membership list: { contains: :lists }` when a row belongs to several lists.
 Use `membership list: { equals: :status }` for scalar membership.
 Rules combine with AND. The parameter type must match the scalar field or array element, including the enum name.
+Use `matches` when the scope is a filter on row fields, such as a media list. `matches mediaKind: { in: ["IMAGE", "VIDEO"] }` admits a row whose field is in the set, `matches kind: { equals: "GIFT" }` admits a row whose field equals the literal, and `matches sequenceNumber: { greater_than: :afterSequence }` admits a row whose `:int` field is above the scope parameter. A row with a missing or null field does not match.
+Each field takes one test, literals are strings, numbers or booleans of the field type, and `greater_than` needs an `:int` attribute and an `:int` parameter that no other line uses. A loaded window of the scope takes the row when the row passes every `matches` test for that window's parameters, so one row can join the window `afterSequence: 10` and not the window `afterSequence: 20`.
+`matches` rules describe constant `variables`. A scope with constant `variables` and no `matches` or `membership` rule stays out of automatic insertion.
+A member that stops matching after a row change leaves the window, like a member that loses its list.
 Membership rules require `query`. Local scopes read their `where` columns.
 When a nullable `where` column has a default, an explicit null selects its own window.
 Missing membership fields after merging the stored row fail application. An empty array removes previous membership.
@@ -582,6 +586,28 @@ scope :list, insert_on: [:event, :response, :node] do
   membership list: { contains: :lists }
   query "Chats"
 end
+```
+
+```ruby
+scope :audio_since, insert_on: [:event, :response, :node] do
+  parameter :chatId, :id
+  parameter :afterSequence, :int
+  where chatId: :chatId
+  matches mediaKind: { equals: "AUDIO" }, sequenceNumber: { greater_than: :afterSequence }
+  order sequenceNumber: :asc
+  query "ChatMedia"
+  variables mediaKinds: ["AUDIO"], includeGifts: false
+  response from: "node.messages"
+  paginate size: 50, direction: :forward
+end
+```
+
+```swift
+let audio = try Message.audioSince(chatId, afterSequence: 120)
+```
+
+```kotlin
+val audio = Message.audioSince(chatId, afterSequence = 120)
 ```
 
 | Line | Meaning | Default |
@@ -600,6 +626,7 @@ end
 | `scope :chat_members, members_complete: true do` | Automatic page chain, without `max_pages`. `complete` only after the final `hasNextPage == false`. Initial window `tail: 50`, maximum 200 rows. Full membership is in SQLite, the window has no Ranked of all keys. Multiple readers share the request, the last cancels it, the next continues the cursor. Error with partial rows: Loaded + error, complete=false | ordinary paged loading |
 | `refresh_on_foreground: true` (on the `scope` line, needs `query`) | a window that has a reader reloads on every foreground event, fresh or not | reloads only when stale |
 | `stable_order: true` (on the `scope` line) | the list keeps the order the rows were shown in, see [stable order](#scopes) | sorted by the `order` values on every read |
+| `matches mediaKind: { in: ["IMAGE", "VIDEO"] }`, `matches kind: { equals: "GIFT" }`, `matches sequenceNumber: { greater_than: :afterSequence }` | row fields the scope admits for `insert_on`: a literal set, a literal, or a row field above a scope parameter, combined with `where` and `membership` by AND | every row of the `where` columns |
 | `variables statusFilter: :status, includeRewards: false` | name the GraphQL variables: a symbol takes the value of a scope parameter, any other value is sent as written | every parameter under its own name |
 | `edge do attribute :impressionUuid, :string, null: true end` | values of the connection edge that carried the row, stored for this scope, see [edge values](#edge-values) | none |
 | `subscribe "Subscription", apply: { ... }` | keep the scope current with a subscription. Write the line again for each subscription. `debounce: 300.milliseconds` merges bursts | none |

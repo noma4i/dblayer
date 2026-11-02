@@ -282,3 +282,20 @@ fn preload_lists_the_values_of_every_parameter_of_a_remote_scope() {
         ("source with another key", &derived("    preload channel: { of: \"Sample.list\" }\n"), Some("takes a list of values or `{ from:")),
     ]);
 }
+
+#[test]
+fn matches_checks_fields_literals_and_the_threshold_parameter() {
+    let remote = |rule: &str| scope(", insert_on: [:event, :response]", &format!("{BY_OWNER}    parameter :after, :int\n    {rule}\n    query \"S\"\n"));
+    run(&[
+        ("literal set and threshold", &remote("matches name: { in: [\"a\", \"b\"] }, count: { greater_than: :after }"), None),
+        ("literal equality", &remote("matches name: { equals: \"a\" }, count: { greater_than: :after }"), None),
+        ("unknown field", &remote("matches ghost: { equals: \"a\" }"), Some("is not an attribute")),
+        ("literal of another type", &remote("matches name: { equals: 1 }"), Some("must match the type")),
+        ("threshold on a string parameter", &remote("matches count: { greater_than: :ownerId }"), Some("needs an `:int` parameter")),
+        ("threshold on a string field", &remote("matches name: { greater_than: :after }"), Some("needs an `:int` parameter")),
+        ("two tests for one field", &remote("matches name: { in: [\"a\"], equals: \"b\" }"), Some("exactly one")),
+        ("empty set", &remote("matches name: { in: [] }"), Some("non-empty array")),
+        ("field given twice", &remote("matches name: { equals: \"a\" }, name: { equals: \"b\" }"), Some("given twice")),
+        ("local scope", &scope("", &format!("{BY_OWNER}    matches name: {{ equals: \"a\" }}\n")), Some("`matches` needs a scope with `query`")),
+    ]);
+}

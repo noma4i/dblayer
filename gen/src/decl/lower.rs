@@ -793,7 +793,7 @@ fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = ScopeDecl {
-        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, members_complete, parameters: Vec::new(), where_: None, membership: Vec::new(), order: None, query: None, variables: None,
+        pos: line.pos, name, node, insert_on: insert, stable_order: stable, refresh_on_foreground: foreground, members_complete, parameters: Vec::new(), where_: None, membership: Vec::new(), row_rules: Vec::new(), order: None, query: None, variables: None,
         response: None, paginate: None, freshness: None, preload: None, marker: None, tail: None, total: None, edges: Vec::new(), subscriptions: Vec::new(), has_block: true,
     };
     let remote = lines.iter().any(|candidate| candidate.word == "query");
@@ -835,6 +835,38 @@ fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
                 let Some(field) = symbol(cx, &rules[0].value, "a membership field") else { continue };
                 let rule = if rules[0].key == "contains" { dblayer::schema::Membership::Contains(field) } else { dblayer::schema::Membership::Equals(field) };
                 decl.membership.push((pair.key.clone(), rule, pair_pos(pair)));
+            }
+        }
+        "matches" => {
+            no_block(cx, call);
+            line.no_args(cx);
+            line.used.iter_mut().for_each(|used| *used = true);
+            if call.options.is_empty() { cx.fail(line.pos, "`matches` needs row rules like `matches kind: { equals: \"GIFT\" }`"); }
+            for pair in &call.options {
+                let Some(rules) = hash_pairs(cx, &pair.value, "a row rule") else { continue };
+                if rules.len() != 1 || !matches!(rules[0].key.as_str(), "in" | "equals" | "greater_than") {
+                    cx.fail(pair_pos(pair), "`matches` needs exactly one `in`, `equals` or `greater_than` test per field");
+                    continue;
+                }
+                let value = &rules[0].value;
+                let test = match (rules[0].key.as_str(), &value.item) {
+                    ("greater_than", _) => symbol(cx, value, "a `greater_than` parameter").map(|parameter| dblayer::schema::RowTest::GreaterThan { parameter }),
+                    ("in", Value::Array(items)) if !items.is_empty() && items.iter().all(|item| matches!(item.item, Value::Str(_) | Value::Int(_) | Value::Bool(_))) => {
+                        Some(dblayer::schema::RowTest::In { values: items.iter().map(|item| json_of(&item.item)).collect() })
+                    }
+                    ("equals", Value::Str(_) | Value::Int(_) | Value::Bool(_)) => Some(dblayer::schema::RowTest::Equals { value: json_of(&value.item) }),
+                    ("in", _) => {
+                        cx.fail(at(value), "`in` needs a non-empty array of strings, numbers or booleans");
+                        None
+                    }
+                    _ => {
+                        cx.fail(at(value), "`equals` needs a string, a number or a boolean");
+                        None
+                    }
+                };
+                if let Some(test) = test {
+                    decl.row_rules.push((dblayer::schema::RowRule { field: pair.key.clone(), test }, pair_pos(pair)));
+                }
             }
         }
         "where" => {

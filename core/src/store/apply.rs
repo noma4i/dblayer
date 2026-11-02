@@ -473,12 +473,16 @@ fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelK
     let MembershipLog { moves, heads } = log;
     use crate::schema::{Membership, RemoteShape, PageDirection};
     let row = crate::identity::RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
-    for relation in info.spec.relations.iter().filter(|relation| (!relation.membership.is_empty() || envelope.node_reread) && (if envelope.node_reread { relation.joins_node } else { relation.joins_events && matches!(envelope.origin, WriteOrigin::Event | WriteOrigin::Response) })) {
+    for relation in info.spec.relations.iter().filter(|relation| (!relation.membership.is_empty() || relation.has_threshold() || envelope.node_reread) && relation.constants_described() && (if envelope.node_reread { relation.joins_node } else { relation.joins_events && matches!(envelope.origin, WriteOrigin::Event | WriteOrigin::Response) })) {
         for rule in relation.membership.values() {
             let field = match rule { Membership::Contains(field) | Membership::Equals(field) => field };
             if !new.contains_key(field) { return Err(StoreError::Constraint(format!("missing membership field {field}"))); }
         }
-        let keys = |values: &Map<String, Value>| relation.row_params(values).into_iter().map(|params| info.spec.selection_key(&relation.name, &params).map_err(|error| StoreError::Constraint(error.to_string()))).collect::<Result<BTreeSet<_>, _>>();
+        let keys = |values: &Map<String, Value>| if relation.has_threshold() {
+            loaded_threshold_scopes(connection, info, relation, values)
+        } else {
+            relation.row_params(values).into_iter().map(|params| info.spec.selection_key(&relation.name, &params).map_err(|error| StoreError::Constraint(error.to_string()))).collect::<Result<BTreeSet<_>, _>>()
+        };
         let before = old.map(keys).transpose()?.unwrap_or_default();
         let after = keys(new)?;
         moves.extend(before.difference(&after).map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() }));
@@ -490,6 +494,26 @@ fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelK
         }
     }
     Ok(())
+}
+
+fn loaded_threshold_scopes(connection: &Connection, info: &ModelInfo, relation: &crate::schema::RelationSpec, values: &Map<String, Value>) -> Result<BTreeSet<crate::identity::ListKey>, StoreError> {
+    let constraint = |message: String| StoreError::Constraint(message);
+    let wanted = relation.row_params(values).iter().map(|params| info.spec.partial_selection_params(&relation.name, params).map_err(|error| constraint(error.to_string()))).collect::<Result<Vec<_>, _>>()?;
+    let mut keys = BTreeSet::new();
+    if wanted.is_empty() { return Ok(keys); }
+    let pattern = super::windows::like_prefix(&super::windows::family_prefix(info.spec.key.as_str(), &relation.name));
+    let mut statement = connection.prepare_cached("SELECT key FROM query_window WHERE key LIKE ?1 ESCAPE '\\'")?;
+    let windows = statement.query_map([pattern], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    for window in windows {
+        let (scope, _) = window.rsplit_once(':').ok_or_else(|| constraint(format!("malformed window key {window}")))?;
+        let key = crate::identity::ListKey::from_raw(scope);
+        let segments = key.decompose().ok_or_else(|| constraint(format!("malformed window key {window}")))?;
+        let params: BTreeMap<String, String> = segments.get(2).and_then(|text| serde_json::from_str(text).ok()).ok_or_else(|| constraint(format!("malformed window params {window}")))?;
+        if wanted.iter().any(|partial| partial.iter().all(|(name, value)| params.get(name) == Some(value))) && relation.row_passes_thresholds(values, &params) {
+            keys.insert(key);
+        }
+    }
+    Ok(keys)
 }
 
 fn join_heads(

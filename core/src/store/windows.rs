@@ -33,7 +33,7 @@ pub fn family_prefix(model: &str, relation: &str) -> String {
     ListKey::compose(&[model, relation]).as_str().to_string()
 }
 
-fn like_prefix(prefix: &str) -> String {
+pub(super) fn like_prefix(prefix: &str) -> String {
     let mut pattern = String::with_capacity(prefix.len() + 1);
     for character in prefix.chars() {
         if matches!(character, '%' | '_' | '\\') {

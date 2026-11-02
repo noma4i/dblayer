@@ -680,9 +680,26 @@ pub enum Membership {
     Equals(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "test", rename_all = "snake_case")]
+pub enum RowTest {
+    In { values: Vec<Value> },
+    Equals { value: Value },
+    GreaterThan { parameter: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowRule {
+    pub field: String,
+    #[serde(flatten)]
+    pub test: RowTest,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationSpec {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_rules: Vec<RowRule>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub membership: BTreeMap<String, Membership>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -757,6 +774,7 @@ impl RelationSpec {
     pub fn new(name: &str, by_columns: &[&str]) -> Self {
         Self {
             name: name.to_string(),
+            row_rules: Vec::new(),
             membership: BTreeMap::new(),
             joins_node: false,
             updates: Vec::new(),
@@ -800,13 +818,41 @@ impl RelationSpec {
     }
 
     pub fn lists_every_row_of_its_params(&self) -> bool {
-        let Some(remote) = &self.remote else { return false };
+        let Some(_) = &self.remote else { return false };
         (!self.by_columns.is_empty() || !self.membership.is_empty())
             && self.text_params.iter().all(|parameter| self.membership.contains_key(parameter))
-            && !remote.variables.values().any(|source| matches!(source, VariableSource::Constant { .. }))
+            && self.constants_described()
+    }
+
+    pub fn constants_described(&self) -> bool {
+        !self.row_rules.is_empty() || !self.remote.as_ref().is_some_and(|remote| remote.variables.values().any(|source| matches!(source, VariableSource::Constant { .. })))
+    }
+
+    pub fn has_threshold(&self) -> bool {
+        self.row_rules.iter().any(|rule| matches!(rule.test, RowTest::GreaterThan { .. }))
+    }
+
+    pub fn row_passes_literals(&self, row: &Map<String, Value>) -> bool {
+        self.row_rules.iter().all(|rule| {
+            let value = row.get(&rule.field).filter(|value| !value.is_null());
+            match &rule.test {
+                RowTest::In { values } => value.is_some_and(|value| values.contains(value)),
+                RowTest::Equals { value: literal } => value == Some(literal),
+                RowTest::GreaterThan { .. } => true,
+            }
+        })
+    }
+
+    pub fn row_passes_thresholds(&self, row: &Map<String, Value>, window: &BTreeMap<String, String>) -> bool {
+        self.row_rules.iter().all(|rule| {
+            let RowTest::GreaterThan { parameter } = &rule.test else { return true };
+            let bound = window.get(parameter).and_then(|text| text.strip_prefix("d:")).and_then(|text| text.parse::<i64>().ok());
+            matches!((bound, row.get(&rule.field).and_then(Value::as_i64)), (Some(bound), Some(value)) if value > bound)
+        })
     }
 
     pub fn row_params(&self, row: &Map<String, Value>) -> Vec<Map<String, Value>> {
+        if !self.row_passes_literals(row) { return Vec::new(); }
         let mut params = vec![Map::new()];
         for column in &self.by_columns {
             let Some(value) = row.get(column) else { return Vec::new() };

@@ -223,6 +223,7 @@ fn check_scope(node: &ModelDecl, all: &[ModelDecl], scope: &ScopeDecl, report: &
         };
         if !fits { report(*pos, format!("scope `{name}`: membership `{parameter}` must match the type of `{field}`")); }
     }
+    check_row_rules(node, scope, &linked, report);
     for parameter in &scope.parameters {
         let is_linked = linked.contains(&parameter.name.as_str());
         if !scope.is_remote() && !is_linked {
@@ -377,6 +378,45 @@ fn check_scope_parameter(scope: &ScopeDecl, parameter: &ParameterDecl, linked: b
     }
 }
 
+fn check_row_rules(node: &ModelDecl, scope: &ScopeDecl, linked: &[&str], report: &mut impl FnMut(Pos, String)) {
+    use dblayer::schema::RowTest;
+    let name = &scope.name;
+    let mut fields = HashSet::new();
+    for (rule, pos) in &scope.row_rules {
+        if !fields.insert(rule.field.as_str()) {
+            report(*pos, format!("scope `{name}`: `matches` field `{}` is given twice", rule.field));
+        }
+        let Some(attribute) = node.attributes.iter().find(|attribute| attribute.name == rule.field) else {
+            report(*pos, format!("scope `{name}`: `matches` field `{}` is not an attribute", rule.field));
+            continue;
+        };
+        let literal_fits = |literal: &serde_json::Value| match (&attribute.ty, literal) {
+            (TypeRef::Enum, serde_json::Value::String(text)) => attribute.values.as_ref().is_none_or(|values| values.contains(text)),
+            (TypeRef::Scalar(ScalarKind::Str | ScalarKind::Id), serde_json::Value::String(_)) => true,
+            (TypeRef::Scalar(ScalarKind::Int), serde_json::Value::Number(number)) => number.is_i64(),
+            (TypeRef::Scalar(ScalarKind::Bool), serde_json::Value::Bool(_)) => true,
+            _ => false,
+        };
+        match &rule.test {
+            RowTest::In { values } if !values.iter().all(literal_fits) => report(*pos, format!("scope `{name}`: `matches {}` values must match the type of `{}`", rule.field, rule.field)),
+            RowTest::Equals { value } if !literal_fits(value) => report(*pos, format!("scope `{name}`: `matches {}` value must match the type of `{}`", rule.field, rule.field)),
+            RowTest::GreaterThan { parameter } => {
+                let declared = scope.parameters.iter().find(|candidate| &candidate.name == parameter);
+                let int_parameter = declared.is_some_and(|declared| !declared.ty.list && !declared.null && declared.default.is_none() && matches!(declared.ty.base, ParamBase::Int));
+                if !int_parameter || !matches!(attribute.ty, TypeRef::Scalar(ScalarKind::Int)) || linked.contains(&parameter.as_str()) || scope.membership.iter().any(|(candidate, _, _)| candidate == parameter) {
+                    report(*pos, format!("scope `{name}`: `matches {} greater_than: :{parameter}` needs an `:int` parameter that only this rule uses and an `:int` attribute", rule.field));
+                }
+            }
+            _ => {}
+        }
+    }
+    let thresholds = scope.row_rules.iter().filter(|(rule, _)| matches!(rule.test, RowTest::GreaterThan { .. })).count();
+    let distinct: HashSet<_> = scope.row_rules.iter().filter_map(|(rule, _)| if let RowTest::GreaterThan { parameter } = &rule.test { Some(parameter) } else { None }).collect();
+    if distinct.len() != thresholds {
+        report(scope.row_rules[0].1, format!("scope `{name}`: a parameter can be used by one `greater_than` rule only"));
+    }
+}
+
 fn check_remote_scope(scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
     let name = &scope.name;
     let paginated = scope.paginate.is_some();
@@ -390,7 +430,7 @@ fn check_remote_scope(scope: &ScopeDecl, report: &mut impl FnMut(Pos, String)) {
         }
     }
     let linked = scope.where_.is_some() || !scope.membership.is_empty();
-    let server_only = scope.parameters.iter().any(|parameter| !scope.where_.iter().flat_map(|clause| &clause.pairs).any(|(_, linked)| linked.item == parameter.name) && !scope.membership.iter().any(|(name, _, _)| name == &parameter.name));
+    let server_only = scope.parameters.iter().any(|parameter| !scope.where_.iter().flat_map(|clause| &clause.pairs).any(|(_, linked)| linked.item == parameter.name) && !scope.membership.iter().any(|(name, _, _)| name == &parameter.name) && !scope.row_rules.iter().any(|(rule, _)| matches!(&rule.test, dblayer::schema::RowTest::GreaterThan { parameter: name } if name == &parameter.name)));
     if let Some(insert) = &scope.insert_on {
         let mut sorted: Vec<_> = insert.item.iter().map(|source| *source as u8).collect();
         sorted.sort_unstable();

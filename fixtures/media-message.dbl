@@ -1,0 +1,70 @@
+model MediaMessage do
+  attribute :chatId, :id
+  attribute :kind, :enum, values: ["TEXT", "GIFT"], as: MediaMessageKind
+  attribute :mediaKind, :enum, values: ["AUDIO", "IMAGE", "VIDEO"], as: MediaKindValue, null: true
+  attribute :sequenceNumber, :int, null: true
+  index :chatId, :sequenceNumber
+  scope :visual_media, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    where chatId: :chatId
+    matches mediaKind: { in: ["IMAGE", "VIDEO"] }
+    order sequenceNumber: :asc
+    query "ChatMedia"
+    variables mediaKinds: ["IMAGE", "VIDEO"], includeGifts: false
+    response from: "node.messages"
+    paginate size: 30, direction: :forward
+  end
+  scope :audio_media, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    where chatId: :chatId
+    matches mediaKind: { equals: "AUDIO" }
+    order sequenceNumber: :asc
+    query "ChatMedia"
+    variables mediaKinds: ["AUDIO"], includeGifts: false
+    response from: "node.messages"
+    paginate size: 30, direction: :forward
+  end
+  scope :gift_media, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    where chatId: :chatId
+    matches kind: { equals: "GIFT" }
+    order sequenceNumber: :asc
+    query "ChatMedia"
+    variables includeGifts: true
+    response from: "node.messages"
+    paginate size: 30, direction: :forward
+  end
+  scope :visual_since, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    parameter :afterSequence, :int
+    where chatId: :chatId
+    matches mediaKind: { in: ["IMAGE", "VIDEO"] }, sequenceNumber: { greater_than: :afterSequence }
+    order sequenceNumber: :asc
+    query "ChatMedia"
+    variables mediaKinds: ["IMAGE", "VIDEO"], includeGifts: false
+    response from: "node.messages"
+    paginate size: 50, direction: :forward
+  end
+  scope :audio_since, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    parameter :afterSequence, :int
+    where chatId: :chatId
+    matches mediaKind: { equals: "AUDIO" }, sequenceNumber: { greater_than: :afterSequence }
+    order sequenceNumber: :asc
+    query "ChatMedia"
+    variables mediaKinds: ["AUDIO"], includeGifts: false
+    response from: "node.messages"
+    paginate size: 50, direction: :forward
+  end
+  scope :gifts_since, insert_on: [:event, :response, :node] do
+    parameter :chatId, :id
+    parameter :afterSequence, :int
+    where chatId: :chatId
+    matches kind: { equals: "GIFT" }, sequenceNumber: { greater_than: :afterSequence }
+    order sequenceNumber: :asc
+    query "ChatMedia"
+    variables includeGifts: true
+    response from: "node.messages"
+    paginate size: 50, direction: :forward
+  end
+end

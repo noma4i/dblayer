@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Membership rules match row fields against literal sets, literals and scope parameters.
+
 ### Fixed
 - Settled returns the refusal of an action that was rolled back.
 

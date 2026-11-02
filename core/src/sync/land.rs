@@ -21,7 +21,7 @@ impl Inner {
     pub(super) fn joins_of(&self, reader: &Reader<'_>, model: &str, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, SyncError> {
         let spec = self.db.spec(model)?;
         let mut joins = Vec::new();
-        for relation in spec.relations.iter().filter(|relation| relation.joins_events && relation.remote.is_some() && relation.text_params.is_empty()) {
+        for relation in spec.relations.iter().filter(|relation| relation.joins_events && relation.remote.is_some() && relation.text_params.is_empty() && relation.constants_described() && relation.row_passes_literals(row)) {
             let params: Map<String, Value> = relation.by_columns.iter().filter_map(|column| row.get(column).filter(|value| !value.is_null()).map(|value| (column.clone(), value.clone()))).collect();
             if params.len() != relation.by_columns.len() {
                 continue;

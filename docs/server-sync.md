@@ -542,6 +542,8 @@ Payloads from a subscription's previous database generation are discarded after 
 Remove manual Chat rereads and list refetches after MESSAGE when these payload declarations supply both rows.
 Events of the plain transport with a full row save that row directly. `insert_on: [:event, :response]` adds such a row to loaded selections that match its `where` columns, and does the same for rows from operation responses (`upsert`), including cached rows absent from matching loaded windows. Existing members keep their places.
 A scope parameter without `where` needs explicit `membership` to accept event rows.
+`matches mediaKind: { in: [...] }`, `matches kind: { equals: "GIFT" }` and `matches sequenceNumber: { greater_than: :afterSequence }` select loaded windows by row fields. A row from an event, an operation response or a node reread joins every loaded window whose `where` columns and `matches` tests it satisfies. A row with a null tested field joins none. A member that stops matching leaves the window.
+Constant `variables` keep a scope out of automatic insertion unless a `matches` rule describes the answer.
 `membership list: { contains: :lists }` selects windows whose list parameter occurs in the row array.
 `insert_on: [:event, :response, :node]` also admits rows from `changed_by` node rereads.
 Missing members join loaded windows at the head. Existing members keep their places. Manual node reads do not insert members.

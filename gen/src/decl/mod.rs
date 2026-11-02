@@ -304,6 +304,7 @@ pub struct ScopeDecl {
     pub parameters: Vec<ParameterDecl>,
     pub where_: Option<WhereDecl>,
     pub membership: Vec<(String, dblayer::schema::Membership, Pos)>,
+    pub row_rules: Vec<(dblayer::schema::RowRule, Pos)>,
     pub order: Option<OrderDecl>,
     pub query: Option<QueryDecl>,
     pub variables: Option<Vec<VariableBinding>>,
