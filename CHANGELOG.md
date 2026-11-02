@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.14.0 - 2026-11-02
 
 ### Added
 - Membership rules match row fields against literal sets, literals and scope parameters.
