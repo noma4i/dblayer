@@ -4,6 +4,7 @@ use serde_json::{json, Map, Value};
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 
+use crate::db::dispatch::Effects;
 use crate::pacing::parse_duration;
 use crate::schema::UpdatesSpec;
 use crate::transport::EventSpec;
@@ -24,12 +25,17 @@ pub(crate) struct Live {
 }
 
 impl Live {
-    fn started(&mut self, started: Result<Updates, super::SyncError>) {
+    fn started(&mut self, started: Result<Updates, super::SyncError>, effects: &mut Effects) {
         self.starting = None;
         match started {
-            Ok(subscription) => self.subscription = Some(subscription),
-            Err(error) => { self.ready.send_replace(Some(Err(error))); }
+            Ok(subscription) => effects.release(self.subscription.replace(subscription)),
+            Err(error) => self.publish_ready(Some(Err(error)), effects),
         }
+    }
+
+    fn publish_ready(&self, ready: Option<Result<(), super::SyncError>>, effects: &mut Effects) {
+        let sender = self.ready.clone();
+        effects.push(move || { sender.send_replace(ready); });
     }
 }
 
@@ -45,26 +51,36 @@ impl Inner {
     pub(crate) fn restart_live(self: &std::sync::Arc<Self>, cause: super::resume_machine::Cause) {
         let explicit = cause == super::resume_machine::Cause::Explicit;
         if explicit { let _ = self.subscription_failures.send(None); }
-        let mut lives = locked(&self.lives);
-        for (key, live) in lives.iter_mut() {
-            let Some(subscription) = live.subscription.as_ref().filter(|subscription| {
-                let status = subscription.status();
-                status.stopped && status.failure.as_ref().is_some_and(|failure| explicit || !failure.session_refused())
-            }) else { continue };
-            let definition = subscription.definition.clone();
-            live.subscription = None;
-            live.ready.send_replace(None);
-            let inner = self.clone();
-            let slot = key.clone();
-            let ready = live.ready.clone();
-            let task = tokio::spawn(self.until_closed(async move {
-                let started = inner.subscribe(definition, Some(ready)).await;
-                if let Some(live) = locked(&inner.lives).get_mut(&slot) {
-                    live.started(started);
-                }
-            }));
-            live.starting = Some(task.abort_handle());
-        }
+        self.live_effects.under(&self.lives, |lives, effects| {
+            for (key, live) in lives.iter_mut() {
+                let Some(subscription) = live.subscription.as_ref().filter(|subscription| {
+                    let status = subscription.status();
+                    status.stopped && status.failure.as_ref().is_some_and(|failure| explicit || !failure.session_refused())
+                }) else { continue };
+                let definition = subscription.definition.clone();
+                effects.release(live.subscription.take());
+                live.publish_ready(None, effects);
+                let inner = self.clone();
+                let slot = key.clone();
+                let ready = live.ready.clone();
+                live.starting = Some(self.start_after(&Handle::current(), effects, async move {
+                    let started = inner.subscribe(definition, Some(ready)).await;
+                    inner.live_effects.under(&inner.lives, |lives, effects| {
+                        if let Some(live) = lives.get_mut(&slot) { live.started(started, effects); }
+                    });
+                }));
+            }
+        });
+    }
+
+    /// The task waits until the effects queued so far have run, so a reset of `ready` cannot land after the result of the start it announces.
+    fn start_after(self: &std::sync::Arc<Self>, runtime: &Handle, effects: &mut Effects, work: impl std::future::Future<Output = ()> + Send + 'static) -> AbortHandle {
+        let (open, gate) = tokio::sync::oneshot::channel::<()>();
+        effects.push(move || { let _ = open.send(()); });
+        runtime.spawn(self.until_closed(async move {
+            let _ = gate.await;
+            work.await;
+        })).abort_handle()
     }
 
     pub(crate) fn acquire_live(self: &std::sync::Arc<Self>, model: &str, relation: &str, params: &Map<String, Value>) -> Vec<String> {
@@ -143,63 +159,66 @@ impl Inner {
         def.id = updates.id;
         def.apply = updates.apply;
         let Ok(runtime) = Handle::try_current() else { return receiver };
-        let mut lives = locked(&self.lives);
-        let live = lives.entry(key.clone()).or_default();
-        live.runtime = Some(runtime.clone());
-        live.readers += 1;
-        match live.receivers.iter_mut().find(|(key, _, _)| key == &receiver) {
-            Some((_, _, readers)) => *readers += 1,
-            None => live.receivers.push((receiver.clone(), def.clone(), 1)),
-        }
-        if let Some(closing) = live.closing.take() {
-            closing.abort();
-        }
-        if live.subscription.is_some() || live.starting.is_some() {
-            return receiver;
-        }
-        live.ready.send_replace(None);
-        let inner = self.clone();
-        let slot = key.clone();
-        let ready = live.ready.clone();
-        let task = runtime.spawn(self.until_closed(async move {
-            let started = inner.subscribe(def, Some(ready)).await;
-            let mut lives = locked(&inner.lives);
-            let Some(live) = lives.get_mut(&slot) else { return };
-            live.started(started);
-        }));
-        live.starting = Some(task.abort_handle());
+        self.live_effects.under(&self.lives, |lives, effects| {
+            let live = lives.entry(key.clone()).or_default();
+            live.runtime = Some(runtime.clone());
+            live.readers += 1;
+            match live.receivers.iter_mut().find(|(key, _, _)| key == &receiver) {
+                Some((_, _, readers)) => *readers += 1,
+                None => live.receivers.push((receiver.clone(), def.clone(), 1)),
+            }
+            if let Some(closing) = live.closing.take() {
+                effects.push(move || closing.abort());
+            }
+            if live.subscription.is_some() || live.starting.is_some() {
+                return;
+            }
+            live.publish_ready(None, effects);
+            let inner = self.clone();
+            let slot = key.clone();
+            let ready = live.ready.clone();
+            live.starting = Some(self.start_after(&runtime, effects, async move {
+                let started = inner.subscribe(def, Some(ready)).await;
+                inner.live_effects.under(&inner.lives, |lives, effects| {
+                    if let Some(live) = lives.get_mut(&slot) { live.started(started, effects); }
+                });
+            }));
+        });
         receiver
     }
 
     pub(crate) fn release_live(self: &std::sync::Arc<Self>, key: &str) {
-        let mut lives = locked(&self.lives);
-        let Some(live) = lives.get_mut(live_source(key)) else { return };
-        let Some((_, _, readers)) = live.receivers.iter_mut().find(|(receiver, _, _)| receiver == key) else { return };
-        if *readers == 0 { return; }
-        *readers -= 1;
-        live.readers = live.readers.saturating_sub(1);
-        if live.readers > 0 || live.closing.is_some() {
-            return;
-        }
-        let Some(runtime) = live.runtime.clone() else {
-            lives.remove(live_source(key));
-            return;
-        };
-        let inner = self.clone();
-        let slot = live_source(key).to_string();
-        let linger: Duration = self.config.live_linger;
-        let task = runtime.spawn(self.until_closed(async move {
-            tokio::time::sleep(linger).await;
-            let mut lives = locked(&inner.lives);
-            if lives.get(&slot).is_some_and(|live| live.readers == 0) {
-                if let Some(mut live) = lives.remove(&slot) {
-                    live.closing = None;
-                }
+        self.live_effects.under(&self.lives, |lives, effects| {
+            let Some(live) = lives.get_mut(live_source(key)) else { return };
+            let Some((_, _, readers)) = live.receivers.iter_mut().find(|(receiver, _, _)| receiver == key) else { return };
+            if *readers == 0 { return; }
+            *readers -= 1;
+            live.readers = live.readers.saturating_sub(1);
+            if live.readers > 0 || live.closing.is_some() {
+                return;
             }
-        }));
-        if let Some(live) = lives.get_mut(live_source(key)) {
-            live.closing = Some(task.abort_handle());
-        }
+            let Some(runtime) = live.runtime.clone() else {
+                effects.release(lives.remove(live_source(key)));
+                return;
+            };
+            let inner = self.clone();
+            let slot = live_source(key).to_string();
+            let linger: Duration = self.config.live_linger;
+            let task = runtime.spawn(self.until_closed(async move {
+                tokio::time::sleep(linger).await;
+                inner.live_effects.under(&inner.lives, |lives, effects| {
+                    if lives.get(&slot).is_some_and(|live| live.readers == 0) {
+                        if let Some(mut live) = lives.remove(&slot) {
+                            live.closing = None;
+                            effects.release(live);
+                        }
+                    }
+                });
+            }));
+            if let Some(live) = lives.get_mut(live_source(key)) {
+                live.closing = Some(task.abort_handle());
+            }
+        });
     }
 
     pub(super) fn live_definitions(&self, operation: &str, variables: &Value) -> Vec<SubscriptionDef> {
@@ -230,3 +249,5 @@ fn changes_updates(subscription: String) -> UpdatesSpec {
 
 #[cfg(test)]
 mod live_tests;
+#[cfg(test)]
+mod wake_tests;

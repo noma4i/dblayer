@@ -30,7 +30,7 @@ impl EntityListener for Probe {
         let first = delivery.snapshots[0].clone();
         locked(&self.seen).push(delivery);
         let Some(live) = self.live.get().and_then(Weak::upgrade) else { return };
-        if !(mutex_free(&live.state) && mutex_free(&live.outbox)) { self.guarded.fetch_add(1, Ordering::SeqCst); }
+        if !(mutex_free(&live.state) && live.outbox.is_free()) { self.guarded.fetch_add(1, Ordering::SeqCst); }
         let armed = locked(&self.op).take();
         let Some((op, lease)) = armed else { return };
         match op {
@@ -182,7 +182,7 @@ async fn entity_callback_panic_keeps_delivering() {
     listener.armed.store(true, Ordering::SeqCst);
     let panicked = std::panic::catch_unwind(AssertUnwindSafe(|| live.decode_failed(EntityLease { id: "m1".into(), lease: 1 }, revision, "boom".into())));
     assert!(panicked.is_err());
-    assert!(mutex_free(&live.state) && !locked(&live.outbox).draining, "a panicking listener left the source blocked");
+    assert!(mutex_free(&live.state) && live.outbox.is_idle(), "a panicking listener left the source blocked");
     live.decode_failed(EntityLease { id: "m1".into(), lease: 1 }, revision, "after".into());
     let seen = locked(&listener.seen);
     assert_eq!(seen.len(), before + 2);

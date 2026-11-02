@@ -62,6 +62,75 @@ impl Effects {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct OrderedEffects(Mutex<Ordered>);
+
+#[derive(Default)]
+struct Ordered {
+    batches: VecDeque<Effects>,
+    running: bool,
+}
+
+struct Unwinding<'a> {
+    ordered: &'a Mutex<Ordered>,
+    armed: bool,
+}
+
+impl Drop for Unwinding<'_> {
+    fn drop(&mut self) {
+        if self.armed { held(self.ordered).running = false; }
+    }
+}
+
+impl OrderedEffects {
+    pub(crate) fn push(&self, batch: Effects) {
+        if !batch.is_empty() { held(&self.0).batches.push_back(batch); }
+    }
+
+    pub(crate) fn under<S, R>(&self, state: &Mutex<S>, apply: impl FnOnce(&mut S, &mut Effects) -> R) -> R {
+        let mut effects = Effects::default();
+        let result = {
+            let mut guard = held(state);
+            let result = apply(&mut guard, &mut effects);
+            self.push(effects);
+            result
+        };
+        self.run();
+        result
+    }
+
+    pub(crate) fn run(&self) {
+        {
+            let mut ordered = held(&self.0);
+            if ordered.running || ordered.batches.is_empty() { return; }
+            ordered.running = true;
+        }
+        let mut unwinding = Unwinding { ordered: &self.0, armed: true };
+        loop {
+            let batch = {
+                let mut ordered = held(&self.0);
+                let Some(batch) = ordered.batches.pop_front() else {
+                    ordered.running = false;
+                    unwinding.armed = false;
+                    return;
+                };
+                batch
+            };
+            batch.run();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_idle(&self) -> bool {
+        self.0.try_lock().is_ok_and(|ordered| !ordered.running && ordered.batches.is_empty())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_free(&self) -> bool {
+        crate::test_wait::mutex_free(&self.0)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct Event {
     pub revision: i64,

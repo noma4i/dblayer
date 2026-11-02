@@ -6,6 +6,7 @@ use tokio::runtime::Handle;
 use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 
+use crate::db::dispatch::OrderedEffects;
 
 use super::error::SyncError;
 use super::resume_machine::{Cause, ResumeEvent, ResumeMachine};
@@ -31,11 +32,12 @@ struct OwnerState {
 
 pub(crate) struct ResumeOwner {
     state: std::sync::Mutex<OwnerState>,
+    effects: OrderedEffects,
 }
 
 impl ResumeOwner {
     pub(crate) fn new() -> Self {
-        Self { state: std::sync::Mutex::new(OwnerState { machine: ResumeMachine::new(), current: Vec::new(), queued: Vec::new(), settled: Vec::new(), runner: None, runners: 0 }) }
+        Self { state: std::sync::Mutex::new(OwnerState { machine: ResumeMachine::new(), current: Vec::new(), queued: Vec::new(), settled: Vec::new(), runner: None, runners: 0 }), effects: OrderedEffects::default() }
     }
 
     fn request(&self, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<(u64, Cause)> {
@@ -51,34 +53,38 @@ impl ResumeOwner {
     }
 
     fn finish(&self, runner: u64, outcome: Outcome) -> Option<Cause> {
-        let mut state = locked(&self.state);
-        if state.runner != Some(runner) { return None; }
-        let answered = std::mem::take(&mut state.current);
-        let next = state.machine.handle(&ResumeEvent::Finished);
-        let settled = if next.is_some() {
-            state.current = std::mem::take(&mut state.queued);
-            Vec::new()
-        } else {
-            state.runner = None;
-            std::mem::take(&mut state.settled)
-        };
-        drop(state);
-        for waiter in answered { let _ = waiter.send(outcome.clone()); }
-        for waiter in settled { let _ = waiter.send(()); }
-        next
+        self.effects.under(&self.state, |state, effects| {
+            if state.runner != Some(runner) { return None; }
+            let answered = std::mem::take(&mut state.current);
+            let next = state.machine.handle(&ResumeEvent::Finished);
+            let settled = if next.is_some() {
+                state.current = std::mem::take(&mut state.queued);
+                Vec::new()
+            } else {
+                state.runner = None;
+                std::mem::take(&mut state.settled)
+            };
+            effects.push(move || {
+                for waiter in answered { let _ = waiter.send(outcome.clone()); }
+                for waiter in settled { let _ = waiter.send(()); }
+            });
+            next
+        })
     }
 
     fn abort(&self, runner: u64, error: SyncError) {
-        let mut state = locked(&self.state);
-        if state.runner != Some(runner) { return; }
-        let mut waiters = std::mem::take(&mut state.current);
-        waiters.append(&mut state.queued);
-        while !state.machine.is_idle() { state.machine.handle(&ResumeEvent::Finished); }
-        state.runner = None;
-        let settled = std::mem::take(&mut state.settled);
-        drop(state);
-        for waiter in waiters { let _ = waiter.send(Err(error.clone())); }
-        for waiter in settled { let _ = waiter.send(()); }
+        self.effects.under(&self.state, |state, effects| {
+            if state.runner != Some(runner) { return; }
+            let mut waiters = std::mem::take(&mut state.current);
+            waiters.append(&mut state.queued);
+            while !state.machine.is_idle() { state.machine.handle(&ResumeEvent::Finished); }
+            state.runner = None;
+            let settled = std::mem::take(&mut state.settled);
+            effects.push(move || {
+                for waiter in waiters { let _ = waiter.send(Err(error.clone())); }
+                for waiter in settled { let _ = waiter.send(()); }
+            });
+        });
     }
 
     #[cfg(test)]
@@ -242,3 +248,6 @@ impl Inner {
         Ok(report)
     }
 }
+
+#[cfg(test)]
+mod wake_tests;

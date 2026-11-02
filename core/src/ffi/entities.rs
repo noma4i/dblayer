@@ -1,6 +1,7 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
+use crate::db::dispatch::{Effects, OrderedEffects};
 use crate::db::{locked, EntityChange, EntityObserver};
 use crate::identity::RowId;
 use crate::sync::RefreshError;
@@ -101,19 +102,16 @@ pub struct LiveEntities {
     wire: Arc<WireModel>,
     listener: Arc<dyn EntityListener>,
     state: Mutex<State>,
-    outbox: Mutex<Outbox>,
+    outbox: OrderedEffects,
     weak: Weak<Self>,
 }
-
-#[derive(Default)]
-struct Outbox { deliveries: VecDeque<EntityDelivery>, draining: bool }
 
 /// Declared before the `state` guard, so it drops after it: queued deliveries reach the listener with no library lock held.
 struct Delivering<'a>(&'a LiveEntities);
 
 impl Drop for Delivering<'_> {
     fn drop(&mut self) {
-        if !std::thread::panicking() { self.0.drain(); }
+        if !std::thread::panicking() { self.0.outbox.run(); }
     }
 }
 
@@ -146,26 +144,11 @@ impl LiveEntities {
     }
 
     fn emit(&self, snapshots: Vec<WireEntitySnapshot>) {
-        if !snapshots.is_empty() { locked(&self.outbox).deliveries.push_back(EntityDelivery { snapshots }); }
-    }
-
-    fn drain(&self) {
-        if std::mem::replace(&mut locked(&self.outbox).draining, true) { return; }
-        struct Unwinding<'a>(&'a Mutex<Outbox>);
-        impl Drop for Unwinding<'_> {
-            fn drop(&mut self) { if std::thread::panicking() { locked(self.0).draining = false; } }
-        }
-        let _unwinding = Unwinding(&self.outbox);
-        loop {
-            let next = {
-                let mut outbox = locked(&self.outbox);
-                let next = outbox.deliveries.pop_front();
-                outbox.draining = next.is_some();
-                next
-            };
-            let Some(delivery) = next else { return };
-            self.listener.changed(delivery);
-        }
+        if snapshots.is_empty() { return; }
+        let listener = self.listener.clone();
+        let mut effects = Effects::default();
+        effects.push(move || listener.changed(EntityDelivery { snapshots }));
+        self.outbox.push(effects);
     }
 
     fn changed(&self, change: &EntityChange) {
@@ -436,7 +419,7 @@ pub(super) fn open(database: Database, model: &str, wire: Arc<WireModel>, listen
     let observer = db.observe_entities(model, move |change| { if let Some(source) = seen.get().and_then(Weak::upgrade) { source.changed(change); } })?;
     let source = Arc::new_cyclic(|weak: &Weak<LiveEntities>| {
         let _ = target.set(weak.clone());
-        LiveEntities { observer, database, model: model.into(), wire, listener, state: Mutex::new(State::default()), outbox: Mutex::default(), weak: weak.clone() }
+        LiveEntities { observer, database, model: model.into(), wire, listener, state: Mutex::new(State::default()), outbox: OrderedEffects::default(), weak: weak.clone() }
     });
     let weak = Arc::downgrade(&source);
     let name = model.to_string();

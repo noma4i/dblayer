@@ -6,6 +6,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{watch, Semaphore};
 use tokio::task::JoinSet;
 
+use crate::db::dispatch::{Effects, OrderedEffects};
 use crate::schema::{PreloadChoice, PreloadSource};
 
 use super::error::SyncError;
@@ -54,6 +55,7 @@ pub struct PreloadFailure {
 
 pub(crate) struct PreloadOwner {
     state: Mutex<State>,
+    effects: OrderedEffects,
     busy: watch::Sender<usize>,
     changed: watch::Sender<u64>,
     inner: OnceLock<Weak<Inner>>,
@@ -64,11 +66,24 @@ impl PreloadOwner {
     pub(crate) fn attach(&self, inner: Weak<Inner>) {
         let _ = self.inner.set(inner);
     }
+
+    fn with_state<R>(&self, apply: impl FnOnce(&mut State, &mut Effects) -> R) -> R {
+        self.effects.under(&self.state, apply)
+    }
+
+    fn publish_busy(&self, loads: usize, effects: &mut Effects) {
+        let busy = self.busy.clone();
+        effects.push(move || { busy.send_replace(loads); });
+    }
+
+    fn app_loads(&self) -> usize {
+        locked(&self.state).app_loads
+    }
 }
 
 impl Default for PreloadOwner {
     fn default() -> Self {
-        Self { state: Mutex::new(State::default()), busy: watch::channel(0).0, changed: watch::channel(0).0, inner: OnceLock::new(), runtime: OnceLock::new() }
+        Self { state: Mutex::new(State::default()), effects: OrderedEffects::default(), busy: watch::channel(0).0, changed: watch::channel(0).0, inner: OnceLock::new(), runtime: OnceLock::new() }
     }
 }
 
@@ -77,11 +92,10 @@ pub(crate) struct AppLoadHold(Weak<Inner>);
 impl Drop for AppLoadHold {
     fn drop(&mut self) {
         let Some(inner) = self.0.upgrade() else { return };
-        {
-            let mut state = locked(&inner.preload.state);
+        inner.preload.with_state(|state, effects| {
             state.app_loads -= 1;
-            inner.preload.busy.send_replace(state.app_loads);
-        }
+            inner.preload.publish_busy(state.app_loads, effects);
+        });
         inner.preload_start();
     }
 }
@@ -258,13 +272,16 @@ impl Inner {
 
     async fn app_loads_settled(&self) {
         let mut busy = self.preload.busy.subscribe();
-        let _ = busy.wait_for(|loads| *loads == 0).await;
+        while self.preload.app_loads() != 0 {
+            if busy.changed().await.is_err() { return; }
+        }
     }
 
     pub(crate) fn app_load(self: &Arc<Self>) -> AppLoadHold {
-        let mut state = locked(&self.preload.state);
-        state.app_loads += 1;
-        self.preload.busy.send_replace(state.app_loads);
+        self.preload.with_state(|state, effects| {
+            state.app_loads += 1;
+            self.preload.publish_busy(state.app_loads, effects);
+        });
         AppLoadHold(Arc::downgrade(self))
     }
 
@@ -273,22 +290,25 @@ impl Inner {
         FirstScreenHold { inner: Arc::downgrade(self), delivered: false }
     }
 
-    fn apply_listen(self: &Arc<Self>, state: &mut State) {
+    fn apply_listen(self: &Arc<Self>, state: &mut State, effects: &mut Effects) {
         let wanted = state.wants_listen();
         if std::mem::replace(&mut state.listened, wanted) == wanted { return; }
-        if wanted { self.listen_all(); } else { self.unlisten_all(); }
+        let (inner, runtime) = (self.clone(), Handle::try_current().ok());
+        effects.push(move || {
+            let _entered = runtime.as_ref().map(Handle::enter);
+            if wanted { inner.listen_all(); } else { inner.unlisten_all(); }
+        });
     }
 
     pub(crate) fn preload_on_session(self: &Arc<Self>) -> bool {
         match self.transport.session() {
             Ok(current) => {
-                let changed = {
-                    let mut state = locked(&self.preload.state);
+                let changed = self.preload.with_state(|state, effects| {
                     let changed = std::mem::replace(&mut state.session, current.clone()) != current;
                     if changed { state.first_snapshot = false; }
-                    self.apply_listen(&mut state);
+                    self.apply_listen(state, effects);
                     changed
-                };
+                });
                 let committed = changed && current.is_some();
                 if committed { self.preload_on_event(); }
                 committed
@@ -360,15 +380,17 @@ impl Sync {
     }
 
     pub fn session_ended(&self) {
-        let mut state = locked(&self.inner.preload.state);
-        state.session = None;
-        self.inner.apply_listen(&mut state);
+        self.inner.preload.with_state(|state, effects| {
+            state.session = None;
+            self.inner.apply_listen(state, effects);
+        });
     }
 
     pub fn set_listening(&self, allowed: bool) {
-        let mut state = locked(&self.inner.preload.state);
-        state.listening_denied = !allowed;
-        self.inner.apply_listen(&mut state);
+        self.inner.preload.with_state(|state, effects| {
+            state.listening_denied = !allowed;
+            self.inner.apply_listen(state, effects);
+        });
     }
 
     pub fn session_committed(&self) {
@@ -388,3 +410,6 @@ impl Sync {
         self.inner.preload_take()
     }
 }
+
+#[cfg(test)]
+mod wake_tests;

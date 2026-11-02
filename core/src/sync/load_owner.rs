@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, Weak};
 use serde_json::{Map, Value};
 use tokio::sync::watch;
 
-use crate::db::dispatch::Effects;
+use crate::db::dispatch::{Effects, OrderedEffects};
 
 use super::load_machine::{step, Effect, Event, FlightId, LoadError, LoadKind, Machine, RelationState, Stored};
 use super::locked;
@@ -112,27 +112,10 @@ impl OwnerState {
 }
 
 #[derive(Default)]
-struct Outbox {
-    batches: VecDeque<Effects>,
-    running: bool,
-}
-
-struct Unwinding<'a> {
-    outbox: &'a Mutex<Outbox>,
-    armed: bool,
-}
-
-impl Drop for Unwinding<'_> {
-    fn drop(&mut self) {
-        if self.armed { locked(self.outbox).running = false; }
-    }
-}
-
-#[derive(Default)]
 pub(crate) struct LoadOwner {
     queue: Mutex<VecDeque<Queued>>,
     state: Mutex<OwnerState>,
-    outbox: Mutex<Outbox>,
+    outbox: OrderedEffects,
     next_flight: AtomicU64,
     epoch: AtomicU64,
     #[cfg(test)]
@@ -143,37 +126,7 @@ pub(crate) struct LoadOwner {
 
 impl LoadOwner {
     fn with_state<R>(&self, apply: impl FnOnce(&mut OwnerState, &mut Effects) -> R) -> R {
-        let mut effects = Effects::default();
-        let result = {
-            let mut state = locked(&self.state);
-            let result = apply(&mut state, &mut effects);
-            if !effects.is_empty() { locked(&self.outbox).batches.push_back(effects); }
-            result
-        };
-        self.flush();
-        result
-    }
-
-    /// One caller at a time runs the queued batches. A call made from inside an effect only queues its batch, so a woken task can use the owner and the publication order stays the order of the state changes.
-    fn flush(&self) {
-        {
-            let mut outbox = locked(&self.outbox);
-            if outbox.running || outbox.batches.is_empty() { return; }
-            outbox.running = true;
-        }
-        let mut unwinding = Unwinding { outbox: &self.outbox, armed: true };
-        loop {
-            let batch = {
-                let mut outbox = locked(&self.outbox);
-                let Some(batch) = outbox.batches.pop_front() else {
-                    outbox.running = false;
-                    unwinding.armed = false;
-                    return;
-                };
-                batch
-            };
-            batch.run();
-        }
+        self.outbox.under(&self.state, apply)
     }
 
     pub(crate) fn members(self: &Arc<Self>, window: &str, start: impl FnOnce(watch::Sender<Option<Result<(), super::SyncError>>>) -> tokio::task::AbortHandle) -> MembersRead {
@@ -317,7 +270,7 @@ impl LoadOwner {
     #[cfg(test)]
     pub(crate) fn guards_free(&self) -> bool {
         use crate::test_wait::mutex_free;
-        mutex_free(&self.state) && mutex_free(&self.queue) && mutex_free(&self.outbox)
+        mutex_free(&self.state) && mutex_free(&self.queue) && self.outbox.is_free()
     }
 
     #[cfg(test)]
