@@ -197,7 +197,7 @@ impl Inner {
 
     async fn cycle(&self, pull: bool) -> Result<(), CloudError> {
         let generation = self.db.generation();
-        let unstamped = self.db.cloud_unstamped(generation)?;
+        let unstamped = crate::blocking::blocking_unit(|| self.db.cloud_unstamped(generation))?;
         if !unstamped.is_empty() {
             self.publish(PhaseEvent::Merge { rows: unstamped.len() as u64 });
             return Ok(());
@@ -208,27 +208,28 @@ impl Inner {
             CloudAccount::Restricted => return Err(CloudError::Rejected { detail: "the cloud account is restricted".into() }),
         }
         self.publish(PhaseEvent::Start);
-        let own = self.db.cloud_replica(generation)?;
+        let own = crate::blocking::blocking_unit(|| self.db.cloud_replica(generation))?;
         loop {
             loop {
-                let batch = self.db.cloud_batch(generation, BATCH)?;
+                let batch = crate::blocking::blocking_unit(|| self.db.cloud_batch(generation, BATCH))?;
                 if batch.is_empty() {
                     break;
                 }
                 let (seqs, changes): (Vec<i64>, Vec<_>) = batch.into_iter().unzip();
                 self.io.push(changes.iter().map(CloudChange::blob).collect()).await?;
-                self.db.cloud_ack(generation, &seqs)?;
+                crate::blocking::blocking_unit(|| self.db.cloud_ack(generation, &seqs))?;
             }
-            if pull || self.db.cloud_cursor(generation)?.is_none() {
+            if pull || crate::blocking::blocking_unit(|| self.db.cloud_cursor(generation))?.is_none() {
                 loop {
-                    let page = self.io.pull(self.db.cloud_cursor(generation)?, BATCH).await?;
-                    self.db.apply_cloud_page(generation, &own, &decode(&page)?, &page.cursor)?;
+                    let page = self.io.pull(crate::blocking::blocking_unit(|| self.db.cloud_cursor(generation))?, BATCH).await?;
+                    let changes = decode(&page)?;
+                    crate::blocking::blocking_unit(|| self.db.apply_cloud_page(generation, &own, &changes, &page.cursor))?;
                     if !page.more {
                         break;
                     }
                 }
             }
-            if self.db.cloud_pending()? == 0 {
+            if crate::blocking::blocking_unit(|| self.db.cloud_pending())? == 0 {
                 break;
             }
         }

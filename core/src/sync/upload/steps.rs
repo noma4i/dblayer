@@ -164,7 +164,8 @@ impl Runner {
         };
         let sent = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await;
         if !whole {
-            let _ = std::fs::remove_file(&file.path);
+            let path = file.path.clone();
+            let _ = tokio::task::spawn_blocking(move || std::fs::remove_file(path)).await;
         }
         match sent {
             Err(_) => Err(StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, "put timed out")))),

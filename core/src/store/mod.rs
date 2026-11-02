@@ -4,6 +4,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 
 use rusqlite::Connection;
 
+use crate::commit::CommitResult;
 use crate::ddl::{layout, table_name, Layout, RecreateReason};
 use crate::identity::{Generation, RowRef};
 use crate::pacing::{Clock, Counters, SystemClock};
@@ -135,6 +136,45 @@ impl AnnounceLine {
     }
 }
 
+/// A finished commit whose announcement has not run yet. Its place in the announcement order is reserved, so a caller that holds a guard can finish the commit, release the guard, and then call `publish`. Dropping it publishes too: later commits wait for this place in the order.
+#[must_use]
+pub(crate) struct Committed<'a> {
+    result: CommitResult,
+    turn: Option<(&'a Store, u64)>,
+}
+
+impl Committed<'_> {
+    fn unannounced(result: CommitResult) -> Self {
+        Self { result, turn: None }
+    }
+
+    fn event(result: &CommitResult) -> StoreEvent<'_> {
+        if result.is_noop() { StoreEvent::Renewed(&result.renewed) } else { StoreEvent::Committed(result) }
+    }
+
+    pub(crate) fn result(&self) -> &CommitResult {
+        &self.result
+    }
+
+    pub(crate) fn publish(mut self) -> CommitResult {
+        self.announce();
+        let tx_id = self.result.tx_id;
+        std::mem::replace(&mut self.result, CommitResult::noop(tx_id))
+    }
+
+    fn announce(&mut self) {
+        if let Some((store, ticket)) = self.turn.take() {
+            store.line.run(ticket, || store.announce(Self::event(&self.result)));
+        }
+    }
+}
+
+impl Drop for Committed<'_> {
+    fn drop(&mut self) {
+        self.announce();
+    }
+}
+
 pub struct Store {
     inner: Mutex<Inner>,
     models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
@@ -248,6 +288,19 @@ impl Store {
         let ticket = self.line.ticket();
         drop(inner);
         self.line.run(ticket, || self.announce(event));
+    }
+
+    fn commit_announcement(&self, inner: MutexGuard<'_, Inner>, result: CommitResult) -> Committed<'_> {
+        let renewal = result.is_noop();
+        if renewal && result.renewed.is_empty() {
+            return Committed::unannounced(result);
+        }
+        if let Some(log) = self.commit_log.get() {
+            log(&Committed::event(&result));
+        }
+        let ticket = self.line.ticket();
+        drop(inner);
+        Committed { result, turn: Some((self, ticket)) }
     }
 
     pub fn generation(&self) -> Generation {

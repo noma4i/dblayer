@@ -15,6 +15,7 @@
 - A pending native call resumes on a library lane, so cancelling or releasing it cannot deadlock with the thread that produces its result.
 - The Swift and Kotlin adapters hold no lock while they enter the core or run your code: the online state, a row decoder, a live merge, a replaced row's release and the power state reach their receivers after the adapter lock is free, so a callback can call the library again.
 - Closing the database ends every open stream with a result, stops its cloud, refresh and synchronization work, and leaves a connectivity sink that the platform still holds inert: a waiting `next`, `current` or initial-load wait no longer hangs, and a reopened database has one owner.
+- A busy store no longer stops asynchronous control work: loads, sends, uploads and the cloud pass run their SQLite planning and commits as whole units that hand the Tokio worker over while they wait, and an upload progress save announces its commit after it releases the upload state.
 - Models without row rules keep the schema fingerprint they had in 6.13.1, so an upgrade does not wipe and reload their cache.
 
 ## 6.14.0 - 2026-11-02

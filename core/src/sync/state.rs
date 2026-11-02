@@ -32,6 +32,10 @@ impl Inner {
     }
 
     fn stored_of(&self, model: &str, scope_key: &str, window_key: &str) -> Result<Option<Stored>, SyncError> {
+        crate::blocking::blocking_unit(|| self.stored_unit(model, scope_key, window_key))
+    }
+
+    fn stored_unit(&self, model: &str, scope_key: &str, window_key: &str) -> Result<Option<Stored>, SyncError> {
         let epoch = self.owner.epoch();
         let store = &self.db.shared.store;
         let rows = store.read(&[model], |reader| reader.scope_first_key(model, scope_key));

@@ -87,3 +87,46 @@ fn inv_conc_02_no_store_lock_is_held_while_the_hook_calls_into_other_components(
     store.reset_incompatible().unwrap();
     assert_eq!(*probes.lock().unwrap(), vec![(true, true); 3]);
 }
+
+fn deferred<'a>(store: &'a Store, row_id: &str) -> Committed<'a> {
+    let mut planned = Some(envelope(store, vec![upsert("messages", message(row_id, "c1"))], vec![]));
+    store.commit_prepared_deferred(store.generation(), |_| Ok::<_, StoreError>(planned.take())).unwrap()
+}
+
+#[test]
+fn a_deferred_commit_announces_only_when_the_caller_publishes_in_commit_order() {
+    let (store, _) = booted_store();
+    let announced = Arc::new(Mutex::new(Vec::new()));
+    let log = announced.clone();
+    store.set_hook(Box::new(move |event| {
+        if let StoreEvent::Committed(result) = event {
+            log.lock().unwrap().push(result.revision);
+        }
+    }));
+    let caller_state = Mutex::new(());
+    let guard = caller_state.lock().unwrap();
+    let first = deferred(&store, "m1");
+    let second = deferred(&store, "m2");
+    assert!(announced.lock().unwrap().is_empty(), "nothing is announced while the caller holds its guard");
+    assert_eq!(store.revision_seq().unwrap(), second.result().revision.unwrap(), "the commits are readable before they are announced");
+    drop(guard);
+    let (first, second) = (first.publish(), second.publish());
+    assert_eq!(*announced.lock().unwrap(), vec![first.revision, second.revision]);
+}
+
+#[test]
+fn a_dropped_deferred_commit_still_announces_so_the_order_never_stalls() {
+    let (store, _) = booted_store();
+    let store = Arc::new(store);
+    let announced = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = announced.clone();
+    store.set_hook(Box::new(move |event| {
+        if matches!(event, StoreEvent::Committed(_)) {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }));
+    drop(deferred(&store, "m1"));
+    let later = store.clone();
+    within_five_seconds(move || written(&later, "m2"));
+    assert_eq!(announced.load(std::sync::atomic::Ordering::SeqCst), 2);
+}

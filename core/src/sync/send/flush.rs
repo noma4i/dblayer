@@ -142,7 +142,7 @@ impl Inner {
         let mut report = FlushReport::default();
         locked(self.operation_queue()?).begin_pass();
         let mut cursor = i64::MIN;
-        while let Some(entry) = self.next_ready(&mut cursor, &mut report)? {
+        while let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? {
             locked(self.operation_queue()?).attempted(entry.operation.id.0);
             let result = self.send(&entry, None).await?;
             self.keep_discarded(&entry, &result);
@@ -176,7 +176,7 @@ impl Inner {
 
     fn roll_back_refused(&self, sending: &Sending<'_>, generation: Generation, failure: &OperationFailure) -> Result<(), DbError> {
         let mut kept = self.keep_refusal(sending.entry, &SendResult::Rejected(failure.clone()));
-        self.db.roll_back_at(sending.entry.operation.id.0, generation)?;
+        crate::blocking::blocking_unit(|| self.db.roll_back_at(sending.entry.operation.id.0, generation))?;
         kept.landed();
         self.refused();
         Ok(())
@@ -187,7 +187,7 @@ impl Inner {
     }
 
     pub(crate) fn outbox_operation(&self, seq: i64) -> Result<Option<OutboxOperation>, SyncError> {
-        let entry = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, seq)?))?;
+        let entry = crate::blocking::blocking_unit(|| self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, seq)?)))?;
         locked(&self.db.shared.counters).outbox_rows_loaded += usize::from(entry.is_some());
         Ok(entry)
     }
@@ -240,8 +240,11 @@ impl Inner {
     }
 
     async fn send(&self, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>) -> Result<SendResult, SyncError> {
-        let Some(Bound { model, action, declaration, mutation, .. }) = self.bind(entry)? else { return Ok(SendResult::Skipped(SkipReason::NotBound)) };
-        let sending = Sending { entry, model, action, generation: self.db.generation(), base_revision: self.db.revision_seq()? };
+        let Some((Bound { model, action, declaration, mutation, .. }, generation, base_revision)) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
+            let Some(bound) = self.bind(entry)? else { return Ok(None) };
+            Ok(Some((bound, self.db.generation(), self.db.revision_seq()?)))
+        })? else { return Ok(SendResult::Skipped(SkipReason::NotBound)) };
+        let sending = Sending { entry, model, action, generation, base_revision };
         let Some(operation) = locked(&self.operations).get(&mutation).cloned() else {
             let failure = OperationFailure::new(FailureKind::Rejected, format!("operation {mutation} is not registered"));
             return self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure));
@@ -359,11 +362,14 @@ impl Inner {
     }
 
     pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, _serial: &tokio::sync::MutexGuard<'_, ()>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
-        let Some(owner) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, request_owner.seq)?))? else { return Ok(()) };
-        if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
-            self.db.retry_operations(vec![owner.clone()])?;
-        }
-        let Some(entry) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, owner.operation.id.0)?))? else { return Ok(()) };
+        let settled = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
+            let Some(owner) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, request_owner.seq)?))? else { return Ok(None) };
+            if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
+                self.db.retry_operations(vec![owner.clone()])?;
+            }
+            Ok(self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, owner.operation.id.0)?))?)
+        })?;
+        let Some(entry) = settled else { return Ok(()) };
         if entry.operation.upload.is_some() {
             if let Some(upload) = upload { self.resume_upload(upload, result).await; }
             return Ok(());
@@ -514,7 +520,7 @@ impl Inner {
     }
 
     async fn land_response(&self, sending: &Sending<'_>, operation: &OperationDef, data: Value) -> Result<SendResult, SyncError> {
-        let blob_files = self.db.shared.read(&[], |reader| Ok(crate::store::blob::files(reader.connection(), sending.entry.operation.id.0)?))?;
+        let blob_files = crate::blocking::blocking_unit(|| self.db.shared.read(&[], |reader| Ok(crate::store::blob::files(reader.connection(), sending.entry.operation.id.0)?)))?;
         let entry = sending.entry;
         let temp = entry.operation.temp_id.clone();
         let spec = self.db.spec(&sending.model)?;
@@ -526,11 +532,11 @@ impl Inner {
         let batch_action = spec.actions.iter().find(|action| action.name == sending.action && action.batch.is_some());
         let mut replacements = Vec::new();
         if let Some(action) = batch_action {
-            let expected = self.db.shared.read(&[], |reader| {
+            let expected = crate::blocking::blocking_unit(|| self.db.shared.read(&[], |reader| {
                 let mut statement = reader.connection().prepare("SELECT row_id, client_key FROM op_item WHERE seq = ?1 ORDER BY position")?;
                 let rows = statement.query_map([entry.operation.id.0], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
                 Ok(rows)
-            })?;
+            }))?;
             let field = &action.correlate[0];
             let mut seen = HashSet::new();
             for row in &normalized.roots {
@@ -706,16 +712,31 @@ impl Inner {
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
     ) -> Result<Option<CommitResult>, SyncError> {
-        match self.db.commit_following(generation, plan) {
+        crate::blocking::blocking_unit(|| match self.db.commit_following(generation, plan) {
             Ok(result) => Ok(Some(result)),
             Err(PlanCommitError::Plan(error)) => Err(error),
             Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => Ok(None),
             Err(PlanCommitError::Store(error)) => Err(error.into()),
-        }
+        })
+    }
+
+    pub(crate) fn commit_deferred(
+        &self,
+        generation: Generation,
+        plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
+    ) -> Result<Option<crate::store::Committed<'_>>, SyncError> {
+        crate::blocking::blocking_unit(|| match self.db.commit_following_deferred(generation, plan) {
+            Ok((committed, _)) => Ok(Some(committed)),
+            Err(PlanCommitError::Plan(error)) => Err(error),
+            Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => Ok(None),
+            Err(PlanCommitError::Store(error)) => Err(error.into()),
+        })
     }
 
     fn on_connection(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<()>) -> Result<(), SyncError> {
-        let inner = self.db.shared.store.lock();
-        run(&inner.connection).map_err(|error| SyncError::Store(error.to_string()))
+        crate::blocking::blocking_unit(|| {
+            let inner = self.db.shared.store.lock();
+            run(&inner.connection).map_err(|error| SyncError::Store(error.to_string()))
+        })
     }
 }

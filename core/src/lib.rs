@@ -20,6 +20,7 @@ pub mod files;
 pub mod sync;
 pub mod upload;
 pub mod ffi;
+mod blocking;
 
 #[cfg(test)]
 mod lib_tests;

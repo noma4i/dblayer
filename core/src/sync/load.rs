@@ -170,8 +170,7 @@ impl Inner {
     }
 
     pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
-        let generation = self.db.generation();
-        let base_revision = self.db.revision_seq()?;
+        let (generation, base_revision) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> { Ok((self.db.generation(), self.db.revision_seq()?)) })?;
         Ok(FetchAttempt::new(key, self.next_issued(), generation, base_revision))
     }
 
@@ -302,7 +301,7 @@ impl Inner {
 
     async fn run(&self, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool) -> Result<Executed, SyncError> {
         let attempt = self.begin_attempt(&resolved.window_key)?;
-        let has_window = self.db.shared.store.window(&resolved.window_key)?.is_some();
+        let has_window = crate::blocking::blocking_unit(|| self.db.shared.store.window(&resolved.window_key))?.is_some();
         let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
         let mut replace_window = false;

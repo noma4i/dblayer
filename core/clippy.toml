@@ -1,0 +1,6 @@
+await-holding-invalid-types = [
+    { path = "rusqlite::Transaction", reason = "a SQLite transaction is one synchronous unit and never crosses an await" },
+    { path = "std::sync::RwLockReadGuard", reason = "a std guard never crosses an await" },
+    { path = "std::sync::RwLockWriteGuard", reason = "a std guard never crosses an await" },
+    { path = "tokio::sync::watch::Ref", reason = "a watch Ref holds the channel read lock" },
+]

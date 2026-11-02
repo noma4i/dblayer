@@ -23,7 +23,7 @@ use super::shape::{delete_tables, insert_children, member_values, normalize, nor
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
-use super::{Inner, ModelInfo, Store, StoreError};
+use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlanCommitError<E> {
@@ -45,7 +45,7 @@ impl Store {
         inner.ensure_healthy()?;
         inner.ensure_generation(envelope.generation)?;
         match self.write_planned(inner, Ok::<_, std::convert::Infallible>(Some(envelope))) {
-            Ok(result) => Ok(result),
+            Ok(committed) => Ok(committed.publish()),
             Err(PlanCommitError::Store(error)) => Err(error),
             Err(PlanCommitError::Plan(never)) => match never {},
         }
@@ -55,7 +55,7 @@ impl Store {
         &self,
         generation: Generation,
         plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
-    ) -> Result<CommitResult, PlanCommitError<E>> {
+    ) -> Result<Committed<'_>, PlanCommitError<E>> {
         let mut inner = self.lock();
         inner.ensure_healthy()?;
         inner.ensure_generation(generation)?;
@@ -68,8 +68,16 @@ impl Store {
     pub fn commit_prepared<E>(
         &self,
         generation: Generation,
-        mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
+        plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<CommitResult, PlanCommitError<E>> {
+        self.commit_prepared_deferred(generation, plan).map(Committed::publish)
+    }
+
+    pub(crate) fn commit_prepared_deferred<E>(
+        &self,
+        generation: Generation,
+        mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
+    ) -> Result<Committed<'_>, PlanCommitError<E>> {
         if !self.reads_off_writer() {
             return self.plan_under_writer(generation, plan);
         }
@@ -93,15 +101,15 @@ impl Store {
         }
     }
 
-    fn write_planned<E>(&self, inner: std::sync::MutexGuard<'_, Inner>, planned: Result<Option<CommitEnvelope>, E>) -> Result<CommitResult, PlanCommitError<E>> {
+    fn write_planned<'a, E>(&'a self, inner: std::sync::MutexGuard<'_, Inner>, planned: Result<Option<CommitEnvelope>, E>) -> Result<Committed<'a>, PlanCommitError<E>> {
         let now_ms = inner.now_ms();
         let envelope = planned.map_err(PlanCommitError::Plan)?;
         let Some(envelope) = envelope else {
-            return Ok(CommitResult::noop(uuid::Uuid::new_v4()));
+            return Ok(Committed::unannounced(CommitResult::noop(uuid::Uuid::new_v4())));
         };
         envelope.validate(inner.generation).map_err(StoreError::Envelope)?;
         if envelope.is_empty() {
-            return Ok(CommitResult::noop(envelope.tx_id));
+            return Ok(Committed::unannounced(CommitResult::noop(envelope.tx_id)));
         }
         match attempt(&inner, &envelope, now_ms) {
             Ok(result) => Ok(self.finish(inner, result)),
@@ -118,16 +126,9 @@ impl Store {
         }
     }
 
-    fn finish(&self, mut inner: std::sync::MutexGuard<'_, Inner>, result: (CommitResult, u32)) -> CommitResult {
+    fn finish<'a>(&'a self, mut inner: std::sync::MutexGuard<'_, Inner>, result: (CommitResult, u32)) -> Committed<'a> {
         inner.counters.unknown_operation_acks += result.1 as usize;
-        if result.0.is_noop() {
-            if !result.0.renewed.is_empty() {
-                self.announce_released(inner, super::StoreEvent::Renewed(&result.0.renewed));
-            }
-            return result.0;
-        }
-        self.announce_released(inner, super::StoreEvent::Committed(&result.0));
-        result.0
+        self.commit_announcement(inner, result.0)
     }
 }
 

@@ -59,7 +59,7 @@ pub(super) fn stop_of(error: StepError) -> Stop {
 }
 
 pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
-    let runner = match Runner::load(inner.clone(), seq, position, run, token, matches!(mode, RunMode::Transfer)) {
+    let runner = match crate::blocking::blocking_unit(|| Runner::load(inner.clone(), seq, position, run, token, matches!(mode, RunMode::Transfer))) {
         Ok(Some(runner)) => runner,
         Ok(None) => return,
         Err(error) => {
@@ -128,9 +128,9 @@ impl Runner {
         locked(&self.state).clone()
     }
 
-    pub(super) fn commit(&self, mut build: impl FnMut(&mut CommitEnvelope)) -> Result<(), Stop> {
-        let generation = self.inner.db.generation();
-        let committed = self.inner.commit(generation, |reader| {
+    fn commit_deferred(&self, mut build: impl FnMut(&mut CommitEnvelope)) -> Result<crate::store::Committed<'_>, Stop> {
+        let generation = crate::blocking::blocking_unit(|| self.inner.db.generation());
+        let committed = self.inner.commit_deferred(generation, |reader| {
             if !self.inner.is_current(self.seq, self.position, self.run) {
                 return Ok(None);
             }
@@ -142,19 +142,34 @@ impl Runner {
             Ok(Some(envelope))
         });
         match committed {
-            Ok(Some(result)) if !result.is_noop() => Ok(()),
-            Ok(_) => Err(Stop::Superseded),
+            Ok(Some(committed)) => Ok(committed),
+            Ok(None) => Err(Stop::Superseded),
             Err(error) => Err(Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string()))),
         }
     }
 
+    fn settle(committed: crate::store::Committed<'_>) -> Result<(), Stop> {
+        let noop = committed.result().is_noop();
+        committed.publish();
+        if noop { Err(Stop::Superseded) } else { Ok(()) }
+    }
+
+    pub(super) fn commit(&self, build: impl FnMut(&mut CommitEnvelope)) -> Result<(), Stop> {
+        Self::settle(self.commit_deferred(build)?)
+    }
+
     pub(super) fn save(&self, event: UploadEvent) -> Result<(), Stop> {
-        let mut state = locked(&self.state);
-        let mut snapshot = state.clone();
-        snapshot.apply(event).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
-        self.commit(|envelope| envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: Box::new(snapshot.clone()) }))?;
-        *state = snapshot;
-        Ok(())
+        let committed = {
+            let mut state = locked(&self.state);
+            let mut snapshot = state.clone();
+            snapshot.apply(event).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+            let committed = self.commit_deferred(|envelope| envelope.operation_transitions.push(OperationTransition::Progress { seq: self.seq, item_position: self.position, state: Box::new(snapshot.clone()) }))?;
+            if !committed.result().is_noop() {
+                *state = snapshot;
+            }
+            committed
+        };
+        Self::settle(committed)
     }
 
     pub(super) fn report(&self, part: u32, bytes: u64) {

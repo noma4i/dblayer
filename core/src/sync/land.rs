@@ -128,6 +128,10 @@ impl Inner {
     }
 
     pub(crate) fn land_rows(&self, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
+        crate::blocking::blocking_unit(|| self.land_rows_unit(model, normalized, attempt))
+    }
+
+    fn land_rows_unit(&self, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
@@ -155,6 +159,10 @@ impl Inner {
     }
 
     pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
+        crate::blocking::blocking_unit(|| self.land_unit(landing))
+    }
+
+    fn land_unit(&self, landing: Landing) -> Result<Landed, SyncError> {
         let _serial = locked(&self.landing);
         let Landing { marker, leave_stale, node_reread, model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
         let generation = attempt.generation;
