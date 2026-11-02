@@ -75,12 +75,6 @@ impl Entry {
         }
     }
 
-    fn cancel(&mut self, sync: Option<&crate::sync::Sync>) {
-        if let Some(cancel) = self.cancel.take() {
-            if let Some(sync) = sync { sync.cancel_entity_refresh(&cancel); } else { cancel.cancel(); }
-        }
-    }
-
     fn clear_value(&mut self) {
         self.value = None;
         self.previous = None;
@@ -123,12 +117,33 @@ impl Drop for Delivering<'_> {
     }
 }
 
+/// Declared between `Delivering` and the `state` guard: cancels, feed cancel and lease releases run after the guard and before the deliveries.
+struct Detached<'a> { live: &'a LiveEntities, tokens: Vec<CancelToken>, subscription: Option<Arc<LiveSubscription>>, released: Vec<RowId> }
+
+impl Detached<'_> {
+    fn cancel(&mut self, entry: &mut Entry) { self.tokens.extend(entry.cancel.take()); }
+}
+
+impl Drop for Detached<'_> {
+    fn drop(&mut self) {
+        for token in self.tokens.drain(..) { self.live.cancel_refresh(&token); }
+        if !self.released.is_empty() { self.live.observer.release(&self.released); }
+        if let Some(subscription) = self.subscription.take() { subscription.cancel(); }
+    }
+}
+
 impl LiveEntities {
     fn now(&self) -> u64 { self.database.clock.now().as_millis().try_into().unwrap_or(u64::MAX) }
     fn generation(&self) -> u64 { self.database.db.generation().value() }
     fn epoch(&self) -> u64 { self.database.db.shared.ephemeral.lock().epoch }
 
     fn delivering(&self) -> Delivering<'_> { Delivering(self) }
+
+    fn detached(&self) -> Detached<'_> { Detached { live: self, tokens: Vec::new(), subscription: None, released: Vec::new() } }
+
+    fn cancel_refresh(&self, token: &CancelToken) {
+        if let Some(sync) = self.database.sync.as_ref() { sync.cancel_entity_refresh(token); } else { token.cancel(); }
+    }
 
     fn emit(&self, snapshots: Vec<WireEntitySnapshot>) {
         if !snapshots.is_empty() { locked(&self.outbox).deliveries.push_back(EntityDelivery { snapshots }); }
@@ -208,30 +223,29 @@ impl LiveEntities {
     fn reset_core(&self) {
         let _delivering = self.delivering();
         self.database.entity_cache.clear(&self.model);
+        let mut detached = self.detached();
         let mut state = locked(&self.state);
         if state.closed { return; }
         let generation = self.generation();
         let epoch = self.epoch();
         let mut snapshots = Vec::new();
         for (id, entry) in &mut state.entries {
-            entry.cancel(self.database.sync.as_ref());
+            detached.cancel(entry);
             entry.clear_value();
             entry.generation = generation;
             entry.epoch = epoch;
             entry.verdict = entry.machine.reset();
             snapshots.push(entry.snapshot(id));
         }
-        let subscription = if let Some(single) = &mut state.singleton {
+        if let Some(single) = &mut state.singleton {
             single.entry.clear_value();
             single.entry.generation = generation;
             single.entry.epoch = epoch;
             single.entry.verdict = single.entry.machine.reset();
             snapshots.push(single.entry.snapshot(""));
-            single.subscription.take()
-        } else { None };
+            detached.subscription = single.subscription.take();
+        }
         self.emit(snapshots);
-        drop(state);
-        if let Some(subscription) = subscription { subscription.cancel(); }
     }
 
     fn single_changed(&self, feed: u64, change: LiveChange) {
@@ -267,18 +281,20 @@ impl LiveEntities {
         let _delivering = self.delivering();
         let generation = self.generation();
         let epoch = self.epoch();
+        let now = self.now();
         let mut ids = Vec::new();
         let mut fetches = Vec::new();
         {
+            let mut detached = self.detached();
             let mut state = locked(&self.state);
             if state.closed { return Err(DbError::Interrupted { detail: "entities closed".into() }); }
             for request in requests {
                 let id = RowId::new(&request.id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
                 if state.entries.get(&request.id).is_some_and(|entry| entry.lease == request.lease) { continue; }
-                if let Some(mut old) = state.entries.remove(&request.id) { old.cancel(self.database.sync.as_ref()); self.observer.release(std::slice::from_ref(&id)); }
+                if let Some(mut old) = state.entries.remove(&request.id) { detached.cancel(&mut old); detached.released.push(id.clone()); }
                 let mut entry = Entry::new(request.lease, false, generation, epoch);
                 if request.fetch != EntityFetch::None { entry.verdict = entry.machine.read_started(); }
-                if let Some(cached) = self.database.entity_cache.take(&self.model, &request.id, self.now(), generation, epoch) {
+                if let Some(cached) = self.database.entity_cache.take(&self.model, &request.id, now, generation, epoch) {
                     entry.verdict = if cached.row.is_some() { entry.machine.seed(cached.revision) } else { entry.machine.accept(cached.revision, false, None) };
                     entry.value = cached.row;
                     entry.value_token = NEXT_VALUE.fetch_add(1, Ordering::Relaxed);
@@ -302,7 +318,13 @@ impl LiveEntities {
             let sink: crate::sync::RefreshSink = Arc::new(move |id, error| { if let Some(source) = weak.upgrade() { source.refreshed(id, lease, generation, error); } });
             let refresh = self.database.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "entity fetch needs a network session".into() })?.refresh_entities(&self.model, std::slice::from_ref(&id), fetch, sink);
             match refresh {
-                Ok(cancel) => { if let Some(entry) = locked(&self.state).entries.get_mut(&id).filter(|entry| entry.lease == lease) { entry.cancel = Some(cancel); } else { cancel.cancel(); } }
+                Ok(cancel) => {
+                    let unclaimed = {
+                        let mut state = locked(&self.state);
+                        match state.entries.get_mut(&id).filter(|entry| entry.lease == lease) { Some(entry) => { entry.cancel = Some(cancel); None } None => Some(cancel) }
+                    };
+                    if let Some(cancel) = unclaimed { cancel.cancel(); }
+                }
                 Err(error) => self.refreshed(&id, lease, generation, Some(RefreshError::Failed(error.to_string()))),
             }
         }
@@ -311,18 +333,18 @@ impl LiveEntities {
 
     pub fn release(&self, leases: Vec<EntityLease>) -> Result<(), DbError> {
         super::entity_calls::entered();
+        let now = self.now();
+        let mut detached = self.detached();
         let mut state = locked(&self.state);
-        let mut ids = Vec::new();
         for lease in leases {
             if !state.entries.get(&lease.id).is_some_and(|entry| entry.lease == lease.lease) { continue; }
             let Some(mut entry) = state.entries.remove(&lease.id) else { continue };
-            entry.cancel(self.database.sync.as_ref());
+            detached.cancel(&mut entry);
             if !state.closed && (entry.value.is_some() || entry.verdict.stage == EntityStage::Absent) {
-                self.database.entity_cache.keep(&self.model, &lease.id, CachedEntity { row: entry.value, revision: entry.verdict.revision, generation: entry.generation, epoch: entry.epoch }, self.now());
+                self.database.entity_cache.keep(&self.model, &lease.id, CachedEntity { row: entry.value, revision: entry.verdict.revision, generation: entry.generation, epoch: entry.epoch }, now);
             }
-            ids.push(RowId::new(&lease.id).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
+            detached.released.push(RowId::new(&lease.id).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
         }
-        self.observer.release(&ids);
         Ok(())
     }
 
@@ -350,13 +372,13 @@ impl LiveEntities {
             (single.query.clone(), single.entry.verdict.feed)
         };
         let subscription = self.database.live_query(pending.0, Arc::new(SingletonListener { source: self.weak.clone(), feed: pending.1 }));
+        let mut detached = self.detached();
         let mut state = locked(&self.state);
         let closed = state.closed;
         if let Some(single) = &mut state.singleton {
             if !closed && single.entry.verdict.feed == pending.1 { single.subscription = Some(subscription); return; }
         }
-        drop(state);
-        subscription.cancel();
+        detached.subscription = Some(subscription);
     }
 
     pub fn reset(&self) { super::entity_calls::entered(); self.reset_core(); }
@@ -364,25 +386,24 @@ impl LiveEntities {
     pub fn shutdown(&self) {
         super::entity_calls::entered();
         let _delivering = self.delivering();
+        let mut detached = self.detached();
         let mut state = locked(&self.state);
         if std::mem::replace(&mut state.closed, true) { return; }
         let mut snapshots = Vec::new();
         for (id, entry) in &mut state.entries {
-            entry.cancel(self.database.sync.as_ref());
+            detached.cancel(entry);
             entry.clear_value();
             entry.verdict = entry.machine.database_closed();
             snapshots.push(entry.snapshot(id));
         }
-        let subscription = if let Some(single) = &mut state.singleton {
+        if let Some(single) = &mut state.singleton {
             single.entry.clear_value();
             single.entry.verdict = single.entry.machine.database_closed();
             snapshots.push(single.entry.snapshot(""));
-            single.subscription.take()
-        } else { None };
+            detached.subscription = single.subscription.take();
+        }
         self.database.entity_cache.clear(&self.model);
         self.emit(snapshots);
-        drop(state);
-        if let Some(subscription) = subscription { subscription.cancel(); }
     }
 
     pub fn decode_failed(&self, lease: EntityLease, revision: i64, message: String) {
@@ -402,7 +423,9 @@ impl LiveEntities {
 impl Drop for LiveEntities {
     fn drop(&mut self) {
         super::entity_calls::entered();
-        for entry in locked(&self.state).entries.values_mut() { entry.cancel(self.database.sync.as_ref()); }
+        let state = self.state.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let tokens: Vec<CancelToken> = state.entries.values_mut().filter_map(|entry| entry.cancel.take()).collect();
+        for token in &tokens { self.cancel_refresh(token); }
     }
 }
 
@@ -432,3 +455,7 @@ pub fn entity_open_failed(id: String, lease: u64, message: String, unopened: boo
 #[cfg(test)]
 #[path = "entity_snapshot_tests.rs"]
 mod entity_snapshot_tests;
+
+#[cfg(test)]
+#[path = "entity_reenter_tests.rs"]
+mod entity_reenter_tests;

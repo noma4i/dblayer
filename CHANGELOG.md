@@ -4,6 +4,7 @@
 
 ### Fixed
 - Cancelling a live query no longer deadlocks with a delivered change.
+- An entity listener can retain, release, reset or close its entities from inside `changed`: refresh cancels and lease releases run after the entity registry lock is free.
 - A pending native call resumes on a library lane, so cancelling or releasing it cannot deadlock with the thread that produces its result.
 - Models without row rules keep the schema fingerprint they had in 6.13.1, so an upgrade does not wipe and reload their cache.
 
