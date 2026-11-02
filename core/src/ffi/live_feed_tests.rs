@@ -441,3 +441,34 @@ fn ending_the_feed_while_a_delivery_wakes_the_initial_load_waiter_finishes_with_
         assert!(matches!(waiting.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(super::live_feed::Readiness::Ended)));
     }));
 }
+
+#[test]
+fn feed_readiness_wake_has_no_guards() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+    use crate::test_wait::ProbeWaker;
+    type Step = fn(&LiveFeed);
+    let nothing: Step = |_| {};
+    let cases: [(&str, Step, Step); 7] = [
+        ("rows make the feed ready", nothing, |feed| send(feed, &Input::Rows(1, 1))),
+        ("a count makes the feed ready", nothing, |feed| feed.count(LiveChange { count: Some(1), ..LiveChange::empty(1) })),
+        ("a read failure makes the feed ready", nothing, |feed| feed.read_failed("unreadable".into())),
+        ("an invalid query makes the feed ready", nothing, |feed| feed.invalid(DbError::Invalid { detail: "unknown field".into() })),
+        ("the finished load makes the feed ready", |feed| { feed.expect_load(); send(feed, &Input::Rows(1, 1)); }, |feed| feed.load_finished(None)),
+        ("the end of the feed", nothing, |feed| feed.end()),
+        ("a resync that gives up", nothing, |feed| { feed.resync(); }),
+    ];
+    for (name, setup, trigger) in cases {
+        let (feed, _tape) = feed();
+        setup(&feed);
+        let probe = ProbeWaker::new({
+            let feed = feed.clone();
+            move || feed.guards_free()
+        });
+        let mut readiness = feed.readiness.subscribe();
+        let mut changed = Box::pin(readiness.changed());
+        assert!(changed.as_mut().poll(&mut Context::from_waker(&Waker::from(probe.clone()))).is_pending(), "{name}: nothing published yet");
+        trigger(&feed);
+        assert_eq!((probe.wakes(), probe.violations()), (1, 0), "{name}: one wake with the feed guards free");
+    }
+}

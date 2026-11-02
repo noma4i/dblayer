@@ -33,6 +33,7 @@ Live results arrive from library threads. Record writes run on background thread
 - An entity listener may call `retain`, `release`, `reset`, `shutdown` and `decodeFailed` from inside `changed`. The source queues its deliveries and sends them in order after it releases its state, so a call from the listener never waits on the delivery that made it.
 - A reset listener may write or reset again. `Store` copies the listener list and returns the call as an owned effect. `reset` and `reset_all` run it after the file lifecycle lock, the writer and the announcement turn are released, so the cache clear and the reset event are already published and a nested commit takes the next turn.
 - A live query listener may call `cancel`, `expandBefore`, `expandAfter` and any operation that changes the online state from inside `changed`. Related and window queries release their target observers, projection and state snapshots before they call the listener.
+- A relation state waiter may be woken by a foreign task that calls the library again. The load owner queues each state change as an owned effect and sends the watch updates, drops senders and aborts tasks in order after it releases its state, so the nested call returns and its update follows the first one. Last-reader cancellation, flight completion and feed readiness wake their waiters the same way.
 - Queues are bounded. Producers wait asynchronously where work cannot be combined. Observation requests combine within each live group. Data is never dropped.
 
 ## Consistency under load

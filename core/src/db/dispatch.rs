@@ -47,6 +47,14 @@ impl Effects {
         self.0.push(Box::new(effect));
     }
 
+    pub(crate) fn release(&mut self, value: impl Send + 'static) {
+        self.push(move || drop(value));
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     pub(crate) fn run(self) {
         for effect in self.0 {
             effect();

@@ -7,6 +7,7 @@
 - An entity listener can retain, release, reset or close its entities from inside `changed`: refresh cancels and lease releases run after the entity registry lock is free.
 - A live query listener can cancel its subscription or change the online state from inside `changed`, for related and window queries and for relation states: no target map, projection or state snapshot is held during the call.
 - A reset listener can write or reset again from inside its callback: reset listeners run after the file lifecycle lock and the commit announcement turn are released, so the nested call no longer waits on itself.
+- A task woken by a relation state, a shared load or a live query readiness can call the library again from its wake: the load owner and the flight table publish after they release their locks.
 - A pending native call resumes on a library lane, so cancelling or releasing it cannot deadlock with the thread that produces its result.
 - Models without row rules keep the schema fingerprint they had in 6.13.1, so an upgrade does not wipe and reload their cache.
 

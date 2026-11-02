@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex, Weak};
 use serde_json::{Map, Value};
 use tokio::sync::watch;
 
+use crate::db::dispatch::Effects;
+
 use super::load_machine::{step, Effect, Event, FlightId, LoadError, LoadKind, Machine, RelationState, Stored};
 use super::locked;
 
@@ -44,7 +46,7 @@ impl RelationWatch {
 impl Drop for RelationLease {
     fn drop(&mut self) {
         if let Some(owner) = self.owner.upgrade() {
-            locked(&owner.state).forget_window(&self.window);
+            owner.with_state(|state, effects| state.forget_window(&self.window, effects));
         }
     }
 }
@@ -81,25 +83,28 @@ impl MembersRead {
 impl Drop for MembersRead {
     fn drop(&mut self) {
         let Some(owner) = self.owner.upgrade() else { return };
-        let mut state = locked(&owner.state);
-        if let Some(chain) = state.chains.get_mut(&self.window) {
+        owner.with_state(|state, effects| {
+            let Some(chain) = state.chains.get_mut(&self.window) else { return };
             if !Arc::ptr_eq(&chain.identity, &self.identity) { return; }
             chain.readers -= 1;
-            if chain.readers == 0 {
-                chain.task.abort();
-                state.chains.remove(&self.window);
+            if chain.readers > 0 { return; }
+            if let Some(chain) = state.chains.remove(&self.window) {
+                effects.push(move || {
+                    chain.task.abort();
+                    drop(chain);
+                });
             }
-        }
+        });
     }
 }
 
 impl OwnerState {
-    fn forget_window(&mut self, window: &str) {
+    fn forget_window(&mut self, window: &str, effects: &mut Effects) {
         if self.senders.get(window).is_some_and(|sender| sender.receiver_count() > 0) {
             return;
         }
         if self.machine.forget_window(window) {
-            self.senders.remove(window);
+            if let Some(sender) = self.senders.remove(window) { effects.release(sender); }
             self.targets.remove(window);
             self.retries.retain(|(key, _)| key != window);
         }
@@ -107,9 +112,27 @@ impl OwnerState {
 }
 
 #[derive(Default)]
+struct Outbox {
+    batches: VecDeque<Effects>,
+    running: bool,
+}
+
+struct Unwinding<'a> {
+    outbox: &'a Mutex<Outbox>,
+    armed: bool,
+}
+
+impl Drop for Unwinding<'_> {
+    fn drop(&mut self) {
+        if self.armed { locked(self.outbox).running = false; }
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct LoadOwner {
     queue: Mutex<VecDeque<Queued>>,
     state: Mutex<OwnerState>,
+    outbox: Mutex<Outbox>,
     next_flight: AtomicU64,
     epoch: AtomicU64,
     #[cfg(test)]
@@ -119,15 +142,50 @@ pub(crate) struct LoadOwner {
 }
 
 impl LoadOwner {
+    fn with_state<R>(&self, apply: impl FnOnce(&mut OwnerState, &mut Effects) -> R) -> R {
+        let mut effects = Effects::default();
+        let result = {
+            let mut state = locked(&self.state);
+            let result = apply(&mut state, &mut effects);
+            if !effects.is_empty() { locked(&self.outbox).batches.push_back(effects); }
+            result
+        };
+        self.flush();
+        result
+    }
+
+    /// One caller at a time runs the queued batches. A call made from inside an effect only queues its batch, so a woken task can use the owner and the publication order stays the order of the state changes.
+    fn flush(&self) {
+        {
+            let mut outbox = locked(&self.outbox);
+            if outbox.running || outbox.batches.is_empty() { return; }
+            outbox.running = true;
+        }
+        let mut unwinding = Unwinding { outbox: &self.outbox, armed: true };
+        loop {
+            let batch = {
+                let mut outbox = locked(&self.outbox);
+                let Some(batch) = outbox.batches.pop_front() else {
+                    outbox.running = false;
+                    unwinding.armed = false;
+                    return;
+                };
+                batch
+            };
+            batch.run();
+        }
+    }
+
     pub(crate) fn members(self: &Arc<Self>, window: &str, start: impl FnOnce(watch::Sender<Option<Result<(), super::SyncError>>>) -> tokio::task::AbortHandle) -> MembersRead {
-        let mut state = locked(&self.state);
-        let chain = state.chains.entry(window.to_string()).or_insert_with(|| {
-            let result = watch::channel(None).0;
-            let task = start(result.clone());
-            MembersChain { identity: Arc::new(()), readers: 0, result, task }
-        });
-        chain.readers += 1;
-        MembersRead { identity: chain.identity.clone(), owner: Arc::downgrade(self), window: window.to_string(), result: chain.result.subscribe() }
+        self.with_state(|state, _| {
+            let chain = state.chains.entry(window.to_string()).or_insert_with(|| {
+                let result = watch::channel(None).0;
+                let task = start(result.clone());
+                MembersChain { identity: Arc::new(()), readers: 0, result, task }
+            });
+            chain.readers += 1;
+            MembersRead { identity: chain.identity.clone(), owner: Arc::downgrade(self), window: window.to_string(), result: chain.result.subscribe() }
+        })
     }
 
     pub(crate) async fn unobserved(&self, window: &str) {
@@ -149,10 +207,10 @@ impl LoadOwner {
     }
 
     fn drain(&self) {
-        self.drain_locked(&mut locked(&self.state));
+        self.with_state(|state, effects| self.drain_locked(state, effects));
     }
 
-    fn drain_locked(&self, state: &mut OwnerState) {
+    fn drain_locked(&self, state: &mut OwnerState, effects: &mut Effects) {
         loop {
             let Some(queued) = locked(&self.queue).pop_front() else { return };
             let event = match queued {
@@ -178,16 +236,16 @@ impl LoadOwner {
                 }
                 step(&mut state.machine, event)
             }));
-            let effects = match (stepped, window.clone()) {
-                (Ok(effects), _) => effects,
+            let produced = match (stepped, window.clone()) {
+                (Ok(produced), _) => produced,
                 (Err(_), Some(window)) => step(&mut state.machine, Event::ReadFailed { window, error: LoadError::internal() }),
                 (Err(_), None) => Vec::new(),
             };
-            for effect in effects {
+            for effect in produced {
                 match effect {
                     Effect::Publish { window, state: published } => {
-                        if let Some(sender) = state.senders.get(&window) {
-                            sender.send_replace(*published);
+                        if let Some(sender) = state.senders.get(&window).cloned() {
+                            effects.push(move || { sender.send_replace(*published); });
                         }
                     }
                     Effect::Retry { window, kind } => state.retries.push((window, kind)),
@@ -195,8 +253,10 @@ impl LoadOwner {
             }
             if finished {
                 if let Some(window) = &window {
-                    if state.machine.flights(window) == 0 { state.chains.remove(window); }
-                    state.forget_window(window);
+                    if state.machine.flights(window) == 0 {
+                        if let Some(chain) = state.chains.remove(window) { effects.release(chain); }
+                    }
+                    state.forget_window(window, effects);
                 }
             }
             if resets {
@@ -204,30 +264,31 @@ impl LoadOwner {
                 let observed = |window: &str| state.senders.get(window).is_some_and(|sender| sender.receiver_count() > 0);
                 state.machine.forget(observed);
                 let kept: BTreeSet<String> = state.senders.keys().filter(|window| state.machine.view(window).is_some()).cloned().collect();
-                state.senders.retain(|window, _| kept.contains(window));
+                let gone: Vec<String> = state.senders.keys().filter(|window| !kept.contains(*window)).cloned().collect();
+                effects.release(gone.iter().filter_map(|window| state.senders.remove(window)).collect::<Vec<_>>());
                 state.targets.retain(|window, _| kept.contains(window));
             }
         }
     }
 
     pub(crate) fn observe(self: &Arc<Self>, window: &str, target: Target, seed: Option<Stored>) -> RelationWatch {
-        let receiver = {
-            let mut state = locked(&self.state);
+        let receiver = self.with_state(|state, effects| {
             let view = state.machine.view(window).unwrap_or_else(RelationState::closed);
             let receiver = state.senders.entry(window.to_string()).or_insert_with(|| watch::channel(view).0).subscribe();
             locked(&self.queue).push_back(Queued::Target(Event::Observe { window: window.to_string(), model: target.model.clone(), seed }, target));
-            self.drain_locked(&mut state);
+            self.drain_locked(state, effects);
             receiver
-        };
+        });
         RelationWatch { receiver, _lease: RelationLease { owner: Arc::downgrade(self), window: window.to_string() } }
     }
 
     pub(crate) fn seed_observed(&self, window: &str, model: String, seed: Option<Stored>) {
-        let mut state = locked(&self.state);
-        if state.senders.get(window).is_some_and(|sender| sender.receiver_count() > 0) {
-            locked(&self.queue).push_back(Queued::Event(Event::Observe { window: window.to_string(), model, seed }));
-            self.drain_locked(&mut state);
-        }
+        self.with_state(|state, effects| {
+            if state.senders.get(window).is_some_and(|sender| sender.receiver_count() > 0) {
+                locked(&self.queue).push_back(Queued::Event(Event::Observe { window: window.to_string(), model, seed }));
+                self.drain_locked(state, effects);
+            }
+        });
     }
 
     pub(crate) fn begin_flight(&self, window: &str, target: Target, cursor: bool, seed: Option<Stored>) -> FlightId {
@@ -251,6 +312,12 @@ impl LoadOwner {
         let mut state = locked(&self.state);
         let retries = std::mem::take(&mut state.retries);
         retries.into_iter().filter_map(|(window, kind)| state.targets.get(&window).cloned().map(|target| (target, kind))).collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn guards_free(&self) -> bool {
+        use crate::test_wait::mutex_free;
+        mutex_free(&self.state) && mutex_free(&self.queue) && mutex_free(&self.outbox)
     }
 
     #[cfg(test)]

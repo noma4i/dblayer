@@ -24,6 +24,8 @@ mod load_forget_tests;
 #[cfg(test)]
 mod load_owner_panic_tests;
 #[cfg(test)]
+mod load_wake_tests;
+#[cfg(test)]
 mod load_machine_oracle_tests;
 #[cfg(test)]
 mod load_wiring_tests;

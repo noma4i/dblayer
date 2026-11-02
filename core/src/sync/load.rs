@@ -106,11 +106,14 @@ impl FlightGuard<'_> {
 
     fn release(&mut self, end: FlightEnd) {
         let Some(sender) = self.sender.take() else { return };
-        let mut flights = locked(&self.inner.flights);
-        flights.coalescing.finish(&self.key);
-        flights.waiting.remove(&self.key);
-        flights.node_rereads.remove(&self.key);
+        let waiting = {
+            let mut flights = locked(&self.inner.flights);
+            flights.coalescing.finish(&self.key);
+            flights.node_rereads.remove(&self.key);
+            flights.waiting.remove(&self.key)
+        };
         sender.send_replace(Some(end));
+        drop(waiting);
     }
 }
 
@@ -227,6 +230,7 @@ impl Inner {
                 });
                 if let Some(error) = freshness_error {
                     flights.coalescing.finish(&flight_key);
+                    drop(flights);
                     self.owner.submit(super::load_machine::Event::ReadFailed { window: resolved.window_key.clone(), error: LoadError::of(&error) });
                     return Err(error);
                 }

@@ -175,12 +175,14 @@ impl LiveFeed {
 
     /// Asks the observed group to tell this feed through `reached` once it has read through a revision the relation state is ahead of.
     pub(super) fn on_ahead(&self, ask: Arc<dyn Fn(i64) + Send + Sync>) {
-        held(&self.state).reach_request = Some(ask);
+        let replaced = held(&self.state).reach_request.replace(ask);
+        drop(replaced);
     }
 
     /// Sets how to make the observer deliver the whole result again.
     pub(super) fn on_rejoin(&self, rejoin: Arc<dyn Fn() + Send + Sync>) {
-        held(&self.state).rejoin = Some(rejoin);
+        let replaced = held(&self.state).rejoin.replace(rejoin);
+        drop(replaced);
     }
 
     pub(super) fn show_targets_only(&self) {
@@ -259,7 +261,13 @@ impl LiveFeed {
     }
 
     pub(super) fn hold_first_screen(&self, hold: crate::sync::FirstScreenHold) {
-        *held(&self.first_screen) = Some(hold);
+        let replaced = held(&self.first_screen).replace(hold);
+        drop(replaced);
+    }
+
+    #[cfg(test)]
+    pub(super) fn guards_free(&self) -> bool {
+        crate::test_wait::mutex_free(&self.state) && crate::test_wait::mutex_free(&self.first_screen)
     }
 
     pub(super) fn end(&self) {
