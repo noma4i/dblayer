@@ -122,6 +122,8 @@ async fn a_window_that_grows_past_max_shrinks_to_its_first_size() {
 
 fn last(tape: &Tape) -> super::LiveChange { tape.0.lock().unwrap().last().unwrap().clone() }
 
+fn latest(tape: &Tape, ready: impl Fn(&super::LiveChange) -> bool) -> bool { tape.0.lock().unwrap().last().is_some_and(ready) }
+
 #[tokio::test]
 async fn members_complete_chain() {
     for ending in ["success", "error", "empty_error", "offline", "reset"] {
@@ -130,28 +132,28 @@ async fn members_complete_chain() {
         let tape = Arc::new(Tape(Mutex::default()));
         let live = db.live_window(WINDOW.into(), 50, Some(200), tape.clone());
         if ending == "empty_error" {
-            spin_until("failure without member rows", || tape.0.lock().unwrap().last().is_some_and(|change| change.error.is_some()));
+            spin_until("failure without member rows", || latest(&tape, |change| change.error.is_some()));
             assert_eq!(last(&tape).phase, Some(super::LivePhase::Failed));
             assert!(!last(&tape).complete);
             assert!(shown(&tape).is_empty());
             live.cancel();
             continue;
         }
-        spin_until("partial members with their load state", || shown(&tape).len() == 2 && transport.queries.load(Ordering::SeqCst) == 2 && last(&tape).phase != Some(super::LivePhase::NotLoaded));
+        spin_until("partial members with their load state", || shown(&tape).len() == 2 && transport.queries.load(Ordering::SeqCst) == 2 && latest(&tape, |change| change.phase != Some(super::LivePhase::NotLoaded)));
         assert_eq!(last(&tape).phase, Some(super::LivePhase::Loading));
         assert!(!last(&tape).complete);
         assert_eq!(transport.variables.lock().unwrap()[1]["after"], "c0");
         assert_eq!(transport.variables.lock().unwrap()[0]["first"], 100);
         if ending == "offline" {
             db.set_online(false).unwrap();
-            spin_until("offline partial members", || last(&tape).error.is_some());
+            spin_until("offline partial members", || latest(&tape, |change| change.error.is_some()));
             assert_eq!(last(&tape).phase, Some(super::LivePhase::Loaded));
             assert!(!last(&tape).complete);
             db.set_online(true).unwrap();
             spin_until("online continues the cursor", || transport.queries.load(Ordering::SeqCst) == 3);
             assert_eq!(transport.variables.lock().unwrap()[2]["after"], "c0");
             transport.permits.add_permits(3);
-            spin_until("online finishes the members", || last(&tape).complete);
+            spin_until("online finishes the members", || latest(&tape, |change| change.complete));
             live.cancel();
             continue;
         }
@@ -159,7 +161,7 @@ async fn members_complete_chain() {
             db.db.reset_all().unwrap();
             let reset_revision = db.db.revision_seq().unwrap();
             transport.permits.add_permits(1);
-            spin_until("reset rows and ended chain", || { let shown = last(&tape); shown.error.is_some() && shown.revision >= reset_revision });
+            spin_until("reset rows and ended chain", || latest(&tape, |shown| shown.error.is_some() && shown.revision >= reset_revision));
             assert!(!last(&tape).complete);
             assert!(shown(&tape).is_empty());
             live.cancel();
@@ -167,7 +169,7 @@ async fn members_complete_chain() {
         }
         if ending == "error" {
             transport.permits.add_permits(1);
-            spin_until("failed partial chain", || last(&tape).error.is_some());
+            spin_until("failed partial chain", || latest(&tape, |change| change.error.is_some()));
             assert_eq!(last(&tape).phase, Some(super::LivePhase::Loaded));
             assert!(!last(&tape).complete);
             assert_eq!(shown(&tape).len(), 2);
@@ -176,12 +178,12 @@ async fn members_complete_chain() {
             spin_until("resume the saved cursor", || transport.queries.load(Ordering::SeqCst) == 3);
             assert_eq!(transport.variables.lock().unwrap()[2]["after"], "c0");
             transport.permits.add_permits(3);
-            spin_until("complete after reopening", || last(&tape).complete);
+            spin_until("complete after reopening", || latest(&tape, |change| change.complete));
             resumed.cancel();
             continue;
         }
         transport.permits.add_permits(3);
-        spin_until("the confirmed end", || last(&tape).complete);
+        spin_until("the confirmed end", || latest(&tape, |change| change.complete));
         assert_eq!(last(&tape).phase, Some(super::LivePhase::Loaded));
         assert_eq!(transport.queries.load(Ordering::SeqCst), 4, "short and empty pages with hasNextPage are followed");
         assert_eq!(last(&tape).window.unwrap().total, Some(202));
@@ -217,7 +219,7 @@ async fn members_idle_work() {
     spin_until("second reader joins", || db.sync().unwrap().inner.owner.members_readers(&key) == 2);
     first.cancel();
     transport.permits.add_permits(3);
-    spin_until("shared chain completes", || last(&other).complete);
+    spin_until("shared chain completes", || latest(&other, |change| change.complete));
     assert_eq!(transport.queries.load(Ordering::SeqCst), 4);
     second.cancel();
     let calls = transport.queries.load(Ordering::SeqCst);
@@ -240,6 +242,6 @@ async fn members_idle_work() {
     spin_until("reopen at the persisted cursor", || transport.queries.load(Ordering::SeqCst) == calls + 3);
     assert_eq!(transport.variables.lock().unwrap().last().unwrap()["after"], "c0");
     transport.permits.add_permits(3);
-    spin_until("resumed chain completes", || last(&tail).complete);
+    spin_until("resumed chain completes", || latest(&tail, |change| change.complete));
     reopened.cancel();
 }
