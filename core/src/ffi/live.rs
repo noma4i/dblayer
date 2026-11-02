@@ -207,6 +207,7 @@ pub struct LiveSubscription {
 impl super::open_streams::Closable for LiveSubscription {
     fn close(&self) { self.cancel(); }
     fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
+    fn busy(&self) -> bool { self.feed.busy() }
 }
 
 impl LiveSubscription {

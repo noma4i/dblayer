@@ -36,6 +36,10 @@ pub(crate) struct ResumeOwner {
 }
 
 impl ResumeOwner {
+    pub(crate) fn idle(&self) -> bool {
+        locked(&self.state).machine.is_idle() && self.effects.is_idle()
+    }
+
     pub(crate) fn new() -> Self {
         Self { state: std::sync::Mutex::new(OwnerState { machine: ResumeMachine::new(), current: Vec::new(), queued: Vec::new(), settled: Vec::new(), runner: None, runners: 0 }), effects: OrderedEffects::default() }
     }
@@ -87,7 +91,6 @@ impl ResumeOwner {
         });
     }
 
-    #[cfg(test)]
     fn settled(&self) -> Option<oneshot::Receiver<()>> {
         let mut state = locked(&self.state);
         if state.machine.is_idle() { return None; }
@@ -173,7 +176,6 @@ impl Sync {
         receiver.await.unwrap_or(Err(SyncError::Cancelled))
     }
 
-    #[cfg(test)]
     pub(crate) async fn resume_settled(&self) {
         if let Some(settled) = self.inner.resume.settled() { let _ = settled.await; }
     }

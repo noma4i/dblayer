@@ -410,6 +410,13 @@ impl LiveEntities {
 impl super::open_streams::Closable for LiveEntities {
     fn close(&self) { self.shutdown(); }
     fn registration(&self) -> &OnceLock<super::open_streams::Registration> { &self.registration }
+    fn busy(&self) -> bool {
+        let state = locked(&self.state);
+        let reading = state.entries.values().any(|entry| entry.machine.is_reading())
+            || state.singleton.as_ref().is_some_and(|single| single.entry.machine.is_reading());
+        drop(state);
+        reading || !self.outbox.is_idle()
+    }
 }
 
 impl Drop for LiveEntities {

@@ -39,6 +39,18 @@ Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlay
 
 `DB.enterForegroundForTesting()` in Swift (`DBlayerTesting`) and `DBlayer.enterForegroundForTesting()` in Kotlin (`@DBlayerTestingApi`) require a database opened with `openTesting`. They send the same core event as a system foreground notice, without posting notifications or changing the process lifecycle. A scope with `refresh_on_foreground: true` reloads when it has a reader, even while fresh. No reader means no request. The call schedules the event. Await the window's result to check its effect.
 
+`resetForTesting` clears model data using the normal data reset while keeping the clock, transport, registered operations, and session. Call the explicit session reset when a test needs no session. Existing loads finish under their original generation. `settleForTesting` waits for background work and reports the busy part if it does not finish within 10 seconds. Both calls require `openTesting`.
+
+```swift
+try await DB.resetForTesting()
+try await DB.settleForTesting()
+```
+
+```kotlin
+DBlayer.resetForTesting()
+DBlayer.settleForTesting()
+```
+
 ```swift
 let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
 try await Moment.feed.load()

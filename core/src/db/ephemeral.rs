@@ -192,7 +192,7 @@ impl State {
         self.rows.len()
     }
 
-    fn next_due(&self) -> Option<Duration> {
+    pub(crate) fn next_due(&self) -> Option<Duration> {
         self.deadlines.first().map(|(due, _, _)| *due)
     }
 }

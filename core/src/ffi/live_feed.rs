@@ -96,6 +96,11 @@ fn live_phase(phase: LoadPhase) -> LivePhase {
 }
 
 impl LiveFeed {
+    pub(super) fn busy(&self) -> bool {
+        let state = held(&self.state);
+        state.draining || !state.queue.is_empty() || (!state.ended && (!state.opened || state.load_pending || state.awaiting_whole))
+    }
+
     pub(super) fn new(listener: Arc<dyn QueryListener>) -> Arc<Self> {
         let state = FeedState {
             seq: 0,

@@ -63,6 +63,11 @@ pub(crate) struct PreloadOwner {
 }
 
 impl PreloadOwner {
+    pub(crate) fn idle(&self) -> bool {
+        let state = locked(&self.state);
+        !state.running && state.app_loads == 0 && self.effects.is_idle()
+    }
+
     pub(crate) fn attach(&self, inner: Weak<Inner>) {
         let _ = self.inner.set(inner);
     }
@@ -270,7 +275,7 @@ impl Inner {
         }
     }
 
-    async fn app_loads_settled(&self) {
+    pub(crate) async fn app_loads_settled(&self) {
         let mut busy = self.preload.busy.subscribe();
         while self.preload.app_loads() != 0 {
             if busy.changed().await.is_err() { return; }

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Reset and settle testing databases without reopening them.
+
 ## 6.14.1 - 2026-11-02
 
 ### Fixed

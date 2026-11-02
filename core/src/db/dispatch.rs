@@ -120,7 +120,6 @@ impl OrderedEffects {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
         self.0.try_lock().is_ok_and(|ordered| !ordered.running && ordered.batches.is_empty())
     }

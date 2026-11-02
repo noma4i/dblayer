@@ -175,6 +175,10 @@ pub struct EntityMachine {
 }
 
 impl EntityMachine {
+    pub(super) fn is_reading(&self) -> bool {
+        locked(&self.flow).inner().reading
+    }
+
     fn send(&self, event: Event) -> EntityVerdict {
         let mut flow = locked(&self.flow);
         let mut effect = Effect::default();

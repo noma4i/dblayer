@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 pub(super) trait Closable: Send + Sync {
     fn close(&self);
     fn registration(&self) -> &OnceLock<Registration>;
+    fn busy(&self) -> bool { false }
 }
 
 pub(super) struct Registration { streams: Weak<OpenStreams>, id: usize }
@@ -31,6 +32,11 @@ pub(super) struct OpenStreams {
 }
 
 impl OpenStreams {
+    pub(super) fn busy(&self) -> bool {
+        let open: Vec<_> = crate::db::locked(&self.members).open.values().cloned().collect();
+        open.into_iter().filter_map(|member| member.upgrade()).any(|member| member.busy())
+    }
+
     pub(super) fn enroll<M: Closable + 'static>(self: &Arc<Self>, member: &Arc<M>) {
         assert!(member.registration().get().is_none());
         let registration = {

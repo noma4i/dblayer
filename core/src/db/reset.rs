@@ -4,6 +4,28 @@ use super::open::Db;
 pub(crate) use crate::store::ResetListener;
 
 impl Db {
+    pub(crate) fn testing_busy(&self) -> Result<Option<&'static str>, DbError> {
+        let expiry = match self.shared.expiry_gate.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(Some("expiry")),
+        };
+        let ephemeral = self.shared.ephemeral.lock();
+        if ephemeral.next_due().is_some_and(|due| due <= ephemeral.clock.now()) {
+            return Ok(Some("expiry"));
+        }
+        drop(ephemeral);
+        drop(expiry);
+        let revision = self.revision_seq()?;
+        if !self.shared.dispatch.quiet_through(revision) || !self.shared.reached_through(revision) {
+            return Ok(Some("listeners"));
+        }
+        if !super::locked(&self.shared.upload_round).is_idle() {
+            return Ok(Some("upload round"));
+        }
+        Ok(None)
+    }
+
     pub(crate) fn on_reset(&self, listener: ResetListener) {
         self.shared.store.on_reset(listener);
     }

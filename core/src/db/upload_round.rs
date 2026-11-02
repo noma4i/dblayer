@@ -180,6 +180,10 @@ pub(crate) struct UploadRound {
 }
 
 impl UploadRound {
+    pub(crate) fn is_idle(&self) -> bool {
+        self.cover.phase == Phase::Idle
+    }
+
     fn send(&mut self, event: RoundEvent) -> Reply {
         self.cover.reply = Reply::None;
         let mut machine = RoundFlow.uninitialized_state_machine().init_with_context(&mut self.cover);

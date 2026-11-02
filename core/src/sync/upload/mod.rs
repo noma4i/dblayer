@@ -94,6 +94,12 @@ impl Drop for UploadResume {
 }
 
 impl UploadRuns {
+    pub(crate) fn idle(&mut self) -> (bool, Vec<Result<(), tokio::task::JoinError>>) {
+        let mut finished = Vec::new();
+        while let Some(result) = self.tasks.try_join_next() { finished.push(result); }
+        (self.ready.is_empty() && self.active.is_empty() && self.tasks.is_empty(), finished)
+    }
+
     pub(crate) fn new(max_files: usize) -> Self {
         Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: HashMap::new(), next_run: 0, tasks: JoinSet::new(), adopted: HashMap::new() }
     }

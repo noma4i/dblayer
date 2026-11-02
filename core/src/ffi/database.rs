@@ -471,6 +471,39 @@ impl Database {
         self.online_sink()?.enter_foreground();
         Ok(())
     }
+    pub async fn reset_for_testing(&self) -> Result<(), DbError> {
+        if !self.testing { return Err(DbError::Invalid { detail: "resetForTesting requires openTesting".into() }); }
+        let database = self.db.clone();
+        blocking(move || { database.reset_all()?; Ok(()) }).await
+    }
+
+    pub async fn settle_for_testing(&self) -> Result<(), DbError> {
+        if !self.testing { return Err(DbError::Invalid { detail: "settleForTesting requires openTesting".into() }); }
+        let database = self.clone();
+        on_executor(async move {
+            let mut busy = "background work";
+            let finished = tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    if let Some(sync) = &database.sync {
+                        busy = "resume";
+                        sync.resume_settled().await;
+                        busy = "load flights";
+                        sync.inner.app_loads_settled().await;
+                    }
+                    let checking = database.clone();
+                    busy = match blocking(move || checking.testing_busy()).await? {
+                        Some(part) => part,
+                        None => return Ok::<(), DbError>(()),
+                    };
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            }).await;
+            match finished {
+                Ok(result) => result,
+                Err(_) => Err(DbError::Invalid { detail: format!("settleForTesting timed out: {busy}") }),
+            }
+        }).await
+    }
     pub fn set_listening(&self, allowed: bool) -> Result<(), DbError> {
         if let Some(sync) = &self.sync {
             let _entered = executor()?.enter();
@@ -556,6 +589,37 @@ impl Database {
 }
 
 impl Database {
+    pub(super) fn testing_busy(&self) -> Result<Option<&'static str>, DbError> {
+        if let Some(sync) = &self.sync {
+            let inner = &sync.inner;
+            if !crate::sync::locked(&inner.flights).waiting.is_empty() { return Ok(Some("load flights")); }
+            if !inner.resume.idle() { return Ok(Some("resume")); }
+            if !inner.preload.idle() { return Ok(Some("preload")); }
+            if inner.connectivity.is_online() {
+                let queue = inner.operation_queue().map_err(DbError::from)?;
+                let queue = crate::sync::locked(queue);
+                if queue.entries.values().any(|entry| entry.uploading && entry.operation.status == crate::operation::OperationStatus::Pending && !inner.is_waiting(&entry.operation)) {
+                    return Ok(Some("uploads"));
+                }
+                if queue.pending.iter().filter_map(|seq| queue.entries.get(seq)).any(|entry| !inner.is_waiting(&entry.operation) && !queue.blocked_before(&entry.operation).0 && !queue.blocked_before(&entry.operation).1) {
+                    return Ok(Some("outbox send"));
+                }
+            }
+            if inner.outbox_gate.try_lock().is_err() { return Ok(Some("outbox send")); }
+            let (uploads_idle, finished) = crate::sync::locked(&inner.uploads).idle();
+            for result in finished {
+                result.map_err(|error| DbError::Invalid { detail: format!("upload task failed: {error}") })?;
+            }
+            if !uploads_idle || *inner.file_tasks.borrow() != 0 || !inner.upload_effects.is_idle() {
+                return Ok(Some("uploads"));
+            }
+            if !inner.live_effects.is_idle() { return Ok(Some("live listeners")); }
+        }
+        if let Some(part) = self.db.testing_busy()? { return Ok(Some(part)); }
+        if self.streams.busy() { return Ok(Some("listeners")); }
+        Ok(None)
+    }
+
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "transport is required for server operations".into() }) }
     fn send_writes(&self) {
         if let (Some(sync), Ok(executor)) = (self.sync.as_ref(), executor()) {

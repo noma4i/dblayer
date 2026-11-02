@@ -25,12 +25,12 @@ impl Transport for Counting {
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
-    async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
+    async fn query(&self, request: super::TransportRequest) -> Result<String, DbError> {
         if let Some(gate) = &self.gate { gate.acquire().await.unwrap().forget(); }
         self.queries.fetch_add(1, Ordering::SeqCst);
         self.started.notify_one();
         if let Some(hold) = &self.hold { hold.acquire().await.unwrap().forget(); }
-        Ok(r#"{"data":{"moments":[{"id":"m1","text":"a"}]}}"#.into())
+        Ok(if request.operation_name == "Node" { r#"{"data":{"node":{"__typename":"Moment","id":"m1","text":"a"}}}"# } else { r#"{"data":{"moments":[{"id":"m1","text":"a"}]}}"# }.into())
     }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), DbError> {
@@ -46,6 +46,18 @@ impl Transport for Counting {
 struct Silent;
 impl QueryListener for Silent {
     fn changed(&self, _: LiveChange) {}
+}
+
+#[derive(Default)]
+struct Recording(std::sync::Mutex<Vec<u32>>);
+impl QueryListener for Recording {
+    fn changed(&self, change: LiveChange) { self.0.lock().unwrap().push(change.size); }
+}
+
+#[derive(Default)]
+struct RecordingEntity(std::sync::Mutex<Vec<super::EntityDelivery>>);
+impl super::EntityListener for RecordingEntity {
+    fn changed(&self, delivery: super::EntityDelivery) { self.0.lock().unwrap().push(delivery); }
 }
 
 #[tokio::test]
@@ -145,7 +157,7 @@ async fn rig_with_clock() -> (Arc<Database>, Arc<Counting>, Arc<TestClock>) {
     (db, transport, clock)
 }
 
-async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tokio::sync::Semaphore>>, gate: Option<Arc<tokio::sync::Semaphore>>) -> (Arc<Database>, Arc<Counting>, Option<Arc<TestClock>>) {
+pub(super) async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tokio::sync::Semaphore>>, gate: Option<Arc<tokio::sync::Semaphore>>) -> (Arc<Database>, Arc<Counting>, Option<Arc<TestClock>>) {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     model.relations.extend([relation("feed", "5.minutes"), relation("quick", "200.milliseconds")]);
     let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: hold.clone(), gate, subscriptions: None });
@@ -164,6 +176,75 @@ async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tokio::sync::S
 async fn load(db: &Database, relation: &str) -> Result<(), DbError> { db.load("Moment".into(), relation.into(), "{}".into()).await }
 fn stored(db: &Database) -> bool { db.db.find("Moment", &RowId::new("m1").unwrap()).unwrap().is_some() }
 fn queries(transport: &Counting) -> usize { transport.queries.load(Ordering::SeqCst) }
+
+#[tokio::test]
+async fn testing_calls_reject_a_production_database() {
+    let (db, _) = rig().await;
+    assert!(db.reset_for_testing().await.unwrap_err().to_string().contains("resetForTesting requires openTesting"));
+    assert!(db.settle_for_testing().await.unwrap_err().to_string().contains("settleForTesting requires openTesting"));
+}
+
+#[tokio::test]
+async fn testing_settle_waits_for_a_load_that_outlives_reset() {
+    let hold = Arc::new(tokio::sync::Semaphore::new(0));
+    let clock = TestClock::new(1_000_000);
+    let (db, transport, _) = open_rig(Some(clock), Some(hold.clone()), None).await;
+    let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
+    within(transport.started.notified()).await;
+    db.reset_for_testing().await.unwrap();
+    let settling = tokio::spawn({ let db = db.clone(); async move { db.settle_for_testing().await } });
+    crate::test_wait::yield_until("settle sees the active flight", || db.testing_busy().unwrap() == Some("load flights")).await;
+    assert!(!settling.is_finished());
+    hold.add_permits(1);
+    within(load).await.unwrap().unwrap();
+    within(settling).await.unwrap().unwrap();
+    assert!(!stored(&db));
+
+    let hold = Arc::new(tokio::sync::Semaphore::new(0));
+    let (db, transport, _) = open_rig(Some(TestClock::new(1_000_000)), Some(hold.clone()), None).await;
+    let listener = Arc::new(Recording::default());
+    let _live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), listener.clone());
+    within(transport.started.notified()).await;
+    hold.add_permits(1);
+    db.settle_for_testing().await.unwrap();
+    assert!(listener.0.lock().unwrap().contains(&1), "the loaded row reached the listener");
+
+    let hold = Arc::new(tokio::sync::Semaphore::new(0));
+    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None, subscriptions: None });
+    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    let mut node = RelationSpec::new("node", &[]);
+    node.text_params = vec![crate::schema::NODE_PARAM.to_string()];
+    node.node = Some(crate::schema::NodeRead::One);
+    let mut remote = relation("node", "5.minutes").remote.unwrap();
+    remote.operation = "Node".into();
+    remote.shape = RemoteShape::Single;
+    remote.variables.insert("id".into(), crate::schema::VariableSource::Param { name: crate::schema::NODE_PARAM.into() });
+    node.remote = Some(remote);
+    model.relations.push(node);
+    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000)).await.unwrap();
+    db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
+    let listener = Arc::new(RecordingEntity::default());
+    let entity = db.live_entities("Moment".into(), listener.clone()).unwrap();
+    entity.retain(vec![super::EntityRequest { id: "m1".into(), lease: 1, fetch: super::EntityFetch::Force }]).unwrap();
+    let settling = tokio::spawn({ let db = db.clone(); async move { db.settle_for_testing().await } });
+    within(transport.started.notified()).await;
+    assert!(!settling.is_finished());
+    hold.add_permits(1);
+    within(settling).await.unwrap().unwrap();
+    assert!(listener.0.lock().unwrap().iter().flat_map(|delivery| &delivery.snapshots).any(|snapshot| snapshot.value.is_some()));
+}
+
+#[tokio::test]
+async fn testing_settle_names_a_held_load_after_the_bound() {
+    let hold = Arc::new(tokio::sync::Semaphore::new(0));
+    let (db, transport, _) = open_rig(Some(TestClock::new(1_000_000)), Some(hold.clone()), None).await;
+    let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
+    within(transport.started.notified()).await;
+    let error = crate::test_wait::within_secs(20, db.settle_for_testing()).await.unwrap_err();
+    assert!(error.to_string().contains("load flights"));
+    hold.add_permits(1);
+    within(load).await.unwrap().unwrap();
+}
 
 #[tokio::test]
 async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {

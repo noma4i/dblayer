@@ -15,6 +15,40 @@ fn request(id: &str, lease: u64) -> EntityRequest { EntityRequest { id: id.into(
 fn release(id: &str, lease: u64) -> EntityLease { EntityLease { id: id.into(), lease } }
 
 #[tokio::test]
+async fn testing_reset_empties_rows_and_resets_a_retained_entity() {
+    let clock = super::super::TestClock::new(1_000_000);
+    let (db, transport, _) = super::super::load_tests::open_rig(Some(clock.clone()), None, None).await;
+    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    let scope = db.db.spec("Moment").unwrap().selection_key("feed", &serde_json::Map::new()).unwrap();
+    let window = crate::store::window_key(scope.as_str(), crate::schema::PageDirection::Forward);
+    assert!(db.db.shared.store.window(&window).unwrap().is_some());
+    clock.advance(1_000);
+    let now = db.clock.now();
+    put(&db.db, "Moment", json!({"id":"m1", "text":"before"}));
+    db.db.create("Moment", json!({"id":"pending", "text":"pending"}).as_object().unwrap().clone()).unwrap();
+    assert_eq!(db.db.outbox().unwrap().len(), 1);
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    let live = db.live_entities("Moment".into(), Arc::new(Listener(sender))).unwrap();
+    live.retain(vec![request("m1", 1)]).unwrap();
+    assert!(next(&mut receiver, EntityStage::Present).await.value.is_some());
+    let (log, callback) = crate::db::fixtures::recorder();
+    let _subscription = db.db.observe(crate::query::Query::new("Moment"), callback).unwrap();
+    db.db.await_revision(db.db.revision_seq().unwrap());
+    db.reset_for_testing().await.unwrap();
+    let empty = next(&mut receiver, EntityStage::Absent).await;
+    db.settle_for_testing().await.unwrap();
+    assert!(empty.value.is_none());
+    assert!(db.db.find("Moment", &RowId::new("m1").unwrap()).unwrap().is_none());
+    assert!(db.db.outbox().unwrap().is_empty());
+    assert!(db.db.shared.store.window(&window).unwrap().is_none());
+    assert_eq!(db.clock.now(), now);
+    assert_eq!(crate::db::fixtures::changes(&log).iter().map(crate::db::fixtures::ids).collect::<Vec<_>>(), vec![vec!["m1", "pending"], vec![]]);
+    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    assert_eq!(transport.queries.load(std::sync::atomic::Ordering::SeqCst), 2);
+    live.shutdown();
+}
+
+#[tokio::test]
 async fn entity_snapshot_order() {
     let (db, _) = super::super::load_tests::rig().await;
     put(&db.db, "Moment", json!({"id":"m1", "text":"cold"}));
