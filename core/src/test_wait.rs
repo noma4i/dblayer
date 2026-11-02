@@ -123,3 +123,34 @@ impl Wake for ForeignWaker {
         drop(self.lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     }
 }
+
+pub(crate) struct ProbeWaker {
+    unlocked: Box<dyn Fn() -> bool + Send + Sync>,
+    wakes: std::sync::atomic::AtomicUsize,
+    violations: std::sync::atomic::AtomicUsize,
+}
+
+impl ProbeWaker {
+    pub(crate) fn new(unlocked: impl Fn() -> bool + Send + Sync + 'static) -> Arc<Self> {
+        Arc::new(Self { unlocked: Box::new(unlocked), wakes: Default::default(), violations: Default::default() })
+    }
+
+    pub(crate) fn wakes(&self) -> usize {
+        self.wakes.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn violations(&self) -> usize {
+        self.violations.load(Ordering::SeqCst)
+    }
+}
+
+impl Wake for ProbeWaker {
+    fn wake(self: Arc<Self>) {
+        if !(self.unlocked)() { self.violations.fetch_add(1, Ordering::SeqCst); }
+        self.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+pub(crate) fn mutex_free<T>(mutex: &Mutex<T>) -> bool {
+    !matches!(mutex.try_lock(), Err(std::sync::TryLockError::WouldBlock))
+}

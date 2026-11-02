@@ -264,7 +264,8 @@ impl LiveFeed {
 
     pub(super) fn end(&self) {
         self.calls.cancel();
-        held(&self.first_screen).take();
+        let hold = held(&self.first_screen).take();
+        drop(hold);
         held(&self.state).ended = true;
         self.readiness.send_replace(Readiness::Ended);
     }

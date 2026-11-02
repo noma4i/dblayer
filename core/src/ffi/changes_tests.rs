@@ -1,7 +1,7 @@
 use super::*;
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
-use crate::test_wait::{join_within, spin_until, within, ForeignWaker};
+use crate::test_wait::{join_within, mutex_free, spin_until, within, ForeignWaker, ProbeWaker};
 
 #[tokio::test]
 async fn a_slow_reader_receives_a_bounded_replacement_with_every_current_row() {
@@ -71,4 +71,56 @@ fn cancelling_while_a_delivered_change_wakes_the_reader_finishes_and_ends_the_st
         join_within(delivering);
         assert!(matches!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(None)));
     }));
+}
+
+#[test]
+fn changes_cancel_during_foreign_wake() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    join_within(std::thread::spawn(|| {
+        let queue = LiveChanges::new();
+        let foreign = Arc::new(Mutex::new(()));
+        let waker = ForeignWaker::new(foreign.clone());
+        let mut next = Box::pin(queue.next());
+        assert!(next.as_mut().poll(&mut Context::from_waker(&Waker::from(waker.clone()))).is_pending());
+        let task_lock = foreign.lock().unwrap();
+        let cancelling = {
+            let queue = queue.clone();
+            std::thread::spawn(move || queue.cancel())
+        };
+        spin_until("the cancel never woke the reader", || waker.entered());
+        Listener(Arc::downgrade(&queue)).changed(LiveChange::empty(1));
+        drop(task_lock);
+        join_within(cancelling);
+        assert!(matches!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(None)));
+        let state = crate::db::locked(&queue.state);
+        assert!(state.closed && state.pending.is_empty() && state.rows.is_empty());
+    }));
+}
+
+#[test]
+fn every_stream_wake_runs_unlocked() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    enum Trigger { Value, Error, Cancel }
+    for trigger in [Trigger::Value, Trigger::Error, Trigger::Cancel] {
+        let queue = LiveChanges::new();
+        let seen = queue.clone();
+        let waker = ProbeWaker::new(move || mutex_free(&seen.state) && mutex_free(&seen.subscription));
+        let mut next = Box::pin(queue.next());
+        assert!(next.as_mut().poll(&mut Context::from_waker(&Waker::from(waker.clone()))).is_pending());
+        let listener = Listener(Arc::downgrade(&queue));
+        match trigger {
+            Trigger::Value => listener.changed(LiveChange::empty(1)),
+            Trigger::Error => listener.changed(LiveChange { error: Some(DbError::Network { detail: "lost".into() }), ..LiveChange::empty(2) }),
+            Trigger::Cancel => queue.cancel(),
+        }
+        assert_eq!((waker.wakes() >= 1, waker.violations()), (true, 0));
+        let ready = next.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        match trigger {
+            Trigger::Value => assert!(matches!(ready, Poll::Ready(Some(change)) if change.revision == 1)),
+            Trigger::Error => assert!(matches!(ready, Poll::Ready(Some(change)) if matches!(change.error, Some(DbError::Network { .. })))),
+            Trigger::Cancel => assert!(matches!(ready, Poll::Ready(None))),
+        }
+    }
 }

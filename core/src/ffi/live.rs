@@ -213,12 +213,16 @@ impl LiveSubscription {
         value
     }
     pub fn cancel(&self) {
-        crate::db::locked(&self.handles).take();
+        let handles = crate::db::locked(&self.handles).take();
+        drop(handles);
         self.feed.end();
     }
     /// The wrapper could not apply the last delivery to its list. The core sends the whole list again, and a failure once that did not help twice in a row.
     pub fn report_desync(&self) {
-        if self.feed.resync() { crate::db::locked(&self.handles).take(); }
+        if self.feed.resync() {
+            let handles = crate::db::locked(&self.handles).take();
+            drop(handles);
+        }
     }
     pub fn expand_before(&self, rows: u32) {
         if let Some(window) = crate::db::locked(&self.handles).as_ref().and_then(|handles| handles.window.as_ref()) { window.expand_before(rows as usize); }

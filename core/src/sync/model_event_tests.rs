@@ -388,3 +388,26 @@ async fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listeni
     assert_eq!(expect_event(within(&events).await).kind, "DELETED");
     assert_eq!(rig.transport.call_count("Changes"), 1, "one stream for the whole cycle");
 }
+
+#[tokio::test(start_paused = true)]
+async fn every_model_event_wake_runs_unlocked() {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+    enum Trigger { Value, Close, Drop }
+    for trigger in [Trigger::Value, Trigger::Close, Trigger::Drop] {
+        let rig = chat_rig();
+        let events = rig.sync.open_model_events("chats").await.unwrap();
+        let queue = events.queue();
+        let seen = queue.clone();
+        let waker = crate::test_wait::ProbeWaker::new(move || seen.state_free());
+        let mut waiting = Box::pin(queue.ready().notified());
+        assert!(waiting.as_mut().poll(&mut Context::from_waker(&Waker::from(waker.clone()))).is_pending());
+        match trigger {
+            Trigger::Value => rig.sync.inner.publish_model_event(super::ModelEvent { model: "chats".into(), area: "CHAT".into(), kind: "UPDATED".into(), id: "c1".into(), before: None, after: None }),
+            Trigger::Close => events.close(),
+            Trigger::Drop => drop(events),
+        }
+        assert_eq!((waker.wakes() >= 1, waker.violations()), (true, 0));
+        assert!(matches!(waiting.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(())));
+    }
+}

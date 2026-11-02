@@ -51,6 +51,12 @@ pub(crate) struct EventQueue {
     ready: tokio::sync::Notify,
 }
 
+#[cfg(test)]
+impl EventQueue {
+    pub(super) fn state_free(&self) -> bool { crate::test_wait::mutex_free(&self.state) }
+    pub(super) fn ready(&self) -> &tokio::sync::Notify { &self.ready }
+}
+
 impl EventQueue {
     fn push(&self, event: &ModelEvent) {
         let mut state = locked(&self.state);
@@ -106,6 +112,11 @@ pub struct ModelEvents {
     keys: std::sync::Mutex<Vec<String>>,
 }
 
+#[cfg(test)]
+impl ModelEvents {
+    pub(super) fn queue(&self) -> Arc<EventQueue> { self.queue.clone() }
+}
+
 impl ModelEvents {
     pub async fn next(&self) -> Option<ModelEventItem> {
         loop {
@@ -129,7 +140,8 @@ impl ModelEvents {
     pub fn close(&self) {
         locked(&self.queue.state).closed = true;
         self.queue.ready.notify_waiters();
-        for key in locked(&self.keys).drain(..) { self.inner.release_live(&key); }
+        let keys = std::mem::take(&mut *locked(&self.keys));
+        for key in keys { self.inner.release_live(&key); }
     }
 }
 

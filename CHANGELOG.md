@@ -4,6 +4,7 @@
 
 ### Fixed
 - Cancelling a live query no longer deadlocks with a delivered change.
+- A pending native call resumes on a library lane, so cancelling or releasing it cannot deadlock with the thread that produces its result.
 - Models without row rules keep the schema fingerprint they had in 6.13.1, so an upgrade does not wipe and reload their cache.
 
 ## 6.14.0 - 2026-11-02

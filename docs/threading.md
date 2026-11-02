@@ -29,6 +29,7 @@ Live results arrive from library threads. Record writes run on background thread
 - A subscription to a remote relation returns its handle at once. The stored window state is read on a blocking task. The subscription delivers nothing until then and keeps only the latest merged snapshot, so its first value carries the rows and the state together.
 - Releasing the last owning synchronization handle stops background subscriptions, uploads and scheduled retries. Background tasks never keep that handle alive.
 - Cloned database handles and connectivity sinks keep synchronization alive until they are released. Explicitly awaited operations retain their handle until they finish.
+- A pending native call resumes your coroutine or Swift task from a library lane, never from the thread that produced the result or released the call. Cancelling a call hands the cancel and the free to that lane, so neither runs while the library holds a lock.
 - Queues are bounded. Producers wait asynchronously where work cannot be combined. Observation requests combine within each live group. Data is never dropped.
 
 ## Consistency under load
