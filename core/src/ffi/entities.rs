@@ -403,6 +403,10 @@ impl LiveEntities {
     }
 }
 
+impl super::open_streams::Closable for LiveEntities {
+    fn close(&self) { self.shutdown(); }
+}
+
 impl Drop for LiveEntities {
     fn drop(&mut self) {
         super::entity_calls::entered();

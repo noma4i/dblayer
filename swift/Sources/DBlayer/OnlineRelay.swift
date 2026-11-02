@@ -22,6 +22,14 @@ final class OnlineRelay: @unchecked Sendable {
     deliver()
   }
 
+  func detach() {
+    let previous = lock.withLock { () -> (@Sendable (Bool) -> Void)? in
+      defer { sink = nil; sinkDue = false }
+      return sink
+    }
+    withExtendedLifetime(previous) {}
+  }
+
   func set(_ online: Bool) {
     lock.withLock {
       self.online = online

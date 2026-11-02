@@ -713,7 +713,7 @@ impl Inner {
         let mut stopped = self.stopped.clone();
         tokio::select! {
             biased;
-            _ = stopped.changed() => None,
+            _ = stopped.wait_for(|stopped| *stopped) => None,
             result = async {
                 self.connectivity.online().await;
                 self.transport.subscribe(request).await

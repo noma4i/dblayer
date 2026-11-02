@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::node_tests::{data, node_rig};
 use super::{RefreshError, RefreshSink};
-use crate::test_wait::within;
+use crate::test_wait::{within, yield_until};
 
 type Told = Arc<Mutex<Vec<(String, Option<RefreshError>)>>>;
 
@@ -183,4 +183,57 @@ async fn entity_if_missing_idle() {
     assert_eq!(rig.transport.call_count("ChatNode"), 0);
     sync.set_online(true);
     assert!(matches!(&told(&got, 2).await[1], Some(RefreshError::Failed(_))));
+}
+
+struct DropProbe(std::sync::Weak<super::Inner>, Arc<Mutex<Vec<bool>>>);
+
+impl Drop for DropProbe {
+    fn drop(&mut self) {
+        let free = self.0.upgrade().is_some_and(|inner| inner.entity_due.try_lock().is_ok());
+        self.1.lock().unwrap().push(free);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_cancelled_parked_refresh_releases_its_sink_outside_the_due_lock() {
+    let rig = node_rig();
+    rig.sync.set_online(false);
+    let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let probe = DropProbe(Arc::downgrade(&rig.sync.inner), seen.clone());
+    let sink: RefreshSink = Arc::new(move |_, _| { let _keep = &probe; });
+    let cancel = rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
+    yield_until("the refresh parked", || !rig.sync.inner.entity_due.lock().unwrap().is_empty()).await;
+    yield_until("the task released its copy", || Arc::strong_count(&sink) == 2).await;
+    drop(sink);
+    assert!(seen.lock().unwrap().is_empty());
+    rig.sync.cancel_entity_refresh(&cancel);
+    assert_eq!(*seen.lock().unwrap(), [true]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pending_refresh_does_not_keep_the_database_alive() {
+    let rig = node_rig();
+    rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "slow"}})).after(Duration::from_secs(3600)));
+    let (sink, _) = sink();
+    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
+    yield_until("the request is in flight", || rig.transport.call_count("ChatNode") == 1).await;
+    assert!(Arc::strong_count(&rig.sync.inner) >= 2, "the task holds the inner state");
+    rig.sync.close();
+    yield_until("the task ended with the close", || Arc::strong_count(&rig.sync.inner) == 1).await;
+    rig.sync.refresh_entities("chats", &ids("c2"), super::EntityFetch::Force, sink.clone()).unwrap();
+    for _ in 0..8 { tokio::task::yield_now().await; }
+    assert_eq!(rig.transport.call_count("ChatNode"), 1, "a closed database sends nothing");
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropping_the_last_owner_ends_a_pending_refresh() {
+    let rig = node_rig();
+    rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "slow"}})).after(Duration::from_secs(3600)));
+    let (sink, _) = sink();
+    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink).unwrap();
+    yield_until("the request is in flight", || rig.transport.call_count("ChatNode") == 1).await;
+    let owner = Arc::downgrade(&rig.sync.inner);
+    let sync = rig.sync;
+    drop(sync);
+    yield_until("the last drop released the database", || owner.upgrade().is_none()).await;
 }

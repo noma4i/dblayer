@@ -17,6 +17,26 @@ const RETRY: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(
 #[derive(Clone)]
 pub struct Cloud {
     inner: Arc<Inner>,
+    task: Arc<Runner>,
+}
+
+struct Runner {
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl Runner {
+    fn stop(&self) {
+        let task = locked(&self.task).take();
+        if let Some(task) = task {
+            task.abort();
+        }
+    }
+}
+
+impl Drop for Runner {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 struct Inner {
@@ -29,7 +49,6 @@ struct Inner {
     phase: Mutex<Phase>,
     effects: OrderedEffects,
     pass: tokio::sync::Mutex<()>,
-    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 struct Failure {
@@ -56,7 +75,12 @@ impl Cloud {
     pub fn attach(db: &Db, io: Arc<dyn CloudIo>, clock: Arc<dyn Clock>) -> Cloud {
         let online = db.connectivity();
         let state = Arc::new(watch::channel(CloudState::Idle).0);
-        Cloud { inner: Arc::new(Inner { db: db.clone(), io, clock, online, wake: Notify::new(), state, phase: Mutex::new(Phase::new()), effects: OrderedEffects::default(), pass: tokio::sync::Mutex::new(()), task: Mutex::new(None) }) }
+        Cloud { inner: Arc::new(Inner { db: db.clone(), io, clock, online, wake: Notify::new(), state, phase: Mutex::new(Phase::new()), effects: OrderedEffects::default(), pass: tokio::sync::Mutex::new(()) }), task: Arc::new(Runner { task: Mutex::new(None) }) }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_running(&self) -> bool {
+        locked(&self.task.task).as_ref().is_some_and(|task| !task.is_finished())
     }
 
     pub fn state(&self) -> CloudState {
@@ -98,7 +122,7 @@ impl Cloud {
     }
 
     pub fn start(&self) {
-        let mut task = locked(&self.inner.task);
+        let mut task = locked(&self.task.task);
         if task.is_some() {
             return;
         }
@@ -107,10 +131,7 @@ impl Cloud {
     }
 
     pub fn stop(&self) {
-        let task = locked(&self.inner.task).take();
-        if let Some(task) = task {
-            task.abort();
-        }
+        self.task.stop();
     }
 }
 

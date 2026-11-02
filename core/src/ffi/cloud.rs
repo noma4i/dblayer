@@ -21,8 +21,14 @@ impl Database {
         let _entered = executor()?.enter();
         let cloud = Cloud::attach(&self.db, io, self.clock.clone());
         cloud.start();
-        Ok(Arc::new(CloudLink { cloud }))
+        let link = Arc::new(CloudLink { cloud });
+        self.streams.enroll(&link);
+        Ok(link)
     }
+}
+
+impl super::open_streams::Closable for CloudLink {
+    fn close(&self) { self.cloud.stop(); }
 }
 
 #[uniffi::export]

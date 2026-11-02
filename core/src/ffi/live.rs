@@ -129,6 +129,10 @@ impl LiveChange {
         Self { full: true, size: rows.len() as u32, inserted: (0..rows.len() as u32).collect(), rows, ..Self::empty(revision) }
     }
 
+    pub(super) fn closed() -> Self {
+        Self { error: Some(super::DbError::Interrupted { detail: "subscription ended".into() }), phase: Some(LivePhase::Closed), ..Self::empty(0) }
+    }
+
     pub(super) fn counted(revision: i64, count: i64) -> Self {
         Self { count: Some(count), ..Self::empty(revision) }
     }
@@ -199,6 +203,10 @@ pub struct LiveSubscription {
     pub(super) handles: Mutex<Option<LiveHandles>>,
 }
 
+impl super::open_streams::Closable for LiveSubscription {
+    fn close(&self) { self.cancel(); }
+}
+
 impl LiveSubscription {
     fn window_control(&self) -> Option<crate::db::ObserverControl> {
         let handles = crate::db::locked(&self.handles);
@@ -218,9 +226,15 @@ impl LiveSubscription {
         }
     }
     pub async fn current(&self) -> LiveChange {
-        let mut receiver = self.feed.latest.subscribe();
-        let value = receiver.wait_for(Option::is_some).await.expect("live owns sender").as_ref().expect("first delivery").clone();
-        value
+        let mut latest = self.feed.latest.subscribe();
+        let mut readiness = self.feed.readiness.subscribe();
+        loop {
+            let value = latest.borrow().clone();
+            if let Some(value) = value { return value; }
+            let ended = *readiness.borrow() == Readiness::Ended;
+            if ended { return LiveChange::closed(); }
+            tokio::select! { _ = latest.changed() => {}, _ = readiness.changed() => {} }
+        }
     }
     pub fn cancel(&self) {
         let handles = crate::db::locked(&self.handles).take();

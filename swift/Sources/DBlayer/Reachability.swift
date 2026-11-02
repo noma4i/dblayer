@@ -31,6 +31,10 @@ final class Reachability: @unchecked Sendable {
     return connectivity
   }
 
+  func detach() {
+    relay.detach()
+  }
+
   func changed(_ online: Bool) {
     relay.set(online)
   }

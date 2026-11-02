@@ -136,12 +136,22 @@ impl ByteProgress {
 pub struct PutReply { pub status: u16, pub etag: Option<String> }
 
 #[derive(uniffi::Object)]
-pub struct OnlineSink { pub(crate) sync: Option<crate::sync::Sync>, pub(crate) online: Arc<core::Connectivity> }
+pub struct OnlineSink { pub(crate) sync: Option<crate::sync::WeakSync>, pub(crate) online: Arc<core::Connectivity> }
+
+impl OnlineSink {
+    fn live_sync(&self) -> Option<Option<crate::sync::Sync>> {
+        match &self.sync {
+            Some(weak) => weak.upgrade().map(Some),
+            None => Some(None),
+        }
+    }
+}
 
 #[uniffi::export]
 impl OnlineSink {
     pub fn set_online(&self, online: bool) {
-        match (&self.sync, super::database::executor()) {
+        let Some(sync) = self.live_sync() else { return };
+        match (sync, super::database::executor()) {
             (Some(sync), Ok(executor)) => {
                 let _entered = executor.enter();
                 sync.set_online(online);
@@ -151,13 +161,15 @@ impl OnlineSink {
     }
 
     pub fn set_power_saving(&self, saving: bool) {
-        let (Some(sync), Ok(executor)) = (&self.sync, super::database::executor()) else { return };
+        let Some(Some(sync)) = self.live_sync() else { return };
+        let Ok(executor) = super::database::executor() else { return };
         let _entered = executor.enter();
         sync.set_power_saving(saving);
     }
 
     pub fn enter_foreground(&self) {
-        let (Some(sync), Ok(executor)) = (&self.sync, super::database::executor()) else { return };
+        let Some(Some(sync)) = self.live_sync() else { return };
+        let Ok(executor) = super::database::executor() else { return };
         let _entered = executor.enter();
         sync.enter_foreground();
     }

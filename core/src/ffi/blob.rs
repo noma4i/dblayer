@@ -50,6 +50,10 @@ impl BlobChanges {
     pub fn cancel(&self) { self.cancel.cancel(); }
 }
 
+impl super::open_streams::Closable for BlobChanges {
+    fn close(&self) { self.cancel.cancel(); }
+}
+
 impl Drop for BlobChanges { fn drop(&mut self) { self.cancel.cancel(); } }
 
 #[uniffi::export]
@@ -67,10 +71,12 @@ impl Database {
     pub async fn blob_changes(self: Arc<Self>, id: String) -> Result<Arc<BlobChanges>, DbError> {
         let sync = self.sync()?.clone();
         let changes = self.db.outbox_changes();
-        super::database::blocking(move || {
+        let changes = super::database::blocking(move || {
             sync.blob_snapshot(&id)?;
             Ok(Arc::new(BlobChanges { sync, id, changes: tokio::sync::Mutex::new(changes), last: Mutex::new(None), cancel: crate::transport::CancelToken::new() }))
-        }).await
+        }).await?;
+        self.streams.enroll(&changes);
+        Ok(changes)
     }
     pub async fn wait_blob(self: Arc<Self>, id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();

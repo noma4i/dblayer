@@ -15,6 +15,10 @@ internal class OnlineRelay(private val connectivity: (Boolean) -> Unit) {
         deliver()
     }
 
+    fun detach() {
+        synchronized(lock) { sink = null; sinkDue = false }
+    }
+
     fun set(online: Boolean) {
         synchronized(lock) { this.online = online; connectivityDue = true; sinkDue = sink != null }
         deliver()

@@ -125,11 +125,11 @@ impl Inner {
         let mut ready = locked(&self.lives).get(live_source(key)).ok_or(super::SyncError::Cancelled)?.ready.subscribe();
         let mut stopped = self.stopped.clone();
         loop {
-            if stopped.has_changed().is_err() { return Err(super::SyncError::Cancelled); }
+            if self.is_stopped() { return Err(super::SyncError::Cancelled); }
             if let Some(result) = ready.borrow_and_update().clone() { return result; }
             tokio::select! {
                 result = ready.changed() => { result.map_err(|_| super::SyncError::Cancelled)?; }
-                _ = stopped.changed() => return Err(super::SyncError::Cancelled),
+                _ = stopped.wait_for(|stopped| *stopped) => return Err(super::SyncError::Cancelled),
             }
         }
     }

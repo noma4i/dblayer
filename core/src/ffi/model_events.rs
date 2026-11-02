@@ -31,8 +31,14 @@ impl Database {
         let wire = self.wire(&model)?.clone();
         let sync = self.sync()?.clone();
         let events = super::database::cancellable(async move { sync.open_model_events(&model).await }).await??;
-        Ok(Arc::new(ModelEventFeed { events: Arc::new(events), wire }))
+        let feed = Arc::new(ModelEventFeed { events: Arc::new(events), wire });
+        self.streams.enroll(&feed);
+        Ok(feed)
     }
+}
+
+impl super::open_streams::Closable for ModelEventFeed {
+    fn close(&self) { self.events.close(); }
 }
 
 async fn joined<T>(task: tokio::task::JoinHandle<Option<T>>) -> Result<Option<T>, DbError> {

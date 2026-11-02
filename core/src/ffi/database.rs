@@ -17,6 +17,7 @@ use super::entities::{self, EntityListener, LiveEntities};
 use super::live::{follow_failures, intake, LiveHandles};
 use super::live_feed::LiveFeed;
 use super::related::RelatedProjection;
+use super::open_streams::OpenStreams;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
@@ -120,7 +121,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) entity_cache: Arc<super::entity_pool::EntityCache>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<OpenStreams>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) entity_cache: Arc<super::entity_pool::EntityCache>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -146,7 +147,7 @@ impl Database {
         }
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), testing: false, wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams: Arc::default(), db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), testing: false, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -243,7 +244,9 @@ impl Database {
     }
     pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
         super::entity_calls::entered();
-        entities::open(self.clone(), &model, self.wire(&model)?.clone(), listener)
+        let source = entities::open(self.clone(), &model, self.wire(&model)?.clone(), listener)?;
+        self.streams.enroll(&source);
+        Ok(source)
     }
     pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| self.connect_json(&query_json, false, None, feed))
@@ -475,7 +478,7 @@ impl Database {
         }
         Ok(())
     }
-    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.clone(), online: self.db.connectivity() })) }
+    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.as_ref().map(Sync::downgrade), online: self.db.connectivity() })) }
     pub async fn upload(&self, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<i64, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
@@ -533,7 +536,11 @@ impl Database {
         let db = self.db.clone();
         blocking(move || Ok(db.maintain(&[]).map(|_| ())?)).await
     }
-    pub fn shutdown(&self) { if let Some(lease) = self.lease.get() { lease.release(); } }
+    pub fn shutdown(&self) {
+        self.streams.close();
+        if let Some(sync) = &self.sync { sync.close(); }
+        if let Some(lease) = self.lease.get() { lease.release(); }
+    }
     pub async fn logout(&self) -> Result<(), DbError> {
         if let Some(sync) = &self.sync {
             let _entered = executor()?.enter();
@@ -586,7 +593,9 @@ impl Database {
                 None
             }
         };
-        Arc::new(LiveSubscription { feed, handles: Mutex::new(handles) })
+        let subscription = Arc::new(LiveSubscription { feed, handles: Mutex::new(handles) });
+        self.streams.enroll(&subscription);
+        subscription
     }
     fn window_handles(&self, query_json: &str, (tail, max): (u32, Option<u32>), related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let (query, relation) = self.parsed_query(query_json)?;

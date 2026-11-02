@@ -22,6 +22,7 @@ public enum DB {
     ForegroundEvents.shared.stop()
     PowerSaving.shared.stop()
     wake.detach()
+    reachability.detach()
     current?.shutdown()
     current = nil
   }

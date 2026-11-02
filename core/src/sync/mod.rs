@@ -124,7 +124,7 @@ impl Default for JoinedLoads {
 }
 
 pub(crate) struct Inner {
-    stopped: watch::Receiver<()>,
+    stopped: watch::Receiver<bool>,
     pub db: Db,
     pub transport: Arc<dyn Transport>,
     pub clock: Arc<dyn Clock>,
@@ -167,10 +167,14 @@ impl Inner {
         async move {
             tokio::select! {
                 biased;
-                _ = stopped.changed() => {}
+                _ = stopped.wait_for(|stopped| *stopped) => {}
                 () = work => {}
             }
         }
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        *self.stopped.borrow() || self.stopped.has_changed().is_err()
     }
 
     pub(crate) fn now_ms(&self) -> i64 {
@@ -189,13 +193,35 @@ pub struct Sync {
 }
 
 struct Lifetime {
-    _stop: watch::Sender<()>,
+    stop: watch::Sender<bool>,
     owner: Arc<load_owner::LoadOwner>,
+    closed: std::sync::atomic::AtomicBool,
+}
+
+impl Lifetime {
+    fn close(&self) {
+        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) { return; }
+        self.stop.send_replace(true);
+        self.owner.submit(load_machine::Event::Close);
+    }
 }
 
 impl Drop for Lifetime {
     fn drop(&mut self) {
-        self.owner.submit(load_machine::Event::Close);
+        self.close();
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct WeakSync {
+    inner: std::sync::Weak<Inner>,
+    lifetime: std::sync::Weak<Lifetime>,
+}
+
+impl WeakSync {
+    pub(crate) fn upgrade(&self) -> Option<Sync> {
+        let sync = Sync { inner: self.inner.upgrade()?, _lifetime: self.lifetime.upgrade()? };
+        (!sync.is_closed()).then_some(sync)
     }
 }
 
@@ -205,7 +231,7 @@ impl Sync {
         db.shared.blob_failed_ttl_ms.store(config.upload.failed_ttl.as_millis().try_into().unwrap_or(i64::MAX), std::sync::atomic::Ordering::Relaxed);
         let queue = db.operation_queue().map_err(|error| error.to_string());
         let max_files = config.upload.max_files;
-        let (stop, stopped) = watch::channel(());
+        let (stop, stopped) = watch::channel(false);
         let owner = Arc::new(load_owner::LoadOwner::default());
         let resets = Arc::downgrade(&owner);
         db.on_reset(Arc::new(move |models| {
@@ -213,7 +239,7 @@ impl Sync {
                 owner.reset(models);
             }
         }));
-        let lifetime = Lifetime { _stop: stop, owner: owner.clone() };
+        let lifetime = Lifetime { stop, owner: owner.clone(), closed: std::sync::atomic::AtomicBool::new(false) };
         let connectivity = db.connectivity();
         let change_feed = db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| (spec.key.to_string(), feed.clone())));
         let mut change_targets: BTreeMap<String, BTreeMap<String, Vec<crate::schema::ChangeRead>>> = BTreeMap::new();
@@ -268,6 +294,18 @@ impl Sync {
             }
         }));
         this
+    }
+
+    pub fn close(&self) {
+        self._lifetime.close();
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self._lifetime.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn downgrade(&self) -> WeakSync {
+        WeakSync { inner: Arc::downgrade(&self.inner), lifetime: Arc::downgrade(&self._lifetime) }
     }
 
     pub fn register(&self, mut def: OperationDef) {

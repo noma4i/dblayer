@@ -1,4 +1,7 @@
 mod database;
+mod open_streams;
+#[cfg(test)]
+mod close_tests;
 mod foreign_future;
 mod lease;
 mod open_slot;

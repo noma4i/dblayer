@@ -59,6 +59,7 @@ object DBlayer {
         EntityRegistries.closeAll()
         ForegroundEvents.stop()
         PowerSaving.stop()
+        Reachability.disconnect()
         opened?.shutdown()
         opened = null
         ready = CompletableDeferred()

@@ -82,8 +82,13 @@ impl Database {
         let queue = LiveChanges::new();
         let subscription = self.live_query(query_json, Arc::new(Listener(Arc::downgrade(&queue))));
         *crate::db::locked(&queue.subscription) = Some(subscription);
+        self.streams.enroll(&queue);
         Ok(queue)
     }
+}
+
+impl super::open_streams::Closable for LiveChanges {
+    fn close(&self) { self.cancel(); }
 }
 
 #[uniffi::export]
@@ -108,6 +113,7 @@ impl LiveChanges {
             state.pending.clear();
             state.rows.clear();
         });
+        self.ready.notify_waiters();
     }
 }
 

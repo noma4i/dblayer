@@ -30,6 +30,8 @@ internal object Reachability {
 
     fun connect(sink: OnlineSink) = relay.attach { sink.setOnline(it) }
 
+    fun disconnect() = relay.detach()
+
     private fun isOnline(manager: ConnectivityManager): Boolean {
         val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)

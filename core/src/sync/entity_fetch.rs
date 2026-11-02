@@ -4,7 +4,7 @@ use crate::identity::Generation;
 use crate::schema::NodeRead;
 use crate::transport::CancelToken;
 use super::error::SyncError;
-use super::{locked, Sync};
+use super::{locked, Inner, Sync};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum EntityFetch { None, Stale, Force, IfMissing }
@@ -36,30 +36,30 @@ impl Sync {
         let generation = self.inner.db.generation();
         for id in ids {
             let due = DueRefresh { model: model.into(), relation: relation.clone(), id: id.clone(), fetch, generation, cancel: cancel.clone(), sink: sink.clone() };
-            runtime.spawn(self.inner.until_closed(self.clone().refresh_entity(due)));
+            runtime.spawn(self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
         }
         Ok(cancel)
     }
 
-    async fn refresh_entity(self, due: DueRefresh) {
-        if due.cancel.is_cancelled() || due.generation != self.inner.db.generation() { return; }
+    async fn refresh_entity(inner: Arc<Inner>, due: DueRefresh) {
+        if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return; }
         let work = async {
             if due.fetch == EntityFetch::IfMissing {
-                let db = self.inner.db.clone();
+                let db = inner.db.clone();
                 let (model, id) = (due.model.clone(), due.id.clone());
                 let present = tokio::task::spawn_blocking(move || db.entity_present(&model, &id)).await
                     .map_err(|error| SyncError::Store(error.to_string()))??;
                 if present { return Ok(()); }
-                if due.cancel.is_cancelled() || due.generation != self.inner.db.generation() { return Err(SyncError::Cancelled); }
+                if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return Err(SyncError::Cancelled); }
             }
-            self.node(&due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
+            inner.node(&due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
         };
         let result = tokio::select! { biased; _ = due.cancel.cancelled() => return, result = work => result };
-        if due.cancel.is_cancelled() || due.generation != self.inner.db.generation() { return; }
+        if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return; }
         let outcome = match result {
             Ok(()) => None,
             Err(SyncError::Offline) => {
-                locked(&self.inner.entity_due).push(due.clone());
+                locked(&inner.entity_due).push(due.clone());
                 Some(RefreshError::Offline)
             }
             Err(error) => Some(RefreshError::Failed(error.to_string())),
@@ -69,14 +69,20 @@ impl Sync {
 
     pub fn cancel_entity_refresh(&self, cancel: &CancelToken) {
         cancel.cancel();
-        locked(&self.inner.entity_due).retain(|due| !due.cancel.is_cancelled());
+        let cancelled = {
+            let mut waiting = locked(&self.inner.entity_due);
+            let (cancelled, kept) = std::mem::take(&mut *waiting).into_iter().partition(|due| due.cancel.is_cancelled());
+            *waiting = kept;
+            cancelled
+        };
+        drop::<Vec<DueRefresh>>(cancelled);
     }
 
     pub(crate) fn refresh_due_entities(&self) {
         let waiting = std::mem::take(&mut *locked(&self.inner.entity_due));
         let Ok(runtime) = Handle::try_current() else { return };
         for due in waiting.into_iter().filter(|due| !due.cancel.is_cancelled() && due.generation == self.inner.db.generation()) {
-            runtime.spawn(self.inner.until_closed(self.clone().refresh_entity(due)));
+            runtime.spawn(self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
         }
     }
 }
