@@ -1,4 +1,5 @@
 use super::fixtures::*;
+use super::Db;
 use crate::query::Query;
 
 #[test]
@@ -36,4 +37,62 @@ fn reset_advances_the_revision() {
 fn reset_of_an_unknown_model_fails() {
     let db = booted();
     assert!(db.reset(&["ghosts"]).is_err());
+}
+
+type ResetCalls = std::sync::Arc<std::sync::Mutex<Vec<Option<Vec<String>>>>>;
+
+fn reentrant_reset_rig() -> (Db, ResetCalls) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let db = booted();
+    seed_tree(&db);
+    let calls: ResetCalls = Arc::default();
+    let (inner, sink, entered) = (db.clone(), calls.clone(), Arc::new(AtomicBool::new(false)));
+    db.on_reset(Arc::new(move |models| {
+        sink.lock().unwrap().push(models.map(<[String]>::to_vec));
+        if entered.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, inner.generation());
+        envelope.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new("moments"), id: rid("m9"), row: obj(serde_json::json!({"id": "m9", "userId": "u2", "text": "nine"})) });
+        inner.land(envelope).unwrap();
+        inner.reset(&["users"]).unwrap();
+    }));
+    (db, calls)
+}
+
+#[test]
+fn reset_listener_writes_and_resets() {
+    type Outer = fn(&Db);
+    let cases: [(&str, Outer, Option<Vec<String>>); 2] = [
+        ("reset_all", |db| db.reset_all().unwrap(), None),
+        ("reset of models", |db| db.reset(&["vibes"]).unwrap(), Some(vec!["vibes".to_string()])),
+    ];
+    for (name, outer, first) in cases {
+        let (db, calls) = reentrant_reset_rig();
+        let before = db.generation();
+        let runner = db.clone();
+        crate::test_wait::join_within(std::thread::spawn(move || outer(&runner)));
+        assert_eq!(*calls.lock().unwrap(), vec![first, Some(vec!["users".to_string()])], "{name}: listener calls");
+        assert_eq!(db.generation(), before.next().next(), "{name}: one generation per reset");
+        assert!(db.find("moments", &rid("m9")).unwrap().is_some(), "{name}: the write made inside the callback is committed");
+        assert_eq!(db.count(&Query::new("users")).unwrap(), 0, "{name}: the nested reset applied after the write");
+    }
+}
+
+#[test]
+fn reset_listener_sees_the_finished_reset() {
+    use std::sync::{Arc, Mutex};
+    let db = booted();
+    seed_tree(&db);
+    assert!(db.find("moments", &rid("m1")).unwrap().is_some());
+    assert!(db.peek_row("moments", &rid("m1")).is_some());
+    let seen: Arc<Mutex<Vec<(bool, bool, i64)>>> = Arc::default();
+    let (probe, sink) = (db.clone(), seen.clone());
+    db.on_reset(Arc::new(move |_| {
+        let revision = probe.revision_seq().unwrap();
+        sink.lock().unwrap().push((probe.find("moments", &rid("m1")).unwrap().is_none(), probe.peek_row("moments", &rid("m1")).is_none(), revision));
+    }));
+    db.reset(&["moments"]).unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![(true, true, db.revision_seq().unwrap())]);
 }

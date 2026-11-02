@@ -37,6 +37,23 @@ fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Owned work that the outermost operation runs after it released every guard, gate and announcement turn.
+#[must_use]
+#[derive(Default)]
+pub(crate) struct Effects(Vec<Box<dyn FnOnce() + Send>>);
+
+impl Effects {
+    pub(crate) fn push(&mut self, effect: impl FnOnce() + Send + 'static) {
+        self.0.push(Box::new(effect));
+    }
+
+    pub(crate) fn run(self) {
+        for effect in self.0 {
+            effect();
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct Event {
     pub revision: i64,

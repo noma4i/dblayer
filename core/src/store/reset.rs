@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
+use crate::db::dispatch::Effects;
 use crate::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ListKey;
@@ -254,6 +255,11 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
 
 impl Store {
     pub fn reset_cache_only(&self, models: &[&str]) -> Result<(), StoreError> {
+        self.reset_cache_only_held(models)?.run();
+        Ok(())
+    }
+
+    pub(crate) fn reset_cache_only_held(&self, models: &[&str]) -> Result<Effects, StoreError> {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         let tables: Vec<(String, String)> = models
@@ -275,11 +281,17 @@ impl Store {
         transaction.commit()?;
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
+        let effects = self.reset_effects(Some(names.clone()));
         self.announce_released(inner, StoreEvent::Reset { revision, models: Some(names), operations });
-        Ok(())
+        Ok(effects)
     }
 
     pub fn reset_incompatible(&self) -> Result<(), StoreError> {
+        self.reset_incompatible_held()?.run();
+        Ok(())
+    }
+
+    pub(crate) fn reset_incompatible_held(&self) -> Result<Effects, StoreError> {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         inner.generation = inner.generation.next();
@@ -295,8 +307,9 @@ impl Store {
         transaction.commit()?;
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
+        let effects = self.reset_effects(None);
         self.announce_released(inner, StoreEvent::Reset { revision, models: None, operations });
-        Ok(())
+        Ok(effects)
     }
 
     #[cfg(test)]

@@ -4,7 +4,7 @@ mod warm;
 mod commit;
 mod correlate;
 mod diff;
-mod dispatch;
+pub(crate) mod dispatch;
 mod effects;
 #[cfg(test)]
 pub(crate) mod spec_fixtures;
