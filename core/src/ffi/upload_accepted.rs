@@ -48,6 +48,7 @@ pub trait UploadAcceptedSink: Send + Sync {
 impl Database {
     pub fn set_upload_accepted_sink(&self, sink: Arc<dyn UploadAcceptedSink>) {
         self.db.set_upload_accepted_sink(Arc::new(move |event| {
+            crate::db::lock::assert_no_library_lock("UploadAcceptedSink::accepted");
             sink.accepted(WireUploadAccepted { model: event.model, items: event.items.into_iter().map(Into::into).collect() });
         }));
     }

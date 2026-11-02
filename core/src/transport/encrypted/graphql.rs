@@ -21,7 +21,7 @@ struct TransportCable(Arc<dyn Transport>);
 
 #[async_trait]
 impl CableConnect for TransportCable {
-    async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> { self.0.open_cable().await }
+    async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> { crate::db::lock::assert_no_library_lock("Transport::open_cable"); self.0.open_cable().await }
 }
 
 impl EncryptedTransport {
@@ -106,6 +106,7 @@ impl Transport for EncryptedTransport {
     }
 
     async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
+        crate::db::lock::assert_no_library_lock("Transport::put");
         self.rest.put(request).await
     }
 }

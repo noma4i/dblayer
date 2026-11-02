@@ -74,6 +74,21 @@ for path in files:
     if re.search(r"\binvalidate_model\(", contents[path]):
         findings.append(f"Z10 lists are marked stale and reloaded in sync/invalidate only: {relative}")
 
+guard = re.compile(r"\b(?:locked|held)\(|\.lock\(")
+effect = re.compile(r"\.notify_(?:one|waiters)\(|\.wake\(|\.send\(|\.abort\(|\blistener\.changed\(")
+function = re.compile(r"\bfn\s+\w+")
+for path in files:
+    if any(part in str(path) for part in ("/stress/", "/fixtures.rs", "/mock.rs", "/test_clock.rs", "/test_wait.rs")):
+        continue
+    seen = False
+    for number, line in enumerate(contents[path].splitlines(), 1):
+        if function.search(line):
+            seen = False
+        if guard.search(line):
+            seen = True
+        if seen and effect.search(line) and not re.search(r"lock-ok:\s*\S", line):
+            findings.append(f"Z17 review effect after guard: {path.relative_to(root)}:{number}: {line.strip()}")
+
 test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")
 panic_allowed = [entry[len("panic:"):] for entry in allowed if entry.startswith("panic:")]
@@ -82,6 +97,8 @@ for path in files:
     if any(marker in "/" + relative for marker in test_only):
         continue
     for number, line in enumerate(contents[path].splitlines(), 1):
+        if relative == "core/src/db/lock.rs" and number < contents[path].splitlines().index("pub(crate) use debug::{assert_no_library_lock, holds, lock, lock_as, try_lock, wait, wait_timeout, wait_timeout_while, Guard};") + 1:
+            continue
         calls = panic_call.findall(line)
         if not calls:
             continue

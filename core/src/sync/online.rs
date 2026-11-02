@@ -11,9 +11,11 @@ impl Sync {
     pub fn set_online(&self, online: bool) {
         let was_online = self.inner.connectivity.is_online();
         self.inner.connectivity.set_online(online);
+        crate::db::lock::assert_no_library_lock("Transport::set_online");
         self.inner.transport.set_online(online);
         if !online {
-            if let Some(wake) = locked(&self.inner.wake).take() { wake.abort(); }
+            let wake = locked(&self.inner.wake).take();
+            if let Some(wake) = wake { wake.abort(); } // lock-ok: wake extracted before abort
             self.inner.owner.submit(Event::Offline);
         }
         if online && !was_online {
@@ -38,8 +40,9 @@ impl Inner {
         };
         let wake = due.filter(|_| self.connectivity.is_online()).map(|due| due.saturating_sub(self.clock.now()).max(Duration::from_millis(1)));
         let task = wake.and_then(|wait| self.spawn_flush(wait));
-        if let Some(old) = std::mem::replace(&mut *locked(&self.wake), task) {
-            old.abort();
+        let old = std::mem::replace(&mut *locked(&self.wake), task);
+        if let Some(old) = old {
+            old.abort(); // lock-ok: wake extracted before abort
         }
         Ok(())
     }

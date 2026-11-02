@@ -174,7 +174,7 @@ impl Feed {
         self.opening(Err(SyncError::Transport(failure.error.clone())));
         locked(&self.status).failure = Some(failure.clone());
         if matches!(failure.error, TransportError::Session { .. }) {
-            let _ = self.inner.subscription_failures.send(Some((super::live::live_key(&self.def.operation, &self.def.variables), failure.clone())));
+            let _ = self.inner.subscription_failures.send(Some((super::live::live_key(&self.def.operation, &self.def.variables), failure.clone()))); // lock-ok: status guard ended at statement
         }
     }
 
@@ -716,6 +716,7 @@ impl Inner {
             _ = stopped.wait_for(|stopped| *stopped) => None,
             result = async {
                 self.connectivity.online().await;
+                crate::db::lock::assert_no_library_lock("Transport::subscribe");
                 self.transport.subscribe(request).await
             } => Some(result),
         }

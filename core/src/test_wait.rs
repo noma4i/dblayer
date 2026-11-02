@@ -105,20 +105,24 @@ pub(crate) async fn yield_until(what: &str, mut ready: impl FnMut() -> bool) {
 pub(crate) struct ForeignWaker {
     lock: Arc<Mutex<()>>,
     entered: AtomicBool,
+    held_classes: Mutex<Vec<&'static str>>,
 }
 
 impl ForeignWaker {
     pub(crate) fn new(lock: Arc<Mutex<()>>) -> Arc<Self> {
-        Arc::new(Self { lock, entered: AtomicBool::new(false) })
+        Arc::new(Self { lock, entered: AtomicBool::new(false), held_classes: Mutex::new(Vec::new()) })
     }
 
     pub(crate) fn entered(&self) -> bool {
         self.entered.load(Ordering::SeqCst)
     }
+
+    pub(crate) fn held_classes(&self) -> Vec<&'static str> { self.held_classes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() }
 }
 
 impl Wake for ForeignWaker {
     fn wake(self: Arc<Self>) {
+        *self.held_classes.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = crate::db::lock::held_classes();
         self.entered.store(true, Ordering::SeqCst);
         drop(self.lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     }
@@ -146,7 +150,7 @@ impl ProbeWaker {
 
 impl Wake for ProbeWaker {
     fn wake(self: Arc<Self>) {
-        if !(self.unlocked)() { self.violations.fetch_add(1, Ordering::SeqCst); }
+        if !crate::db::lock::is_empty() || !(self.unlocked)() { self.violations.fetch_add(1, Ordering::SeqCst); }
         self.wakes.fetch_add(1, Ordering::SeqCst);
     }
 }

@@ -131,6 +131,7 @@ impl<'a> Retrying<'a> {
 pub(crate) async fn query(transport: &dyn Transport, request: GraphQLRequest, clock: &dyn Clock, online: &Connectivity, called: impl Fn()) -> Result<(Response, u32), TransportError> {
     if transport.retries_queries() {
         called();
+        crate::db::lock::assert_no_library_lock("Transport::query");
         return transport.query(request).await.map(|response| (response, 1));
     }
     let progress = RetryCalls::default();
@@ -138,6 +139,7 @@ pub(crate) async fn query(transport: &dyn Transport, request: GraphQLRequest, cl
     loop {
         online.online().await;
         called();
+        crate::db::lock::assert_no_library_lock("Transport::query");
         let (error, response) = match transport.query(request.clone()).await {
             Ok(response) => {
                 let codes: Vec<_> = response.errors.iter().filter_map(|error| error.code()).collect();

@@ -67,12 +67,12 @@ impl EventQueue {
             state.events += 1;
         }
         drop(state);
-        self.ready.notify_one();
+        self.ready.notify_one(); // lock-ok: state guard explicitly dropped
     }
 
     fn push_gap(&self) {
         locked(&self.state).gap(1);
-        self.ready.notify_one();
+        self.ready.notify_one(); // lock-ok: state guard ended at statement
     }
 }
 
@@ -139,7 +139,7 @@ impl ModelEvents {
 
     pub fn close(&self) {
         locked(&self.queue.state).closed = true;
-        self.queue.ready.notify_waiters();
+        self.queue.ready.notify_waiters(); // lock-ok: state guard ended at statement
         let keys = std::mem::take(&mut *locked(&self.keys));
         for key in keys { self.inner.release_live(&key); }
     }

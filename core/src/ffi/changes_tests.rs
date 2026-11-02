@@ -69,6 +69,7 @@ fn cancelling_while_a_delivered_change_wakes_the_reader_finishes_and_ends_the_st
         queue.cancel();
         drop(task_lock);
         join_within(delivering);
+        assert!(waker.held_classes().is_empty());
         assert!(matches!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(None)));
     }));
 }
@@ -92,6 +93,7 @@ fn changes_cancel_during_foreign_wake() {
         Listener(Arc::downgrade(&queue)).changed(LiveChange::empty(1));
         drop(task_lock);
         join_within(cancelling);
+        assert!(waker.held_classes().is_empty());
         assert!(matches!(next.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(None)));
         let state = crate::db::locked(&queue.state);
         assert!(state.closed && state.pending.is_empty() && state.rows.is_empty());
@@ -102,8 +104,8 @@ fn changes_cancel_during_foreign_wake() {
 fn every_stream_wake_runs_unlocked() {
     use std::future::Future;
     use std::task::{Context, Poll, Waker};
-    enum Trigger { Value, Error, Cancel }
-    for trigger in [Trigger::Value, Trigger::Error, Trigger::Cancel] {
+    enum Trigger { Value, Error, Cancel, Close }
+    for trigger in [Trigger::Value, Trigger::Error, Trigger::Cancel, Trigger::Close] {
         let queue = LiveChanges::new();
         let seen = queue.clone();
         let waker = ProbeWaker::new(move || mutex_free(&seen.state) && mutex_free(&seen.subscription));
@@ -114,13 +116,14 @@ fn every_stream_wake_runs_unlocked() {
             Trigger::Value => listener.changed(LiveChange::empty(1)),
             Trigger::Error => listener.changed(LiveChange { error: Some(DbError::Network { detail: "lost".into() }), ..LiveChange::empty(2) }),
             Trigger::Cancel => queue.cancel(),
+            Trigger::Close => super::super::open_streams::Closable::close(&*queue),
         }
         assert_eq!((waker.wakes() >= 1, waker.violations()), (true, 0));
         let ready = next.as_mut().poll(&mut Context::from_waker(Waker::noop()));
         match trigger {
             Trigger::Value => assert!(matches!(ready, Poll::Ready(Some(change)) if change.revision == 1)),
             Trigger::Error => assert!(matches!(ready, Poll::Ready(Some(change)) if matches!(change.error, Some(DbError::Network { .. })))),
-            Trigger::Cancel => assert!(matches!(ready, Poll::Ready(None))),
+            Trigger::Cancel | Trigger::Close => assert!(matches!(ready, Poll::Ready(None))),
         }
     }
 }

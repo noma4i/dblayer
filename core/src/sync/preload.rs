@@ -240,7 +240,7 @@ impl Inner {
             running.retain(|key, (task, window)| {
                 let borrowed = locked(&self.flights).waiting.get(window).is_some_and(|sender| sender.receiver_count() > 0);
                 let observed = self.db.observed_reads().iter().any(|read| read.key == *window);
-                if selected.contains(key) || borrowed || observed { true } else { task.abort(); false }
+                if selected.contains(key) || borrowed || observed { true } else { task.abort(); false } // lock-ok: flights guard ended at statement
             });
             for (model, relation, params) in windows {
                 let key = format!("{model}|{relation}|{params:?}");

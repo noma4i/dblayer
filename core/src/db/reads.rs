@@ -119,7 +119,7 @@ impl ReadPool {
         }
         let _ = shared;
         held(&self.queue).jobs.push_back((job, permit));
-        self.wake.notify_one();
+        self.wake.notify_one(); // lock-ok: queue guard ended at statement
         true
     }
 

@@ -53,6 +53,7 @@ impl Inner {
             };
             let request = GraphQLRequest::new(&operation.document, &operation.name, json!({"key": key, "uploadId": upload_id}));
             locked(&self.counters).record_transport_call();
+            crate::db::lock::assert_no_library_lock("Transport::mutate");
             let call = crate::pacing::timeout(self.clock.as_ref(), self.config.upload.step_timeout, self.transport.mutate(request)).await;
             let settled = match call {
                 Ok(Ok(response)) => {

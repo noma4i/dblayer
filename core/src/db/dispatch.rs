@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use crate::commit::{CommitResult, ScopeRef};
 use crate::identity::{ModelKey, RowId, RowRef};
@@ -33,9 +33,7 @@ fn on_core_thread() -> bool {
     CORE_THREAD.with(Cell::get)
 }
 
-fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+use super::lock::{lock as held, wait};
 
 /// Owned work that the outermost operation runs after it released every guard, gate and announcement turn.
 #[must_use]
@@ -56,6 +54,7 @@ impl Effects {
     }
 
     pub(crate) fn run(self) {
+        super::lock::assert_no_library_lock("Effects::run");
         for effect in self.0 {
             effect();
         }
@@ -100,6 +99,7 @@ impl OrderedEffects {
     }
 
     pub(crate) fn run(&self) {
+        super::lock::assert_no_library_lock("OrderedEffects::run");
         {
             let mut ordered = held(&self.0);
             if ordered.running || ordered.batches.is_empty() { return; }
@@ -200,7 +200,7 @@ impl Progress {
     fn wait_after(&self, seen: u64) {
         let mut generation = held(&self.generation);
         while *generation == seen {
-            generation = self.changed.wait(generation).unwrap_or_else(|poisoned| poisoned.into_inner());
+            generation = wait(&self.changed, generation);
         }
     }
 
@@ -275,12 +275,12 @@ impl Dispatch {
             pending.events.push_front(first.merge(second));
         }
         self.progress.advance();
-        self.wake.notify_one();
+        self.wake.notify_one(); // lock-ok: condvar schedules an OS thread
     }
 
     pub(crate) fn push_read(&self, result: CompletedRead) {
         held(&self.pending).reads.push_back(result);
-        self.wake.notify_one();
+        self.wake.notify_one(); // lock-ok: pending guard ended at statement
     }
 
     pub(crate) fn next_work(&self) -> Option<Work> {
@@ -288,7 +288,7 @@ impl Dispatch {
         loop {
             #[cfg(test)]
             if pending.paused {
-                pending = self.wake.wait(pending).unwrap_or_else(|poisoned| poisoned.into_inner());
+                pending = wait(&self.wake, pending);
                 continue;
             }
             if let Some(result) = pending.reads.pop_front() {
@@ -303,7 +303,7 @@ impl Dispatch {
             if pending.closed {
                 return None;
             }
-            pending = self.wake.wait(pending).unwrap_or_else(|poisoned| poisoned.into_inner());
+            pending = wait(&self.wake, pending);
         }
     }
 
@@ -318,7 +318,7 @@ impl Dispatch {
     pub(crate) fn pause_owner(self: &Arc<Self>) -> OwnerPaused {
         let mut pending = held(&self.pending);
         while pending.processing_through.is_some() {
-            pending = self.wake.wait(pending).unwrap_or_else(|poisoned| poisoned.into_inner());
+            pending = wait(&self.wake, pending);
         }
         pending.paused = true;
         OwnerPaused(self.clone())

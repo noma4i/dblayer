@@ -2,6 +2,10 @@
 
 Live results arrive from library threads. Record writes run on background threads. Disk reads use separate connections from the writer.
 
+## Rules
+
+Foreign execution must not run under a library lock. State changes return owned effects and publish them through `OrderedEffects` after guards are released. Debug builds check tracked guards before effects and selected callbacks. A `lock-ok: reason` comment exempts one line from the static check and is inventoried in the lock audit report. The debug tracker covers the core `locked` and dispatch `held` functions and the observer guard. Other raw locks and async gates are outside its current coverage.
+
 ## What you can rely on
 
 - Record writes use `async` in Swift and `suspend` in Kotlin. Rust runs SQLite writes, argument decoding and result conversion off the caller thread.

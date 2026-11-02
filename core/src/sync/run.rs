@@ -14,6 +14,7 @@ impl Sync {
         }
         let request = GraphQLRequest::new(&definition.document, operation, variables);
         let transport = &self.inner.transport;
+        crate::db::lock::assert_no_library_lock("Transport::request");
         let response = if definition.document.trim_start().starts_with("mutation") { transport.mutate(request).await } else { transport.query(request).await }
             .map_err(SyncError::Transport)?;
         if response.shape().outcome() != ResponseOutcome::Commit {

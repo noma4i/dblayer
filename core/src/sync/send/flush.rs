@@ -144,7 +144,7 @@ impl Inner {
         let mut cursor = i64::MIN;
         while let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? {
             locked(self.operation_queue()?).attempted(entry.operation.id.0);
-            let result = self.send(&entry, None).await?;
+            let result = self.send(&entry, None).await?; // lock-ok: queue guard ended at statement
             self.keep_discarded(&entry, &result);
             report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
         }
@@ -480,6 +480,7 @@ impl Inner {
     async fn deliver(&self, request: GraphQLRequest) -> Delivery {
         locked(&self.counters).record_transport_call();
         let owner = request.owner.clone();
+        crate::db::lock::assert_no_library_lock("Transport::mutate");
         let result = self.transport.mutate(request).await;
         let replayable = match owner.map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage)).transpose() {
             Ok(pending) => pending.unwrap_or(false),

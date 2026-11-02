@@ -1,4 +1,4 @@
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, ThreadId};
 
 use rusqlite::Connection;
@@ -265,6 +265,7 @@ impl EncryptedClient {
     }
 
     pub fn reset(&self) -> Result<(), TransportError> {
+        crate::db::lock::assert_no_library_lock("CredentialSlot::clear");
         self.credentials.clear()?;
         let mut state = crate::db::locked(&self.credential.state);
         state.cached = None;
@@ -353,6 +354,7 @@ impl EncryptedClient {
     }
 
     async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, upload: bool) -> Result<Answer, TransportError> {
+        crate::db::lock::assert_no_library_lock("HttpExchange::post");
         let reply = self.http.post(path, token, upload).await?;
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });
@@ -376,7 +378,7 @@ impl EncryptedClient {
                         break (None, state.generation, Some(Loading(cell)));
                     }
                     Some(owner) if owner == thread::current().id() => return Err(TransportError::Network("the credential callback re-entered the credential load".into())),
-                    Some(_) => state = cell.settled.wait(state).unwrap_or_else(PoisonError::into_inner),
+                    Some(_) => state = crate::db::lock::wait(&cell.settled, state),
                 }
             }
         };
@@ -394,10 +396,12 @@ impl EncryptedClient {
     }
 
     fn load_credential(&self, generation: u64) -> Result<String, TransportError> {
+        crate::db::lock::assert_no_library_lock("CredentialSlot::get");
         let (credential, minted) = match self.credentials.get()? {
             Some(stored) => (self.verified(stored), false),
             None => {
                 let credential = random_token();
+                crate::db::lock::assert_no_library_lock("CredentialSlot::set");
                 self.credentials.set(&credential)?;
                 (Ok(credential), true)
             }
@@ -405,7 +409,7 @@ impl EncryptedClient {
         let mut state = crate::db::locked(&self.credential.state);
         if state.generation != generation {
             drop(state);
-            if minted { self.credentials.clear()?; }
+            if minted { crate::db::lock::assert_no_library_lock("CredentialSlot::clear"); self.credentials.clear()?; }
             return Err(TransportError::Network("the session was reset while its credential was loading".into()));
         }
         let credential = credential?;

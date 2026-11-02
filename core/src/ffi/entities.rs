@@ -148,7 +148,10 @@ impl LiveEntities {
         if snapshots.is_empty() { return; }
         let listener = self.listener.clone();
         let mut effects = Effects::default();
-        effects.push(move || listener.changed(EntityDelivery { snapshots }));
+        effects.push(move || {
+            crate::db::lock::assert_no_library_lock("EntityListener::changed");
+            listener.changed(EntityDelivery { snapshots });
+        });
         self.outbox.push(effects);
     }
 

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use crate::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::files::FileDirectories;
@@ -71,32 +71,29 @@ pub(crate) struct Shared {
     pub panic_key: Mutex<Option<String>>,
 }
 
-pub(crate) fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+pub(crate) use super::lock::lock as locked;
 
+#[cfg(not(any(debug_assertions, test)))]
 thread_local! {
     static OBSERVERS_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 pub(crate) struct ObserversGuard<'a> {
-    guard: MutexGuard<'a, Observers>,
+    guard: super::lock::Guard<'a, Observers>,
     retired: Vec<super::observe::Retired>,
 }
 
 impl<'a> ObserversGuard<'a> {
     fn try_new(mutex: &'a Mutex<Observers>) -> Option<Self> {
-        let guard = match mutex.try_lock() {
-            Ok(guard) => guard,
-            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return None,
-        };
+        let guard = super::lock::try_lock(mutex)?;
+        #[cfg(not(any(debug_assertions, test)))]
         OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
         Some(Self { guard, retired: Vec::new() })
     }
 
     fn new(mutex: &'a Mutex<Observers>) -> Self {
-        let guard = locked(mutex);
+        let guard = super::lock::lock_as(mutex, std::any::type_name::<Observers>());
+        #[cfg(not(any(debug_assertions, test)))]
         OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
         Self { guard, retired: Vec::new() }
     }
@@ -105,6 +102,7 @@ impl<'a> ObserversGuard<'a> {
 impl Drop for ObserversGuard<'_> {
     fn drop(&mut self) {
         self.retired = self.guard.take_retired();
+        #[cfg(not(any(debug_assertions, test)))]
         OBSERVERS_HELD.with(|held| held.set(held.get() - 1));
     }
 }
@@ -124,6 +122,9 @@ impl std::ops::DerefMut for ObserversGuard<'_> {
 }
 
 pub(crate) fn observers_held() -> bool {
+    #[cfg(any(debug_assertions, test))]
+    { super::lock::holds::<Observers>() }
+    #[cfg(not(any(debug_assertions, test)))]
     OBSERVERS_HELD.with(|held| held.get() > 0)
 }
 

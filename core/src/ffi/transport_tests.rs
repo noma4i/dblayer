@@ -47,6 +47,14 @@ fn subscription_sink_wakes_its_receiver_with_the_sender_lock_free() {
     assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(None)), "the receiver sees the end once");
     sink.ready();
     assert_eq!(probe.wakes(), 2, "an event after the close reaches nobody");
+
+    let (sender_owner, mut receiver) = self::sink();
+    let probe = ProbeWaker::new(|| true);
+    let waker = Waker::from(probe.clone());
+    assert!(receiver.poll_recv(&mut Context::from_waker(&waker)).is_pending());
+    drop(sender_owner);
+    assert_eq!((probe.wakes(), probe.violations()), (1, 0), "sender drop wakes without tracked guards");
+    assert!(matches!(receiver.poll_recv(&mut Context::from_waker(&waker)), std::task::Poll::Ready(None)));
 }
 
 struct FakeSocket;

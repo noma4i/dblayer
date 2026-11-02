@@ -28,7 +28,7 @@ impl Runner {
     fn stop(&self) {
         let task = locked(&self.task).take();
         if let Some(task) = task {
-            task.abort();
+            task.abort(); // lock-ok: task extracted before abort
         }
     }
 }
@@ -102,6 +102,7 @@ impl Cloud {
         if source == MergeSource::UseLocal {
             let mut cursor = None;
             loop {
+                crate::db::lock::assert_no_library_lock("CloudIo::pull");
                 let page = self.inner.io.pull(cursor, BATCH).await?;
                 for change in &decode(&page)? {
                     self.inner.db.cloud_observe(generation, &Hlc::new(change.clock_ms, change.clock_count, &change.replica))?;
@@ -113,7 +114,7 @@ impl Cloud {
             }
         }
         self.inner.db.cloud_stamp_rows(generation, &rows, source)?;
-        self.inner.wake.notify_one();
+        self.inner.wake.notify_one(); // lock-ok: no synchronous guard remains
         Ok(())
     }
 
@@ -202,6 +203,7 @@ impl Inner {
             self.publish(PhaseEvent::Merge { rows: unstamped.len() as u64 });
             return Ok(());
         }
+        crate::db::lock::assert_no_library_lock("CloudIo::account");
         match self.io.account().await? {
             CloudAccount::Available => {}
             CloudAccount::SignedOut | CloudAccount::NeedsConsent => return Err(CloudError::NeedsAuthorization { detail: "no cloud account is available".into() }),
@@ -216,11 +218,13 @@ impl Inner {
                     break;
                 }
                 let (seqs, changes): (Vec<i64>, Vec<_>) = batch.into_iter().unzip();
+                crate::db::lock::assert_no_library_lock("CloudIo::push");
                 self.io.push(changes.iter().map(CloudChange::blob).collect()).await?;
                 crate::blocking::blocking_unit(|| self.db.cloud_ack(generation, &seqs))?;
             }
             if pull || crate::blocking::blocking_unit(|| self.db.cloud_cursor(generation))?.is_none() {
                 loop {
+                    crate::db::lock::assert_no_library_lock("CloudIo::pull");
                     let page = self.io.pull(crate::blocking::blocking_unit(|| self.db.cloud_cursor(generation))?, BATCH).await?;
                     let changes = decode(&page)?;
                     crate::blocking::blocking_unit(|| self.db.apply_cloud_page(generation, &own, &changes, &page.cursor))?;

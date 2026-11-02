@@ -438,14 +438,14 @@ impl Executor {
         let mut queue = held(&self.queue);
         queue.ready.push_back(subscriber);
         if queue.ready.len() <= queue.idle || queue.workers >= MAX_WORKERS {
-            self.wake.notify_one();
+            self.wake.notify_one(); // lock-ok: condvar schedules an OS thread
             return;
         }
         queue.workers += 1;
         let Err(detail) = self.spawn_worker(self.clone()) else { return };
         queue.workers -= 1;
         if queue.workers > 0 {
-            self.wake.notify_one();
+            self.wake.notify_one(); // lock-ok: condvar schedules an OS thread
             return;
         }
         let stranded = queue.ready.pop_back();

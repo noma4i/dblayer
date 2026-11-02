@@ -67,8 +67,9 @@ impl Drop for ForeignSocket {
 
 #[async_trait]
 impl core::CableSocket for ForeignSocket {
-    async fn send(&self, text: String) -> Result<(), core::TransportError> { self.transport.cable_send(self.token.clone(), text).await.map_err(transport_error) }
+    async fn send(&self, text: String) -> Result<(), core::TransportError> { crate::db::lock::assert_no_library_lock("Transport::cable_send"); self.transport.cable_send(self.token.clone(), text).await.map_err(transport_error) }
     async fn next(&self) -> Option<core::SocketEvent> {
+        crate::db::lock::assert_no_library_lock("Transport::cable_next");
         self.transport.cable_next(self.token.clone()).await.map(|event| match event {
             EncryptedSocketEvent::Text { text } => core::SocketEvent::Text(text),
             EncryptedSocketEvent::Closed { code, reason } => core::SocketEvent::Closed { code, reason },
@@ -77,6 +78,7 @@ impl core::CableSocket for ForeignSocket {
     async fn close(&self) {
         let Some(token) = self.lease.lease.begin_close() else { return };
         let mut closing = Closing { lease: &self.lease.lease, done: false };
+        crate::db::lock::assert_no_library_lock("Transport::cable_close");
         self.transport.cable_close(token).await;
         closing.done = true;
     }
@@ -119,7 +121,7 @@ impl SubscriptionSink {
     }
     fn send(&self, event: core::SubscriptionEvent) {
         let sender = crate::db::locked(&self.sender).clone();
-        if let Some(sender) = sender { let _ = sender.send(event); }
+        if let Some(sender) = sender { let _ = sender.send(event); } // lock-ok: sender cloned after guard release
     }
 }
 
@@ -128,7 +130,7 @@ pub struct ByteProgress { cancel: core::CancelToken, sent: core::ByteSink }
 
 #[uniffi::export]
 impl ByteProgress {
-    pub fn sent(&self, bytes: u64) { (self.sent)(bytes); }
+    pub fn sent(&self, bytes: u64) { crate::db::lock::assert_no_library_lock("ByteProgress::sent"); (self.sent)(bytes); }
     pub fn is_cancelled(&self) -> bool { self.cancel.is_cancelled() }
 }
 
@@ -223,11 +225,12 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 #[async_trait]
 impl core::Transport for ForeignTransport {
     async fn open_cable(&self) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
+        crate::db::lock::assert_no_library_lock("Transport::open_cable");
         let transport = self.0.clone();
         let handle = super::database::executor().map_err(transport_error)?.handle().clone();
         let lease = Arc::new(CableLease { lease: TokenLease::new(handle, move |token| {
             let transport = transport.clone();
-            Box::pin(async move { transport.cable_close(token).await })
+            Box::pin(async move { crate::db::lock::assert_no_library_lock("Transport::cable_close"); transport.cable_close(token).await })
         }) });
         let abandoned = lease.clone();
         Calling::new(self.0.open_cable(lease.clone()), move || abandoned.lease.abandon()).await.map_err(transport_error)?;
@@ -237,20 +240,23 @@ impl core::Transport for ForeignTransport {
         Ok(Arc::new(ForeignSocket { transport: self.0.clone(), lease, token }))
     }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
+        crate::db::lock::assert_no_library_lock("Transport::query");
         let json = self.0.query(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
     async fn mutate(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
+        crate::db::lock::assert_no_library_lock("Transport::mutate");
         let json = self.0.mutate(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
     async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
+        crate::db::lock::assert_no_library_lock("Transport::subscribe");
         let (sender, receiver) = mpsc::unbounded_channel();
         let transport = self.0.clone();
         let handle = super::database::executor().map_err(transport_error)?.handle().clone();
         let sink = Arc::new(SubscriptionSink::new(handle, sender, move |token| {
             let transport = transport.clone();
-            Box::pin(async move { transport.unsubscribe(token) })
+            Box::pin(async move { crate::db::lock::assert_no_library_lock("Transport::unsubscribe"); transport.unsubscribe(token) })
         }));
         let abandoned = sink.clone();
         Calling::new(self.0.subscribe(request.into(), sink.clone()), move || abandoned.abandon()).await.map_err(transport_error)?;
@@ -261,6 +267,7 @@ impl core::Transport for ForeignTransport {
         Ok(core::ServerSubscription::new(receiver, core::ServerSubscriptionHandle::new(move || sink.abandon())))
     }
     async fn put(&self, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
+        crate::db::lock::assert_no_library_lock("Transport::put");
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
         let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.tag, progress).await.map_err(transport_error)?;
         Ok(core::PutResponse { status: reply.status, etag: reply.etag })

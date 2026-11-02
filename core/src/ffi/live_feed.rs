@@ -376,6 +376,7 @@ impl LiveFeed {
             drop(state);
             self.latest.send_replace(Some(next.clone()));
             let delta = !next.full;
+            crate::db::lock::assert_no_library_lock("QueryListener::changed");
             self.calls.call(|| self.listener.changed(next));
             let hold = held(&self.first_screen).take();
             if let Some(hold) = hold { hold.delivered(); }

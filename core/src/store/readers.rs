@@ -54,6 +54,6 @@ impl Drop for Lease<'_> {
     fn drop(&mut self) {
         let mut idle = self.pool.idle.lock().unwrap_or_else(|error| error.into_inner());
         idle.push(self.index);
-        self.pool.available.notify_one();
+        self.pool.available.notify_one(); // lock-ok: condvar schedules an OS thread
     }
 }

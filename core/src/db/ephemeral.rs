@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::Duration;
 
 use serde_json::{Map, Value};
@@ -207,7 +207,7 @@ impl Ephemerals {
         Arc::new(Self { state: Mutex::new(state), wake: Condvar::new() })
     }
 
-    pub(crate) fn lock(&self) -> MutexGuard<'_, State> {
+    pub(crate) fn lock(&self) -> super::lock::Guard<'_, State> {
         locked(&self.state)
     }
 
@@ -241,14 +241,14 @@ impl Ephemerals {
                 return false;
             }
             let Some(due) = state.next_due() else {
-                state = self.wake.wait(state).unwrap_or_else(|poisoned| poisoned.into_inner());
+                state = super::lock::wait(&self.wake, state);
                 continue;
             };
             let now = state.clock.now();
             if due <= now {
                 return true;
             }
-            state = self.wake.wait_timeout(state, due - now).unwrap_or_else(|poisoned| poisoned.into_inner()).0;
+            state = super::lock::wait_timeout(&self.wake, state, due - now).0;
         }
     }
 }

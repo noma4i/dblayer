@@ -82,7 +82,7 @@ impl Runner {
         let call = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.step_timeout, async {
             match resumed {
                 Some(result) => result,
-                None => self.inner.transport.mutate(request).await,
+                None => { crate::db::lock::assert_no_library_lock("Transport::mutate"); self.inner.transport.mutate(request).await },
             }
         });
         let outcome = if interruptible {
@@ -162,6 +162,7 @@ impl Runner {
             cancel: self.token.clone(),
             sent: Arc::new(move |bytes| runner.report(part, bytes)),
         };
+        crate::db::lock::assert_no_library_lock("Transport::put");
         let sent = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await;
         if !whole {
             let path = file.path.clone();

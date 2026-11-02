@@ -44,7 +44,10 @@ impl CloudLink {
     }
 
     pub fn listen(&self, listener: Arc<dyn CloudStateListener>) -> Result<Arc<StateSubscription>, DbError> {
-        StateSubscription::follow(self.cloud.state_changes(), move |state| listener.changed(state))
+        StateSubscription::follow(self.cloud.state_changes(), move |state| {
+            crate::db::lock::assert_no_library_lock("CloudStateListener::changed");
+            listener.changed(state)
+        })
     }
 
     pub async fn sync_now(&self) -> Result<(), CloudError> {

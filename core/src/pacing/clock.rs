@@ -42,8 +42,8 @@ impl ManualClock {
 
     pub fn advance(&self, by: Duration) {
         *crate::db::locked(&self.now) += by;
-        self.changed.notify_waiters();
-        self.wake();
+        self.changed.notify_waiters(); // lock-ok: clock guard ended at statement
+        self.wake(); // lock-ok: clock guard ended at statement
     }
 
     fn wake(&self) {
@@ -54,8 +54,8 @@ impl ManualClock {
     #[cfg(test)]
     pub fn set(&self, now: Duration) {
         *crate::db::locked(&self.now) = now;
-        self.changed.notify_waiters();
-        self.wake();
+        self.changed.notify_waiters(); // lock-ok: clock guard ended at statement
+        self.wake(); // lock-ok: clock guard ended at statement
     }
 }
 

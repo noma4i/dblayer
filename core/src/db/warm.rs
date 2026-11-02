@@ -69,8 +69,7 @@ impl Db {
     pub fn warm(&self, query: &Query) -> Result<(), DbError> {
         let warmed = self.warm_shelf(query)?;
         let shelf = &warmed.peek;
-        let (peek, _) = shelf.delivered.wait_timeout_while(locked(&shelf.peek), FIRST_DELIVERY_CEILING, |peek| !peek.ready)
-            .unwrap_or_else(|error| error.into_inner());
+        let (peek, _) = super::lock::wait_timeout_while(&shelf.delivered, locked(&shelf.peek), FIRST_DELIVERY_CEILING, |peek| !peek.ready);
         if !peek.ready {
             return Err(DbError::Internal("query warming did not deliver its first value".into()));
         }

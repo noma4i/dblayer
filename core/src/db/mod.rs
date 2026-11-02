@@ -21,6 +21,7 @@ mod upload_round;
 mod upload_round_tests;
 mod land;
 mod listeners;
+pub(crate) mod lock;
 mod local_field;
 mod local_write;
 mod merge;
