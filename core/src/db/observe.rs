@@ -124,7 +124,10 @@ pub(crate) struct Observers {
     read_order: HashMap<String, u64>,
     top: i64,
     reach_waiting: Vec<ReachWait>,
+    retired: Vec<Retired>,
 }
+
+pub(crate) type Retired = Box<dyn std::any::Any + Send>;
 
 struct ReachWait {
     key: String,
@@ -134,6 +137,14 @@ struct ReachWait {
 }
 
 impl Observers {
+    fn retire(&mut self, removed: impl std::any::Any + Send) {
+        self.retired.push(Box::new(removed));
+    }
+
+    pub(crate) fn take_retired(&mut self) -> Vec<Retired> {
+        std::mem::take(&mut self.retired)
+    }
+
     pub(crate) fn defer_read(&mut self, key: &str) {
         if self.read_order.contains_key(key) {
             return;
@@ -224,6 +235,7 @@ impl Observers {
         let Some(group) = self.entities.remove(key) else { return };
         let ids: Vec<RowId> = group.ids().cloned().collect();
         self.unindex_rows(key, group.model(), ids.iter());
+        self.retire(group);
     }
 
     fn add_group(&mut self, key: &str, group: Group) {
@@ -238,17 +250,17 @@ impl Observers {
     fn remove_group(&mut self, key: &str) {
         self.remove_deferred(key);
         let Some(group) = self.groups.remove(key) else { return };
-        if !group.deps.keyed() {
-            return;
-        }
-        for row in &group.deps.rows {
-            if let Some(keys) = self.by_row.get_mut(row) {
-                keys.remove(key);
-                if keys.is_empty() {
-                    self.by_row.remove(row);
+        if group.deps.keyed() {
+            for row in &group.deps.rows {
+                if let Some(keys) = self.by_row.get_mut(row) {
+                    keys.remove(key);
+                    if keys.is_empty() {
+                        self.by_row.remove(row);
+                    }
                 }
             }
         }
+        self.retire(group);
     }
 
     fn touched_ids(&self, key: &str, batch: &[Event]) -> Option<HashSet<String>> {
@@ -397,8 +409,8 @@ impl Shared {
 
     fn serve_reach(&self, observers: &mut Observers) {
         let top = observers.top;
-        let mut waiting = std::mem::take(&mut observers.reach_waiting);
-        waiting.retain(|wait| match observers.groups.get(&wait.key) {
+        let waiting = std::mem::take(&mut observers.reach_waiting);
+        let (kept, served): (Vec<ReachWait>, Vec<ReachWait>) = waiting.into_iter().partition(|wait| match observers.groups.get(&wait.key) {
             Some(group) => match Observers::mark(group, top) {
                 Some(reached) if reached >= wait.revision => {
                     wait.subscriber.reach(&self.executor, reached);
@@ -408,7 +420,8 @@ impl Shared {
             },
             None => observers.opening.contains_key(&wait.key),
         });
-        observers.reach_waiting.extend(waiting);
+        observers.reach_waiting.extend(kept);
+        observers.retire(served);
     }
 
     pub(crate) fn run_observer_commands(&self, observers: &mut Observers) {
@@ -436,25 +449,36 @@ impl Shared {
                     self.pump(observers, &key);
                 }
                 ObserverCommand::Cancel { group: key, id } => {
-                    observers.reach_waiting.retain(|wait| wait.id != id);
+                    let (kept, gone): (Vec<ReachWait>, Vec<ReachWait>) = std::mem::take(&mut observers.reach_waiting).into_iter().partition(|wait| wait.id != id);
+                    observers.reach_waiting = kept;
+                    observers.retire(gone);
                     observers.warm_ids.remove(&id);
+                    let mut evicted = Subscribers::new();
                     if let Some(group) = observers.groups.get_mut(&key) {
-                        group.subscribers.retain(|(member, _)| *member != id);
-                        group.facts.joining.retain(|(member, _)| *member != id);
+                        evicted.extend(evict(&mut group.subscribers, id));
+                        evicted.extend(evict(&mut group.facts.joining, id));
                         if group.subscribers.is_empty() && group.facts.joining.is_empty() {
                             observers.remove_group(&key);
                         }
                     } else if let Some(opening) = observers.opening.get_mut(&key) {
-                        opening.waiting.retain(|(member, _)| *member != id);
+                        evicted.extend(evict(&mut opening.waiting, id));
                         if opening.waiting.is_empty() {
-                            observers.opening.remove(&key);
+                            let emptied = observers.opening.remove(&key);
                             observers.remove_deferred(&key);
+                            observers.retire(emptied);
                         }
                     }
+                    observers.retire(evicted);
                 }
             }
         }
     }
+}
+
+fn evict(members: &mut Subscribers, id: u64) -> Subscribers {
+    let (gone, kept) = std::mem::take(members).into_iter().partition(|(member, _)| *member == id);
+    *members = kept;
+    gone
 }
 
 struct Due {

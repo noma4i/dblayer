@@ -165,6 +165,7 @@ pub(crate) enum Feed {
 
 pub(crate) trait Runnable: Send + Sync {
     fn run(&self);
+    fn stranded(&self, detail: String);
 }
 
 pub(crate) enum Listener {
@@ -226,6 +227,15 @@ pub(crate) struct Subscriber {
 impl Runnable for Subscriber {
     fn run(&self) {
         self.run_deliveries();
+    }
+
+    fn stranded(&self, detail: String) {
+        locked(&self.counters).listener_spawn_failures += 1;
+        let mut mailbox = held(&self.mailbox);
+        mailbox.finish();
+        if matches!(self.listener, Listener::Feed(_)) {
+            mailbox.failure = Some(detail);
+        }
     }
 }
 
@@ -427,33 +437,34 @@ impl Executor {
     pub(crate) fn schedule(self: &Arc<Self>, subscriber: Arc<dyn Runnable>) {
         let mut queue = held(&self.queue);
         queue.ready.push_back(subscriber);
-        if queue.ready.len() > queue.idle && queue.workers < MAX_WORKERS {
-            queue.workers += 1;
-            let executor = self.clone();
-            if self.spawn_worker(executor).is_err() {
-                queue.workers -= 1;
-                if queue.workers == 0 {
-                    let stranded = queue.ready.pop_back();
-                    drop(queue);
-                    if let Some(subscriber) = stranded {
-                        subscriber.run();
-                        self.progress.advance();
-                    }
-                } else {
-                    self.wake.notify_one();
-                }
-            }
-        } else {
+        if queue.ready.len() <= queue.idle || queue.workers >= MAX_WORKERS {
             self.wake.notify_one();
+            return;
+        }
+        queue.workers += 1;
+        let Err(detail) = self.spawn_worker(self.clone()) else { return };
+        queue.workers -= 1;
+        if queue.workers > 0 {
+            self.wake.notify_one();
+            return;
+        }
+        let stranded = queue.ready.pop_back();
+        drop(queue);
+        if let Some(subscriber) = stranded {
+            subscriber.stranded(detail);
+            self.progress.advance();
         }
     }
 
-    fn spawn_worker(&self, executor: Arc<Self>) -> Result<(), DbError> {
+    fn spawn_worker(&self, executor: Arc<Self>) -> Result<(), String> {
         #[cfg(test)]
         if self.refuse_spawn.load(Ordering::SeqCst) {
-            return Err(DbError::ThreadSpawn { name: "dblayer-listener", detail: "refused by the test".into() });
+            return Err("refused by the test".into());
         }
-        super::threads::spawn_named("dblayer-listener", move || executor.work())
+        super::threads::spawn_named("dblayer-listener", move || executor.work()).map_err(|error| match error {
+            DbError::ThreadSpawn { detail, .. } => detail,
+            other => other.to_string(),
+        })
     }
 
     fn work(&self) {

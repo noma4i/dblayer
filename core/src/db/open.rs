@@ -79,7 +79,10 @@ thread_local! {
     static OBSERVERS_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-pub(crate) struct ObserversGuard<'a>(MutexGuard<'a, Observers>);
+pub(crate) struct ObserversGuard<'a> {
+    guard: MutexGuard<'a, Observers>,
+    retired: Vec<super::observe::Retired>,
+}
 
 impl<'a> ObserversGuard<'a> {
     fn try_new(mutex: &'a Mutex<Observers>) -> Option<Self> {
@@ -89,18 +92,19 @@ impl<'a> ObserversGuard<'a> {
             Err(std::sync::TryLockError::WouldBlock) => return None,
         };
         OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
-        Some(Self(guard))
+        Some(Self { guard, retired: Vec::new() })
     }
 
     fn new(mutex: &'a Mutex<Observers>) -> Self {
         let guard = locked(mutex);
         OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
-        Self(guard)
+        Self { guard, retired: Vec::new() }
     }
 }
 
 impl Drop for ObserversGuard<'_> {
     fn drop(&mut self) {
+        self.retired = self.guard.take_retired();
         OBSERVERS_HELD.with(|held| held.set(held.get() - 1));
     }
 }
@@ -109,17 +113,17 @@ impl std::ops::Deref for ObserversGuard<'_> {
     type Target = Observers;
 
     fn deref(&self) -> &Observers {
-        &self.0
+        &self.guard
     }
 }
 
 impl std::ops::DerefMut for ObserversGuard<'_> {
     fn deref_mut(&mut self) -> &mut Observers {
-        &mut self.0
+        &mut self.guard
     }
 }
 
-fn observers_held() -> bool {
+pub(crate) fn observers_held() -> bool {
     OBSERVERS_HELD.with(|held| held.get() > 0)
 }
 

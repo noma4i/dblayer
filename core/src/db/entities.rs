@@ -154,6 +154,11 @@ impl EntitySubscriber {
 }
 
 impl EntitySubscriber {
+    #[cfg(test)]
+    pub(crate) fn idle(&self) -> bool {
+        !locked(&self.pending).scheduled
+    }
+
     pub(crate) fn post_failure(self: &Arc<Self>, executor: &Arc<Executor>, error: &DbError, epoch: u64, leases: BTreeMap<RowId, u64>) {
         let needs_run = {
             let mut pending = locked(&self.pending);
@@ -178,6 +183,13 @@ impl EntitySubscriber {
 }
 
 impl Runnable for EntitySubscriber {
+    fn stranded(&self, detail: String) {
+        locked(&self.counters).listener_spawn_failures += 1;
+        let mut pending = locked(&self.pending);
+        pending.scheduled = false;
+        pending.failure = Some(detail);
+    }
+
     fn run(&self) {
         loop {
             let change = {

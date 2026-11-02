@@ -11,6 +11,7 @@
 - A task woken by a resume, an app-load hold or a shared live subscription can call the library again from its wake: those states wake their waiters and release their subscriptions after they release their locks.
 - A task woken by an upload finishing, an adopted PUT update, a cancelled upload or a subscription sink can call the library again from its wake: the upload map and the sink release their locks first.
 - A credential store callback can reset the session from inside `get` or `set`, and a slow keychain no longer blocks reset: the library holds no lock while it calls the store, and a result loaded before a reset is rejected. A cloud state watcher or a stamp wake can read the store from its wake.
+- A listener that owns another subscription can be released by the library without a deadlock, and a listener thread that cannot start no longer runs the callback on the caller's thread: the refusal is counted and delivered as a failure.
 - A pending native call resumes on a library lane, so cancelling or releasing it cannot deadlock with the thread that produces its result.
 - Models without row rules keep the schema fingerprint they had in 6.13.1, so an upgrade does not wipe and reload their cache.
 
