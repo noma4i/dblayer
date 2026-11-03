@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -356,7 +357,7 @@ class ValueBridgeTest {
             assertTrue(runCatching { row.update(name = "hijacked", account = scopeA) }.exceptionOrNull() is DbException.Interrupted)
             assertTrue(runCatching { User.profile.read(scopeA) }.exceptionOrNull() is DbException.Interrupted)
             assertTrue(runCatching { User.profile.readRow(row.id, scopeA) }.exceptionOrNull() is DbException.Interrupted)
-            assertEquals("B", User.profile.read().first().name, "a command of A changed the row of B")
+            assertEquals("a command of A changed the row of B", "B", User.profile.read().first().name)
         } finally {
             DBlayer.close()
         }
@@ -377,12 +378,12 @@ class ValueBridgeTest {
             val whole = DBlayer.database.readQuery(scope.epoch, User.profile.json).first()
             val bad = whole.copy(layout = "another layout")
             val broken = ListProjection<User>().apply(StreamDelivery(1uL, scope.epoch, 1uL, StreamValue.Snapshot(1L, listOf(bad), state)), User).projection
-            assertTrue(broken.rows.isEmpty() && broken.error != null, "a row that does not decode was dropped without an error")
+            assertTrue("a row that does not decode was dropped without an error", broken.rows.isEmpty() && broken.error != null)
             val healed = broken.apply(StreamDelivery(1uL, scope.epoch, 2uL, StreamValue.Snapshot(2L, listOf(whole), state)), User).projection
-            assertTrue(healed.rows.size == 1 && healed.error == null, "a good snapshot did not clear the error")
+            assertTrue("a good snapshot did not clear the error", healed.rows.size == 1 && healed.error == null)
 
             val first = scope.events(User).events(User).first()
-            assertTrue(first is ModelEventItem.Failed, "the events stream did not report its source error: $first")
+            assertTrue("the events stream did not report its source error: $first", first is ModelEventItem.Failed)
         } finally {
             screen.cancel()
             DBlayer.close()

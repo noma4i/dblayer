@@ -58,7 +58,11 @@ pub(super) fn stop_of(error: StepError) -> Stop {
     }
 }
 
-pub(super) async fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
+pub(super) fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(drive_pass(inner, seq, position, run, token, mode, resumed))
+}
+
+async fn drive_pass(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
     let runner = match crate::blocking::blocking_unit(|| Runner::load(inner.clone(), seq, position, run, token, matches!(mode, RunMode::Transfer))) {
         Ok(Some(runner)) => runner,
         Ok(None) => return,

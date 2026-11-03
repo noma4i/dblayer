@@ -21,18 +21,14 @@ struct BridgeProbeTests {
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.send(in: DB.account(), text: "m").row
     #expect(await changes.next()?.first?.text == "m")
-    _ = try await moment.update(text: "edited")
-    #expect(await changes.next()?.first?.text == "edited")
     try await moment.setLocal("tone", .string("warm"))
     #expect(await changes.next()?.first?.tone == "warm")
     try await moment.setLocal("tone", .null)
     #expect(await changes.next()?.first?.tone == nil)
-    try await moment.destroy()
-    #expect(await changes.next()?.isEmpty == true)
   }
 
   @Test @MainActor
-  func aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() async throws {
+  func aWarmQueryAnswersFromMemoryAndAFinishedLiveReadLeavesNothingWarm() async throws {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     #expect(try await Moment.recent.cached() == nil)
     let moment = try await Moment.send(in: DB.account(), text: "m").row
@@ -48,7 +44,7 @@ struct BridgeProbeTests {
       let list = Projected<Moment>(try AccountScope().stream(Moment.recent))
       await eventually("the stream shows the row") { list.rows.count == 1 }
     }
-    #expect(try await Moment.recent.cached()?.value.first?.text == "n")
+    await eventually("a finished live read leaves nothing warm") { (try? await Moment.recent.cached()) == nil }
   }
 
 

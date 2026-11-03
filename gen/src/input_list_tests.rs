@@ -47,9 +47,9 @@ fn an_operation_arg_takes_a_list_of_input_objects_in_every_nullability() {
         };
         let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
         let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
-        assert!(swift.contains(&format!("public static func widgetsSend({swift_param}) async throws")), "{arg}\n{swift}");
+        assert!(swift.contains(&format!("public static func widgetsSend({swift_param}, in scope: AccountScope? = nil) async throws")), "{arg}\n{swift}");
         assert!(swift.contains(swift_put), "{arg}\n{swift}");
-        assert!(kotlin.contains(&format!("suspend fun widgetsSend({kotlin_param})")), "{arg}\n{kotlin}");
+        assert!(kotlin.contains(&format!("suspend fun widgetsSend({kotlin_param}, account: AccountScope? = null)")), "{arg}\n{kotlin}");
         assert!(kotlin.contains(kotlin_put), "{arg}\n{kotlin}");
     }
 }

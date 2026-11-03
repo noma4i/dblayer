@@ -137,7 +137,12 @@ impl Inner {
         crate::db::lock::effect(|| self.db.shared.outbox_changes.send_modify(|version| *version += 1));
     }
 
-    pub(crate) async fn flush(&self) -> Result<FlushReport, SyncError> {
+    /// Boxed here once: the future of a pass is large in a debug build and must not sit inside the future of every caller.
+    pub(crate) fn flush(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FlushReport, SyncError>> + Send + '_>> {
+        Box::pin(self.flush_pass())
+    }
+
+    async fn flush_pass(&self) -> Result<FlushReport, SyncError> {
         let _serial = self.outbox_gate.lock().await;
         let mut report = FlushReport::default();
         if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(report); }

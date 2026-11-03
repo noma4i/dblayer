@@ -7,7 +7,7 @@ use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig};
 use crate::ffi::lifecycle_tests::named;
-use crate::ffi::{CommandRequest, CommandStatus, DbError, Placement, Replacement, StreamDelivery, StreamEnd, StreamRequest, StreamValue, ValueSink, WireRow, WireSyncState};
+use crate::ffi::{Database, CommandRequest, CommandStatus, DbError, Placement, Replacement, StreamDelivery, StreamEnd, StreamRequest, StreamValue, ValueSink, WireRow, WireSyncState};
 use crate::test_wait::yield_until;
 
 /// What a platform reader holds: the deliveries in order, replayed into the rows its screen shows.
@@ -735,7 +735,7 @@ async fn a_durable_command_that_failed_on_the_network_goes_out_at_once_when_the_
     let epoch = rig.database.session_epoch();
     rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down);
     let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
-    yield_until("the first attempt failed on the network", || rig.database.db.outbox().unwrap().first().is_some_and(|entry| entry.operation.attempts >= 1)).await;
+    yield_until("the first attempt failed on the network", || rig.database.db.outbox().unwrap().first().is_some_and(|entry| entry.operation.attempts >= 1 && !entry.operation.transport_started)).await;
     assert_eq!(rig.world.count("SendMessage"), 0, "the failed attempt reached the server");
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
@@ -930,6 +930,10 @@ async fn forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_i
     }
 }
 
+type Call = for<'a> fn(&'a Database, u64) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), DbError>> + 'a>>;
+
+fn case(name: &'static str, call: Call) -> (&'static str, Call) { (name, call) }
+
 /// K17 (C01, old lines ffi/database.rs run, load, refresh, load_all, load_more, node, nodes, retry_all, warm, edge_values, peek_row, cancel_upload and stream/mod.rs peek_query): every entry of the database names the epoch of its caller and is refused after that session ended. Nothing reaches the server.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
@@ -939,24 +943,24 @@ async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
     bound(rig.database.session_reset()).await.unwrap();
     rig.login_ios("B").await;
     let before = rig.world.log().len();
-    let db = &rig.database;
-    let results: Vec<(&str, Result<(), DbError>)> = vec![
-        ("run", bound(db.run(old, "MyProfile".into(), "{}".into())).await.map(drop)),
-        ("load", bound(db.load(old, "User".into(), "all".into(), "{}".into())).await),
-        ("refresh", bound(db.refresh(old, "User".into(), "all".into(), "{}".into())).await),
-        ("refresh_preloads", bound(db.refresh_preloads(old)).await),
-        ("load_all", bound(db.load_all(old, "User".into(), "all".into(), "{}".into(), true)).await),
-        ("load_more", bound(db.load_more(old, "User".into(), "all".into(), "{}".into())).await.map(drop)),
-        ("node", bound(db.node(old, "User".into(), "node".into(), "user".into(), true)).await.map(drop)),
-        ("nodes", bound(db.nodes(old, "User".into(), "nodes".into(), vec!["user".into()])).await.map(drop)),
-        ("retry_all", bound(db.retry_all(old)).await.map(drop)),
-        ("warm", bound(db.warm(old, r#"{"model":"User"}"#.into())).await),
-        ("edge_values", bound(db.edge_values(old, "User".into(), "all".into(), "{}".into(), vec!["user".into()])).await.map(drop)),
-        ("peek_query", bound(db.peek_query(old, r#"{"model":"User"}"#.into())).await.map(drop)),
-        ("peek_row", db.peek_row(old, "User".into(), "user".into()).map(drop)),
-        ("cancel_upload", bound(db.cancel_upload(old, "User".into(), "user".into(), "upload".into())).await.map(drop)),
+    let calls = vec![
+        case("run", |db, old| Box::pin(async move { bound(db.run(old, "MyProfile".into(), "{}".into())).await.map(drop) })),
+        case("load", |db, old| Box::pin(async move { bound(db.load(old, "User".into(), "all".into(), "{}".into())).await })),
+        case("refresh", |db, old| Box::pin(async move { bound(db.refresh(old, "User".into(), "all".into(), "{}".into())).await })),
+        case("refresh_preloads", |db, old| Box::pin(async move { bound(db.refresh_preloads(old)).await })),
+        case("load_all", |db, old| Box::pin(async move { bound(db.load_all(old, "User".into(), "all".into(), "{}".into(), true)).await })),
+        case("load_more", |db, old| Box::pin(async move { bound(db.load_more(old, "User".into(), "all".into(), "{}".into())).await.map(drop) })),
+        case("node", |db, old| Box::pin(async move { bound(db.node(old, "User".into(), "node".into(), "user".into(), true)).await.map(drop) })),
+        case("nodes", |db, old| Box::pin(async move { bound(db.nodes(old, "User".into(), "nodes".into(), vec!["user".into()])).await.map(drop) })),
+        case("retry_all", |db, old| Box::pin(async move { bound(db.retry_all(old)).await.map(drop) })),
+        case("warm", |db, old| Box::pin(async move { bound(db.warm(old, r#"{"model":"User"}"#.into())).await })),
+        case("edge_values", |db, old| Box::pin(async move { bound(db.edge_values(old, "User".into(), "all".into(), "{}".into(), vec!["user".into()])).await.map(drop) })),
+        case("peek_query", |db, old| Box::pin(async move { bound(db.peek_query(old, r#"{"model":"User"}"#.into())).await.map(drop) })),
+        case("peek_row", |db, old| Box::pin(async move { db.peek_row(old, "User".into(), "user".into()).map(drop) })),
+        case("cancel_upload", |db, old| Box::pin(async move { bound(db.cancel_upload(old, "User".into(), "user".into(), "upload".into())).await.map(drop) })),
     ];
-    for (name, result) in results {
+    for (name, call) in calls {
+        let result = call(&rig.database, old).await;
         assert!(matches!(result, Err(DbError::Interrupted { .. })), "{name} of a left account was not refused: {result:?}");
     }
     assert_eq!(rig.world.log().len(), before, "a refused entry reached the server");

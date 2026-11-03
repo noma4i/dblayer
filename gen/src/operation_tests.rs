@@ -11,22 +11,22 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "public struct QrCodeCreateResult: Codable, Sendable, Equatable {\n    public let url: String?",
-        "public static func qrCodeCreate(kind: String, size: Int? = nil) async throws -> QrCodeCreateResult {",
+        "public static func qrCodeCreate(kind: String, size: Int? = nil, in scope: AccountScope? = nil) async throws -> QrCodeCreateResult {",
         "if let value = size { variables[\"size\"] = try JSONValue.encode(value) }",
-        "return try await DB.run(\"QrCodeCreate\", variables: [\"input\": JSONValue.object(variables)], as: QrCodeCreateResult.self)",
-        "public static func signOut() async throws {\n        let variables: [String: JSONValue] = [:]",
-        "try await DB.run(\"SignOut\", variables: variables)",
+        "return try await DB.run(\"QrCodeCreate\", variables: [\"input\": JSONValue.object(variables)], as: QrCodeCreateResult.self, in: scope)",
+        "public static func signOut(in scope: AccountScope? = nil) async throws {\n        let variables: [String: JSONValue] = [:]",
+        "try await DB.run(\"SignOut\", variables: variables, in: scope)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "data class QrCodeCreateResult(\n    val url: String? = null,\n)",
-        "suspend fun qrCodeCreate(kind: String, size: Long? = null): QrCodeCreateResult = offCaller {",
+        "suspend fun qrCodeCreate(kind: String, size: Long? = null, account: AccountScope? = null): QrCodeCreateResult {",
         "if (size != null) variables[\"size\"] = jsonValue(size)",
-        "DBlayer.run(\"QrCodeCreate\", JsonObject(mapOf(\"input\" to JsonObject(variables))), QrCodeCreateResult.serializer())",
-        "suspend fun signOut() = offCaller {",
-        "DBlayer.run(\"SignOut\", JsonObject(variables))",
+        "DBlayer.run(\"QrCodeCreate\", JsonObject(mapOf(\"input\" to JsonObject(variables))), QrCodeCreateResult.serializer(), account)",
+        "suspend fun signOut(account: AccountScope? = null) {",
+        "DBlayer.run(\"SignOut\", JsonObject(variables), account)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }
@@ -66,15 +66,15 @@ fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "public struct GiphyLoadResult: Codable, Sendable, Equatable {",
-        "public static func giphyLoad(type: String, limit: Int? = nil) async throws -> [GiphyLoadResult] {",
-        "return try await DB.run(\"Giphy\", variables: variables, as: [GiphyLoadResult].self)",
+        "public static func giphyLoad(type: String, limit: Int? = nil, in scope: AccountScope? = nil) async throws -> [GiphyLoadResult] {",
+        "return try await DB.run(\"Giphy\", variables: variables, as: [GiphyLoadResult].self, in: scope)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
-        "suspend fun giphyLoad(type: String, limit: Long? = null): List<GiphyLoadResult> = offCaller {",
-        "DBlayer.run(\"Giphy\", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()))",
+        "suspend fun giphyLoad(type: String, limit: Long? = null, account: AccountScope? = null): List<GiphyLoadResult> {",
+        "DBlayer.run(\"Giphy\", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()), account)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

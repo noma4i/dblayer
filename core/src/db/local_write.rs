@@ -350,8 +350,10 @@ impl Db {
             self.apply_flagged(reader, &mut edits, &Call { owner: &own, args: &input_args }, &flagged)?;
             let mut rows = Vec::new();
             let mut touches = Vec::new();
+            let removes = declared.as_ref().is_some_and(|declared| declared.removes_receiver);
             for ((edited_model, edited_id), (before, after)) in edits.into_rows() {
-                if (edited_model != model || edited_id != id.as_str()) && before == after {
+                let is_receiver = edited_model == model && edited_id == id.as_str();
+                if (!is_receiver && before == after) || (is_receiver && removes) {
                     continue;
                 }
                 let edited_key = ModelKey::new(&edited_model);

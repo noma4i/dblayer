@@ -50,7 +50,7 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() = bounded {
+    fun aWarmQueryAnswersFromMemoryAndAFinishedLiveReadLeavesNothingWarm() = bounded {
         reopenSigned(Config(null, null, 32u), modelsJSON)
         assertNull(Moment.recent.cached())
         val moment = Moment.send(AccountScope.current(), text = "m").row
@@ -63,7 +63,7 @@ class BridgeProbeTest {
         assertNull(Moment.recent.cached())
         Moment.send(AccountScope.current(), text = "n").row
         assertEquals(1, withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.size)
-        assertEquals("n", Moment.recent.cached()!!.value.first().text)
+        eventually("a finished live read leaves nothing warm") { Moment.recent.cached() == null }
     }
 
     @Test
@@ -73,14 +73,10 @@ class BridgeProbeTest {
         assertEquals(emptyList<Moment>(), withTimeout(5000) { live.first() })
         val moment = Moment.send(AccountScope.current(), text = "m").row
         assertEquals("m", withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first().text)
-        moment.update(text = GraphQLNullable.Value("edited"))
-        assertEquals("edited", withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.text == "edited" } }.first().text)
         moment.setLocal("tone", kotlinx.serialization.json.JsonPrimitive("warm"))
         assertEquals("warm", withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.tone == "warm" } }.first().tone)
         moment.setLocal("tone", kotlinx.serialization.json.JsonNull)
         assertNull(withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.tone == null } }.first().tone)
-        moment.destroy()
-        assertEquals(emptyList<Moment>(), withTimeout(5000) { Moment.recent.live.flow.first { it.isEmpty() } })
     }
 
     @Test

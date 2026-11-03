@@ -11,8 +11,9 @@ private let sessionCodes: [SessionCode] = [
 private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#
 
 private final class RefusedRetry: Database, @unchecked Sendable {
+  override func sessionEpoch() -> UInt64 { 1 }
   override func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
-  override func retryAll() async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
+  override func retryAll(epoch: UInt64) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
 }
 
 extension BridgeProbeTests {

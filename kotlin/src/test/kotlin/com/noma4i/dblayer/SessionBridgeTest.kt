@@ -26,7 +26,8 @@ class SessionBridgeTest {
             calls.add("retry $model $rowId ${action ?: "null"}")
             return 3u
         }
-        override suspend fun retryAll(): ULong {
+        override fun sessionEpoch(): ULong = 1uL
+        override suspend fun retryAll(epoch: ULong): ULong {
             calls.add("retryAll")
             return 7u
         }

@@ -134,7 +134,7 @@ extension BridgeProbeTests {
       let upserted = try #require(try await Letter.ids([id]).read().first)
       #expect(upserted.chatId == target, "\(target): the answer row is not in its own chat")
     }
-    let sameChat = try await Letter.thread(chatId: "c1").read()
+    let sameChat = try await Letter.thread("c1").read()
     #expect(sameChat.map(\.id).contains(sourceId) && sameChat.map(\.id).contains("fwd-1"))
   }
 
@@ -149,7 +149,7 @@ extension BridgeProbeTests {
     try await local.settled(action: nil)
     let sourceId = try await local.confirmedId()
     let source = try #require(try await Letter.ids([sourceId]).read().first)
-    let thread = try Letter.thread(chatId: "c2")
+    let thread = try Letter.thread("c2")
     #expect(try await thread.read().isEmpty)
 
     let hold = transport.hold("ForwardLetter", reply: forwardAnswer("fwd-1", chat: "c2"), failure: refusal ? forbidden : nil)

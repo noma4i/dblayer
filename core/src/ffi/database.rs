@@ -357,7 +357,7 @@ impl Database {
     }
     pub async fn load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "load", async move {
+        self.serve_shared_in_epoch(epoch, "load", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load(&model, &relation, &params, LoadOptions::default()).await?)
         }).await.map(drop)
@@ -365,21 +365,21 @@ impl Database {
     pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         self.require_online(&format!("{model}.{relation} refresh"))?;
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "refresh", async move {
+        self.serve_shared_in_epoch(epoch, "refresh", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.refresh(&model, &relation, &params).await?)
         }).await.map(drop)
     }
     pub async fn refresh_preloads(&self, epoch: u64) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        let failures = self.serve_in_epoch(epoch, "refresh preloads", async move { Ok::<_, DbError>(sync.refresh_preloads().await?) }).await?;
+        let failures = self.serve_shared_in_epoch(epoch, "refresh preloads", async move { Ok::<_, DbError>(sync.refresh_preloads().await?) }).await?;
         if failures.is_empty() { return Ok(()); }
         let scopes: Vec<String> = failures.iter().map(|failure| format!("{}.{} {}: {}", failure.model, failure.relation, serde_json::Value::Object(failure.params.clone()), failure.error)).collect();
         Err(DbError::Sync { detail: format!("{} preload scopes failed to refresh: {}", scopes.len(), scopes.join("; ")) })
     }
     pub async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "load all", async move {
+        self.serve_shared_in_epoch(epoch, "load all", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load_all(&model, &relation, &params, LoadOptions { force }).await?)
         }).await
@@ -387,7 +387,7 @@ impl Database {
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.require_online(&format!("{model}.{relation} load more"))?;
         let sync = self.sync()?.clone();
-        let outcome = self.serve_in_epoch(epoch, "load more", async move {
+        let outcome = self.serve_shared_in_epoch(epoch, "load more", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load_more(&model, &relation, &params).await?)
         }).await?;
@@ -400,13 +400,13 @@ impl Database {
     pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?;
-        let row = self.serve_in_epoch(epoch, "node", async move { sync.node(&model, &relation, &row_id, force).await }).await?;
+        let row = self.serve_shared_in_epoch(epoch, "node", async move { sync.node(&model, &relation, &row_id, force).await }).await?;
         Ok(row.map(|row| wire.row(&row)))
     }
     pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?;
-        let rows = self.serve_in_epoch(epoch, "nodes", async move { sync.nodes(&model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
+        let rows = self.serve_shared_in_epoch(epoch, "nodes", async move { sync.nodes(&model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
         Ok(rows.iter().map(|row| wire.row(row)).collect())
     }
     pub async fn flush(&self) -> Result<(), DbError> {

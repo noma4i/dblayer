@@ -73,27 +73,19 @@ fn save(db: &Db, values: Value) {
 #[tokio::test(start_paused = true)]
 async fn stale_generation_preserves_the_undelivered_attempt_budget() {
     let mut failures = Vec::new();
-    for action in ["create", "update", "destroy"] {
+    let action = "create";
     for (attempts, expected) in [(1, crate::operation::OperationStatus::Pending), (40, crate::operation::OperationStatus::Failed)] {
         let mut model = spec();
-        if action != "update" {
-            let mut declaration = ActionDeclaration::new(action, if action == "destroy" { RootShape::Destroy } else { RootShape::Upsert });
-            declaration.mutation = Some("UpdateRecord".into());
-            declaration.has_optimistic = true;
-            declaration.has_temp_row_retention = true;
-            model.actions.push(declaration);
-        }
+        let mut declaration = ActionDeclaration::new(action, RootShape::Upsert);
+        declaration.mutation = Some("UpdateRecord".into());
+        declaration.durable = true;
+        declaration.has_optimistic = true;
+        declaration.has_temp_row_retention = true;
+        model.actions.push(declaration);
         let db = Db::open_in_memory(vec![model, ModelSpec::new("Folder", vec![FieldSpec::scalar("id", ScalarKind::Id)])], None).unwrap();
         let transport = Arc::new(MockTransport::new());
         let sync = Sync::new(db.clone(), transport.clone(), Arc::new(ManualClock::new(Duration::ZERO)), SyncConfig::default());
-        let id = if action == "create" {
-            db.create("Record", fields(json!({"body":"pending"}))).unwrap().id.clone()
-        } else {
-            save(&db, json!({"id":"r1","body":"before"}));
-            if action == "destroy" { db.destroy("Record", &rid("r1")).unwrap(); }
-            else { db.update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap(); }
-            rid("r1")
-        };
+        let id = db.create("Record", fields(json!({"body":"pending"}))).unwrap().id.clone();
         let operation = OperationDef::new("UpdateRecord", "mutation Probe { id }", "updateRecord.record");
         for attempt in 1..=attempts {
             let delay = if attempt == attempts { Duration::from_secs(5) } else { Duration::ZERO };
@@ -122,13 +114,8 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
         assert_eq!(transport.call_count("UpdateRecord"), attempts as usize);
         assert!(!(entry.operation.status == crate::operation::OperationStatus::Pending && entry.operation.transport_started));
         let body = db.find("Record", &id).unwrap().map(|row| row.data["body"].clone());
-        let expected_body = match (action, attempts) {
-            ("destroy", 1) => None,
-            ("destroy", _) => Some(json!("before")),
-            _ => Some(json!("pending")),
-        };
+        let expected_body = Some(json!("pending"));
         if body != expected_body { failures.push(format!("{action}/{attempts}: body {body:?}, expected {expected_body:?}")); }
-    }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

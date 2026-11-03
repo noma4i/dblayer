@@ -9,7 +9,7 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class EnumListTest {
-    private suspend fun open() = openDatabase(Config(null, null, 32u), modelsJSON, null).also { adopt(it) }
+    private suspend fun open() = reopenSigned(Config(null, null, 32u), modelsJSON)
 
     @Test
     fun aListOfEnumValuesIsStoredReadBackAndKeepsAValueTheDeclarationLacks() = bounded {

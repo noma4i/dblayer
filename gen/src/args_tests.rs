@@ -66,5 +66,5 @@ fn a_model_without_args_emits_no_args_variable() {
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     assert!(!swift.contains("var args") && !swift.contains("args: args"), "swift keeps an unused args variable");
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
-    assert!(kotlin.contains("account.send(this, values)") && kotlin.contains("update(admitted(account), modelName, id, values.jsonText(), \"{}\")"), "kotlin builds an empty args object");
+    assert!(kotlin.contains("account.send(this, values)") && kotlin.contains("update(epoch, modelName, id, values.jsonText(), \"{}\")"), "kotlin builds an empty args object");
 }

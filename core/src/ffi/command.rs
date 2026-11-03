@@ -106,6 +106,12 @@ impl Database {
         }).await
     }
 
+    /// Work whose flight other callers may join: a caller that goes away does not stop it. The epoch still bounds the lease, the origin and the SQL commit.
+    pub(super) async fn serve_shared_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
+        let life = self.db.shared.store.lifecycle.clone();
+        self.in_epoch(epoch, target, super::database::on_executor(crate::store::ORIGIN.scope((life, epoch), work))).await
+    }
+
     fn admit_command(&self, request: &CommandRequest) -> Result<(), DbError> {
         let spec = self.db.spec(&request.model)?;
         let allowed = match &request.upload {

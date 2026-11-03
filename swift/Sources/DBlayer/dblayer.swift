@@ -1303,13 +1303,16 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
      */
     func send(request: CommandRequest) async throws  -> CommandReceipt
     
+    /**
+     * Queues the action. An action with no optimistic change and no declared result returns after the server answered, with the row at the root of the answer: the receiver row when the answer names the receiver, else the row the answer carried. The receiver row is never overwritten by an answer with another id.
+     */
     func act(epoch: UInt64, model: String, rowId: String, action: String, patchJson: String, argsJson: String) async throws  -> QueuedAction
     
     func answer(epoch: UInt64, model: String, operation: Int64) async throws  -> String
     
     func attach(epoch: UInt64, model: String, rowId: String, field: String, bytes: Data, name: String, mime: String) async throws  -> String
     
-    func cancelUpload(model: String, rowId: String, action: String) async throws  -> Bool
+    func cancelUpload(epoch: UInt64, model: String, rowId: String, action: String) async throws  -> Bool
     
     /**
      * Closes the database: every lease ends, every holder closes, the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
@@ -1329,7 +1332,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func discard(epoch: UInt64, model: String, rowId: String, action: String?) async throws 
     
-    func edgeValues(model: String, relation: String, paramsJson: String, rowIds: [String]) async throws  -> String
+    func edgeValues(epoch: UInt64, model: String, relation: String, paramsJson: String, rowIds: [String]) async throws  -> String
     
     func enterForegroundForTesting() throws 
     
@@ -1337,29 +1340,29 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func flush() async throws 
     
-    func load(model: String, relation: String, paramsJson: String) async throws 
+    func load(epoch: UInt64, model: String, relation: String, paramsJson: String) async throws 
     
-    func loadAll(model: String, relation: String, paramsJson: String, force: Bool) async throws 
+    func loadAll(epoch: UInt64, model: String, relation: String, paramsJson: String, force: Bool) async throws 
     
-    func loadMore(model: String, relation: String, paramsJson: String) async throws  -> LoadMoreResult
+    func loadMore(epoch: UInt64, model: String, relation: String, paramsJson: String) async throws  -> LoadMoreResult
     
     func maintain() async throws 
     
-    func node(model: String, relation: String, rowId: String, force: Bool) async throws  -> WireRow?
+    func node(epoch: UInt64, model: String, relation: String, rowId: String, force: Bool) async throws  -> WireRow?
     
-    func nodes(model: String, relation: String, rowIds: [String]) async throws  -> [WireRow]
+    func nodes(epoch: UInt64, model: String, relation: String, rowIds: [String]) async throws  -> [WireRow]
     
     func onlineSink() throws  -> OnlineSink
     
     func openReport()  -> OpenReport
     
-    func peekRow(model: String, rowId: String) throws  -> WireRow?
+    func peekRow(epoch: UInt64, model: String, rowId: String) throws  -> WireRow?
     
     func read(epoch: UInt64, model: String, rowId: String, field: String) async throws  -> Data?
     
-    func refresh(model: String, relation: String, paramsJson: String) async throws 
+    func refresh(epoch: UInt64, model: String, relation: String, paramsJson: String) async throws 
     
-    func refreshPreloads() async throws 
+    func refreshPreloads(epoch: UInt64) async throws 
     
     func registerOperations(defsJson: String) throws 
     
@@ -1369,9 +1372,9 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws  -> UInt64
     
-    func retryAll() async throws  -> UInt64
+    func retryAll(epoch: UInt64) async throws  -> UInt64
     
-    func run(operation: String, variablesJson: String) async throws  -> String
+    func run(epoch: UInt64, operation: String, variablesJson: String) async throws  -> String
     
     func setEphemeral(epoch: UInt64, model: String, rowId: String, valuesJson: String) async throws 
     
@@ -1393,7 +1396,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func url(epoch: UInt64, model: String, rowId: String, field: String) async throws  -> String?
     
-    func warm(queryJson: String) async throws 
+    func warm(epoch: UInt64, queryJson: String) async throws 
     
     func sessionCall(operation: String, bodyJson: String) async throws  -> String
     
@@ -1405,7 +1408,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func sessionResume() async throws  -> String?
     
     /**
-     * The reader stopped. The stream ends in the core and nothing is delivered after this call returns.
+     * The reader stopped. The stream ends in the core and no new delivery is admitted after this call returns. A delivery already admitted may finish, and the call does not wait for the reader.
      */
     func cancelStream(stream: UInt64) 
     
@@ -1417,7 +1420,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     /**
      * The rows of a query the core already holds, without a stream and without reading SQLite on the calling thread.
      */
-    func peekQuery(queryJson: String) async throws  -> CachedQuery?
+    func peekQuery(epoch: UInt64, queryJson: String) async throws  -> CachedQuery?
     
     /**
      * The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.
@@ -1655,6 +1658,9 @@ open func send(request: CommandRequest)async throws  -> CommandReceipt  {
         )
 }
     
+    /**
+     * Queues the action. An action with no optimistic change and no declared result returns after the server answered, with the row at the root of the answer: the receiver row when the answer names the receiver, else the row the answer carried. The receiver row is never overwritten by an answer with another id.
+     */
 open func act(epoch: UInt64, model: String, rowId: String, action: String, patchJson: String, argsJson: String)async throws  -> QueuedAction  {
     return
         try  await uniffiRustCallAsync(
@@ -1703,12 +1709,12 @@ open func attach(epoch: UInt64, model: String, rowId: String, field: String, byt
         )
 }
     
-open func cancelUpload(model: String, rowId: String, action: String)async throws  -> Bool  {
+open func cancelUpload(epoch: UInt64, model: String, rowId: String, action: String)async throws  -> Bool  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_cancel_upload(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterString.lower(action)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterString.lower(action)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_i8,
@@ -1821,12 +1827,12 @@ open func discard(epoch: UInt64, model: String, rowId: String, action: String?)a
         )
 }
     
-open func edgeValues(model: String, relation: String, paramsJson: String, rowIds: [String])async throws  -> String  {
+open func edgeValues(epoch: UInt64, model: String, relation: String, paramsJson: String, rowIds: [String])async throws  -> String  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_edge_values(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson),FfiConverterSequenceString.lower(rowIds)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson),FfiConverterSequenceString.lower(rowIds)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -1877,12 +1883,12 @@ open func flush()async throws   {
         )
 }
     
-open func load(model: String, relation: String, paramsJson: String)async throws   {
+open func load(epoch: UInt64, model: String, relation: String, paramsJson: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_load(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -1893,12 +1899,12 @@ open func load(model: String, relation: String, paramsJson: String)async throws 
         )
 }
     
-open func loadAll(model: String, relation: String, paramsJson: String, force: Bool)async throws   {
+open func loadAll(epoch: UInt64, model: String, relation: String, paramsJson: String, force: Bool)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_load_all(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson),FfiConverterBool.lower(force)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson),FfiConverterBool.lower(force)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -1909,12 +1915,12 @@ open func loadAll(model: String, relation: String, paramsJson: String, force: Bo
         )
 }
     
-open func loadMore(model: String, relation: String, paramsJson: String)async throws  -> LoadMoreResult  {
+open func loadMore(epoch: UInt64, model: String, relation: String, paramsJson: String)async throws  -> LoadMoreResult  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_load_more(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -1941,12 +1947,12 @@ open func maintain()async throws   {
         )
 }
     
-open func node(model: String, relation: String, rowId: String, force: Bool)async throws  -> WireRow?  {
+open func node(epoch: UInt64, model: String, relation: String, rowId: String, force: Bool)async throws  -> WireRow?  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_node(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(rowId),FfiConverterBool.lower(force)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(rowId),FfiConverterBool.lower(force)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -1957,12 +1963,12 @@ open func node(model: String, relation: String, rowId: String, force: Bool)async
         )
 }
     
-open func nodes(model: String, relation: String, rowIds: [String])async throws  -> [WireRow]  {
+open func nodes(epoch: UInt64, model: String, relation: String, rowIds: [String])async throws  -> [WireRow]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_nodes(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterSequenceString.lower(rowIds)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterSequenceString.lower(rowIds)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -1991,11 +1997,12 @@ open func openReport() -> OpenReport  {
 })
 }
     
-open func peekRow(model: String, rowId: String)throws  -> WireRow?  {
+open func peekRow(epoch: UInt64, model: String, rowId: String)throws  -> WireRow?  {
     return try  FfiConverterOptionTypeWireRow.lift(try rustCallWithError(FfiConverterTypeDbError_lift) {
         uniffiCallStatus in
     uniffi_dblayer_fn_method_database_peek_row(
             self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(epoch),
         FfiConverterString.lower(model),
         FfiConverterString.lower(rowId),uniffiCallStatus
     )
@@ -2018,12 +2025,12 @@ open func read(epoch: UInt64, model: String, rowId: String, field: String)async 
         )
 }
     
-open func refresh(model: String, relation: String, paramsJson: String)async throws   {
+open func refresh(epoch: UInt64, model: String, relation: String, paramsJson: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_refresh(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -2034,12 +2041,12 @@ open func refresh(model: String, relation: String, paramsJson: String)async thro
         )
 }
     
-open func refreshPreloads()async throws   {
+open func refreshPreloads(epoch: UInt64)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_refresh_preloads(
-                        self.uniffiCloneHandle()
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -2107,12 +2114,12 @@ open func retry(epoch: UInt64, model: String, rowId: String, action: String?)asy
         )
 }
     
-open func retryAll()async throws  -> UInt64  {
+open func retryAll(epoch: UInt64)async throws  -> UInt64  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_retry_all(
-                        self.uniffiCloneHandle()
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_u64,
@@ -2123,12 +2130,12 @@ open func retryAll()async throws  -> UInt64  {
         )
 }
     
-open func run(operation: String, variablesJson: String)async throws  -> String  {
+open func run(epoch: UInt64, operation: String, variablesJson: String)async throws  -> String  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_run(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(operation),FfiConverterString.lower(variablesJson)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(operation),FfiConverterString.lower(variablesJson)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -2278,12 +2285,12 @@ open func url(epoch: UInt64, model: String, rowId: String, field: String)async t
         )
 }
     
-open func warm(queryJson: String)async throws   {
+open func warm(epoch: UInt64, queryJson: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_warm(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(queryJson)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(queryJson)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -2348,7 +2355,7 @@ open func sessionResume()async throws  -> String?  {
 }
     
     /**
-     * The reader stopped. The stream ends in the core and nothing is delivered after this call returns.
+     * The reader stopped. The stream ends in the core and no new delivery is admitted after this call returns. A delivery already admitted may finish, and the call does not wait for the reader.
      */
 open func cancelStream(stream: UInt64)  {try! rustCall() {
         uniffiCallStatus in
@@ -2381,12 +2388,12 @@ open func loadMoreStream(stream: UInt64)async throws  -> LoadMoreResult  {
     /**
      * The rows of a query the core already holds, without a stream and without reading SQLite on the calling thread.
      */
-open func peekQuery(queryJson: String)async throws  -> CachedQuery?  {
+open func peekQuery(epoch: UInt64, queryJson: String)async throws  -> CachedQuery?  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_peek_query(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(queryJson)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(queryJson)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -10770,7 +10777,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_send() != 32046) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_act() != 60029) {
+    if (uniffi_dblayer_checksum_method_database_act() != 52938) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_answer() != 4611) {
@@ -10779,7 +10786,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_attach() != 26925) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_cancel_upload() != 37303) {
+    if (uniffi_dblayer_checksum_method_database_cancel_upload() != 27388) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_close_database() != 51190) {
@@ -10800,7 +10807,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_discard() != 25759) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_edge_values() != 45089) {
+    if (uniffi_dblayer_checksum_method_database_edge_values() != 42334) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_enter_foreground_for_testing() != 29641) {
@@ -10812,22 +10819,22 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_flush() != 20138) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_load() != 38526) {
+    if (uniffi_dblayer_checksum_method_database_load() != 62537) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_load_all() != 50450) {
+    if (uniffi_dblayer_checksum_method_database_load_all() != 16467) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_load_more() != 54188) {
+    if (uniffi_dblayer_checksum_method_database_load_more() != 38719) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_maintain() != 8785) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_node() != 9398) {
+    if (uniffi_dblayer_checksum_method_database_node() != 26975) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_nodes() != 30948) {
+    if (uniffi_dblayer_checksum_method_database_nodes() != 36191) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_online_sink() != 36615) {
@@ -10836,16 +10843,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_open_report() != 3959) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_peek_row() != 50904) {
+    if (uniffi_dblayer_checksum_method_database_peek_row() != 40812) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_read() != 3808) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_refresh() != 41444) {
+    if (uniffi_dblayer_checksum_method_database_refresh() != 51357) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_refresh_preloads() != 47727) {
+    if (uniffi_dblayer_checksum_method_database_refresh_preloads() != 10840) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_register_operations() != 47241) {
@@ -10860,10 +10867,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_retry() != 63835) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_retry_all() != 2913) {
+    if (uniffi_dblayer_checksum_method_database_retry_all() != 25573) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_run() != 41466) {
+    if (uniffi_dblayer_checksum_method_database_run() != 31958) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_set_ephemeral() != 25133) {
@@ -10896,7 +10903,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_url() != 24988) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_warm() != 49344) {
+    if (uniffi_dblayer_checksum_method_database_warm() != 51793) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_session_call() != 15531) {
@@ -10908,13 +10915,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_session_resume() != 44692) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_cancel_stream() != 26346) {
+    if (uniffi_dblayer_checksum_method_database_cancel_stream() != 50948) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_load_more_stream() != 14132) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_peek_query() != 2987) {
+    if (uniffi_dblayer_checksum_method_database_peek_query() != 8309) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_read_query() != 32690) {

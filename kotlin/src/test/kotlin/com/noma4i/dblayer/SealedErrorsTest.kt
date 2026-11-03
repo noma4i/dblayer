@@ -11,7 +11,8 @@ import org.junit.Test
 class SealedErrorsTest {
     private class RefusedRetry : Database(NoHandle) {
         override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?): ULong = throw DbException.Invalid("retry refused")
-        override suspend fun retryAll(): ULong = throw DbException.Invalid("retry refused")
+        override fun sessionEpoch(): ULong = 1uL
+        override suspend fun retryAll(epoch: ULong): ULong = throw DbException.Invalid("retry refused")
     }
 
     @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {

@@ -1005,6 +1005,17 @@ val groups = Group.nodes(ids)
 An operation that waits for the server shows its change at once and takes it back when the server refuses. Four effects exist, one per operation, and no others: `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`. Write `optimistic false` next to them.
 
 ```ruby
+model Person do
+  attribute :name, :string
+  scope :club_members do
+    parameter :clubId, :string
+    parameter :order, :string
+    query "ClubMembers"
+    response from: "node.members"
+    paginate size: 30, direction: :forward
+  end
+end
+
 model Club do
   attribute :name, :string
   operation :leave do
