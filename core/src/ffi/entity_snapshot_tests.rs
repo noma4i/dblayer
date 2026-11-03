@@ -15,6 +15,72 @@ fn request(id: &str, lease: u64) -> EntityRequest { EntityRequest { id: id.into(
 fn release(id: &str, lease: u64) -> EntityLease { EntityLease { id: id.into(), lease } }
 
 #[tokio::test]
+async fn a_remote_entity_read_without_transport_returns_an_error() {
+    let (sample, _) = super::super::load_tests::rig().await;
+    let models = serde_json::to_string(&vec![sample.db.spec("Moment").unwrap().clone()]).unwrap();
+    let db = Database::start_with(super::super::Config { path: None, data_version: None, cache_rows: 8 }, models, None, Arc::new(crate::pacing::SystemClock), |_, _| Ok((None, None))).unwrap();
+    let (sender, _) = mpsc::unbounded_channel();
+    let live = db.live_entities("Moment".into(), Arc::new(Listener(sender))).unwrap();
+    let result = live.retain(vec![EntityRequest { id: "m1".into(), lease: 1, fetch: EntityFetch::Force }]);
+    assert!(matches!(result, Err(DbError::Invalid { detail }) if detail == "entity fetch needs a network session"));
+}
+
+#[tokio::test]
+async fn held_entities_reload_after_a_data_reset() {
+    use crate::schema::{FieldSpec, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
+    use crate::transport::{MockTransport, Reply};
+    use crate::value::ScalarKind;
+    let transport = Arc::new(MockTransport::new());
+    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    model.relations.push(super::super::load_tests::relation("feed", "5.minutes"));
+    let mut node = RelationSpec::new("node", &[]);
+    node.text_params = vec![NODE_PARAM.to_string()];
+    node.node = Some(NodeRead::One);
+    let mut remote = super::super::load_tests::relation("node", "5.minutes").remote.unwrap();
+    remote.operation = "Node".into();
+    remote.shape = RemoteShape::Single;
+    remote.variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
+    node.remote = Some(remote);
+    model.relations.push(node);
+    let wired = transport.clone();
+    let db = Database::start_with(super::super::Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), None, Arc::new(crate::pacing::SystemClock), move |_, _| Ok((Some(wired), None))).unwrap();
+    db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"},{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
+    for operation in ["Feed", "Node"] {
+        for text in ["before", "after"] {
+            let row = json!({"__typename":"Moment", "id":"m1", "text":text});
+            let payload = if operation == "Feed" { json!({"moments":[row]}) } else { json!({"node":row}) };
+            transport.enqueue(operation, Reply::data(payload));
+        }
+    }
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    let live = db.live_entities("Moment".into(), Arc::new(Listener(sender))).unwrap();
+    live.singleton(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), 1).unwrap();
+    live.retain(vec![EntityRequest { id: "m1".into(), lease: 2, fetch: EntityFetch::Force }]).unwrap();
+    crate::test_wait::yield_until("both first reads finish", || {
+        let state = locked(&live.state);
+        state.singleton.as_ref().is_some_and(|single| single.entry.verdict.settled && single.entry.value.is_some()) && state.entries.get("m1").is_some_and(|entry| entry.verdict.read == EntityRead::Loaded && entry.value.is_some())
+    }).await;
+    db.db.reset_all().unwrap();
+    let generation = db.db.generation().value();
+    let mut reset = BTreeMap::new();
+    let mut loaded = BTreeMap::new();
+    within(async {
+        while loaded.len() != 2 {
+            let snapshot = within(receiver.recv()).await.unwrap();
+            if snapshot.generation != generation { continue; }
+            if snapshot.phase == EntityStage::Opening && snapshot.value.is_none() { reset.insert(snapshot.lease, true); }
+            if snapshot.value.is_some() && snapshot.read == EntityRead::Loaded { loaded.insert(snapshot.lease, snapshot); }
+        }
+    }).await;
+    assert_eq!(reset.keys().copied().collect::<Vec<_>>(), [1, 2]);
+    assert_eq!(loaded.keys().copied().collect::<Vec<_>>(), [1, 2]);
+    assert!(loaded.values().all(|snapshot| snapshot.value.as_ref().unwrap().cells.contains(&super::super::wire::Cell::Text { value: "after".into() }) && snapshot.settled));
+    assert_eq!(transport.call_count("Feed"), 2);
+    assert_eq!(transport.call_count("Node"), 2);
+    live.shutdown();
+}
+
+#[tokio::test]
 async fn testing_reset_empties_rows_and_resets_a_retained_entity() {
     let clock = super::super::TestClock::new(1_000_000);
     let (db, transport, _) = super::super::load_tests::open_rig(Some(clock.clone()), None, None).await;

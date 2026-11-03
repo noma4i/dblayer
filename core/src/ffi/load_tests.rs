@@ -61,6 +61,27 @@ impl super::EntityListener for RecordingEntity {
 }
 
 #[tokio::test]
+async fn held_queries_and_windows_reload_after_a_data_reset() {
+    for window in [false, true] {
+        let (db, transport) = rig().await;
+        let listener = Arc::new(Recording::default());
+        let query = r#"{"model":"Moment","relation":"feed","params":{},"order":[{"field":"text","direction":"asc"}]}"#.into();
+        let live = if window { db.live_window(query, 10, None, listener.clone()) } else { db.live_query(query, listener.clone()) };
+        within(live.wait_for_initial_load()).await.unwrap();
+        crate::test_wait::yield_until("the first row", || listener.0.lock().unwrap().contains(&1)).await;
+        listener.0.lock().unwrap().clear();
+        db.db.reset_all().unwrap();
+        crate::test_wait::yield_until("the reset and reloaded row", || {
+            let seen = listener.0.lock().unwrap();
+            seen.iter().position(|size| *size == 0).is_some_and(|empty| seen[empty + 1..].contains(&1))
+        }).await;
+        within(live.wait_for_initial_load()).await.unwrap();
+        assert_eq!(transport.queries.load(Ordering::SeqCst), 2, "window={window}");
+        live.cancel();
+    }
+}
+
+#[tokio::test]
 async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without_http() {
     struct Listener(std::sync::mpsc::Sender<DbError>);
     impl QueryListener for Listener {

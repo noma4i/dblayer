@@ -252,6 +252,16 @@ impl LoadOwner {
 
     pub(crate) fn reset(&self, models: Option<&[String]>) {
         let epoch = self.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        self.with_state(|state, effects| {
+            let windows: Vec<_> = state.chains.keys().filter(|window| {
+                models.is_none_or(|models| state.targets.get(*window).is_some_and(|target| models.contains(&target.model)))
+            }).cloned().collect();
+            for window in windows {
+                if let Some(chain) = state.chains.remove(&window) {
+                    effects.push(move || { crate::db::lock::effect(|| chain.task.abort()); drop(chain); });
+                }
+            }
+        });
         self.submit(Event::Reset { epoch, models: models.map(|models| models.iter().cloned().collect()) });
     }
 

@@ -41,6 +41,8 @@ Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlay
 
 `resetForTesting` clears model data using the normal data reset while keeping the clock, transport, registered operations, and session. Call the explicit session reset when a test needs no session. Existing loads finish under their original generation. `settleForTesting` waits for background work and reports the busy part if it does not finish within 10 seconds. Both calls require `openTesting`.
 
+Held entities and live queries reconnect and load again after `resetForTesting`.
+
 ```swift
 try await DB.resetForTesting()
 try await DB.settleForTesting()

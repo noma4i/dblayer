@@ -206,6 +206,8 @@ pub struct LiveSubscription {
 
 impl super::open_streams::Closable for LiveSubscription {
     fn close(&self) { self.cancel(); }
+    fn reset(&self, models: Option<&[String]>) { self.feed.reset(models); }
+    fn resets(&self) -> bool { true }
     fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
     fn busy(&self) -> bool { self.feed.busy() }
 }
@@ -240,6 +242,7 @@ impl LiveSubscription {
         }
     }
     pub fn cancel(&self) {
+        if let Some(registration) = self.registration.get() { registration.remove(); }
         let handles = crate::db::locked(&self.handles).take();
         drop(handles);
         self.feed.end();

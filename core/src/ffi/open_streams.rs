@@ -5,23 +5,34 @@ pub(super) trait Closable: Send + Sync {
     fn close(&self);
     fn registration(&self) -> &OnceLock<Registration>;
     fn busy(&self) -> bool { false }
+    fn reset(&self, _models: Option<&[String]>) {}
+    fn resets(&self) -> bool { false }
 }
 
 pub(super) struct Registration { streams: Weak<OpenStreams>, id: usize }
 
-impl Drop for Registration {
-    fn drop(&mut self) {
+impl Registration {
+    pub(super) fn remove(&self) {
         if let Some(streams) = self.streams.upgrade() {
-            let removed = crate::db::locked(&streams.members).open.remove(&self.id);
+            let removed = {
+                let mut members = crate::db::locked(&streams.members);
+                members.resets.remove(&self.id);
+                members.open.remove(&self.id)
+            };
             drop(removed);
         }
     }
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) { self.remove(); }
 }
 
 #[derive(Default)]
 struct Members {
     closed: bool,
     open: HashMap<usize, Weak<dyn Closable>>,
+    resets: HashMap<usize, Weak<dyn Closable>>,
 }
 
 #[derive(Default)]
@@ -32,6 +43,11 @@ pub(super) struct OpenStreams {
 }
 
 impl OpenStreams {
+    pub(super) fn reset(&self, models: Option<&[String]>) {
+        let open: Vec<_> = crate::db::locked(&self.members).resets.values().cloned().collect();
+        for member in open.into_iter().filter_map(|member| member.upgrade()) { member.reset(models); }
+    }
+
     pub(super) fn busy(&self) -> bool {
         let open: Vec<_> = crate::db::locked(&self.members).open.values().cloned().collect();
         open.into_iter().filter_map(|member| member.upgrade()).any(|member| member.busy())
@@ -44,6 +60,7 @@ impl OpenStreams {
             if !members.closed {
                 let id = Arc::as_ptr(member) as usize;
                 members.open.insert(id, Arc::downgrade(member) as Weak<dyn Closable>);
+                if member.resets() { members.resets.insert(id, Arc::downgrade(member) as Weak<dyn Closable>); }
                 Some(Registration { streams: Arc::downgrade(self), id })
             } else {
                 None
@@ -62,6 +79,7 @@ impl OpenStreams {
             if std::mem::replace(&mut members.closed, true) {
                 return;
             }
+            members.resets.clear();
             std::mem::take(&mut members.open)
         };
         for member in open.values().filter_map(Weak::upgrade) {

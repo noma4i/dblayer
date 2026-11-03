@@ -162,10 +162,10 @@ async fn members_complete_chain() {
         if ending == "reset" {
             db.db.reset_all().unwrap();
             let reset_revision = db.db.revision_seq().unwrap();
-            transport.permits.add_permits(1);
-            spin_until("reset rows and ended chain", || latest(&tape, |shown| shown.error.is_some() && shown.revision >= reset_revision));
-            assert!(!last(&tape).complete);
-            assert!(shown(&tape).is_empty());
+            spin_until("reset rows", || latest(&tape, |change| change.size == 0 && change.revision >= reset_revision));
+            transport.permits.add_permits(4);
+            spin_until("reload after reset", || latest(&tape, |change| change.complete && change.revision > reset_revision));
+            assert!(!shown(&tape).is_empty());
             live.cancel();
             continue;
         }

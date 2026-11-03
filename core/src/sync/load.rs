@@ -215,6 +215,7 @@ impl Inner {
     }
 
     pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
+        let generation = self.db.generation();
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
             None => resolved.window_key.clone(),
@@ -298,7 +299,10 @@ impl Inner {
                         crate::db::lock::effect(|| joined.send_modify(|joined| *joined += 1));
                     }
                     let end = receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone());
-                    if let Some(FlightEnd::Settled(result)) = end { return result; }
+                    if let Some(FlightEnd::Settled(result)) = end {
+                        if generation == self.db.generation() && matches!(&result, Ok(outcome) if outcome.status == LoadStatus::Discarded(DiscardReason::StaleGeneration)) { continue; }
+                        return result;
+                    }
                 }
                 Err(None) => return Ok(LoadOutcome::of(LoadStatus::SkippedFresh)),
             }

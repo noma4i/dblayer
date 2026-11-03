@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- Held entities and live queries load again after a data reset.
 - Server subscriptions reopen after a data reset.
 
 ## 6.15.1 - 2026-11-03

@@ -147,7 +147,10 @@ impl Database {
         }
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams: Arc::default(), db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), testing: false, wires: Arc::new(wires) }))
+        let streams: Arc<OpenStreams> = Arc::default();
+        let weak_streams = Arc::downgrade(&streams);
+        db.on_reset(Arc::new(move |models| { if let Some(streams) = weak_streams.upgrade() { streams.reset(models); } }));
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), testing: false, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -760,6 +763,9 @@ impl Database {
         Ok(match tracked {
             Some((sync, relation, params)) => {
                 let app_load = sync.app_load();
+                let resets = Arc::new(tokio::sync::watch::channel(0_u64).0);
+                let mut reset_changes = resets.subscribe();
+                feed.on_reset(model.clone(), resets.clone());
                 let ask = control.clone();
                 feed.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
                 let (follower, loader) = (feed.clone(), feed.clone());
@@ -782,12 +788,26 @@ impl Database {
                     }
                 }).abort_handle();
                 let load = executor()?.spawn(async move {
-                    let _app_load = app_load;
+                    let _resets = resets;
+                    let mut app_load = Some(app_load);
                     let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
-                    let result = sync.load(&model, &relation, &params, options).await;
-                    let settled = receiver.borrow().clone();
-                    loader.state(settled);
-                    loader.load_finished(result.err().map(DbError::from));
+                    loop {
+                        let result = tokio::select! {
+                            biased;
+                            changed = reset_changes.changed() => {
+                                if changed.is_err() { return; }
+                                loader.reset_load();
+                                continue;
+                            }
+                            result = sync.load(&model, &relation, &params, options) => result,
+                        };
+                        let settled = receiver.borrow().clone();
+                        loader.state(settled);
+                        loader.load_finished(result.err().map(DbError::from));
+                        drop(app_load.take());
+                        if reset_changes.changed().await.is_err() { return; }
+                        loader.reset_load();
+                    }
                 }).abort_handle();
                 (Some(load), Some(state))
             }

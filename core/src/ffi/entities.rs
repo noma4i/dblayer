@@ -51,6 +51,7 @@ struct Entry {
     value_token: u64,
     previous_token: u64,
     cancel: Option<CancelToken>,
+    fetch: EntityFetch,
     generation: u64,
     epoch: u64,
 }
@@ -59,7 +60,7 @@ impl Entry {
     fn new(lease: u64, singleton: bool, generation: u64, epoch: u64) -> Self {
         let machine = EntityMachine::new(singleton);
         let verdict = if singleton { machine.begin_feed() } else { machine.reset() };
-        Self { lease, observer_lease: 0, machine, verdict, value: None, previous: None, value_token: 0, previous_token: 0, cancel: None, generation, epoch }
+        Self { lease, observer_lease: 0, machine, verdict, value: None, previous: None, value_token: 0, previous_token: 0, cancel: None, fetch: EntityFetch::None, generation, epoch }
     }
 
     fn snapshot(&self, id: &str) -> WireEntitySnapshot {
@@ -162,15 +163,18 @@ impl LiveEntities {
         let generation = self.generation();
         let mut snapshots = Vec::new();
         for row in &change.rows {
-            if let Some(entry) = state.entries.get_mut(row.id.as_str()).filter(|entry| change.leases.get(&row.id) == Some(&entry.observer_lease)) {
+            if let Some(entry) = state.entries.get_mut(row.id.as_str()).filter(|entry| entry.generation == generation && change.leases.get(&row.id) == Some(&entry.observer_lease)) {
+                let value = self.wire.row(row);
+                if entry.verdict.revision == change.revision && !entry.verdict.stale && entry.value.as_ref() == Some(&value) { continue; }
                 entry.generation = generation;
                 entry.epoch = change.epoch;
-                entry.accept(change.revision, Some(self.wire.row(row)), None);
+                entry.accept(change.revision, Some(value), None);
                 snapshots.push(entry.snapshot(row.id.as_str()));
             }
         }
         for id in &change.removed {
-            if let Some(entry) = state.entries.get_mut(id.as_str()).filter(|entry| change.leases.get(id) == Some(&entry.observer_lease)) {
+            if let Some(entry) = state.entries.get_mut(id.as_str()).filter(|entry| entry.generation == generation && change.leases.get(id) == Some(&entry.observer_lease)) {
+                if entry.verdict.revision == change.revision && !entry.verdict.stale && entry.verdict.stage == EntityStage::Absent { continue; }
                 entry.generation = generation;
                 entry.epoch = change.epoch;
                 entry.accept(change.revision, None, None);
@@ -179,7 +183,7 @@ impl LiveEntities {
         }
         if let Some(message) = &change.failure {
             for (id, entry) in &mut state.entries {
-                if !change.leases.iter().any(|(changed, lease)| changed.as_str() == id && *lease == entry.observer_lease) { continue; }
+                if entry.generation != generation || !change.leases.iter().any(|(changed, lease)| changed.as_str() == id && *lease == entry.observer_lease) { continue; }
                 entry.verdict = entry.machine.fail(message.clone(), None);
                 snapshots.push(entry.snapshot(id));
             }
@@ -216,12 +220,19 @@ impl LiveEntities {
         let generation = self.generation();
         let epoch = self.epoch();
         let mut snapshots = Vec::new();
+        let mut fetches = Vec::new();
+        let mut reads = Vec::new();
         for (id, entry) in &mut state.entries {
             detached.cancel(entry);
             entry.clear_value();
             entry.generation = generation;
             entry.epoch = epoch;
             entry.verdict = entry.machine.reset();
+            reads.push((id.clone(), entry.lease));
+            if entry.fetch != EntityFetch::None {
+                entry.verdict = entry.machine.read_started();
+                fetches.push((id.clone(), entry.lease, entry.fetch));
+            }
             snapshots.push(entry.snapshot(id));
         }
         if let Some(single) = &mut state.singleton {
@@ -233,6 +244,67 @@ impl LiveEntities {
             detached.subscription = single.subscription.take();
         }
         self.emit(snapshots);
+        let weak = self.weak.clone();
+        let mut effects = Effects::default();
+        effects.push(move || {
+            if let Some(source) = weak.upgrade() {
+                source.resume();
+                source.read_retained(reads, generation);
+                source.refresh_retained(fetches, generation);
+            }
+        });
+        self.outbox.push(effects);
+    }
+
+    fn read_retained(&self, reads: Vec<(String, u64)>, generation: u64) {
+        let _delivering = self.delivering();
+        for (id, lease) in reads {
+            let result = RowId::new(&id).map_err(|error| error.to_string()).and_then(|id| self.database.db.entity_row(&self.model, &id).map_err(|error| error.to_string()));
+            let mut state = locked(&self.state);
+            if state.closed || generation != self.generation() { return; }
+            let Some(entry) = state.entries.get_mut(&id).filter(|entry| entry.lease == lease && entry.generation == generation) else { continue };
+            match result {
+                Ok((revision, row)) => {
+                    let value = row.map(|row| self.wire.row(&row));
+                    if entry.verdict.revision == revision && !entry.verdict.stale && entry.value == value && entry.verdict.stage != EntityStage::Opening { continue; }
+                    entry.accept(revision, value, None);
+                }
+                Err(error) => entry.verdict = entry.machine.fail(error, None),
+            }
+            self.emit(vec![entry.snapshot(&id)]);
+        }
+    }
+
+    fn refresh_retained(&self, fetches: Vec<(String, u64, EntityFetch)>, generation: u64) {
+        if fetches.is_empty() { return; }
+        let executor = match super::database::executor() {
+            Ok(executor) => executor,
+            Err(error) => {
+                for (id, lease, _) in fetches { self.refreshed(&id, lease, generation, Some(RefreshError::Failed(error.to_string()))); }
+                return;
+            }
+        };
+        let _entered = executor.enter();
+        for (id, lease, fetch) in fetches {
+            {
+                let state = locked(&self.state);
+                if state.closed || generation != self.generation() { return; }
+                if !state.entries.get(&id).is_some_and(|entry| entry.lease == lease && entry.generation == generation) { continue; }
+            }
+            let weak = self.weak.clone();
+            let sink: crate::sync::RefreshSink = Arc::new(move |id, error| { if let Some(source) = weak.upgrade() { source.refreshed(id, lease, generation, error); } });
+            let refresh = self.database.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "entity fetch needs a network session".into() }).and_then(|sync| sync.refresh_entities(&self.model, std::slice::from_ref(&id), fetch, sink).map_err(DbError::from));
+            match refresh {
+                Ok(cancel) => {
+                    let unclaimed = {
+                        let mut state = locked(&self.state);
+                        match state.entries.get_mut(&id).filter(|entry| entry.lease == lease && entry.generation == generation) { Some(entry) => entry.cancel.replace(cancel), None => Some(cancel) }
+                    };
+                    if let Some(cancel) = unclaimed { self.cancel_refresh(&cancel); }
+                }
+                Err(error) => self.refreshed(&id, lease, generation, Some(RefreshError::Failed(error.to_string()))),
+            }
+        }
     }
 
     fn single_changed(&self, feed: u64, change: LiveChange) {
@@ -280,6 +352,7 @@ impl LiveEntities {
                 if state.entries.get(&request.id).is_some_and(|entry| entry.lease == request.lease) { continue; }
                 if let Some(mut old) = state.entries.remove(&request.id) { detached.cancel(&mut old); detached.released.push(id.clone()); }
                 let mut entry = Entry::new(request.lease, false, generation, epoch);
+                entry.fetch = request.fetch;
                 if request.fetch != EntityFetch::None { entry.verdict = entry.machine.read_started(); }
                 if let Some(cached) = self.database.entity_cache.take(&self.model, &request.id, now, generation, epoch) {
                     entry.verdict = if cached.row.is_some() { entry.machine.seed(cached.revision) } else { entry.machine.accept(cached.revision, false, None) };
@@ -299,22 +372,11 @@ impl LiveEntities {
                 if let Some(entry) = state.entries.get_mut(id.as_str()) { entry.observer_lease = lease; }
             }
         }
-        let _entered = super::database::executor()?.enter();
-        for (id, lease, fetch) in fetches {
-            let weak = self.weak.clone();
-            let sink: crate::sync::RefreshSink = Arc::new(move |id, error| { if let Some(source) = weak.upgrade() { source.refreshed(id, lease, generation, error); } });
-            let refresh = self.database.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "entity fetch needs a network session".into() })?.refresh_entities(&self.model, std::slice::from_ref(&id), fetch, sink);
-            match refresh {
-                Ok(cancel) => {
-                    let unclaimed = {
-                        let mut state = locked(&self.state);
-                        match state.entries.get_mut(&id).filter(|entry| entry.lease == lease) { Some(entry) => { entry.cancel = Some(cancel); None } None => Some(cancel) }
-                    };
-                    if let Some(cancel) = unclaimed { cancel.cancel(); }
-                }
-                Err(error) => self.refreshed(&id, lease, generation, Some(RefreshError::Failed(error.to_string()))),
-            }
+        super::database::executor()?;
+        if !fetches.is_empty() && self.database.sync.is_none() {
+            return Err(DbError::Invalid { detail: "entity fetch needs a network session".into() });
         }
+        self.refresh_retained(fetches, generation);
         Ok(())
     }
 
@@ -372,6 +434,7 @@ impl LiveEntities {
 
     pub fn shutdown(&self) {
         super::entity_calls::entered();
+        if let Some(registration) = self.registration.get() { registration.remove(); }
         let _delivering = self.delivering();
         let mut detached = self.detached();
         let mut state = locked(&self.state);
@@ -409,6 +472,10 @@ impl LiveEntities {
 
 impl super::open_streams::Closable for LiveEntities {
     fn close(&self) { self.shutdown(); }
+    fn reset(&self, models: Option<&[String]>) {
+        if models.is_none_or(|models| models.contains(&self.model)) { self.reset_core(); }
+    }
+    fn resets(&self) -> bool { true }
     fn registration(&self) -> &OnceLock<super::open_streams::Registration> { &self.registration }
     fn busy(&self) -> bool {
         let state = locked(&self.state);
@@ -430,17 +497,13 @@ impl Drop for LiveEntities {
 }
 
 pub(super) fn open(database: Database, model: &str, wire: Arc<WireModel>, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
-    let db = database.db.clone();
     let target: Arc<OnceLock<Weak<LiveEntities>>> = Arc::default();
     let seen = target.clone();
-    let observer = db.observe_entities(model, move |change| { if let Some(source) = seen.get().and_then(Weak::upgrade) { source.changed(change); } })?;
+    let observer = database.db.observe_entities(model, move |change| { if let Some(source) = seen.get().and_then(Weak::upgrade) { source.changed(change); } })?;
     let source = Arc::new_cyclic(|weak: &Weak<LiveEntities>| {
         let _ = target.set(weak.clone());
         LiveEntities { observer, database, model: model.into(), wire, listener, state: Mutex::new(State::default()), outbox: OrderedEffects::default(), weak: weak.clone(), registration: OnceLock::new() }
     });
-    let weak = Arc::downgrade(&source);
-    let name = model.to_string();
-    db.on_reset(Arc::new(move |models| { if models.is_none_or(|models| models.contains(&name)) { if let Some(source) = weak.upgrade() { source.reset_core(); } } }));
     Ok(source)
 }
 

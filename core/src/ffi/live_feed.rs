@@ -58,6 +58,7 @@ struct FeedState {
     awaiting_whole: bool,
     resyncs_in_row: u32,
     reported: bool,
+    reset: Option<(String, Arc<watch::Sender<u64>>)>,
 }
 
 pub(super) struct LiveFeed {
@@ -130,6 +131,7 @@ impl LiveFeed {
             awaiting_whole: false,
             resyncs_in_row: 0,
             reported: false,
+            reset: None,
         };
         Arc::new(Self { state: Mutex::new(state), listener, calls: crate::db::CallState::new(), latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0, first_screen: Mutex::new(None) })
     }
@@ -200,6 +202,37 @@ impl LiveFeed {
 
     pub(super) fn expect_load(&self) {
         held(&self.state).load_pending = true;
+    }
+
+    pub(super) fn reset_load(&self) {
+        {
+            let mut state = held(&self.state);
+            if state.ended { return; }
+            state.load_pending = true;
+            state.load_error = None;
+            state.ready_pending = false;
+        }
+        crate::db::lock::effect(|| self.readiness.send_if_modified(|current| {
+            if *current == Readiness::Ended { return false; }
+            *current = Readiness::Waiting;
+            true
+        }));
+    }
+
+    pub(super) fn on_reset(&self, model: String, sender: Arc<watch::Sender<u64>>) {
+        held(&self.state).reset = Some((model, sender));
+    }
+
+    pub(super) fn reset(&self, models: Option<&[String]>) {
+        let reset = {
+            let state = held(&self.state);
+            if state.ended { return; }
+            state.reset.as_ref().filter(|(model, _)| models.is_none_or(|models| models.contains(model))).map(|(_, sender)| sender.clone())
+        };
+        if let Some(sender) = reset {
+            self.reset_load();
+            crate::db::lock::effect(|| sender.send_modify(|generation| *generation = generation.wrapping_add(1)));
+        }
     }
 
     pub(super) fn load_error(&self) -> Option<DbError> {
