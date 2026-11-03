@@ -161,8 +161,8 @@ class LifecycleSessionTest {
             var live = holdList(history)
             try {
                 eventually("the held list shows A") { history.states.lastOrNull()?.contains("A") == true }
-                val seen = history.states.size
                 DBlayer.sessionReset()
+                val seen = history.states.size
                 startSession("B")
                 live = holdList(history)
                 eventually("the held list shows B") { history.states.lastOrNull()?.contains("B") == true }
