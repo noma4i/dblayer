@@ -36,12 +36,12 @@ class SubscriptionTokenTest {
         }
         val database = openDatabase(Config(null, null, 8u), modelsJSON, transport)
         database.registerOperations("""[{"name":"documentBySlug","document":"query documentBySlug(${'$'}slug: String!, ${'$'}source: String!) { documentBySlug(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated(${'$'}slug: String!, ${'$'}source: String!) { documentUpdated(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentUpdated"}]""")
-        val listener = object : QueryListener { override fun changed(change: LiveChange) {} }
-        val lives = (0 until count).map { database.liveQuery("""{"model":"Document","relation":"bySlug","params":{"slug":"s$it","source":"web"}}""", listener) }
+        val listener = object : ValueSink { override fun delivered(delivery: StreamDelivery) {} }
+        val lives = (0 until count).map { database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Document","relation":"bySlug","params":{"slug":"s$it","source":"web"}}"""), listener) }
         eventually("every subscription reaches the transport") { issued.size == count }
         var collected = 0
         eventually("the Kotlin sink wrappers are collected") { System.gc(); while (queue.poll() != null) collected++; collected == count }
-        lives.forEach { it.cancel() }
+        lives.forEach { database.cancelStream(it) }
         eventually("every cancel reaches the transport") { revoked.size == count }
         assertEquals(emptyList<String>(), unknown.toList())
         assertEquals(emptyList<String>(), mock.unknownTokens.toList())

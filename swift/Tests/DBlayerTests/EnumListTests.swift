@@ -11,8 +11,8 @@ extension BridgeProbeTests.EnumTests {
   @Test @MainActor
   func aListOfEnumValuesIsStoredReadBackAndKeepsAValueTheDeclarationLacks() async throws {
     let database = try await openShelves()
-    let wire = try await database.create(model: "Container", valuesJson: #"{"title":"t","shelves":["PRIMARY","FUTURE"]}"#, argsJson: "{}")
-    let container = try Container.decode(wire)
+    _ = database
+    let container = try await DB.account().send(Container.self, values: ["title": .string("t"), "shelves": .array([.string("PRIMARY"), .string("FUTURE")])]).row
     #expect(container.shelves == [.primary, .unknown("FUTURE")])
   }
 
@@ -20,8 +20,9 @@ extension BridgeProbeTests.EnumTests {
   func aListOfEnumValuesWrittenAsTextsReadsBackTypedAndAnAbsentListReadsAsNil() async throws {
     let database = try await openShelves()
     let typed = JSONValue.object(["title": .string("t"), "shelves": try JSONValue.encode([ContainerShelf.secondary])])
-    #expect(try Container.decode(try await database.create(model: "Container", valuesJson: typed.text, argsJson: "{}")).shelves == [.secondary])
-    #expect(try Container.decode(try await database.create(model: "Container", valuesJson: #"{"title":"u"}"#, argsJson: "{}")).shelves == nil)
+    _ = database
+    #expect(try await DB.account().send(Container.self, values: typed.objectValue).row.shelves == [.secondary])
+    #expect(try await DB.account().send(Container.self, values: ["title": .string("u")]).row.shelves == nil)
   }
 
   @Test

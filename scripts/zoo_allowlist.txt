@@ -16,3 +16,18 @@ panic:core/src/value/mod.rs:expect("string map serializes")   # a map of strings
 panic:core/src/ddl/mod.rs:expect("fingerprint serializes")   # own Serialize type, string keys
 panic:core/src/ffi/live.rs:expect("first delivery")   # wait_for(is_some) returned, so the value is Some
 panic:core/src/ffi/live.rs:expect("live owns sender")   # the object owns the watch sender, so wait_for never sees a closed channel; the second expect holds because wait_for(is_some) returned
+wrapper-glue:UrlSessionTransport.swift   # the open sockets of the URLSession transport: platform I/O, no stream or list state
+wrapper-glue:UrlSessionCable.swift   # the open sockets of the cable: platform I/O, no stream or list state
+wrapper-glue:PowerSaving.swift   # one system observer token: platform I/O, no stream or list state
+wrapper-glue:PowerSaving.kt   # one system observer token: platform I/O, no stream or list state
+wrapper-glue:OnlineRelay.swift   # the single online sink between the OS and the core: platform I/O, no stream or list state
+wrapper-glue:OnlineRelay.kt   # the single online sink between the OS and the core: platform I/O, no stream or list state
+wrapper-glue:ForegroundEvents.swift   # one system observer token: platform I/O, no stream or list state
+wrapper-glue:RustFutureHandle.swift   # the free of a foreign future handle: platform I/O, no stream or list state
+wrapper-glue:Reachability.swift   # the one path monitor of the process: platform I/O, no stream or list state
+wrapper-glue:Reachability.kt   # the one network callback of the process: platform I/O, no stream or list state
+wrapper-glue:DB.swift   # the one open database of the process (one database per process): platform I/O, no stream or list state
+wrapper-glue:Entry.kt   # the open call is serialized: platform I/O, no stream or list state
+wrapper-glue:Transports.kt   # the open sockets of the OkHttp transport: platform I/O, no stream or list state
+wrapper-glue:OkHttpEncryptedSocket.kt   # the open sockets of the encrypted socket: platform I/O, no stream or list state
+wrapper-glue:ProcessOwner.kt   # the process properties of the host: platform I/O, no stream or list state

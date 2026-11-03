@@ -76,19 +76,5 @@ public struct UploadBatchRequest: Sendable {
 }
 
 extension DBModel {
-  @concurrent public static func uploadCreate(items: [UploadItem], request: UploadBatchRequest) async throws -> [Self] {
-    try await DB.database.uploadCreateBatch(model: modelName, items: items.map { try $0.wire }, request: request.wire).map(decode)
-  }
-
-  /// Creates the record locally at once and sends its file in the background through the declared upload `action`. The record carries `uploads[action]` progress, and the mutation creates it on the server when the file is stored. A failed upload leaves the record failed: `retry(action:)` sends again, `discard(action:)` removes it.
-  @concurrent public static func create(values: [String: JSONValue], action: String, uploading request: UploadRequest) async throws -> Self {
-    try decode(try await DB.database.uploadCreate(model: modelName, action: action, valuesJson: JSONValue.object(values).text, request: request.wire))
-  }
-
-  @concurrent public func upload<Answer: Decodable & Sendable>(action: String, _ request: UploadRequest) async throws -> ActionAnswer<Self, Answer> {
-    let operation = try await DB.database.upload(model: Self.modelName, rowId: id, action: action, request: request.wire)
-    return ActionAnswer(model: self, operation: operation)
-  }
-
   @concurrent public func cancelUpload(action: String) async throws -> Bool { try await DB.database.cancelUpload(model: Self.modelName, rowId: id, action: action) }
 }

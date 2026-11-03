@@ -73,8 +73,8 @@ class UploadWorkTest {
             var starts = 0
             database.setUploadAcceptedSink(UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> if (starts++ == 0) "the app was not visible" else null }))
             fun batch(keys: IntRange) = keys.map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
-            val rows = Asset.uploadCreate(batch(0..1), UploadBatchRequest(operation = "create_files"))
-            val other = Asset.uploadCreate(batch(8..9), UploadBatchRequest(operation = "create_files"))
+            val rows = AccountScope.current().uploadBatch(Asset, batch(0..1), UploadBatchRequest(operation = "create_files"))
+            val other = AccountScope.current().uploadBatch(Asset, batch(8..9), UploadBatchRequest(operation = "create_files"))
             eventually("every member of the refused batch shows the reason") {
                 rows.all { Asset.find(it.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("the app was not visible") == true }
             }

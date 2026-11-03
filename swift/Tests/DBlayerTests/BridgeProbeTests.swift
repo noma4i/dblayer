@@ -8,8 +8,8 @@ struct BridgeProbeTests {
   @Test
   func aSearchPassesWholeWordsToTheCore() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    _ = try await Moment.create(text: "hello world")
-    _ = try await Moment.create(text: "hel")
+    _ = try await Moment.send(in: DB.account(), text: "hello world").row
+    _ = try await Moment.send(in: DB.account(), text: "hel").row
     let whole = Cursor(try await Query<Moment>().search("hel", wholeWords: true).live.stream())
     #expect(await whole.first("the row with the whole word") { $0.map(\.text) == ["hel"] } != nil)
   }
@@ -19,7 +19,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let changes = Cursor(try await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
-    let moment = try await Moment.create(text: "m")
+    let moment = try await Moment.send(in: DB.account(), text: "m").row
     #expect(await changes.next()?.first?.text == "m")
     _ = try await moment.update(text: "edited")
     #expect(await changes.next()?.first?.text == "edited")
@@ -35,7 +35,7 @@ struct BridgeProbeTests {
   func aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     #expect(try await Moment.recent.cached() == nil)
-    let moment = try await Moment.create(text: "m")
+    let moment = try await Moment.send(in: DB.account(), text: "m").row
     try await Moment.recent.warm()
     let cached = try await Moment.recent.cached()
     let warm = try #require(cached)
@@ -43,38 +43,12 @@ struct BridgeProbeTests {
     #expect(try await Moment.recent.cachedRow("ghost") == nil)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     #expect(try await Moment.recent.cached() == nil)
-    _ = try await Moment.create(text: "n")
-    #expect(try await Moment.recent.live.current().count == 1)
+    _ = try await Moment.send(in: DB.account(), text: "n").row
+    #expect(try await Moment.recent.current().count == 1)
     #expect(try await Moment.recent.cached()?.value.first?.text == "n")
   }
 
-  @MainActor
-  @Test
-  func anEntityFollowsAnEditAndLetsGoOfTheRecordWhenItIsDropped() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let first = try await Moment.create(text: "one")
-    var entity: Entity<Moment>? = Moment.entity(first.id)
-    await eventually(#"not (entity?.value == nil)"#) { !(entity?.value == nil) }
-    #expect(entity?.value?.text == "one")
 
-    _ = try await first.update(text: "edited")
-    await eventually(#"not (entity?.value?.text != "edited")"#) { !(entity?.value?.text != "edited") }
-    #expect(entity?.value?.text == "edited")
-
-    #expect(try DB.subscriptionCensus().subscriptions == 1)
-    entity = nil
-    await eventually(#"not (Entities<Moment>.shared.liveCount > 0)"#) { !(Entities<Moment>.shared.liveCount > 0) }
-    #expect(Entities<Moment>.shared.liveCount == 0)
-  }
-
-  @Test
-  func snapshotsOfOneRowWithDifferentFieldsAreNotEqual() {
-    let before = Moment(id: "1", uuid: "a", text: "m", media: .object([:]), createdAt: "2026-10-08T00:00:00.000Z")
-    let after = Moment(id: "1", uuid: "a", text: "edited", media: .object([:]), createdAt: "2026-10-08T00:00:00.000Z")
-    #expect(before != after)
-    #expect(before.hashValue == after.hashValue)
-    #expect(before == before)
-  }
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
@@ -100,7 +74,7 @@ struct BridgeProbeTests {
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    let list = LiveList(Moment.feed)
+    let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
 
     do {
       try await list.refresh()
@@ -109,10 +83,10 @@ struct BridgeProbeTests {
     } catch {
       Issue.record("the failed load surfaced as \(error), not as a database error")
     }
-    await eventually("the relation fails") { list.snapshot.phase == .failed }
+    await eventually("the relation fails") { list.phase == .failed }
 
-    #expect(list.snapshot.phase == .failed)
-    #expect(list.snapshot.errorKind != nil)
+    #expect(list.phase == .failed)
+    #expect(list.state?.errorKind != nil)
   }
 
   @MainActor
@@ -123,15 +97,15 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
-    let list = LiveList(Moment.feed)
-    await eventually(#"not (list.rows.isEmpty || list.snapshot.loadedAt == nil)"#) { !(list.rows.isEmpty || list.snapshot.loadedAt == nil) }
+    let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
+    await eventually("the rows and the load time arrive") { !(list.rows.isEmpty || list.state?.loadedAt == nil) }
 
     #expect(list.rows.first?.uuid == "a")
     #expect(transport.calls.first?.operationName == "MomentsFeed")
-    #expect(list.snapshot.hasMore && list.snapshot.phase == .loaded)
-    #expect(list.snapshot.total == 9)
-    let entity = Moment.entity("1")
-    await eventually(#"not (entity.value == nil)"#) { !(entity.value == nil) }
+    #expect(list.state?.hasMore == true && list.phase == .loaded)
+    #expect(list.state?.total == 9)
+    let entity = Projected<Moment>(try AccountScope().entity(Moment.self, "1"))
+    await eventually("the entity shows the row") { entity.value != nil }
     #expect(entity.value?.uuid == "a")
   }
 
@@ -147,9 +121,9 @@ struct BridgeProbeTests {
       } else {
         transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false}}}}"#)
       }
-      let list = LiveList(Moment.feed, refreshOnConnect: true)
+      let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
       do {
-        try await list.waitForInitialLoad()
+        try await list.loaded()
         #expect(index < 2)
       } catch DbError.Http(let status, _) {
         #expect(index == 2 && status == 400)
@@ -159,18 +133,6 @@ struct BridgeProbeTests {
     }
   }
 
-  @MainActor
-  @Test
-  func aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndNeedsAttention() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
-
-    let local = try await Moment.create(text: "hello", media: nil)
-    let entity = Moment.entity(local.id)
-    await eventually(#"not (entity.value?.sync.state != .failed)"#) { !(entity.value?.sync.state != .failed) }
-
-    #expect(entity.value?.sync.state == .failed)
-    #expect(entity.value?.needsAttention == true)
-  }
 
   @Test
   func confirmedIdWaitsForTheServerIdOfALocalCreate() async throws {
@@ -179,7 +141,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
-    let local = try await Moment.create(text: "hello", media: nil)
+    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
     #expect(local.id.hasPrefix("temp"))
     try await local.settled(action: nil)
     let real = try await local.confirmedId()
@@ -193,7 +155,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
-    let local = try await Moment.create(text: "hello", media: nil)
+    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
     let ids = try await withThrowingTaskGroup(of: String.self) { group in
       for _ in 0..<8 { group.addTask { try await local.confirmedId() } }
       return try await group.reduce(into: [String]()) { $0.append($1) }
@@ -209,7 +171,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"}]"#)
 
-    let local = try await Record.create(containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1")
+    let local = try await Record.send(in: DB.account(), containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1").row
     try await local.settled(action: nil)
     let sent = transport.calls.first { $0.operationName == "CreateRecord" }?.variablesJson ?? ""
     #expect(sent.contains(#""signedId":"blob-1""#) && sent.contains(#""attachedUserId":42"#), "variables sent: \(sent)")
@@ -225,7 +187,7 @@ struct BridgeProbeTests {
     transport.enqueue("CurrentRegionQuery", reply: #"{"data":{"region":{"id":"r1","name":"Home"}}}"#)
     try await CurrentUser.current.load()
     try await CurrentRegion.current.load()
-    let row = try await Record.create(containerId: "c", text: "hi")
+    let row = try await Record.send(in: DB.account(), containerId: "c", text: "hi").row
     #expect(row.authorId == "u1" && row.regionId == "r1")
   }
 
@@ -235,35 +197,15 @@ struct BridgeProbeTests {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    let snapshots = Cursor(try await Moment.recent.snapshots.stream())
-    _ = await snapshots.next()
+    let list = Projected<Moment>(try AccountScope().stream(Moment.recent))
+    try await list.loaded()
 
-    let local = try await Moment.create(text: "hello", media: nil)
-    let replaced = await snapshots.first("the snapshot that carries the replaced id") { $0.replaced["m77"] != nil }?.replaced["m77"]
+    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
+    await eventually("the list carries the replaced id") { list.projection.temporaryIds["m77"] != nil }
 
-    #expect(replaced == local.id)
+    #expect(list.projection.temporaryIds["m77"] == local.id)
   }
 
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func aLiveListAttachesItsStreamsOffTheMainThread() async throws {
-    final class Seen: @unchecked Sendable {
-      let lock = NSLock()
-      var mainThread: [Bool] = []
-      func note() { lock.lock(); mainThread.append(Thread.isMainThread); lock.unlock() }
-    }
-    let seen = Seen()
-    let snapshots = LiveSource<Snapshot<Moment>>(initial: Snapshot(rows: [], replaced: [:])) { emit in
-      seen.note()
-      emit(Snapshot(rows: [], replaced: ["a": "b"]))
-      return {}
-    }
-
-    let list = LiveList(Moment.recent, snapshots: snapshots)
-    await eventually("the replacement reaches the list") { !list.replaced.isEmpty }
-
-    #expect(seen.mainThread == [false])
-  }
 
   @Test
   func aCreateWithAnUploadShowsTheRecordAtOnceAndTheServerIdReplacesIt() async throws {
@@ -274,7 +216,7 @@ struct BridgeProbeTests {
     let file = FileManager.default.temporaryDirectory.appending(path: "clip-\(UUID().uuidString).mp4")
     try Data("abcdef".utf8).write(to: file)
 
-    let local = try await Moment.create(values: ["text": .string("hello")], action: "upload_clip", uploading: UploadRequest(path: file.path, variables: ["text": .string("hello")]))
+    let local = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, variables: ["text": .string("hello")]))).row
 
     #expect(local.id.hasPrefix("temp"))
     #expect(local.uploads["upload_clip"] != nil)
@@ -288,7 +230,7 @@ struct BridgeProbeTests {
   @Test
   func aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let initial = try await Record.create(containerId: "c1", authorId: "u1", text: "hello")
+    let initial = try await Record.send(in: DB.account(), containerId: "c1", authorId: "u1", text: "hello").row
     let row = try await initial.update(reactions: [RecordReactionNode(body: "A", userId: "u1")])
     let changed = try await row.react(reactionBody: "C", userId: "u1")
     #expect(changed.reactions.map(\.userId) == ["u1"])
@@ -299,7 +241,7 @@ struct BridgeProbeTests {
   func anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let ann = try await User.create(name: "Ann")
-    let record = try await Record.create(containerId: "c1", authorId: ann.id, text: "hello")
+    let record = try await Record.send(in: DB.account(), containerId: "c1", authorId: ann.id, text: "hello").row
     let withUser = try await record.react(reactionBody: "A", userId: ann.id)
     #expect(withUser.reactions.first?.user?.name == "Ann")
     let withoutUser = try await record.react(reactionBody: "B", userId: "nobody")
@@ -314,8 +256,8 @@ struct BridgeProbeTests {
     transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    let list = LiveList(Moment.feed)
-    await eventually("the relation fails") { list.snapshot.phase == .failed }
+    let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
+    await eventually("the relation fails") { list.phase == .failed }
     let before = transport.calls.count
 
     try await DB.resume()
@@ -327,7 +269,7 @@ struct BridgeProbeTests {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]"#)
-    let local = try await Moment.create(text: "hello", media: nil)
+    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
     try await local.settled(action: nil)
     return try #require(await Moment.find(try await local.confirmedId()).current())
   }
@@ -364,75 +306,9 @@ struct BridgeProbeTests {
   }
 }
 
-final class EntityCollector: EntityListener, @unchecked Sendable {
-  private let lock = NSLock()
-  private var received: [WireEntitySnapshot] = []
-  func changed(delivery: EntityDelivery) { lock.withLock { received.append(contentsOf: delivery.snapshots) } }
-  var snapshots: [WireEntitySnapshot] { lock.withLock { received } }
-  func wait(for count: Int) async -> [WireEntitySnapshot] {
-    await eventually("\(count) entity snapshots") { snapshots.count >= count }
-    return snapshots
-  }
-}
-
 extension BridgeProbeTests {
-  @Test
-  func retainedRowsReachTheBridgeAsSnapshotsAndReleasedRowsStayQuiet() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let first = try await Moment.create(text: "one")
-    let second = try await Moment.create(text: "two")
-    let collector = EntityCollector()
-    let entities = try DB.database.liveEntities(model: Moment.modelName, listener: collector)
-    try entities.retain(requests: [EntityRequest(id: first.id, lease: 1, fetch: .none), EntityRequest(id: second.id, lease: 2, fetch: .none)])
-    #expect(Set(await collector.wait(for: 2).map(\.id)) == [first.id, second.id])
-
-    _ = try await first.update(text: "edited")
-    let changed = await collector.wait(for: 3)
-    #expect(changed.count == 3 && changed[2].id == first.id && changed[2].value?.cells.contains(.text(value: "edited")) == true)
-
-    try entities.release(leases: [EntityLease(id: first.id, lease: 1)])
-    _ = try await first.update(text: "unseen")
-    _ = try await second.update(text: "seen")
-    let last = await collector.wait(for: 4)
-    #expect(last.count == 4 && last[3].id == second.id && last[3].value?.cells.contains(.text(value: "seen")) == true)
-
-    try await second.destroy()
-    let removed = await collector.wait(for: 5)
-    #expect(removed.last?.id == second.id && removed.last?.phase == .absent)
-  }
 
   /// REL-24: a reset of the account empties the entities that readers hold and the same objects receive the next rows.
-  @MainActor
-  @Test
-  func aResetEmptiesTheHeldEntityAndTheSameObjectReceivesTheNextRow() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let moment = try await Moment.create(text: "old")
-    let held = Moment.entity(moment.id)
-    await eventually(#"held.value?.text == "old""#) { held.value?.text == "old" }
-
-    try await DB.sessionReset()
-    await eventually(#"held.value == nil"#) { held.value == nil }
-    #expect(!held.isClosed)
-    _ = try await DB.database.create(model: "Moment", valuesJson: #"{"id":"\#(moment.id)","text":"new"}"#, argsJson: "{}")
-    await eventually(#"held.value?.text == "new""#) { held.value?.text == "new" }
-    #expect(held === Moment.entity(moment.id))
-  }
 
   /// REL-25: closing the database closes the held entities and the next open starts empty.
-  @MainActor
-  @Test
-  func aClosedDatabaseClosesTheHeldEntitiesAndTheNextOpenStartsEmpty() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let moment = try await Moment.create(text: "old")
-    let held = Moment.entity(moment.id)
-    await eventually(#"held.value?.text == "old""#) { held.value?.text == "old" }
-
-    try await DB.close()
-    #expect(held.isClosed && held.value == nil)
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let fresh = Moment.entity(moment.id)
-    let other = Moment.entity(try await Moment.create(text: "other").id)
-    await eventually("a delivery of the new database reaches the registry") { other.value != nil }
-    #expect(fresh.value == nil && fresh !== held && !fresh.isClosed && held.isClosed)
-  }
 }

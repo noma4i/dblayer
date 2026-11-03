@@ -16,7 +16,7 @@ class ConfirmedIdTest {
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
-        val local = Moment.create(text = "hello", media = null)
+        val local = Moment.send(AccountScope.current(), text = "hello", media = null).row
         val ids = coroutineScope { (1..8).map { async { withTimeout(5000) { local.confirmedId() } } }.awaitAll() }
         assertEquals(List(8) { "m77" }, ids)
     }

@@ -24,7 +24,7 @@ class UploadBatchTest {
             adopt(database)
             database.setOnline(false)
             val items = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
-            val rows = Asset.uploadCreate(items, UploadBatchRequest(operation = "create_files"))
+            val rows = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             assertEquals(2, rows.size)
             assertTrue(rows.all { it.id.startsWith("temp-") && it.sync.state == SyncState.Sending && it.uploads.isNotEmpty() })
             assertTrue(source.delete())

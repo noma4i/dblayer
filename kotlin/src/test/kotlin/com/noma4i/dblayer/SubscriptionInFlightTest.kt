@@ -34,10 +34,10 @@ class SubscriptionInFlightTest {
         }
         val database = openDatabase(Config(null, null, 8u), modelsJSON, transport)
         database.registerOperations(operations)
-        val listener = object : QueryListener { override fun changed(change: LiveChange) {} }
-        val live = database.liveQuery("""{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}""", listener)
+        val listener = object : ValueSink { override fun delivered(delivery: StreamDelivery) {} }
+        val live = database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"""), listener)
         withTimeout(HANG_GUARD_MILLIS) { entered.await() }
-        live.cancel()
+        database.cancelStream(live)
         database.close()
         val outcome = withTimeout(HANG_GUARD_MILLIS) { finished.await() }
         assertEquals(true, outcome.exceptionOrNull() is kotlinx.coroutines.CancellationException)

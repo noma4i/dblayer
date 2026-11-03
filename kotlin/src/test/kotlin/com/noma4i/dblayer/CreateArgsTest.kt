@@ -19,7 +19,7 @@ class CreateArgsTest {
         transport.enqueue("CurrentRegionQuery", """{"data":{"region":{"id":"r1","name":"Home"}}}""")
         CurrentUser.current.load()
         CurrentRegion.current.load()
-        val row = Record.create(containerId = "c", text = "hi")
+        val row = Record.send(AccountScope.current(), containerId = "c", text = "hi").row
         assertEquals(listOf("u1", "r1"), listOf(row.authorId, row.regionId))
     }
 
@@ -30,7 +30,7 @@ class CreateArgsTest {
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt } }"}]""")
 
-        val local = Record.create(containerId = "c", authorId = "u1", text = "hi", attachedUserId = "42", signedId = "blob-1")
+        val local = Record.send(AccountScope.current(), containerId = "c", authorId = "u1", text = "hi", attachedUserId = "42", signedId = "blob-1").row
         withTimeout(5000) { local.settled(null) }
         val sent = transport.calls.first { it.operationName == "CreateRecord" }.variablesJson
         assertTrue("variables sent: $sent", sent.contains("\"signedId\":\"blob-1\"") && sent.contains("\"attachedUserId\":42"))

@@ -78,8 +78,8 @@ private final class OrderedSubscribe: Transport, @unchecked Sendable {
   }
 }
 
-private final class IgnoredChanges: QueryListener, @unchecked Sendable {
-  func changed(change: LiveChange) {}
+private final class IgnoredChanges: ValueSink, @unchecked Sendable {
+  func delivered(delivery: StreamDelivery) {}
 }
 
 struct SubscriptionTokenAfterCancelTests {
@@ -88,7 +88,7 @@ struct SubscriptionTokenAfterCancelTests {
     transport.mock.enqueue("documentBySlug", reply: #"{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}"#)
     transport.box.hold(try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport))
     try transport.box.current?.registerOperations(defsJson: #"[{"name":"documentBySlug","document":"query documentBySlug($slug: String!, $source: String!) { documentBySlug(slug: $slug, source: $source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated($slug: String!, $source: String!) { documentUpdated(slug: $slug, source: $source) { id slug } }","rootPath":"documentUpdated"}]"#)
-    _ = transport.box.current?.liveQuery(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#, listener: IgnoredChanges())
+    if let current = transport.box.current { _ = current.subscribe(epoch: current.sessionEpoch(), request: .query(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#), sink: IgnoredChanges()) }
     await eventually("the call issues its token") { transport.issued.count == 1 }
     await eventually("the token is handed back") { transport.revokedTokens.count == 1 }
     #expect(transport.revokedTokens == transport.issued)

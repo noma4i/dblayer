@@ -5,5 +5,3 @@ swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(String.self) { self = .string(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([JSONValue].self) { self = .array(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode([String: JSONValue].self) { self = .object(value) }	picks the variant of a JSON value
-kotlin/src/main/kotlin/com/noma4i/dblayer/ListChange.kt	runCatching { IndexedRow(if (change.full) position else change.rowIndexes[position].toInt(), decoder.read(wire)) }	the decode error is kept in the failure of the ListChange
-kotlin/src/main/kotlin/com/noma4i/dblayer/ListFeed.kt	val row = runCatching { decoder.read(wire) }	the decode error goes to the failure and the undecodable ids of the state

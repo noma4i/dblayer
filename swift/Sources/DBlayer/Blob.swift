@@ -9,33 +9,29 @@ public struct BlobUpload: Sendable {
 
 public typealias BlobSnapshot = WireBlobSnapshot
 
+/// The status of one media upload. It reads the status stream of its account until it is released, and releasing it ends the stream in the core.
 @Observable @MainActor
 public final class Blob: Encodable, @unchecked Sendable {
   public nonisolated let id: String
   public private(set) var snapshot: BlobSnapshot
   @ObservationIgnored nonisolated private let database: Database
-  @ObservationIgnored private let changes: BlobChanges
+  @ObservationIgnored private let status: UploadStatusStream
   @ObservationIgnored private var task: Task<Void, Never>?
 
-  init(database: Database, snapshot: BlobSnapshot, changes: BlobChanges) {
+  init(database: Database, snapshot: BlobSnapshot, status: UploadStatusStream) {
     self.database = database
     self.snapshot = snapshot
     self.id = snapshot.id
-    self.changes = changes
-    task = Task { [weak self, changes] in
-      do {
-        while let next = try await changes.next() {
-          guard let self else { return }
-          self.snapshot = next
-        }
-      } catch is CancellationError {} catch {
+    self.status = status
+    task = Task { [weak self, status] in
+      for await next in status {
         guard let self else { return }
-        self.snapshot = BlobSnapshot(id: self.id, state: .failed, progress: self.snapshot.progress, sentBytes: self.snapshot.sentBytes, totalBytes: self.snapshot.totalBytes, error: String(describing: error), signedId: nil)
+        self.snapshot = next
       }
     }
   }
 
-  deinit { task?.cancel(); changes.cancel() }
+  isolated deinit { task?.cancel(); status.stream.cancel() }
   public nonisolated func encode(to encoder: Encoder) throws { var value = encoder.singleValueContainer(); try value.encode(id) }
   @concurrent public func waitUntilUploaded() async throws -> String { try await database.waitBlob(id: id) }
   @concurrent public func retry() async throws { try await database.retryBlob(id: id) }
@@ -46,13 +42,13 @@ extension DB {
   @concurrent public static func upload(_ upload: BlobUpload, request: UploadRequest) async throws -> Blob {
     let database = try DB.database
     let snapshot = try await database.uploadBlob(name: upload.name, create: upload.create, request: request.wire)
-    let changes = try await database.blobChanges(id: snapshot.id)
-    return await Blob(database: database, snapshot: snapshot, changes: changes)
+    let status = try AccountScope().uploadStatus(snapshot.id)
+    return await Blob(database: database, snapshot: snapshot, status: status)
   }
   @concurrent public static func blob(_ id: String) async throws -> Blob {
     let database = try DB.database
     let snapshot = try await database.blob(id: id)
-    let changes = try await database.blobChanges(id: id)
-    return await Blob(database: database, snapshot: snapshot, changes: changes)
+    let status = try AccountScope().uploadStatus(id)
+    return await Blob(database: database, snapshot: snapshot, status: status)
   }
 }

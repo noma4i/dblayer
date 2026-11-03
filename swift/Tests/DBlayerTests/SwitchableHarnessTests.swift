@@ -53,7 +53,7 @@ extension BridgeProbeTests {
       let switchable = SwitchableTransport(first, unset: unset)
       try await DB.openTesting(transport: switchable, modelsJSON: modelsJSON)
       try DB.database.registerOperations(defsJson: Self.operations)
-      let entity = User.entity()
+      let entity = Projected<User>(try DB.account().stream(User.profile))
       await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
       let before = first.calls.count
 
@@ -68,11 +68,10 @@ extension BridgeProbeTests {
       try DB.database.registerOperations(defsJson: Self.operations)
       try DB.setListening(true)
 
-      let next = User.entity()
-      try await next.waitForInitialLoad()
+      let next = Projected<User>(try DB.account().stream(User.profile))
+      try await next.loaded()
       #expect(next.value?.name == "B")
       #expect(second.calls.count == 1)
-      if case let .failed(error) = next.read { Issue.record("the next database inherited \(error)") }
       try await DB.close()
     }
   }
@@ -86,7 +85,7 @@ extension BridgeProbeTests {
     first.enqueue("UserProfile", reply: Self.profile("A"))
     try await DB.openTesting(transport: first, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: Self.operations)
-    let entity = User.entity()
+    let entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     try await DB.close()
     try await DB.openTesting(transport: nil, modelsJSON: modelsJSON)
@@ -95,7 +94,7 @@ extension BridgeProbeTests {
     second.enqueue("UserProfile", reply: Self.profile("B"))
     try await DB.openTesting(transport: second, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: Self.operations)
-    let reopened = User.entity()
+    let reopened = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"reopened.value?.name == "B""#) { reopened.value?.name == "B" }
     #expect(first.calls.count == 1)
     try await DB.close()

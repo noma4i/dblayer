@@ -37,8 +37,8 @@ private final class HeldSubscribe: Transport, @unchecked Sendable {
   }
 }
 
-private final class IgnoredChanges: QueryListener, @unchecked Sendable {
-  func changed(change: LiveChange) {}
+private final class IgnoredChanges: ValueSink, @unchecked Sendable {
+  func delivered(delivery: StreamDelivery) {}
 }
 
 struct SubscriptionTokenTests {
@@ -47,9 +47,10 @@ struct SubscriptionTokenTests {
     transport.mock.enqueue("documentBySlug", reply: #"{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}"#)
     var database: Database? = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
     try database?.registerOperations(defsJson: #"[{"name":"documentBySlug","document":"query documentBySlug($slug: String!, $source: String!) { documentBySlug(slug: $slug, source: $source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated($slug: String!, $source: String!) { documentUpdated(slug: $slug, source: $source) { id slug } }","rootPath":"documentUpdated"}]"#)
-    let live = try #require(database).liveQuery(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#, listener: IgnoredChanges())
+    let opened = try #require(database)
+    let live = opened.subscribe(epoch: opened.sessionEpoch(), request: .query(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#), sink: IgnoredChanges())
     await eventually("subscribe in flight", timeout: .seconds(5)) { transport.hasEntered }
-    live.cancel()
+    opened.cancelStream(stream: live)
     database = nil
     await eventually("foreign task cancelled", timeout: .seconds(5)) { transport.wasCancelled }
     #expect(transport.revokedTokens.isEmpty)

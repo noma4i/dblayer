@@ -14,7 +14,7 @@ class EnumListTest {
     @Test
     fun aListOfEnumValuesIsStoredReadBackAndKeepsAValueTheDeclarationLacks() = bounded {
         val database = open()
-        val wire = database.create("Container", """{"title":"t","shelves":["PRIMARY","FUTURE"]}""", "{}")
+        val wire = database.send(CommandRequest(database.sessionEpoch(), "Container", """{"title":"t","shelves":["PRIMARY","FUTURE"]}""", "{}", null)).row
         val container = Container.read(wire)
         assertEquals(listOf(ContainerShelf.Primary, ContainerShelf.Unknown("FUTURE")), container.shelves)
     }
@@ -22,8 +22,8 @@ class EnumListTest {
     @Test
     fun theTypedApiWritesAListOfEnumValuesAndAnAbsentListReadsAsNull() = bounded {
         open()
-        assertEquals(listOf(ContainerShelf.Secondary), Container.create(title = "t", shelves = listOf(ContainerShelf.Secondary)).shelves)
-        assertNull(Container.create(title = "u").shelves)
+        assertEquals(listOf(ContainerShelf.Secondary), Container.send(AccountScope.current(), title = "t", shelves = listOf(ContainerShelf.Secondary)).row.shelves)
+        assertNull(Container.send(AccountScope.current(), title = "u").row.shelves)
     }
 
     @Test

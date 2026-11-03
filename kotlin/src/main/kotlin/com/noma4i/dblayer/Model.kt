@@ -101,14 +101,6 @@ class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operat
     suspend fun answer(): Answer = offCaller { dbJson.decodeFromString(serializer, DBlayer.database.answer(model.modelName, operation)) }
 }
 
-fun <Target : DBModel> DBModel.related(name: String, decoder: ModelDecoder<Target>): LiveSource<List<Target>> {
-    val owner = buildJsonObject {
-        put("model", modelName)
-        put("where", Condition.equal("id", jsonValue(id)).json)
-    }.jsonText()
-    return RelatedQuery(name, decoder, { owner }, { offCaller { DBlayer.database.refresh(modelName, "", "{}") } }, { offCaller { DBlayer.database.loadMore(modelName, "", "{}") } }).live
-}
-
 class ModelEvent<Model : DBModel>(val area: String, val kind: String, val id: String, val before: Model?, val after: Model?)
 
 sealed interface ModelEventItem<out Model : DBModel> {
@@ -116,29 +108,4 @@ sealed interface ModelEventItem<out Model : DBModel> {
     class Missed(val count: ULong) : ModelEventItem<Nothing>
 
     class Failed(val error: Throwable) : ModelEventItem<Nothing>
-}
-
-suspend fun <Model : DBModel> ModelDecoder<Model>.openEvents(): kotlinx.coroutines.flow.Flow<ModelEventItem<Model>> {
-    val first = java.util.concurrent.atomic.AtomicReference(offCaller { DBlayer.database.openModelEvents(modelName) })
-    return kotlinx.coroutines.flow.flow {
-        val feed = first.getAndSet(null) ?: try {
-            offCaller { DBlayer.database.openModelEvents(modelName) }
-        } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Throwable) { emit(ModelEventItem.Failed(error)); return@flow }
-        feed.use {
-            try {
-                kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                while (true) {
-                    val next = try {
-                        when (val item = it.next() ?: break) {
-                            is WireModelEventItem.Missed -> ModelEventItem.Missed(item.count)
-                            is WireModelEventItem.Event -> ModelEventItem.Event(ModelEvent(item.event.area, item.event.kind, item.event.id, item.event.before?.let { row -> read(row) }, item.event.after?.let { row -> read(row) }))
-                        }
-                    } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Throwable) { emit(ModelEventItem.Failed(error)); break }
-                    emit(next)
-                }
-            } finally {
-                it.cancel()
-            }
-        }
-    }
 }

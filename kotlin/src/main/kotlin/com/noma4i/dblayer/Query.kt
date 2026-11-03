@@ -93,30 +93,6 @@ class Query<Model : DBModel>(
         relation?.let { put("relation", it); put("params", params) }
     }.jsonText()
 
-    val live: LiveSource<List<Model>>
-        get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveQuery(json, listener) }) { applied, _ -> applied.rows }
-
-    val snapshots: LiveSource<Snapshot<Model>>
-        get() = snapshots(false) {}
-
-    internal fun snapshots(refreshOnConnect: Boolean, connected: (Result<LiveSubscription>) -> Unit): LiveSource<Snapshot<Model>> =
-        listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener ->
-            val result = runCatching { DBlayer.database.liveQuery(json(refreshOnConnect), listener) }
-            connected(result)
-            result.getOrThrow()
-        }) { applied, change ->
-            Snapshot.of(applied, change)
-        }
-
-    fun <Target : DBModel> related(association: Association<Model, Target>) =
-        RelatedQuery(association.name, association.decoder, { refreshOnConnect -> json(refreshOnConnect) }, { refresh() }, { loadMore() })
-
-    val count: LiveSource<Long>
-        get() = LiveSource(0L, { listener -> DBlayer.database.liveCount(json, listener) }) { change -> change.count ?: 0L }
-
-    fun find(id: String): LiveSource<Model?> =
-        listSource<Model, Model?>(null, decoder, open = { listener -> DBlayer.database.liveFind(modelName, id, listener) }) { applied, _ -> applied.rows.firstOrNull() }
-
     suspend fun cached(): Cached<List<Model>>? =
         offCaller { DBlayer.database.peekQuery(json)?.let { change -> Cached(change.rows.map(decoder::read), change.revision) } }
 
@@ -130,7 +106,7 @@ class Query<Model : DBModel>(
 
     suspend fun load() = offCaller { DBlayer.database.load(modelName, relation.orEmpty(), params.jsonText()) }
     suspend fun refresh() = offCaller { DBlayer.database.refresh(modelName, relation.orEmpty(), params.jsonText()) }
-    /** Reads every page of the connection of this relation to its confirmed end, so that `snapshots.current()` holds all rows afterwards. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation shares its page requests. It throws when a page fails, when `max_pages` stops it before the end, or when the query has no remote relation. It does not make the pages atomic: rows of earlier pages stay after a failure. */
+    /** Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation shares its page requests. It throws when a page fails, when `max_pages` stops it before the end, or when the query has no remote relation. It does not make the pages atomic: rows of earlier pages stay after a failure. */
     suspend fun loadAll(force: Boolean = false) = offCaller { DBlayer.database.loadAll(modelName, relation.orEmpty(), params.jsonText(), force) }
     suspend fun loadMore(): LoadMoreResult = offCaller { DBlayer.database.loadMore(modelName, relation.orEmpty(), params.jsonText()) }
 }
@@ -141,26 +117,3 @@ fun <Model : DBModel> idsQuery(modelName: String, decoder: ModelDecoder<Model>, 
     Query(modelName, decoder).where(Condition.inList("id", ids.map { JsonPrimitive(it) }))
 
 class Association<Owner : DBModel, Target : DBModel>(val name: String, internal val decoder: ModelDecoder<Target>)
-
-class RelatedQuery<Target : DBModel> internal constructor(
-    internal val name: String,
-    private val decoder: ModelDecoder<Target>,
-    private val sourceJson: (Boolean) -> String,
-    internal val refresh: suspend () -> Unit,
-    internal val loadMore: suspend () -> LoadMoreResult,
-) {
-    internal fun sourceJsonText(refreshOnConnect: Boolean = false) = sourceJson(refreshOnConnect)
-
-    val live: LiveSource<List<Target>>
-        get() = listSource(emptyList(), decoder, open = { listener -> DBlayer.database.liveRelated(sourceJson(false), name, listener) }) { applied, _ -> applied.rows }
-
-    val snapshots: LiveSource<Snapshot<Target>>
-        get() = snapshots(false) {}
-
-    internal fun snapshots(refreshOnConnect: Boolean, connected: (Result<LiveSubscription>) -> Unit): LiveSource<Snapshot<Target>> =
-        listSource(Snapshot(emptyList(), emptyMap()), decoder, { older, newer -> Snapshot.merging(older, newer) }, { listener ->
-            val result = runCatching { DBlayer.database.liveRelated(sourceJson(refreshOnConnect), name, listener) }
-            connected(result)
-            result.getOrThrow()
-        }) { applied, change -> Snapshot.of(applied, change) }
-}

@@ -20,7 +20,7 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
     let real = try DB.database
     defer { DB.current = real }
-    let row = try await Moment.create(text: "saved")
+    let row = try await Moment.send(in: DB.account(), text: "saved").row
     DB.current = RefusedRetry(noHandle: .init())
     await #expect(throws: DbError.self) { try await row.retry(action: nil) }
     await #expect(throws: DbError.self) { try await DB.retryAll() }
@@ -63,7 +63,7 @@ extension BridgeProbeTests {
     }
 
     transport.enqueue("CreateMoment", failure: failure)
-    let local = try await Moment.create(text: "hello", media: nil)
+    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
     do {
       try await local.settled(action: nil)
       Issue.record("\(code): settled did not throw")

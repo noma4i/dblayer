@@ -10,6 +10,8 @@ public protocol DBModel: Sendable, Identifiable, Hashable {
   var uploads: [String: UploadInfo] { get }
 }
 
+public protocol DBSingleton: DBModel { static var singleton: Query<Self> { get } }
+
 extension DBModel {
   public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
@@ -58,54 +60,11 @@ extension DBModel {
   @discardableResult @concurrent public static func retry(id: String, action: String?) async throws -> UInt64 { try await DB.database.retry(model: modelName, rowId: id, action: action) }
   @concurrent public func discard(action: String?) async throws { try await DB.database.discard(model: Self.modelName, rowId: id, action: action) }
 
-  public func related<Target: DBModel>(_ name: String, as _: Target.Type) -> LiveSource<[Target]> {
-    Query<Self>().where(.equal("id", .string(id))).related(Association<Self, Target>(name)).live
-  }
-
   @concurrent public static func readNode(relation: String, id: String, force: Bool) async throws -> Self? {
     try await DB.database.node(model: modelName, relation: relation, rowId: id, force: force).map(decode)
   }
   @concurrent public static func readNodes(relation: String, ids: [String]) async throws -> [Self] {
     try await DB.database.nodes(model: modelName, relation: relation, rowIds: ids).map(decode)
-  }
-
-  @concurrent public static func openEvents() async throws -> LiveStream<ModelEventItem<Self>> {
-    let feed = try await DB.database.openModelEvents(model: modelName)
-    let first = eventStream(feed)
-    guard !Task.isCancelled else { first.cancel(); throw CancellationError() }
-    return LiveStream(first: first) {
-      do { return eventStream(try await DB.database.openModelEvents(model: modelName)) }
-      catch {
-        let latest = Latest<ModelEventItem<Self>>(merge: nil)
-        latest.put(.failed(error))
-        return LiveStream(receive: {
-          let item = await latest.next()
-          latest.close()
-          return item
-        }, cancel: { latest.close() })
-      }
-    }
-  }
-
-  private static func eventStream(_ feed: ModelEventFeed) -> LiveStream<ModelEventItem<Self>> {
-    return LiveStream(receive: {
-      let item: WireModelEventItem?
-      do { item = try await feed.next() } catch {
-        feed.cancel()
-        return .failed(error)
-      }
-      switch item {
-      case .none: return nil
-      case .some(.missed(let count)): return .missed(count)
-      case .some(.event(let wire)):
-        do {
-          return .event(ModelEvent(area: wire.area, kind: wire.kind, id: wire.id, before: try wire.before.map(decode), after: try wire.after.map(decode)))
-        } catch {
-          feed.cancel()
-          return .failed(error)
-        }
-      }
-    }, cancel: { feed.cancel() })
   }
 
   static func decode(_ row: WireRow) throws -> Self {

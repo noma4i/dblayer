@@ -226,4 +226,89 @@ extension BridgeProbeTests {
     #expect(thread.rows.count == 6, "a row of the list was lost")
     withExtendedLifetime(profile) {}
   }
+
+  /// B08, R7: a delivery the reader never received leaves a gap. The reader asks for one new snapshot, drops the deltas that were already queued behind the gap, and continues from the snapshot.
+  @MainActor
+  @Test
+  func aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let scope = try DB.account()
+    let reader = LossyReader()
+    let stream = DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
+    reader.stream = stream
+    try await DB.database.streamLoaded(stream: stream)
+    await eventually("the first snapshot arrives") { reader.snapshots == 1 }
+
+    try DB.database.setOnline(online: false)
+    reader.dropNext()
+    for number in 1...3 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
+    await eventually("the reader holds the three rows again") { reader.rows == 3 && reader.snapshots == 2 }
+
+    #expect(reader.resyncs == 1, "the queue of later deltas asked for more than one new snapshot")
+    #expect(reader.snapshots == 2, "a missed revision gives exactly one new snapshot")
+    DB.database.cancelStream(stream: stream)
+  }
+
+  /// B10: the outcome of a command sent offline waits, and ends with the session of its receipt.
+  @MainActor
+  @Test
+  func theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let scope = try DB.account()
+    try DB.database.setOnline(online: false)
+    let sent = try await scope.send(Moment.self, values: ["text": .string("queued")])
+    let waiting = Task { try await sent.outcome() }
+    #expect(try sent.status() == .queued)
+
+    try await DB.sessionReset()
+    #expect(try await waiting.value == .ended)
+    try DB.database.setOnline(online: true)
+    try await Self.signIn("B")
+    #expect(try sent.status() == .ended, "a receipt of A answered in the epoch of B")
+  }
+
+  /// B12: a stream whose source cannot be connected ends once with the invalid outcome and leaves nothing open.
+  @MainActor
+  @Test
+  func aStreamThatCannotConnectEndsOnceAndLeavesTheTable() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let reader = LossyReader()
+    let stream = DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .none), sink: reader)
+    await eventually("the failed stream ended") { !reader.ended.isEmpty }
+
+    #expect(reader.ended == [.invalid])
+    #expect(try DB.streamCensus().open == 0)
+    await #expect(throws: DbError.self) { try await DB.database.streamLoaded(stream: stream) }
+  }
 }
+
+private final class LossyReader: ValueSink, @unchecked Sendable {
+  private let lock = NSLock()
+  private var projection = ListProjection<Moment>()
+  private var dropping = false
+  private var endings: [StreamEnd] = []
+  private(set) var snapshots = 0
+  private(set) var resyncs = 0
+  var stream: UInt64 = 0
+
+  var rows: Int { lock.withLock { projection.rows.count } }
+  var ended: [StreamEnd] { lock.withLock { endings } }
+
+  func dropNext() { lock.withLock { dropping = true } }
+
+  func delivered(delivery: StreamDelivery) {
+    let ask = lock.withLock { () -> Bool in
+      if dropping { dropping = false; return false }
+      if case .snapshot = delivery.value { snapshots += 1 }
+      if case let .ended(reason) = delivery.value { endings.append(reason) }
+      let applied = projection.apply(delivery)
+      if applied == .resync { resyncs += 1 }
+      return applied == .resync
+    }
+    if ask { DB.database.resyncStream(stream: stream) }
+  }
+}
+

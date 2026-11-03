@@ -154,6 +154,7 @@ for path in files:
             continue
         findings.append(f"Z11 a phone library never panics on the environment, return an error or a degraded answer: {relative}:{number}: {line.strip()}")
 
+glue = {line[len("wrapper-glue:"):] for line in allowed if line.startswith("wrapper-glue:")}
 for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblayer.swift"), ("kotlin/src/main/kotlin/com/noma4i/dblayer", "*.kt", "dblayer.kt")]:
     for path in (root / directory).rglob(suffix):
         if path.name in (generated, "MockTransport.kt"):
@@ -167,6 +168,8 @@ for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblay
             ("Z15 application names do not belong in the library", r'"(?:myProfile|AuthSignIn|AuthConsumeLoginLink|Yupi|V3|Message|chat|gift)"'),
             ("Z16 change streams use the bounded core queue", r"buffer\(Channel\.UNLIMITED\)|buffered:\s*true"),
         ]
+        if path.name not in glue:
+            rules.append(("Z18 a wrapper holds no lock and no static registry: the core owns the state", r"\b(?:NSLock|NSRecursiveLock|OSAllocatedUnfairLock|Mutex|DispatchSemaphore|ReentrantLock|ReentrantReadWriteLock|synchronized|ConcurrentHashMap)\b|\.withLock\b|\bstatic\s+(?:let|var)\s+shared\b|nonisolated\(unsafe\)"))
         for label, expression in rules:
             for match in re.finditer(expression, text):
                 number = text.count("\n", 0, match.start()) + 1

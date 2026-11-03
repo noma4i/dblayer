@@ -32,6 +32,11 @@ public struct BlobProfile: DBSingleton {
         return built
     }
     public static var singleton: Query<Self> { current }
+    @concurrent public static func create(label: String? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = label { values["label"] = try JSONValue.encode(value) }
+        return try await create(values: values)
+    }
     @concurrent public func update(label: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = label { values["label"] = try JSONValue.encode(value) }
@@ -77,6 +82,11 @@ public struct Clip: DBModel {
         var variables: [String: JSONValue] = [:]
         if let value = widgets { variables["widgets"] = try JSONValue.encode(value) }
         return variables
+    }
+    @concurrent public static func create(title: String? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = title { values["title"] = try JSONValue.encode(value) }
+        return try await create(values: values)
     }
     @concurrent public func update(title: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
@@ -125,6 +135,12 @@ public struct Inbox: DBModel {
         let built = Query<Self>(relation: "shelf", params: ["list": try JSONValue.encode(list)])
         return built
     }
+    @concurrent public static func create(title: String, stance: String? = nil) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        values["title"] = try JSONValue.encode(title)
+        if let value = stance { values["stance"] = try JSONValue.encode(value) }
+        return try await create(values: values)
+    }
     @concurrent public func update(title: String? = nil, stance: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
@@ -171,6 +187,12 @@ public struct MediaEntry: DBModel {
         let built = Query<Self>(relation: "media", params: ["chatId": try JSONValue.encode(chatId)])
         return built
     }
+    @concurrent public static func create(text: String? = nil, sequenceNumber: Int) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        if let value = text { values["text"] = try JSONValue.encode(value) }
+        values["sequenceNumber"] = try JSONValue.encode(sequenceNumber)
+        return try await create(values: values)
+    }
     @concurrent public func update(text: String?? = nil, sequenceNumber: Int? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = text { values["text"] = try JSONValue.encode(value) }
@@ -212,6 +234,11 @@ public struct Roster: DBModel {
     public static func completeMembers(_ containerId: String, order: ContainerMemberOrder = .joined) throws -> Query<Self> {
         let built = Query<Self>(relation: "complete_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
         return built
+    }
+    @concurrent public static func create(title: String) async throws -> Self {
+        var values: [String: JSONValue] = [:]
+        values["title"] = try JSONValue.encode(title)
+        return try await create(values: values)
     }
     @concurrent public func update(title: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]

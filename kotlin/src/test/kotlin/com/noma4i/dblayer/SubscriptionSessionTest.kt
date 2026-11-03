@@ -37,10 +37,18 @@ class SubscriptionSessionTest {
         database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
         val failures = CopyOnWriteArrayList<DbException>()
         val delivered = CompletableDeferred<DbException>()
-        val listener = object : QueryListener {
-            override fun changed(change: LiveChange) { change.error?.let { failures.add(it); events.add("listener received error"); delivered.complete(it) } }
+        val listener = object : ValueSink {
+            override fun delivered(delivery: StreamDelivery) {
+                val state = when (val value = delivery.value) {
+                    is StreamValue.Snapshot -> value.state
+                    is StreamValue.Delta -> value.state
+                    is StreamValue.State -> value.state
+                    else -> null
+                }
+                state?.error?.let { failures.add(it); events.add("listener received error"); delivered.complete(it) }
+            }
         }
-        val live = database.liveQuery("""{"model":"Notice","relation":"recent","params":{}}""", listener)
+        val live = database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Notice","relation":"recent","params":{}}"""), listener)
         suspend fun <T> step(what: String, block: suspend () -> T): T = try {
             awaitWithin(what, block)
         } catch (error: AssertionError) {
@@ -59,6 +67,6 @@ class SubscriptionSessionTest {
             assertEquals("case $order", SessionCode.UNAUTHENTICATED, failure.code)
             assertEquals("case $order", "session_unknown", failure.detail)
             assertEquals("case $order", listOf("BulletinAdded"), mock.calls.map { it.operationName })
-        } finally { live.cancel(); database.close() }
+        } finally { database.cancelStream(live); database.close() }
     }
 }

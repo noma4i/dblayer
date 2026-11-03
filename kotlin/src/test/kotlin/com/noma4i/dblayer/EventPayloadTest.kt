@@ -18,8 +18,9 @@ class EventPayloadTest {
         list.load()
         transport.enqueue("ChatNode", """{"data":{"node":{"__typename":"Chat","id":"c1","title":"before","revision":9007199254740993,"lists":["SECONDARY"]}}}""")
         assertEquals(9007199254740993L, Chat.node("c1", force = true)?.serverRevision)
-        val chats = Chat.events()
-        val messages = Message.events()
+        val scope = AccountScope.current()
+        val chats = scope.events(Chat).events(Chat)
+        val messages = scope.events(Message).events(Message)
         transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":"9007199254740994","lists":["PRIMARY"]},"message":{"id":"m1","text":"received","chatId":"c1"}}]}}}""")
         val changed = (chats.first() as ModelEventItem.Event).event
         val received = (messages.first() as ModelEventItem.Event).event

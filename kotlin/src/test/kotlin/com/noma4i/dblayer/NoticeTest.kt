@@ -17,7 +17,7 @@ class NoticeTest {
         val transport = MockTransport()
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
-        val events = ChatActivityNotice.events()
+        val events = AccountScope.current().events(ChatActivityNotice).events(ChatActivityNotice)
         val seen = MutableStateFlow<List<ChatAction>?>(null)
         val collecting = async { ChatAction.byChat("c").live.flow.collect { seen.value = it } }
         awaitWithin("the live action query attaches") { seen.first { it != null } }

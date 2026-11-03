@@ -20,11 +20,10 @@ class ClosedDatabaseTest {
         val errors = listOf(
             refusal { DBlayer.database },
             refusal { DBlayer.subscriptionCensus() },
-            refusal { Moment.create(text = "late") },
+            refusal { Moment.send(AccountScope.current(), text = "late").row },
             refusal { Moment.recent.warm() },
             refusal { Moment.recent.live.flow.first() },
             refusal { Moment.recent.live.current() },
-            refusal { Moment.recent.changes.first() },
         )
         for (error in errors) {
             assertTrue(error is IllegalStateException)
@@ -32,11 +31,4 @@ class ClosedDatabaseTest {
         }
     }
 
-    @Test
-    fun aSingletonOfAClosedDatabaseIsClosed() = bounded {
-        DBlayer.close()
-        val entity = User.entity()
-        eventually("the singleton of a closed database to close") { entity.isClosed }
-        assertEquals(null, entity.value.value)
-    }
 }

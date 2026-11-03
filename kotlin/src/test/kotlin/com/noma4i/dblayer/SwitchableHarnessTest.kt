@@ -38,8 +38,8 @@ class SwitchableHarnessTest {
                 val switchable = SwitchableTransport(first, unset)
                 DBlayer.openTesting(switchable, modelsJSON)
                 DBlayer.database.registerOperations(operations)
-                val entity = User.entity()
-                eventually("the held entity shows A") { entity.value.value?.name == "A" }
+                val entity = heldUser()
+                eventually("the held entity shows A") { entity.value?.name == "A" }
                 val before = first.calls.size
 
                 switchable.target = null
@@ -53,11 +53,10 @@ class SwitchableHarnessTest {
                 DBlayer.database.registerOperations(operations)
                 DBlayer.setListening(true)
 
-                val next = User.entity()
-                next.waitForInitialLoad()
-                assertEquals("B", next.value.value?.name)
+                val next = heldUser()
+                next.loaded()
+                assertEquals("B", next.value?.name)
                 assertEquals(1, second.calls.size)
-                assertTrue("the next database inherited ${next.read.value}", next.read.value !is EntityRead.Failed)
             } finally {
                 DBlayer.close()
             }
@@ -73,8 +72,8 @@ class SwitchableHarnessTest {
             first.enqueue("UserProfile", profile("A"))
             DBlayer.openTesting(first, modelsJSON)
             DBlayer.database.registerOperations(operations)
-            val entity = User.entity()
-            eventually("the held entity shows A") { entity.value.value?.name == "A" }
+            val entity = heldUser()
+            eventually("the held entity shows A") { entity.value?.name == "A" }
             DBlayer.close()
 
             DBlayer.openTesting(null, modelsJSON)
@@ -84,8 +83,8 @@ class SwitchableHarnessTest {
             second.enqueue("UserProfile", profile("B"))
             DBlayer.openTesting(second, modelsJSON)
             DBlayer.database.registerOperations(operations)
-            val reopened = User.entity()
-            eventually("the reopened entity shows B") { reopened.value.value?.name == "B" }
+            val reopened = heldUser()
+            eventually("the reopened entity shows B") { reopened.value?.name == "B" }
             assertEquals(1, first.calls.size)
         } finally {
             DBlayer.close()

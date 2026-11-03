@@ -35,7 +35,7 @@ class GraphqlExtensionsTest(private val queued: Boolean) {
             val error = runCatching {
                 withTimeout(5000) {
                     if (queued) {
-                        val row = database.create("Moment", """{"text":"hello","media":null}""", "{}")
+                        val row = database.send(CommandRequest(database.sessionEpoch(), "Moment", """{"text":"hello","media":null}""", "{}", null)).row
                         database.settled("Moment", row.id, null)
                     } else database.run(operation, "{}")
                 }

@@ -9,7 +9,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]"#)
-    let events = Cursor(try await ChatActivityNotice.events())
+    let events = Cursor(try DB.account().events(ChatActivityNotice.self))
     let actions = Cursor(try await ChatAction.byChat("c").live.stream())
     #expect(await actions.next()?.isEmpty == true)
     try transport.emit("ChatActionSignal", json: #"{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":true}}}"#)

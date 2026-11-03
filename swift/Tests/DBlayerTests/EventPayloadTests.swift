@@ -14,9 +14,10 @@ extension BridgeProbeTests {
     transport.enqueue("ChatNode", reply: #"{"data":{"node":{"__typename":"Chat","id":"c1","title":"before","revision":9007199254740993,"lists":["SECONDARY"]}}}"#)
     let before = try await Chat.node("c1", force: true)
     #expect(before?.serverRevision == 9007199254740993)
-    let chats = try await Chat.events()
-    let messages = try await Message.events()
-    defer { chats.cancel(); messages.cancel() }
+    let scope = try DB.account()
+    let chats = scope.events(Chat.self)
+    let messages = scope.events(Message.self)
+    defer { chats.stream.cancel(); messages.stream.cancel() }
     let chatEvents = Cursor(chats)
     let messageEvents = Cursor(messages)
     try transport.emit("RecordEvents", json: #"{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":"9007199254740994","lists":["PRIMARY"]},"message":{"id":"m1","text":"received","chatId":"c1"}}]}}}"#)

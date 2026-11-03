@@ -22,7 +22,7 @@ class BridgeProbeTest {
     @Test
     fun aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() = bounded {
         reopen(Config(null, null, 32u), modelsJSON, null)
-        val initial = Record.create(containerId = "c1", authorId = "u1", text = "hello")
+        val initial = Record.send(AccountScope.current(), containerId = "c1", authorId = "u1", text = "hello").row
         val row = initial.update(reactions = listOf(RecordReactionNode(body = "A", userId = "u1")))
         val changed = row.react(reactionBody = "C", userId = "u1")
         assertEquals(listOf("u1"), changed.reactions.map { it.userId })
@@ -33,7 +33,7 @@ class BridgeProbeTest {
     fun anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() = bounded {
         reopen(Config(null, null, 32u), modelsJSON, null)
         val ann = User.create(name = "Ann")
-        val record = Record.create(containerId = "c1", authorId = ann.id, text = "hello")
+        val record = Record.send(AccountScope.current(), containerId = "c1", authorId = ann.id, text = "hello").row
         val withUser = record.react(reactionBody = "A", userId = ann.id)
         assertEquals("Ann", withUser.reactions.first().user?.name)
         val withoutUser = record.react(reactionBody = "B", userId = "nobody")
@@ -41,24 +41,10 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun anEntityFollowsAnEditAndLetsGoOfTheRecordWhenItIsDropped() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, null)
-        val first = Moment.create(text = "one")
-        var entity: Entity<Moment>? = Moment.entity(first.id)
-        assertEquals("one", withTimeout(5000) { entity!!.value.first { it != null } }?.text)
-        first.update(text = GraphQLNullable.Value("edited"))
-        assertEquals("edited", withTimeout(5000) { entity!!.value.first { it?.text == "edited" } }?.text)
-        assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
-        entity = null
-        eventually("the registry lets go of the record", 10_000) { System.gc(); EntityRegistries.of("Moment", Moment).liveCount == 0 }
-        assertEquals(0, EntityRegistries.of("Moment", Moment).liveCount)
-    }
-
-    @Test
     fun aSearchPassesWholeWordsToTheCore() = bounded {
         reopen(Config(null, null, 32u), modelsJSON, null)
-        Moment.create(text = "hello world")
-        Moment.create(text = "hel")
+        Moment.send(AccountScope.current(), text = "hello world").row
+        Moment.send(AccountScope.current(), text = "hel").row
         val whole = Query("Moment", Moment).search("hel", wholeWords = true)
         assertEquals(listOf("hel"), withTimeout(5000) { whole.live.flow.first { it.isNotEmpty() } }.map { it.text })
     }
@@ -67,7 +53,7 @@ class BridgeProbeTest {
     fun aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() = bounded {
         reopen(Config(null, null, 32u), modelsJSON, null)
         assertNull(Moment.recent.cached())
-        val moment = Moment.create(text = "m")
+        val moment = Moment.send(AccountScope.current(), text = "m").row
         Moment.recent.warm()
         val warm = Moment.recent.cached()!!
         assertEquals(listOf(moment.id), warm.value.map { it.id })
@@ -75,7 +61,7 @@ class BridgeProbeTest {
         assertNull(Moment.recent.cachedRow("ghost"))
         reopen(Config(null, null, 32u), modelsJSON, null)
         assertNull(Moment.recent.cached())
-        Moment.create(text = "n")
+        Moment.send(AccountScope.current(), text = "n").row
         assertEquals(1, withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.size)
         assertEquals("n", Moment.recent.cached()!!.value.first().text)
     }
@@ -85,7 +71,7 @@ class BridgeProbeTest {
         reopen(Config(null, null, 32u), modelsJSON, null)
         val live = Moment.recent.live.flow
         assertEquals(emptyList<Moment>(), withTimeout(5000) { live.first() })
-        val moment = Moment.create(text = "m")
+        val moment = Moment.send(AccountScope.current(), text = "m").row
         assertEquals("m", withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first().text)
         moment.update(text = GraphQLNullable.Value("edited"))
         assertEquals("edited", withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.text == "edited" } }.first().text)
@@ -144,9 +130,9 @@ class BridgeProbeTest {
         assertEquals(true, state.hasMore)
         assertEquals(9L, state.total)
         assertEquals(LoadPhase.Loaded, state.phase)
-        val entity = Moment.entity("1")
-        withTimeout(5000) { entity.value.first { it != null } }
-        assertEquals("a", entity.value.value?.uuid)
+        val entity = Projected(AccountScope.current().entity(Moment, "1"), Moment, listScope)
+        withTimeout(5000) { entity.projection.first { it.rows.isNotEmpty() } }
+        assertEquals("a", entity.value?.uuid)
         listScope.cancel()
     }
 
@@ -175,24 +161,13 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aCreateWhoseMutationIsNotRegisteredFailsOnTheRecordAndNeedsAttention() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, MockTransport())
-
-        val local = Moment.create(text = "hello", media = null)
-        val entity = Moment.entity(local.id)
-        val failed = withTimeout(5000) { entity.value.first { it?.sync?.state == SyncState.Failed } }!!
-
-        assertEquals(true, failed.needsAttention)
-    }
-
-    @Test
     fun confirmedIdWaitsForTheServerIdOfALocalCreate() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
 
-        val local = Moment.create(text = "hello", media = null)
+        val local = Moment.send(AccountScope.current(), text = "hello", media = null).row
         assertEquals(true, local.id.startsWith("temp"))
         withTimeout(5000) { local.settled(null) }
         assertEquals("m77", withTimeout(5000) { local.confirmedId() })
@@ -204,15 +179,15 @@ class BridgeProbeTest {
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
-        val seen = kotlinx.coroutines.flow.MutableSharedFlow<Snapshot<Moment>>(replay = 64)
-        val collecting = launch { Moment.recent.snapshots.flow.collect { seen.emit(it) } }
-        withTimeout(5000) { seen.first() }
+        val listScope = CoroutineScope(SupervisorJob())
+        val list = Projected(AccountScope.current().stream(Moment.recent), Moment, listScope)
+        list.loaded()
 
-        val local = Moment.create(text = "hello", media = null)
-        val snapshot = withTimeout(5000) { seen.first { it.replaced.containsKey("m77") } }
+        val local = Moment.send(AccountScope.current(), text = "hello", media = null).row
+        val projection = withTimeout(5000) { list.projection.first { it.temporaryIds.containsKey("m77") } }
 
-        assertEquals(local.id, snapshot.replaced["m77"])
-        collecting.cancel()
+        assertEquals(local.id, projection.temporaryIds["m77"])
+        listScope.cancel()
     }
 
     @Test
@@ -225,7 +200,7 @@ class BridgeProbeTest {
 
         val values = kotlinx.serialization.json.buildJsonObject { put("text", kotlinx.serialization.json.JsonPrimitive("hello")) }
         val request = UploadRequest(file.path, variables = values)
-        val local = uploadCreate("Moment", "upload_clip", values, request, Moment)
+        val local = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request)).row
 
         assertEquals(true, local.id.startsWith("temp"))
         assertEquals(true, local.uploads["upload_clip"] != null)

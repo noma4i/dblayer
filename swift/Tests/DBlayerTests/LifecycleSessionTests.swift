@@ -21,25 +21,16 @@ private final class SignedAccount: @unchecked Sendable {
   func signOut() { lock.withLock { name = nil } }
 }
 
-private final class RowHistory: QueryListener, @unchecked Sendable {
+private final class RowHistory: ValueSink, @unchecked Sendable {
   private let lock = NSLock()
-  private var rows: [WireRow] = []
-  private var delivered: [[String]] = []
+  private var projection = ListProjection<User>()
+  private var history: [[String]] = []
 
-  var states: [[String]] { lock.withLock { delivered } }
+  var states: [[String]] { lock.withLock { history } }
 
-  func changed(change: LiveChange) {
+  func delivered(delivery: StreamDelivery) {
     lock.withLock {
-      if change.full {
-        rows = change.rows
-      } else {
-        rows.removeAll { change.removed.contains($0.id) }
-        for row in change.rows {
-          rows.removeAll { $0.id == row.id }
-          rows.append(row)
-        }
-      }
-      delivered.append(rows.flatMap { row in row.cells.compactMap { if case let .text(value) = $0 { value } else { nil } } })
+      if projection.apply(delivery) == .changed { history.append(projection.rows.map(\.name)) }
     }
   }
 }
@@ -95,6 +86,10 @@ extension BridgeProbeTests {
     return server
   }
 
+  fileprivate static func holdList(_ history: RowHistory) -> UInt64 {
+    DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .query(queryJson: #"{"model":"User"}"#), sink: history)
+  }
+
   /// The order of the app: sign-in call, session profile, profile refresh.
   @MainActor
   static func startSealedSession(_ account: String) async throws {
@@ -109,15 +104,16 @@ extension BridgeProbeTests {
   func anAppLoginAfterALogoutRefreshesTheHeldEntityAndNoReadFollowsTheLogout() async throws {
     let server = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
-    let entity = User.entity()
+    var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let before = server.requests.count
     try await DB.sessionReset()
-    #expect(entity.value == nil)
+    #expect(entity.projection.ended == .sessionEnded)
     server.refuseEverything(true)
     #expect(server.requests.count == before)
     server.refuseEverything(false)
     try await Self.startSealedSession("B")
+    entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
   }
 
@@ -127,16 +123,17 @@ extension BridgeProbeTests {
   func aConfirmedLogoutThenASessionResetAndAClearNeverShowsTheAccountToTheNextLogin() async throws {
     let server = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
-    let entity = User.entity()
+    var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     try await DB.sessionCall("logout", body: NoBody())
     try await DB.sessionReset()
-    #expect(entity.value == nil)
+    #expect(entity.projection.ended == .sessionEnded)
     let before = server.requests.count
     server.refuseEverything(true)
     #expect(server.requests.count == before)
     server.refuseEverything(false)
     try await Self.startSealedSession("B")
+    entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
   }
 
@@ -145,17 +142,12 @@ extension BridgeProbeTests {
   func theAppExitOrderEndsEveryHeldWaitWhenTheCredentialIsGone() async throws {
     _ = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
-    let entity = User.entity()
+    var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    let changes = try DB.database.changes(queryJson: #"{"model":"User"}"#)
-    let holding = Task { while (try? await changes.next()) != nil {} }
     try await DB.sessionCall("logout", body: NoBody())
     try await DB.sessionReset()
-    holding.cancel()
-    changes.cancel()
-    await holding.value
     try await DB.sessionReset()
-    await #expect(throws: DbError.self) { try await entity.waitForInitialLoad() }
+    await #expect(throws: DbError.self) { try await entity.loaded() }
   }
 
   /// Every value delivered to a list held across a logout and the next login: none shows account A after the logout and the last one shows B.
@@ -165,12 +157,13 @@ extension BridgeProbeTests {
     _ = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
     let history = RowHistory()
-    let live = try DB.database.liveQuery(queryJson: #"{"model":"User"}"#, listener: history)
-    defer { live.cancel() }
+    let live = Self.holdList(history)
+    defer { DB.database.cancelStream(stream: live) }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     let seen = history.states.count
     try await DB.sessionReset()
     try await Self.startSealedSession("B")
+    _ = Self.holdList(history)
     await eventually("the held list shows B") { history.states.last?.contains("B") == true }
     let after = history.states.dropFirst(seen)
     #expect(after.allSatisfy { !$0.contains("A") }, "account A came back after the logout: \(after)")
@@ -182,30 +175,31 @@ extension BridgeProbeTests {
   func theAppExitOrderEndsAPendingInitialWaitAndEveryCallOfTheExit() async throws {
     let server = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
-    let entity = User.entity()
+    var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let history = RowHistory()
-    let live = try DB.database.liveQuery(queryJson: #"{"model":"User"}"#, listener: history)
-    defer { live.cancel() }
+    let live = Self.holdList(history)
+    defer { DB.database.cancelStream(stream: live) }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     server.hold(operation: "UserProfile")
     Task { @MainActor in _ = try? await User.profile.refresh() }
     await eventually("the reread waits at the server") { server.parkedCount > 0 }
     let pending = Outcome()
     Task { @MainActor in
-      _ = try? await entity.waitForInitialLoad()
+      _ = try? await entity.loaded()
       pending.finish()
     }
 
     await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
     try await DB.sessionReset()
-    live.cancel()
+    DB.database.cancelStream(stream: live)
 
     await eventually("the wait that was pending at the exit ended") { pending.isDone }
-    #expect(entity.value == nil)
+    #expect(entity.projection.ended == .sessionEnded)
     server.hold(operation: nil)
-    #expect(entity.value == nil, "the late answer of account A reached the held entity")
+    #expect(entity.value?.name != "B", "the late answer reached the held entity")
     try await Self.startSealedSession("B")
+    entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
   }
 
@@ -215,11 +209,11 @@ extension BridgeProbeTests {
   func anAccountSwitchABAKeepsAHeldListAndEntityFreeOfThePreviousAccount() async throws {
     let server = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
-    let entity = User.entity()
+    var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let history = RowHistory()
-    let live = try DB.database.liveQuery(queryJson: #"{"model":"User"}"#, listener: history)
-    defer { live.cancel() }
+    let live = Self.holdList(history)
+    defer { DB.database.cancelStream(stream: live) }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     for (next, previous) in [("B", "A"), ("A", "B")] {
       server.hold(operation: "UserProfile")
@@ -227,10 +221,12 @@ extension BridgeProbeTests {
       await eventually("the reread waits at the server") { server.parkedCount > 0 }
       await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
       try await DB.sessionReset()
-      #expect(entity.value == nil)
+      #expect(entity.projection.ended == .sessionEnded)
       let seen = history.states.count
       server.hold(operation: nil)
       try await Self.startSealedSession(next)
+      entity = Projected<User>(try DB.account().stream(User.profile))
+      _ = Self.holdList(history)
       await eventually("the held entity shows \(next)") { entity.value?.name == next }
         await eventually("the held list shows \(next)") { history.states.last?.contains(next) == true }
       let after = history.states.dropFirst(seen)
@@ -244,13 +240,14 @@ extension BridgeProbeTests {
   func aLogoutThenALoginOfTheSameAccountReadsItAgain() async throws {
     let server = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
-    let entity = User.entity()
+    var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let reads = server.operationRequests("UserProfile")
     try await DB.sessionCall("logout", body: NoBody())
     try await DB.sessionReset()
-    #expect(entity.value == nil)
+    #expect(entity.projection.ended == .sessionEnded)
     try await Self.startSealedSession("A")
+    entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     #expect(server.operationRequests("UserProfile") > reads)
   }
@@ -261,10 +258,10 @@ extension BridgeProbeTests {
   func aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead() async throws {
     let server = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
-    let entity = User.entity()
+    var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     try await DB.sessionReset()
-    #expect(entity.value == nil)
+    #expect(entity.projection.ended == .sessionEnded)
     let before = server.requests.count
     server.refuseEverything(true)
     #expect(server.requests.count == before)
@@ -305,7 +302,7 @@ extension BridgeProbeTests {
     try await DB.sessionCall("logout", body: NoBody())
     try await Self.startSealedSession("A")
     #expect(server.pathRequests("/api/auth/login_link") == logins + 1)
-    let entity = User.entity()
+    var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
   }
 }

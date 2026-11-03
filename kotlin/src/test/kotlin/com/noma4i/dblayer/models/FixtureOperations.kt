@@ -43,6 +43,12 @@ data class BlobProfile(
             return built
         }
         suspend fun setVideo(video: Blob) = requireNotNull(current.cached()?.value?.firstOrNull()) { "singleton is missing" }.setVideo(video)
+        suspend fun create(label: String? = null): BlobProfile = offCaller {
+            val values = buildJsonObject {
+                label?.let { put("label", jsonValue(it)) }
+            }
+            read(DBlayer.database.create("BlobProfile", values.jsonText(), "{}"))
+        }
     suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted): BlobProfile = offCaller {
         val values = buildJsonObject {
             put("label", label)
@@ -78,6 +84,12 @@ data class Clip(
         fun ids(ids: List<String>) = idsQuery("Clip", this, ids)
         fun createFileVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
             if (widgets != null) put("widgets", jsonValue(widgets))
+        }
+        suspend fun create(title: String? = null): Clip = offCaller {
+            val values = buildJsonObject {
+                title?.let { put("title", jsonValue(it)) }
+            }
+            read(DBlayer.database.create("Clip", values.jsonText(), "{}"))
         }
     suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted): Clip = offCaller {
         val values = buildJsonObject {
@@ -123,6 +135,13 @@ data class Inbox(
             var built = Query("Inbox", this, relation = "shelf", params = buildJsonObject { put("list", jsonValue(list)) })
             return built
         }
+        suspend fun create(title: String, stance: String? = null): Inbox = offCaller {
+            val values = buildJsonObject {
+                put("title", jsonValue(title))
+                stance?.let { put("stance", jsonValue(it)) }
+            }
+            read(DBlayer.database.create("Inbox", values.jsonText(), "{}"))
+        }
     suspend fun update(title: String? = null, stance: GraphQLNullable<String> = GraphQLNullable.Omitted): Inbox = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
@@ -164,6 +183,13 @@ data class MediaEntry(
             var built = Query("MediaEntry", this, relation = "media", params = buildJsonObject { put("chatId", jsonValue(chatId)) })
             return built
         }
+        suspend fun create(text: String? = null, sequenceNumber: Long): MediaEntry = offCaller {
+            val values = buildJsonObject {
+                text?.let { put("text", jsonValue(it)) }
+                put("sequenceNumber", jsonValue(sequenceNumber))
+            }
+            read(DBlayer.database.create("MediaEntry", values.jsonText(), "{}"))
+        }
     suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, sequenceNumber: Long? = null): MediaEntry = offCaller {
         val values = buildJsonObject {
             put("text", text)
@@ -204,6 +230,12 @@ data class Roster(
         fun completeMembers(containerId: String, order: ContainerMemberOrder = ContainerMemberOrder.Joined): Query<Roster> {
             var built = Query("Roster", this, relation = "complete_members", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("order", jsonValue(order)) })
             return built
+        }
+        suspend fun create(title: String): Roster = offCaller {
+            val values = buildJsonObject {
+                put("title", jsonValue(title))
+            }
+            read(DBlayer.database.create("Roster", values.jsonText(), "{}"))
         }
     suspend fun update(title: String? = null): Roster = offCaller {
         val values = buildJsonObject {

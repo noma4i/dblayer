@@ -16,7 +16,7 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 1), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]"#, uploads: UploadOperations(createBlob: UploadOperation("CreateBlob")))
     try DB.database.setOnline(online: false)
     let items = (0..<2).map { UploadItem(values: ["clientKey": .string("key-\($0)"), "size": .integer(2)], path: source.path) }
-    let rows = try await Asset.uploadCreate(items: items, request: UploadBatchRequest(operation: "create_files"))
+    let rows = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     #expect(rows.count == 2)
     #expect(rows.allSatisfy { $0.id.hasPrefix("temp-") && $0.sync.state == .sending && !$0.uploads.isEmpty })
     try FileManager.default.removeItem(at: source)

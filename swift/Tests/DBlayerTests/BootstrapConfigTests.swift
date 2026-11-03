@@ -182,7 +182,7 @@ struct BootstrapConfigTests {
     let peer = try BootstrapPeer()
     let http = BootstrapHttp(peer, "timeout")
     let retries = RetryProgress()
-    let changes = Cursor(try await retries.changes.stream())
+    let changes = Cursor(retries.changes)
     #expect(await changes.next("the snapshot at connect") == RetrySnapshot(activeCalls: 0, lastAttempt: nil))
     let task = Task { try await DB.serverConfig(encrypted: peer.encrypted, platform: .ios, version: "1.2", http: http, retries: retries) }
     let attempt = try #require(await changes.next("the first retry")?.lastAttempt)

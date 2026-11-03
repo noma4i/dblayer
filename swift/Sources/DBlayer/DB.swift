@@ -13,7 +13,6 @@ public enum DB {
 
   /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources.
   @MainActor public static func close() async throws {
-    EntityRegistries.closeAll()
     ForegroundEvents.shared.stop()
     PowerSaving.shared.stop()
     reachability.detach()
@@ -23,10 +22,6 @@ public enum DB {
   }
 
   public static func subscriptionCensus() throws -> SubscriptionCensus { try database.subscriptionCensus() }
-
-  public static func entityCensus() throws -> EntityCensus { try database.entityCensus() }
-
-  @MainActor public static func entityLeaseFailures() -> Int { EntityRegistries.leaseFailures() }
 
   public static func openReport() throws -> OpenReport { try database.openReport() }
 
@@ -59,7 +54,6 @@ public enum DB {
   /// Ends the session: work of the old session ends, the credential and the data of the account go. Call it for every sign-out; the library clears the data itself.
   public static func sessionReset() async throws {
     try await database.sessionReset()
-    await EntityRegistries.delivered()
   }
 
   /// Tells the library whether the app lets the model subscriptions run. `open(listening: false)` starts none from a committed credential until `setListening(true)`. Allowed with a committed credential, they start once. `setListening(false)` and `sessionReset()` stop them. Call it from the app state that gates subscriptions, for example registration complete.

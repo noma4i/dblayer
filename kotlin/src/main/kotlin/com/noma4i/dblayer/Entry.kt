@@ -47,12 +47,10 @@ object DBlayer {
     /** Ends the session: work of the old session ends, the credential and the data of the account go. Call it for every sign-out; the library clears the data itself. */
     suspend fun sessionReset() {
         offCaller { database.sessionReset() }
-        EntityRegistries.delivered()
     }
 
     /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
     suspend fun close() {
-        EntityRegistries.closeAll()
         ForegroundEvents.stop()
         PowerSaving.stop()
         Reachability.disconnect()
@@ -63,10 +61,6 @@ object DBlayer {
     }
 
     fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
-
-    fun entityCensus(): EntityCensus = database.entityCensus()
-
-    fun entityLeaseFailures(): Int = EntityRegistries.leaseFailures()
 
     fun openReport(): OpenReport = database.openReport()
 

@@ -272,4 +272,116 @@ class ValueBridgeTest {
             DBlayer.close()
         }
     }
+
+    /** B08, R7: a delivery the reader never received leaves a gap. The reader asks for one new snapshot, drops the deltas that were already queued behind the gap, and continues from the snapshot. */
+    @Test
+    fun aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt() = bounded {
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val reader = LossyReader()
+            val stream = DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Moment.recent.json), reader)
+            reader.stream = stream
+            DBlayer.database.streamLoaded(stream)
+            eventually("the first snapshot arrives") { reader.snapshots.get() == 1 }
+
+            DBlayer.database.setOnline(false)
+            reader.dropNext()
+            for (number in 1..3) scope.send(Moment, text("m$number"))
+            eventually("the reader holds the three rows again") { reader.rows() == 3 && reader.snapshots.get() == 2 }
+
+            assertEquals("the queue of later deltas asked for more than one new snapshot", 1, reader.resyncs.get())
+            assertEquals("a missed revision gives exactly one new snapshot", 2, reader.snapshots.get())
+            DBlayer.database.cancelStream(stream)
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** B10: the outcome of a command sent offline waits, and ends with the session of its receipt. */
+    @Test
+    fun theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            DBlayer.database.setOnline(false)
+            val sent = scope.send(Moment, text("queued"))
+            val waiting = screen.async { sent.outcome() }
+            assertEquals(CommandStatus.Queued, sent.status())
+
+            DBlayer.sessionReset()
+            assertEquals(CommandStatus.Ended, awaitWithin("the outcome ends with the session") { waiting.await() })
+            DBlayer.database.setOnline(true)
+            signIn("B")
+            assertEquals(CommandStatus.Ended, sent.status())
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
+    /** B12: a stream whose source cannot be connected ends once with the invalid outcome and leaves nothing open. */
+    @Test
+    fun aStreamThatCannotConnectEndsOnceAndLeavesTheTable() = bounded {
+        try {
+            openSession()
+            signIn("A")
+            val reader = LossyReader()
+            val stream = DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Entity("Nope", "x", EntityFetch.NONE), reader)
+            eventually("the failed stream ended") { reader.ended().isNotEmpty() }
+
+            assertEquals(listOf(StreamEnd.INVALID), reader.ended())
+            assertEquals(0uL, streamCensus().open)
+            assertTrue(runCatching { DBlayer.database.streamLoaded(stream) }.isFailure)
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** B14, R6: a projection made in a scope that was already cancelled does not leave a stream without a reader. */
+    @Test
+    fun aProjectionInACancelledScopeLeavesNoStreamInTheCore() = bounded {
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val cancelled = CoroutineScope(SupervisorJob())
+            cancelled.cancel()
+            Projected(scope.stream(User.profile), User, cancelled)
+            eventually("the stream left the core") { streamCensus().open == 0uL }
+            assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
+        } finally {
+            DBlayer.close()
+        }
+    }
 }
+
+private class LossyReader : ValueSink {
+    private var projection = ListProjection<Moment>()
+    private var dropping = false
+    private val endings = java.util.concurrent.CopyOnWriteArrayList<StreamEnd>()
+    val snapshots = AtomicInteger(0)
+    val resyncs = AtomicInteger(0)
+    @Volatile var stream: ULong = 0uL
+
+    fun rows(): Int = synchronized(this) { projection.rows.size }
+    fun ended(): List<StreamEnd> = endings.toList()
+    fun dropNext() = synchronized(this) { dropping = true }
+
+    override fun delivered(delivery: StreamDelivery) {
+        val ask = synchronized(this) {
+            if (dropping) { dropping = false; return@synchronized false }
+            if (delivery.value is StreamValue.Snapshot) snapshots.incrementAndGet()
+            (delivery.value as? StreamValue.Ended)?.let { endings.add(it.reason) }
+            val step = projection.apply(delivery, Moment)
+            projection = step.projection
+            if (step.applied == Applied.Resync) resyncs.incrementAndGet()
+            step.applied == Applied.Resync
+        }
+        if (ask) DBlayer.database.resyncStream(stream)
+    }
+}
+
