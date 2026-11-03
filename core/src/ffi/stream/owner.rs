@@ -73,6 +73,10 @@ pub(in crate::ffi) struct Stream {
     pub(super) request: Request,
 }
 
+impl Drop for State {
+    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("State::drop"); }
+}
+
 impl Drop for Stream {
     fn drop(&mut self) { crate::db::lock::assert_no_library_lock("Stream::drop"); }
 }
@@ -164,11 +168,11 @@ impl Stream {
     fn signal_ready(&self, effects: &mut Effects) {
         let readiness = self.readiness.clone();
         effects.push(move || {
-            readiness.send_if_modified(|current| {
+            crate::db::lock::effect(|| readiness.send_if_modified(|current| {
                 let waiting = *current == Readiness::Waiting;
                 if waiting { *current = Readiness::Ready; }
                 waiting
-            });
+            }));
         });
     }
 
@@ -181,7 +185,7 @@ impl Stream {
         self.queue(state, effects, StreamValue::Ended { reason }, true);
         state.ended = true;
         let readiness = self.readiness.clone();
-        effects.push(move || { readiness.send_replace(Readiness::Ended); });
+        effects.push(move || { crate::db::lock::effect(|| readiness.send_replace(Readiness::Ended)); });
     }
 
     /// Ends the stream with its one outcome and frees what it holds.
@@ -197,7 +201,7 @@ impl Stream {
             state.ended = true;
             state.sink = None;
             let readiness = self.readiness.clone();
-            effects.push(move || { readiness.send_replace(Readiness::Ended); });
+            effects.push(move || { crate::db::lock::effect(|| readiness.send_replace(Readiness::Ended)); });
         });
         self.release();
     }
@@ -359,11 +363,11 @@ impl Stream {
             state.ready_pending = false;
             let readiness = self.readiness.clone();
             effects.push(move || {
-                readiness.send_if_modified(|current| {
+                crate::db::lock::effect(|| readiness.send_if_modified(|current| {
                     if *current == Readiness::Ended { return false; }
                     *current = Readiness::Waiting;
                     true
-                });
+                }));
             });
         });
     }

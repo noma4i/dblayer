@@ -9,9 +9,9 @@ Foreign execution must not run under a library lock. State changes return owned 
 ## What you can rely on
 
 - Record writes use `async` in Swift and `suspend` in Kotlin. Rust runs SQLite writes, argument decoding and result conversion off the caller thread.
-- Database calls prepare their JSON and decode their answers off the caller thread: Kotlin on `Dispatchers.Default`, Swift through `@concurrent`. `LiveList` builds `ids` off the main thread and only assign ready values on it. Generated `create`, `update`, `set`, model actions that are not uploads, node reads, edge reads and operation calls follow the same rule. Upload calls keep their own paths.
-- A Kotlin live list or window publishes `rows`, `ids`, `snapshot` and `replaced` from `Dispatchers.Default`, so the comparison of rows that `StateFlow` makes never runs on the main thread. The owner of what a consumer takes is one immutable bundle of rows, edits and revision that the publisher and `takeUpdate()` swap by compare-and-set, so `takeUpdate()` never waits for a publication and always returns rows and edits of one revision. `rows` of an update never change after `takeUpdate()` returns them. Swift prepares `ids` and composes the edits off the main thread, keeps the same bundle, and assigns the prepared values on the main actor. Swift `takeUpdate()` holds a lock only to swap the bundle, never while edits are composed, and Swift observation never compares rows.
-- A delivery to entities touches only the live entities whose ids it carries. Kotlin applies the values after it releases the registry lock, so `entity(id)` never waits for a delivery.
+- Database calls prepare their JSON and decode their answers off the caller thread: Kotlin on `Dispatchers.Default`, Swift through `@concurrent`. A projection decodes rows off the main thread and assigns ready values on it. Generated `create`, `update`, `set`, model actions that are not uploads, node reads, edge reads and operation calls follow the same rule. Upload calls keep their own paths.
+- A stream delivers values from library threads. A Kotlin `Projected` publishes its `StateFlow` from `Dispatchers.Default`, and a Swift `Projected` applies values on the main actor.
+- A delivery touches only the rows it carries. The wrappers hold no lock for it.
 - Await `discard(action)` and `sessionReset()` to finish removing queued changes or clearing account data before starting dependent work.
 - Opening a database is asynchronous (`await DB.open` in Swift, suspend `DBlayer.open` in Kotlin). Registering operations is synchronous. A live query attaches off the caller thread when it is collected.
 - Calls that read or write files (`attach`, `file`, `read`, `url`, `detach`, `maintain`) run on a background thread of the library, never on the caller thread.
@@ -27,7 +27,7 @@ Foreign execution must not run under a library lock. State changes return owned 
 - Listener callbacks never run under the store lock.
 - Listeners are called from library threads, never from the main thread. Move to the main thread in your UI code.
 - Each listener has its own queue where the latest state wins. A slow listener does not delay others and does not build up a backlog.
-- `entity(id)` returns from memory. Swift and Kotlin submit batched retain/release calls in order on background threads. Rust reads the rows in its reader pool.
+- `scope.entity(Model, id)` opens a stream whose first value comes from the cache of the core.
 - Frequent changes are merged: a listener gets one change per dispatch cycle, and the last state always arrives.
 - Cancelling or dropping a subscription stops its work at once without leaking tasks.
 - Cancelling a subscription returns without waiting for the observer registry. When the dispatch thread holds it, the request is queued and applied before the next registry access.

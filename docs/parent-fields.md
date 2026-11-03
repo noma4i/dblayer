@@ -8,11 +8,11 @@ If no child remains, all copied fields become null.
 Read the parent entity after declaring `sets` in the child model:
 
 ```swift
-let group = Group.entity(groupId)
+let group = Projected<Group>(try scope.entity(Group.self, groupId))
 let lastNoteAt = group.value?.lastNoteAt
 ```
 
 ```kotlin
-val group = Group.entity(groupId)
+val group = Projected(scope.entity(Group, groupId), Group, screenScope)
 val lastNoteAt = group.value.value?.lastNoteAt
 ```

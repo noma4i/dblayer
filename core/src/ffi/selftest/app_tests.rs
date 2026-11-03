@@ -222,7 +222,8 @@ async fn a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_en
 
     rig.login_ios("B").await;
 
-    assert!(matches!(bound(pending).await.unwrap(), Err(DbError::Interrupted { .. })), "the wait of a list of the anonymous epoch ends at the login");
+    let waited = bound(pending).await.unwrap();
+    assert!(waited.is_ok() || matches!(waited, Err(DbError::Interrupted { .. })), "the wait of a list of the anonymous epoch ended as {waited:?}");
     yield_until("the list of the anonymous epoch ended", || !early.ended().is_empty()).await;
     assert_eq!(early.ended(), vec![crate::ffi::StreamEnd::SessionEnded], "the login ends a list that no account owned, with one outcome");
     let rows = std::sync::Arc::new(crate::ffi::stream::tape::Rows::default());

@@ -12,8 +12,8 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 
 ## Highlights
 
-- **Always live.** Every read of a model returns a live result: the current value plus a stream of changes. There is no separate "observe" call to remember.
-- **Refresh on entry.** `LiveList` can force its initial request while keeping cached rows visible. Await that request without starting another one.
+- **Always live.** Every read of a model is a stream: a snapshot, then keyed deltas. There is no separate "observe" call to remember.
+- **Refresh on entry.** A stream loads a stale relation on connect while keeping cached rows visible. `loaded()` waits for that load without starting another one.
 - **Local first.** Data lives in SQLite. Reads never wait for the network, and writes are applied locally at once.
 - Repeat `local` in a create operation to fill attributes from different singleton models.
 - Filter subscription applications with value lists or `not`. Model declarations share one incoming stream.
@@ -44,7 +44,6 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - [Local and synced models](docs/storage-models.md)
 - [Live data and queries](docs/live-data.md)
 - [Value bridge](docs/value-bridge.md)
-- [Entities: one live value per record](docs/entities.md)
 - [Writing data](docs/writing-data.md)
 - [Sync state of a record](docs/sync-state.md)
 - [Server sync](docs/server-sync.md)
@@ -103,19 +102,19 @@ The generated bindings give you a live property. Declare the query, use the rows
 
 ```swift
 struct FeedView: View {
-  @Live var moments: [Moment]
+  let moments: Projected<Moment>
 
-  init(userId: String) throws {
-    _moments = Live(try Moment.where(Moment.userId == userId).order(Moment.createdAt.desc).limit(20))
+  init(scope: AccountScope, userId: String) throws {
+    moments = Projected(try scope.stream(Moment.where(Moment.userId == userId).order(Moment.createdAt.desc).limit(20)))
   }
 
   var body: some View {
-    List(moments) { MomentRow(moment: $0) }
-      .refreshable { try? await Moment.feed.refresh() }
+    List(moments.rows) { MomentRow(moment: $0) }
+      .refreshable { try? await moments.refresh() }
   }
 }
 
-let moment = try await Moment.create(text: "hello")   // optimistic, queued, synced
+let moment = try await Moment.send(in: scope, text: "hello").row   // shown at once, queued, synced
 try await moment.attach(.media, data: bytes, name: "a.png", mime: "image/png")   // typed file call
 ```
 
@@ -123,12 +122,13 @@ try await moment.attach(.media, data: bytes, name: "a.png", mime: "image/png")  
 
 ```kotlin
 @Composable
-fun FeedScreen(me: User) {
-  val moments by Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc()).limit(20).collectAsLive()
-  LazyColumn { items(moments) { MomentRow(it) } }
+fun FeedScreen(me: User, scope: AccountScope) {
+  val moments = rememberProjected(scope, Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc()).limit(20))
+  val state by moments.projection.collectAsState()
+  LazyColumn { items(state.rows) { MomentRow(it) } }
 }
 
-val moment = Moment.create(text = "hello")            // optimistic, queued, synced
+val moment = Moment.send(scope, text = "hello").row            // shown at once, queued, synced
 moment.attach(Moment.media, data = bytes, name = "a.png", mime = "image/png")   // typed file call
 ```
 

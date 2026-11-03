@@ -156,8 +156,8 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
-    assert!(swift.contains("func inFolder(") && !swift.contains("func create("), "{swift}");
-    assert!(kotlin.contains("fun inFolder(") && !kotlin.contains("fun create("), "{kotlin}");
+    assert!(swift.contains("func inFolder(") && swift.contains("func create("), "{swift}");
+    assert!(kotlin.contains("fun inFolder(") && kotlin.contains("fun create("), "{kotlin}");
     let db = Db::open_in_memory(models, None).unwrap();
     for (text, folder, position) in [("first", "f1", 1), ("second", "f1", 2), ("other", "f2", 3)] {
         db.create("Note", json!({"text": text, "folderId": folder, "position": position}).as_object().unwrap().clone()).unwrap();

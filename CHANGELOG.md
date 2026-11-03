@@ -7,6 +7,10 @@
 - `AccountScope.send`: a durable message command with `CommandStatus`, refused for an old epoch.
 - `refresh`, `loadMore` and `loaded` on a stream, interrupted when its session ends.
 - Lifecycle sequence tests for the core, Swift and Kotlin, listed in a manifest.
+- Streams for counts, related rows, rows by id, model events and upload status.
+- `AccountScope.send` carries a media upload; `uploadBatch` sends many files.
+- `durable: true` on `operation :create` generates `Model.send`.
+- A projection keeps the edits of its deltas and the temporary id of a row.
 
 ### Changed
 - Requests, loads, uploads and subscriptions hold a lease that a session end, reset or close ends.
@@ -14,12 +18,18 @@
 - A session end replays after a crash between the credential and the data clear.
 - A test opens its database and closes it; there is no reset between tests.
 - iOS uploads use a plain `URLSession` PUT.
+- Only a message send and a media upload wait for the network; other actions fail at once offline.
+- A send, a stream request and a prepared delivery end with the epoch they belong to.
+- `Model.create` writes local rows only; a model with a create mutation uses `send`.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.
 - `resetForTesting`, `settleForTesting` and `testing_busy`.
 - iCloud and Google Drive sync, the `cloud` model attribute and `CloudLink`.
 - `LiveWindow`, `Window`, `expand` and `Query.window`.
+- `LiveList`, `Live`, `Entity`, `Entities`, `LiveSource`, `.live`, `.snapshots`, `.find` and `Model.events()`.
+- The `add_to`, `remove_from`, `create_row` and `change_row` lines of `.dbl`.
+- Wrapper registries, flushers and value caches for entities, lists and events.
 - The iOS background upload session: `handleBackgroundSession`, `BackgroundPuts`, `BackgroundUploadSession`.
 
 ### Fixed

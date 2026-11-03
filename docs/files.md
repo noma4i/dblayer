@@ -129,7 +129,7 @@ try await DB.open(endpoint: endpoint, modelsJSON: models,
     createBlob: UploadOperation("CreateBlob", rootPath: "uploadCreate.directUpload"),
     multipart: .init(initiate: UploadOperation("InitMultipart"), presign: UploadOperation("PresignParts"), complete: UploadOperation("CompleteMultipart"), abort: UploadOperation("AbortMultipart"))))
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
-try await moment.upload(action: "upload_clip", request)
+try await DB.account().upload(moment, action: "upload_clip", request)
 moment.uploads["upload_clip"]?.status       // .uploading
 moment.uploads["upload_clip"]?.percent      // 42.0
 try await moment.cancelUpload(action: "upload_clip")
@@ -143,7 +143,7 @@ DBlayer.open(context, endpoint = endpoint, modelsJson = models,
         multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart"))),
     uploadNotification = notification)
 val request = UploadRequest(path = file.path, variables = variables)
-moment.upload("upload_clip", request)
+AccountScope.current().upload(moment, "upload_clip", request, UploadClipAnswer.serializer())
 moment.uploads["upload_clip"]?.status       // Uploading
 moment.uploads["upload_clip"]?.percent      // 42.0
 moment.cancelUpload("upload_clip")
@@ -167,14 +167,14 @@ Declare a named operation for each content mutation, with `upload MutationName` 
 
 ```swift
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
-let moment = try await Moment.create(values: ["text": .string("hello")], action: "upload_clip", uploading: request)
+let moment = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: request)).row
 moment.uploads["upload_clip"]?.percent      // 42.0
 try await moment.confirmedId()
 ```
 
 ```kotlin
 val request = UploadRequest(path = file.path, variables = variables)
-val moment = uploadCreate("Moment", "upload_clip", values, request, Moment)
+val moment = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request)).row
 moment.uploads["upload_clip"]?.percent      // 42.0
 moment.confirmedId()
 ```
@@ -182,7 +182,7 @@ moment.confirmedId()
 Each generated upload method returns `ActionAnswer`, like an action declared with `returns`.
 Call `answer()` to wait for the file transfer and final mutation, then read the declared response fields.
 Fields the server omitted are `nil` in Swift and `null` in Kotlin.
-For example, `moment.uploadClip(request).answer()` returns the fields declared by `upload_clip`.
+For example, `moment.uploadClip(request, in: scope).answer()` returns the fields declared by `upload_clip`.
 Swift calls use `try await` and Kotlin calls run in a coroutine.
 The generic `upload` also returns `ActionAnswer` and takes the answer type, like `actAnswering`.
 
@@ -235,7 +235,8 @@ The GraphQL mutation accepts an input object list containing the correlation key
 Its response includes every created record with the same correlation key, in any order.
 
 ```swift
-let records = try await Asset.uploadCreate(
+let records = try await DB.account().uploadBatch(
+  Asset.self,
   items: files.map { UploadItem(values: $0.values, path: $0.path) },
   request: UploadBatchRequest(operation: "create_files")
 )
@@ -243,7 +244,8 @@ try await records[1].discard(action: "create_files")
 ```
 
 ```kotlin
-val records = Asset.uploadCreate(
+val records = AccountScope.current().uploadBatch(
+    Asset,
     items = files.map { UploadItem(values = it.values, path = it.path) },
     request = UploadBatchRequest(operation = "create_files"),
 )
@@ -271,13 +273,13 @@ end
 ```swift
 let widgets = [MomentWidgetInput(kind: .emoji, props: .emoji(MomentEmojiInput(code: "fire")))]
 let request = UploadRequest(path: url.path, variables: try Moment.createFileVariables(widgets: widgets))
-let moment = try await Moment.create(values: ["text": .string("hello")], action: "create_file", uploading: request)
+let moment = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "create_file", request: request)).row
 ```
 
 ```kotlin
 val widgets = listOf(MomentWidgetInput(kind = WidgetKind.Emoji, props = MomentWidgetProps.Emoji(MomentEmojiInput(code = "fire"))))
 val request = UploadRequest(path = file.path, variables = Moment.createFileVariables(widgets = widgets))
-val moment = uploadCreate("Moment", "create_file", values, request, Moment)
+val moment = AccountScope.current().send(Moment, values, upload = UploadCommand("create_file", request)).row
 ```
 
 ### Scenarios

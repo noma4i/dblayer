@@ -243,6 +243,10 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], schem
     }).collect::<Vec<_>>().join("\n") + "\n"
 }
 
+fn creates_locally(model: &ModelSpec) -> bool {
+    model.actions.iter().find(|action| action.name == "create").is_none_or(|action| action.mutation.is_none())
+}
+
 pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
     let decls = checked_enum_decls(models, operations, schema_types);
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
@@ -327,6 +331,18 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
                 else { writeln!(out, "        {args}[\"{name}\"] = try JSONValue.encode({printed})", printed = identifier(name, true)).unwrap(); }
             }
             writeln!(out, "        return try await scope.send(Self.self, values: {values}{})\n    }}", if create_args.is_empty() { String::new() } else { format!(", args: {args}") }).unwrap();
+        } else if creates_locally(model) {
+            writeln!(out, "    @concurrent public static func create({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+            if !create_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
+            for field in &create_fields {
+                if create_optional(model, field) { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.name, true), field.name).unwrap(); }
+                else { writeln!(out, "        {values}[\"{}\"] = try JSONValue.encode({})", field.name, identifier(&field.name, true)).unwrap(); }
+            }
+            for (name, kind) in &create_args {
+                if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ {args}[\"{name}\"] = try JSONValue.encode(value) }}", printed = identifier(name, true)).unwrap(); }
+                else { writeln!(out, "        {args}[\"{name}\"] = try JSONValue.encode({printed})", printed = identifier(name, true)).unwrap(); }
+            }
+            writeln!(out, "        return try await create(values: {values}{})\n    }}", if create_args.is_empty() { String::new() } else { format!(", args: {args}") }).unwrap();
         }
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| format!("{}: {}? = nil", identifier(&field.name, true), field_type(field, true))).chain(update_args.iter().map(|(name, kind)| format!("{}: {}? = nil", identifier(name, true), arg_type(kind, true)))).collect::<Vec<_>>().join(", ");
@@ -458,6 +474,28 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             out.push_str("            }\n");
         }
         writeln!(out, "            return account.send(this, {values}{})\n        }}", if create_args.is_empty() { String::new() } else { format!(", {args}") }).unwrap();
+        } else if creates_locally(model) {
+            let params = create_fields.iter().map(|field| {
+                let optional = create_optional(model, field);
+                let mut kind = field_type(field, false);
+                if optional && !kind.ends_with('?') { kind.push('?'); }
+                format!("{}: {}{}", identifier(&field.name, false), kind, if optional { " = null" } else { "" })
+            }).chain(create_args.iter().map(|(name, kind)| format!("{}: {}{}", identifier(name, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" }))).collect::<Vec<_>>().join(", ");
+            writeln!(out, "        suspend fun create({params}): {class} = offCaller {{\n            val {values} = buildJsonObject {{").unwrap();
+            for field in &create_fields {
+                if create_optional(model, field) { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
+                else { writeln!(out, "                put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
+            }
+            out.push_str("            }\n");
+            if !create_args.is_empty() {
+                writeln!(out, "            val {args} = buildJsonObject {{").unwrap();
+                for (name, kind) in &create_args {
+                    if kind.ends_with('?') { writeln!(out, "                {printed}?.let {{ put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
+                    else { writeln!(out, "                put(\"{name}\", jsonValue({printed}))", printed = identifier(name, false)).unwrap(); }
+                }
+                out.push_str("            }\n");
+            }
+            writeln!(out, "            read(DBlayer.database.create(\"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         }
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| kotlin_patch_param(field)).chain(update_args.iter().map(|(name, kind)| format!("{}: {}? = null", identifier(name, false), arg_type(kind, false)))).collect::<Vec<_>>().join(", ");

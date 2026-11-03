@@ -72,8 +72,15 @@ B07		core	work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_rea
 B07		swift	BridgeProbeTests.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2 specs/architecture.md B, C, D, F
 B07		kotlin	com.noma4i.dblayer.ValueBridgeTest.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2 specs/architecture.md B, C, D, F
 B08		core	a_missed_revision_gives_one_new_snapshot	green	S2: a missed revision gives one new snapshot	arch-r2 specs/architecture.md B, C, D, F
+B08		swift	BridgeProbeTests.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3 specs/architecture.md A-F
+B08		kotlin	com.noma4i.dblayer.ValueBridgeTest.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3 specs/architecture.md A-F
 B09		core	a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row	green	S3 R1: a send waiting for the writer while the session ends writes no row	arch-r3 specs/architecture.md A-F
 B10		core	the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_receipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
+B10		swift	BridgeProbeTests.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
+B10		kotlin	com.noma4i.dblayer.ValueBridgeTest.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
 B11		core	a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothing	green	S3 R3: a request whose caller left holds no lease past its epoch	arch-r3 specs/architecture.md A-F
 B12		core	a_stream_that_cannot_connect_ends_once_and_leaves_the_table	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
+B12		swift	BridgeProbeTests.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
+B12		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
 B13		core	a_prepared_delivery_is_withdrawn_by_the_cancel_of_the_reader	green	S3 R5: a prepared delivery is withdrawn by the cancel	arch-r3 specs/architecture.md A-F
+B14		kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionInACancelledScopeLeavesNoStreamInTheCore	green	S3 R6: a projection in a cancelled scope leaves no stream in the core	arch-r3 specs/architecture.md A-F

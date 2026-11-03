@@ -49,6 +49,11 @@ The core then drops the subscription. Nothing is delivered after that.
 The first value comes from the cache of the core when it holds the query.
 The call that opens a stream never reads the database on your thread.
 
+## Every path is a stream
+
+Queries, counts, related rows, a row by id, model events and upload status use the same values. See [live data](live-data.md).
+One owner in the core serves each stream. The wrappers keep no registry, no lock and no cache for it.
+
 ## Calls on a stream
 
 | Call | Result |
@@ -58,7 +63,9 @@ The call that opens a stream never reads the database on your thread.
 | `loaded()` | Returns when the first load settled. |
 
 A call that outlives its epoch ends as `Interrupted`.
-Its late answer changes nothing.
+Its late answer changes nothing, and a request of the stream does not start in the next epoch.
+A delivery that was prepared and not yet handed over is withdrawn by the cancel of the reader and by the end of the epoch.
+A stream whose source cannot be connected ends once with the `invalid` outcome.
 
 ## Sending a message
 

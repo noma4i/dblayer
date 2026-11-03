@@ -225,6 +225,18 @@ impl Database {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64 }
     }
+    /// Writes a row that only this device keeps. A model whose create declares a server mutation is written by `send`.
+    pub async fn create(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
+        if self.db.spec(&model)?.actions.iter().any(|action| action.name == "create" && action.mutation.is_some()) {
+            return Err(DbError::Invalid { detail: format!("{model} creates through the server: use send") });
+        }
+        let database = self.clone();
+        blocking(move || {
+            let row = database.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
+            database.send_writes();
+            Ok(database.wire(&model)?.row(&row))
+        }).await
+    }
     pub async fn update(&self, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireRow, DbError> {
         self.refuse_offline(&model, "update")?;
         let database = self.clone();
@@ -538,14 +550,3 @@ impl Database {
     }
 }
 
-#[cfg(test)]
-impl Database {
-    pub(crate) async fn create_for_test(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
-        let database = self.clone();
-        blocking(move || {
-            let row = database.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
-            database.send_writes();
-            Ok(database.wire(&model)?.row(&row))
-        }).await
-    }
-}

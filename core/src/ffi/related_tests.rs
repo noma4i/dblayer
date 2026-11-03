@@ -39,7 +39,7 @@ pub(super) fn ids(tape: &Tape) -> Vec<String> {
 
 fn last(tape: &Tape) -> Seen { tape.last().expect("a delivery") }
 
-async fn make(db: &Database, model: &str, json: &str) { db.create_for_test(model.into(), json.into(), "{}".into()).await.unwrap(); }
+async fn make(db: &Database, model: &str, json: &str) { db.create(model.into(), json.into(), "{}".into()).await.unwrap(); }
 
 async fn patch(db: &Database, model: &str, id: &str, json: &str) { db.update(model.into(), id.into(), json.into(), "{}".into()).await.unwrap(); }
 

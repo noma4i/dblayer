@@ -155,3 +155,10 @@ impl Database {
 
     pub(crate) fn watch_query(&self, query_json: &str, sink: Arc<dyn ValueSink>) -> Arc<Watched> { self.watch(StreamRequest::Query { query_json: query_json.into() }, sink) }
 }
+
+impl Database {
+    pub(crate) async fn create_durable(&self, model: &str, values_json: &str) -> super::super::wire::WireRow {
+        let request = crate::ffi::CommandRequest { epoch: self.session_epoch(), model: model.into(), values_json: values_json.into(), args_json: "{}".into(), upload: None };
+        self.send(request).await.unwrap().row
+    }
+}

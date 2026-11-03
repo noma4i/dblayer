@@ -351,12 +351,11 @@ end
 - Use it for search results, prices and other data that is fetched, shown and dropped.
 
 ```swift
-@Live var online: [Presence]
-_online = Live(try Presence.where(Presence.room == "lobby"))
+let online = Projected<Presence>(try scope.stream(Presence.where(Presence.room == "lobby")))
 ```
 
 ```kotlin
-val online by Presence.where(Presence.room eq "lobby").collectAsLive()
+val online = Projected(scope.stream(Presence.where(Presence.room eq "lobby")), Presence, screenScope)
 ```
 
 ### Notices in memory
@@ -400,15 +399,13 @@ end
 ```
 
 ```swift
-@Live var notices: [Notice]
-@Live var interactions: [InteractionNotice]
-_notices = Live(Notice.recent)
-_interactions = Live(InteractionNotice.recent)
+let notices = Projected<Notice>(try scope.stream(Notice.recent))
+let interactions = Projected<InteractionNotice>(try scope.stream(InteractionNotice.recent))
 ```
 
 ```kotlin
-val notices by Notice.recent.collectAsLive()
-val interactions by InteractionNotice.recent.collectAsLive()
+val notices = Projected(scope.stream(Notice.recent), Notice, screenScope)
+val interactions = Projected(scope.stream(InteractionNotice.recent), InteractionNotice, screenScope)
 ```
 
 ## Associations
@@ -434,23 +431,23 @@ Singular associations capitalize their name, preserving a final `s`. Plural asso
 // group { id opponent { id } }       -> Group.opponent is the user
 // group { id opponent { id } }       -> opponent: null, Group.opponent is nil, the user row stays
 // group { id title }                 -> opponent not selected, Group.opponent keeps its last user
-let group = try await Group.find(groupId).current()
-let opponent = try await group?.opponent.current().first
+let groups = Query<Group>().where(Condition.equal("id", try JSONValue.encode(groupId)))
+let opponent = Projected<User>(try scope.related(groups, Group.Relations.opponent))   // opponent.value is the user
 ```
 
 ```kotlin
 // group { id opponent { id } }       -> Group.opponent is the user
 // group { id opponent { id } }       -> opponent: null, Group.opponent is null, the user row stays
 // group { id title }                 -> opponent not selected, Group.opponent keeps its last user
-val group = Group.find(groupId).current()
-val opponent = group?.opponent?.current()?.firstOrNull()
+val groups = Query("Group", Group).where(Condition.equal("id", jsonValue(groupId)))
+val opponent = Projected(scope.related(groups, Group.Relations.opponent), User, screenScope)   // opponent.value is the user
 ```
 
 - `dependent: :destroy` removes children in the same commit as the parent.
 - `touch: true` bumps the parent's revision when a child changes, so observers of the parent refresh. See [partial child updates](parent-fields.md) for `sets` field presence.
 - `sets: { lastNoteId: :id, lastNoteAt: :createdAt }` on a `belongs_to` writes the child fields to the parent fields in the same commit as every write of the child: a local `create`, an event, a page landing, the answer of a mutation, a replace, `land`. Destroying the child that the parent points at (the first parent field set from the child `id`), locally or from the server, moves the parent fields to the newest remaining child by the `newer` child fields, or to null when none remains. `newer: { sequenceNumber: :lastSequenceNumber, createdAt: :lastNoteAt }` writes only when the child is newer than what the parent holds. The pairs are a tuple in the order written: the first pair where both sides have a value and differ decides, a child with the id the parent already points at always refreshes, a temporary id outranks a confirmed one (client and server clocks never order them), and an empty parent value counts as older. The same tuple guards the parent row itself: a row of the parent that arrives from a list, an event or a mutation answer never moves these parent fields backward. An event for a child whose parent is not stored (a group outside the loaded pages) reloads the watched lists of the parent model. A discard or a refusal gives the parent values back, the swap of a temporary child id moves a parent field that points at it. Both options name fields that exist on their side, otherwise the model is rejected.
 - Foreign-key indexes are inferred from associations. Declare the foreign-key attribute, without adding its index again.
-- There are no counter caches. Count with a query: `moment.vibes.count`.
+- There are no counter caches. Count with a query: `scope.count(...)`.
 
 ## Scopes
 
@@ -717,10 +714,10 @@ end
 
 Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `event`, `missed` or `failed`.
 
-Any model with `changed_by` has a suspending `events()` call, whichever model declares the `changes` source. It prepares the first reader and returns after the server confirms the shared subscription. Opening offline waits for connectivity without an app retry or a timer. Other opening failures throw their original `DbError` kind. Events published after the call returns reach the prepared reader, including before iteration or collection starts. Every later iteration or collection opens an independent reader and waits for readiness. Concurrent readers receive their own events. A later opening failure arrives as the final `failed` item with its original error kind. An earlier event is not replayed, because rows before and after are read only while the model has a reader. Another model's reader or an observed read does not prove that your reader exists.
+Any model with `changed_by` has an events stream (`scope.events(Model)`), whichever model declares the `changes` source. Opening it prepares the first reader. Opening offline waits for connectivity without an app retry or a timer. Other opening failures throw their original `DbError` kind. Events published after the call returns reach the prepared reader, including before iteration or collection starts. Every later iteration or collection opens an independent reader and waits for readiness. Concurrent readers receive their own events. A later opening failure arrives as the final `failed` item with its original error kind. An earlier event is not replayed, because rows before and after are read only while the model has a reader. Another model's reader or an observed read does not prove that your reader exists.
 
 ```swift
-let events = try await Message.events()
+let events = try scope.events(Message.self)
 for await item in events {
   switch item {
   case .event(let event): show(event.before, event.after)
@@ -731,7 +728,7 @@ for await item in events {
 ```
 
 ```kotlin
-val events = Message.events()
+val events = scope.events(Message).events(Message)
 events.collect { item -> when (item) { is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Missed -> resync(item.count); is ModelEventItem.Failed -> report(item.error) } }
 ```
 
@@ -802,12 +799,12 @@ Terminal kinds in `removes_on` delete the row without requiring a payload.
 Both payload declarations remove all MESSAGE node requests. Model events retain their active-reader snapshots and never replay earlier events.
 
 ```swift
-let events = try await Chat.events()
+let events = try scope.events(Chat.self)
 let chats = try Chat.list("PRIMARY")
 ```
 
 ```kotlin
-val events = Chat.events()
+val events = scope.events(Chat).events(Chat)
 val chats = Chat.list("PRIMARY")
 ```
 
@@ -946,15 +943,16 @@ query GroupMembers($groupId: ID!, $order: GroupMemberOrder = JOINED, $first: Int
 ```
 
 ```swift
-let members = LiveList(try User.groupMembers(groupId))                      // JOINED, members.rows, members.snapshot.hasMore
-let owners = LiveList(try User.groupMembers(groupId, order: .ownerFirst))   // its own window and cursor
+let members = Projected<User>(try scope.stream(User.groupMembers(groupId)))                      // JOINED, members.rows, members.state?.hasMore
+let owners = Projected<User>(try scope.stream(User.groupMembers(groupId, order: .ownerFirst)))   // its own window and cursor
 try await User.groupMembers(groupId).loadMore()                         // .loaded(hasMore: true) while another page exists
 ```
 
 ```kotlin
-val members = User.groupMembers(groupId)                                  // JOINED
-val owners = User.groupMembers(groupId, order = GroupMemberOrder.OwnerFirst)  // its own window and cursor
-members.loadMore()                                 // LoadMoreResult.Loaded(true) while another page exists
+val members = Projected(scope.stream(User.groupMembers(groupId)), User, screenScope)                                  // JOINED
+val owners = Projected(scope.stream(User.groupMembers(groupId, order = GroupMemberOrder.OwnerFirst)), User, screenScope)  // its own window and cursor
+val page = User.groupMembers(groupId)
+page.loadMore()                                    // LoadMoreResult.Loaded(true) while another page exists
 ```
 
 `total` is set only when the connection selects `totalCount`. Without it `total` stays nil and `hasMore` comes from `pageInfo`.
@@ -962,11 +960,11 @@ members.loadMore()                                 // LoadMoreResult.Loaded(true
 `total from: "node.membersCount"` takes `total` from a field beside the connection: the path starts at the first field of the operation, like `response from:`. The group size `Group.membersCount` counts every member, `totalCount` of the connection counts only the members the viewer can see. The document must select the field and the schema check refuses a path that is not an `Int`. Each page that carries the field sets `total`, a page without it keeps the last value, and the value survives a restart. The line needs `paginate`.
 
 ```swift
-let snapshots = try await User.groupMembers(groupId).snapshots.stream()   // snapshot.total is Group.membersCount, 53 for a group of 53
+let members = Projected<User>(try scope.stream(User.groupMembers(groupId)))   // members.state?.total is Group.membersCount, 53 for a group of 53
 ```
 
 ```kotlin
-val total = User.groupMembers(groupId).snapshots.flow.first { it.total != null }.total   // Group.membersCount
+val members = Projected(scope.stream(User.groupMembers(groupId)), User, screenScope)   // members.projection.value.state?.total is Group.membersCount
 ```
 
 | Line | Meaning |
@@ -999,7 +997,7 @@ val groups = Group.nodes(ids)
 - `nodes` skips null and empty entries, preserves repeated IDs in response order, and writes each row once. Every call asks the server.
 - Repeated rows merge selected fields before storage. The last supplied value wins, and root fields take precedence over nested copies.
 - An answer that arrives after the database was reset (a logout or a cache reset of the model) is dropped. Nothing is written, `node` returns nil and `nodes` returns an empty list.
-- `Model.entity(id)` and `Model.find(id)` stay the way to watch a row. A node read fills them.
+- `scope.entity(Model, id)` is the way to watch a row. A node read fills it.
 - The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has an attribute that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.
 
 ## Validation
@@ -1081,28 +1079,6 @@ user.answerConnection(decision = ConnectionAction.Accept)
 ```
 
 Attributes marked `local: true`, `:file` attributes and models with `storage: :local` are skipped. Schema fields that the model leaves out are listed as notes, because a model may select a subset.
-
-## Operation effects
-
-Four lines of a named `operation` declare effects beyond the row of the operation. [Writing data](writing-data.md#changes-beyond-the-row) describes what they do.
-
-| Line | Form |
-| ---- | ---- |
-| `add_to :scope` | `add_to :scope[, Model][, rows: :param][, with: { name: value }]` |
-| `remove_from :scope` | `remove_from :scope[, Model][, rows: :param][, with: { name: value }]` |
-| `create_row Model` | `create_row Model, attribute: value, ...` |
-| `change_row Model` | `change_row Model[, row: :param], attribute: value, ...` |
-
-Each line may repeat. An operation with an effect line needs no `optimistic` line, and `optimistic false` beside one is an error. The generator stops and names the line for each of these:
-
-- an effect line in a standard operation (`create`, `update`, `destroy`);
-- a model, scope, attribute or parameter that is not declared, or a scope without `query`;
-- `rows:` that names a parameter that is not `:id` or `[:id]`, and an effect on rows of another model without `rows:`;
-- `with:` that names a name the scope has no parameter for, an `add_to` that leaves a parameter without default unbound, and a `remove_from` that binds only some parameters;
-- `create_row` twice for one model, and `create_row` without the `upsert` or `response from:` row that replaces it;
-- `change_row` without `row:` on a model that has no single global scope, and `plus:` or `minus:` on an attribute or parameter that is not a number.
-
-A parameter that only an effect line uses is valid. The core checks the same rules when it opens the models, so a hand-written models JSON gets the same errors.
 
 ## Access level
 

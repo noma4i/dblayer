@@ -11,7 +11,7 @@ async fn a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_s
     let rig = Rig::new();
     let database = signed_in(&rig).await;
     rig.server.reply_with(serde_json::json!({ "makeMoment": { "id": "42", "text": "hello" } }));
-    let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
     rig.server.refuse_next("UNAUTHENTICATED", false);
 
     let refused = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();

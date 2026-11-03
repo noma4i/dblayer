@@ -150,7 +150,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
 | `DB.run(_:variables:)` and generated `Operations.*` calls (`DBlayer.database.run` in Kotlin) | the call got the sealed refusal |
 | `settled(action)`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. `unauthenticated` and `accountUnavailable` keep the operation failed and the optimistic row in place, `error.kind` is `session:<CODE>` and `error.message` is the detail. Recover as in "Recover a queued mutation" below. Every other code follows the `onFailure` rule of the action, as for any refusal |
-| live reads (`live`, `LiveList`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
+| streams (`scope.stream`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
 `flush()` and `retry(action)` do not throw for the refusal of one operation. `sessionResume()` throws sealed refusals but returns `nil` / `null` for permanent HTTP refusals listed below. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
 
@@ -548,7 +548,7 @@ Constant `variables` keep a scope out of automatic insertion unless a `matches` 
 `insert_on: [:event, :response, :node]` also admits rows from `changed_by` node rereads.
 Missing members join loaded windows at the head. Existing members keep their places. Manual node reads do not insert members.
 After a reconnect, Cable rereads the observed selections of models with `changed_by`.
-`via: :observed` uses this reread for each event. Each event also reaches `Model.events()` with the row before and after the reread, see [Models](models.md).
+`via: :observed` uses this reread for each event. Each event also reaches `scope.events(Model)` with the row before and after the reread, see [Models](models.md).
 
 ## Mutations
 

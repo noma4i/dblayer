@@ -23,14 +23,14 @@ async fn a_reported_desync_makes_the_next_delivery_the_whole_list_of_the_databas
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None, None).await.unwrap();
     let settle = || database.db.await_revision(database.db.revision_seq().unwrap());
     for text in ["a", "b", "c"] {
-        database.create_for_test("Note".into(), serde_json::json!({"text": text}).to_string(), "{}".into()).await.unwrap();
+        database.create("Note".into(), serde_json::json!({"text": text}).to_string(), "{}".into()).await.unwrap();
         settle();
     }
     let tape = Arc::new(Rows::default());
     let stream = database.watch_query(r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#, tape.clone());
     let first = heard(&tape, 1).await;
     assert!(matches!(&first[0], StreamValue::Snapshot { rows, .. } if rows.len() == 3));
-    database.create_for_test("Note".into(), r#"{"text":"d"}"#.into(), "{}".into()).await.unwrap();
+    database.create("Note".into(), r#"{"text":"d"}"#.into(), "{}".into()).await.unwrap();
     settle();
     let seen = heard(&tape, 2).await;
     assert!(matches!(seen[1], StreamValue::Delta { .. }), "a later change arrives as a delta");

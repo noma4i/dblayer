@@ -15,7 +15,7 @@ Select the full Message projection inside `EntityChange.message`. Terminal messa
 Use the same Chat revision field in node and page documents.
 Regenerate Swift and Kotlin models with the schema and operation documents.
 Remove the manual Chat reread and list refetch after MESSAGE on both platforms.
-Keep `Chat.events()` and the generated list scope. The core applies payload rows, membership and event snapshots.
+Keep the generated list scope and open `scope.events(Chat)` for the events. The core applies payload rows, membership and event snapshots.
 Without a payload declaration, the declared identifier-based read remains forced. There is no TTL skip or automatic fallback.
 Rust `ChangeRead` literals add `payload: None` for identifier-based reads. `ModelSpec` adds the optional `server_revision` field.
 
@@ -41,7 +41,7 @@ The `chatMediaState` query takes `chatId` and `upToSequence`, and selects every 
 The `chatMedia` query takes `afterSequence`, `first`, `after` and returns messages in ascending sequence order.
 The source of `revision` is `ChatMediaLibrary.revision`, the server's `chats.media_revision`. `Chat.revision` does not replace this marker.
 Regenerate Swift and Kotlin models with the GraphQL schema and query documents.
-Open `LiveList(try ChatMedia.media(chatId))` on Swift or `LiveList(ChatMedia.media(chatId), scope)` on Kotlin.
+Open `Projected(try scope.stream(ChatMedia.media(chatId)))` on Swift or `Projected(scope.stream(ChatMedia.media(chatId)), ChatMedia, screenScope)` on Kotlin.
 Remove the local Chat fields: `mediaSequence`, `mediaVisualCount`, `mediaAudioCount`, `mediaGiftCount`.
 A typed SQLite marker owned by the core replaces them.
 Remove counter comparisons and manual tail loading from ChatMediaModel on both platforms.
@@ -55,15 +55,15 @@ Derived preload: `preload vibeId: { from: "Compass.rows" }, limit: 40`.
 Remove `preload ... { from: ... }` declarations without `limit`. `limit` is now a reserved key of the `preload` line.
 Full membership scope: `scope :chat_members, members_complete: true do`, existing `query`, `response`, `paginate size: 100, direction: :forward`.
 `max_pages` is incompatible with `members_complete`. The server limit for a members page is 100.
-Swift: `LiveList(try User.chatMembers(chatId))`.
-Kotlin: `LiveList(User.chatMembers(chatId), scope)`.
-Read `snapshot.phase`, `snapshot.error`, `snapshot.complete`, through `snapshot.value` in Kotlin.
+Swift: `Projected(try scope.stream(User.chatMembers(chatId)))`.
+Kotlin: `Projected(scope.stream(User.chatMembers(chatId)), User, screenScope)`.
+Read `state.phase`, `state.error`, `state.complete` from the projection.
 Completeness occurs only after `hasNextPage == false`. A short or empty intermediate page does not end the chain.
 On error, partial rows remain: `Loaded` with `error`, `complete = false`. Without rows, the phase is `Failed`.
 The last reader cancels the request. The next reader continues from the saved cursor. Network return continues a failed chain with readers.
 Remove `CompassRowLoads`, manual `loadAll`, the completeness flag of `ChatGroupDetails`, the second list and app-side row slicing.
 SQLite stores the full membership.
-`rows` and `snapshot.error` of `LiveList` read the same snapshot. Regenerate models for both platforms.
+`rows` and `state.error` of the projection read the same value. Regenerate models for both platforms.
 
 ## Create sources
 
@@ -78,11 +78,11 @@ Replace `matches: { kind: "ACTIVE" }` with `matches: { kind: ["ACTIVE"] }`.
 Use `matches: { kind: { not: ["SCREENSHOT"] } }` for exclusion.
 Declare ChatAction with the five accepted activity kinds. Declare ChatActivityNotice with `["SCREENSHOT"]` on the same subscription.
 Remove app-side kind switches, receive/stop calls and notice copying. Regenerate both platforms.
-Model-level subscription declarations expose `Model.events()` on Swift and Kotlin.
-Regenerate both platforms and replace the `events` property with `try await Model.events()` on Swift or `Model.events()` on Kotlin.
+Model-level subscription declarations are read with `scope.events(Model)` on Swift and Kotlin.
+Regenerate both platforms and replace the `events` property with `scope.events(Model.self)` on Swift or `scope.events(Model).events(Model)` on Kotlin.
 Start actions after this call returns: the first reader and server subscription are ready.
 Remove offline retry loops around this call. The library waits for connectivity and owns cancellation and reader release.
-Reusing the returned stream creates an independent reader for each later collection, including after completion or cancellation.
+A stream is one reader. Open a new one for each screen.
 Handle opening errors with their original `DbError` kind. Later collection failures use `ModelEventItem.failed` or `ModelEventItem.Failed`.
 
 ## Node membership
@@ -93,10 +93,9 @@ Remove app-side insertion and list refetch after MESSAGE. Regenerate Swift and K
 The existing generated list and node calls keep their signatures.
 Missing members join the head. Existing members keep their places. Manual node reads do not insert rows into lists.
 
-## Entity snapshot
+## One owner per stream
 
-Read `entity.snapshot` on Swift or `entity.snapshot.value` on Kotlin when one view needs value, phase, read, revision and staleness together. The `value`, `phase`, `read`, `isStale` and `id` accessors stay and read the same snapshot.
-Remove app code that waits for a cached first value or seeds an entity by hand. A new entity is `opening` until the first snapshot of the core arrives.
-Replace `fetch: .stale` plus a manual row check with `fetch: .ifMissing` (Kotlin: `EntityFetch.IF_MISSING`) when the node should be read only for an absent row.
-`waitForInitialLoad()` of an entity without fetch now returns after the first local snapshot and sends no request.
-Removed: platform-side retained values, `EntitySource` and `EntityRefresh`. The core owns them.
+Replace `LiveList`, `Live`, `Entity`, `.live`, `.snapshots`, `.find(id)`, `.entity(id)` and `Model.events()` with `AccountScope` streams and `Projected`. See [live data](live-data.md).
+Replace `Model.create` of a message or a media record with `Model.send(in: scope, ...)`. See [writing data](writing-data.md#sending-without-a-network).
+Replace `add_to`, `remove_from`, `create_row` and `change_row` lines with `upsert` and `refetch`. An action that needs the server fails at once while the network is away.
+Make a new `AccountScope` after each sign-in and build the screens again for it.

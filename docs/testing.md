@@ -24,10 +24,9 @@ A call with no queued reply fails at once with `Invalid` that names the operatio
 
 `transport.calls` lists the requests it received. `emit` pushes a subscription event and `breakSubscription` drops the subscription.
 
-For model events, open the reader before calling `emit`: `let events = try await Message.events()` in Swift, `val events = Message.events()` in Kotlin. The call returns after the transport has registered the subscription sink, or throws if opening fails. Emit immediately after it returns, then read or collect the returned stream. No sleep, retry or request-count check is needed. Events sent before opening are not replayed.
+For model events, open the reader before calling `emit`: `let events = try scope.events(Message.self)` in Swift, `val events = scope.events(Message).events(Message)` in Kotlin. The call returns after the stream is registered in the core. Emit immediately after it returns, then read or collect the returned stream. No sleep, retry or request-count check is needed. Events sent before opening are not replayed.
 
-Keep native observer handles alive until every asynchronous assertion finishes. In Kotlin, enclose direct `liveEntities` tests in `use` and test delivery after `System.gc()`.
-JVM locals can become unreachable after their last use, even while the enclosing test still awaits callbacks.
+Keep the projections and streams of a test alive until every asynchronous assertion finishes. A stream ends in the core when its reader is released.
 
 A live query loads by itself when something subscribes, and an explicit refresh can add a second request. Queue 2 or 3 replies per operation and assert the content of `transport.calls`, not their exact count.
 
@@ -136,7 +135,7 @@ Test conventions:
 - Kotlin tests that open the shared database run sequentially with JUnit 4. Keep that shared state sequential if changing the test runner. Tests using independent database handles can run concurrently on either platform.
 - Before advancing manual cable clocks, await the registered deadline in Swift and Kotlin. A received frame's timestamp does not prove its asynchronous sleep has registered. A closed socket also precedes the connection actor's completion and its reconnect sleep registration. Read the actor's closed state, then await that sleep. After a reopen delay, await the new socket rather than a fixed settling interval. For terminal closure, await the client's start task before advancing time.
 - A test waits only through `eventually` or `Cursor` (Swift, `Waiting.swift`) and `bounded` or `eventually` (Kotlin, `TestWaiting.kt`). Each wait has a timeout and its failure names the condition. `check_waits.sh` rejects loops, raw iterators, `runBlocking` and pauses (`Task.sleep`, `Thread.sleep`, `delay(`) in tests. A test that needs time to pass moves the test clock.
-- A test that must see a row after upload runs or other commits reads storage (`Asset.find(id).current()`, `liveFind(...).current()`), not `peekRow`: a commit evicts the row from the row cache, so a cache read passes or fails with the timing of background runs. Run such a test with `cacheRows: 1` so it cannot depend on the cache.
+- A test that must see a row after upload runs or other commits reads storage (`Query<Asset>().cachedRow(id)`), not `peekRow`: a commit evicts the row from the row cache, so a cache read passes or fails with the timing of background runs. Run such a test with `cacheRows: 1` so it cannot depend on the cache.
 - The step timer of `run_bounded` freezes the process tree (`SIGSTOP`) before it lists the descendants, so a step that spawns a child at the moment of expiry cannot leave it running. The self test of this (`inv_check_05_a_step_past_its_limit_leaves_no_process`) lets the limit expire at once and the child appear between the listing and the kill.
 - Tests are never embedded in source files. A module is a directory with `mod.rs`, and the tests of `x.rs` are in `x_tests.rs` next to it.
 - Every behavior test is written first and seen failing.

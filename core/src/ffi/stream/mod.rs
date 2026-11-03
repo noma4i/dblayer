@@ -11,6 +11,7 @@ mod frame;
 mod open;
 mod owner;
 #[cfg(test)]
+#[path = "tape_tests.rs"]
 pub(crate) mod tape;
 
 pub use crate::sync::EntityFetch;

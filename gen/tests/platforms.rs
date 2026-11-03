@@ -35,10 +35,10 @@ end
     assert_eq!(moment.relations[1].remote.as_ref().unwrap().operation, "MomentsFeed");
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    for token in ["struct Moment", "DBModel", "func set(", "static var recent", "static var feed", "func like("] {
+    for token in ["struct Moment", "DBModel", "func create(", "func set(", "static var recent", "static var feed", "func like("] {
         assert!(swift.contains(token), "missing Swift {token}");
     }
-    for token in ["ModelDecoder<Moment>", "data class Moment", "fun set(", "val recent", "val feed", "fun like(", "fun ids("] {
+    for token in ["ModelDecoder<Moment>", "data class Moment", "fun create(", "fun set(", "val recent", "val feed", "fun like(", "fun ids("] {
         assert!(kotlin.contains(token), "missing Kotlin {token}");
     }
 }
@@ -197,8 +197,8 @@ fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
-    assert!(swift.contains("@concurrent public func update(text: String? = nil)") && !swift.contains("func create(") && !swift.contains("func send("), "{swift}");
-    assert!(kotlin.contains("suspend fun update(text: String? = null)") && !kotlin.contains("fun create(") && !kotlin.contains("fun send("), "{kotlin}");
+    assert!(swift.contains("@concurrent public static func create(text: String)") && swift.contains("@concurrent public func update(text: String? = nil)"), "{swift}");
+    assert!(kotlin.contains("suspend fun create(text: String)") && kotlin.contains("suspend fun update(text: String? = null)"), "{kotlin}");
 }
 
 #[test]

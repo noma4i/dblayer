@@ -14,16 +14,16 @@ DBlayer.sessionReset()
 
 The sign-out also stops singleton subscriptions and empties their entities. Signing in again restarts them: the app calls nothing.
 
-All writes are optimistic: they apply to the local database at once, so every live read updates immediately. A write that must reach the server is also placed in a durable queue in the same commit.
+A write applies to the local database at once, so every open stream updates immediately. A send and a media upload are also placed in a durable queue in the same commit. Other actions that reach the server need the network and fail at once without it.
 
 ```swift
-let moment = try await Moment.create(text: "hello", media: nil)
+let moment = try await Moment.send(in: scope, text: "hello", media: nil).row
 try await moment.update(text: "hello world")
 try await moment.destroy()
 ```
 
 ```kotlin
-val moment = Moment.create(text = "hello", media = null)
+val moment = Moment.send(scope, text = "hello", media = null).row
 moment.update(text = GraphQLNullable.Value("hello world"))
 moment.destroy()
 ```
@@ -38,14 +38,14 @@ try await moment.update(text: .some(nil))
 moment.update(text = GraphQLNullable.Null)
 ```
 
-`create` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send. `local :userId, from: { of: CurrentUser, field: :id }` fills the attribute from a singleton row. Repeat `local` with different destinations and sources. Generated `create` makes each sourced argument optional. A non-null explicit value wins. An absent singleton leaves the attribute unset. Duplicate destinations and incompatible types fail generation. `update` accepts plain `local` and rejects `local from:`.
+`send` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send. `local :userId, from: { of: CurrentUser, field: :id }` fills the attribute from a singleton row. Repeat `local` with different destinations and sources. Generated `create` makes each sourced argument optional. A non-null explicit value wins. An absent singleton leaves the attribute unset. Duplicate destinations and incompatible types fail generation. `update` accepts plain `local` and rejects `local from:`.
 
 ```swift
-let message = try await Message.create(text: "hello")
+let message = try await Message.send(in: scope, text: "hello").row
 ```
 
 ```kotlin
-val message = Message.create(text = "hello")
+val message = Message.send(scope, text = "hello").row
 ``` Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
 ## Values the row does not store
@@ -53,7 +53,7 @@ val message = Message.create(text = "hello")
 A mutation may need a value that is not an attribute of the model, such as a signed upload id or the id of an attached record. Declare it with `parameter` inside `operation :create` or `operation :update`. Map it to a mutation variable with `variables`:
 
 ```ruby
-operation :create do
+operation :create, durable: true do
   mutation "SendNote"
   wrap "input"
   variables groupId: :groupId, body: :body, file: :file, attachedUserId: :attachedUserId
@@ -63,11 +63,11 @@ end
 ```
 
 ```swift
-let message = try await Note.create(groupId: group.id, body: "hi", attachedUserId: "42", file: signedId)
+let message = try await Note.send(in: scope, groupId: group.id, body: "hi", attachedUserId: "42", file: signedId).row
 ```
 
 ```kotlin
-val message = Note.create(groupId = group.id, body = "hi", attachedUserId = "42", file = signedId)
+val message = Note.send(scope, groupId = group.id, body = "hi", attachedUserId = "42", file = signedId).row
 ```
 
 A parameter has a type (`:bool`, `:int`, `:num`, `:string`, `:id` or `[:id]`). `null: true` makes it optional: the call may leave it out and the variable is then not sent. The generated call takes the parameters after the attributes, in alphabetical order. The parameters of `update` are always optional.
@@ -112,13 +112,13 @@ A refusal is kept until `settled(action)` or `confirmedId()` reads it, even when
 To wait for the server id, for example to open the screen of the record you just created, call `confirmedId()`. It returns the real id once the queued `create` is answered and throws if the server refuses it or the device is offline:
 
 ```swift
-let group = try await Group.create(name: "Trip", userIds: ids)
-let groupId = try await group.confirmedId()
+let note = try await Note.send(in: scope, groupId: group.id, body: "hi").row
+let noteId = try await note.confirmedId()
 ```
 
 ```kotlin
-val group = Group.create(name = "Trip", userIds = ids)
-val groupId = group.confirmedId()
+val note = Note.send(scope, groupId = group.id, body = "hi").row
+val noteId = note.confirmedId()
 ```
 
 A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `match_by "groupId", "userId", "kind", "body"` to the `create` operation, or to a custom operation, to name the attributes that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: observers get a `replaced` entry, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
@@ -248,7 +248,8 @@ group.mute(mute = true)
 
 ## Changes beyond the row
 
-An operation changes more than its own row: a user joins a list, a message appears in another chat, a balance drops. Four lines declare these effects. They apply with the call, in the same commit as the queued change, and one refusal takes back exactly what its operation did:
+An operation writes its own row. It does not write other rows, lists or scopes on the device before the server answers.
+The rows the server answers with arrive through `upsert Model, from: "path"` and `response from:`. A scope that the answer changes is read again with `refetch :scope`.
 
 ```ruby
 operation :block do
@@ -256,23 +257,13 @@ operation :block do
   variables userId: :id
   wrap "input"
   response :ignore
-  add_to :blocked
-end
-
-operation :add_members do
-  mutation "ChatGroupUpdate"
-  parameter :userIds, [:id]
-  variables chatId: :id, addUserIds: :userIds
-  wrap "input"
-  response :ignore
-  add_to :chat_members, User, rows: :userIds, with: { chatId: :id }
+  refetch :blocked
 end
 
 operation :send_gift do
   mutation "GiftSend"
   parameter :giftId, :string
   parameter :chatId, :id
-  parameter :price, :int, null: true
   variables userId: :id, giftId: :giftId
   wrap "input"
   upsert Message, from: "giftSend.message"
@@ -280,47 +271,47 @@ operation :send_gift do
     attribute :successMessage, :string
   end
   response from: "giftSend.user"
-  create_row Message, chatId: :chatId, kind: "GIFT"
-  change_row CurrentUser, balance: { minus: :price }
 end
 ```
 
 ```swift
 try await user.block()
-try await chat.addMembers(userIds: ["u1", "u2"])
-let sent = try await user.sendGift(giftId: "g1", chatId: chat.id, price: 30)
+let sent = try await user.sendGift(giftId: "g1", chatId: chat.id)
 let text = try await sent.answer().successMessage
 ```
 
 ```kotlin
 user.block()
-chat.addMembers(userIds = listOf("u1", "u2"))
-val sent = user.sendGift(giftId = "g1", chatId = chat.id, price = 30)
+val sent = user.sendGift(giftId = "g1", chatId = chat.id)
 val text = sent.answer().successMessage
 ```
 
-| Line | Effect |
-| ---- | ------ |
-| `add_to :scope` | the row joins the head of a server scope, as a created row does |
-| `remove_from :scope` | the row leaves the scope |
-| `create_row Model, attribute: value, ...` | a new row of `Model` with a temporary id appears, and the row the server answers replaces it |
-| `change_row Model, attribute: value, ...` | attributes of another row change |
+An action that needs the server fails at once while the network is away (`DbError.Network`). It does not wait in a queue.
 
-`add_to` and `remove_from` act on the row of the operation. Another model comes after the scope, and `rows:` names an `:id` or `[:id]` parameter that holds the rows to join or leave. A row that is not stored on the device is skipped, the refetch of the scope brings it. `with:` binds the parameters of the scope to `:id` (the row of the operation), to a parameter or to a value. `add_to` binds every parameter that has no default. `remove_from` binds all parameters or none, and with none the row leaves the scope for every value of its parameters.
+## Sending without a network
 
-A value is a literal, a parameter (`:price`), `:id`, `{ owner: :body }` (an attribute of the row of the operation), `{ of: CurrentUser, field: :id }` (an attribute of the only row of a model that has one) or `{ of: User, row: :userId, field: :name }` (an attribute of the row an `:id` parameter names). In `change_row`, `{ minus: :price }` and `{ plus: :price }` shift a number. A value that comes from a parameter the call left out is skipped: an attribute of `create_row` gets the zero value, a field of `change_row` stays, a scope parameter skips the effect. `change_row` finds its row with `row: :param`, or takes the only row of a model that has a single global scope. A row that is not stored is skipped.
+Two operations are durable: sending a message and uploading media (chat, avatar, moment). They write the row at once, queue the request, and survive a lost network and a closed app.
+Declare the send with `durable: true` on `operation :create`. The generator then writes `Model.send(in: scope, ...)` (Swift) and `Model.send(account, ...)` (Kotlin).
 
-`create_row` needs the row that replaces it: an `upsert Model, from:` line, or the `response from:` row when the model is the model of the operation and the answer is another row. The new row joins the lists of its parameters like a created row. It has no sync state of its own: the row of the operation carries the state of the queued change.
+```ruby
+operation :create, durable: true do
+  mutation "MessageSend"
+  variables chatId: :chatId, text: :text
+end
+```
 
-Rolling back follows the rules of [rolling back](#rolling-back), applied to each effect:
+```swift
+let sent = try await Message.send(in: scope, chatId: chat.id, text: "hi")
+let outcome = try await sent.outcome()   // .delivered(id:), .failed(message:), .ended
+```
 
-| Outcome | Membership | Created row | Changed attributes |
-| ------- | ---------- | ----------- | ------------------ |
-| the server refuses | the row returns to its place, or leaves again, unless a newer change of the same list still holds it | the row disappears | the attribute returns unless a newer change or the server owns it now |
-| the delivery is unknown | stays | stays | stays |
-| the server answers | stays until the refetch of the scope | the row of the answer replaces it | stays until the answer row or the refetch writes it |
+```kotlin
+val sent = Message.send(scope, chatId = chat.id, text = "hi")
+val outcome = sent.outcome()             // CommandStatus.Delivered, Failed, Ended
+```
 
-A page of a scope that arrives while the change is queued keeps the rows the change added and does not bring back the rows it removed. A refused number rolls back to the value it had, so a newer change of the same number keeps its result until the server answers it.
+`outcome()` waits for the one final value, also while the network is away. A command of an ended session ends with it and does not go to the next account.
+A model without a server mutation for `create` keeps `Model.create(...)` for rows that only this device holds.
 
 ## What the server answered
 

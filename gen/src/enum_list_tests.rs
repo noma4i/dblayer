@@ -2,7 +2,7 @@ use std::fs;
 
 use crate::{compile_files, emit_kotlin, emit_swift, parse_models};
 
-const CHAT: &str = "model Chat do\n  attribute :title, :string\n  attribute :lists, [:enum], values: [\"PRIMARY\", \"SECONDARY\"], as: ChatList\n  attribute :extras, [:enum], values: [\"a_b\", \"c\"], as: ChatExtra, null: true\n  operation :create, durable: true do\n    mutation \"CreateChat\"\n  end\nend\n";
+const CHAT: &str = "model Chat do\n  attribute :title, :string\n  attribute :lists, [:enum], values: [\"PRIMARY\", \"SECONDARY\"], as: ChatList\n  attribute :extras, [:enum], values: [\"a_b\", \"c\"], as: ChatExtra, null: true\nend\n";
 
 #[test]
 fn a_list_of_enum_values_is_a_typed_list_on_both_platforms() {
