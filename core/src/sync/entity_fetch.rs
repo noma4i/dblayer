@@ -30,6 +30,10 @@ impl Sync {
     pub fn refresh_entities(&self, model: &str, ids: &[String], fetch: EntityFetch, sink: RefreshSink) -> Result<CancelToken, SyncError> {
         let cancel = CancelToken::new();
         if fetch == EntityFetch::None { return Ok(cancel); }
+        if !self.inner.admitted(crate::lifecycle::Origin::Observed) {
+            for id in ids { sink(id, None); }
+            return Ok(cancel);
+        }
         let spec = self.inner.db.spec(model).map_err(|_| SyncError::UnknownModel(model.into()))?;
         let relation = spec.relations.iter().find(|declared| declared.node == Some(NodeRead::One))
             .ok_or_else(|| SyncError::UnknownRelation { model: model.into(), relation: "node".into() })?.name.clone();
@@ -53,7 +57,7 @@ impl Sync {
                 if present { return Ok(()); }
                 if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return Err(SyncError::Cancelled); }
             }
-            inner.node(&due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
+            inner.node(crate::lifecycle::Origin::Observed, &due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
         };
         let result = tokio::select! { biased; _ = due.cancel.cancelled() => return, result = work => result };
         if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return; }
@@ -81,15 +85,21 @@ impl Sync {
     }
 
     pub(crate) fn refresh_due_entities(&self, session: bool) {
+        self.inner.refresh_due_entities(session);
+    }
+}
+
+impl Inner {
+    pub(crate) fn refresh_due_entities(self: &Arc<Self>, session: bool) {
         let waiting: Vec<DueRefresh> = {
-            let mut due = locked(&self.inner.entity_due);
+            let mut due = locked(&self.entity_due);
             let (waiting, kept) = std::mem::take(&mut *due).into_iter().partition(|due| due.session == session);
             *due = kept;
             waiting
         };
         let Ok(runtime) = Handle::try_current() else { return };
-        for due in waiting.into_iter().filter(|due| !due.cancel.is_cancelled() && due.generation == self.inner.db.generation()) {
-            runtime.spawn(self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
+        for due in waiting.into_iter().filter(|due| !due.cancel.is_cancelled() && due.generation == self.db.generation()) {
+            runtime.spawn(self.until_closed(Sync::refresh_entity(self.clone(), due)));
         }
     }
 }

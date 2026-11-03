@@ -13,7 +13,7 @@ pub trait CloudStateListener: Send + Sync {
 #[derive(uniffi::Object)]
 pub struct CloudLink {
     pub(super) cloud: Cloud,
-    registration: std::sync::OnceLock<super::open_streams::Registration>,
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
 }
 
 #[uniffi::export]
@@ -28,9 +28,9 @@ impl Database {
     }
 }
 
-impl super::open_streams::Closable for CloudLink {
+impl crate::lifecycle::Member for CloudLink {
     fn close(&self) { self.cloud.stop(); }
-    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 }
 
 #[uniffi::export]

@@ -1,8 +1,6 @@
 use super::error::DbError;
 use super::open::Db;
 
-pub(crate) use crate::store::ResetListener;
-
 impl Db {
     pub(crate) fn testing_busy(&self) -> Result<Option<&'static str>, DbError> {
         let expiry = match self.shared.expiry_gate.try_lock() {
@@ -24,10 +22,6 @@ impl Db {
             return Ok(Some("upload round"));
         }
         Ok(None)
-    }
-
-    pub(crate) fn on_reset(&self, listener: ResetListener) {
-        self.shared.store.on_reset(listener);
     }
 
     pub fn reset(&self, models: &[&str]) -> Result<(), DbError> {

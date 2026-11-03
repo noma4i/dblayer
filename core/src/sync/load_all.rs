@@ -13,10 +13,12 @@ use super::load_owner::FlightTicket;
 
 impl Inner {
     pub(crate) async fn load_members(self: &Arc<Self>, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
+        let origin = resolved.origin;
+        if !self.admitted(origin) { return Err(SyncError::Cancelled); }
         let (inner, model, relation, params) = (self.clone(), resolved.model.clone(), resolved.relation.clone(), resolved.params.clone());
         let mut reader = self.owner.members(&resolved.window_key, |result| {
             tokio::spawn(self.until_closed(async move {
-                let loaded = match inner.resolve(&model, &relation, &params) {
+                let loaded = match inner.resolve(origin, &model, &relation, &params) {
                     Ok(resolved) => inner.members_chain(&resolved, force).await,
                     Err(error) => Err(error),
                 };
@@ -91,7 +93,7 @@ impl Inner {
 impl Sync {
     pub async fn load_all(&self, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<(), SyncError> {
         let _app = self.app_load();
-        let resolved = self.inner.resolve(model, relation, params)?;
+        let resolved = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?;
         if resolved.media.is_some() { return self.inner.load_members(&resolved, options.force).await; }
         self.inner.load_all(&resolved, options.force).await
     }

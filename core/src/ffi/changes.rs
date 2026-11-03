@@ -9,6 +9,7 @@ struct State {
     pending: VecDeque<LiveChange>,
     rows: Vec<super::WireRow>,
     closed: bool,
+    min_revision: i64,
 }
 
 impl State {
@@ -36,10 +37,11 @@ impl State {
 
 #[derive(uniffi::Object)]
 pub struct LiveChanges {
-    registration: std::sync::OnceLock<super::open_streams::Registration>,
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
     state: Mutex<State>,
     ready: tokio::sync::Notify,
     subscription: Mutex<Option<Arc<LiveSubscription>>>,
+    context: std::sync::OnceLock<(crate::db::Db, String)>,
 }
 
 struct Listener(Weak<LiveChanges>);
@@ -51,7 +53,7 @@ impl QueryListener for Listener {
 
 impl LiveChanges {
     fn new() -> Arc<Self> {
-        Arc::new(Self { state: Mutex::new(State::default()), ready: tokio::sync::Notify::new(), subscription: Mutex::new(None), registration: Default::default() })
+        Arc::new(Self { state: Mutex::new(State::default()), ready: tokio::sync::Notify::new(), subscription: Mutex::new(None), registration: Default::default(), context: Default::default() })
     }
 
     fn with_state(&self, change: impl FnOnce(&mut State)) {
@@ -61,7 +63,7 @@ impl LiveChanges {
 
     fn push(&self, change: LiveChange) {
         self.with_state(|state| {
-            if state.closed { return; }
+            if state.closed || change.revision < state.min_revision { return; }
             state.apply(&change);
             if state.pending.len() >= CHANGE_QUEUE_LIMIT {
                 let mut replacement = LiveChange::whole(change.revision, state.rows.clone());
@@ -81,6 +83,8 @@ impl LiveChanges {
 impl Database {
     pub fn changes(&self, query_json: String) -> Result<Arc<LiveChanges>, DbError> {
         let queue = LiveChanges::new();
+        let model = serde_json::from_str::<serde_json::Value>(&query_json)?["model"].as_str().unwrap_or_default().to_string();
+        let _ = queue.context.set((self.db.clone(), model));
         let subscription = self.live_query(query_json, Arc::new(Listener(Arc::downgrade(&queue))));
         *crate::db::locked(&queue.subscription) = Some(subscription);
         self.streams.enroll(&queue);
@@ -88,9 +92,20 @@ impl Database {
     }
 }
 
-impl super::open_streams::Closable for LiveChanges {
+impl crate::lifecycle::Member for LiveChanges {
     fn close(&self) { self.cancel(); }
-    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+        let Some((db, model)) = self.context.get() else { return };
+        if !matches!(snapshot.change, crate::lifecycle::Change::Reset(_)) || !snapshot.rereads(model) { return; }
+        let Ok(revision) = db.revision_seq() else { return };
+        self.with_state(|state| {
+            state.min_revision = revision;
+            state.pending.clear();
+            state.rows.clear();
+            state.pending.push_back(LiveChange::whole(revision, Vec::new()));
+        });
+    }
 }
 
 #[uniffi::export]

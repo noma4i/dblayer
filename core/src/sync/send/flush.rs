@@ -140,9 +140,11 @@ impl Inner {
     pub(crate) async fn flush(&self) -> Result<FlushReport, SyncError> {
         let _serial = self.outbox_gate.lock().await;
         let mut report = FlushReport::default();
+        if !self.admitted(crate::lifecycle::Origin::Background) { return Ok(report); }
         locked(self.operation_queue()?).begin_pass();
         let mut cursor = i64::MIN;
         while let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? {
+            if !self.admitted(crate::lifecycle::Origin::Background) { break; }
             locked(self.operation_queue()?).attempted(entry.operation.id.0);
             let result = self.send(&entry, None).await?; // lock-ok: queue guard ended at statement
             self.keep_discarded(&entry, &result);

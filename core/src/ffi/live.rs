@@ -201,14 +201,12 @@ pub(super) fn intake(feed: &LiveFeed, wire: &WireModel, item: Feed) {
 pub struct LiveSubscription {
     pub(super) feed: Arc<LiveFeed>,
     pub(super) handles: Mutex<Option<LiveHandles>>,
-    pub(super) registration: std::sync::OnceLock<super::open_streams::Registration>,
+    pub(super) registration: std::sync::OnceLock<crate::lifecycle::Registration>,
 }
 
-impl super::open_streams::Closable for LiveSubscription {
+impl crate::lifecycle::Member for LiveSubscription {
     fn close(&self) { self.cancel(); }
-    fn reset(&self, models: Option<&[String]>) { self.feed.reset(models); }
-    fn resets(&self) -> bool { true }
-    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
     fn busy(&self) -> bool { self.feed.busy() }
 }
 

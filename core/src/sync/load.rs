@@ -63,6 +63,7 @@ impl LoadOutcome {
 }
 
 pub(crate) struct Resolved<'a> {
+    pub origin: crate::lifecycle::Origin,
     pub media: Option<&'a crate::schema::MediaSpec>,
     pub members_complete: bool,
     pub node_reread: bool,
@@ -132,7 +133,7 @@ impl Inner {
         self.fetch(resolved, None, force).await
     }
 
-    pub(crate) fn resolve(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Resolved<'_>, SyncError> {
+    pub(crate) fn resolve(&self, origin: crate::lifecycle::Origin, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Resolved<'_>, SyncError> {
         let spec = self.db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
         let declared = spec
             .relations
@@ -166,7 +167,7 @@ impl Inner {
         };
         let window_key = window_key(scope_key.as_str(), direction);
         let scope = ScopeRef::new(ModelKey::new(model), scope_key);
-        Ok(Resolved { media: declared.media.as_ref(), members_complete: declared.members_complete, node_reread: false, model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
+        Ok(Resolved { origin, media: declared.media.as_ref(), members_complete: declared.members_complete, node_reread: false, model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
     }
 
     pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
@@ -215,6 +216,8 @@ impl Inner {
     }
 
     pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
+        let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
+        if !self.admitted(resolved.origin) { return Err(SyncError::Cancelled); }
         let generation = self.db.generation();
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
@@ -269,10 +272,7 @@ impl Inner {
                     let seed = match self.stored(resolved) { Ok(seed) => seed, Err(error) => { guard.finish(Err(error.clone())); return Err(error); } };
                     let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), seed);
                     let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
-                    let executed = match self.wait_for_session().await {
-                        Ok(()) => self.execute(resolved, cursor, force).await,
-                        Err(error) => Executed::Failed(error),
-                    };
+                    let executed = self.execute(resolved, cursor, force).await;
                     let result = match executed {
                         Executed::Landed(outcome, revision) => {
                             match outcome.status {
@@ -294,6 +294,9 @@ impl Inner {
                         }
                     };
                     guard.finish(result.clone());
+                    if resolved.origin == crate::lifecycle::Origin::Explicit && result.as_ref().is_ok_and(|outcome| outcome.kept_error.is_none()) {
+                        self.explicit_succeeded(epoch);
+                    }
                     return result;
                 }
                 Err(Some(mut receiver)) => {
@@ -394,7 +397,7 @@ impl Inner {
         let (response, attempts) = tokio::select! {
             biased;
             () = self.connectivity.offline() => return Err(SyncError::Offline),
-            result = crate::transport::retry::query(self.transport.as_ref(), request, self.clock.as_ref(), &self.connectivity, || locked(&self.counters).record_transport_call()) => result.map_err(SyncError::Transport)?,
+            result = self.db.shared.store.lifecycle.request(crate::transport::retry::query(self.transport.as_ref(), request, self.clock.as_ref(), &self.connectivity, || locked(&self.counters).record_transport_call())) => result.map_err(SyncError::Transport)?,
         };
         if response.shape().outcome() == ResponseOutcome::Commit || return_invalid_cursor && response.errors.iter().any(|error| error.code() == Some(INVALID_CURSOR)) {
             return Ok((response, attempts));
@@ -428,11 +431,11 @@ impl Inner {
 impl Sync {
     #[cfg(test)]
     pub fn window_key(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<String, SyncError> {
-        Ok(self.inner.resolve(model, relation, params)?.window_key)
+        Ok(self.inner.resolve(crate::lifecycle::Origin::Observed, model, relation, params)?.window_key)
     }
 
     pub fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<std::collections::BTreeMap<String, Map<String, Value>>, SyncError> {
-        let resolved = self.inner.resolve(model, relation, params)?;
+        let resolved = self.inner.resolve(crate::lifecycle::Origin::Observed, model, relation, params)?;
         let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
         let read = self.inner.db.shared.store.read(&[model], |reader| reader.scope_edges(model, resolved.scope.key.as_str(), &wanted))?;
         {
@@ -460,13 +463,13 @@ impl Sync {
 
     pub async fn load(&self, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
         let _app = self.app_load();
-        let resolved = self.inner.resolve(model, relation, params)?;
+        let resolved = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?;
         self.inner.load_scope(&resolved, options.force).await
     }
 
     pub async fn load_more(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
         let _app = self.app_load();
-        let resolved = self.inner.resolve(model, relation, params)?;
+        let resolved = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?;
         self.inner.load_more(&resolved).await
     }
 }

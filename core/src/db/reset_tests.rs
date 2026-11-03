@@ -41,14 +41,29 @@ fn reset_of_an_unknown_model_fails() {
 
 type ResetCalls = std::sync::Arc<std::sync::Mutex<Vec<Option<Vec<String>>>>>;
 
-fn reentrant_reset_rig() -> (Db, ResetCalls) {
+type ResetCall = Box<dyn Fn(Option<&[String]>) + Send + Sync>;
+
+struct ResetProbe {
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    call: ResetCall,
+}
+
+impl crate::lifecycle::Member for ResetProbe {
+    fn close(&self) {}
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+        if let crate::lifecycle::Change::Reset(models) = &snapshot.change { (self.call)(models.as_deref()); }
+    }
+}
+
+fn reentrant_reset_rig() -> (Db, ResetCalls, std::sync::Arc<ResetProbe>) {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     let db = booted();
     seed_tree(&db);
     let calls: ResetCalls = Arc::default();
     let (inner, sink, entered) = (db.clone(), calls.clone(), Arc::new(AtomicBool::new(false)));
-    db.on_reset(Arc::new(move |models| {
+    let probe = Arc::new(ResetProbe { registration: Default::default(), call: Box::new(move |models| {
         sink.lock().unwrap().push(models.map(<[String]>::to_vec));
         if entered.swap(true, Ordering::SeqCst) {
             return;
@@ -57,8 +72,9 @@ fn reentrant_reset_rig() -> (Db, ResetCalls) {
         envelope.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new("moments"), id: rid("m9"), row: obj(serde_json::json!({"id": "m9", "userId": "u2", "text": "nine"})) });
         inner.land(envelope).unwrap();
         inner.reset(&["users"]).unwrap();
-    }));
-    (db, calls)
+    }) });
+    db.shared.store.lifecycle.enroll(&probe);
+    (db, calls, probe)
 }
 
 #[test]
@@ -69,7 +85,7 @@ fn reset_listener_writes_and_resets() {
         ("reset of models", |db| db.reset(&["vibes"]).unwrap(), Some(vec!["vibes".to_string()])),
     ];
     for (name, outer, first) in cases {
-        let (db, calls) = reentrant_reset_rig();
+        let (db, calls, _probe) = reentrant_reset_rig();
         let before = db.generation();
         let runner = db.clone();
         crate::test_wait::join_within(std::thread::spawn(move || outer(&runner)));
@@ -89,10 +105,11 @@ fn reset_listener_sees_the_finished_reset() {
     assert!(db.peek_row("moments", &rid("m1")).is_some());
     let seen: Arc<Mutex<Vec<(bool, bool, i64)>>> = Arc::default();
     let (probe, sink) = (db.clone(), seen.clone());
-    db.on_reset(Arc::new(move |_| {
+    let observer = Arc::new(ResetProbe { registration: Default::default(), call: Box::new(move |_| {
         let revision = probe.revision_seq().unwrap();
         sink.lock().unwrap().push((probe.find("moments", &rid("m1")).unwrap().is_none(), probe.peek_row("moments", &rid("m1")).is_none(), revision));
-    }));
+    }) });
+    db.shared.store.lifecycle.enroll(&observer);
     db.reset(&["moments"]).unwrap();
     assert_eq!(*seen.lock().unwrap(), vec![(true, true, db.revision_seq().unwrap())]);
 }

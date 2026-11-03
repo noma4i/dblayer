@@ -22,7 +22,7 @@ impl From<BlobSnapshot> for WireBlobSnapshot {
 
 #[derive(uniffi::Object)]
 pub struct BlobChanges {
-    registration: std::sync::OnceLock<super::open_streams::Registration>,
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
     sync: crate::sync::Sync,
     id: String,
     changes: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
@@ -51,9 +51,9 @@ impl BlobChanges {
     pub fn cancel(&self) { self.cancel.cancel(); }
 }
 
-impl super::open_streams::Closable for BlobChanges {
+impl crate::lifecycle::Member for BlobChanges {
     fn close(&self) { self.cancel.cancel(); }
-    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 }
 
 impl Drop for BlobChanges { fn drop(&mut self) { self.cancel.cancel(); } }

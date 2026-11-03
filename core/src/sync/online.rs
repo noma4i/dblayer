@@ -13,6 +13,7 @@ impl Sync {
         self.inner.connectivity.set_online(online);
         crate::db::lock::assert_no_library_lock("Transport::set_online");
         self.inner.transport.set_online(online);
+        if online != was_online { self.inner.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Online(online)); }
         if !online {
             let wake = locked(&self.inner.wake).take();
             if let Some(wake) = wake { crate::db::lock::effect(|| wake.abort()); }
@@ -48,6 +49,7 @@ impl Inner {
     }
 
     pub(crate) fn spawn_flush(self: &Arc<Self>, wait: Duration) -> Option<tokio::task::AbortHandle> {
+        if !self.admitted(crate::lifecycle::Origin::Background) { return None; }
         let runtime = Handle::try_current().ok()?;
         let clock = self.clock.clone();
         let deadline = clock.now().saturating_add(wait);
@@ -68,7 +70,7 @@ impl Inner {
         let inner = Arc::downgrade(self);
         runtime.spawn(self.until_closed(async move {
             let Some(inner) = inner.upgrade() else { return };
-            let Ok(resolved) = inner.resolve(&target.model, &target.relation, &target.params) else { return };
+            let Ok(resolved) = inner.resolve(crate::lifecycle::Origin::Observed, &target.model, &target.relation, &target.params) else { return };
             if resolved.members_complete || resolved.media.is_some() {
                 tokio::select! {
                     _ = inner.owner.unobserved(&resolved.window_key) => {},

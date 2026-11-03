@@ -162,7 +162,7 @@ impl Sync {
         let spec = self.inner.db.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| SyncError::UnknownRelation { model:model.into(), relation:relation.into() })?;
         let read = if declared.remote.is_some() {
-            let key = self.inner.resolve(model, relation, params)?.window_key;
+            let key = self.inner.resolve(crate::lifecycle::Origin::Observed, model, relation, params)?.window_key;
             Some(self.inner.db.register_observed_read(crate::db::ObservedRead { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key }))
         } else { None };
         let failures = self.inner.subscription_failures.subscribe();
@@ -205,7 +205,7 @@ impl Inner {
     }
 
     pub(crate) async fn resume_windows(self: &Arc<Self>, cause: Cause) -> Result<ResumeReport, SyncError> {
-        self.wait_for_session().await?;
+        if !self.admitted(crate::lifecycle::Origin::Observed) { return Ok(ResumeReport::default()); }
         if cause == Cause::Explicit { self.transport.resume_subscriptions(); }
         self.restart_live(cause);
         let drain = self.config.resume;
@@ -236,7 +236,7 @@ impl Inner {
                 let inner = self.clone();
                 let force = !unloaded.contains(&key);
                 loads.spawn(async move {
-                    let resolved = inner.resolve(&model, &relation, &params)?;
+                    let resolved = inner.resolve(crate::lifecycle::Origin::Observed, &model, &relation, &params)?;
                     if resolved.members_complete || resolved.media.is_some() {
                         tokio::select! {
                             _ = inner.owner.unobserved(&resolved.window_key) => Err(SyncError::Cancelled),

@@ -12,7 +12,7 @@ async fn inv_loadm_11_a_panic_in_one_window_event_fails_that_window_with_an_inte
     let rig = rig();
     let feed = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     let current = rig.sync.relation_state("users", "current", &none()).await.unwrap();
-    let window = rig.sync.inner.resolve("moments", "feed", &none()).unwrap().window_key.clone();
+    let window = rig.sync.inner.resolve(crate::lifecycle::Origin::Observed, "moments", "feed", &none()).unwrap().window_key.clone();
     let owner = rig.sync.inner.owner.clone();
     owner.panic_on(&window);
     owner.submit(Event::Abandoned { window: window.clone(), flight: 99 });

@@ -175,6 +175,7 @@ async fn authenticated_error_retryability_controls_feed_until_resume() {
         let http = Arc::new(Http { key: RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads: AtomicUsize::new(0) });
         let clock = Arc::new(crate::pacing::TestClock::default());
         let client = Arc::new(crate::transport::EncryptedClient::new(&config, http.clone(), Arc::new(super::super::fake_server_tests::MemoryCredentials::default()), db.clone(), clock.clone()).unwrap());
+        client.sign_in_for_test().unwrap();
         let transport = Arc::new(crate::transport::EncryptedTransport::new(client, connect.clone()));
         let sync = crate::sync::Sync::new(db, transport, clock, Default::default());
         sync.register(crate::sync::OperationDef::new("ItemEvents", "subscription ItemEvents { itemEvent { id } }", "itemEvent"));
@@ -456,6 +457,7 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     let http = Arc::new(Http { key:RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads:AtomicUsize::new(0) });
     let clock = Arc::new(crate::pacing::TestClock::default());
     let client = Arc::new(crate::transport::EncryptedClient::new(&config, http.clone(), Arc::new(super::super::fake_server_tests::MemoryCredentials::default()), db.clone(), clock.clone()).unwrap());
+    client.sign_in_for_test().unwrap();
     let transport = Arc::new(crate::transport::EncryptedTransport::new(client, connect));
     let sync = crate::sync::Sync::new(db.clone(), transport, clock, Default::default());
     sync.register(crate::sync::OperationDef::new("ChatNode", "query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title } } }", "node"));

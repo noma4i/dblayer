@@ -186,7 +186,7 @@ pub(super) async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tok
     let models = serde_json::to_string(&vec![model]).unwrap();
     let transport_handle = Some(transport.clone() as Arc<dyn Transport>);
     let db = match &clock {
-        Some(clock) => Database::open_with_clock(config, models, transport_handle, None, clock.clone()).await,
+        Some(clock) => Database::open_with_clock(config, models, transport_handle, None, clock.clone(), None, None, None, None).await,
         None => Database::open(config, models, transport_handle, None, None, None, None, None).await,
     }
     .unwrap();
@@ -242,7 +242,7 @@ async fn testing_settle_waits_for_a_load_that_outlives_reset() {
     remote.variables.insert("id".into(), crate::schema::VariableSource::Param { name: crate::schema::NODE_PARAM.into() });
     node.remote = Some(remote);
     model.relations.push(node);
-    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000)).await.unwrap();
+    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
     let listener = Arc::new(RecordingEntity::default());
     let entity = db.live_entities("Moment".into(), listener.clone()).unwrap();

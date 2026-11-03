@@ -1,11 +1,12 @@
 mod database;
-mod open_streams;
 #[cfg(test)]
 mod close_tests;
 mod foreign_future;
 mod lease;
 mod open_slot;
 mod opening;
+#[cfg(test)]
+mod lifecycle_tests;
 mod changes;
 mod model_events;
 mod cloud;

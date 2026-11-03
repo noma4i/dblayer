@@ -163,7 +163,7 @@ async fn preload_off_sends_no_request_on_any_event_and_on_loads() {
         let slot = OpenDatabase::new();
         let transport: Arc<dyn Transport> = Arc::new(CountingFeed(requests.clone()));
         let database = if clocked {
-            let database = slot.open_with_clock(config(), models.clone(), Some(transport), None, super::super::TestClock::new(1_000_000), preload, true).await.unwrap();
+            let database = slot.open_with_clock(config(), models.clone(), Some(transport), None, super::super::TestClock::new(1_000_000), preload, true, None, None, None, None).await.unwrap();
             database.register_operations(operations.into()).unwrap();
             database
         } else {

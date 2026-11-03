@@ -97,7 +97,7 @@ struct State { entries: BTreeMap<String, Entry>, singleton: Option<Singleton>, c
 
 #[derive(uniffi::Object)]
 pub struct LiveEntities {
-    registration: OnceLock<super::open_streams::Registration>,
+    registration: OnceLock<crate::lifecycle::Registration>,
     observer: EntityObserver,
     database: Database,
     model: String,
@@ -413,7 +413,7 @@ impl LiveEntities {
         super::entity_calls::entered();
         let pending = {
             let mut state = locked(&self.state);
-            if state.closed { return; }
+            if state.closed || !self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) { return; }
             let Some(single) = &mut state.singleton else { return };
             if single.subscription.is_some() { return; }
             if single.entry.verdict.feed == 0 { single.entry.verdict = single.entry.machine.begin_feed(); }
@@ -470,19 +470,18 @@ impl LiveEntities {
     }
 }
 
-impl super::open_streams::Closable for LiveEntities {
+impl crate::lifecycle::Member for LiveEntities {
     fn close(&self) { self.shutdown(); }
-    fn reset(&self, models: Option<&[String]>) {
-        if models.is_none_or(|models| models.contains(&self.model)) { self.reset_core(); }
+    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+        if snapshot.rereads(&self.model) { self.reset_core(); }
     }
-    fn resets(&self) -> bool { true }
-    fn registration(&self) -> &OnceLock<super::open_streams::Registration> { &self.registration }
+    fn registration(&self) -> &OnceLock<crate::lifecycle::Registration> { &self.registration }
     fn busy(&self) -> bool {
         let state = locked(&self.state);
         let reading = state.entries.values().any(|entry| entry.machine.is_reading())
             || state.singleton.as_ref().is_some_and(|single| single.entry.machine.is_reading());
         drop(state);
-        reading || !self.outbox.is_idle()
+        reading && self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) || !self.outbox.is_idle()
     }
 }
 

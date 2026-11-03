@@ -115,6 +115,7 @@ fn upload_entry(entries: Vec<OutboxOperation>, model: &str, id: &RowId, family: 
 
 impl Inner {
     pub(crate) fn start_uploads(self: &Arc<Self>) -> Result<(), SyncError> {
+        if !self.admitted(crate::lifecycle::Origin::Background) { return Ok(()); }
         let sequences = {
             let mut queue = locked(self.operation_queue()?);
             let mut changed = std::mem::take(&mut queue.dirty_uploads);
@@ -268,6 +269,7 @@ impl Inner {
     }
 
     fn drain_uploads(self: &Arc<Self>) {
+        if !self.admitted(crate::lifecycle::Origin::Background) { return; }
         let mut runs = locked(&self.uploads);
         while runs.active_files < runs.max_files {
             let Some(((seq, position), pending)) = runs.ready.pop_first() else { break };

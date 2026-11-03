@@ -145,9 +145,16 @@ pub(super) fn temporary_error(body: &Value) -> Option<TransportError> {
 
 impl EncryptedClient {
     pub async fn session_call(&self, operation: &str, body: Value) -> Result<Answer, TransportError> {
+        let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
         if operation == "logout" { return self.mutate(&self.config.endpoints.logout, body).await; }
         let operation = self.config.endpoints.session_operations.get(operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
-        if !operation.sessionless { return self.mutate(&operation.path, body).await; }
+        if !operation.sessionless {
+            let answer = self.mutate(&operation.path, body).await?;
+            if confirmed_error(&answer.body).is_none() {
+                self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(self.signed_in()?, epoch));
+            }
+            return Ok(answer);
+        }
         let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
         loop {
             self.online.online().await;
@@ -265,6 +272,7 @@ impl EncryptedClient {
     }
 
     pub fn reset(&self) -> Result<(), TransportError> {
+        self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::EndSession);
         crate::db::lock::assert_no_library_lock("CredentialSlot::clear");
         self.credentials.clear()?;
         let mut state = crate::db::locked(&self.credential.state);
@@ -279,6 +287,7 @@ impl EncryptedClient {
     }
 
     async fn await_answer(&self, mut pending: Pending) -> Result<Answer, TransportError> {
+      let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
       let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
       loop {
         self.online.online().await;
@@ -295,6 +304,9 @@ impl EncryptedClient {
             }
             Ok(answer) => answer,
         };
+        if self.db.shared.store.lifecycle.snapshot().session_epoch != epoch {
+            return Err(TransportError::Interrupted("the session was reset while its answer was pending".into()));
+        }
         if let Some(error) = temporary_error(&answer.body) {
             if answer.sequence == Some(pending.sequence) {
                 let confirmed = pending.sequence;
@@ -319,7 +331,14 @@ impl EncryptedClient {
         }
         match pending.path == self.config.endpoints.logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
             true => self.reset()?,
-            false => self.with_connection(|connection| state::commit(connection, pending.sequence))?,
+            false => {
+                let previous = self.signed_in()?;
+                self.with_connection(|connection| state::commit(connection, pending.sequence))?;
+                let current = self.signed_in()?;
+                if previous != current && confirmed_error(&answer.body).is_none() {
+                    self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(current, epoch));
+                }
+            }
         }
         return Ok(answer);
       }
@@ -355,7 +374,7 @@ impl EncryptedClient {
 
     async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, upload: bool) -> Result<Answer, TransportError> {
         crate::db::lock::assert_no_library_lock("HttpExchange::post");
-        let reply = self.http.post(path, token, upload).await?;
+        let reply = self.db.shared.store.lifecycle.request(self.http.post(path, token, upload)).await?;
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });
         }
@@ -418,6 +437,12 @@ impl EncryptedClient {
         }
         state.cached = Some(credential.clone());
         Ok(credential)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sign_in_for_test(&self) -> Result<(), TransportError> {
+        self.credential()?;
+        self.with_connection(|connection| state::commit(connection, 1))
     }
 
     fn with_connection<T>(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {

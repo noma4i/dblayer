@@ -103,7 +103,6 @@ pub(crate) enum StoreEvent<'a> {
 
 pub(crate) type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
 pub(crate) type CommitLog = Box<dyn Fn(&StoreEvent<'_>) + Send + Sync>;
-pub(crate) type ResetListener = Arc<dyn Fn(Option<&[String]>) + Send + Sync>;
 
 /// Hands out places in the order of the commits, so the hook runs after the writer lock is released and still sees events in commit order.
 #[derive(Default)]
@@ -177,13 +176,12 @@ impl Drop for Committed<'_> {
 
 pub struct Store {
     inner: Mutex<Inner>,
-    generation: AtomicU64,
+    pub(crate) lifecycle: Arc<crate::lifecycle::Lifecycle>,
     models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
     poison: Arc<Mutex<Option<String>>>,
     readers: Option<readers::Readers>,
     hook: OnceLock<StoreHook>,
     commit_log: OnceLock<CommitLog>,
-    reset_listeners: Mutex<Vec<ResetListener>>,
     line: AnnounceLine,
     recreated: Option<RecreateReason>,
     #[cfg(test)]
@@ -214,13 +212,12 @@ impl Store {
         };
         Self {
             inner: Mutex::new(inner),
-            generation: AtomicU64::new(Generation::INITIAL.value()),
+            lifecycle: Arc::default(),
             models: RwLock::new(models),
             poison,
             readers: None,
             hook: OnceLock::new(),
             commit_log: OnceLock::new(),
-            reset_listeners: Mutex::new(Vec::new()),
             line: AnnounceLine::default(),
             #[cfg(test)]
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
@@ -262,17 +259,11 @@ impl Store {
         let _ = self.commit_log.set(log);
     }
 
-    pub(crate) fn on_reset(&self, listener: ResetListener) {
-        self.reset_listeners.lock().unwrap_or_else(|error| error.into_inner()).push(listener);
-    }
-
     fn reset_effects(&self, models: Option<Vec<String>>) -> crate::db::dispatch::Effects {
-        let listeners = self.reset_listeners.lock().unwrap_or_else(|error| error.into_inner()).clone();
+        let lifecycle = self.lifecycle.clone();
         let mut effects = crate::db::dispatch::Effects::default();
         effects.push(move || {
-            for listener in &listeners {
-                listener(models.as_deref());
-            }
+            lifecycle.transition(crate::lifecycle::Change::Reset(models));
         });
         effects
     }
@@ -301,14 +292,14 @@ impl Store {
     }
 
     pub fn generation(&self) -> Generation {
-        Generation::from_value(self.generation.load(Ordering::SeqCst))
+        self.lifecycle.snapshot().generation
     }
 
     #[cfg(test)]
     pub(crate) fn advance_generation_for_test(&self) {
-        let mut inner = self.lock();
-        inner.generation = inner.generation.next();
-        self.generation.store(inner.generation.value(), Ordering::SeqCst);
+        let generation = self.lifecycle.transition_deferred(crate::lifecycle::Change::BeginReset);
+        self.lock().generation = generation;
+        self.lifecycle.transition(crate::lifecycle::Change::Reset(Some(Vec::new())));
     }
 
     #[cfg(test)]

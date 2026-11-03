@@ -66,7 +66,7 @@ async fn open_pages(closes_after: usize, members: bool, fail_at: Option<usize>) 
     });
     model.relations.push(feed);
     let transport = Arc::new(Pages { queries: AtomicUsize::new(0), active: AtomicUsize::new(0), closes_after, members, permits: tokio::sync::Semaphore::new(1), fail_at: Mutex::new(fail_at), variables: Mutex::default() });
-    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000)).await.unwrap();
+    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
     (db, transport)
 }

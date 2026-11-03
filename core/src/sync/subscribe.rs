@@ -334,7 +334,7 @@ impl Feed {
         }
         let mut failure = None;
         for (relation, params) in targets.into_values() {
-            let outcome = match self.inner.resolve(model, &relation, &params) {
+            let outcome = match self.inner.resolve(crate::lifecycle::Origin::Observed, model, &relation, &params) {
                 Ok(resolved) => self.inner.load_scope(&resolved, true).await.map(|_| ()),
                 Err(error) => Err(error),
             };
@@ -351,7 +351,7 @@ impl Feed {
             Some(parameter) => Map::from_iter([(parameter.to_string(), json!(id.ok_or_else(|| SyncError::Event("missing event id".into()))?))]),
             None => Map::new(),
         };
-        let mut resolved = self.inner.resolve(model, name, &params)?;
+        let mut resolved = self.inner.resolve(crate::lifecycle::Origin::Observed, model, name, &params)?;
         resolved.node_reread = relation.node == Some(crate::schema::NodeRead::One);
         self.inner.load_scope(&resolved, true).await.map(|_| ())
     }
@@ -653,14 +653,19 @@ impl Feed {
         }
     }
 
-    async fn run(self, request: GraphQLRequest, first: Option<(Generation, Result<ServerSubscription, TransportError>)>, mut resets: tokio::sync::watch::Receiver<u64>) {
+    async fn run(self, request: GraphQLRequest, first: Option<(Generation, Result<ServerSubscription, TransportError>)>, mut resets: crate::lifecycle::Watch) {
         let mut lifecycle = Lifecycle::new(self.backoff);
         let mut opened = first;
         loop {
+            if !self.inner.admitted(crate::lifecycle::Origin::Observed) {
+                opened = None;
+                if resets.changed().await.is_none() { return; }
+                continue;
+            }
             lifecycle.handle(Event::Resumed);
             let (generation, attempt) = tokio::select! {
                 biased;
-                _ = resets.changed() => { opened = None; lifecycle = Lifecycle::new(self.backoff); continue; }
+                _ = invalidated(&mut resets) => { opened = None; lifecycle = Lifecycle::new(self.backoff); continue; }
                 attempt = async {
                     match opened.take() {
                         Some(attempt) => Some(attempt),
@@ -687,7 +692,7 @@ impl Feed {
                     lifecycle.handle(Event::Connected);
                     tokio::select! {
                         biased;
-                        _ = resets.changed() => { lifecycle = Lifecycle::new(self.backoff); continue; },
+                        _ = invalidated(&mut resets) => { lifecycle = Lifecycle::new(self.backoff); continue; },
                         kind = self.pump(&mut connection, &mut lifecycle, generation) => kind,
                     }
                 }
@@ -704,12 +709,19 @@ impl Feed {
             match lifecycle.step() {
                 Step::Stop => return,
                 Step::Wait(delay) => tokio::select! {
-                    _ = resets.changed() => { lifecycle = Lifecycle::new(self.backoff); },
+                    _ = invalidated(&mut resets) => { lifecycle = Lifecycle::new(self.backoff); },
                     _ = self.inner.connectivity.wait(self.inner.clock.as_ref(), delay) => {},
                 },
                 Step::Open => {}
             }
         }
+    }
+}
+
+async fn invalidated(resets: &mut crate::lifecycle::Watch) -> Option<crate::lifecycle::Snapshot> {
+    loop {
+        let next = resets.changed().await?;
+        if !matches!(next.change, crate::lifecycle::Change::Session(..)) { return Some(next); }
     }
 }
 
@@ -727,7 +739,7 @@ impl Inner {
             _ = stopped.wait_for(|stopped| *stopped) => None,
             result = async {
                 self.connectivity.online().await;
-                self.wait_for_session().await.ok()?;
+                if !self.admitted(crate::lifecycle::Origin::Observed) { return None; }
                 let generation = self.db.generation();
                 crate::db::lock::assert_no_library_lock("Transport::subscribe");
                 Some((generation, self.transport.subscribe(request).await))
@@ -745,11 +757,11 @@ impl Inner {
             .cloned()
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
-        let mut resets = self.subscription_reset.subscribe();
-        let first = if self.connectivity.is_online() {
+        let mut resets = self.db.shared.store.lifecycle.watch();
+        let first = if self.connectivity.is_online() && self.admitted(crate::lifecycle::Origin::Observed) {
             tokio::select! {
                 biased;
-                _ = resets.changed() => None,
+                _ = invalidated(&mut resets) => None,
                 attempt = self.open_subscription(request.clone()) => attempt,
             }
         } else { None };

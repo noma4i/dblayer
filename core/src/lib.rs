@@ -21,6 +21,7 @@ pub mod sync;
 pub mod upload;
 pub mod ffi;
 mod blocking;
+mod lifecycle;
 
 #[cfg(test)]
 mod lib_tests;

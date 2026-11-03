@@ -17,7 +17,7 @@ use super::entities::{self, EntityListener, LiveEntities};
 use super::live::{follow_failures, intake, LiveHandles};
 use super::live_feed::LiveFeed;
 use super::related::RelatedProjection;
-use super::open_streams::OpenStreams;
+use crate::lifecycle::Lifecycle;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
@@ -121,7 +121,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<OpenStreams>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) entity_cache: Arc<super::entity_pool::EntityCache>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<Lifecycle>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) entity_cache: Arc<super::entity_pool::EntityCache>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -147,9 +147,7 @@ impl Database {
         }
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        let streams: Arc<OpenStreams> = Arc::default();
-        let weak_streams = Arc::downgrade(&streams);
-        db.on_reset(Arc::new(move |models| { if let Some(streams) = weak_streams.upgrade() { streams.reset(models); } }));
+        let streams = db.shared.store.lifecycle.clone();
         Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), testing: false, wires: Arc::new(wires) }))
     }
 
@@ -164,27 +162,35 @@ impl Database {
         uploads: Option<UploadOperations>,
         retries: Option<Arc<super::RetryProgress>>,
     ) -> Result<Arc<Self>, DbError> {
-        blocking(move || {
-            let Some(encrypted) = encrypted else {
-                if credentials.is_some() || http.is_some() || retries.is_some() {
-                    return Err(DbError::Invalid { detail: "credentials, http and retries require encrypted".into() });
-                }
-                return Self::start(config, models_json, transport, uploads, Arc::new(SystemClock));
-            };
-            let credentials = credentials.ok_or_else(|| DbError::Invalid { detail: "encrypted requires credentials".into() })?;
-            let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
-            let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
-            let _entered = executor()?.enter();
-            Self::start_with(config, models_json, uploads, Arc::new(SystemClock), |db, clock| {
-                super::encrypted::wire(db, clock, encrypted, http, credentials, transport, retries)
-            })
-        }).await
+        Self::open_at(config, models_json, transport, encrypted, credentials, http, uploads, retries, Arc::new(SystemClock), false).await
     }
 
-    pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<TestClock>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, retries: Option<Arc<super::RetryProgress>>) -> Result<Arc<Self>, DbError> {
+        Self::open_at(config, models_json, transport, encrypted, credentials, http, uploads, retries, clock.clock.clone(), true).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn open_at(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, uploads: Option<UploadOperations>, retries: Option<Arc<super::RetryProgress>>, clock: Arc<dyn Clock>, testing: bool) -> Result<Arc<Self>, DbError> {
         blocking(move || {
-            let database = Self::start(config, models_json, transport, uploads, clock.clock.clone())?;
-            Ok(Arc::new(Self { testing: true, ..Arc::unwrap_or_clone(database) }))
+            let database = match encrypted {
+                Some(encrypted) => {
+                    let credentials = credentials.ok_or_else(|| DbError::Invalid { detail: "encrypted requires credentials".into() })?;
+                    let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
+                    let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
+                    let _entered = executor()?.enter();
+                    Self::start_with(config, models_json, uploads, clock, |db, clock| {
+                        super::encrypted::wire(db, clock, encrypted, http, credentials, transport, retries)
+                    })?
+                }
+                None => {
+                    if credentials.is_some() || http.is_some() || retries.is_some() {
+                        return Err(DbError::Invalid { detail: "credentials, http and retries require encrypted".into() });
+                    }
+                    Self::start(config, models_json, transport, uploads, clock)?
+                }
+            };
+            Ok(Arc::new(Self { testing, ..Arc::unwrap_or_clone(database) }))
         }).await
     }
 
@@ -762,10 +768,7 @@ impl Database {
     fn follow_load(&self, tracked: Option<(Sync, String, Map<String, Value>)>, model: String, options: LoadOptions, feed: &Arc<LiveFeed>, control: crate::db::ObserverControl) -> Result<(Option<tokio::task::AbortHandle>, Option<tokio::task::AbortHandle>), DbError> {
         Ok(match tracked {
             Some((sync, relation, params)) => {
-                let app_load = sync.app_load();
-                let resets = Arc::new(tokio::sync::watch::channel(0_u64).0);
-                let mut reset_changes = resets.subscribe();
-                feed.on_reset(model.clone(), resets.clone());
+                let mut transitions = self.streams.watch();
                 let ask = control.clone();
                 feed.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
                 let (follower, loader) = (feed.clone(), feed.clone());
@@ -788,25 +791,49 @@ impl Database {
                     }
                 }).abort_handle();
                 let load = executor()?.spawn(async move {
-                    let _resets = resets;
-                    let mut app_load = Some(app_load);
                     let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
+                    let mut force = options.force;
                     loop {
+                        let snapshot = transitions.current();
+                        if snapshot.closed { return; }
+                        if !snapshot.admits(crate::lifecycle::Origin::Observed) {
+                            loader.load_finished(None);
+                            if transitions.changed().await.is_none() { return; }
+                            continue;
+                        }
+                        let resolved = match sync.inner.resolve(crate::lifecycle::Origin::Observed, &model, &relation, &params) {
+                            Ok(resolved) => resolved,
+                            Err(error) => { loader.load_finished(Some(DbError::from(error))); return; }
+                        };
+                        let app_load = sync.app_load();
+                        loader.reset_load();
+                        let concerning = async {
+                            loop {
+                                match transitions.changed().await {
+                                    None => break None,
+                                    Some(next) if next.concerns(&model) => break Some(next),
+                                    Some(_) => {}
+                                }
+                            }
+                        };
                         let result = tokio::select! {
                             biased;
-                            changed = reset_changes.changed() => {
-                                if changed.is_err() { return; }
-                                loader.reset_load();
+                            changed = concerning => {
+                                if changed.is_none() { return; }
                                 continue;
                             }
-                            result = sync.load(&model, &relation, &params, options) => result,
+                            result = sync.inner.load_scope(&resolved, force) => result,
                         };
+                        force = false;
                         let settled = receiver.borrow().clone();
                         loader.state(settled);
                         loader.load_finished(result.err().map(DbError::from));
-                        drop(app_load.take());
-                        if reset_changes.changed().await.is_err() { return; }
-                        loader.reset_load();
+                        drop(app_load);
+                        loop {
+                            let Some(next) = transitions.changed().await else { return };
+                            if next.closed { return; }
+                            if next.concerns(&model) { break; }
+                        }
                     }
                 }).abort_handle();
                 (Some(load), Some(state))

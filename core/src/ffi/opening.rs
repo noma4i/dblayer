@@ -47,9 +47,9 @@ impl OpenDatabase {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn open_with_clock(&self, config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<WireUploadOperations>, clock: Arc<TestClock>, preload: bool, listening: bool) -> Result<Arc<Database>, DbError> {
+    pub async fn open_with_clock(&self, config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<WireUploadOperations>, clock: Arc<TestClock>, preload: bool, listening: bool, encrypted: Option<EncryptedConfig>, credentials: Option<Arc<dyn CredentialStore>>, http: Option<Arc<dyn EncryptedHttp>>, retries: Option<Arc<RetryProgress>>) -> Result<Arc<Database>, DbError> {
         let lease = self.slot.acquire()?;
-        let database = Database::open_with_clock(config, models_json, transport, uploads.map(Into::into), clock).await?;
+        let database = Database::open_with_clock(config, models_json, transport, uploads.map(Into::into), clock, encrypted, credentials, http, retries).await?;
         database.hold(lease);
         if let Ok(sync) = database.sync() {
             sync.set_preload(preload);

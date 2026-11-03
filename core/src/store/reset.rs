@@ -293,8 +293,7 @@ impl Store {
             .iter()
             .map(|model| inner.model(model).map(|info| (model.to_string(), info.table.clone())))
             .collect::<Result<_, _>>()?;
-        inner.generation = inner.generation.next();
-        self.generation.store(inner.generation.value(), std::sync::atomic::Ordering::SeqCst);
+        inner.generation = self.lifecycle.transition_deferred(crate::lifecycle::Change::BeginReset);
         let now = inner.now_ms();
         let names: Vec<String> = models.iter().map(|model| model.to_string()).collect();
         write_intent(&inner.connection, "cache_only", &names, now)?;
@@ -325,8 +324,7 @@ impl Store {
     pub(crate) fn reset_incompatible_held(&self) -> Result<ResetCommitted<'_>, StoreError> {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
-        inner.generation = inner.generation.next();
-        self.generation.store(inner.generation.value(), std::sync::atomic::Ordering::SeqCst);
+        inner.generation = self.lifecycle.transition_deferred(crate::lifecycle::Change::BeginReset);
         let now = inner.now_ms();
         write_intent(&inner.connection, "incompatible", &[], now)?;
         let transaction = inner.connection.unchecked_transaction()?;

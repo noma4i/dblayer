@@ -381,6 +381,19 @@ async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_i
 }
 
 #[tokio::test(start_paused = true)]
+async fn queued_events_of_an_ended_session_never_reach_the_next_account() {
+    let rig = chat_rig();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
+    let queued = |id: &str| super::ModelEvent { model: "chats".into(), area: "CHAT".into(), kind: "UPDATED".into(), id: id.into(), before: None, after: None };
+    rig.sync.inner.publish_model_event(queued("account-a"));
+    rig.sync.session_ended();
+    rig.transport.set_session(Some("second"));
+    rig.sync.session_committed();
+    rig.sync.inner.publish_model_event(queued("account-b"));
+    assert_eq!(expect_event(within(&events).await).id, "account-b");
+}
+
+#[tokio::test(start_paused = true)]
 async fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listening() {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));

@@ -204,7 +204,6 @@ pub struct Generation(u64);
 impl Generation {
     pub const INITIAL: Generation = Generation(0);
 
-    pub(crate) fn from_value(value: u64) -> Self { Self(value) }
 
     pub fn value(self) -> u64 {
         self.0

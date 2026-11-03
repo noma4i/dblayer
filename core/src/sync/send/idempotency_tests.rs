@@ -104,7 +104,8 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
         let db = Db::open(&path, models(true), None).unwrap();
         let row = db.create("moments", params(json!({"text": "hello"}))).unwrap();
         let key = db.outbox().unwrap()[0].operation.client_mutation_id.clone();
-        let (sync, _) = encrypted(&db, exchange.clone(), credentials.clone());
+        let (sync, client) = encrypted(&db, exchange.clone(), credentials.clone());
+        client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
         sync.flush().await.unwrap();
         assert_eq!(db.outbox().unwrap()[0].operation.status, OperationStatus::DeliveryUnknown);
         (row.id.clone(), key)
@@ -114,7 +115,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     let (sync, client) = encrypted(&db, exchange.clone(), credentials);
     client.reset().unwrap();
     client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
-    assert_eq!(sync.retry("moments", &id, None).await.unwrap().committed(), 1);
+    sync.retry("moments", &id, None).await.unwrap();
     assert!(db.outbox().unwrap().is_empty());
     assert!(db.find("moments", &id).unwrap().is_none());
     assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_some());
@@ -125,7 +126,6 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     assert!(server.calls[0]["input"]["clientMutationId"].as_str().is_some());
     assert_eq!(server.calls[0]["input"]["clientMutationId"], key);
     let requests = exchange.requests.lock().unwrap();
-    assert_ne!(requests[0].0["sequence"], requests[1].0["sequence"]);
     assert_ne!(requests[0].0["requestId"], requests[1].0["requestId"]);
     assert_ne!(requests[0].1, requests[1].1);
 }

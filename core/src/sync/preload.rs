@@ -18,7 +18,6 @@ use super::{locked, Inner, Sync};
 struct State {
     due: bool,
     running: bool,
-    session: Option<String>,
     listening_denied: bool,
     listened: bool,
     power_saving: bool,
@@ -30,10 +29,6 @@ struct State {
 }
 
 impl State {
-    fn wants_listen(&self) -> bool {
-        self.session.is_some() && !self.listening_denied
-    }
-
     fn held(&self) -> bool {
         self.suppressed || self.power_saving || self.low_ram
     }
@@ -58,7 +53,6 @@ pub(crate) struct PreloadOwner {
     effects: OrderedEffects,
     busy: watch::Sender<usize>,
     changed: watch::Sender<u64>,
-    session_ready: watch::Sender<bool>,
     inner: OnceLock<Weak<Inner>>,
     runtime: OnceLock<Handle>,
 }
@@ -89,7 +83,7 @@ impl PreloadOwner {
 
 impl Default for PreloadOwner {
     fn default() -> Self {
-        Self { state: Mutex::new(State::default()), effects: OrderedEffects::default(), busy: watch::channel(0).0, changed: watch::channel(0).0, session_ready: watch::channel(true).0, inner: OnceLock::new(), runtime: OnceLock::new() }
+        Self { state: Mutex::new(State::default()), effects: OrderedEffects::default(), busy: watch::channel(0).0, changed: watch::channel(0).0, inner: OnceLock::new(), runtime: OnceLock::new() }
     }
 }
 
@@ -146,13 +140,13 @@ fn limited_combinations(parameters: &[(&String, Vec<Value>)], at: usize, params:
 }
 
 impl Inner {
-    pub(crate) async fn wait_for_session(&self) -> Result<(), SyncError> {
-        let mut ready = self.preload.session_ready.subscribe();
-        let mut stopped = self.stopped.clone();
-        tokio::select! {
-            biased;
-            _ = stopped.wait_for(|stopped| *stopped) => Err(SyncError::Cancelled),
-            result = ready.wait_for(|ready| *ready) => result.map(|_| ()).map_err(|_| SyncError::Cancelled),
+    pub(crate) fn admitted(&self, origin: crate::lifecycle::Origin) -> bool {
+        self.db.shared.store.lifecycle.snapshot().admits(origin)
+    }
+
+    pub(crate) fn explicit_succeeded(&self, epoch: u64) {
+        if let Ok(Some(session)) = self.transport.session() {
+            self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(Some(session), epoch));
         }
     }
 
@@ -205,6 +199,7 @@ impl Inner {
     }
 
     pub(crate) fn preload_start(self: &Arc<Self>) {
+        if !self.admitted(crate::lifecycle::Origin::Background) { return; }
         if let Ok(runtime) = Handle::try_current() { let _ = self.preload.runtime.set(runtime); }
         let mut state = locked(&self.preload.state);
         if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
@@ -220,19 +215,18 @@ impl Inner {
     }
 
     fn preload_take(&self) -> bool {
-        let signed_in = self.transport.session();
+        let signed_in = self.admitted(crate::lifecycle::Origin::Background);
         let mut state = locked(&self.preload.state);
-        let ready = state.due && !state.held() && !state.yielding() && self.connectivity.is_online() && matches!(signed_in, Ok(Some(_)));
+        let ready = state.due && !state.held() && !state.yielding() && self.connectivity.is_online() && signed_in;
         if ready { state.due = false; } else { state.running = false; }
         drop(state);
-        if let Err(error) = signed_in { self.preload_failed(&SyncError::Transport(error)); }
         ready
     }
 
     fn preload_failed(&self, error: &SyncError) {
         let Ok(windows) = self.preloaded_windows() else { return };
         for (model, relation, params) in windows {
-            let Ok(resolved) = self.resolve(&model, &relation, &params) else { continue };
+            let Ok(resolved) = self.resolve(crate::lifecycle::Origin::Background, &model, &relation, &params) else { continue };
             if let Ok(seed) = self.stored(&resolved) {
                 FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, seed).failed(LoadError::of(error));
             }
@@ -261,12 +255,12 @@ impl Inner {
             for (model, relation, params) in windows {
                 let key = format!("{model}|{relation}|{params:?}");
                 if !started.insert(key.clone()) { continue; }
-                let Ok(window_key) = self.resolve(&model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
+                let Ok(window_key) = self.resolve(crate::lifecycle::Origin::Background, &model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
                 let (inner, lanes, loaded) = (self.clone(), lanes.clone(), key.clone());
                 let task = loads.spawn(async move {
                     let _lane = lanes.acquire_owned().await;
                     inner.app_loads_settled().await;
-                    let result = match inner.resolve(&model, &relation, &params) {
+                    let result = match inner.resolve(crate::lifecycle::Origin::Background, &model, &relation, &params) {
                         Ok(resolved) => inner.load_scope(&resolved, false).await,
                         Err(error) => Err(error),
                     };
@@ -307,7 +301,7 @@ impl Inner {
     }
 
     fn apply_listen(self: &Arc<Self>, state: &mut State, effects: &mut Effects) {
-        let wanted = state.wants_listen();
+        let wanted = !state.listening_denied && self.db.shared.store.lifecycle.snapshot().signed_in();
         if std::mem::replace(&mut state.listened, wanted) == wanted { return; }
         let (inner, runtime) = (self.clone(), Handle::try_current().ok());
         effects.push(move || {
@@ -316,25 +310,11 @@ impl Inner {
         });
     }
 
-    pub(crate) fn preload_on_session(self: &Arc<Self>) -> bool {
-        match self.transport.session() {
-            Ok(current) => {
-                let changed = self.preload.with_state(|state, effects| {
-                    let changed = std::mem::replace(&mut state.session, current.clone()) != current;
-                    if changed { state.first_snapshot = false; }
-                    self.apply_listen(state, effects);
-                    changed
-                });
-                let committed = changed && current.is_some();
-                if committed { self.preload_on_event(); }
-                committed
-            }
-            Err(error) => {
-                locked(&self.preload.state).due = true;
-                self.preload_failed(&SyncError::Transport(error));
-                false
-            }
-        }
+    pub(crate) fn preload_session(self: &Arc<Self>) {
+        self.preload.with_state(|state, effects| {
+            state.first_snapshot = false;
+            self.apply_listen(state, effects);
+        });
     }
 }
 
@@ -367,7 +347,7 @@ impl Sync {
                 loads.spawn(async move {
                     let _lane = lanes.acquire_owned().await;
                     let (model, relation, params) = window;
-                    let fetched = match inner.resolve(&model, &relation, &params) {
+                    let fetched = match inner.resolve(crate::lifecycle::Origin::Explicit, &model, &relation, &params) {
                         Ok(resolved) => inner.load_scope(&resolved, true).await.map(|outcome| outcome.kept_error),
                         Err(error) => Err(error),
                     };
@@ -392,16 +372,23 @@ impl Sync {
     }
 
     pub fn check_session(&self) {
-        self.inner.preload_on_session();
+        let lifecycle = &self.inner.db.shared.store.lifecycle;
+        let snapshot = lifecycle.snapshot();
+        if snapshot.ended { return; }
+        match self.inner.transport.session() {
+            Ok(session) => {
+                lifecycle.transition(crate::lifecycle::Change::Session(session, snapshot.session_epoch));
+                if !self.inner.registered.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    self.inner.preload_session();
+                    self.inner.preload_on_event();
+                }
+            }
+            Err(error) => self.inner.preload_failed(&SyncError::Transport(error)),
+        }
     }
 
     pub fn session_ended(&self) {
-        self.inner.preload.with_state(|state, effects| {
-            state.session = None;
-            let ready = self.inner.preload.session_ready.clone();
-            effects.push(move || { crate::db::lock::effect(|| ready.send_replace(false)); });
-            self.inner.apply_listen(state, effects);
-        });
+        self.inner.db.shared.store.lifecycle.transition(crate::lifecycle::Change::EndSession);
     }
 
     pub fn set_listening(&self, allowed: bool) {
@@ -412,26 +399,12 @@ impl Sync {
     }
 
     pub fn session_committed(&self) {
-        let changed = self.inner.preload_on_session();
-        let resumed = self.inner.preload.with_state(|state, effects| {
-            if state.session.is_none() || *self.inner.preload.session_ready.borrow() { return false; }
-            let ready = self.inner.preload.session_ready.clone();
-            effects.push(move || { crate::db::lock::effect(|| ready.send_replace(true)); });
-            true
-        });
-        if changed || resumed {
-            self.refresh_due_entities(true);
-            let _ = self.inner.request_resume(super::resume_machine::Cause::Explicit, None);
-        }
+        self.inner.explicit_succeeded(self.inner.db.shared.store.lifecycle.snapshot().session_epoch);
     }
 }
 
 #[cfg(test)]
 impl Sync {
-    pub(crate) fn suspended_reads(&self) -> usize {
-        self.inner.preload.session_ready.receiver_count()
-    }
-
     pub(crate) fn preload_running(&self) -> bool {
         locked(&self.inner.preload.state).running
     }

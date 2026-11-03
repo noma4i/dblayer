@@ -45,7 +45,7 @@ async fn open(last_has_next: bool) -> (Arc<Database>, Arc<Paged>) {
     });
     model.relations.push(feed);
     let transport = Arc::new(Paged { queries: AtomicUsize::new(0), held: Notify::new(), release: Notify::new(), last_has_next });
-    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000)).await.unwrap();
+    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
     (db, transport)
 }

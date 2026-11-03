@@ -26,7 +26,7 @@ impl Inner {
             if params.len() != relation.by_columns.len() {
                 continue;
             }
-            let Ok(resolved) = self.resolve(model, &relation.name, &params) else { continue };
+            let Ok(resolved) = self.resolve(crate::lifecycle::Origin::Observed, model, &relation.name, &params) else { continue };
             let loaded = rusqlite::OptionalExtension::optional(reader.connection().query_row("SELECT 1 FROM query_window WHERE key = ?1", [&resolved.window_key], |row| row.get::<_, i64>(0)))
                 .map_err(|error| SyncError::Event(error.to_string()))?;
             if loaded.is_none() {

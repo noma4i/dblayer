@@ -116,7 +116,7 @@ fn every_stream_wake_runs_unlocked() {
             Trigger::Value => listener.changed(LiveChange::empty(1)),
             Trigger::Error => listener.changed(LiveChange { error: Some(DbError::Network { detail: "lost".into() }), ..LiveChange::empty(2) }),
             Trigger::Cancel => queue.cancel(),
-            Trigger::Close => super::super::open_streams::Closable::close(&*queue),
+            Trigger::Close => crate::lifecycle::Member::close(&*queue),
         }
         assert_eq!((waker.wakes() >= 1, waker.violations()), (true, 0));
         let ready = next.as_mut().poll(&mut Context::from_waker(Waker::noop()));

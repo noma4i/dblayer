@@ -39,6 +39,8 @@ mod online;
 mod preload;
 #[cfg(test)]
 mod preload_tests;
+#[cfg(test)]
+mod lifecycle_tests;
 mod registry;
 mod state;
 #[cfg(test)]
@@ -126,7 +128,9 @@ impl Default for JoinedLoads {
 
 pub(crate) struct Inner {
     stopped: watch::Receiver<bool>,
-    subscription_reset: watch::Sender<u64>,
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    registered: std::sync::atomic::AtomicBool,
+    this: std::sync::OnceLock<std::sync::Weak<Inner>>,
     pub db: Db,
     pub transport: Arc<dyn Transport>,
     pub clock: Arc<dyn Clock>,
@@ -235,12 +239,6 @@ impl Sync {
         let max_files = config.upload.max_files;
         let (stop, stopped) = watch::channel(false);
         let owner = Arc::new(load_owner::LoadOwner::default());
-        let resets = Arc::downgrade(&owner);
-        db.on_reset(Arc::new(move |models| {
-            if let Some(owner) = resets.upgrade() {
-                owner.reset(models);
-            }
-        }));
         let lifetime = Lifetime { stop, owner: owner.clone(), closed: std::sync::atomic::AtomicBool::new(false) };
         let connectivity = db.connectivity();
         let change_feed = db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| (spec.key.to_string(), feed.clone())));
@@ -252,7 +250,9 @@ impl Sync {
         }
         let inner = Inner {
             stopped,
-            subscription_reset: watch::channel(0).0,
+            registration: std::sync::OnceLock::new(),
+            registered: std::sync::atomic::AtomicBool::new(false),
+            this: std::sync::OnceLock::new(),
             db,
             transport,
             clock,
@@ -291,17 +291,17 @@ impl Sync {
         let this = Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) };
         let preloads = Arc::downgrade(&this.inner);
         this.inner.preload.attach(preloads.clone());
-        this.inner.db.on_reset(Arc::new(move |_| {
-            if let Some(inner) = preloads.upgrade() {
-                inner.reset_live_ready();
-                crate::db::lock::effect(|| inner.subscription_reset.send_modify(|generation| *generation = generation.wrapping_add(1)));
-                inner.preload_on_event();
-            }
-        }));
+        let _ = this.inner.this.set(preloads);
+        if let Ok(session) = this.inner.transport.session() {
+            let epoch = this.inner.db.shared.store.lifecycle.snapshot().session_epoch;
+            this.inner.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(session, epoch));
+        }
+        this.inner.db.shared.store.lifecycle.enroll(&this.inner);
         this
     }
 
     pub fn close(&self) {
+        self.inner.db.shared.store.lifecycle.close();
         self._lifetime.close();
     }
 
@@ -323,6 +323,33 @@ impl Sync {
         let mut counters = locked(&self.inner.counters).clone();
         counters.lost_outcomes = locked(&self.inner.outcomes).lost();
         counters
+    }
+}
+
+impl crate::lifecycle::Member for Inner {
+    fn close(&self) { self.owner.submit(load_machine::Event::Close); }
+
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+
+    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+        let Some(inner) = self.this.get().and_then(std::sync::Weak::upgrade) else { return };
+        match &snapshot.change {
+            crate::lifecycle::Change::Reset(models) => {
+                self.owner.reset(models.as_deref());
+                self.reset_live_ready();
+                inner.preload_on_event();
+            }
+            crate::lifecycle::Change::Session(_, _) | crate::lifecycle::Change::EndSession => {
+                inner.preload_session();
+                if snapshot.session.is_some() {
+                    inner.refresh_due_entities(true);
+                    inner.preload_on_event();
+                    let _ = inner.request_resume(resume_machine::Cause::Explicit, None);
+                    inner.spawn_flush(Duration::ZERO);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

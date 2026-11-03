@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
-use super::open_streams::{Closable, OpenStreams};
+use crate::lifecycle::{Member, Lifecycle};
 use super::live_feed::LiveFeed;
 use super::open_slot::OpenSlot;
 use super::{Config, Database, DbError, LiveChange, LiveSubscription, LivePhase, QueryListener};
@@ -19,13 +19,13 @@ impl QueryListener for Silent {
     fn changed(&self, _: LiveChange) {}
 }
 
-struct Counting(AtomicUsize, Option<Arc<OpenStreams>>, Mutex<Vec<usize>>, std::sync::OnceLock<super::open_streams::Registration>);
-impl Closable for Counting {
+struct Counting(AtomicUsize, Option<Arc<Lifecycle>>, Mutex<Vec<usize>>, std::sync::OnceLock<crate::lifecycle::Registration>);
+impl Member for Counting {
     fn close(&self) {
         self.0.fetch_add(1, Ordering::SeqCst);
         if let Some(streams) = &self.1 { crate::db::locked(&self.2).push(streams.enrolled()); }
     }
-    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.3 }
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.3 }
 }
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
@@ -48,7 +48,7 @@ fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) 
 
 #[test]
 fn the_open_streams_close_each_member_once_and_refuses_late_members() {
-    let streams = Arc::new(OpenStreams::default());
+    let streams = Arc::new(Lifecycle::default());
     let first = Arc::new(Counting(AtomicUsize::new(0), Some(streams.clone()), Mutex::default(), Default::default()));
     let dropped = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()));
     streams.enroll(&first);
@@ -67,7 +67,7 @@ fn the_open_streams_close_each_member_once_and_refuses_late_members() {
 
 #[test]
 fn enrolling_a_stream_does_the_same_work_with_existing_streams() {
-    let streams = Arc::new(OpenStreams::default());
+    let streams = Arc::new(Lifecycle::default());
     let members: Vec<_> = (0..128).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
     for member in &members { streams.enroll(member); }
     let before = streams.work();

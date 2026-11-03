@@ -21,7 +21,7 @@ pub enum WireModelEventItem {
 
 #[derive(uniffi::Object)]
 pub struct ModelEventFeed {
-    registration: std::sync::OnceLock<super::open_streams::Registration>,
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
     events: Arc<crate::sync::ModelEvents>,
     wire: Arc<WireModel>,
 }
@@ -38,9 +38,9 @@ impl Database {
     }
 }
 
-impl super::open_streams::Closable for ModelEventFeed {
+impl crate::lifecycle::Member for ModelEventFeed {
     fn close(&self) { self.events.close(); }
-    fn registration(&self) -> &std::sync::OnceLock<super::open_streams::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 }
 
 async fn joined<T>(task: tokio::task::JoinHandle<Option<T>>) -> Result<Option<T>, DbError> {

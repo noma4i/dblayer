@@ -20,7 +20,7 @@ impl Inner {
         for (key, (relation, params)) in targets {
             let result = async {
                 if only_stale && !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.invalidated) { return Ok(false); }
-                let resolved = self.resolve(model, &relation, &params)?;
+                let resolved = self.resolve(crate::lifecycle::Origin::Observed, model, &relation, &params)?;
                 let outcome = if only_stale { self.fetch_after_flights(&resolved).await? } else { self.fetch(&resolved, None, false).await? };
                 if let Some(error) = outcome.kept_error { return Err(error); }
                 Ok(true)

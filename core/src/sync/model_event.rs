@@ -46,9 +46,31 @@ impl Queue {
 }
 
 pub(crate) struct EventQueue {
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
     model: String,
     state: std::sync::Mutex<Queue>,
     ready: tokio::sync::Notify,
+}
+
+impl crate::lifecycle::Member for EventQueue {
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+
+    fn close(&self) {
+        let mut state = locked(&self.state);
+        state.closed = true;
+        state.slots.clear();
+        state.events = 0;
+        drop(state);
+        crate::db::lock::effect(|| self.ready.notify_waiters());
+    }
+
+    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+        if matches!(snapshot.change, crate::lifecycle::Change::EndSession) || matches!(snapshot.change, crate::lifecycle::Change::Reset(_)) && snapshot.rereads(&self.model) {
+            let mut state = locked(&self.state);
+            state.slots.clear();
+            state.events = 0;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -138,8 +160,7 @@ impl ModelEvents {
     }
 
     pub fn close(&self) {
-        locked(&self.queue.state).closed = true;
-        crate::db::lock::effect(|| self.queue.ready.notify_waiters());
+        crate::lifecycle::Member::close(&*self.queue);
         let keys = std::mem::take(&mut *locked(&self.keys));
         for key in keys { self.inner.release_live(&key); }
     }
@@ -155,7 +176,8 @@ impl Sync {
     pub async fn open_model_events(&self, model: &str) -> Result<ModelEvents, SyncError> {
         let spec = self.inner.db.spec(model)?;
         if spec.changes.is_empty() && spec.listens.is_empty() { return Err(SyncError::Event(format!("{model} declares no event source"))); }
-        let queue = Arc::new(EventQueue { model: model.to_string(), state: Default::default(), ready: tokio::sync::Notify::new() });
+        let queue = Arc::new(EventQueue { registration: Default::default(), model: model.to_string(), state: Default::default(), ready: tokio::sync::Notify::new() });
+        self.inner.db.shared.store.lifecycle.enroll(&queue);
         locked(&self.inner.model_events).push(Arc::downgrade(&queue));
         let mut keys = Vec::new();
         if !spec.changes.is_empty() { keys.push(self.inner.acquire_changes().ok_or_else(|| SyncError::Event("no changes source declared".into()))?); }
