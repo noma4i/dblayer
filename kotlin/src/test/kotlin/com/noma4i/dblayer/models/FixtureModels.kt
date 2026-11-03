@@ -44,6 +44,7 @@ data class Asset(
             }
             read(DBlayer.database.create("Asset", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(clientKey: String? = null, size: Long? = null, position: Long? = null): Asset = offCaller {
         val values = buildJsonObject {
             clientKey?.let { put("clientKey", jsonValue(it)) }
@@ -120,6 +121,7 @@ data class Container(
             }
             return account.send(this, values)
         }
+    }
     suspend fun update(title: String? = null, lastRecordAt: GraphQLNullable<String> = GraphQLNullable.Omitted, lastRecordId: GraphQLNullable<String> = GraphQLNullable.Omitted, shareUrl: GraphQLNullable<String> = GraphQLNullable.Omitted, isPublic: GraphQLNullable<Boolean> = GraphQLNullable.Omitted, shelves: GraphQLNullable<List<ContainerShelf>> = GraphQLNullable.Omitted): Container = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
@@ -181,6 +183,7 @@ data class Document(
             }
             read(DBlayer.database.create("Document", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(slug: String? = null): Document = offCaller {
         val values = buildJsonObject {
             slug?.let { put("slug", jsonValue(it)) }
@@ -232,6 +235,7 @@ data class Chat(
             }
             read(DBlayer.database.create("Chat", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(title: String? = null, serverRevision: Long? = null, lists: List<String>? = null): Chat = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
@@ -277,6 +281,7 @@ data class Message(
             }
             read(DBlayer.database.create("Message", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(text: String? = null, chatId: String? = null): Message = offCaller {
         val values = buildJsonObject {
             text?.let { put("text", jsonValue(it)) }
@@ -321,6 +326,7 @@ data class InterfaceRecord(
             }
             read(DBlayer.database.create("InterfaceRecord", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(slug: String? = null, spec: GraphQLNullable<SampleSpec> = GraphQLNullable.Omitted): InterfaceRecord = offCaller {
         val values = buildJsonObject {
             slug?.let { put("slug", jsonValue(it)) }
@@ -373,6 +379,7 @@ data class KeywordRecord(
             }
             read(DBlayer.database.create("KeywordRecord", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(default: String? = null, `class`: String? = null, value: GraphQLNullable<KeywordValue> = GraphQLNullable.Omitted): KeywordRecord = offCaller {
         val values = buildJsonObject {
             default?.let { put("default", jsonValue(it)) }
@@ -449,6 +456,7 @@ data class MediaMessage(
             }
             read(DBlayer.database.create("MediaMessage", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(chatId: String? = null, kind: MediaMessageKind? = null, mediaKind: GraphQLNullable<MediaKindValue> = GraphQLNullable.Omitted, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted): MediaMessage = offCaller {
         val values = buildJsonObject {
             chatId?.let { put("chatId", jsonValue(it)) }
@@ -531,6 +539,7 @@ data class Moment(
             }
             return account.send(this, values)
         }
+    }
     suspend fun update(uuid: String? = null, userId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: GraphQLNullable<String> = GraphQLNullable.Omitted, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null): Moment = offCaller {
         val values = buildJsonObject {
             uuid?.let { put("uuid", jsonValue(it)) }
@@ -605,6 +614,7 @@ data class NestedSample(
             }
             read(DBlayer.database.create("NestedSample", values_.jsonText(), "{}"))
         }
+    }
     suspend fun update(phase: GraphQLNullable<NestedSamplePhase> = GraphQLNullable.Omitted, value: GraphQLNullable<NestedValue> = GraphQLNullable.Omitted, values: List<NestedValue>? = null, tree: GraphQLNullable<NestedTree> = GraphQLNullable.Omitted, replyTo: GraphQLNullable<RecordReplyNode> = GraphQLNullable.Omitted): NestedSample = offCaller {
         val values_ = buildJsonObject {
             put("phase", phase)
@@ -647,6 +657,7 @@ data class NestedReference(
             }
             read(DBlayer.database.create("NestedReference", values_.jsonText(), "{}"))
         }
+    }
     suspend fun update(values: List<NestedValue>? = null): NestedReference = offCaller {
         val values_ = buildJsonObject {
             values?.let { put("values", jsonValue(it)) }
@@ -694,6 +705,7 @@ data class Notice(
             }
             read(DBlayer.database.create("Notice", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(body: String? = null, occurredAt: String? = null): Notice = offCaller {
         val values = buildJsonObject {
             body?.let { put("body", jsonValue(it)) }
@@ -746,6 +758,7 @@ data class InteractionNotice(
             }
             read(DBlayer.database.create("InteractionNotice", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(recordId: String? = null, actorUserId: String? = null, occurredAt: String? = null): InteractionNotice = offCaller {
         val values = buildJsonObject {
             recordId?.let { put("recordId", jsonValue(it)) }
@@ -803,6 +816,7 @@ data class ChatAction(
             }
             read(DBlayer.database.create("ChatAction", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null): ChatAction = offCaller {
         val values = buildJsonObject {
             chatId?.let { put("chatId", jsonValue(it)) }
@@ -861,6 +875,7 @@ data class ChatActivityNotice(
             }
             read(DBlayer.database.create("ChatActivityNotice", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null): ChatActivityNotice = offCaller {
         val values = buildJsonObject {
             chatId?.let { put("chatId", jsonValue(it)) }
@@ -923,6 +938,7 @@ data class Presence(
             }
             read(DBlayer.database.create("Presence", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(userId: String? = null, room: String? = null): Presence = offCaller {
         val values = buildJsonObject {
             userId?.let { put("userId", jsonValue(it)) }
@@ -1016,6 +1032,7 @@ data class Record(
             }
             return account.send(this, values, args)
         }
+    }
     suspend fun update(containerId: String? = null, authorId: String? = null, regionId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: String? = null, createdAt: String? = null, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, reactions: List<RecordReactionNode>? = null, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, media: GraphQLNullable<RecordMedia> = GraphQLNullable.Omitted): Record = offCaller {
         val values = buildJsonObject {
             containerId?.let { put("containerId", jsonValue(it)) }
@@ -1070,6 +1087,7 @@ data class CurrentUser(
             }
             read(DBlayer.database.create("CurrentUser", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(name: String? = null): CurrentUser = offCaller {
         val values = buildJsonObject {
             name?.let { put("name", jsonValue(it)) }
@@ -1112,6 +1130,7 @@ data class CurrentRegion(
             }
             read(DBlayer.database.create("CurrentRegion", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(name: String? = null): CurrentRegion = offCaller {
         val values = buildJsonObject {
             name?.let { put("name", jsonValue(it)) }
@@ -1163,6 +1182,7 @@ data class CustomScreen(
             }
             read(DBlayer.database.create("CustomScreen", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(slug: String? = null, version: Long? = null, requires: ScreenRequires? = null, spec: GraphQLNullable<ScreenSpec> = GraphQLNullable.Omitted): CustomScreen = offCaller {
         val values = buildJsonObject {
             slug?.let { put("slug", jsonValue(it)) }
@@ -1204,6 +1224,7 @@ data class StorageRow(
             }
             read(DBlayer.database.create("StorageRow", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(record: String? = null): StorageRow = offCaller {
         val values = buildJsonObject {
             record?.let { put("record", jsonValue(it)) }
@@ -1246,6 +1267,7 @@ data class Tail(
             }
             read(DBlayer.database.create("Tail", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(text: String? = null): Tail = offCaller {
         val values = buildJsonObject {
             text?.let { put("text", jsonValue(it)) }
@@ -1292,6 +1314,7 @@ data class UnionSample(
             }
             read(DBlayer.database.create("UnionSample", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, props: GraphQLNullable<MomentWidgetItemProps> = GraphQLNullable.Omitted): UnionSample = offCaller {
         val values = buildJsonObject {
             put("label", label)
@@ -1355,6 +1378,7 @@ data class User(
             }
             read(DBlayer.database.create("User", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(name: String? = null, birthday: GraphQLNullable<String> = GraphQLNullable.Omitted): User = offCaller {
         val values = buildJsonObject {
             name?.let { put("name", jsonValue(it)) }
@@ -1408,6 +1432,7 @@ data class Vibe(
             }
             read(DBlayer.database.create("Vibe", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(momentId: String? = null, userId: String? = null, kind: VibeKind? = null): Vibe = offCaller {
         val values = buildJsonObject {
             momentId?.let { put("momentId", jsonValue(it)) }

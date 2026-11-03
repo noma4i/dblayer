@@ -49,6 +49,7 @@ data class BlobProfile(
             }
             read(DBlayer.database.create("BlobProfile", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted): BlobProfile = offCaller {
         val values = buildJsonObject {
             put("label", label)
@@ -91,6 +92,7 @@ data class Clip(
             }
             read(DBlayer.database.create("Clip", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted): Clip = offCaller {
         val values = buildJsonObject {
             put("title", title)
@@ -142,6 +144,7 @@ data class Inbox(
             }
             read(DBlayer.database.create("Inbox", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(title: String? = null, stance: GraphQLNullable<String> = GraphQLNullable.Omitted): Inbox = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
@@ -190,6 +193,7 @@ data class MediaEntry(
             }
             read(DBlayer.database.create("MediaEntry", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, sequenceNumber: Long? = null): MediaEntry = offCaller {
         val values = buildJsonObject {
             put("text", text)
@@ -237,6 +241,7 @@ data class Roster(
             }
             read(DBlayer.database.create("Roster", values.jsonText(), "{}"))
         }
+    }
     suspend fun update(title: String? = null): Roster = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }

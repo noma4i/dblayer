@@ -276,3 +276,15 @@ fn model_with_two_node_relations_gets_one_entity_per_platform() {
     assert!(swift.contains("func node(_ id: String") && swift.contains("func transcodeStatus(_ id: String"), "{swift}");
     assert!(kotlin.contains("fun node(id: String") && kotlin.contains("fun transcodeStatus(id: String"), "{kotlin}");
 }
+
+#[test]
+fn every_create_form_closes_the_kotlin_companion() {
+    let source = |create: &str| format!("model Moment do\n  attribute :text, :string\n{create}\nend\n");
+    for create in ["", "  operation :create, durable: true do\n    mutation \"SendMoment\"\n  end", "  operation :create do\n    mutation \"CreateMoment\"\n  end"] {
+        let models = parse_models(&source(create)).unwrap();
+        let kotlin = emit_kotlin(&models, &[], &Default::default());
+        let opened = kotlin.matches('{').count();
+        let closed = kotlin.matches('}').count();
+        assert_eq!(opened, closed, "unbalanced braces for create form {create:?}");
+    }
+}
