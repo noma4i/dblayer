@@ -349,6 +349,7 @@ class LifecycleSessionTest {
             eventually("the request waits at the server") { server.parkedCount > 0 }
             DBlayer.close()
             awaitWithin("the call that the server never answered") { ended.await() }
+            Unit
         } finally {
             server.hold(null)
             DBlayer.close()

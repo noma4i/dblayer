@@ -57,8 +57,7 @@ fn the_manifest_lists_every_sequence_and_each_listed_test_exists() {
     let directory = root.join("core/src/ffi/selftest");
     for file in ["app", "calls", "harness", "machine", "recovery", "windows"] {
         let source = std::fs::read_to_string(directory.join(format!("{file}_tests.rs"))).unwrap();
-        let mut attributes = source.match_indices("#[tokio::test");
-        while let Some((at, _)) = attributes.next() {
+        for (at, _) in source.match_indices("#[tokio::test") {
             let name = source[at..].split("fn ").nth(1).and_then(|rest| rest.split('(').next()).unwrap();
             assert!(rows.iter().any(|row| row.lane == "core" && row.test == name), "{file}: {name} is not in the manifest");
         }
