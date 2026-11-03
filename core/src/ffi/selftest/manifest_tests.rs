@@ -55,7 +55,7 @@ fn the_manifest_lists_every_sequence_and_each_listed_test_exists() {
         assert!(text.contains(&format!("{keyword} {}(", name_of(&row.test))), "{} lists {} which does not exist in the {} lane", row.id, row.test, row.lane);
     }
     let directory = root.join("core/src/ffi/selftest");
-    for file in ["app", "calls", "harness", "machine", "recovery", "windows"] {
+    for file in ["app", "bridge", "calls", "harness", "machine", "recovery", "windows"] {
         let source = std::fs::read_to_string(directory.join(format!("{file}_tests.rs"))).unwrap();
         for (at, _) in source.match_indices("#[tokio::test") {
             let name = source[at..].split("fn ").nth(1).and_then(|rest| rest.split('(').next()).unwrap();

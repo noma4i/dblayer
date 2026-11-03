@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Value bridge: `AccountScope`, `ValueStream`, `Projected`, snapshots and keyed deltas with the session epoch.
+- `AccountScope.send`: a durable message command with `CommandStatus`, refused for an old epoch.
+- `refresh`, `loadMore` and `loaded` on a stream, interrupted when its session ends.
 - Lifecycle sequence tests for the core, Swift and Kotlin, listed in a manifest.
 
 ### Changed

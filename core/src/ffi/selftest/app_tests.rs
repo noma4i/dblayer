@@ -18,7 +18,7 @@ fn session_code(error: DbError) -> SessionCode {
     code
 }
 
-async fn ends(database: &Database) { bound(crate::ffi::settled(&database)).await.unwrap(); }
+async fn ends(database: &Database) { bound(crate::ffi::settled(database)).await.unwrap(); }
 
 /// C05, C07, R-5, R-8: the app opens its handles signed out, then logs in. Both login orders end with every handle showing the account.
 #[tokio::test(flavor = "multi_thread")]

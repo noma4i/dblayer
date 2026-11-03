@@ -234,8 +234,9 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     let listener = Arc::new(RecordingEntity::default());
     let entity = db.live_entities("Moment".into(), listener.clone()).unwrap();
     entity.retain(vec![super::EntityRequest { id: "m1".into(), lease: 1, fetch: super::EntityFetch::Force }]).unwrap();
-    let settling = tokio::spawn({ let db = db.clone(); async move { crate::ffi::settled(&db).await } });
     within(transport.started.notified()).await;
+    let settling = tokio::spawn({ let db = db.clone(); async move { crate::ffi::settled(&db).await } });
+    for _ in 0..200 { tokio::task::yield_now().await; }
     assert!(!settling.is_finished());
     hold.add_permits(1);
     within(settling).await.unwrap().unwrap();

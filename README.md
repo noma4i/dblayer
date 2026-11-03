@@ -43,6 +43,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - [Describing models](docs/models.md)
 - [Local and synced models](docs/storage-models.md)
 - [Live data and queries](docs/live-data.md)
+- [Value bridge](docs/value-bridge.md)
 - [Entities: one live value per record](docs/entities.md)
 - [Writing data](docs/writing-data.md)
 - [Sync state of a record](docs/sync-state.md)

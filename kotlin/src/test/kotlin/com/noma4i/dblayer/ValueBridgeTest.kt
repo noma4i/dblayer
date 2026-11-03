@@ -1,0 +1,275 @@
+package com.noma4i.dblayer
+
+import com.noma4i.dblayer.models.Moment
+import com.noma4i.dblayer.models.User
+import com.noma4i.dblayer.models.modelsJSON
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+
+private class BridgeCredential : CredentialStore {
+    @Volatile var current: String? = null
+    override fun get(): String? = current
+    override fun set(credential: String) { current = credential }
+    override fun clear() { current = null }
+}
+
+/** The value bridge through its public API: streams of snapshots and deltas, a durable command, and the epoch of the session. */
+@OptIn(DBlayerTestingApi::class)
+class ValueBridgeTest {
+    private val account = AtomicReference<String?>(null)
+    private val created = AtomicInteger(0)
+
+    private fun json(text: String): JsonObject = Json.parseToJsonElement(text).jsonObject
+
+    private val server = SealedServer { path, body ->
+        if (path == "/api/auth/login_link") {
+            val name = body.getValue("account").jsonPrimitive.content
+            account.set(name)
+            return@SealedServer json("""{"sessionId":"$name"}""")
+        }
+        if (path == "/api/logout") {
+            account.set(null)
+            return@SealedServer json("""{"revoked":true}""")
+        }
+        val name = account.get() ?: return@SealedServer json("""{"error":"UNAUTHENTICATED"}""")
+        when (body["operationName"]?.jsonPrimitive?.content) {
+            "SessionProfile" -> json("""{"data":{"sessionProfile":{"id":"$name"}}}""")
+            "UserProfile" -> json("""{"data":{"me":{"__typename":"User","id":"1","name":"$name"}}}""")
+            "CreateMoment" -> {
+                val number = created.incrementAndGet()
+                val text = body["variables"]?.jsonObject?.get("text")?.jsonPrimitive?.content ?: ""
+                json("""{"data":{"createMoment":{"__typename":"Moment","id":"m$number","uuid":"u$number","text":"$text","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+            }
+            else -> json("""{"errors":[{"message":"unexpected operation"}]}""")
+        }
+    }
+
+    private suspend fun signIn(name: String) {
+        DBlayer.database.sessionCall("login_link", """{"account":"$name"}""")
+        DBlayer.run("SessionProfile", JsonObject(emptyMap()))
+        User.profile.refresh()
+    }
+
+    private suspend fun openSession() {
+        DBlayer.close()
+        account.set(null)
+        val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", false))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
+        DBlayer.openTesting(MockTransport(), modelsJSON, encrypted = encrypted, credentials = BridgeCredential(), http = server)
+        DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]""")
+    }
+
+    private fun text(value: String): JsonObject = buildJsonObject { put("text", value) }
+
+    private fun screens() = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** B01: after the login a stream starts with a snapshot of the account, in the epoch of the session. */
+    @Test
+    fun aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val profile = Projected(scope.stream(User.profile), User, screen)
+            profile.loaded()
+            eventually("the stream shows A") { profile.value?.name == "A" }
+            assertEquals(scope.epoch, profile.projection.value.epoch)
+            assertTrue(profile.projection.value.revision != null && profile.projection.value.ended == null)
+            assertTrue(profile.projection.value.decoded >= 1)
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
+    /** B02: the sign-out ends the stream with one outcome, the projection keeps no new value, and nothing stays open in the core. */
+    @Test
+    fun theSessionResetEndsEveryStreamWithOneOutcome() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val profile = Projected(AccountScope.current().stream(User.profile), User, screen)
+            profile.loaded()
+            eventually("the stream shows A") { profile.value?.name == "A" }
+
+            DBlayer.sessionReset()
+            eventually("the stream ended") { profile.projection.value.ended == StreamEnd.SESSION_ENDED }
+
+            assertEquals(0uL, streamCensus().open)
+            assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
+            assertEquals("A", profile.value?.name)
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
+    /** B03: the account switch gives new streams in a new epoch. B never shows A and A never shows B. */
+    @Test
+    fun anAccountSwitchGivesNewProjectionsAndNoValueOfAReachesB() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val first = AccountScope.current()
+            val projectionA = Projected(first.stream(User.profile), User, screen)
+            projectionA.loaded()
+            eventually("A shows") { projectionA.value?.name == "A" }
+
+            DBlayer.sessionReset()
+            signIn("B")
+            val second = AccountScope.current()
+            assertNotEquals(first.epoch, second.epoch)
+            val projectionB = Projected(second.stream(User.profile), User, screen)
+            projectionB.loaded()
+            eventually("B shows") { projectionB.value?.name == "B" }
+
+            assertEquals("A", projectionA.value?.name)
+            assertEquals(StreamEnd.SESSION_ENDED, projectionA.projection.value.ended)
+            assertEquals(second.epoch, projectionB.projection.value.epoch)
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
+    /** B04: a message sent offline shows at once, goes out once when the network returns, and keeps its position when the server confirms it. */
+    @Test
+    fun aMessageSentOfflineGoesOutOnceAndKeepsItsPosition() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val thread = Projected(scope.stream(Moment.recent), Moment, screen)
+            thread.loaded()
+            DBlayer.database.setOnline(false)
+
+            val sent = scope.send(Moment, text("hello"))
+            eventually("the thread shows the queued message") { thread.projection.value.rows.size == 1 }
+            assertEquals(sent.row.id, thread.projection.value.rows[0].id)
+            assertEquals(SyncState.Pending, thread.projection.value.rows[0].sync.state)
+            assertEquals(CommandStatus.Queued, sent.status())
+            assertEquals(0, server.operationRequests("CreateMoment"))
+
+            DBlayer.database.setOnline(true)
+            assertEquals(CommandStatus.Delivered("m1"), sent.outcome())
+            eventually("the thread shows the confirmed message") { thread.projection.value.rows.firstOrNull()?.id == "m1" }
+
+            assertEquals("one message, not a temporary row and a confirmed row", 1, thread.projection.value.rows.size)
+            assertEquals(SyncState.Synced, thread.projection.value.rows[0].sync.state)
+            assertEquals(1, server.operationRequests("CreateMoment"))
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
+    /** B05: a command and a call of the old epoch are refused or end as interrupted, and the new projection never shows what the old session was about to receive. */
+    @Test
+    fun aCommandAndALateCallOfTheOldEpochEndWithoutReachingTheNewAccount() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val old = AccountScope.current()
+            val stream = old.stream(User.profile)
+            val projectionA = Projected(stream, User, screen)
+            projectionA.loaded()
+            eventually("A shows") { projectionA.value?.name == "A" }
+
+            server.hold("UserProfile")
+            val late = async { runCatching { stream.refresh() } }
+            eventually("the refresh waits at the server") { server.parkedCount > 0 }
+            DBlayer.sessionReset()
+            server.hold(null)
+            signIn("B")
+            val projectionB = Projected(AccountScope.current().stream(User.profile), User, screen)
+            projectionB.loaded()
+            eventually("B shows") { projectionB.value?.name == "B" }
+
+            val ended = late.await().exceptionOrNull()
+            assertTrue("the late call of the old epoch ended as $ended", ended is DbException.Interrupted)
+            val refused = runCatching { old.send(Moment, text("late")) }.exceptionOrNull()
+            assertTrue("a command of the old epoch ran: $refused", refused is DbException.Interrupted)
+            assertEquals(0, server.operationRequests("CreateMoment"))
+            assertEquals("B", projectionB.value?.name)
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
+    /** B06: the reader that stops ends the stream in the core. */
+    @Test
+    fun theReaderThatStopsEndsTheStreamInTheCore() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val projected = Projected(AccountScope.current().stream(User.profile), User, screen)
+            projected.loaded()
+            assertEquals(1uL, streamCensus().open)
+            assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
+
+            projected.close()
+            eventually("the stream left the core") { streamCensus().open == 0uL }
+
+            assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
+    /** B07: a change of one row decodes one row, and the subscriptions are the readers. */
+    @Test
+    fun aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val thread = Projected(scope.stream(Moment.recent), Moment, screen)
+            val profile = Projected(scope.stream(User.profile), User, screen)
+            thread.loaded()
+            val first = (1..5).map { number -> scope.send(Moment, text("m$number")) }
+            first.forEach { it.outcome() }
+            eventually("the thread holds five confirmed rows") { thread.projection.value.rows.let { rows -> rows.size == 5 && rows.all { it.sync.state == SyncState.Synced } } }
+            assertEquals(2uL, streamCensus().open)
+            assertEquals(2uL, DBlayer.subscriptionCensus().subscriptions)
+
+            val decoded = thread.projection.value.decoded
+            val deltas = thread.projection.value.deltas
+            val extra = scope.send(Moment, text("m6"))
+            eventually("the sixth row shows") { thread.projection.value.rows.size == 6 }
+            extra.outcome()
+            eventually("the sixth row is confirmed") { thread.projection.value.rows.lastOrNull()?.sync?.state == SyncState.Synced }
+
+            val decodedNow = thread.projection.value.decoded - decoded
+            val deltasNow = thread.projection.value.deltas - deltas
+            assertTrue("each delta of one row decodes one row, not the six of the list: $decodedNow rows in $deltasNow deltas", deltasNow >= 1 && decodedNow == deltasNow)
+            assertEquals(6, thread.projection.value.rows.size)
+            assertTrue(profile.projection.value.decoded >= 1)
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+}

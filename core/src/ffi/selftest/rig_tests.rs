@@ -77,6 +77,7 @@ struct State {
     violations: Vec<String>,
     log: Vec<Entry>,
     script: Vec<(String, Fault)>,
+    messages: Vec<(String, Value)>,
 }
 
 /// A held request first waits at its gate, then ends in the inner fault, if any.
@@ -105,6 +106,10 @@ impl World {
     pub(super) fn count(&self, operation: &str) -> usize { self.state.lock().unwrap().calls.get(operation).copied().unwrap_or(0) }
     pub(super) fn log(&self) -> Vec<Entry> { self.state.lock().unwrap().log.clone() }
     pub(super) fn hits(&self) -> usize { self.state.lock().unwrap().log.len() }
+    /// A message of the thread `c1` that the server already holds for this account.
+    pub(super) fn seed_message(&self, account: &str, id: &str, text: &str, at: i64) {
+        self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at})));
+    }
     pub(super) fn fail_next(&self, operation: &str, fault: Fault) { self.state.lock().unwrap().script.push((operation.into(), fault)); }
     pub(super) fn hold_then(&self, operation: &str, inner: Fault) -> Arc<Gate> {
         let gate = Gate::new();
@@ -155,6 +160,13 @@ impl World {
             "MyProfile" => json!({"data":{"me":row}}),
             "Users" => json!({"data":{"users":[row]}}),
             "UnregisterDevice" => json!({"data":{"unregisterDevice":{"ok":true}}}),
+            "Thread" => json!({"data":{"thread": state.messages.iter().filter(|(owner, _)| *owner == account).map(|(_, message)| message.clone()).collect::<Vec<_>>()}}),
+            "SendMessage" => {
+                let variables = &body["variables"];
+                let message = json!({"__typename":"Message","id":format!("m{}", state.messages.len() + 1),"chatId":variables["chatId"],"text":variables["text"],"at":variables["at"]});
+                if commits { state.messages.push((account.clone(), message.clone())); }
+                json!({"data":{"sendMessage":message}})
+            }
             "PUT" => json!({}),
             other if other.starts_with("subscribe:") => json!({}),
             other => panic!("unexpected operation {other}"),
@@ -274,7 +286,9 @@ const OPERATIONS: &str = r#"[
     {"name":"UserNode","document":"query UserNode($id: ID!) { node(id: $id) { ... on User { id name } } }"},
     {"name":"Users","document":"query Users { users { id name } }"},
     {"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},
-    {"name":"UnregisterDevice","document":"mutation UnregisterDevice { unregisterDevice { ok } }"}
+    {"name":"UnregisterDevice","document":"mutation UnregisterDevice { unregisterDevice { ok } }"},
+    {"name":"Thread","document":"query Thread($chatId: ID!) { thread(chatId: $chatId) { id chatId text at } }"},
+    {"name":"SendMessage","document":"mutation SendMessage($chatId: ID!, $text: String!, $at: Int!) { sendMessage(chatId: $chatId, text: $text, at: $at) { id chatId text at } }"}
 ]"#;
 
 /// The plain harness also holds a memory model that a server subscription feeds.
@@ -286,7 +300,29 @@ fn plain_models() -> String {
     relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, deleted_unless: None, set: serde_json::Map::new(), removes: false, debounce: None, root: None, id: Vec::new() });
     notice.relations.push(relation);
     models.push(notice);
+    models.push(message_spec());
     serde_json::to_string(&models).unwrap()
+}
+
+/// The chat message of the bridge sequences: a thread read from the server and a create that works offline.
+fn message_spec() -> crate::schema::ModelSpec {
+    use crate::schema::{ActionDeclaration, Coverage, FieldSpec, RelationSpec, RemoteShape, RootShape};
+    let mut message = crate::schema::ModelSpec::new("Message", vec![
+        FieldSpec::scalar("id", crate::value::ScalarKind::Id),
+        FieldSpec::scalar("chatId", crate::value::ScalarKind::Id).indexed(),
+        FieldSpec::scalar("text", crate::value::ScalarKind::Str),
+        FieldSpec::scalar("at", crate::value::ScalarKind::Int),
+    ]);
+    let mut thread = RelationSpec::new("thread", &["chatId"]);
+    thread.remote = Some(crate::sync::rig::remote("Thread", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    message.relations.push(thread);
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.mutation = Some("SendMessage".into());
+    create.has_optimistic = true;
+    create.has_temp_row_retention = true;
+    for field in ["chatId", "text", "at"] { create.variables.insert(field.into(), field.into()); }
+    message.actions.push(create);
+    message
 }
 
 fn plain_operations() -> String {

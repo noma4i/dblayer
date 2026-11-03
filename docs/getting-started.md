@@ -125,5 +125,6 @@ if (report.resetModels.isNotEmpty()) log("models cleared: ${report.resetModels},
 
 - [Describing models](models.md)
 - [Live data and queries](live-data.md)
+- [Value bridge](value-bridge.md)
 - [Writing data](writing-data.md)
 - [Server sync](server-sync.md)

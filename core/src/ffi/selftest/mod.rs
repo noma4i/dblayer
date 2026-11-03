@@ -1,4 +1,5 @@
 mod app_tests;
+mod bridge_tests;
 mod calls_tests;
 mod harness_tests;
 mod machine_tests;
