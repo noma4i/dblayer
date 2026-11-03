@@ -35,8 +35,8 @@ extension BridgeProbeTests {
     let path = Reachability(monitor: nil)
     DB.reachability = path
     defer {
-      try await DB.close()
       DB.reachability = .shared
+      Task { @MainActor in try? await DB.close() }
     }
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
     _ = try await Moment.create(text: "kept")

@@ -62,6 +62,7 @@ extension BridgeProbeTests {
     switched.use(nil)
     try await DB.resetForTesting()
     try await DB.settleForTesting()
+    try DB.database.setOnline(online: true)
     let next = MockTransport()
     for _ in 0..<3 { next.enqueue("MomentsFeed", reply: reply) }
     switched.use(next)

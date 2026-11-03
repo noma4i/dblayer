@@ -21,7 +21,7 @@ class SessionBridgeTest {
             calls.add("resume")
             return """{"ticket":"t-2"}"""
         }
-        override fun sessionReset() { calls.add("reset") }
+        override suspend fun sessionReset() { calls.add("reset") }
         override suspend fun retry(model: String, rowId: String, action: String?): ULong {
             calls.add("retry $model $rowId ${action ?: "null"}")
             return 3u

@@ -6,7 +6,7 @@ func openDatabase(config: Config, modelsJson: String, transport: Transport?, enc
 }
 
 @MainActor @discardableResult
-func adopt(_ database: Database) -> Database {
+func adopt(_ database: Database) async throws -> Database {
   try await DB.close()
   DB.current = database
   return database
@@ -14,5 +14,5 @@ func adopt(_ database: Database) -> Database {
 
 @MainActor @discardableResult
 func reopen(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]", uploads: UploadOperations? = nil, listening: Bool = true) async throws -> Database {
-  adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations, uploads: uploads, listening: listening))
+  try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations, uploads: uploads, listening: listening))
 }

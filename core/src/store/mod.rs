@@ -319,7 +319,7 @@ impl Store {
 
     #[cfg(test)]
     pub(crate) fn advance_generation_for_test(&self) {
-        let permit = self.lifecycle.begin_blocking(crate::lifecycle::Boundary::Models, None).expect("the database is open");
+        let Ok(permit) = self.lifecycle.begin_blocking(crate::lifecycle::Boundary::Models, None) else { return };
         self.lock().generation = permit.next_generation();
         permit.defer(crate::lifecycle::Change::Cleared(Some(Vec::new())));
         permit.finish();

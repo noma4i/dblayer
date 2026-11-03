@@ -95,11 +95,10 @@ extension BridgeProbeTests {
     return server
   }
 
-  /// The order of the app: sign-in call, data logout, session profile, profile refresh.
+  /// The order of the app: sign-in call, session profile, profile refresh.
   @MainActor
   static func startSealedSession(_ account: String) async throws {
     try await DB.sessionCall("login_link", body: LoginLink(account: account))
-    try await DB.sessionReset()
     try await DB.run("SessionProfile", variables: [:])
     try await User.profile.refresh()
   }

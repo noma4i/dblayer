@@ -32,8 +32,8 @@ struct ReachabilityTests {
     let path = Reachability(monitor: nil)
     DB.reachability = path
     defer {
-      try await DB.close()
       DB.reachability = .shared
+      Task { @MainActor in try? await DB.close() }
     }
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("fixtures/encrypted-http/kat.json")
     let fixture = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))

@@ -10,6 +10,7 @@ private fun describe(error: CloudException): String = when (error) {
     is CloudException.NeedsAuthorization -> "needsAuthorization"
     is CloudException.QuotaExceeded -> "quotaExceeded"
     is CloudException.Rejected -> "rejected"
+    is CloudException.Interrupted -> "interrupted"
 }
 
 private fun reason(value: String) = """{"error":{"code":403,"errors":[{"reason":"$value"}]}}"""

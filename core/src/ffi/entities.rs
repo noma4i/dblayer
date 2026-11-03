@@ -54,13 +54,14 @@ struct Entry {
     fetch: EntityFetch,
     generation: u64,
     epoch: u64,
+    after_reset: bool,
 }
 
 impl Entry {
     fn new(lease: u64, singleton: bool, generation: u64, epoch: u64) -> Self {
         let machine = EntityMachine::new(singleton);
         let verdict = if singleton { machine.begin_feed() } else { machine.reset() };
-        Self { lease, observer_lease: 0, machine, verdict, value: None, previous: None, value_token: 0, previous_token: 0, cancel: None, fetch: EntityFetch::None, generation, epoch }
+        Self { lease, observer_lease: 0, machine, verdict, value: None, previous: None, value_token: 0, previous_token: 0, cancel: None, fetch: EntityFetch::None, generation, epoch, after_reset: false }
     }
 
     fn snapshot(&self, id: &str) -> WireEntitySnapshot {
@@ -228,6 +229,7 @@ impl LiveEntities {
             entry.generation = generation;
             entry.epoch = epoch;
             entry.verdict = entry.machine.reset();
+            entry.after_reset = true;
             reads.push((id.clone(), entry.lease));
             if entry.fetch != EntityFetch::None {
                 entry.verdict = entry.machine.read_started();
@@ -240,6 +242,7 @@ impl LiveEntities {
             single.entry.generation = generation;
             single.entry.epoch = epoch;
             single.entry.verdict = single.entry.machine.reset();
+            single.entry.after_reset = true;
             if !self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) { single.entry.verdict = single.entry.machine.session_ended(); }
             snapshots.push(single.entry.snapshot(""));
             detached.subscription = single.subscription.take();
@@ -398,19 +401,52 @@ impl LiveEntities {
         Ok(())
     }
 
-    /// The read of this entry failed: a first-load wait then asks for the load again instead of returning the old failure.
-    fn read_failed(&self, id: &str, lease: u64) -> bool {
-        let state = locked(&self.state);
-        let entry = if id.is_empty() { state.singleton.as_ref().map(|single| &single.entry) } else { state.entries.get(id) };
-        entry.is_some_and(|entry| entry.lease == lease && matches!(entry.verdict.read, EntityRead::Failed { .. }))
+    /// A read that a reset restarted failed because the transport was gone. The first-load wait asks for it again, once per reset.
+    fn redo_failed_read_after_reset(&self, id: &str, lease: u64) {
+        let _delivering = self.delivering();
+        let mut detached = self.detached();
+        let mut state = locked(&self.state);
+        if state.closed { return; }
+        let generation = self.generation();
+        let failed = |entry: &Entry| entry.lease == lease && entry.after_reset && matches!(entry.verdict.read, EntityRead::Failed { .. });
+        let mut effects = Effects::default();
+        if id.is_empty() {
+            let Some(single) = state.singleton.as_mut().filter(|single| failed(&single.entry)) else { return };
+            single.entry.after_reset = false;
+            single.entry.verdict = single.entry.machine.reset();
+            detached.subscription = single.subscription.take();
+            let snapshot = single.entry.snapshot("");
+            self.emit(vec![snapshot]);
+            let weak = self.weak.clone();
+            effects.push(move || { if let Some(source) = weak.upgrade() { source.resume(); } });
+        } else {
+            let Some(entry) = state.entries.get_mut(id).filter(|entry| failed(entry)) else { return };
+            entry.after_reset = false;
+            detached.cancel(entry);
+            entry.verdict = entry.machine.reset();
+            let mut fetches = Vec::new();
+            if entry.fetch != EntityFetch::None {
+                entry.verdict = entry.machine.read_started();
+                fetches.push((id.to_string(), entry.lease, entry.fetch));
+            }
+            let snapshot = entry.snapshot(id);
+            self.emit(vec![snapshot]);
+            let weak = self.weak.clone();
+            let reads = vec![(id.to_string(), lease)];
+            effects.push(move || { if let Some(source) = weak.upgrade() { source.read_retained(reads, generation); source.refresh_retained(fetches, generation); } });
+        }
+        self.outbox.push(effects);
     }
 
     pub async fn load_initial(&self, id: String, lease: u64) -> Result<(), DbError> {
         super::entity_calls::entered();
         let Some(sync) = self.database.sync.clone() else { return Ok(()) };
         let admitted = self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed);
-        if admitted && !self.read_failed(&id, lease) { return Ok(()); }
-        if !admitted && !matches!(sync.inner.transport.session(), Ok(Some(_))) { return Err(DbError::Interrupted { detail: "the session ended".into() }); }
+        if admitted {
+            self.redo_failed_read_after_reset(&id, lease);
+            return Ok(());
+        }
+        if !matches!(sync.inner.transport.session(), Ok(Some(_))) { return Err(DbError::Interrupted { detail: "the session ended".into() }); }
         let singleton = {
             let state = locked(&self.state);
             if state.closed { return Err(DbError::Interrupted { detail: "entities closed".into() }); }

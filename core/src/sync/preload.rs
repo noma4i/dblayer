@@ -401,7 +401,7 @@ impl Sync {
     /// Ends the session the way a confirmed logout does, without a credential.
     pub(crate) fn end_session_for_test(&self) {
         let lifecycle = &self.inner.db.shared.store.lifecycle;
-        let permit = lifecycle.begin_blocking(crate::lifecycle::Boundary::SessionEnd(crate::lifecycle::End::Server), None).expect("the database is open");
+        let Ok(permit) = lifecycle.begin_blocking(crate::lifecycle::Boundary::SessionEnd(crate::lifecycle::End::Server), None) else { return };
         self.inner.db.shared.store.end_session(&permit);
     }
 

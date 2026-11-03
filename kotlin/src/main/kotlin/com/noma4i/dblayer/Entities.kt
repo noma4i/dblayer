@@ -8,6 +8,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlinx.coroutines.flow.FlowCollector
@@ -157,6 +158,7 @@ class Entities<Model : DBModel> internal constructor(private val modelName: Stri
 
     companion object {
         internal val flusher = Executors.newSingleThreadExecutor { task -> Thread(task, "dblayer-entities").apply { isDaemon = true } }
+        internal val flushDispatcher = flusher.asCoroutineDispatcher()
     }
 }
 
@@ -176,6 +178,7 @@ internal class CoreEntitySource<Model : DBModel>(
     val decodedRows get() = decoded.get()
     val leaseFailures get() = failures.get()
     private fun open(): LiveEntities = observer ?: DBlayer.database.liveEntities(modelName, Changes(this)).also { observer = it }
+    private val flushDispatcher get() = Entities.flushDispatcher
     private fun submit(work: () -> Unit) = Entities.flusher.execute(work)
 
     fun retain(requests: List<EntityRequest>) = submit {
@@ -189,8 +192,7 @@ internal class CoreEntitySource<Model : DBModel>(
         perform(listOf(EntityLease("", lease))) { open().singleton(query, lease) }
     }
     suspend fun loadInitial(id: String, lease: ULong) {
-        val held = suspendCancellableCoroutine<LiveEntities?> { continuation -> submit { continuation.resume(observer) } }
-        held?.loadInitial(id, lease)
+        kotlinx.coroutines.withContext(flushDispatcher) { observer?.loadInitial(id, lease) }
     }
     fun reset() = submit { observer?.reset() }
     fun close() = submit { observer?.shutdown(); observer = null; values.clear() }

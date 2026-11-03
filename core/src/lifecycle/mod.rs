@@ -143,10 +143,20 @@ impl Snapshot {
 pub(crate) struct Watch {
     state: watch::Receiver<Snapshot>,
     seen: u64,
+    generation: Generation,
 }
 
 impl Watch {
     pub(crate) fn current(&self) -> Snapshot { self.state.borrow().clone() }
+
+    /// Waits for a change that ends what was open: a session end, a clear, the close, or a session start that follows an end the watch did not see on its own.
+    pub(crate) async fn invalidated(&mut self) -> Option<Snapshot> {
+        loop {
+            let next = self.changed().await?;
+            let moved = std::mem::replace(&mut self.generation, next.generation) != next.generation;
+            if moved || !matches!(next.change, Change::SessionStarted(_)) { return Some(next); }
+        }
+    }
 
     pub(crate) async fn changed(&mut self) -> Option<Snapshot> {
         let seen = self.seen;
@@ -367,8 +377,8 @@ impl Lifecycle {
 
     pub(crate) fn watch(&self) -> Watch {
         let state = self.changed.subscribe();
-        let seen = state.borrow().notice;
-        Watch { state, seen }
+        let (seen, generation) = { let published = state.borrow(); (published.notice, published.generation) };
+        Watch { state, seen, generation }
     }
 
     /// Takes a lease for work of this kind, or refuses it when the database is closed, a transition runs, or the work needs a session that is not there.
@@ -410,19 +420,19 @@ impl Lifecycle {
     }
 
     fn publish_activity(&self, activity: Activity) {
-        self.activity.send_if_modified(|current| {
+        crate::db::lock::effect(|| self.activity.send_if_modified(|current| {
             if activity.seq <= current.seq { return false; }
             *current = activity;
             true
-        });
+        }));
     }
 
     fn publish(&self, snapshot: Snapshot) {
-        self.changed.send_if_modified(|current| {
+        crate::db::lock::effect(|| self.changed.send_if_modified(|current| {
             if snapshot.revision <= current.revision { return false; }
             *current = snapshot;
             true
-        });
+        }));
     }
 
     /// True when no lease is held and no transition runs.

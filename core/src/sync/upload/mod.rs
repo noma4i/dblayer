@@ -305,10 +305,13 @@ impl Inner {
 
     fn launch_run(self: &Arc<Self>, runs: &mut UploadRuns, seq: i64, position: i64, mode: RunMode, resumed: Option<Result<crate::transport::Response, crate::transport::TransportError>>) {
         while runs.tasks.try_join_next().is_some() {}
-        let Ok(lease) = self.lease(crate::lifecycle::Origin::Background, "upload") else { return };
         let (run, token) = runs.register(seq, position, matches!(mode, RunMode::Transfer));
         let inner = self.clone();
         runs.tasks.spawn(self.until_closed(async move {
+            let Ok(lease) = inner.lease(crate::lifecycle::Origin::Background, "upload") else {
+                inner.finish_run(seq, position, run);
+                return;
+            };
             if let Ok(false) = lease.run(survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed))).await {
                 inner.fail_upload(seq, SyncError::Store("the upload task panicked".into()));
             }

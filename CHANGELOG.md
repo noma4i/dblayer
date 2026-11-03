@@ -3,9 +3,9 @@
 ## Unreleased
 
 ### Changed
-- One lifecycle owner: every request, load, upload and subscription holds a lease, and a session end, test reset or close ends the old leases.
-- `sessionReset` and `close` are async and return after the clearing; `sessionReset` also clears the data.
-- `resetForTesting` ends the test session and starts the next one; it no longer promises a fresh open.
+- Requests, loads, uploads and subscriptions hold a lease that a session end, reset or close ends.
+- `sessionReset` and `close` are async and return after clearing; `sessionReset` clears the data.
+- `resetForTesting` ends the test session and starts the next, without a fresh open.
 - `settleForTesting` returns when no lease is held.
 - A session end replays after a crash between the credential and the data clear.
 
@@ -14,10 +14,10 @@
 - `testing_busy` polling and the fresh-open baseline of `resetForTesting`.
 
 ### Added
-- Lifecycle sequence tests in the core, Swift and Kotlin with a manifest of the sequences C01 to C19.
+- Lifecycle sequence tests for the core, Swift and Kotlin, listed in a manifest.
 
 ### Fixed
-- A window opened after a failed load of the same query no longer starts with the error of that earlier load.
+- A window opened after a failed load of its query no longer shows that error.
 - `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
 
 ## 6.16.1 - 2026-11-03

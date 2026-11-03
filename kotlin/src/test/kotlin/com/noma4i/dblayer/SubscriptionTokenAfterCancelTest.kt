@@ -4,7 +4,9 @@ import com.noma4i.dblayer.models.modelsJSON
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
@@ -12,6 +14,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+@OptIn(DelicateCoroutinesApi::class)
 class SubscriptionTokenAfterCancelTest {
     private val operations = """[{"name":"documentBySlug","document":"query documentBySlug(${'$'}slug: String!, ${'$'}source: String!) { documentBySlug(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated(${'$'}slug: String!, ${'$'}source: String!) { documentUpdated(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentUpdated"}]"""
 
@@ -32,7 +35,7 @@ class SubscriptionTokenAfterCancelTest {
             override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
                 val token = "token-${request.operationName}"
                 issued.add(token)
-                announce(sink, token) { database.close() }
+                announce(sink, token) { kotlinx.coroutines.GlobalScope.launch { database.closeDatabase() } }
             }
             override fun unsubscribe(token: String) { unsubscribed.add(token); mock.unsubscribe(token) }
         }

@@ -197,6 +197,25 @@ fn interrupted_cache_only_reset_is_completed_before_manifest_check() {
 }
 
 #[test]
+fn an_interrupted_session_end_wipes_the_data_at_the_next_open_and_asks_for_the_credential_clear_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    let models = [messages_spec(), items_spec()];
+    {
+        let (store, _) = reopen(&path, &models, None);
+        seed(&store);
+        store.write_session_end_intent().unwrap();
+    }
+    let (store, report) = reopen(&path, &models, None);
+    assert!(report.finished_interrupted_reset);
+    assert_eq!((store.row_count("messages").unwrap(), store.row_count("items").unwrap()), (0, 0));
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
+    assert_eq!(store.reset_intent().unwrap(), None);
+    assert!(store.take_session_end_replay(), "the open did not ask for the credential clear");
+    assert!(!store.take_session_end_replay(), "the credential clear was asked twice");
+}
+
+#[test]
 fn interrupted_incompatible_reset_is_completed_idempotently() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");

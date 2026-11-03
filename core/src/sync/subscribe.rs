@@ -740,10 +740,7 @@ impl Feed {
 }
 
 async fn invalidated(resets: &mut crate::lifecycle::Watch) -> Option<crate::lifecycle::Snapshot> {
-    loop {
-        let next = resets.changed().await?;
-        if !matches!(next.change, crate::lifecycle::Change::SessionStarted(_)) { return Some(next); }
-    }
+    resets.invalidated().await
 }
 
 impl Sync {

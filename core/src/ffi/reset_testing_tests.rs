@@ -152,6 +152,7 @@ async fn reset_for_testing_ends_the_old_work_and_the_next_declaration_reads_the_
     assert_eq!(first.count("Notices") + first.count("Listened"), 0, "subscriptions of the previous test opened on the next transport: {:?}", first.names());
     let _attached = db.live_query(NOTICES.into(), Arc::new(Silent));
     yield_until("the subscription of the observer", || first.count("Notices") == 1).await;
+    db.set_listening(false).unwrap();
     db.set_listening(true).unwrap();
     yield_until("the model subscription after listening is switched on", || first.count("Listened") == 1).await;
 
@@ -171,7 +172,7 @@ async fn reset_for_testing_ends_the_old_work_and_the_next_declaration_reads_the_
     prepare(&db, &switch, &second).await;
     db.set_online(true).unwrap();
     within(db.settle_for_testing()).await.unwrap();
-    assert_eq!(second.count("Node"), 0, "a refresh parked before the reset reached the next transport: {:?}", second.names());
+    assert_eq!(second.count("Node"), 1, "the held handle reads once on the next transport and the refresh parked before the reset adds none: {:?}", second.names());
 
     db.session_reset().await.unwrap();
     assert!(!db.streams.snapshot().signed_in());

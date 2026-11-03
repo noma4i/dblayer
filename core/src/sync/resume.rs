@@ -172,7 +172,12 @@ impl Inner {
     }
 
     pub(crate) fn begin_resume(self: &Arc<Self>, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<Runner> {
-        let lease = self.lease(crate::lifecycle::Origin::Background, "resume").ok()?;
+        let Ok(lease) = self.lease(crate::lifecycle::Origin::Background, "resume") else {
+            if cause == Cause::Explicit && self.db.shared.store.lifecycle.snapshot().admits(crate::lifecycle::Origin::Explicit) {
+                if let Some(waiter) = waiter { crate::db::lock::effect(|| { let _ = waiter.send(Ok(ResumeReport::default())); }); }
+            }
+            return None;
+        };
         self.resume.request(cause, waiter).map(|(id, first)| Runner { inner: Arc::downgrade(self), id, first, _lease: lease })
     }
 

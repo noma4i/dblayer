@@ -2163,6 +2163,11 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func cancelUpload(model: String, rowId: String, action: String) async throws  -> Bool
     
+    /**
+     * Closes the database: every lease ends, every holder closes, the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
+     */
+    func closeDatabase() async throws 
+    
     func confirmed(model: String, rowId: String) async throws  -> String
     
     func create(model: String, valuesJson: String, argsJson: String) async throws  -> WireRow
@@ -2203,8 +2208,6 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func loadMore(model: String, relation: String, paramsJson: String) async throws  -> LoadMoreResult
     
-    func logout() async throws 
-    
     func maintain() async throws 
     
     func node(model: String, relation: String, rowId: String, force: Bool) async throws  -> WireRow?
@@ -2229,6 +2232,9 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func registerOperations(defsJson: String) throws 
     
+    /**
+     * Ends the session of the test and starts the next one: the old work ends, the data goes, the credential and the pending request stay. Online, listening and power saving keep the values the test gave them.
+     */
     func resetForTesting() async throws 
     
     func resume() async throws 
@@ -2251,11 +2257,12 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func setOnline(online: Bool) throws 
     
+    /**
+     * Returns when no lease is held: no load, request, subscription opening, delivery or upload is running. It does not change listening, preload or the session.
+     */
     func settleForTesting() async throws 
     
     func settled(model: String, rowId: String, action: String?) async throws 
-    
-    func shutdown() 
     
     func subscriptionCensus()  -> SubscriptionCensus
     
@@ -2273,7 +2280,10 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func sessionCall(operation: String, bodyJson: String) async throws  -> String
     
-    func sessionReset() throws 
+    /**
+     * Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
+     */
+    func sessionReset() async throws 
     
     func sessionResume() async throws  -> String?
     
@@ -2523,6 +2533,25 @@ open func cancelUpload(model: String, rowId: String, action: String)async throws
             completeFunc: ffi_dblayer_rust_future_complete_i8,
             freeFunc: ffi_dblayer_rust_future_free_i8,
             liftFunc: FfiConverterBool.lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+    /**
+     * Closes the database: every lease ends, every holder closes, the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
+     */
+open func closeDatabase()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_close_database(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
             errorHandler: FfiConverterTypeDbError_lift
         )
 }
@@ -2804,22 +2833,6 @@ open func loadMore(model: String, relation: String, paramsJson: String)async thr
         )
 }
     
-open func logout()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_logout(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
 open func maintain()async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -2979,6 +2992,9 @@ open func registerOperations(defsJson: String)throws   {try rustCallWithError(Ff
 }
 }
     
+    /**
+     * Ends the session of the test and starts the next one: the old work ends, the data goes, the credential and the pending request stay. Online, listening and power saving keep the values the test gave them.
+     */
 open func resetForTesting()async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -3141,6 +3157,9 @@ open func setOnline(online: Bool)throws   {try rustCallWithError(FfiConverterTyp
 }
 }
     
+    /**
+     * Returns when no lease is held: no load, request, subscription opening, delivery or upload is running. It does not change listening, preload or the session.
+     */
 open func settleForTesting()async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -3171,14 +3190,6 @@ open func settled(model: String, rowId: String, action: String?)async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeDbError_lift
         )
-}
-    
-open func shutdown()  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_shutdown(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
 }
     
 open func subscriptionCensus() -> SubscriptionCensus  {
@@ -3303,12 +3314,23 @@ open func sessionCall(operation: String, bodyJson: String)async throws  -> Strin
         )
 }
     
-open func sessionReset()throws   {try rustCallWithError(FfiConverterTypeDbError_lift) {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_session_reset(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
+    /**
+     * Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
+     */
+open func sessionReset()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_session_reset(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeDbError_lift
+        )
 }
     
 open func sessionResume()async throws  -> String?  {
@@ -4153,6 +4175,11 @@ public protocol LiveEntitiesProtocol: AnyObject, Sendable {
     
     func loadInitial(id: String, lease: UInt64) async throws 
     
+    /**
+     * The read of this entry failed: a first-load wait then asks for the load again instead of returning the old failure.
+     */
+    func readFailed(id: String, lease: UInt64)  -> Bool
+    
     func release(leases: [EntityLease]) throws 
     
     func reset() 
@@ -4244,6 +4271,20 @@ open func loadInitial(id: String, lease: UInt64)async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeDbError_lift
         )
+}
+    
+    /**
+     * The read of this entry failed: a first-load wait then asks for the load again instead of returning the old failure.
+     */
+open func readFailed(id: String, lease: UInt64) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_liveentities_read_failed(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(id),
+        FfiConverterUInt64.lower(lease),uniffiCallStatus
+    )
+})
 }
     
 open func release(leases: [EntityLease])throws   {try rustCallWithError(FfiConverterTypeDbError_lift) {
@@ -10101,6 +10142,8 @@ enum CloudError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     )
     case Rejected(detail: String
     )
+    case Interrupted(detail: String
+    )
 
     
 
@@ -10148,6 +10191,9 @@ public struct FfiConverterTypeCloudError: FfiConverterRustBuffer {
         case 6: return .Rejected(
             detail: try FfiConverterString.read(from: &buf)
             )
+        case 7: return .Interrupted(
+            detail: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -10187,6 +10233,11 @@ public struct FfiConverterTypeCloudError: FfiConverterRustBuffer {
         
         case let .Rejected(detail):
             writeInt(&buf, Int32(6))
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Interrupted(detail):
+            writeInt(&buf, Int32(7))
             FfiConverterString.write(detail, into: &buf)
             
         }
@@ -13402,6 +13453,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_cancel_upload() != 37303) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_database_close_database() != 51190) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_confirmed() != 53912) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13462,9 +13516,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_load_more() != 64839) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_logout() != 64211) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_maintain() != 8785) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13501,7 +13552,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_register_operations() != 47241) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_reset_for_testing() != 26949) {
+    if (uniffi_dblayer_checksum_method_database_reset_for_testing() != 32009) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_resume() != 54438) {
@@ -13534,13 +13585,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_set_online() != 62209) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_settle_for_testing() != 24118) {
+    if (uniffi_dblayer_checksum_method_database_settle_for_testing() != 31431) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_settled() != 19732) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_shutdown() != 3723) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_subscription_census() != 38217) {
@@ -13567,7 +13615,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_session_call() != 15531) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_session_reset() != 22284) {
+    if (uniffi_dblayer_checksum_method_database_session_reset() != 19549) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_session_resume() != 44692) {
@@ -13631,6 +13679,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_liveentities_load_initial() != 33937) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_liveentities_read_failed() != 11609) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_liveentities_release() != 27114) {

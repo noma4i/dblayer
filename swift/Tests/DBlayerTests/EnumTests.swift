@@ -20,7 +20,7 @@ struct EnumTests {
   @Test @MainActor
   func aValueOutsideTheDeclaredOnesIsStoredReadBackAndKeptByAnEdit() async throws {
     let database = try await open()
-    adopt(database)
+    try await adopt(database)
     let wire = try await database.create(model: "NestedSample", valuesJson: #"{"phase":"archived"}"#, argsJson: "{}")
     let sample = try NestedSample.decode(wire)
     #expect(sample.phase == .unknown("archived"))
@@ -34,7 +34,7 @@ struct EnumTests {
 
   @Test @MainActor
   func theTypedApiWritesADeclaredCaseAndQueriesCompareTypedValues() async throws {
-    adopt(try await open())
+    try await adopt(try await open())
     let sample = try await NestedSample.create(phase: .live)
     #expect(sample.phase == .live)
     let live = Cursor(try await NestedSample.where(NestedSample.phase == .live).snapshots.stream())

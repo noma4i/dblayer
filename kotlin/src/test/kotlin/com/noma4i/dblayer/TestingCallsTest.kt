@@ -63,6 +63,7 @@ class TestingCallsTest {
             switched.target = null
             DBlayer.resetForTesting()
             DBlayer.settleForTesting()
+            DBlayer.database.setOnline(true)
             val next = MockTransport()
             repeat(3) { next.enqueue("MomentsFeed", reply) }
             switched.target = next

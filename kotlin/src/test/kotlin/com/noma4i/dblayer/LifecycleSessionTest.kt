@@ -73,10 +73,9 @@ class LifecycleSessionTest {
         }
     }
 
-    /** The order of the app: sign-in call, data logout, session profile, profile refresh. */
+    /** The order of the app: sign-in call, session profile, profile refresh. */
     private suspend fun startSession(name: String) {
         DBlayer.database.sessionCall("login_link", """{"account":"$name"}""")
-        DBlayer.sessionReset()
         DBlayer.run("SessionProfile", JsonObject(emptyMap()))
         User.profile.refresh()
     }
