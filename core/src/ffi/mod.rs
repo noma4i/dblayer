@@ -7,6 +7,8 @@ mod open_slot;
 mod opening;
 #[cfg(test)]
 mod lifecycle_tests;
+#[cfg(test)]
+mod selftest;
 mod changes;
 mod model_events;
 mod cloud;

@@ -93,7 +93,7 @@ impl EncryptedHttp for Server {
 }
 
 #[derive(Default)]
-struct Entities(Mutex<BTreeMap<u64, WireEntitySnapshot>>);
+pub(super) struct Entities(pub(super) Mutex<BTreeMap<u64, WireEntitySnapshot>>);
 
 impl EntityListener for Entities {
     fn changed(&self, delivery: EntityDelivery) {
@@ -103,7 +103,7 @@ impl EntityListener for Entities {
 }
 
 #[derive(Default)]
-struct Rows(Mutex<Vec<WireRow>>, Mutex<Vec<LiveChange>>);
+pub(super) struct Rows(pub(super) Mutex<Vec<WireRow>>, pub(super) Mutex<Vec<LiveChange>>);
 
 impl QueryListener for Rows {
     fn changed(&self, change: LiveChange) {
@@ -118,7 +118,7 @@ impl QueryListener for Rows {
     }
 }
 
-fn models() -> String {
+pub(super) fn models() -> String {
     let mut user = ModelSpec::new("User", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str)]);
     for (name, operation, shape) in [("profile", "MyProfile", RemoteShape::Single), ("all", "Users", RemoteShape::List { coverage: crate::schema::Coverage::Complete })] {
         let mut relation = super::load_tests::relation(name, "5.minutes");
@@ -159,7 +159,7 @@ async fn start_session(database: &Database, account: &str) {
     within(database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
 }
 
-async fn delivered(changes: &LiveChanges) -> Vec<Vec<WireRow>> {
+pub(super) async fn delivered(changes: &LiveChanges) -> Vec<Vec<WireRow>> {
     let mut rows: Vec<WireRow> = Vec::new();
     let mut states = Vec::new();
     while let Ok(Some(change)) = tokio::time::timeout(std::time::Duration::from_millis(300), changes.next()).await {
@@ -172,7 +172,7 @@ async fn delivered(changes: &LiveChanges) -> Vec<Vec<WireRow>> {
     states
 }
 
-fn named(row: &WireRow, name: &str) -> bool { row.cells.contains(&super::wire::Cell::Text { value: name.into() }) }
+pub(super) fn named(row: &WireRow, name: &str) -> bool { row.cells.contains(&super::wire::Cell::Text { value: name.into() }) }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_current() {
