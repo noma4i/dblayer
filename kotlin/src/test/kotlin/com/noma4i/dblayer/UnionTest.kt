@@ -41,7 +41,7 @@ class UnionTest {
             val fields = row.jsonObject
             val label = fields.getValue("name").toString()
             val values = buildJsonObject { fields["attachment"]?.let { put("attachment", it) } }
-            val sample = UnionSample.read(database.create("UnionSample", values.toString(), "{}"))
+            val sample = UnionSample.read(database.create(database.sessionEpoch(), "UnionSample", values.toString(), "{}"))
             val encoded = sample.attachment?.let { jsonValue(it) } ?: JsonNull
             assertEquals(label, comparableJson(fields.getValue("output")), comparableJson(encoded))
             val input = fields["attachment"]

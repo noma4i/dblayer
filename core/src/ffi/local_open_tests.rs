@@ -23,7 +23,7 @@ async fn the_app_lifecycle_calls_do_nothing_without_a_transport() {
     database.resume().await.unwrap();
     database.flush().await.unwrap();
     assert_eq!(format!("{:?}", database.retry_all().await.unwrap()), "0", "retry_all must return the queued operation count");
-    assert_eq!(format!("{:?}", database.retry("Note".into(), "1".into(), None).await.unwrap()), "0", "retry must return the queued operation count");
+    assert_eq!(format!("{:?}", database.retry(database.session_epoch(), "Note".into(), "1".into(), None).await.unwrap()), "0", "retry must return the queued operation count");
 }
 
 #[tokio::test]

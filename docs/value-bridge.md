@@ -86,11 +86,32 @@ val outcome = sent.outcome()
 ```
 
 A command for an epoch that has gone is refused.
+A send needs a signed-in session.
 Pending commands of an ended account end with it. They do not go to the next account.
 Only message sends and media uploads survive the network and the app.
+Any other action needs the network: it fails at once while the network is away and is rolled back if the network goes away before it is sent.
+
+## Commands of an account
+
+Every command, one-off read and blob call carries the epoch of an account.
+Pass the scope of the account: a call of an account that left ends as `Interrupted` and changes nothing for the next account.
+Without the argument the call belongs to the account that is signed in when it is called.
+A create that the server answers, such as a new group, needs the network and returns the confirmed row.
+
+```swift
+let group = try await Chat.create(name: "Friends", userIds: ids, in: scope)
+let rows = try await Chat.list.read(in: scope)
+```
+
+```kotlin
+val group = Chat.create(name = "Friends", userIds = ids, account = scope)
+val rows = Chat.list.read(scope)
+```
 
 ## What the work costs
 
 An idle stream sends no request and wakes nothing.
+A stream that ended leaves no observer: a write after its last reader left reads nothing. `retainedObservers` counts only the observers of an explicit `warm`.
+A reader that falls behind keeps the newest 256 deliveries. The dropped ones arrive as `missed`, and a list asks for a new snapshot.
 A change of one row sends one row and decodes one row.
 The number of subscriptions is the number of readers.

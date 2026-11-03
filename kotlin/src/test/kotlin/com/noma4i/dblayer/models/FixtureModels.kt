@@ -36,22 +36,22 @@ data class Asset(
         val position = Column<Asset, Long>("position")
         fun where(condition: Condition) = Query("Asset", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Asset", this, ids)
-        suspend fun create(clientKey: String, size: Long, position: Long? = null): Asset = offCaller {
+        suspend fun create(clientKey: String, size: Long, position: Long? = null, account: AccountScope? = null): Asset = offCaller {
             val values = buildJsonObject {
                 put("clientKey", jsonValue(clientKey))
                 put("size", jsonValue(size))
                 position?.let { put("position", jsonValue(it)) }
             }
-            read(DBlayer.database.create("Asset", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "Asset", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(clientKey: String? = null, size: Long? = null, position: Long? = null): Asset = offCaller {
+    suspend fun update(clientKey: String? = null, size: Long? = null, position: Long? = null, account: AccountScope? = null): Asset = offCaller {
         val values = buildJsonObject {
             clientKey?.let { put("clientKey", jsonValue(it)) }
             size?.let { put("size", jsonValue(it)) }
             position?.let { put("position", jsonValue(it)) }
         }
-        Asset.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Asset.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
     suspend fun createFile(account: AccountScope, request: UploadRequest): ActionAnswer<Asset, AssetCreateFileResult> = account.upload(this, "create_file", request, AssetCreateFileResult.serializer())
 }
@@ -122,7 +122,7 @@ data class Container(
             return account.send(this, values)
         }
     }
-    suspend fun update(title: String? = null, lastRecordAt: GraphQLNullable<String> = GraphQLNullable.Omitted, lastRecordId: GraphQLNullable<String> = GraphQLNullable.Omitted, shareUrl: GraphQLNullable<String> = GraphQLNullable.Omitted, isPublic: GraphQLNullable<Boolean> = GraphQLNullable.Omitted, shelves: GraphQLNullable<List<ContainerShelf>> = GraphQLNullable.Omitted): Container = offCaller {
+    suspend fun update(title: String? = null, lastRecordAt: GraphQLNullable<String> = GraphQLNullable.Omitted, lastRecordId: GraphQLNullable<String> = GraphQLNullable.Omitted, shareUrl: GraphQLNullable<String> = GraphQLNullable.Omitted, isPublic: GraphQLNullable<Boolean> = GraphQLNullable.Omitted, shelves: GraphQLNullable<List<ContainerShelf>> = GraphQLNullable.Omitted, account: AccountScope? = null): Container = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
             put("lastRecordAt", lastRecordAt)
@@ -131,7 +131,7 @@ data class Container(
             put("isPublic", isPublic)
             put("shelves", shelves)
         }
-        Container.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Container.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
     suspend fun createPhoto(account: AccountScope, request: UploadRequest): ActionAnswer<Container, ContainerCreatePhotoResult> = account.upload(this, "create_photo", request, ContainerCreatePhotoResult.serializer())
     suspend fun updatePhoto(account: AccountScope, request: UploadRequest): ActionAnswer<Container, ContainerUpdatePhotoResult> = account.upload(this, "update_photo", request, ContainerUpdatePhotoResult.serializer())
@@ -177,18 +177,18 @@ data class Document(
             var built = Query("Document", this, relation = "bySlug", params = buildJsonObject { put("slug", jsonValue(slug)); put("source", jsonValue(source)) })
             return built
         }
-        suspend fun create(slug: String): Document = offCaller {
+        suspend fun create(slug: String, account: AccountScope? = null): Document = offCaller {
             val values = buildJsonObject {
                 put("slug", jsonValue(slug))
             }
-            read(DBlayer.database.create("Document", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "Document", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(slug: String? = null): Document = offCaller {
+    suspend fun update(slug: String? = null, account: AccountScope? = null): Document = offCaller {
         val values = buildJsonObject {
             slug?.let { put("slug", jsonValue(it)) }
         }
-        Document.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Document.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -227,22 +227,22 @@ data class Chat(
             var built = Query("Chat", this, relation = "list", params = buildJsonObject { put("list", jsonValue(list)) })
             return built
         }
-        suspend fun create(title: String, serverRevision: Long, lists: List<String>): Chat = offCaller {
+        suspend fun create(title: String, serverRevision: Long, lists: List<String>, account: AccountScope? = null): Chat = offCaller {
             val values = buildJsonObject {
                 put("title", jsonValue(title))
                 put("serverRevision", jsonValue(serverRevision))
                 put("lists", jsonValue(lists))
             }
-            read(DBlayer.database.create("Chat", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "Chat", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, serverRevision: Long? = null, lists: List<String>? = null): Chat = offCaller {
+    suspend fun update(title: String? = null, serverRevision: Long? = null, lists: List<String>? = null, account: AccountScope? = null): Chat = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
             serverRevision?.let { put("serverRevision", jsonValue(it)) }
             lists?.let { put("lists", jsonValue(it)) }
         }
-        Chat.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Chat.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -274,20 +274,20 @@ data class Message(
         fun where(condition: Condition) = Query("Message", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Message", this, ids)
         suspend fun node(id: String, force: Boolean = false): Message? = offCaller { DBlayer.database.node("Message", "node", id, force)?.let { read(it) } }
-        suspend fun create(text: String, chatId: String): Message = offCaller {
+        suspend fun create(text: String, chatId: String, account: AccountScope? = null): Message = offCaller {
             val values = buildJsonObject {
                 put("text", jsonValue(text))
                 put("chatId", jsonValue(chatId))
             }
-            read(DBlayer.database.create("Message", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "Message", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(text: String? = null, chatId: String? = null): Message = offCaller {
+    suspend fun update(text: String? = null, chatId: String? = null, account: AccountScope? = null): Message = offCaller {
         val values = buildJsonObject {
             text?.let { put("text", jsonValue(it)) }
             chatId?.let { put("chatId", jsonValue(it)) }
         }
-        Message.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Message.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -319,20 +319,20 @@ data class InterfaceRecord(
         fun where(condition: Condition) = Query("InterfaceRecord", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("InterfaceRecord", this, ids)
         suspend fun node(id: String, force: Boolean = false): InterfaceRecord? = offCaller { DBlayer.database.node("InterfaceRecord", "node", id, force)?.let { read(it) } }
-        suspend fun create(slug: String, spec: SampleSpec? = null): InterfaceRecord = offCaller {
+        suspend fun create(slug: String, spec: SampleSpec? = null, account: AccountScope? = null): InterfaceRecord = offCaller {
             val values = buildJsonObject {
                 put("slug", jsonValue(slug))
                 spec?.let { put("spec", jsonValue(it)) }
             }
-            read(DBlayer.database.create("InterfaceRecord", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "InterfaceRecord", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(slug: String? = null, spec: GraphQLNullable<SampleSpec> = GraphQLNullable.Omitted): InterfaceRecord = offCaller {
+    suspend fun update(slug: String? = null, spec: GraphQLNullable<SampleSpec> = GraphQLNullable.Omitted, account: AccountScope? = null): InterfaceRecord = offCaller {
         val values = buildJsonObject {
             slug?.let { put("slug", jsonValue(it)) }
             put("spec", spec)
         }
-        InterfaceRecord.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        InterfaceRecord.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -371,22 +371,22 @@ data class KeywordRecord(
             built = built.where(Condition.equal("class", jsonValue(`class`)))
             return built
         }
-        suspend fun create(default: String, `class`: String, value: KeywordValue? = null): KeywordRecord = offCaller {
+        suspend fun create(default: String, `class`: String, value: KeywordValue? = null, account: AccountScope? = null): KeywordRecord = offCaller {
             val values = buildJsonObject {
                 put("default", jsonValue(default))
                 put("class", jsonValue(`class`))
                 value?.let { put("value", jsonValue(it)) }
             }
-            read(DBlayer.database.create("KeywordRecord", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "KeywordRecord", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(default: String? = null, `class`: String? = null, value: GraphQLNullable<KeywordValue> = GraphQLNullable.Omitted): KeywordRecord = offCaller {
+    suspend fun update(default: String? = null, `class`: String? = null, value: GraphQLNullable<KeywordValue> = GraphQLNullable.Omitted, account: AccountScope? = null): KeywordRecord = offCaller {
         val values = buildJsonObject {
             default?.let { put("default", jsonValue(it)) }
             `class`?.let { put("class", jsonValue(it)) }
             put("value", value)
         }
-        KeywordRecord.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        KeywordRecord.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -447,24 +447,24 @@ data class MediaMessage(
             var built = Query("MediaMessage", this, relation = "gifts_since", params = buildJsonObject { put("chatId", jsonValue(chatId)); put("afterSequence", jsonValue(afterSequence)) })
             return built
         }
-        suspend fun create(chatId: String, kind: MediaMessageKind, mediaKind: MediaKindValue? = null, sequenceNumber: Long? = null): MediaMessage = offCaller {
+        suspend fun create(chatId: String, kind: MediaMessageKind, mediaKind: MediaKindValue? = null, sequenceNumber: Long? = null, account: AccountScope? = null): MediaMessage = offCaller {
             val values = buildJsonObject {
                 put("chatId", jsonValue(chatId))
                 put("kind", jsonValue(kind))
                 mediaKind?.let { put("mediaKind", jsonValue(it)) }
                 sequenceNumber?.let { put("sequenceNumber", jsonValue(it)) }
             }
-            read(DBlayer.database.create("MediaMessage", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "MediaMessage", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(chatId: String? = null, kind: MediaMessageKind? = null, mediaKind: GraphQLNullable<MediaKindValue> = GraphQLNullable.Omitted, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted): MediaMessage = offCaller {
+    suspend fun update(chatId: String? = null, kind: MediaMessageKind? = null, mediaKind: GraphQLNullable<MediaKindValue> = GraphQLNullable.Omitted, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, account: AccountScope? = null): MediaMessage = offCaller {
         val values = buildJsonObject {
             chatId?.let { put("chatId", jsonValue(it)) }
             kind?.let { put("kind", jsonValue(it)) }
             put("mediaKind", mediaKind)
             put("sequenceNumber", sequenceNumber)
         }
-        MediaMessage.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        MediaMessage.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -540,7 +540,7 @@ data class Moment(
             return account.send(this, values)
         }
     }
-    suspend fun update(uuid: String? = null, userId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: GraphQLNullable<String> = GraphQLNullable.Omitted, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null): Moment = offCaller {
+    suspend fun update(uuid: String? = null, userId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: GraphQLNullable<String> = GraphQLNullable.Omitted, likedByMe: Boolean? = null, media: JsonElement? = null, createdAt: String? = null, account: AccountScope? = null): Moment = offCaller {
         val values = buildJsonObject {
             uuid?.let { put("uuid", jsonValue(it)) }
             put("userId", userId)
@@ -549,10 +549,10 @@ data class Moment(
             media?.let { put("media", jsonValue(it)) }
             createdAt?.let { put("createdAt", jsonValue(it)) }
         }
-        Moment.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Moment.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
-    suspend fun like(): Moment = act("like", JsonObject(parseJsonObject("""{"likedByMe":true}""") + mapOf()), JsonObject(mapOf()), Moment)
-    suspend fun share(): ActionAnswer<Moment, MomentShareResult> = actAnswering("share", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf()), Moment, MomentShareResult.serializer())
+    suspend fun like(account: AccountScope? = null): Moment = act("like", JsonObject(parseJsonObject("""{"likedByMe":true}""") + mapOf()), JsonObject(mapOf()), Moment, account)
+    suspend fun share(account: AccountScope? = null): ActionAnswer<Moment, MomentShareResult> = actAnswering("share", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf()), Moment, MomentShareResult.serializer(), account)
     suspend fun uploadClip(account: AccountScope, request: UploadRequest): ActionAnswer<Moment, MomentUploadClipResult> = account.upload(this, "upload_clip", request, MomentUploadClipResult.serializer())
     object Relations {
         val author = Association<Moment, User>("author", User)
@@ -604,7 +604,7 @@ data class NestedSample(
         val replyTo = Column<NestedSample, RecordReplyNode?>("replyTo")
         fun where(condition: Condition) = Query("NestedSample", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("NestedSample", this, ids)
-        suspend fun create(phase: NestedSamplePhase? = null, value: NestedValue? = null, values: List<NestedValue>? = null, tree: NestedTree? = null, replyTo: RecordReplyNode? = null): NestedSample = offCaller {
+        suspend fun create(phase: NestedSamplePhase? = null, value: NestedValue? = null, values: List<NestedValue>? = null, tree: NestedTree? = null, replyTo: RecordReplyNode? = null, account: AccountScope? = null): NestedSample = offCaller {
             val values_ = buildJsonObject {
                 phase?.let { put("phase", jsonValue(it)) }
                 value?.let { put("value", jsonValue(it)) }
@@ -612,10 +612,10 @@ data class NestedSample(
                 tree?.let { put("tree", jsonValue(it)) }
                 replyTo?.let { put("replyTo", jsonValue(it)) }
             }
-            read(DBlayer.database.create("NestedSample", values_.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "NestedSample", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(phase: GraphQLNullable<NestedSamplePhase> = GraphQLNullable.Omitted, value: GraphQLNullable<NestedValue> = GraphQLNullable.Omitted, values: List<NestedValue>? = null, tree: GraphQLNullable<NestedTree> = GraphQLNullable.Omitted, replyTo: GraphQLNullable<RecordReplyNode> = GraphQLNullable.Omitted): NestedSample = offCaller {
+    suspend fun update(phase: GraphQLNullable<NestedSamplePhase> = GraphQLNullable.Omitted, value: GraphQLNullable<NestedValue> = GraphQLNullable.Omitted, values: List<NestedValue>? = null, tree: GraphQLNullable<NestedTree> = GraphQLNullable.Omitted, replyTo: GraphQLNullable<RecordReplyNode> = GraphQLNullable.Omitted, account: AccountScope? = null): NestedSample = offCaller {
         val values_ = buildJsonObject {
             put("phase", phase)
             put("value", value)
@@ -623,7 +623,7 @@ data class NestedSample(
             put("tree", tree)
             put("replyTo", replyTo)
         }
-        NestedSample.read(DBlayer.database.update(modelName, id, values_.jsonText(), "{}"))
+        NestedSample.read(DBlayer.database.update(admitted(account), modelName, id, values_.jsonText(), "{}"))
     }
 }
 
@@ -651,18 +651,18 @@ data class NestedReference(
         val values = Column<NestedReference, List<NestedValue>>("values")
         fun where(condition: Condition) = Query("NestedReference", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("NestedReference", this, ids)
-        suspend fun create(values: List<NestedValue>? = null): NestedReference = offCaller {
+        suspend fun create(values: List<NestedValue>? = null, account: AccountScope? = null): NestedReference = offCaller {
             val values_ = buildJsonObject {
                 values?.let { put("values", jsonValue(it)) }
             }
-            read(DBlayer.database.create("NestedReference", values_.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "NestedReference", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(values: List<NestedValue>? = null): NestedReference = offCaller {
+    suspend fun update(values: List<NestedValue>? = null, account: AccountScope? = null): NestedReference = offCaller {
         val values_ = buildJsonObject {
             values?.let { put("values", jsonValue(it)) }
         }
-        NestedReference.read(DBlayer.database.update(modelName, id, values_.jsonText(), "{}"))
+        NestedReference.read(DBlayer.database.update(admitted(account), modelName, id, values_.jsonText(), "{}"))
     }
 }
 
@@ -698,20 +698,20 @@ data class Notice(
             built = built.order(Order("occurredAt", "desc"))
             return built
         }
-        suspend fun create(body: String, occurredAt: String): Notice = offCaller {
+        suspend fun create(body: String, occurredAt: String, account: AccountScope? = null): Notice = offCaller {
             val values = buildJsonObject {
                 put("body", jsonValue(body))
                 put("occurredAt", jsonValue(occurredAt))
             }
-            read(DBlayer.database.create("Notice", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "Notice", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(body: String? = null, occurredAt: String? = null): Notice = offCaller {
+    suspend fun update(body: String? = null, occurredAt: String? = null, account: AccountScope? = null): Notice = offCaller {
         val values = buildJsonObject {
             body?.let { put("body", jsonValue(it)) }
             occurredAt?.let { put("occurredAt", jsonValue(it)) }
         }
-        Notice.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Notice.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -750,22 +750,22 @@ data class InteractionNotice(
             built = built.order(Order("occurredAt", "desc"))
             return built
         }
-        suspend fun create(recordId: String, actorUserId: String, occurredAt: String): InteractionNotice = offCaller {
+        suspend fun create(recordId: String, actorUserId: String, occurredAt: String, account: AccountScope? = null): InteractionNotice = offCaller {
             val values = buildJsonObject {
                 put("recordId", jsonValue(recordId))
                 put("actorUserId", jsonValue(actorUserId))
                 put("occurredAt", jsonValue(occurredAt))
             }
-            read(DBlayer.database.create("InteractionNotice", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "InteractionNotice", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(recordId: String? = null, actorUserId: String? = null, occurredAt: String? = null): InteractionNotice = offCaller {
+    suspend fun update(recordId: String? = null, actorUserId: String? = null, occurredAt: String? = null, account: AccountScope? = null): InteractionNotice = offCaller {
         val values = buildJsonObject {
             recordId?.let { put("recordId", jsonValue(it)) }
             actorUserId?.let { put("actorUserId", jsonValue(it)) }
             occurredAt?.let { put("occurredAt", jsonValue(it)) }
         }
-        InteractionNotice.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        InteractionNotice.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -807,24 +807,24 @@ data class ChatAction(
             built = built.where(Condition.equal("chatId", jsonValue(chatId)))
             return built
         }
-        suspend fun create(chatId: String, userId: String, kind: String, active: Boolean): ChatAction = offCaller {
+        suspend fun create(chatId: String, userId: String, kind: String, active: Boolean, account: AccountScope? = null): ChatAction = offCaller {
             val values = buildJsonObject {
                 put("chatId", jsonValue(chatId))
                 put("userId", jsonValue(userId))
                 put("kind", jsonValue(kind))
                 put("active", jsonValue(active))
             }
-            read(DBlayer.database.create("ChatAction", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "ChatAction", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null): ChatAction = offCaller {
+    suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null, account: AccountScope? = null): ChatAction = offCaller {
         val values = buildJsonObject {
             chatId?.let { put("chatId", jsonValue(it)) }
             userId?.let { put("userId", jsonValue(it)) }
             kind?.let { put("kind", jsonValue(it)) }
             active?.let { put("active", jsonValue(it)) }
         }
-        ChatAction.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        ChatAction.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -866,24 +866,24 @@ data class ChatActivityNotice(
             built = built.order(Order("kind", "asc"))
             return built
         }
-        suspend fun create(chatId: String, userId: String, kind: String, active: Boolean): ChatActivityNotice = offCaller {
+        suspend fun create(chatId: String, userId: String, kind: String, active: Boolean, account: AccountScope? = null): ChatActivityNotice = offCaller {
             val values = buildJsonObject {
                 put("chatId", jsonValue(chatId))
                 put("userId", jsonValue(userId))
                 put("kind", jsonValue(kind))
                 put("active", jsonValue(active))
             }
-            read(DBlayer.database.create("ChatActivityNotice", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "ChatActivityNotice", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null): ChatActivityNotice = offCaller {
+    suspend fun update(chatId: String? = null, userId: String? = null, kind: String? = null, active: Boolean? = null, account: AccountScope? = null): ChatActivityNotice = offCaller {
         val values = buildJsonObject {
             chatId?.let { put("chatId", jsonValue(it)) }
             userId?.let { put("userId", jsonValue(it)) }
             kind?.let { put("kind", jsonValue(it)) }
             active?.let { put("active", jsonValue(it)) }
         }
-        ChatActivityNotice.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        ChatActivityNotice.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -931,20 +931,20 @@ data class Presence(
             var built = Query("Presence", this, relation = "history", params = buildJsonObject { put("presenceId", jsonValue(presenceId)) })
             return built
         }
-        suspend fun create(userId: String, room: String): Presence = offCaller {
+        suspend fun create(userId: String, room: String, account: AccountScope? = null): Presence = offCaller {
             val values = buildJsonObject {
                 put("userId", jsonValue(userId))
                 put("room", jsonValue(room))
             }
-            read(DBlayer.database.create("Presence", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "Presence", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(userId: String? = null, room: String? = null): Presence = offCaller {
+    suspend fun update(userId: String? = null, room: String? = null, account: AccountScope? = null): Presence = offCaller {
         val values = buildJsonObject {
             userId?.let { put("userId", jsonValue(it)) }
             room?.let { put("room", jsonValue(it)) }
         }
-        Presence.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Presence.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
     object Relations {
         val user = Association<Presence, User>("user", User)
@@ -1033,7 +1033,7 @@ data class Record(
             return account.send(this, values, args)
         }
     }
-    suspend fun update(containerId: String? = null, authorId: String? = null, regionId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: String? = null, createdAt: String? = null, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, reactions: List<RecordReactionNode>? = null, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, media: GraphQLNullable<RecordMedia> = GraphQLNullable.Omitted): Record = offCaller {
+    suspend fun update(containerId: String? = null, authorId: String? = null, regionId: GraphQLNullable<String> = GraphQLNullable.Omitted, text: String? = null, createdAt: String? = null, sequenceNumber: GraphQLNullable<Long> = GraphQLNullable.Omitted, reactions: List<RecordReactionNode>? = null, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, media: GraphQLNullable<RecordMedia> = GraphQLNullable.Omitted, account: AccountScope? = null): Record = offCaller {
         val values = buildJsonObject {
             containerId?.let { put("containerId", jsonValue(it)) }
             authorId?.let { put("authorId", jsonValue(it)) }
@@ -1045,9 +1045,9 @@ data class Record(
             put("attachment", attachment)
             put("media", media)
         }
-        Record.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Record.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
-    suspend fun react(reactionBody: String, userId: String): Record = act("react", JsonObject(parseJsonObject("""{"reactions":{"${'$'}keyed":{"by":"userId","element":{"body":{"${'$'}arg":"reactionBody"},"userId":{"${'$'}arg":"userId"}}}}}""") + mapOf()), JsonObject(mapOf("reactionBody" to jsonValue(reactionBody), "userId" to jsonValue(userId))), Record)
+    suspend fun react(reactionBody: String, userId: String, account: AccountScope? = null): Record = act("react", JsonObject(parseJsonObject("""{"reactions":{"${'$'}keyed":{"by":"userId","element":{"body":{"${'$'}arg":"reactionBody"},"userId":{"${'$'}arg":"userId"}}}}}""") + mapOf()), JsonObject(mapOf("reactionBody" to jsonValue(reactionBody), "userId" to jsonValue(userId))), Record, account)
     object Relations {
         val container = Association<Record, Container>("container", Container)
     }
@@ -1081,18 +1081,18 @@ data class CurrentUser(
             var built = Query("CurrentUser", this, relation = "current", params = buildJsonObject {  })
             return built
         }
-        suspend fun create(name: String): CurrentUser = offCaller {
+        suspend fun create(name: String, account: AccountScope? = null): CurrentUser = offCaller {
             val values = buildJsonObject {
                 put("name", jsonValue(name))
             }
-            read(DBlayer.database.create("CurrentUser", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "CurrentUser", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null): CurrentUser = offCaller {
+    suspend fun update(name: String? = null, account: AccountScope? = null): CurrentUser = offCaller {
         val values = buildJsonObject {
             name?.let { put("name", jsonValue(it)) }
         }
-        CurrentUser.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        CurrentUser.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -1124,18 +1124,18 @@ data class CurrentRegion(
             var built = Query("CurrentRegion", this, relation = "current", params = buildJsonObject {  })
             return built
         }
-        suspend fun create(name: String): CurrentRegion = offCaller {
+        suspend fun create(name: String, account: AccountScope? = null): CurrentRegion = offCaller {
             val values = buildJsonObject {
                 put("name", jsonValue(name))
             }
-            read(DBlayer.database.create("CurrentRegion", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "CurrentRegion", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null): CurrentRegion = offCaller {
+    suspend fun update(name: String? = null, account: AccountScope? = null): CurrentRegion = offCaller {
         val values = buildJsonObject {
             name?.let { put("name", jsonValue(it)) }
         }
-        CurrentRegion.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        CurrentRegion.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -1173,24 +1173,24 @@ data class CustomScreen(
         fun where(condition: Condition) = Query("CustomScreen", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("CustomScreen", this, ids)
         suspend fun node(id: String, force: Boolean = false): CustomScreen? = offCaller { DBlayer.database.node("CustomScreen", "node", id, force)?.let { read(it) } }
-        suspend fun create(slug: String, version: Long, requires: ScreenRequires, spec: ScreenSpec? = null): CustomScreen = offCaller {
+        suspend fun create(slug: String, version: Long, requires: ScreenRequires, spec: ScreenSpec? = null, account: AccountScope? = null): CustomScreen = offCaller {
             val values = buildJsonObject {
                 put("slug", jsonValue(slug))
                 put("version", jsonValue(version))
                 put("requires", jsonValue(requires))
                 spec?.let { put("spec", jsonValue(it)) }
             }
-            read(DBlayer.database.create("CustomScreen", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "CustomScreen", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(slug: String? = null, version: Long? = null, requires: ScreenRequires? = null, spec: GraphQLNullable<ScreenSpec> = GraphQLNullable.Omitted): CustomScreen = offCaller {
+    suspend fun update(slug: String? = null, version: Long? = null, requires: ScreenRequires? = null, spec: GraphQLNullable<ScreenSpec> = GraphQLNullable.Omitted, account: AccountScope? = null): CustomScreen = offCaller {
         val values = buildJsonObject {
             slug?.let { put("slug", jsonValue(it)) }
             version?.let { put("version", jsonValue(it)) }
             requires?.let { put("requires", jsonValue(it)) }
             put("spec", spec)
         }
-        CustomScreen.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        CustomScreen.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -1218,18 +1218,18 @@ data class StorageRow(
         val record = Column<StorageRow, String>("record")
         fun where(condition: Condition) = Query("StorageRow", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("StorageRow", this, ids)
-        suspend fun create(record: String): StorageRow = offCaller {
+        suspend fun create(record: String, account: AccountScope? = null): StorageRow = offCaller {
             val values = buildJsonObject {
                 put("record", jsonValue(record))
             }
-            read(DBlayer.database.create("StorageRow", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "StorageRow", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(record: String? = null): StorageRow = offCaller {
+    suspend fun update(record: String? = null, account: AccountScope? = null): StorageRow = offCaller {
         val values = buildJsonObject {
             record?.let { put("record", jsonValue(it)) }
         }
-        StorageRow.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        StorageRow.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -1261,18 +1261,18 @@ data class Tail(
             var built = Query("Tail", this, relation = "since", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("afterSequence", jsonValue(afterSequence)); put("pinned", jsonValue(pinned)) })
             return built
         }
-        suspend fun create(text: String): Tail = offCaller {
+        suspend fun create(text: String, account: AccountScope? = null): Tail = offCaller {
             val values = buildJsonObject {
                 put("text", jsonValue(text))
             }
-            read(DBlayer.database.create("Tail", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "Tail", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(text: String? = null): Tail = offCaller {
+    suspend fun update(text: String? = null, account: AccountScope? = null): Tail = offCaller {
         val values = buildJsonObject {
             text?.let { put("text", jsonValue(it)) }
         }
-        Tail.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Tail.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -1306,22 +1306,22 @@ data class UnionSample(
         val props = Column<UnionSample, MomentWidgetItemPropsKind>("props")
         fun where(condition: Condition) = Query("UnionSample", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("UnionSample", this, ids)
-        suspend fun create(label: String? = null, attachment: RecordAttachment? = null, props: MomentWidgetItemProps? = null): UnionSample = offCaller {
+        suspend fun create(label: String? = null, attachment: RecordAttachment? = null, props: MomentWidgetItemProps? = null, account: AccountScope? = null): UnionSample = offCaller {
             val values = buildJsonObject {
                 label?.let { put("label", jsonValue(it)) }
                 attachment?.let { put("attachment", jsonValue(it)) }
                 props?.let { put("props", jsonValue(it)) }
             }
-            read(DBlayer.database.create("UnionSample", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "UnionSample", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, props: GraphQLNullable<MomentWidgetItemProps> = GraphQLNullable.Omitted): UnionSample = offCaller {
+    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, attachment: GraphQLNullable<RecordAttachment> = GraphQLNullable.Omitted, props: GraphQLNullable<MomentWidgetItemProps> = GraphQLNullable.Omitted, account: AccountScope? = null): UnionSample = offCaller {
         val values = buildJsonObject {
             put("label", label)
             put("attachment", attachment)
             put("props", props)
         }
-        UnionSample.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        UnionSample.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -1371,23 +1371,23 @@ data class User(
             var built = Query("User", this, relation = "complete_members", params = buildJsonObject { put("containerId", jsonValue(containerId)) })
             return built
         }
-        suspend fun create(name: String, birthday: String? = null): User = offCaller {
+        suspend fun create(name: String, birthday: String? = null, account: AccountScope? = null): User = offCaller {
             val values = buildJsonObject {
                 put("name", jsonValue(name))
                 birthday?.let { put("birthday", jsonValue(it)) }
             }
-            read(DBlayer.database.create("User", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "User", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(name: String? = null, birthday: GraphQLNullable<String> = GraphQLNullable.Omitted): User = offCaller {
+    suspend fun update(name: String? = null, birthday: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): User = offCaller {
         val values = buildJsonObject {
             name?.let { put("name", jsonValue(it)) }
             put("birthday", birthday)
         }
-        User.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        User.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
-    suspend fun set(typing: Boolean? = null, mood: GraphQLNullable<String> = GraphQLNullable.Omitted) {
-        offCaller { DBlayer.database.setEphemeral(modelName, id, buildJsonObject {
+    suspend fun set(typing: Boolean? = null, mood: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null) {
+        offCaller { DBlayer.database.setEphemeral(admitted(account), modelName, id, buildJsonObject {
             typing?.let { put("typing", jsonValue(it)) }
             put("mood", mood)
         }.jsonText()) }
@@ -1424,22 +1424,22 @@ data class Vibe(
         val kind = Column<Vibe, VibeKind>("kind")
         fun where(condition: Condition) = Query("Vibe", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Vibe", this, ids)
-        suspend fun create(momentId: String, userId: String, kind: VibeKind): Vibe = offCaller {
+        suspend fun create(momentId: String, userId: String, kind: VibeKind, account: AccountScope? = null): Vibe = offCaller {
             val values = buildJsonObject {
                 put("momentId", jsonValue(momentId))
                 put("userId", jsonValue(userId))
                 put("kind", jsonValue(kind))
             }
-            read(DBlayer.database.create("Vibe", values.jsonText(), "{}"))
+            read(DBlayer.database.create(admitted(account), "Vibe", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(momentId: String? = null, userId: String? = null, kind: VibeKind? = null): Vibe = offCaller {
+    suspend fun update(momentId: String? = null, userId: String? = null, kind: VibeKind? = null, account: AccountScope? = null): Vibe = offCaller {
         val values = buildJsonObject {
             momentId?.let { put("momentId", jsonValue(it)) }
             userId?.let { put("userId", jsonValue(it)) }
             kind?.let { put("kind", jsonValue(it)) }
         }
-        Vibe.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
+        Vibe.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
     }
 }
 

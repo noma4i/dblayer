@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,16 +44,22 @@ class ValueStream internal constructor(val id: ULong, val epoch: ULong, private 
     }
 }
 
-private class Forward(private val channel: Channel<StreamDelivery>) : ValueSink {
+/** A reader that falls behind keeps the newest deliveries only. The count of the dropped ones reaches the reader as `Missed`, and a list projection that misses a delta asks the core for a new snapshot. */
+private const val STREAM_BUFFER = 256
+
+private class Forward(private val channel: Channel<StreamDelivery>, private val dropped: java.util.concurrent.atomic.AtomicLong) : ValueSink {
     override fun delivered(delivery: StreamDelivery) {
+        val lost = dropped.getAndSet(0)
+        if (lost > 0) channel.trySend(StreamDelivery(delivery.stream, delivery.epoch, delivery.seq, StreamValue.Missed(lost.toULong())))
         channel.trySend(delivery)
         if (delivery.value is StreamValue.Ended) channel.close()
     }
 }
 
 internal fun Database.openValueStream(epoch: ULong, request: StreamRequest): ValueStream {
-    val channel = Channel<StreamDelivery>(Channel.UNLIMITED)
-    val id = subscribe(epoch, request, Forward(channel))
+    val dropped = java.util.concurrent.atomic.AtomicLong()
+    val channel = Channel<StreamDelivery>(STREAM_BUFFER, BufferOverflow.DROP_OLDEST) { dropped.incrementAndGet() }
+    val id = subscribe(epoch, request, Forward(channel, dropped))
     return ValueStream(id, epoch, this, channel)
 }
 
@@ -80,6 +87,9 @@ class ListProjection<Model : DBModel> private constructor(
 
     val phase: LivePhase? get() = state?.phase
 
+    /** The error the screen shows: the one the core reports for the stream, else a row the platform could not decode. */
+    val error: DbException? get() = state?.error ?: failure?.let { DbException.Invalid(it) }
+
     class Step<Model : DBModel>(val projection: ListProjection<Model>, val applied: Applied)
 
     private fun copy(
@@ -101,16 +111,20 @@ class ListProjection<Model : DBModel> private constructor(
             }
         }
         return when (val value = delivery.value) {
-            is StreamValue.Snapshot -> Step(copy(rows = decode(value.rows).filterNotNull(), state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false), Applied.Changed)
+            is StreamValue.Snapshot -> {
+                failure = null
+                val whole = decode(value.rows).filterNotNull()
+                Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false), Applied.Changed)
+            }
             is StreamValue.State -> Step(copy(state = value.state, epoch = held, lastEdits = emptyList()), Applied.Changed)
             is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList()), Applied.Changed)
             is StreamValue.Delta -> {
                 if (awaitingSnapshot) return Step(this, Applied.Ignored)
-                val gap = Step(copy(epoch = held, failure = failure, decoded = decoded, awaitingSnapshot = true), Applied.Resync)
-                if (value.base != revision) return gap
+                fun gap() = Step(copy(epoch = held, failure = failure, decoded = decoded, awaitingSnapshot = true), Applied.Resync)
+                if (value.base != revision) return gap()
                 val carried = decode(value.rows)
-                if (carried.any { it == null }) return gap
-                val result = rebuild(carried.filterNotNull().zip(value.rowIndexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap
+                if (carried.any { it == null }) return gap()
+                val result = rebuild(carried.filterNotNull().zip(value.rowIndexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap()
                 val ids = HashMap(temporaryIds)
                 for (pair in value.renamed) { ids[pair.to] = ids[pair.from] ?: pair.from; ids.remove(pair.from) }
                 Step(copy(rows = result.first, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
@@ -208,8 +222,21 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
 class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
     private val held = MutableStateFlow<Long?>(null)
     val count: StateFlow<Long?> = held.asStateFlow()
+    private val shown = MutableStateFlow<StreamState?>(null)
+    /** The state of the stream with its error. */
+    val state: StateFlow<StreamState?> = shown.asStateFlow()
+    private val over = MutableStateFlow<StreamEnd?>(null)
+    /** Why the stream ended by itself. */
+    val ended: StateFlow<StreamEnd?> = over.asStateFlow()
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
-        stream.deliveries.collect { delivery -> (delivery.value as? StreamValue.Count)?.let { held.value = it.count } }
+        stream.deliveries.collect { delivery ->
+            when (val value = delivery.value) {
+                is StreamValue.Count -> { held.value = value.count; shown.value = value.state }
+                is StreamValue.State -> shown.value = value.state
+                is StreamValue.Ended -> over.value = value.reason
+                else -> {}
+            }
+        }
     }.also { it.invokeOnCompletion { stream.close() } }
 
     fun close() {
@@ -220,6 +247,7 @@ class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
 
 /** The events of a model after the stream opened. The flow ends when the collector stops or the session of the account ends. */
 fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<ModelEventItem<Model>> = flow {
+    var failed = false
     deliveries.collect { delivery ->
         when (val value = delivery.value) {
             is StreamValue.Missed -> emit(ModelEventItem.Missed(value.count))
@@ -229,6 +257,8 @@ fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<Mod
                 emit(ModelEventItem.Failed(error))
                 close()
             }
+            is StreamValue.State -> value.state.error?.let { if (!failed) { failed = true; emit(ModelEventItem.Failed(it)) } }
+            is StreamValue.Ended -> if (value.reason == StreamEnd.INVALID && !failed) { failed = true; emit(ModelEventItem.Failed(DbException.Invalid("the events stream could not open"))) }
             else -> {}
         }
     }
@@ -274,7 +304,7 @@ class AccountScope private constructor(val epoch: ULong, private val database: D
     /** Sends the file of an existing record through its declared upload action. */
     suspend fun <Model : DBModel, Answer> upload(row: Model, action: String, request: UploadRequest, answerSerializer: kotlinx.serialization.KSerializer<Answer>): ActionAnswer<Model, Answer> {
         val operation = offCaller { database.upload(epoch, row.modelName, row.id, action, request.wire()) }
-        return ActionAnswer(row, operation, answerSerializer)
+        return ActionAnswer(row, operation, answerSerializer, epoch)
     }
 
     suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): List<Model> =

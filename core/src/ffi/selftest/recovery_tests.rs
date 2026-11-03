@@ -25,7 +25,7 @@ async fn a_data_reset_between_a_refused_pending_request_and_the_session_reset_ke
     rig.server.reply_with(json!({ "makeMoment": { "id": "42", "text": "hello" } }));
     let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
     rig.server.refuse_next("UNAUTHENTICATED", false);
-    let refused = bound(database.settled("Moment".into(), row.id.clone(), None)).await.unwrap_err();
+    let refused = bound(database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None)).await.unwrap_err();
     assert_eq!(session(refused).0, SessionCode::Unauthenticated);
 
     database.db.reset_all().unwrap();
@@ -108,7 +108,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         gate.entered_for("the first PUT").await;
         let waiters: Vec<_> = ["42", "43"].into_iter().map(|id| {
             let database = database.clone();
-            tokio::spawn(async move { database.settled("Moment".into(), id.into(), None).await })
+            tokio::spawn(async move { database.settled(database.session_epoch(), "Moment".into(), id.into(), None).await })
         }).collect();
 
         crate::test_wait::yield_until("both settle calls parked", || database.sync.as_ref().unwrap().counters().settle_parks >= 2).await;

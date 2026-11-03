@@ -21,7 +21,7 @@ struct EnumTests {
   func aValueOutsideTheDeclaredOnesIsStoredReadBackAndKeptByAnEdit() async throws {
     let database = try await open()
     try await adopt(database)
-    let wire = try await database.create(model: "NestedSample", valuesJson: #"{"phase":"archived"}"#, argsJson: "{}")
+    let wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"phase":"archived"}"#, argsJson: "{}")
     let sample = try NestedSample.decode(wire)
     #expect(sample.phase == .unknown("archived"))
     let edited = try await sample.update(values: [])
@@ -48,7 +48,7 @@ struct EnumTests {
     let json = Data(#"{"title":"t","state":"mystery"}"#.utf8)
     #expect(try JSONDecoder().decode(NestedValue.self, from: json).state == .unknown("mystery"))
     let database = try await open()
-    let wire = try await database.create(model: "NestedSample", valuesJson: #"{"value":{"title":"t","state":"mystery"}}"#, argsJson: "{}")
+    let wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"value":{"title":"t","state":"mystery"}}"#, argsJson: "{}")
     let sample = try NestedSample.decode(wire)
     #expect(sample.value?.state == .unknown("mystery"))
     let encoded = String(decoding: try JSONEncoder().encode(sample.value), as: UTF8.self)

@@ -28,7 +28,7 @@ extension BridgeProbeTests {
     for fields in try vectors() {
       let label = fields["name"]!.stringValue!
       let values = fields["attachment"].map { JSONValue.object(["attachment": $0]) } ?? .object([:])
-      let wire = try await database.create(model: "UnionSample", valuesJson: values.text, argsJson: "{}")
+      let wire = try await database.create(epoch: database.sessionEpoch(), model: "UnionSample", valuesJson: values.text, argsJson: "{}")
       let sample = try UnionSample.decode(wire)
       let encoded = try sample.attachment.map { try JSONValue.encode($0) } ?? .null
       #expect(withoutNullKeys(encoded) == withoutNullKeys(fields["output"]!), Comment(rawValue: label))

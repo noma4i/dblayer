@@ -66,10 +66,10 @@ class CellDecoderTest {
             """{"value":{"title":"t","children":[{"body":"a"},{"nope":1}]}}""" to "value.children[1].nope",
             """{"value":{"title":"t","count":"many"}}""" to "value.count",
         )) {
-            val error = runCatching { database.create("NestedSample", values, "{}") }.exceptionOrNull()
+            val error = runCatching { database.create(database.sessionEpoch(), "NestedSample", values, "{}") }.exceptionOrNull()
             assertTrue(values, error is DbException && error.toString().contains(path))
         }
-        database.create("NestedSample", """{"value":{"title":"t","payload":{"anything":[1]}}}""", "{}")
+        database.create(database.sessionEpoch(), "NestedSample", """{"value":{"title":"t","payload":{"anything":[1]}}}""", "{}")
     }
 
     @Test
@@ -80,7 +80,7 @@ class CellDecoderTest {
             val fields = row.jsonObject
             if (fields["error"] == JsonPrimitive(true) || fields["input"] == null) continue
             val label = fields.getValue("name").toString()
-            val wire = database.create("NestedSample", buildJsonObject { put("value", withoutUnknownKeys(fields.getValue("input"))) }.toString(), "{}")
+            val wire = database.create(database.sessionEpoch(), "NestedSample", buildJsonObject { put("value", withoutUnknownKeys(fields.getValue("input"))) }.toString(), "{}")
             val expected = dbJson.decodeFromString(NestedValue.serializer(), fields.getValue("output").toString())
             assertEquals(label, expected, NestedSample.read(wire).value)
         }
@@ -88,7 +88,7 @@ class CellDecoderTest {
 
     @Test
     fun aRowWithAnotherLayoutIsRefused(): Unit = bounded {
-        val wire = open().create("NestedSample", "{}", "{}")
+        val wire = open().let { it.create(it.sessionEpoch(), "NestedSample", "{}", "{}") }
         assertThrows(DbException::class.java) { NestedSample.read(wire.copy(layout = "other")) }
     }
 }

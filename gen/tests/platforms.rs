@@ -121,10 +121,10 @@ end
     assert_eq!(action.root.as_deref(), Some("containerMute.container"));
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("@concurrent public func mute(mute: Bool) async throws -> Self"));
+    assert!(swift.contains("@concurrent public func mute(mute: Bool, in scope: AccountScope? = nil) async throws -> Self"));
     assert!(swift.contains("values[\"muted\"] = try JSONValue.encode(mute)"));
     assert!(swift.contains("args: [\"mute\": try JSONValue.encode(mute)]"));
-    assert!(kotlin.contains("suspend fun mute(mute: Boolean): Container"));
+    assert!(kotlin.contains("suspend fun mute(mute: Boolean, account: AccountScope? = null): Container"));
     assert!(kotlin.contains("\"muted\" to jsonValue(mute)"));
 }
 
@@ -197,8 +197,8 @@ fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
-    assert!(swift.contains("@concurrent public static func create(text: String)") && swift.contains("@concurrent public func update(text: String? = nil)"), "{swift}");
-    assert!(kotlin.contains("suspend fun create(text: String)") && kotlin.contains("suspend fun update(text: String? = null)"), "{kotlin}");
+    assert!(swift.contains("@concurrent public static func create(text: String, in scope: AccountScope? = nil)") && swift.contains("@concurrent public func update(text: String? = nil, in scope: AccountScope? = nil)"), "{swift}");
+    assert!(kotlin.contains("suspend fun create(text: String, account: AccountScope? = null)") && kotlin.contains("suspend fun update(text: String? = null, account: AccountScope? = null)"), "{kotlin}");
 }
 
 #[test]

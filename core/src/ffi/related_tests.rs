@@ -39,9 +39,9 @@ pub(super) fn ids(tape: &Tape) -> Vec<String> {
 
 fn last(tape: &Tape) -> Seen { tape.last().expect("a delivery") }
 
-async fn make(db: &Database, model: &str, json: &str) { db.create(model.into(), json.into(), "{}".into()).await.unwrap(); }
+async fn make(db: &Database, model: &str, json: &str) { db.create(db.session_epoch(), model.into(), json.into(), "{}".into()).await.unwrap(); }
 
-async fn patch(db: &Database, model: &str, id: &str, json: &str) { db.update(model.into(), id.into(), json.into(), "{}".into()).await.unwrap(); }
+async fn patch(db: &Database, model: &str, id: &str, json: &str) { db.update(db.session_epoch(), model.into(), id.into(), json.into(), "{}".into()).await.unwrap(); }
 
 async fn watch(db: &Database, query: &str, name: &str) -> (Arc<Tape>, Arc<Watched>) {
     let tape = Arc::new(Tape::default());
@@ -76,10 +76,10 @@ async fn related_01_belongs_to_follows_parent_order_links_targets_and_late_arriv
     settle(&db);
     assert_eq!(ids(&tape), ["u2", "u1", "u9"], "a target that arrives later joins at its parent position");
 
-    db.destroy("Moment".into(), "m2".into()).await.unwrap();
+    db.destroy(db.session_epoch(), "Moment".into(), "m2".into()).await.unwrap();
     settle(&db);
     assert_eq!(ids(&tape), ["u2", "u1", "u9"], "m1 still points at u2");
-    for gone in ["m1", "m3", "m4"] { db.destroy("Moment".into(), gone.into()).await.unwrap(); }
+    for gone in ["m1", "m3", "m4"] { db.destroy(db.session_epoch(), "Moment".into(), gone.into()).await.unwrap(); }
     settle(&db);
     assert!(ids(&tape).is_empty(), "no parents, no rows");
     live.cancel();
@@ -106,7 +106,7 @@ async fn related_03_has_one_shows_the_first_child_and_the_next_one_after_it_goes
     for (id, user) in [("p1", "u2"), ("p2", "u1"), ("p3", "u1")] { make(&db, "Profile", &format!(r#"{{"id":"{id}","userId":"{user}"}}"#)).await; }
     let (tape, live) = watch(&db, r#"{"model":"User","order":[{"field":"id","direction":"asc"}]}"#, "profile").await;
     assert_eq!(ids(&tape), ["p2", "p1"]);
-    db.destroy("Profile".into(), "p2".into()).await.unwrap();
+    db.destroy(db.session_epoch(), "Profile".into(), "p2".into()).await.unwrap();
     settle(&db);
     assert_eq!(ids(&tape), ["p3", "p1"]);
     live.cancel();

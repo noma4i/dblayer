@@ -108,6 +108,8 @@ pub(crate) struct Stepping {
 pub struct ObserverCensus {
     pub observed_queries: usize,
     pub subscriptions: usize,
+    /// Observers kept warm by an explicit `warm` after their reader left. They read on every write to their query.
+    pub retained: usize,
 }
 
 #[derive(Default)]

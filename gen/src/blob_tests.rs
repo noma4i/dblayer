@@ -19,9 +19,9 @@ fn blob_platforms() {
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs) + &emit_blob_swift(&declared.blob_uploads);
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs) + &emit_blob_kotlin(&declared.blob_uploads);
     assert!(swift.contains("static let videoIntro = BlobUpload(name: \"video_intro\", create: \"BlobCreate\")"), "{swift}");
-    assert!(swift.contains("static func setVideo(video: Blob)"), "{swift}");
+    assert!(swift.contains("static func setVideo(video: Blob"), "{swift}");
     assert!(kotlin.contains("BlobUpload.Companion.VideoIntro"), "{kotlin}");
-    assert!(kotlin.contains("suspend fun setVideo(video: Blob)"), "{kotlin}");
+    assert!(kotlin.contains("suspend fun setVideo(video: Blob"), "{kotlin}");
     assert_eq!(declared.models[0].actions.iter().find(|action| action.name == "set_video").unwrap().variables["signedId"], "video");
     for (case, source, queries, message) in [
         ("unknown create", source.replace("create: \"BlobCreate\"", "create: \"Missing\""), queries.clone(), "not a mutation"),

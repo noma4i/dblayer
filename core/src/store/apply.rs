@@ -22,7 +22,7 @@ use super::shape::{delete_tables, insert_children, member_values, normalize, nor
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
-use super::{Committed, Inner, ModelInfo, Store, StoreError};
+use super::{pinned_epoch, Committed, Inner, ModelInfo, Store, StoreError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlanCommitError<E> {
@@ -110,9 +110,9 @@ impl Store {
         if envelope.is_empty() {
             return Ok(Committed::unannounced(CommitResult::noop(envelope.tx_id)));
         }
-        match attempt(&inner, &envelope, now_ms) {
+        match self.attempt_in_epoch(&inner, &envelope, now_ms) {
             Ok(result) => Ok(self.finish(inner, result)),
-            Err(first) if first.is_apply_failure() => match attempt(&inner, &envelope, now_ms) {
+            Err(first) if first.is_apply_failure() => match self.attempt_in_epoch(&inner, &envelope, now_ms) {
                 Ok(result) => Ok(self.finish(inner, result)),
                 Err(second) => {
                     if second.is_apply_failure() {
@@ -123,6 +123,21 @@ impl Store {
             },
             Err(other) => Err(other.into()),
         }
+    }
+
+    /// The SQL commit of a write that belongs to a session epoch: the epoch check and the commit happen while the lifecycle holds its commit line, so a transition either comes before the check and refuses the write, or waits for the commit.
+    fn attempt_in_epoch(&self, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
+        let pinned = pinned_epoch();
+        let _line = pinned.as_ref().map(|(life, _)| life.commit_line());
+        if let Some((life, epoch)) = &pinned {
+            if !life.epoch_holds(*epoch) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
+        }
+        #[cfg(test)]
+        if pinned.is_some() {
+            let hook = self.after_epoch_check.lock().unwrap_or_else(|error| error.into_inner()).take();
+            if let Some(hook) = hook { hook(); }
+        }
+        attempt(inner, envelope, now_ms)
     }
 
     fn finish<'a>(&'a self, mut inner: std::sync::MutexGuard<'_, Inner>, result: (CommitResult, u32)) -> Committed<'a> {

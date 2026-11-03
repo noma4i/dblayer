@@ -135,15 +135,29 @@ impl Stream {
         result
     }
 
-    /// The stream holds a lease while it owes its reader a value: before the first one, while a load runs, and while a whole snapshot is awaited. The need is read under the lease guard, so the last caller applies the latest state.
+    /// The stream holds a lease while it owes its reader a value: before the first one, while a load runs, and while a whole snapshot is awaited. The lease is made and dropped outside every lock, and the loop repeats until the slot matches the need.
     fn keep_lease(&self) {
-        let mut lease = self.lease.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let owes = { let state = locked(&self.state); !state.ended && (!state.opened || state.load_pending || state.awaiting_whole) };
-        if lease.as_ref().is_some_and(|held| !held.is_current()) { lease.take(); }
-        match (owes, lease.is_some()) {
-            (true, false) => *lease = self.life.lease_passive(Origin::Session, "stream").ok(),
-            (false, true) => { lease.take(); }
-            _ => {}
+        loop {
+            let owes = { let state = locked(&self.state); !state.ended && (!state.opened || state.load_pending || state.awaiting_whole) };
+            let (gone, make) = {
+                let mut slot = locked(&self.lease);
+                let mut gone = None;
+                if slot.as_ref().is_some_and(|held| !held.is_current()) { gone = slot.take(); }
+                match (owes, slot.is_some()) {
+                    (true, false) => (gone, true),
+                    (false, true) => (slot.take(), false),
+                    _ => (gone, false),
+                }
+            };
+            let mut changed = gone.is_some();
+            drop(gone);
+            if make {
+                let made = self.life.lease_passive(Origin::Session, "stream").ok();
+                changed |= made.is_some();
+                let extra = { let mut slot = locked(&self.lease); if slot.is_none() { *slot = made; None } else { made } };
+                drop(extra);
+            }
+            if !changed { return; }
         }
     }
 
@@ -153,9 +167,9 @@ impl Stream {
         let Some(sink) = state.sink.clone() else { return };
         let delivery = StreamDelivery { stream: self.id, epoch: self.epoch, seq: state.seq, value };
         if last { state.ended = true; state.sink = None; }
-        let (calls, revoked, hold) = (self.calls.clone(), self.revoked.clone(), self.first_screen.clone());
+        let (calls, revoked, hold, life, epoch) = (self.calls.clone(), self.revoked.clone(), self.first_screen.clone(), self.life.clone(), self.epoch);
         effects.push(move || {
-            if revoked.load(Ordering::SeqCst) && !last { return; }
+            if !last && (revoked.load(Ordering::SeqCst) || !life.admits_epoch(epoch)) { return; }
             crate::db::lock::assert_no_library_lock("ValueSink::delivered");
             if !calls.call(|| sink.delivered(delivery)) { return; }
             let held = locked(&hold).take();
@@ -192,12 +206,13 @@ impl Stream {
         self.release();
     }
 
-    /// The reader asked to stop: nothing is delivered after this.
+    /// The reader asked to stop. A delivery admitted before this call may still run to its end, and none is admitted after it. The call does not wait for the reader: a reader may hold a lock that the canceller holds.
     pub(super) fn cancelled(&self) {
         self.calls.cancel();
         self.change(|state, effects| {
             state.ended = true;
-            state.sink = None;
+            let sink = state.sink.take();
+            effects.push(move || drop(sink));
             let readiness = self.readiness.clone();
             effects.push(move || { crate::db::lock::effect(|| readiness.send_replace(Readiness::Ended)); });
         });

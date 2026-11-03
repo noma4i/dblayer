@@ -150,6 +150,10 @@ pub(crate) struct Inner {
     pub owner: Arc<load_owner::LoadOwner>,
     pub outbox_gate: tokio::sync::Mutex<()>,
     pub queue: Result<Arc<Mutex<crate::operation::OperationQueue>>, String>,
+    /// The newest operation the outbox held when this database opened. A pending action that is not durable and is this old or older does not survive the open.
+    pub(crate) reopened_through: i64,
+    /// The identity of the session now and the newest pending operation when another identity took its place: an operation of that age belongs to the account that left and never goes out.
+    pub(crate) account: Mutex<(Option<String>, i64)>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub(crate) upload_effects: crate::db::dispatch::OrderedEffects,
     pub(crate) file_tasks: Arc<tokio::sync::watch::Sender<usize>>,
@@ -243,6 +247,7 @@ impl Sync {
         db.set_clock(clock.clone());
         db.shared.blob_failed_ttl_ms.store(config.upload.failed_ttl.as_millis().try_into().unwrap_or(i64::MAX), std::sync::atomic::Ordering::Relaxed);
         let queue = db.operation_queue().map_err(|error| error.to_string());
+        let reopened_through = queue.as_ref().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied()).unwrap_or(i64::MIN);
         let max_files = config.upload.max_files;
         let (stop, stopped) = watch::channel(false);
         let owner = Arc::new(load_owner::LoadOwner::default());
@@ -282,6 +287,8 @@ impl Sync {
             owner,
             outbox_gate: tokio::sync::Mutex::new(()),
             queue,
+            reopened_through,
+            account: Mutex::new((None, i64::MIN)),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             upload_effects: crate::db::dispatch::OrderedEffects::default(),
             file_tasks: Arc::new(tokio::sync::watch::channel(0).0),
@@ -305,6 +312,7 @@ impl Sync {
             let epoch = this.inner.db.shared.store.lifecycle.snapshot().session_epoch;
             this.inner.db.shared.store.lifecycle.start_session(session, epoch);
         }
+        locked(&this.inner.account).0 = this.inner.db.shared.store.lifecycle.snapshot().session;
         this.inner.db.shared.store.lifecycle.enroll(&this.inner);
         this
     }
@@ -353,6 +361,7 @@ impl crate::lifecycle::Holder for Inner {
             crate::lifecycle::Change::SessionStarted(_) | crate::lifecycle::Change::SessionEnded => {
                 if matches!(snapshot.change, crate::lifecycle::Change::SessionEnded) { inner.cancel_uploads(); }
                 inner.preload_session();
+                inner.account_changed(snapshot.session.as_deref());
                 if snapshot.session.is_some() {
                     inner.refresh_due_entities(true);
                     inner.preload_on_event();

@@ -74,14 +74,26 @@ B07		kotlin	com.noma4i.dblayer.ValueBridgeTest.aChangeOfOneRowDecodesOneRowAndSu
 B08		core	a_missed_revision_gives_one_new_snapshot	green	S2: a missed revision gives one new snapshot	arch-r2 specs/architecture.md B, C, D, F
 B08		swift	BridgeProbeTests.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3 specs/architecture.md A-F
 B08		kotlin	com.noma4i.dblayer.ValueBridgeTest.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3 specs/architecture.md A-F
-B09		core	a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row	green	S3 R1: a send waiting for the writer while the session ends writes no row	arch-r3 specs/architecture.md A-F
+B09		core	a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row	green	core-only: the proof holds the SQL writer lock, a core hook	arch-r3 specs/architecture.md A-F
 B10		core	the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_receipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
 B10		swift	BridgeProbeTests.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
 B10		kotlin	com.noma4i.dblayer.ValueBridgeTest.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
-B11		core	a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothing	green	S3 R3: a request whose caller left holds no lease past its epoch	arch-r3 specs/architecture.md A-F
+B11		core	a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothing	green	core-only: the proof holds a server request through the fake world gate	arch-r3 specs/architecture.md A-F
 B12		core	a_stream_that_cannot_connect_ends_once_and_leaves_the_table	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
 B12		swift	BridgeProbeTests.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
 B12		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
-B13		core	a_prepared_delivery_is_withdrawn_by_the_cancel_of_the_reader	green	S3 R5: a prepared delivery is withdrawn by the cancel	arch-r3 specs/architecture.md A-F
+B13		core	the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitted_after_it	green	core-only: the proof blocks the reader inside its delivery and counts calls in the core	arch-r3 specs/architecture.md A-F
 B14		kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionInACancelledScopeLeavesNoStreamInTheCore	green	S3 R6: a projection in a cancelled scope leaves no stream in the core	arch-r3 specs/architecture.md A-F
-B15		core	work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_gets_one_value_per_write	green	S3: spec F counters for the entity and count paths	arch-r3 specs/architecture.md F
+B15		core	work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_gets_one_value_per_write	green	core-only: the proof reads the core work counters	arch-r3 specs/architecture.md F
+K01	B1	core	a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_next_account	green	-	arch-r3b review B1
+K02	B2	core	a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing	green	-	arch-r3b review B2
+K02	B2	swift	BridgeProbeTests.aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing	green	-	arch-r3b review B2
+K02	B2	kotlin	com.noma4i.dblayer.ValueBridgeTest.aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing	green	-	arch-r3b review B2
+K03	B3	core	a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network	green	-	arch-r3b review B3
+K04	B4	core	a_server_create_returns_the_confirmed_row_and_needs_the_network	green	-	arch-r3b review B4
+K05	B5	core	the_cancel_of_a_reader_releases_its_object_outside_every_library_lock	green	-	arch-r3b review B5
+K06	B6	core	a_queued_message_shows_as_pending_in_the_thread_before_the_server_answers	green	-	arch-r3b review B6
+K07	B9	core	a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_reading	green	-	arch-r3b review B9
+K08	B7	swift	BridgeProbeTests.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
+K08	B7	kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
+K09	B	core	a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns	green	-	arch-r3b consumer finding: refresh on reconnect

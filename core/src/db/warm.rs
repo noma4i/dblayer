@@ -82,10 +82,6 @@ impl Db {
         Ok(())
     }
 
-    pub(crate) fn retain_query(&self, query: &Query) -> Result<(), DbError> {
-        self.warm_shelf(query).map(drop)
-    }
-
     fn warm_shelf(&self, query: &Query) -> Result<Arc<Warmed>, DbError> {
         let key = Subject::Rows(query.clone()).key();
         if let Some(shelf) = locked(&self.shared.warm).touch(&key) {

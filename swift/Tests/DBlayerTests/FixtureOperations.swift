@@ -32,23 +32,23 @@ public struct BlobProfile: DBSingleton {
         return built
     }
     public static var singleton: Query<Self> { current }
-    @concurrent public static func create(label: String? = nil) async throws -> Self {
+    @concurrent public static func create(label: String? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = label { values["label"] = try JSONValue.encode(value) }
-        return try await create(values: values)
+        return try await create(values: values, in: scope)
     }
-    @concurrent public func update(label: String?? = nil) async throws -> Self {
+    @concurrent public func update(label: String?? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = label { values["label"] = try JSONValue.encode(value) }
-        return try await update(values: values)
+        return try await update(values: values, in: scope)
     }
-    @concurrent public func setVideo(video: Blob) async throws -> Self {
+    @concurrent public func setVideo(video: Blob, in scope: AccountScope? = nil) async throws -> Self {
         let values = try JSONValue.read(#"{}"#).objectValue
-        return try await act("set_video", values: values, args: ["video": try JSONValue.encode(video)])
+        return try await act("set_video", values: values, args: ["video": try JSONValue.encode(video)], in: scope)
     }
-    @concurrent public static func setVideo(video: Blob) async throws -> Self {
-        guard let current = try await singleton.read().first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
-        return try await current.setVideo(video: video)
+    @concurrent public static func setVideo(video: Blob, in scope: AccountScope? = nil) async throws -> Self {
+        guard let current = try await singleton.read(in: scope).first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
+        return try await current.setVideo(video: video, in: scope)
     }
 }
 
@@ -83,15 +83,15 @@ public struct Clip: DBModel {
         if let value = widgets { variables["widgets"] = try JSONValue.encode(value) }
         return variables
     }
-    @concurrent public static func create(title: String? = nil) async throws -> Self {
+    @concurrent public static func create(title: String? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
-        return try await create(values: values)
+        return try await create(values: values, in: scope)
     }
-    @concurrent public func update(title: String?? = nil) async throws -> Self {
+    @concurrent public func update(title: String?? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
-        return try await update(values: values)
+        return try await update(values: values, in: scope)
     }
     @concurrent public func createFile(_ request: UploadRequest, in scope: AccountScope) async throws -> ActionAnswer<Self, ClipCreateFileResult> {
         try await scope.upload(self, action: "create_file", request)
@@ -135,21 +135,21 @@ public struct Inbox: DBModel {
         let built = Query<Self>(relation: "shelf", params: ["list": try JSONValue.encode(list)])
         return built
     }
-    @concurrent public static func create(title: String, stance: String? = nil) async throws -> Self {
+    @concurrent public static func create(title: String, stance: String? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["title"] = try JSONValue.encode(title)
         if let value = stance { values["stance"] = try JSONValue.encode(value) }
-        return try await create(values: values)
+        return try await create(values: values, in: scope)
     }
-    @concurrent public func update(title: String? = nil, stance: String?? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil, stance: String?? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
         if let value = stance { values["stance"] = try JSONValue.encode(value) }
-        return try await update(values: values)
+        return try await update(values: values, in: scope)
     }
-    @concurrent public func move(list: ContainerShelfKind) async throws -> Self {
+    @concurrent public func move(list: ContainerShelfKind, in scope: AccountScope? = nil) async throws -> Self {
         let values = try JSONValue.read(#"{"stance":{"$map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#).objectValue
-        return try await act("move", values: values, args: ["list": try JSONValue.encode(list)])
+        return try await act("move", values: values, args: ["list": try JSONValue.encode(list)], in: scope)
     }
 }
 
@@ -187,17 +187,17 @@ public struct MediaEntry: DBModel {
         let built = Query<Self>(relation: "media", params: ["chatId": try JSONValue.encode(chatId)])
         return built
     }
-    @concurrent public static func create(text: String? = nil, sequenceNumber: Int) async throws -> Self {
+    @concurrent public static func create(text: String? = nil, sequenceNumber: Int, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = text { values["text"] = try JSONValue.encode(value) }
         values["sequenceNumber"] = try JSONValue.encode(sequenceNumber)
-        return try await create(values: values)
+        return try await create(values: values, in: scope)
     }
-    @concurrent public func update(text: String?? = nil, sequenceNumber: Int? = nil) async throws -> Self {
+    @concurrent public func update(text: String?? = nil, sequenceNumber: Int? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = text { values["text"] = try JSONValue.encode(value) }
         if let value = sequenceNumber { values["sequenceNumber"] = try JSONValue.encode(value) }
-        return try await update(values: values)
+        return try await update(values: values, in: scope)
     }
 }
 
@@ -235,15 +235,15 @@ public struct Roster: DBModel {
         let built = Query<Self>(relation: "complete_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
         return built
     }
-    @concurrent public static func create(title: String) async throws -> Self {
+    @concurrent public static func create(title: String, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         values["title"] = try JSONValue.encode(title)
-        return try await create(values: values)
+        return try await create(values: values, in: scope)
     }
-    @concurrent public func update(title: String? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
-        return try await update(values: values)
+        return try await update(values: values, in: scope)
     }
 }
 

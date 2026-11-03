@@ -146,7 +146,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: [WidgetInput]? = nil",
-        "@concurrent public func decorate(widgets: [WidgetInput]) async throws -> Self {",
+        "@concurrent public func decorate(widgets: [WidgetInput], in scope: AccountScope? = nil) async throws -> Self {",
         "\"widgets\": try JSONValue.encode(widgets)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
@@ -154,7 +154,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: List<WidgetInput>? = null",
-        "suspend fun decorate(widgets: List<WidgetInput>): Moment = act(\"decorate\"",
+        "suspend fun decorate(widgets: List<WidgetInput>, account: AccountScope? = null): Moment = act(\"decorate\"",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

@@ -141,6 +141,7 @@ impl Inner {
         let _serial = self.outbox_gate.lock().await;
         let mut report = FlushReport::default();
         if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(report); }
+        self.refuse_non_durable()?;
         locked(self.operation_queue()?).begin_pass();
         let mut cursor = i64::MIN;
         while let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? {
@@ -152,6 +153,36 @@ impl Inner {
         }
         locked(self.operation_queue()?).begin_pass();
         Ok(report)
+    }
+
+    /// Marks every pending operation as belonging to the account that left when another identity takes the session. They are all committed before the session start: the commit line orders them.
+    pub(crate) fn account_changed(&self, session: Option<&str>) {
+        let newest = self.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
+        let mut account = locked(&self.account);
+        let leaving = account.0.is_some() && session.is_some() && account.0.as_deref() != session;
+        if session.is_some() { account.0 = session.map(str::to_string); }
+        if leaving { if let Some(newest) = newest { account.1 = account.1.max(newest); } }
+    }
+
+    /// Only sending a message and a media upload wait for the network (`specs/architecture.md` D). Any other action that needs the server is refused and rolled back when the network is away or when it was left over from before this open.
+    fn refuse_non_durable(&self) -> Result<(), SyncError> {
+        let online = self.connectivity.is_online();
+        let left = locked(&self.account).1;
+        let pending: Vec<i64> = locked(self.operation_queue()?).pending.iter().copied().collect();
+        for seq in pending {
+            let of_left_account = seq <= left;
+            if !of_left_account && online && seq > self.reopened_through { continue; }
+            let Some(entry) = self.outbox_operation(seq)? else { continue };
+            let Some((model, action)) = Operation::split_action_key(&entry.operation.action_key) else { continue };
+            let spec = self.db.spec(&model)?;
+            let durable_or_free = spec.actions.iter().find(|declared| declared.name == action).is_none_or(|declared| declared.mutation.is_none() || declared.durable || declared.upload);
+            if durable_or_free && !of_left_account { continue; }
+            let failure = OperationFailure::new(FailureKind::Rejected, if of_left_account { format!("{model}.{action} belongs to the account that signed out") } else { format!("{model}.{action} needs the network") });
+            let mut kept = self.keep_refusal(&entry, &SendResult::Rejected(failure));
+            crate::blocking::blocking_unit(|| self.db.roll_back_at(seq, self.db.generation()))?;
+            kept.landed();
+        }
+        Ok(())
     }
 
     fn keep_outcome(&self, entry: &OutboxOperation, result: &SendResult) {

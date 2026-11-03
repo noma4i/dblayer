@@ -20,7 +20,7 @@ private final class RecordingSession: Database, @unchecked Sendable {
     return #"{"ticket":"t-2"}"#
   }
   override func sessionReset() async throws { record("reset") }
-  override func retry(model: String, rowId: String, action: String?) async throws -> UInt64 {
+  override func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws -> UInt64 {
     record("retry \(model) \(rowId) \(action ?? "nil")")
     return 3
   }

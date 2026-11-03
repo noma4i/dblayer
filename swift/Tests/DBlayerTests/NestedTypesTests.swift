@@ -66,13 +66,13 @@ struct CellDecoderTests {
       (#"{"value":{"title":"t","count":"many"}}"#, "value.count"),
     ] {
       do {
-        _ = try await database.create(model: "NestedSample", valuesJson: values, argsJson: "{}")
+        _ = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: values, argsJson: "{}")
         Issue.record(Comment(rawValue: "accepted \(values)"))
       } catch {
         #expect("\(error)".contains(path), Comment(rawValue: values))
       }
     }
-    _ = try await database.create(model: "NestedSample", valuesJson: #"{"value":{"title":"t","payload":{"anything":[1]}}}"#, argsJson: "{}")
+    _ = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"value":{"title":"t","payload":{"anything":[1]}}}"#, argsJson: "{}")
   }
 
   @Test
@@ -85,7 +85,7 @@ struct CellDecoderTests {
       guard fields["error"] != .bool(true), let input = fields["input"] else { continue }
       let label = fields["name"]!.stringValue!
       let values = String(decoding: try JSONEncoder().encode(["value": withoutUnknownKeys(input)]), as: UTF8.self)
-      let wire = try await database.create(model: "NestedSample", valuesJson: values, argsJson: "{}")
+      let wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: values, argsJson: "{}")
       let sample = try NestedSample.decode(wire)
       let expected = try JSONDecoder().decode(NestedValue.self, from: JSONEncoder().encode(fields["output"]!))
       #expect(sample.value == expected, Comment(rawValue: label))
@@ -95,7 +95,7 @@ struct CellDecoderTests {
   @Test
   func aRowWithAnotherLayoutIsRefused() async throws {
     let database = try await open()
-    var wire = try await database.create(model: "NestedSample", valuesJson: "{}", argsJson: "{}")
+    var wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: "{}", argsJson: "{}")
     wire.layout = "other"
     #expect(throws: (any Error).self) { try NestedSample.decode(wire) }
   }

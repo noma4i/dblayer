@@ -14,7 +14,7 @@ async fn a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_s
     let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
     rig.server.refuse_next("UNAUTHENTICATED", false);
 
-    let refused = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
+    let refused = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap_err();
     let blocked = database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap_err();
     database.session_reset().await.unwrap();
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();

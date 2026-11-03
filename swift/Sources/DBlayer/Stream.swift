@@ -33,18 +33,25 @@ public struct ValueStream: AsyncSequence, Sendable {
   public func cancel() { database.cancelStream(stream: id) }
 }
 
+/// A reader that falls behind keeps the newest deliveries only. The count of the dropped ones reaches the reader as `.missed`, and a list projection that misses a delta asks the core for a new snapshot. The core calls the sink one delivery at a time.
+private let streamBuffer = 256
+
 private final class Forward: ValueSink, @unchecked Sendable {
   private let continuation: AsyncStream<StreamDelivery>.Continuation
+  private var dropped: UInt64 = 0
   init(_ continuation: AsyncStream<StreamDelivery>.Continuation) { self.continuation = continuation }
   func delivered(delivery: StreamDelivery) {
-    continuation.yield(delivery)
+    if dropped > 0 {
+      if case .dropped = continuation.yield(StreamDelivery(stream: delivery.stream, epoch: delivery.epoch, seq: delivery.seq, value: .missed(count: dropped))) { dropped += 1 } else { dropped = 0 }
+    }
+    if case .dropped = continuation.yield(delivery) { dropped += 1 }
     if case .ended = delivery.value { continuation.finish() }
   }
 }
 
 extension Database {
   fileprivate func openValueStream(epoch: UInt64, request: StreamRequest) -> ValueStream {
-    let (deliveries, continuation) = AsyncStream<StreamDelivery>.makeStream(bufferingPolicy: .unbounded)
+    let (deliveries, continuation) = AsyncStream<StreamDelivery>.makeStream(bufferingPolicy: .bufferingNewest(streamBuffer))
     let id = subscribe(epoch: epoch, request: request, sink: Forward(continuation))
     continuation.onTermination = { [self] _ in cancelStream(stream: id) }
     return ValueStream(id: id, epoch: epoch, deliveries: deliveries, database: self)
@@ -75,11 +82,15 @@ public struct ListProjection<Model: DBModel>: Sendable {
 
   public var phase: LivePhase? { state?.phase }
 
+  /// The error the screen shows: the one the core reports for the stream, else a row the platform could not decode.
+  public var error: DbError? { state?.error ?? failure.map { DbError.Invalid(detail: $0) } }
+
   public mutating func apply(_ delivery: StreamDelivery) -> Applied {
     if let epoch, delivery.epoch != epoch { return .ignored }
     epoch = delivery.epoch
     switch delivery.value {
     case let .snapshot(revision, wire, state):
+      failure = nil
       rows = decode(wire).compactMap { $0 }
       self.revision = revision
       self.state = state
@@ -189,7 +200,7 @@ public final class Projected<Model: DBModel> {
   public var value: Model? { projection.rows.first }
   public var state: StreamState? { projection.state }
   public var phase: LivePhase? { projection.phase }
-  public var error: DbError? { projection.state?.error }
+  public var error: DbError? { projection.error }
   public var isEnded: Bool { projection.ended != nil }
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored private var reading: Task<Void, Never>?
@@ -232,6 +243,9 @@ public final class Projected<Model: DBModel> {
 public final class ProjectedCount {
   public private(set) var count: Int?
   public private(set) var state: StreamState?
+  /// Why the stream ended by itself.
+  public private(set) var ended: StreamEnd?
+  public var error: DbError? { state?.error }
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored private var reading: Task<Void, Never>?
   @ObservationIgnored private var epoch: UInt64?
@@ -252,6 +266,7 @@ public final class ProjectedCount {
     switch delivery.value {
     case let .count(_, count, state): self.count = Int(count); self.state = state
     case let .state(state): self.state = state
+    case let .ended(reason): ended = reason
     default: break
     }
   }
@@ -270,10 +285,16 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
   public struct AsyncIterator: AsyncIteratorProtocol {
     var inner: AsyncStream<StreamDelivery>.AsyncIterator
     let stream: ValueStream
+    var reported = false
 
     public mutating func next() async -> ModelEventItem<Model>? {
       while let delivery = await inner.next() {
         switch delivery.value {
+        case let .state(state):
+          if let error = state.error, !reported { reported = true; return .failed(error) }
+        case let .ended(reason):
+          if reason == .invalid, !reported { reported = true; return .failed(DbError.Invalid(detail: "the events stream could not open")) }
+          return nil
         case let .missed(count): return .missed(count)
         case let .event(wire):
           do { return .event(ModelEvent(area: wire.area, kind: wire.kind, id: wire.id, before: try wire.before.map(Model.decode), after: try wire.after.map(Model.decode))) }
@@ -281,7 +302,6 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
             stream.cancel()
             return .failed(error)
           }
-        case .ended: return nil
         default: continue
         }
       }
@@ -373,7 +393,7 @@ public struct AccountScope: Sendable {
   /// Sends the file of an existing record through its declared upload action.
   @concurrent public func upload<Model: DBModel, Answer: Decodable & Sendable>(_ row: Model, action: String, _ request: UploadRequest) async throws -> ActionAnswer<Model, Answer> {
     let operation = try await database.upload(epoch: epoch, model: Model.modelName, rowId: row.id, action: action, request: request.wire)
-    return ActionAnswer(model: row, operation: operation)
+    return ActionAnswer(model: row, operation: operation, epoch: epoch)
   }
 
   @concurrent public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> [Model] {

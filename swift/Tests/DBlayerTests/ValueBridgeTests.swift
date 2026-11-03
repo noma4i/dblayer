@@ -283,6 +283,54 @@ extension BridgeProbeTests {
     #expect(try DB.streamCensus().open == 0)
     await #expect(throws: DbError.self) { try await DB.database.streamLoaded(stream: stream) }
   }
+
+  /// K02: a command and a one-off read that carry the scope of A are refused after the next sign-in and change nothing for B.
+  @MainActor
+  @Test
+  func aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let scopeA = try DB.account()
+    let row = try #require(try await User.profile.read(in: scopeA).first)
+    try await DB.sessionReset()
+    try await Self.signIn("B")
+
+    await #expect(throws: DbError.self) { _ = try await row.update(values: ["name": .string("hijacked")], in: scopeA) }
+    await #expect(throws: DbError.self) { _ = try await User.profile.read(in: scopeA) }
+    await #expect(throws: DbError.self) { _ = try await User.profile.readRow(row.id, in: scopeA) }
+    let current = try await User.profile.read().first
+    #expect(current?.name == "B", "a command of A changed the row of B")
+  }
+
+  /// K08: a row the platform cannot decode is an error of the projection, and the next good snapshot clears it. A count stream and an events stream report their source error.
+  @MainActor
+  @Test
+  func aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let scope = try DB.account()
+    let profile = Projected<User>(try scope.stream(User.profile))
+    try await profile.loaded()
+    await eventually("the stream shows A") { profile.value?.name == "A" }
+    let good = try #require(try await User.profile.read().first)
+    _ = good
+    var projection = ListProjection<User>()
+    let state = try #require(profile.state)
+    var bad = try #require(try await DB.database.readQuery(epoch: scope.epoch, queryJson: User.profile.json).first)
+    bad.layout = "another layout"
+    _ = projection.apply(StreamDelivery(stream: 1, epoch: scope.epoch, seq: 1, value: .snapshot(revision: 1, rows: [bad], state: state)))
+    #expect(projection.rows.isEmpty && projection.error != nil, "a row that does not decode was dropped without an error")
+    let whole = try #require(try await DB.database.readQuery(epoch: scope.epoch, queryJson: User.profile.json).first)
+    _ = projection.apply(StreamDelivery(stream: 1, epoch: scope.epoch, seq: 2, value: .snapshot(revision: 2, rows: [whole], state: state)))
+    #expect(projection.rows.count == 1 && projection.error == nil, "a good snapshot did not clear the error")
+
+    let events = scope.events(User.self)
+    defer { events.stream.cancel() }
+    guard case .failed? = await Cursor(events).next("the source error of the events stream") else {
+      Issue.record("the events stream did not report its source error")
+      return
+    }
+  }
 }
 
 private final class LossyReader: ValueSink, @unchecked Sendable {

@@ -22,26 +22,26 @@ impl From<BlobSnapshot> for WireBlobSnapshot {
 
 #[uniffi::export]
 impl Database {
-    pub async fn upload_blob(self: Arc<Self>, name: String, create: String, request: super::upload_wire::WireUploadRequest) -> Result<WireBlobSnapshot, DbError> {
+    pub async fn upload_blob(self: Arc<Self>, epoch: u64, name: String, create: String, request: super::upload_wire::WireUploadRequest) -> Result<WireBlobSnapshot, DbError> {
         let sync = self.sync()?.clone();
-        super::database::on_executor(async move {
+        self.serve_in_epoch(epoch, "upload blob", async move {
             let id = sync.upload_blob(&name, &create, request.into_file()?).await.map_err(DbError::from)?;
             Ok::<_, DbError>(sync.blob_snapshot(&id)?.into())
         }).await
     }
-    pub async fn blob(self: Arc<Self>, id: String) -> Result<WireBlobSnapshot, DbError> {
-        super::database::blocking(move || Ok(self.sync()?.blob_snapshot(&id)?.into())).await
+    pub async fn blob(self: Arc<Self>, epoch: u64, id: String) -> Result<WireBlobSnapshot, DbError> {
+        self.read_in_epoch(epoch, "blob", move |this| Ok(this.sync()?.blob_snapshot(&id)?.into())).await
     }
-    pub async fn wait_blob(self: Arc<Self>, id: String) -> Result<String, DbError> {
+    pub async fn wait_blob(self: Arc<Self>, epoch: u64, id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
-        super::database::on_executor(async move { sync.wait_blob(&id).await }).await
+        self.serve_in_epoch(epoch, "wait blob", async move { sync.wait_blob(&id).await }).await
     }
-    pub async fn retry_blob(self: Arc<Self>, id: String) -> Result<(), DbError> {
+    pub async fn retry_blob(self: Arc<Self>, epoch: u64, id: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        super::database::on_executor(async move { sync.retry_blob(&id).await }).await
+        self.serve_in_epoch(epoch, "retry blob", async move { sync.retry_blob(&id).await }).await
     }
-    pub async fn discard_blob(self: Arc<Self>, id: String) -> Result<(), DbError> {
+    pub async fn discard_blob(self: Arc<Self>, epoch: u64, id: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        super::database::on_executor(async move { sync.discard_blob(&id).await }).await
+        self.serve_in_epoch(epoch, "discard blob", async move { sync.discard_blob(&id).await }).await
     }
 }

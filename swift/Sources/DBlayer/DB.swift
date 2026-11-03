@@ -11,6 +11,12 @@ public enum DB {
   }
   private static let opener = OpenDatabase()
 
+  /// The database and the epoch a command belongs to: the epoch of the scope when the caller holds one, else the epoch of the session now.
+  static func admitted(_ scope: AccountScope?) throws -> (Database, UInt64) {
+    let database = try database
+    return (database, scope?.epoch ?? database.sessionEpoch())
+  }
+
   /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources.
   @MainActor public static func close() async throws {
     ForegroundEvents.shared.stop()

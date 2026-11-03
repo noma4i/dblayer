@@ -63,6 +63,9 @@ fn the_manifest_lists_every_sequence_and_each_listed_test_exists() {
             assert!(present || !required, "{id} has no {lane} row: a bridge sequence is proved on every lane its public API reaches");
         }
     }
+    for id in core_only {
+        assert!(rows.iter().any(|row| row.id == id && row.lane == "core" && row.s1.starts_with("core-only:")), "{id} stays in the core lane only and its row must name the core hook it needs");
+    }
     let directory = root.join("core/src/ffi/selftest");
     for file in ["app", "bridge", "calls", "harness", "machine", "recovery", "windows"] {
         let source = std::fs::read_to_string(directory.join(format!("{file}_tests.rs"))).unwrap();

@@ -152,9 +152,9 @@ async fn memory_expiry_follows_the_last_write() {
     let clock = TestClock::new(1_000_000);
     let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), None, None, clock.clone(), false, false, None, None, None, None).await.unwrap();
 
-    bound(database.create("presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
+    bound(database.create(database.session_epoch(), "presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_000);
-    bound(database.update("presence".into(), "p1".into(), r#"{"room":"a"}"#.into(), "{}".into())).await.unwrap();
+    bound(database.update(database.session_epoch(), "presence".into(), "p1".into(), r#"{"room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_000);
     bound(database.maintain()).await.unwrap();
     assert!(database.peek_row("presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");

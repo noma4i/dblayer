@@ -70,21 +70,26 @@ val DBModel.needsAttention: Boolean get() = sync.state == SyncState.Failed || sy
 val DBModel.canRetry: Boolean get() = needsAttention
 val DBModel.errorMessage: String? get() = sync.error?.message
 
-suspend fun DBModel.retry(action: String?): ULong = offCaller { DBlayer.database.retry(modelName, id, action) }
-suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?): ULong = offCaller { DBlayer.database.retry(modelName, id, action) }
-suspend fun DBModel.discard(action: String?) { offCaller { DBlayer.database.discard(modelName, id, action) } }
+/** The epoch a command belongs to: the epoch of the account the caller holds, else the epoch of the session now. A command of an account that left is refused. */
+internal fun admitted(account: AccountScope?): ULong = account?.epoch ?: DBlayer.database.sessionEpoch()
 
-suspend fun DBModel.destroy() { offCaller { DBlayer.database.destroy(modelName, id) } }
+suspend fun DBModel.retry(action: String?, account: AccountScope? = null): ULong { val epoch = admitted(account); return offCaller { DBlayer.database.retry(epoch, modelName, id, action) } }
+suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?, account: AccountScope? = null): ULong { val epoch = admitted(account); return offCaller { DBlayer.database.retry(epoch, modelName, id, action) } }
+suspend fun DBModel.discard(action: String?, account: AccountScope? = null) { val epoch = admitted(account); offCaller { DBlayer.database.discard(epoch, modelName, id, action) } }
 
-suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement) { offCaller { DBlayer.database.setLocal(modelName, id, path, value.jsonText()) } }
+suspend fun DBModel.destroy(account: AccountScope? = null) { val epoch = admitted(account); offCaller { DBlayer.database.destroy(epoch, modelName, id) } }
+
+suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement, account: AccountScope? = null) { val epoch = admitted(account); offCaller { DBlayer.database.setLocal(epoch, modelName, id, path, value.jsonText()) } }
 
 /** Waits until the server has answered the queued changes of the record, or of the declared `action` when given, throws on a refusal or when offline. */
-suspend fun DBModel.settled(action: String?) { offCaller { DBlayer.database.settled(modelName, id, action) } }
+suspend fun DBModel.settled(action: String?, account: AccountScope? = null) { val epoch = admitted(account); offCaller { DBlayer.database.settled(epoch, modelName, id, action) } }
 
-suspend fun DBModel.confirmedId(): String = offCaller { DBlayer.database.confirmed(modelName, id) }
+suspend fun DBModel.confirmedId(account: AccountScope? = null): String { val epoch = admitted(account); return offCaller { DBlayer.database.confirmed(epoch, modelName, id) } }
 
-suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, decoder: ModelDecoder<Model>): Model =
-    offCaller { decoder.read(DBlayer.database.act(modelName, id, action, values.jsonText(), args.jsonText()).row) }
+suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, decoder: ModelDecoder<Model>, account: AccountScope? = null): Model {
+    val epoch = admitted(account)
+    return offCaller { decoder.read(DBlayer.database.act(epoch, modelName, id, action, values.jsonText(), args.jsonText()).row) }
+}
 
 suspend fun <Model : DBModel, Answer> Model.actAnswering(
     action: String,
@@ -92,13 +97,15 @@ suspend fun <Model : DBModel, Answer> Model.actAnswering(
     args: kotlinx.serialization.json.JsonObject,
     decoder: ModelDecoder<Model>,
     answerSerializer: KSerializer<Answer>,
+    account: AccountScope? = null,
 ): ActionAnswer<Model, Answer> {
-    val queued = offCaller { DBlayer.database.act(modelName, id, action, values.jsonText(), args.jsonText()) }
-    return ActionAnswer(offCaller { decoder.read(queued.row) }, queued.operation, answerSerializer)
+    val epoch = admitted(account)
+    val queued = offCaller { DBlayer.database.act(epoch, modelName, id, action, values.jsonText(), args.jsonText()) }
+    return ActionAnswer(offCaller { decoder.read(queued.row) }, queued.operation, answerSerializer, epoch)
 }
 
-class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operation: Long, private val serializer: KSerializer<Answer>) {
-    suspend fun answer(): Answer = offCaller { dbJson.decodeFromString(serializer, DBlayer.database.answer(model.modelName, operation)) }
+class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operation: Long, private val serializer: KSerializer<Answer>, private val epoch: ULong) {
+    suspend fun answer(): Answer = offCaller { dbJson.decodeFromString(serializer, DBlayer.database.answer(epoch, model.modelName, operation)) }
 }
 
 class ModelEvent<Model : DBModel>(val area: String, val kind: String, val id: String, val before: Model?, val after: Model?)

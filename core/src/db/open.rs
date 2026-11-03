@@ -320,7 +320,7 @@ impl Db {
 
     pub fn observer_census(&self) -> ObserverCensus {
         let observers = self.shared.observers();
-        ObserverCensus { observed_queries: observers.query_count(), subscriptions: observers.subscription_count() }
+        ObserverCensus { observed_queries: observers.query_count(), subscriptions: observers.subscription_count(), retained: observers.warm_ids.len() }
     }
 }
 

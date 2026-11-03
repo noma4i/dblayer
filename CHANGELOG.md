@@ -22,7 +22,16 @@
 - iOS uploads use a plain `URLSession` PUT.
 - Only a message send and a media upload wait for the network; other actions fail at once offline.
 - A send, a stream request and a prepared delivery end with the epoch they belong to.
-- `Model.create` writes local rows only; a model with a create mutation uses `send`.
+- A create the server answers goes through `create`, needs the network and returns the confirmed row; only a durable create uses `send`.
+- Every command, one-off read and blob call carries the session epoch of its account and is refused when that account left.
+- A send needs a signed-in session.
+- An action that is not a durable command is refused and rolled back while the network is away, after a reopen and when another account signs in.
+- A pinned write checks its epoch and commits while the lifecycle holds its commit line.
+- `cancel` of a stream does not wait for the reader; no delivery is admitted after it.
+- A stream reader keeps the newest 256 deliveries; the dropped ones arrive as `missed` and a list asks for a new snapshot.
+- A blob reads its status stream while the scope of its reader lives (Kotlin).
+- A list stream no longer keeps a warm observer after its reader left; `retainedObservers` counts the observers of `warm`.
+- Projections, count streams and event streams report platform decode errors and source errors.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

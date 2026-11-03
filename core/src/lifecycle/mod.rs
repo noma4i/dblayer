@@ -253,6 +253,10 @@ impl State {
 
 pub(crate) struct Lifecycle {
     state: Mutex<State>,
+    /// Orders a pinned SQL commit against the transitions: a transition changes the epoch while it holds this line, and a pinned write checks the epoch and commits while it holds it.
+    commit_line: Mutex<()>,
+    #[cfg(test)]
+    pub(crate) begin_waits: (Mutex<usize>, Condvar),
     idle: Condvar,
     effects: OrderedEffects,
     changed: watch::Sender<Snapshot>,
@@ -267,6 +271,9 @@ impl Default for Lifecycle {
     fn default() -> Self {
         Self {
             state: Mutex::new(State { machine: machine::new(), holders: Holders::default(), leases: HashMap::new(), next_lease: 0, activity: 0, runner: None }),
+            commit_line: Mutex::new(()),
+            #[cfg(test)]
+            begin_waits: (Mutex::new(0), Condvar::new()),
             idle: Condvar::new(),
             effects: OrderedEffects::default(),
             changed: watch::channel(Snapshot::default()).0,
@@ -383,6 +390,16 @@ impl Lifecycle {
         !published.closed && published.session_epoch == epoch
     }
 
+    /// The line a pinned SQL commit holds from its epoch check to the end of the commit. A transition cannot change the epoch meanwhile.
+    pub(crate) fn commit_line(&self) -> crate::db::lock::Guard<'_, ()> { crate::db::locked(&self.commit_line) }
+
+    /// Whether the epoch is the one now and the database is open, read from the state itself. The caller holds the commit line.
+    pub(crate) fn epoch_holds(&self, epoch: u64) -> bool {
+        let state = crate::db::locked(&self.state);
+        let current = state.snapshot();
+        !current.closed && current.session_epoch == epoch
+    }
+
     pub(crate) fn watch(&self) -> Watch {
         let state = self.changed.subscribe();
         let (seen, generation) = { let published = state.borrow(); (published.notice, published.generation) };
@@ -472,6 +489,12 @@ impl Lifecycle {
 
     /// Starts an exclusive transition. The epoch moves at once and every lease of the old epoch is told to stop. A caller that carries the epoch it was admitted in is refused when that epoch has gone.
     pub(crate) fn try_begin(self: &Arc<Self>, boundary: Boundary, expected: Option<u64>) -> Result<Result<Permit, Boundary>, Refused> {
+        #[cfg(test)]
+        {
+            *self.begin_waits.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
+            self.begin_waits.1.notify_all();
+        }
+        let line = crate::db::locked(&self.commit_line);
         let (permit, snapshot, activity) = {
             let mut state = crate::db::locked(&self.state);
             let current = state.snapshot();
@@ -484,6 +507,7 @@ impl Lifecycle {
             let activity = state.activity();
             (Permit { life: self.clone(), boundary, deferred: Mutex::new(Vec::new()), finished: false }, snapshot, activity)
         };
+        drop(line);
         self.publish(snapshot);
         self.publish_activity(activity);
         Ok(Ok(permit))
@@ -626,10 +650,12 @@ impl Lifecycle {
 
     /// Closes the database: no lease is issued again, every held lease ends, and every holder closes. Returns after every holder closed, also when another thread made the first close. False when a holder's own close called it again: that call cannot wait for itself, and the outer close finishes the work.
     pub(crate) fn close(&self) -> bool {
+        let line = crate::db::locked(&self.commit_line);
         let ticket = {
             let mut state = crate::db::locked(&self.state);
             if state.snapshot().closed {
                 drop(state);
+                drop(line);
                 return self.effects.run_until(self.effects.last_ticket());
             }
             state.machine.handle(&Event::Close);
@@ -641,6 +667,7 @@ impl Lifecycle {
             state.holders.clear();
             let activity = state.activity();
             drop(state);
+            drop(line);
             self.idle.notify_all();
             self.publish(snapshot.clone());
             self.publish_activity(activity);

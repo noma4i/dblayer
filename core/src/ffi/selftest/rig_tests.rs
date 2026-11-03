@@ -168,6 +168,11 @@ impl World {
                 if commits { state.messages.push((account.clone(), message.clone())); }
                 json!({"data":{"sendMessage":message}})
             }
+            "CreateGroup" => {
+                let variables = &body["variables"];
+                let group = json!({"__typename":"Group","id":format!("g{}", state.messages.len() + 1),"name":variables["name"]});
+                json!({"data":{"createGroup":group}})
+            }
             "PUT" => json!({}),
             other if other.starts_with("subscribe:") => json!({}),
             other => panic!("unexpected operation {other}"),
@@ -289,7 +294,8 @@ const OPERATIONS: &str = r#"[
     {"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},
     {"name":"UnregisterDevice","document":"mutation UnregisterDevice { unregisterDevice { ok } }"},
     {"name":"Thread","document":"query Thread($chatId: ID!) { thread(chatId: $chatId) { id chatId text at } }"},
-    {"name":"SendMessage","document":"mutation SendMessage($chatId: ID!, $text: String!, $at: Int!) { sendMessage(chatId: $chatId, text: $text, at: $at) { id chatId text at } }"}
+    {"name":"SendMessage","document":"mutation SendMessage($chatId: ID!, $text: String!, $at: Int!) { sendMessage(chatId: $chatId, text: $text, at: $at) { id chatId text at } }"},
+    {"name":"CreateGroup","document":"mutation CreateGroup($name: String!) { createGroup(name: $name) { id name } }"}
 ]"#;
 
 /// The plain harness also holds a memory model that a server subscription feeds.
@@ -302,6 +308,7 @@ fn plain_models() -> String {
     notice.relations.push(relation);
     models.push(notice);
     models.push(message_spec());
+    models.push(group_spec());
     serde_json::to_string(&models).unwrap()
 }
 
@@ -325,6 +332,19 @@ fn message_spec() -> crate::schema::ModelSpec {
     for field in ["chatId", "text", "at"] { create.variables.insert(field.into(), field.into()); }
     message.actions.push(create);
     message
+}
+
+/// A model whose create goes to the server and is not durable: it needs the network and the answer of the server.
+fn group_spec() -> crate::schema::ModelSpec {
+    use crate::schema::{ActionDeclaration, FieldSpec, RootShape};
+    let mut group = crate::schema::ModelSpec::new("Group", vec![FieldSpec::scalar("id", crate::value::ScalarKind::Id), FieldSpec::scalar("name", crate::value::ScalarKind::Str)]);
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.mutation = Some("CreateGroup".into());
+    create.has_optimistic = true;
+    create.has_temp_row_retention = true;
+    create.variables.insert("name".into(), "name".into());
+    group.actions.push(create);
+    group
 }
 
 fn plain_operations() -> String {

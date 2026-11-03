@@ -341,6 +341,53 @@ class ValueBridgeTest {
         }
     }
 
+    /** K02: a command and a one-off read that carry the scope of A are refused after the next sign-in and change nothing for B. */
+    @Test
+    fun aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing() = bounded {
+        try {
+            openSession()
+            signIn("A")
+            val scopeA = AccountScope.current()
+            val row = User.profile.read(scopeA).first()
+            DBlayer.sessionReset()
+            signIn("B")
+
+            assertTrue(runCatching { row.update(name = "hijacked", account = scopeA) }.exceptionOrNull() is DbException.Interrupted)
+            assertTrue(runCatching { User.profile.read(scopeA) }.exceptionOrNull() is DbException.Interrupted)
+            assertTrue(runCatching { User.profile.readRow(row.id, scopeA) }.exceptionOrNull() is DbException.Interrupted)
+            assertEquals("B", User.profile.read().first().name, "a command of A changed the row of B")
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** K08: a row the platform cannot decode is an error of the projection and the next good snapshot clears it. A count stream and an events stream report their source error. */
+    @Test
+    fun aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val profile = Projected(scope.stream(User.profile), User, screen)
+            profile.loaded()
+            eventually("the stream shows A") { profile.value?.name == "A" }
+            val state = profile.projection.value.state!!
+            val whole = DBlayer.database.readQuery(scope.epoch, User.profile.json).first()
+            val bad = whole.copy(layout = "another layout")
+            val broken = ListProjection<User>().apply(StreamDelivery(1uL, scope.epoch, 1uL, StreamValue.Snapshot(1L, listOf(bad), state)), User).projection
+            assertTrue(broken.rows.isEmpty() && broken.error != null, "a row that does not decode was dropped without an error")
+            val healed = broken.apply(StreamDelivery(1uL, scope.epoch, 2uL, StreamValue.Snapshot(2L, listOf(whole), state)), User).projection
+            assertTrue(healed.rows.size == 1 && healed.error == null, "a good snapshot did not clear the error")
+
+            val first = scope.events(User).events(User).first()
+            assertTrue(first is ModelEventItem.Failed, "the events stream did not report its source error: $first")
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
     /** B14, R6: a projection made in a scope that was already cancelled does not leave a stream without a reader. */
     @Test
     fun aProjectionInACancelledScopeLeavesNoStreamInTheCore() = bounded {

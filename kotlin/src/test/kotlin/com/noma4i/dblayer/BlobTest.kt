@@ -23,11 +23,12 @@ class BlobTest {
         transport.enqueue("BlobCreate", """{"data":{"blobCreate":{"url":"https://s3/blob","headers":{},"signedId":"signed-video","blobId":"b1"}}}""")
         transport.enqueue("BlobSetVideo", """{"data":{"setVideo":{"profile":{"id":"p1","label":"after"}}}}""")
         BlobProfile.current.load()
+        val blobScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob())
         val source = File.createTempFile("blob", ".mp4")
         source.writeText("hello")
         try {
-            val blob = DBlayer.upload(BlobUpload.VideoIntro, UploadRequest(source.path))
-            val restored = DBlayer.blob(blob.id)
+            val blob = DBlayer.upload(BlobUpload.VideoIntro, UploadRequest(source.path), blobScope)
+            val restored = DBlayer.blob(blob.id, blobScope)
             assertEquals(blob.id, restored.id)
             restored.close()
             assertEquals("signed-video", blob.waitUntilUploaded())
@@ -42,7 +43,8 @@ class BlobTest {
             eventually("consumed Blob snapshot") { blob.snapshot.value.state == BlobState.CONSUMED || blob.snapshot.value.error != null }
             assertEquals(BlobState.CONSUMED, blob.snapshot.value.state)
             assertEquals(null, blob.snapshot.value.error)
-            blob.close()
-        } finally { source.delete() }
+            blobScope.cancel()
+            eventually("the status stream ended with the scope of its reader") { streamCensus().open == 0uL }
+        } finally { blobScope.cancel(); source.delete() }
     }
 }

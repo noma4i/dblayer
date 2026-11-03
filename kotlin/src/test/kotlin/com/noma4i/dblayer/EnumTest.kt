@@ -28,7 +28,7 @@ class EnumTest {
     @Test
     fun aValueOutsideTheDeclaredOnesIsStoredReadBackAndKeptByAnEdit() = bounded {
         val database = open()
-        val wire = database.create("NestedSample", """{"phase":"archived"}""", "{}")
+        val wire = database.create(database.sessionEpoch(), "NestedSample", """{"phase":"archived"}""", "{}")
         val sample = NestedSample.read(wire)
         assertEquals(NestedSamplePhase.Unknown("archived"), sample.phase)
         val edited = sample.update(values = emptyList())
@@ -53,7 +53,7 @@ class EnumTest {
     fun aNestedEnumKeepsAValueTheDeclarationLacksOnBothDecodePaths() = bounded {
         val decoded = dbJson.decodeFromString(NestedValue.serializer(), """{"title":"t","state":"mystery"}""")
         assertEquals(NestedValueState.Unknown("mystery"), decoded.state)
-        val wire = open().create("NestedSample", """{"value":{"title":"t","state":"mystery"}}""", "{}")
+        val wire = open().let { it.create(it.sessionEpoch(), "NestedSample", """{"value":{"title":"t","state":"mystery"}}""", "{}") }
         val sample = NestedSample.read(wire)
         assertEquals(NestedValueState.Unknown("mystery"), sample.value?.state)
         assertEquals("""mystery""", jsonValue(sample.value!!).toString().substringAfter("\"state\":\"").substringBefore("\""))

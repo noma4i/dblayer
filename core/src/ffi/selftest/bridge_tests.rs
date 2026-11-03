@@ -470,6 +470,7 @@ async fn a_stream_that_cannot_connect_ends_once_and_leaves_the_table() {
 struct Blocking {
     inner: Arc<Reader>,
     armed: AtomicBool,
+    finished: AtomicBool,
     entered: Mutex<std::sync::mpsc::Sender<()>>,
     release: Mutex<std::sync::mpsc::Receiver<()>>,
 }
@@ -479,21 +480,24 @@ impl ValueSink for Blocking {
         if self.armed.swap(false, Ordering::SeqCst) {
             self.entered.lock().unwrap().send(()).unwrap();
             let _ = self.release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(20));
+            self.inner.delivered(delivery);
+            self.finished.store(true, Ordering::SeqCst);
+            return;
         }
         self.inner.delivered(delivery);
     }
 }
 
-/// B13 (R5, old line stream/owner.rs delivery effect): a delivery that was prepared while another one was in the reader is withdrawn by the cancel of the reader.
+/// B13 (R5, B5; old line stream/owner.rs cancelled): `cancel_stream` returns while a delivery in the reader is still running, and no delivery begins after it returns.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_prepared_delivery_is_withdrawn_by_the_cancel_of_the_reader() {
+async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitted_after_it() {
     let rig = Rig::encrypted().await;
     rig.world.seed_message("A", "m1", "first", 1);
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (entered, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release) = std::sync::mpsc::channel();
-    let blocking = Arc::new(Blocking { inner: Reader::open(), armed: AtomicBool::new(false), entered: Mutex::new(entered), release: Mutex::new(release) });
+    let blocking = Arc::new(Blocking { inner: Reader::open(), armed: AtomicBool::new(false), finished: AtomicBool::new(false), entered: Mutex::new(entered), release: Mutex::new(release) });
     let stream = rig.database.subscribe(epoch, thread(), blocking.clone());
     bound(rig.database.stream_loaded(stream)).await.unwrap();
     yield_until("the thread shows the first message", || blocking.inner.texts().iter().any(|text| text.contains("first"))).await;
@@ -501,12 +505,209 @@ async fn a_prepared_delivery_is_withdrawn_by_the_cancel_of_the_reader() {
     blocking.armed.store(true, Ordering::SeqCst);
     bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
-    bound(rig.database.send(message(epoch, "third", 3))).await.unwrap();
     rig.database.cancel_stream(stream);
-    let before = blocking.inner.len();
+    assert!(!blocking.finished.load(Ordering::SeqCst), "the cancel waited for the reader to finish a delivery");
     release_tx.send(()).unwrap();
+    yield_until("the delivery in progress finished", || blocking.finished.load(Ordering::SeqCst)).await;
+    let after_cancel = blocking.inner.len();
+    bound(rig.database.send(message(epoch, "third", 3))).await.unwrap();
     rig.settle().await;
-    assert!(blocking.inner.len() <= before + 1, "{} deliveries reached the reader after its cancel", blocking.inner.len() - before);
-    assert!(!blocking.inner.texts().iter().any(|text| text.contains("third")), "a delivery prepared before the cancel reached the reader after it");
+    assert_eq!(blocking.inner.len(), after_cancel, "a delivery began after the cancel returned");
+    assert!(!blocking.inner.texts().iter().any(|text| text.contains("third")));
+    rig.database.close_now();
+}
+
+fn group(name: &str) -> (String, String) { (json!({"name": name}).to_string(), "{}".into()) }
+
+/// K01 (B1, old lines store/mod.rs ensure_pinned_epoch and lifecycle/mod.rs try_begin): a send that passed its epoch check and waits before its SQL commit lands before the next sign-in changes the epoch, and the operation of the account that left never goes out for the account that came.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_next_account() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    rig.database.set_online(false).unwrap();
+    let store = &rig.database.db.shared.store;
+    let (entered, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release) = std::sync::mpsc::channel::<()>();
+    *store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { entered.send(()).unwrap(); let _ = release.recv_timeout(std::time::Duration::from_secs(20)); }));
+    let sender = { let database = rig.database.clone(); tokio::spawn(async move { database.send(message(epoch, "late", 9)).await }) };
+    tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
+    let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
+    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session(Some("another-account".into()), epoch)) };
+    yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
+    release_tx.send(()).unwrap();
+    let _ = bound(sender).await.unwrap();
+    assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
+    settle(&rig).await;
+    rig.database.set_online(true).unwrap();
+    bound(rig.database.flush()).await.unwrap();
+    settle(&rig).await;
+    assert_eq!(rig.world.count("SendMessage"), 0, "the message of the account that left went out for the next one");
+    assert!(rig.database.db.outbox().unwrap().is_empty(), "an operation of the account that left is still queued");
+    rig.database.close_now();
+}
+
+/// K02 (B2, old lines ffi/database.rs update, destroy, read_query, read_row): a command or a one-off read that carries the epoch of A is refused after the session ended, also when it waited for the writer while the session ended, and it changes nothing for B.
+#[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)]
+async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing() {
+    use crate::lifecycle::{Boundary, End};
+    let rig = Rig::encrypted().await;
+    rig.world.seed_message("B", "b1", "hello", 1);
+    rig.login_ios("A").await;
+    let old = rig.database.session_epoch();
+    bound(rig.database.session_reset()).await.unwrap();
+    rig.login_ios("B").await;
+    let current = rig.database.session_epoch();
+    assert_ne!(old, current);
+    let users = r#"{"model":"User","relation":"all","params":{}}"#;
+    let refused = |result: Result<(), DbError>| matches!(result, Err(DbError::Interrupted { .. }));
+    assert!(refused(bound(rig.database.read_query(old, users.into())).await.map(|_| ())), "a read of A returned rows in the epoch of B");
+    assert!(refused(bound(rig.database.read_row(old, "User".into(), "user".into())).await.map(|_| ())));
+    assert!(refused(bound(rig.database.update(old, "User".into(), "user".into(), json!({"name":"hijacked"}).to_string(), "{}".into())).await.map(|_| ())));
+    assert!(refused(bound(rig.database.destroy(old, "User".into(), "user".into())).await));
+    assert!(refused(bound(rig.database.set_local(old, "User".into(), "user".into(), "name".into(), "\"x\"".into())).await));
+    assert!(refused(bound(rig.database.clone().upload_blob(old, "n".into(), "create".into(), crate::ffi::upload_wire::WireUploadRequest { path: "/nowhere".into(), name: None, mime: None, variables_json: "{}".into() })).await.map(|_| ())));
+    let seen = bound(rig.database.read_row(current, "User".into(), "user".into())).await.unwrap().expect("the row of B");
+    assert!(named(&seen, "B"), "the row of B changed");
+
+    let store = &rig.database.db.shared.store;
+    let pinned = store.lifecycle.pinned_writes.load(Ordering::SeqCst);
+    let writer = store.lock();
+    let late = { let database = rig.database.clone(); tokio::spawn(async move { database.update(current, "User".into(), "user".into(), json!({"name":"late"}).to_string(), "{}".into()).await }) };
+    yield_until("the update reached the writer", || store.lifecycle.pinned_writes.load(Ordering::SeqCst) > pinned).await;
+    let permit = store.lifecycle.try_begin(Boundary::SessionEnd(End::Local), Some(current)).ok().and_then(Result::ok).expect("the epoch of the caller is current");
+    drop(writer);
+    assert!(refused(bound(late).await.unwrap().map(|_| ())), "an update that waited for the writer while the session ended ran");
+    drop(permit);
+    rig.database.close_now();
+}
+
+/// K03 (B3, old lines ffi/command.rs in_epoch with Origin::Explicit and sync/send/flush.rs waiting_reason): a send needs a session, and an action that is not a durable command does not wait for the network: it is refused and rolled back, and it never goes out later.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network() {
+    let rig = Rig::encrypted().await;
+    let epoch = rig.database.session_epoch();
+    let sent = bound(rig.database.send(message(epoch, "anonymous", 1))).await;
+    assert!(matches!(sent, Err(DbError::Interrupted { .. })), "a send without a session was accepted: {sent:?}");
+    assert!(rig.database.db.outbox().unwrap().is_empty(), "a send without a session left an operation");
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (values, args) = group("g");
+    rig.database.db.create_with("Group", serde_json::from_str(&values).unwrap(), serde_json::from_str(&args).unwrap()).unwrap();
+    assert_eq!(rig.database.db.outbox().unwrap().len(), 1, "the plain action was queued once");
+    rig.database.set_online(false).unwrap();
+    bound(rig.database.flush()).await.unwrap();
+    assert!(rig.database.db.outbox().unwrap().is_empty(), "a plain action stayed queued while the network was away");
+    assert_eq!(rig.database.db.shared.store.row_count("Group").unwrap(), 0, "the row of the refused action stayed");
+    rig.database.set_online(true).unwrap();
+    bound(rig.database.flush()).await.unwrap();
+    settle(&rig).await;
+    assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out after the network returned");
+    let receipt = bound(rig.database.send(message(epoch, "offline", 2))).await.unwrap();
+    assert_eq!(rig.database.command_status(receipt).unwrap(), CommandStatus::Queued);
+    rig.database.close_now();
+}
+
+/// K04 (B4, old line ffi/database.rs create): a create the server answers goes through `create` with the epoch of the caller, needs the network, and returns the row the server confirmed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_create_returns_the_confirmed_row_and_needs_the_network() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (values, args) = group("friends");
+    let row = bound(rig.database.create(epoch, "Group".into(), values.clone(), args.clone())).await.unwrap();
+    assert!(!row.id.starts_with("tmp") && !row.id.contains("temp"), "the created row still has a temporary id: {}", row.id);
+    assert!(named(&row, "friends"));
+    assert_eq!(rig.world.count("CreateGroup"), 1);
+    rig.database.set_online(false).unwrap();
+    let offline = bound(rig.database.create(epoch, "Group".into(), values, args)).await;
+    assert!(matches!(offline, Err(DbError::Network { .. })), "an offline server create did not fail at once: {offline:?}");
+    assert_eq!(rig.world.count("CreateGroup"), 1);
+    assert!(rig.database.db.outbox().unwrap().is_empty());
+    rig.database.close_now();
+}
+
+/// A reader whose last reference decides where the platform object dies.
+struct DropProbe { held: Arc<Mutex<Vec<String>>> }
+
+impl ValueSink for DropProbe {
+    fn delivered(&self, _: StreamDelivery) {}
+}
+
+impl Drop for DropProbe {
+    fn drop(&mut self) { self.held.lock().unwrap().extend(crate::db::lock::held_classes().into_iter().map(str::to_string)); }
+}
+
+/// K05 (B5, old line stream/owner.rs cancelled): the reader object is released after every library lock, also when the cancel drops the last reference.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_cancel_of_a_reader_releases_its_object_outside_every_library_lock() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let held = Arc::new(Mutex::new(Vec::new()));
+    let stream = rig.database.subscribe(epoch, users(), Arc::new(DropProbe { held: held.clone() }));
+    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    rig.database.cancel_stream(stream);
+    assert_eq!(rig.database.stream_census().open, 0);
+    assert!(held.lock().unwrap().is_empty(), "the reader object was released under {:?}", held.lock().unwrap());
+    rig.database.close_now();
+}
+
+/// K06 (B6): the row of a durable command shows in the stream of its reader as pending before the server answers, and the server has not been asked.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queued_message_shows_as_pending_in_the_thread_before_the_server_answers() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let reader = Reader::open();
+    let stream = rig.database.subscribe(epoch, thread(), reader.clone());
+    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    rig.database.set_online(false).unwrap();
+    bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
+    yield_until("the thread shows the queued message", || reader.rows().iter().any(|row| row.sync.state == WireSyncState::Pending)).await;
+    assert_eq!(rig.world.count("SendMessage"), 0, "the message was shown only after the server answered");
+    assert_eq!(reader.texts().len(), 1);
+    rig.database.close_now();
+}
+
+/// K07 (B9, old lines ffi/stream/open.rs retain_query and db/observe.rs query_count): a stream that ended leaves no observer and no work behind: a write after it reads nothing and no retained observer is counted.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_reading() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let reader = Reader::open();
+    let stream = rig.database.subscribe(epoch, thread(), reader.clone());
+    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    rig.database.cancel_stream(stream);
+    let census = rig.database.subscription_census();
+    assert_eq!((census.subscriptions, census.observed_queries, census.retained_observers), (0, 0, 0), "a left list stream kept an observer");
+    let reads = rig.database.db.counters().observation_reads;
+    rig.database.set_online(false).unwrap();
+    bound(rig.database.send(message(epoch, "after", 3))).await.unwrap();
+    settle(&rig).await;
+    assert_eq!(rig.database.db.counters().observation_reads, reads, "a write after the last reader left woke an observer");
+    rig.database.close_now();
+}
+
+
+/// K09 (spec B, C; old line ffi/stream/open.rs connect_json with `force` used once at open): a list stream opened with refresh on connect loads again once when the network returns, without a call of the app. A stream without the flag asks nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns() {
+    let rig = Rig::encrypted().await;
+    rig.world.seed_message("A", "m1", "first", 1);
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let list = Reader::open();
+    let stream = rig.database.subscribe(epoch, StreamRequest::Query { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"refreshOnConnect":true}"#.into() }, list.clone());
+    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    settle(&rig).await;
+    let before = rig.world.count("Thread");
+    rig.database.set_online(false).unwrap();
+    rig.database.set_online(true).unwrap();
+    yield_until("the list loaded again", || rig.world.count("Thread") > before).await;
+    settle(&rig).await;
+    assert_eq!(rig.world.count("Thread"), before + 1, "the stream loaded more or less than once on reconnect");
     rig.database.close_now();
 }

@@ -87,6 +87,11 @@ pub(crate) fn pinned_to_epoch<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch:
     result
 }
 
+/// The lifecycle and epoch of the pinned write on this thread, if there is one.
+fn pinned_epoch() -> Option<(Arc<crate::lifecycle::Lifecycle>, u64)> {
+    PINNED.with(|pinned| pinned.borrow().clone())
+}
+
 fn ensure_pinned_epoch() -> Result<(), StoreError> {
     PINNED.with(|pinned| match &*pinned.borrow() {
         Some((life, epoch)) if !life.admits_epoch(*epoch) => Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)),
@@ -216,6 +221,8 @@ pub struct Store {
     #[cfg(test)]
     pub(crate) before_write: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
+    pub(crate) after_epoch_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
     #[cfg(test)]
     pub(crate) before_freshness: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -250,6 +257,8 @@ impl Store {
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             before_write: Mutex::new(None),
+            #[cfg(test)]
+            after_epoch_check: Mutex::new(None),
             #[cfg(test)]
             after_commit: Mutex::new(None),
             #[cfg(test)]

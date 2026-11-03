@@ -10,7 +10,7 @@ import org.junit.Test
 
 class SealedErrorsTest {
     private class RefusedRetry : Database(NoHandle) {
-        override suspend fun retry(model: String, rowId: String, action: String?): ULong = throw DbException.Invalid("retry refused")
+        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?): ULong = throw DbException.Invalid("retry refused")
         override suspend fun retryAll(): ULong = throw DbException.Invalid("retry refused")
     }
 

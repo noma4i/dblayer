@@ -17,7 +17,7 @@ async fn a_write_yields_while_sqlite_is_busy_and_finishes_after_release() {
     let writing = Arc::clone(&database);
     let (sent, received) = mpsc::channel();
     let thread = std::thread::spawn(move || {
-        let mut future = Box::pin(async { writing.create("Note".into(), r#"{"text":"saved"}"#.into(), "{}".into()).await });
+        let mut future = Box::pin(async { writing.create(writing.session_epoch(), "Note".into(), r#"{"text":"saved"}"#.into(), "{}".into()).await });
         let polled = future.as_mut().poll(&mut Context::from_waker(Waker::noop()));
         sent.send(polled.is_pending()).unwrap();
         match polled {

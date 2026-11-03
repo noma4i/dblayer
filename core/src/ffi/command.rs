@@ -59,16 +59,48 @@ impl CommandStatus {
     fn settled(&self) -> bool { !matches!(self, Self::Queued | Self::Uploading { .. } | Self::Sending) }
 }
 
-fn ended() -> DbError { DbError::Interrupted { detail: "the session of this command ended".into() } }
+pub(super) fn ended() -> DbError { DbError::Interrupted { detail: "the session of this command ended".into() } }
 
 fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no durable command: only sending a message and a media upload work without a network") } }
 
 impl Database {
-    /// Runs the work in the epoch of the caller: it starts only while that epoch is current and ends with it.
-    async fn in_epoch<T>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
-        let lease = self.streams.lease(Origin::Explicit, target).map_err(|_| ended())?;
+    /// Runs the work in the epoch of the caller: it starts only while that epoch is current and ends with it. `Session` work also needs a signed-in session.
+    pub(super) async fn in_epoch_as<T>(&self, origin: Origin, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
+        let lease = self.streams.lease(origin, target).map_err(|_| ended())?;
         if lease.epoch() != epoch { return Err(ended()); }
         lease.run(work).await.map_err(|_| ended())?
+    }
+
+    pub(super) async fn in_epoch<T>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
+        self.in_epoch_as(Origin::Explicit, epoch, target, work).await
+    }
+
+    /// A write to the local database that belongs to the epoch of the caller. The SQL commit is refused when the epoch moved or the database closed before it.
+    pub(super) async fn write_in_epoch<T: Send + 'static>(&self, epoch: u64, target: &'static str, write: impl FnOnce(&Database) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+        let this = self.clone();
+        let work = async move {
+            let life = this.db.shared.store.lifecycle.clone();
+            super::database::blocking(move || {
+                let result = crate::store::pinned_to_epoch(&life, epoch, || write(&this));
+                result.map_err(|error| if this.admits(epoch) { error } else { ended() })
+            }).await
+        };
+        self.in_epoch(epoch, target, work).await
+    }
+
+    /// A read of the local database that belongs to the epoch of the caller: a result read after the epoch moved is not returned.
+    pub(super) async fn read_in_epoch<T: Send + 'static>(&self, epoch: u64, target: &'static str, read: impl FnOnce(&Database) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+        let this = self.clone();
+        let answer = this.clone();
+        let work = async move { super::database::blocking(move || read(&this)).await };
+        let value = self.in_epoch(epoch, target, work).await?;
+        if !answer.admits(epoch) { return Err(ended()); }
+        Ok(value)
+    }
+
+    /// Server work of the epoch of the caller: the task is aborted when the epoch ends.
+    pub(super) async fn serve_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
+        self.in_epoch(epoch, target, async move { super::database::cancellable(async move { work.await.map_err(Into::into) }).await? }).await
     }
 
     fn admit_command(&self, request: &CommandRequest) -> Result<(), DbError> {
@@ -81,7 +113,7 @@ impl Database {
     }
 
     /// Whether the epoch is still the one the receipt belongs to.
-    fn admits(&self, epoch: u64) -> bool { self.streams.admits_epoch(epoch) }
+    pub(super) fn admits(&self, epoch: u64) -> bool { self.streams.admits_epoch(epoch) }
 }
 
 #[uniffi::export]
@@ -119,7 +151,7 @@ impl Database {
             };
             Ok(row)
         };
-        let row = self.in_epoch(epoch, "send", work).await?;
+        let row = self.in_epoch_as(Origin::Session, epoch, "send", work).await?;
         Ok(CommandReceipt { epoch, model, row, upload_action })
     }
 

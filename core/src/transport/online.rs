@@ -5,20 +5,27 @@ use tokio::sync::watch;
 #[derive(uniffi::Object)]
 pub struct Connectivity {
     sender: watch::Sender<bool>,
+    /// Counts the returns of the network, so a reader that polls late still sees a short loss.
+    returns: watch::Sender<u64>,
 }
 
 #[uniffi::export]
 impl Connectivity {
     #[uniffi::constructor]
     pub fn new(online: bool) -> Arc<Self> {
-        Arc::new(Self { sender: watch::channel(online).0 })
+        Arc::new(Self { sender: watch::channel(online).0, returns: watch::channel(0).0 })
     }
 
     pub fn set_online(&self, online: bool) {
-        crate::db::lock::effect(|| self.sender.send_replace(online));
+        crate::db::lock::effect(|| {
+            let was = self.sender.send_replace(online);
+            if online && !was { self.returns.send_modify(|count| *count += 1); }
+        });
     }
 }
 impl Connectivity {
+    pub(crate) fn returns(&self) -> watch::Receiver<u64> { self.returns.subscribe() }
+
     pub fn is_online(&self) -> bool {
         *self.sender.borrow()
     }

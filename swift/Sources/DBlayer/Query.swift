@@ -86,13 +86,15 @@ public struct Query<Model: DBModel>: Sendable {
   }
 
   /// The rows of this query read from storage once. It sends no request and keeps no stream.
-  @concurrent public func read() async throws -> [Model] {
-    try await DB.database.readQuery(queryJson: json).map { try Model.decode($0) }
+  @concurrent public func read(in scope: AccountScope? = nil) async throws -> [Model] {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.readQuery(epoch: epoch, queryJson: json).map { try Model.decode($0) }
   }
 
   /// One row read from storage. It is `nil` when the row does not exist.
-  @concurrent public func readRow(_ id: String) async throws -> Model? {
-    guard let row = try await DB.database.readRow(model: Model.modelName, rowId: id) else { return nil }
+  @concurrent public func readRow(_ id: String, in scope: AccountScope? = nil) async throws -> Model? {
+    let (database, epoch) = try DB.admitted(scope)
+    guard let row = try await database.readRow(epoch: epoch, model: Model.modelName, rowId: id) else { return nil }
     return try Model.decode(row)
   }
 

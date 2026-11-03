@@ -24,17 +24,27 @@ data class FileInfo(val id: String, val size: Long, val name: String?, val mime:
 
 class FileField<Model : DBModel>(val name: String)
 
-suspend fun <Model : DBModel> Model.attach(field: FileField<Model>, data: ByteArray, name: String, mime: String): FileInfo =
-    offCaller { FileInfo.parse(DBlayer.database.attach(modelName, id, field.name, data, name, mime)) }
+suspend fun <Model : DBModel> Model.attach(field: FileField<Model>, data: ByteArray, name: String, mime: String, account: AccountScope? = null): FileInfo {
+    val epoch = admitted(account)
+    return offCaller { FileInfo.parse(DBlayer.database.attach(epoch, modelName, id, field.name, data, name, mime)) }
+}
 
-suspend fun <Model : DBModel> Model.file(field: FileField<Model>): FileInfo? =
-    offCaller { DBlayer.database.file(modelName, id, field.name)?.let(FileInfo::parse) }
+suspend fun <Model : DBModel> Model.file(field: FileField<Model>, account: AccountScope? = null): FileInfo? {
+    val epoch = admitted(account)
+    return offCaller { DBlayer.database.file(epoch, modelName, id, field.name)?.let(FileInfo::parse) }
+}
 
-suspend fun <Model : DBModel> Model.read(field: FileField<Model>): ByteArray? =
-    offCaller { DBlayer.database.read(modelName, id, field.name) }
+suspend fun <Model : DBModel> Model.read(field: FileField<Model>, account: AccountScope? = null): ByteArray? {
+    val epoch = admitted(account)
+    return offCaller { DBlayer.database.read(epoch, modelName, id, field.name) }
+}
 
-suspend fun <Model : DBModel> Model.url(field: FileField<Model>): URI? =
-    offCaller { DBlayer.database.url(modelName, id, field.name)?.let { File(it).toURI() } }
+suspend fun <Model : DBModel> Model.url(field: FileField<Model>, account: AccountScope? = null): URI? {
+    val epoch = admitted(account)
+    return offCaller { DBlayer.database.url(epoch, modelName, id, field.name)?.let { File(it).toURI() } }
+}
 
-suspend fun <Model : DBModel> Model.detach(field: FileField<Model>): Boolean =
-    offCaller { DBlayer.database.detach(modelName, id, field.name) }
+suspend fun <Model : DBModel> Model.detach(field: FileField<Model>, account: AccountScope? = null): Boolean {
+    val epoch = admitted(account)
+    return offCaller { DBlayer.database.detach(epoch, modelName, id, field.name) }
+}

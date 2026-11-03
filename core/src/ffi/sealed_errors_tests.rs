@@ -96,7 +96,7 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
             rig.server.refuse_next(wire, confirmed);
 
-            let error = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
+            let error = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap_err();
 
             let case = format!("{wire} confirmed={confirmed}");
             assert_eq!(session(error), (code, wire.to_string()), "{case}");
@@ -129,7 +129,7 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_l
         let load = database.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
         let run = database.run("MakeMoment".into(), "{}".into()).await.unwrap_err();
         let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
-        let settled = database.settled("Moment".into(), row.id, None).await.unwrap_err();
+        let settled = database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.unwrap_err();
 
         for error in [load, run, settled] {
             assert_eq!(session(error).0, code, "{code:?}");
@@ -149,7 +149,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
         rig.server.refuse_next(wire, false);
 
-        let error = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
+        let error = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap_err();
 
         assert_eq!(session(error).0, code, "{wire}");
         let stored = database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
@@ -159,9 +159,9 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         database.session_resume().await.unwrap();
         let before = graphql_posts(&rig);
 
-        let retried = if wire == "UNAUTHENTICATED" { database.retry("Moment".into(), row.id.clone(), None).await.unwrap() } else { database.retry_all().await.unwrap() };
+        let retried = if wire == "UNAUTHENTICATED" { database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap() } else { database.retry_all().await.unwrap() };
         assert_eq!(retried, 1);
-        let _ = database.settled("Moment".into(), row.id.clone(), None).await;
+        let _ = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await;
 
         assert_eq!(graphql_posts(&rig) - before, 1, "{wire}");
     }
@@ -174,7 +174,7 @@ async fn any_other_session_refusal_rolls_the_queued_mutation_back() {
     let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
     rig.server.refuse_next("RATE_LIMITED", true);
 
-    database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
+    database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap_err();
 
     assert!(database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap().is_none());
 }

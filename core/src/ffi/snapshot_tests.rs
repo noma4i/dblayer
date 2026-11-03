@@ -123,10 +123,8 @@ async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_s
     for (index, request) in requests.into_iter().enumerate() {
         let listener = tape();
         let subscription = db.watch(request, listener.clone());
-        let first = loop {
-            if let Some(first) = listener.heard().into_iter().next() { break first; }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        };
+        crate::test_wait::yield_until("the failed stream delivers its first value", || !listener.heard().is_empty()).await;
+        let first = listener.heard().into_iter().next().unwrap();
         assert_eq!((first.phase, first.error_kind.as_deref(), first.size, first.seq), (Some(LivePhase::Failed), Some("invalid"), 0, 1), "call {index}");
         assert!(first.error.is_some(), "call {index}");
         assert!(subscription.wait_for_initial_load().await.is_err(), "call {index}: a stream that ended has no initial load to wait for");

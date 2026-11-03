@@ -28,17 +28,13 @@ The script refuses the tag, in a dry run and in a publish run, when one of these
 3. `scripts/check_consumers.sh` runs the iOS and Android app suites, in parallel, on a local package built from the stage. The script runs when the files changed since the previous tag touch `core/src/{lifecycle,ffi,session,sync,store}/`, `gen/`, `swift/`, `kotlin/`, the root `Cargo.toml` or the build and check scripts of the release. `RELEASE_CONSUMERS=always` forces it. No setting skips it.
 4. `RECEIPT.json` in the stage records the source commit, the manifest hash, the hash of each release file, the sequence results and the app suite results.
 
-`check_consumers.sh` makes a fresh worktree of the app repository from `CONSUMER_IOS_REF` (iOS lane) and `CONSUMER_ANDROID_REF` (Android lane) for each lane, both default `master` and uses its own library cache. It never reads or writes the shared library caches. It removes the trees and caches when it ends. Required environment:
+`check_consumers.sh` makes a fresh worktree of the app repository from the app ref of each lane (default `master`; a missing ref fails with its name) and uses its own library cache. It never reads or writes the shared library caches. It removes the trees and caches when it ends. Required environment:
 
-| Variable | Meaning |
-| --- | --- |
-| `YUPI_V3_REPO` | App repository checkout |
-| `CONSUMER_IOS_SIM` | Simulator name for `sim-run` (iOS lane) |
-| `BRICK_HOST`, `BRICK_REMOTE_ROOT` | Android build host and its absolute library root (Android lane) |
+The script lists every required variable in its header and names every missing one in its error. They set the app repository checkout, the simulator name for `sim-run` (iOS lane), and the Android build host with its absolute library root (Android lane).
 
-Optional: `CONSUMER_IOS_REF`, `CONSUMER_ANDROID_REF` (app branch or ref each lane tests, default `master`; a missing ref fails with its name), `BRICK_LIBRARIES_CACHE` (default `.cache/yupi-v3/libraries-dblayer-check`), `CONSUMER_MEDIA_CACHE` (read-only source of the MediaLayer entries), `CONSUMER_WORK_ROOT`, `SIM_RUN`, `BUILD_SLOT`, `CONSUMER_IOS_BUILD_LIMIT`, `CONSUMER_IOS_TEST_LIMIT`, `BRICK_GRADLE_TIMEOUT`. An unset required variable is an error that lists every missing name.
+Optional settings: the app ref of each lane, the library cache path of the Android lane, the read-only source of the MediaLayer entries, the work root, `SIM_RUN`, `BUILD_SLOT`, the iOS build and test limits and the Gradle timeout of the Android lane.
 
-The iOS lane generates the app project with `YUPI_DBLAYER_PATH` set to the local package, builds the `YupiLogicTests` scheme, then runs the whole bundle. Only exit code 0 of `ios/scripts/run-unit-tests.sh` is a pass. The Android lane resolves the staged Maven files from its own cache, runs `:app:testDebugUnitTest` and `:app:testDebugNativeSandboxUnitTest` on the build host through `android/scripts/brick.sh`, and requires `rc=0`, executed JVM tests, no failures, no cached result and an executed native sandbox task. `scripts/check_release_modes.sh` tests the refusals with stub commands.
+The iOS lane generates the app project against the local package, builds the logic test scheme, then runs the whole bundle. Only exit code 0 of the app unit test script is a pass. The Android lane resolves the staged Maven files from its own cache, runs the debug unit tests and the native sandbox unit tests on the build host, and requires `rc=0`, executed JVM tests, no failures, no cached result and an executed native sandbox task. `scripts/check_release_modes.sh` tests the refusals with stub commands.
 
 ## Release page
 

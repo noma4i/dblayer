@@ -2,10 +2,7 @@ package com.noma4i.dblayer
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -22,21 +19,20 @@ typealias BlobSnapshot = WireBlobSnapshot
 
 /** The status of one media upload. It reads the status stream of its account until it is closed, and closing it ends the stream in the core. */
 @Serializable(with = BlobSerializer::class)
-class Blob internal constructor(private val database: Database, initial: BlobSnapshot, private val stream: ValueStream) : AutoCloseable {
+class Blob internal constructor(private val database: Database, private val epoch: ULong, initial: BlobSnapshot, private val stream: ValueStream, scope: CoroutineScope) : AutoCloseable {
     val id: String = initial.id
     private val shown = MutableStateFlow(initial)
     val snapshot: StateFlow<BlobSnapshot> get() = shown
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
         try {
             stream.uploadStatus.collect { shown.value = it }
         } catch (error: kotlinx.coroutines.CancellationException) { throw error }
         catch (error: Exception) { shown.value = shown.value.copy(state = BlobState.FAILED, error = error.message, signedId = null) }
     }.also { it.invokeOnCompletion { stream.close() } }
-    suspend fun waitUntilUploaded(): String = offCaller { database.waitBlob(id) }
-    suspend fun retry() = offCaller { database.retryBlob(id) }
-    suspend fun discard() = offCaller { database.discardBlob(id) }
-    override fun close() { scope.cancel(); stream.close() }
+    suspend fun waitUntilUploaded(): String = offCaller { database.waitBlob(epoch, id) }
+    suspend fun retry() = offCaller { database.retryBlob(epoch, id) }
+    suspend fun discard() = offCaller { database.discardBlob(epoch, id) }
+    override fun close() { reading.cancel(); stream.close() }
 }
 
 object BlobSerializer : KSerializer<Blob> {
@@ -45,13 +41,16 @@ object BlobSerializer : KSerializer<Blob> {
     override fun deserialize(decoder: Decoder): Blob = throw SerializationException("Restore Blob with DBlayer.blob(id)")
 }
 
-suspend fun DBlayer.upload(upload: BlobUpload, request: UploadRequest): Blob = offCaller {
+/** The blob reads its status stream while [scope] lives: the end of the scope ends the stream in the core. */
+suspend fun DBlayer.upload(upload: BlobUpload, request: UploadRequest, scope: CoroutineScope): Blob = offCaller {
     val database = DBlayer.database
-    val snapshot = database.uploadBlob(upload.name, upload.create, request.wire())
-    Blob(database, snapshot, database.openValueStream(database.sessionEpoch(), StreamRequest.Blob(snapshot.id)))
+    val epoch = database.sessionEpoch()
+    val snapshot = database.uploadBlob(epoch, upload.name, upload.create, request.wire())
+    Blob(database, epoch, snapshot, database.openValueStream(epoch, StreamRequest.Blob(snapshot.id)), scope)
 }
 
-suspend fun DBlayer.blob(id: String): Blob = offCaller {
+suspend fun DBlayer.blob(id: String, scope: CoroutineScope): Blob = offCaller {
     val database = DBlayer.database
-    Blob(database, database.blob(id), database.openValueStream(database.sessionEpoch(), StreamRequest.Blob(id)))
+    val epoch = database.sessionEpoch()
+    Blob(database, epoch, database.blob(epoch, id), database.openValueStream(epoch, StreamRequest.Blob(id)), scope)
 }

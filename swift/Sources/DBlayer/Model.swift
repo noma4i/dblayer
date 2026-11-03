@@ -21,44 +21,75 @@ extension DBModel {
 
   public static func ids(_ ids: [String]) -> Query<Self> { Query<Self>().where(.inList("id", ids.map(JSONValue.string))) }
 
-  @concurrent public static func create(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
-    try decode(try await DB.database.create(model: modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+  /// Creates a row. A model that keeps the row on the device writes it at once. A model whose create the server answers needs the network and returns the confirmed row. A command of an account passes `scope`: it is refused when that account left. Without `scope` the command belongs to the account that is signed in when it is called.
+  @concurrent public static func create(values: [String: JSONValue], args: [String: JSONValue] = [:], in scope: AccountScope? = nil) async throws -> Self {
+    let (database, epoch) = try DB.admitted(scope)
+    return try decode(try await database.create(epoch: epoch, model: modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
   }
-  @concurrent public func update(values: [String: JSONValue], args: [String: JSONValue] = [:]) async throws -> Self {
-    try Self.decode(try await DB.database.update(model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
+  @concurrent public func update(values: [String: JSONValue], args: [String: JSONValue] = [:], in scope: AccountScope? = nil) async throws -> Self {
+    let (database, epoch) = try DB.admitted(scope)
+    return try Self.decode(try await database.update(epoch: epoch, model: Self.modelName, rowId: id, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text))
   }
-  @concurrent public func setLocal(_ path: String, _ value: JSONValue) async throws {
-    try await DB.database.setLocal(model: Self.modelName, rowId: id, path: path, valueJson: value.text)
+  @concurrent public func setLocal(_ path: String, _ value: JSONValue, in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.setLocal(epoch: epoch, model: Self.modelName, rowId: id, path: path, valueJson: value.text)
   }
-  @concurrent public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> Self {
-    try Self.decode(try await DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text).row)
+  @concurrent public func act(_ action: String, values: [String: JSONValue], args: [String: JSONValue], in scope: AccountScope? = nil) async throws -> Self {
+    let (database, epoch) = try DB.admitted(scope)
+    return try Self.decode(try await database.act(epoch: epoch, model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text).row)
   }
-  @concurrent public func actAnswering<Answer: Decodable & Sendable>(_ action: String, values: [String: JSONValue], args: [String: JSONValue]) async throws -> ActionAnswer<Self, Answer> {
-    let queued = try await DB.database.act(model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text)
-    return ActionAnswer(model: try Self.decode(queued.row), operation: queued.operation)
+  @concurrent public func actAnswering<Answer: Decodable & Sendable>(_ action: String, values: [String: JSONValue], args: [String: JSONValue], in scope: AccountScope? = nil) async throws -> ActionAnswer<Self, Answer> {
+    let (database, epoch) = try DB.admitted(scope)
+    let queued = try await database.act(epoch: epoch, model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text)
+    return ActionAnswer(model: try Self.decode(queued.row), operation: queued.operation, epoch: epoch)
   }
-  @concurrent public func set(values: [String: JSONValue]) async throws {
-    try await DB.database.setEphemeral(model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
+  @concurrent public func set(values: [String: JSONValue], in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.setEphemeral(epoch: epoch, model: Self.modelName, rowId: id, valuesJson: JSONValue.object(values).text)
   }
-  @concurrent public func destroy() async throws { try await DB.database.destroy(model: Self.modelName, rowId: id) }
+  @concurrent public func destroy(in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.destroy(epoch: epoch, model: Self.modelName, rowId: id)
+  }
   /// Waits until the server has answered the queued changes of the record, or of the declared `action` when given, throws on a refusal or when offline.
-  @concurrent public func settled(action: String?) async throws { try await DB.database.settled(model: Self.modelName, rowId: id, action: action) }
-  @concurrent public func attach(_ field: Files, data: Data, name: String, mime: String) async throws -> FileInfo {
-    try FileInfo.parse(try await DB.database.attach(model: Self.modelName, rowId: id, field: field.rawValue, bytes: data, name: name, mime: mime))
+  @concurrent public func settled(action: String?, in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.settled(epoch: epoch, model: Self.modelName, rowId: id, action: action)
   }
-  @concurrent public func file(_ field: Files) async throws -> FileInfo? {
-    try await DB.database.file(model: Self.modelName, rowId: id, field: field.rawValue).map(FileInfo.parse)
+  @concurrent public func attach(_ field: Files, data: Data, name: String, mime: String, in scope: AccountScope? = nil) async throws -> FileInfo {
+    let (database, epoch) = try DB.admitted(scope)
+    return try FileInfo.parse(try await database.attach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue, bytes: data, name: name, mime: mime))
   }
-  @concurrent public func read(_ field: Files) async throws -> Data? { try await DB.database.read(model: Self.modelName, rowId: id, field: field.rawValue) }
-  @concurrent public func url(_ field: Files) async throws -> URL? {
-    try await DB.database.url(model: Self.modelName, rowId: id, field: field.rawValue).map { URL(fileURLWithPath: $0) }
+  @concurrent public func file(_ field: Files, in scope: AccountScope? = nil) async throws -> FileInfo? {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.file(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue).map(FileInfo.parse)
   }
-  @discardableResult @concurrent public func detach(_ field: Files) async throws -> Bool { try await DB.database.detach(model: Self.modelName, rowId: id, field: field.rawValue) }
-  @concurrent public func confirmedId() async throws -> String { try await DB.database.confirmed(model: Self.modelName, rowId: id) }
+  @concurrent public func read(_ field: Files, in scope: AccountScope? = nil) async throws -> Data? {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.read(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue)
+  }
+  @concurrent public func url(_ field: Files, in scope: AccountScope? = nil) async throws -> URL? {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.url(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue).map { URL(fileURLWithPath: $0) }
+  }
+  @discardableResult @concurrent public func detach(_ field: Files, in scope: AccountScope? = nil) async throws -> Bool {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.detach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue)
+  }
+  @concurrent public func confirmedId(in scope: AccountScope? = nil) async throws -> String {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.confirmed(epoch: epoch, model: Self.modelName, rowId: id)
+  }
 
-  @discardableResult @concurrent public func retry(action: String?) async throws -> UInt64 { try await Self.retry(id: id, action: action) }
-  @discardableResult @concurrent public static func retry(id: String, action: String?) async throws -> UInt64 { try await DB.database.retry(model: modelName, rowId: id, action: action) }
-  @concurrent public func discard(action: String?) async throws { try await DB.database.discard(model: Self.modelName, rowId: id, action: action) }
+  @discardableResult @concurrent public func retry(action: String?, in scope: AccountScope? = nil) async throws -> UInt64 { try await Self.retry(id: id, action: action, in: scope) }
+  @discardableResult @concurrent public static func retry(id: String, action: String?, in scope: AccountScope? = nil) async throws -> UInt64 {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.retry(epoch: epoch, model: modelName, rowId: id, action: action)
+  }
+  @concurrent public func discard(action: String?, in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.discard(epoch: epoch, model: Self.modelName, rowId: id, action: action)
+  }
 
   @concurrent public static func readNode(relation: String, id: String, force: Bool) async throws -> Self? {
     try await DB.database.node(model: modelName, relation: relation, rowId: id, force: force).map(decode)
@@ -76,9 +107,10 @@ extension DBModel {
 public struct ActionAnswer<Model: DBModel, Answer: Decodable & Sendable>: Sendable {
   public let model: Model
   let operation: Int64
+  let epoch: UInt64
 
   @concurrent public func answer() async throws -> Answer {
-    try JSONDecoder().decode(Answer.self, from: Data(try await DB.database.answer(model: Model.modelName, operation: operation).utf8))
+    try JSONDecoder().decode(Answer.self, from: Data(try await DB.database.answer(epoch: epoch, model: Model.modelName, operation: operation).utf8))
   }
 }
 
