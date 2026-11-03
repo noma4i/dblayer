@@ -1,0 +1,173 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.noma4i",
+    "module": "dblayer",
+    "version": "6.15.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.8.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "releaseVariantReleaseApiPublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-api"
+      },
+      "dependencies": [
+        {
+          "group": "androidx.compose.runtime",
+          "module": "runtime-annotation",
+          "version": {
+            "requires": "1.11.4"
+          }
+        },
+        {
+          "group": "androidx.compose.runtime",
+          "module": "runtime",
+          "version": {
+            "requires": "1.11.4"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-core",
+          "version": {
+            "requires": "1.10.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-serialization-json",
+          "version": {
+            "requires": "1.7.3"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "dblayer-6.15.0.aar",
+          "url": "dblayer-6.15.0.aar",
+          "size": 21415532,
+          "sha512": "ee7658ec78d74a0201e793bf761fbe3a6b63ac6e71fcc0ffe229db7b4de2d368eb56b2e00d4553e217305aaa9c67ffebc9dd6a1027fa0fc0e3b0c80d284680c1",
+          "sha256": "7af4e1a205c0715f12337a963185807294ff09002bff291b24dc80e416d0e962",
+          "sha1": "13d945634cdd8ab1bd02969a6146bb198f0b995a",
+          "md5": "00d481cc22d7f627165d76d7d304ac47"
+        }
+      ]
+    },
+    {
+      "name": "releaseVariantReleaseRuntimePublication",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.libraryelements": "aar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "dependencies": [
+        {
+          "group": "com.squareup.okhttp3",
+          "module": "okhttp",
+          "version": {
+            "requires": "5.5.0"
+          }
+        },
+        {
+          "group": "com.google.android.gms",
+          "module": "play-services-auth",
+          "version": {
+            "requires": "22.0.0"
+          }
+        },
+        {
+          "group": "androidx.lifecycle",
+          "module": "lifecycle-process",
+          "version": {
+            "requires": "2.11.0"
+          }
+        },
+        {
+          "group": "net.java.dev.jna",
+          "module": "jna",
+          "version": {
+            "requires": "5.19.1"
+          },
+          "excludes": [
+            {
+              "group": "*",
+              "module": "*"
+            }
+          ],
+          "thirdPartyCompatibility": {
+            "artifactSelector": {
+              "name": "jna",
+              "type": "aar",
+              "extension": "aar"
+            }
+          }
+        },
+        {
+          "group": "androidx.compose.runtime",
+          "module": "runtime-annotation",
+          "version": {
+            "requires": "1.11.4"
+          }
+        },
+        {
+          "group": "androidx.compose.runtime",
+          "module": "runtime",
+          "version": {
+            "requires": "1.11.4"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-core",
+          "version": {
+            "requires": "1.10.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-serialization-json",
+          "version": {
+            "requires": "1.7.3"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.4.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "dblayer-6.15.0.aar",
+          "url": "dblayer-6.15.0.aar",
+          "size": 21415532,
+          "sha512": "ee7658ec78d74a0201e793bf761fbe3a6b63ac6e71fcc0ffe229db7b4de2d368eb56b2e00d4553e217305aaa9c67ffebc9dd6a1027fa0fc0e3b0c80d284680c1",
+          "sha256": "7af4e1a205c0715f12337a963185807294ff09002bff291b24dc80e416d0e962",
+          "sha1": "13d945634cdd8ab1bd02969a6146bb198f0b995a",
+          "md5": "00d481cc22d7f627165d76d7d304ac47"
+        }
+      ]
+    }
+  ]
+}
