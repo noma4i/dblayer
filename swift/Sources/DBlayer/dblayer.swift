@@ -2229,6 +2229,8 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func registerOperations(defsJson: String) throws 
     
+    func resetForTesting() async throws 
+    
     func resume() async throws 
     
     func resumeUploads() async throws 
@@ -2248,6 +2250,8 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func setLocal(model: String, rowId: String, path: String, valueJson: String) async throws 
     
     func setOnline(online: Bool) throws 
+    
+    func settleForTesting() async throws 
     
     func settled(model: String, rowId: String, action: String?) async throws 
     
@@ -2975,6 +2979,22 @@ open func registerOperations(defsJson: String)throws   {try rustCallWithError(Ff
 }
 }
     
+open func resetForTesting()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_reset_for_testing(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
 open func resume()async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -3119,6 +3139,22 @@ open func setOnline(online: Bool)throws   {try rustCallWithError(FfiConverterTyp
         FfiConverterBool.lower(online),uniffiCallStatus
     )
 }
+}
+    
+open func settleForTesting()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_settle_for_testing(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeDbError_lift
+        )
 }
     
 open func settled(model: String, rowId: String, action: String?)async throws   {
@@ -13447,6 +13483,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_register_operations() != 47241) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_database_reset_for_testing() != 26949) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_resume() != 54438) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13475,6 +13514,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_set_online() != 62209) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_settle_for_testing() != 24118) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_settled() != 19732) {
