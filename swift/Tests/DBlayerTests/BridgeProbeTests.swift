@@ -7,7 +7,7 @@ import Testing
 struct BridgeProbeTests {
   @Test
   func aSearchPassesWholeWordsToTheCore() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     _ = try await Moment.send(in: DB.account(), text: "hello world").row
     _ = try await Moment.send(in: DB.account(), text: "hel").row
     let whole = Cursor(try await Query<Moment>().search("hel", wholeWords: true).live.stream())
@@ -16,7 +16,7 @@ struct BridgeProbeTests {
 
   @Test
   func writesReachTypedLiveRows() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     let changes = Cursor(try await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
     let moment = try await Moment.send(in: DB.account(), text: "m").row
@@ -33,7 +33,7 @@ struct BridgeProbeTests {
 
   @Test @MainActor
   func aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     #expect(try await Moment.recent.cached() == nil)
     let moment = try await Moment.send(in: DB.account(), text: "m").row
     try await Moment.recent.warm()
@@ -41,7 +41,7 @@ struct BridgeProbeTests {
     let warm = try #require(cached)
     #expect(warm.value.map(\.id) == [moment.id] && warm.value.first?.text == "m")
     #expect(try await Moment.recent.cachedRow("ghost") == nil)
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     #expect(try await Moment.recent.cached() == nil)
     _ = try await Moment.send(in: DB.account(), text: "n").row
     do {
@@ -231,21 +231,23 @@ struct BridgeProbeTests {
     #expect(transport.calls.filter { $0.operationName == "CreateMoment" }.count == 1)
   }
 
+  @MainActor
   @Test
   func aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
-    let initial = try await Record.send(in: DB.account(), containerId: "c1", authorId: "u1", text: "hello").row
-    let row = try await initial.update(reactions: [RecordReactionNode(body: "A", userId: "u1")])
+    _ = try await Self.openRecordSession()
+    let record = try await Self.settledRecord()
+    let row = try await record.update(reactions: [RecordReactionNode(body: "A", userId: "u1")])
     let changed = try await row.react(reactionBody: "C", userId: "u1")
     #expect(changed.reactions.map(\.userId) == ["u1"])
     #expect(changed.reactions.map(\.body) == ["C"])
   }
 
+  @MainActor
   @Test
   func anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    _ = try await Self.openRecordSession()
     let ann = try await User.create(name: "Ann")
-    let record = try await Record.send(in: DB.account(), containerId: "c1", authorId: ann.id, text: "hello").row
+    let record = try await Self.settledRecord()
     let withUser = try await record.react(reactionBody: "A", userId: ann.id)
     #expect(withUser.reactions.first?.user?.name == "Ann")
     let withoutUser = try await record.react(reactionBody: "B", userId: "nobody")

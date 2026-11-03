@@ -15,7 +15,7 @@ class SealedErrorsTest {
     }
 
     @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {
-        reopen(Config(null, null, 8u), modelsJSON, null)
+        reopenSigned(Config(null, null, 8u), modelsJSON)
         val row = Moment.send(AccountScope.current(), text = "saved").row
         val real = DBlayer.database
         DBlayer.database = RefusedRetry()

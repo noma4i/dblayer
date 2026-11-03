@@ -360,3 +360,82 @@ private final class LossyReader: ValueSink, @unchecked Sendable {
   }
 }
 
+
+extension BridgeProbeTests {
+  /// K15 (iOS findings b and c): the first delivery of a projection is a snapshot with no list of edits, edits come with a delta, and one missed revision gives exactly one new snapshot to each of two streams.
+  @MainActor
+  @Test
+  func theFirstDeliveryHasNoEditsAndAMissedRevisionGivesEachStreamOneSnapshot() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let scope = try DB.account()
+    let thread = Projected<Moment>(try scope.stream(Moment.recent))
+    try await thread.loaded()
+    await eventually("the first snapshot arrives") { thread.projection.revision != nil }
+    #expect(thread.projection.lastEdits == nil, "the first delivery carried a list of edits")
+    #expect(thread.takeEdits() == nil, "a screen that asks before the first change must read the rows, not apply nothing")
+
+    let first = LossyReader()
+    let second = LossyReader()
+    let streams = try [first, second].map { reader -> UInt64 in
+      let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
+      reader.stream = stream
+      return stream
+    }
+    for stream in streams { try await DB.database.streamLoaded(stream: stream) }
+    await eventually("both first snapshots arrive") { first.snapshots == 1 && second.snapshots == 1 }
+
+    try DB.database.setOnline(online: false)
+    first.dropNext()
+    second.dropNext()
+    for number in 1...3 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
+    await eventually("both readers hold the three rows again") { first.rows == 3 && second.rows == 3 }
+
+    #expect(first.snapshots == 2 && second.snapshots == 2, "a missed revision gives exactly one new snapshot per stream")
+    #expect(first.resyncs == 1 && second.resyncs == 1)
+    for stream in streams { try DB.database.cancelStream(stream: stream) }
+    withExtendedLifetime(thread) {}
+  }
+
+  /// K16 (B8): a reader that falls behind keeps at most 256 deliveries, learns that it missed some, and ends with the whole list after one new snapshot.
+  @MainActor
+  @Test
+  func aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let scope = try DB.account()
+    let stream = try scope.stream(Moment.recent)
+    try await stream.loaded()
+    try DB.database.setOnline(online: false)
+    for number in 1...300 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
+    let seen = BufferedDeliveries()
+    let cursor = Cursor(stream)
+    for _ in 0..<400 {
+      if seen.rows == 300 { break }
+      guard let delivery = await cursor.next("a delivery of the burst") else { break }
+      seen.apply(delivery, stream: stream)
+    }
+    #expect(seen.rows == 300, "the reader did not end with the whole list")
+    #expect(seen.received <= 270, "the reader received \(seen.received) deliveries of a burst of 300: the buffer bounded nothing")
+    #expect(seen.missed > 0, "the reader was not told that it missed deliveries")
+    stream.cancel()
+  }
+}
+
+private final class BufferedDeliveries: @unchecked Sendable {
+  private let lock = NSLock()
+  private var projection = ListProjection<Moment>()
+  private(set) var received = 0
+  private(set) var missed: UInt64 = 0
+
+  var rows: Int { lock.withLock { projection.rows.count } }
+
+  func apply(_ delivery: StreamDelivery, stream: ValueStream) {
+    let ask = lock.withLock { () -> Bool in
+      received += 1
+      if case let .missed(count) = delivery.value { missed += count }
+      return projection.apply(delivery) == .resync
+    }
+    if ask { stream.resync() }
+  }
+}

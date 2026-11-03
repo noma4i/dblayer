@@ -9,8 +9,7 @@ private enum RecordEvents: GraphQLOperation {
   static let document = "subscription RecordEvents { recordEvents { entries { topic action recordId } } }"
 }
 
-@Suite(.serialized)
-struct OpenListeningTests {
+extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func inv_api_05_openTestingHoldsSubscriptionsUntilRegistrationCompletes() async throws {

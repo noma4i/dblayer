@@ -22,7 +22,7 @@ class CloseOwnershipTest {
 
     @Test
     fun closingTheDatabaseEndsAWaitingChangesFlow() = bounded {
-        reopen(Config(null, null, 8u), modelsJSON)
+        reopenSigned(Config(null, null, 8u), modelsJSON)
         Moment.send(AccountScope.current(), text = "kept").row
         val received = CopyOnWriteArrayList<Any>()
         val collecting = launch(Dispatchers.Default) { Moment.recent.live.flow.collect { received.add(it) } }

@@ -654,6 +654,9 @@ impl Inner {
             return Ok(SendResult::Discarded);
         }
         kept.committed();
+        if spec.actions.iter().any(|action| action.name == sending.action && action.returns_answer()) {
+            if let Some(real) = &real { locked(&self.answer_roots).insert(entry.operation.id.0, real.clone()); }
+        }
         #[cfg(test)]
         if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
         self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;

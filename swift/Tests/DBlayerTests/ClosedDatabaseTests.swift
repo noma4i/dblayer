@@ -3,7 +3,7 @@ import Testing
 
 extension BridgeProbeTests {
   @Test @MainActor func aClosedDatabaseRefusesEveryCallWithTheNotOpenError() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
     let row = try await Moment.send(in: DB.account(), text: "saved").row
     try await DB.close()
     let message = "database is not open; call DBlayer.open once at app start"

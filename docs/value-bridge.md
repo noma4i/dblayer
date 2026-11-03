@@ -40,6 +40,27 @@ A projection ignores a value of another epoch.
 A delta whose `base` is not the held revision asks for one new snapshot.
 `Projected` does that for you: it calls `resync`.
 
+## Reading a projection on screen
+
+The first delivery of a stream is a snapshot. It carries no list of edits: `takeEdits()` returns `nil` and the screen reads `rows` again.
+Edits come only with deltas, as the steps from the rows before to the rows after.
+One missed revision gives one new snapshot per stream, also when a screen follows several streams.
+
+On iOS 17 a SwiftUI view reads `Projected` through `@Observable`: it tracks the properties it reads, and `withObservationTracking` reports the next change.
+`Observations { }` needs iOS 26. Code that targets iOS 17 does not use it.
+On Android the screen collects the `StateFlow` of the projection.
+
+## Offline and reconnect
+
+Only a message send and a media upload wait for the network.
+A durable send whose attempt failed on the network goes out at once when the network returns, without a wait for its backoff.
+While the network is away `refresh`, `loadMore` and a one-off load fail at once with the network error, and the stream state shows it.
+A list stream opened with `refreshOnConnect` loads again once each time the network returns. The app writes no refresh for that moment.
+
+An action that has a mutation and no `optimistic` line returns after the server answered.
+It returns the row at the root of the answer. When that row has another id than the receiver, the receiver row stays unchanged and the answer row appears in its own chat.
+An action with an `optimistic` line shows its change at once as unsent and ends as synced after the answer.
+
 ## Reading and stopping
 
 A stream lives while its reader lives.

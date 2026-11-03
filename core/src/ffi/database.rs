@@ -260,12 +260,30 @@ impl Database {
             Ok(database.db.set_local(&model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
         }).await
     }
+    /// Queues the action. An action with no optimistic change and no declared result returns after the server answered, with the row at the root of the answer: the receiver row when the answer names the receiver, else the row the answer carried. The receiver row is never overwritten by an answer with another id.
     pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
         self.refuse_offline(&model, &action)?;
-        self.write_in_epoch(epoch, "act", move |database| {
+        let waits = self.db.spec(&model)?.actions.iter().find(|declared| declared.name == action).is_some_and(|declared| declared.returns_answer());
+        let (call_model, call_action, receiver) = (model.clone(), action.clone(), row_id.clone());
+        let queued = self.write_in_epoch(epoch, "act", move |database| {
             let acted = database.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
             database.send_writes();
             Ok(QueuedAction { row: database.wire(&model)?.row(&acted.row), operation: acted.operation })
+        }).await?;
+        if !waits { return Ok(queued); }
+        let (sync, db, wire, operation) = (self.sync()?.clone(), self.db.clone(), self.wire(&call_model)?.clone(), queued.operation);
+        self.serve_in_epoch(epoch, "act answer", async move {
+            let receiver = id(&receiver)?;
+            sync.settled(&call_model, &receiver, Some(&call_action)).await?;
+            let answered = match sync.answer_root(operation) {
+                Some(root) => root,
+                None => receiver.clone(),
+            };
+            let row = match db.find(&call_model, &answered)? {
+                Some(row) => row,
+                None => db.find(&call_model, &receiver)?.ok_or_else(|| DbError::Invalid { detail: format!("{call_model} {receiver} is gone after the answer") })?,
+            };
+            Ok::<_, DbError>(QueuedAction { row: wire.row(&row), operation })
         }).await
     }
     pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<(), DbError> {
@@ -338,6 +356,7 @@ impl Database {
         Ok(())
     }
     pub async fn refresh(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
+        self.require_online(&format!("{model}.{relation} refresh"))?;
         let sync = self.sync()?.clone();
         on_executor(async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
@@ -362,6 +381,7 @@ impl Database {
         .await?
     }
     pub async fn load_more(&self, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
+        self.require_online(&format!("{model}.{relation} load more"))?;
         let sync = self.sync()?.clone();
         let outcome = on_executor(async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
@@ -527,6 +547,12 @@ impl Database {
             sync.inner.spawn_flush(Duration::ZERO);
         }
     }
+    /// A call that always goes to the server fails at once while the network is away. It does not wait for the network and does not retry.
+    pub(super) fn require_online(&self, what: &str) -> Result<(), DbError> {
+        if self.db.connectivity().is_online() { return Ok(()); }
+        Err(DbError::Network { detail: format!("{what} needs the network") })
+    }
+
     /// An action that needs the server fails at once while the network is away. Only sending a message and a media upload wait for it (`send`, `upload`).
     fn refuse_offline(&self, model: &str, action: &str) -> Result<(), DbError> {
         let declared = self.db.spec(model)?.actions.iter().any(|declared| declared.name == action && declared.mutation.is_some());

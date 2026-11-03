@@ -711,3 +711,94 @@ async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_re
     assert_eq!(rig.world.count("Thread"), before + 1, "the stream loaded more or less than once on reconnect");
     rig.database.close_now();
 }
+
+/// K10 (offline finding A; old line sync/send/pause.rs retry_due): a durable command whose request failed on the network goes out at once when the network returns, without a step of the clock.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_durable_command_that_failed_on_the_network_goes_out_at_once_when_the_network_returns() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down);
+    let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
+    yield_until("the first attempt failed on the network", || rig.database.db.outbox().unwrap().first().is_some_and(|entry| entry.operation.attempts >= 1)).await;
+    assert_eq!(rig.world.count("SendMessage"), 0, "the failed attempt reached the server");
+    rig.database.set_online(false).unwrap();
+    rig.database.set_online(true).unwrap();
+    let outcome = bound(rig.database.command_outcome(receipt)).await.unwrap();
+    assert!(matches!(outcome, CommandStatus::Delivered { .. }), "the command did not go out after the network returned: {outcome:?}");
+    assert_eq!(rig.world.count("SendMessage"), 1);
+    rig.database.close_now();
+}
+
+/// K11 (offline finding B; old lines ffi/database.rs refresh and load_more, ffi/stream/mod.rs refresh_stream): a call that always goes to the server fails at once with `Network` while the network is away, and the entity stream shows the error in its state.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_shows_the_error() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let entity = Reader::open();
+    let stream = rig.database.subscribe(epoch, StreamRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::EntityFetch::Force }, entity.clone());
+    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    let hits = rig.world.log().len();
+    rig.database.set_online(false).unwrap();
+    let refreshed = bound(rig.database.refresh_stream(stream)).await;
+    assert!(matches!(refreshed, Err(DbError::Network { .. })), "refresh of a stream offline: {refreshed:?}");
+    let refreshed = bound(rig.database.refresh("User".into(), "all".into(), "{}".into())).await;
+    assert!(matches!(refreshed, Err(DbError::Network { .. })), "refresh offline: {refreshed:?}");
+    let more = bound(rig.database.load_more("User".into(), "all".into(), "{}".into())).await;
+    assert!(matches!(more, Err(DbError::Network { .. })), "load more offline: {more:?}");
+    yield_until("the entity stream shows the error", || entity.deliveries().iter().any(|delivery| match &delivery.value {
+        StreamValue::State { state } | StreamValue::Snapshot { state, .. } => state.error.is_some(),
+        _ => false,
+    })).await;
+    assert_eq!(rig.world.log().len(), hits, "a call offline reached the server");
+    rig.database.close_now();
+}
+
+/// K12 (consumer finding forward; old line ffi/database.rs act returned the receiver row): a forward into the same chat and into another chat leaves the source row unchanged, upserts the answer row with its own id in the target chat, and the call returns the answer row. The answer has the shape of the mutation of the app: `messageForward.message` with the id `forwarded-1`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_returns_it() {
+    for (case, target) in [("same chat", "c1"), ("other chat", "c2")] {
+        let rig = Rig::encrypted().await;
+        rig.world.seed_message("A", "m1", "hello", 1);
+        rig.login_ios("A").await;
+        let epoch = rig.database.session_epoch();
+        let reader = Reader::open();
+        let stream = rig.database.subscribe(epoch, thread(), reader.clone());
+        bound(rig.database.stream_loaded(stream)).await.unwrap();
+        yield_until("the thread shows the source", || reader.texts().iter().any(|text| text.contains("hello"))).await;
+        let before = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().expect("the source row");
+        let acted = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": target}).to_string())).await.unwrap();
+        assert_eq!(acted.row.id, "forwarded-1", "{case}: the call returned the source row, not the answer row");
+        let after = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().expect("the source row");
+        assert_eq!(after.cells, before.cells, "{case}: the answer was written onto the source row");
+        let forwarded = bound(rig.database.read_row(epoch, "Message".into(), "forwarded-1".into())).await.unwrap().expect("the answer row");
+        assert!(forwarded.cells.contains(&crate::ffi::Cell::Text { value: target.into() }), "{case}: the answer row is not in the target chat");
+        if target == "c1" {
+            yield_until("the thread shows the source and the answer", || reader.rows().len() == 2).await;
+        }
+        rig.database.close_now();
+    }
+}
+
+/// K13 (B6; old lines: no rule for these actions): leave group, add member and remove member show their change at once as unsent, before the server answers, and end as synced after the answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_group_action_shows_as_unsent_before_the_server_answers_and_as_synced_after() {
+    for (action, operation) in [("leave", "LeaveGroup"), ("add_member", "AddMember"), ("remove_member", "RemoveMember")] {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        let epoch = rig.database.session_epoch();
+        let (values, args) = group("friends");
+        let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+        let gate = rig.world.hold_next(operation);
+        bound(rig.database.act(epoch, "Group".into(), created.id.clone(), action.into(), "{}".into(), "{}".into())).await.unwrap();
+        gate.entered_for(action).await;
+        let during = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap().expect("the group row");
+        assert!(matches!(during.sync.state, WireSyncState::Pending | WireSyncState::Sending), "{action}: the row was {:?} while the server had not answered", during.sync.state);
+        gate.release();
+        bound(rig.database.settled(epoch, "Group".into(), created.id.clone(), Some(action.into()))).await.unwrap();
+        let after = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap().expect("the group row");
+        assert_eq!(after.sync.state, WireSyncState::Synced, "{action}: the row did not end as synced");
+        rig.database.close_now();
+    }
+}

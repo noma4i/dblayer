@@ -17,6 +17,7 @@ impl Inner {
             return None;
         }
         let since = Duration::from_millis(u64::try_from(operation.since).unwrap_or_default());
+        if super::super::locked(&self.network_returned).is_some_and(|returned| since <= returned) { return None; }
         Some(since + self.send_backoff(operation.id.0).delay(operation.attempts - 1))
     }
 

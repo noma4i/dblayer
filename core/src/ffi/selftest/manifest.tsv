@@ -97,3 +97,25 @@ K07	B9	core	a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no
 K08	B7	swift	BridgeProbeTests.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
 K08	B7	kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
 K09	B	core	a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns	green	-	arch-r3b consumer finding: refresh on reconnect
+K10	A	core	a_durable_command_that_failed_on_the_network_goes_out_at_once_when_the_network_returns	green	-	arch-r3c offline finding A
+K11	B	core	a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_shows_the_error	green	-	arch-r3c offline finding B
+K12	forward	core	a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_returns_it	green	-	arch-r3c consumer finding: forward
+K13	B6	core	a_group_action_shows_as_unsent_before_the_server_answers_and_as_synced_after	green	-	arch-r3c B6 leave and members
+K09	B	swift	BridgeProbeTests.aListThatRefreshesOnConnectLoadsAgainOnceWhenTheNetworkReturns	green	-	arch-r3c
+K10	A	swift	BridgeProbeTests.aDurableSendThatFailedOnTheNetworkGoesOutAtOnceWhenTheNetworkReturns	green	-	arch-r3c
+K11	B	swift	BridgeProbeTests.aRefreshAndALoadMoreFailAtOnceOfflineAndTheStreamShowsTheError	green	-	arch-r3c
+K14	B6	swift	BridgeProbeTests.aReactionWithADelayedAnswerShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
+K15	iOS b c	swift	BridgeProbeTests.theFirstDeliveryHasNoEditsAndAMissedRevisionGivesEachStreamOneSnapshot	green	-	arch-r3c
+K16	B8	swift	BridgeProbeTests.aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList	green	-	arch-r3c
+K09	B	kotlin	com.noma4i.dblayer.ReconnectTest.aListThatRefreshesOnConnectLoadsAgainOnceWhenTheNetworkReturns	green	-	arch-r3c
+K10	A	kotlin	com.noma4i.dblayer.ReconnectTest.aDurableSendThatFailedOnTheNetworkGoesOutAtOnceWhenTheNetworkReturns	green	-	arch-r3c
+K11	B	kotlin	com.noma4i.dblayer.ReconnectTest.aRefreshAndALoadMoreFailAtOnceOfflineAndTheStreamShowsTheError	green	-	arch-r3c
+K14	B6	kotlin	com.noma4i.dblayer.RecordSessionTest.aReactionWithADelayedAnswerShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
+K15	iOS b c	kotlin	com.noma4i.dblayer.ValueBridgeTest.theFirstDeliveryHasNoEditsAndAMissedRevisionGivesEachStreamOneSnapshot	green	-	arch-r3c
+K16	B8	kotlin	com.noma4i.dblayer.ValueBridgeTest.aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList	green	-	arch-r3c
+K04	B4	swift	BridgeProbeTests.aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork	green	-	arch-r3c
+K04	B4	kotlin	com.noma4i.dblayer.ClubTest.aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork	green	-	arch-r3c
+K13	B6	swift	BridgeProbeTests.aClubActionShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
+K13	B6	kotlin	com.noma4i.dblayer.ClubTest.aClubActionShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
+K12	forward	swift	BridgeProbeTests.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
+K12	forward	kotlin	com.noma4i.dblayer.ClubTest.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c

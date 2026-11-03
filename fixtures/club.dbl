@@ -1,0 +1,49 @@
+model Club do
+  attribute :name, :string
+  attribute :left, :bool, null: true
+  attribute :membership, :string, null: true
+  operation :create do
+    mutation "CreateClub"
+    variables name: :name
+  end
+  operation :leave do
+    mutation "LeaveClub"
+    variables clubId: :id
+    optimistic left: true
+    response from: "leaveClub"
+  end
+  operation :add_member do
+    mutation "AddClubMember"
+    variables clubId: :id
+    optimistic membership: "added"
+    response from: "addClubMember"
+  end
+  operation :remove_member do
+    mutation "RemoveClubMember"
+    variables clubId: :id
+    optimistic membership: "removed"
+    response from: "removeClubMember"
+  end
+end
+
+model Letter do
+  attribute :chatId, :id
+  attribute :text, :string
+  attribute :at, :int
+  scope :thread do
+    parameter :chatId, :id
+    where chatId: :chatId
+    order at: :asc
+  end
+  operation :create, durable: true do
+    mutation "SendLetter"
+    variables chatId: :chatId, text: :text, at: :at
+  end
+  operation :forward do
+    mutation "ForwardLetter"
+    optimistic false
+    parameter :targetChatId, :id
+    variables letterId: :id, chatId: :targetChatId
+    response from: "forwardLetter.letter"
+  end
+end

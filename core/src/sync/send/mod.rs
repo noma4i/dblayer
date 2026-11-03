@@ -77,6 +77,11 @@ impl Sync {
         Ok(())
     }
 
+    /// The row at the root of the answer to an operation, once, after the answer landed.
+    pub fn answer_root(&self, operation: i64) -> Option<RowId> {
+        locked(&self.inner.answer_roots).remove(&operation)
+    }
+
     /// Waits until the queued action is answered and returns the declared `result` fields of its payload. Fails with the refusal. An answer is read once.
     pub async fn answer(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {
         let lease = self.inner.lease(crate::lifecycle::Origin::Explicit, "answer")?;

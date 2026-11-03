@@ -17,7 +17,7 @@ private final class RefusedRetry: Database, @unchecked Sendable {
 
 extension BridgeProbeTests {
   @Test @MainActor func modelRetriesPropagateErrorsToTheirCaller() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
     let real = try DB.database
     defer { DB.current = real }
     let row = try await Moment.send(in: DB.account(), text: "saved").row

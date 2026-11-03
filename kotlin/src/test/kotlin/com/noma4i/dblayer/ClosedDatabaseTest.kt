@@ -15,7 +15,7 @@ class ClosedDatabaseTest {
 
     @Test
     fun aClosedDatabaseRefusesEveryCallWithTheNotOpenError() = bounded {
-        reopen(Config(null, null, 8u), modelsJSON)
+        reopenSigned(Config(null, null, 8u), modelsJSON)
         DBlayer.close()
         val errors = listOf(
             refusal { DBlayer.database },

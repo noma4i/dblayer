@@ -462,7 +462,7 @@ impl Stream {
         } else if let Some(error) = state.subscription_error.clone() {
             Some((error, "subscription".to_string()))
         } else {
-            state.load_error.clone().filter(|_| state.entity).map(|error| (error, "load".to_string()))
+            state.load_error.clone().filter(|error| state.entity || matches!(error, DbError::Network { .. })).map(|error| (error, "load".to_string()))
         };
         let shown = Shown {
             state: StreamState {

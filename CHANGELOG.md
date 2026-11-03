@@ -11,7 +11,7 @@
 - `AccountScope.send` carries a media upload; `uploadBatch` sends many files.
 - `durable: true` on `operation :create` generates `Model.send`.
 - `Query.read` and `Query.readRow` read storage once without a stream.
-- `AccountScope.stream` takes `refreshOnConnect`.
+- `AccountScope.stream` takes `refreshOnConnect`; a list stream opened with it loads again when the network returns.
 - A projection keeps the edits of its deltas and the temporary id of a row.
 
 ### Changed
@@ -32,6 +32,10 @@
 - A blob reads its status stream while the scope of its reader lives (Kotlin).
 - A list stream no longer keeps a warm observer after its reader left; `retainedObservers` counts the observers of `warm`.
 - Projections, count streams and event streams report platform decode errors and source errors.
+- A durable send that failed on the network goes out at once when the network returns.
+- `refresh`, `loadMore` and a one-off load fail at once with the network error while offline, and the stream state shows it.
+- An action whose answer carries another row returns that row and leaves the receiver row unchanged.
+- The first delivery of a projection is a snapshot; `takeEdits` returns `nil` until a delta arrives.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

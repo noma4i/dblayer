@@ -191,7 +191,7 @@ class ListProjection<Model : DBModel> private constructor(
 class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<Model>, scope: CoroutineScope) {
     private val held = MutableStateFlow(ListProjection<Model>())
     val projection: StateFlow<ListProjection<Model>> = held.asStateFlow()
-    private val pending = java.util.concurrent.atomic.AtomicReference<List<ListEdit<Model>>?>(emptyList())
+    private val pending = java.util.concurrent.atomic.AtomicReference<List<ListEdit<Model>>?>(null)
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
         stream.deliveries.collect { delivery ->
             val step = held.value.apply(delivery, decoder)

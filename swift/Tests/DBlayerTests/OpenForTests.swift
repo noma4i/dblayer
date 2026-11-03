@@ -1,3 +1,4 @@
+import DBlayerTesting
 import Foundation
 @testable import DBlayer
 
@@ -15,4 +16,12 @@ func adopt(_ database: Database) async throws -> Database {
 @MainActor @discardableResult
 func reopen(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]", uploads: UploadOperations? = nil, listening: Bool = true) async throws -> Database {
   try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations, uploads: uploads, listening: listening))
+}
+
+/// A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session (`specs/architecture.md` D).
+@MainActor @discardableResult
+func reopenSigned(config: Config, modelsJson: String, operations: String = "[]", uploads: UploadOperations? = nil) async throws -> Database {
+  let database = try await reopen(config: config, modelsJson: modelsJson, transport: MockTransport(), operations: operations, uploads: uploads)
+  try database.setOnline(online: false)
+  return database
 }

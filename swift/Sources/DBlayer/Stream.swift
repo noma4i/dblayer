@@ -204,7 +204,7 @@ public final class Projected<Model: DBModel> {
   public var isEnded: Bool { projection.ended != nil }
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored private var reading: Task<Void, Never>?
-  @ObservationIgnored private var pending: [ListEdit<Model>]? = []
+  @ObservationIgnored private var pending: [ListEdit<Model>]?
 
   public init(_ stream: ValueStream) {
     self.stream = stream

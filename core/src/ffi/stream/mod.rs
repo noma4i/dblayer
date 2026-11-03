@@ -239,6 +239,10 @@ impl Database {
     /// Loads the relation of the stream again from the server. The answer belongs to the epoch of the stream: it ends as `Interrupted` when the session changed.
     pub async fn refresh_stream(&self, stream: u64) -> Result<(), DbError> {
         let (open, lease) = self.stream_call(stream, "refresh a stream")?;
+        if let Err(error) = self.require_online("refresh a stream") {
+            if open.request.relation.is_some() || open.request.entity.is_some() { open.load_finished(Some(error.clone())); }
+            return Err(error);
+        }
         let sync = self.sync()?.clone();
         let request = open.request.clone();
         let work = super::database::cancellable(async move {
@@ -255,6 +259,7 @@ impl Database {
     /// Loads the next page of the relation of the stream.
     pub async fn load_more_stream(&self, stream: u64) -> Result<LoadMoreResult, DbError> {
         let (open, lease) = self.stream_call(stream, "load more of a stream")?;
+        self.require_online("load more of a stream")?;
         let sync = self.sync()?.clone();
         let request = open.request.clone();
         let Some(relation) = request.relation.clone() else { return Err(DbError::Invalid { detail: "the stream has no relation to page".into() }) };

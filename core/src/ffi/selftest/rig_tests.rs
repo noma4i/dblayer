@@ -59,6 +59,8 @@ pub(super) enum Fault {
     /// The request is held, then ends in the inner fault.
     HoldThen(Arc<Gate>, Box<Fault>),
     Refuse { code: &'static str, confirmed: bool },
+    /// The request does not reach the server: the caller sees a network error.
+    Down,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -168,10 +170,26 @@ impl World {
                 if commits { state.messages.push((account.clone(), message.clone())); }
                 json!({"data":{"sendMessage":message}})
             }
+            "MessageForward" => {
+                let input = &body["variables"]["input"];
+                let source = state.messages.iter().find(|(owner, message)| *owner == account && message["id"] == input["messageId"]).map(|(_, message)| message.clone());
+                let text = source.as_ref().map_or(Value::Null, |message| message["text"].clone());
+                let message = json!({"__typename":"Message","id":"forwarded-1","chatId":input["chatId"],"text":text,"at":99});
+                if commits { state.messages.push((account.clone(), message.clone())); }
+                json!({"data":{"messageForward":{"message":message,"chat":{"id":input["chatId"],"updatedAt":"2026-11-04T00:00:00Z"}}}})
+            }
             "CreateGroup" => {
                 let variables = &body["variables"];
                 let group = json!({"__typename":"Group","id":format!("g{}", state.messages.len() + 1),"name":variables["name"]});
                 json!({"data":{"createGroup":group}})
+            }
+            "LeaveGroup" | "AddMember" | "RemoveMember" => {
+                let (root, left, membership) = match operation {
+                    "LeaveGroup" => ("leaveGroup", json!(true), Value::Null),
+                    "AddMember" => ("addMember", json!(false), json!("added")),
+                    _ => ("removeMember", json!(false), json!("removed")),
+                };
+                json!({"data":{ root: {"__typename":"Group","id":body["variables"]["groupId"],"name":"friends","left":left,"membership":membership}}})
             }
             "PUT" => json!({}),
             other if other.starts_with("subscribe:") => json!({}),
@@ -189,6 +207,7 @@ impl World {
         };
         match pass_gate(fault).await {
             Some(Fault::Refuse { code, .. }) => return Err(DbError::Session { code: SessionCode::Unauthenticated, detail: code.into() }),
+            Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
         }
         Ok(answer.to_string())
@@ -211,6 +230,7 @@ impl EncryptedHttp for World {
         };
         let mut sealed_sequence = sequence;
         match pass_gate(fault).await {
+            Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
             Some(Fault::Refuse { code, confirmed }) => {
                 answer = json!({"error": code});
                 if !confirmed { sealed_sequence = None; }
@@ -295,7 +315,11 @@ const OPERATIONS: &str = r#"[
     {"name":"UnregisterDevice","document":"mutation UnregisterDevice { unregisterDevice { ok } }"},
     {"name":"Thread","document":"query Thread($chatId: ID!) { thread(chatId: $chatId) { id chatId text at } }"},
     {"name":"SendMessage","document":"mutation SendMessage($chatId: ID!, $text: String!, $at: Int!) { sendMessage(chatId: $chatId, text: $text, at: $at) { id chatId text at } }"},
-    {"name":"CreateGroup","document":"mutation CreateGroup($name: String!) { createGroup(name: $name) { id name } }"}
+    {"name":"CreateGroup","document":"mutation CreateGroup($name: String!) { createGroup(name: $name) { id name } }"},
+    {"name":"LeaveGroup","document":"mutation LeaveGroup($groupId: ID!) { leaveGroup(groupId: $groupId) { id name left membership } }"},
+    {"name":"AddMember","document":"mutation AddMember($groupId: ID!) { addMember(groupId: $groupId) { id name left membership } }"},
+    {"name":"RemoveMember","document":"mutation RemoveMember($groupId: ID!) { removeMember(groupId: $groupId) { id name left membership } }"},
+    {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at } chat { id updatedAt } } }"}
 ]"#;
 
 /// The plain harness also holds a memory model that a server subscription feeds.
@@ -331,19 +355,40 @@ fn message_spec() -> crate::schema::ModelSpec {
     create.has_temp_row_retention = true;
     for field in ["chatId", "text", "at"] { create.variables.insert(field.into(), field.into()); }
     message.actions.push(create);
+    let mut forward = ActionDeclaration::new("forward", RootShape::Upsert);
+    forward.mutation = Some("MessageForward".into());
+    forward.args.insert("targetChatId".into(), "string".into());
+    forward.variables.insert("messageId".into(), "id".into());
+    forward.variables.insert("chatId".into(), "targetChatId".into());
+    forward.wrap = Some("input".into());
+    forward.root = Some("messageForward.message".into());
+    message.actions.push(forward);
     message
 }
 
 /// A model whose create goes to the server and is not durable: it needs the network and the answer of the server.
 fn group_spec() -> crate::schema::ModelSpec {
     use crate::schema::{ActionDeclaration, FieldSpec, RootShape};
-    let mut group = crate::schema::ModelSpec::new("Group", vec![FieldSpec::scalar("id", crate::value::ScalarKind::Id), FieldSpec::scalar("name", crate::value::ScalarKind::Str)]);
+    let mut left = FieldSpec::scalar("left", crate::value::ScalarKind::Bool);
+    left.nullable = true;
+    let mut membership = FieldSpec::scalar("membership", crate::value::ScalarKind::Str);
+    membership.nullable = true;
+    let mut group = crate::schema::ModelSpec::new("Group", vec![FieldSpec::scalar("id", crate::value::ScalarKind::Id), FieldSpec::scalar("name", crate::value::ScalarKind::Str), left, membership]);
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("CreateGroup".into());
     create.has_optimistic = true;
     create.has_temp_row_retention = true;
     create.variables.insert("name".into(), "name".into());
     group.actions.push(create);
+    for (name, mutation, root, field, value) in [("leave", "LeaveGroup", "leaveGroup", "left", json!(true)), ("add_member", "AddMember", "addMember", "membership", json!("added")), ("remove_member", "RemoveMember", "removeMember", "membership", json!("removed"))] {
+        let mut action = ActionDeclaration::new(name, RootShape::Upsert);
+        action.mutation = Some(mutation.into());
+        action.has_optimistic = true;
+        action.optimistic.insert(field.into(), value);
+        action.variables.insert("groupId".into(), "id".into());
+        action.root = Some(root.into());
+        group.actions.push(action);
+    }
     group
 }
 

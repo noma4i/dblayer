@@ -154,6 +154,10 @@ pub(crate) struct Inner {
     pub(crate) reopened_through: i64,
     /// The identity of the session now and the newest pending operation when another identity took its place: an operation of that age belongs to the account that left and never goes out.
     pub(crate) account: Mutex<(Option<String>, i64)>,
+    /// When the network last came back. An operation whose last attempt is older than this does not wait for its backoff: the return of the network is the event that retries it.
+    pub(crate) network_returned: Mutex<Option<Duration>>,
+    /// The row the answer of an operation carried at its root, by operation: the call that waits for the answer returns it.
+    pub(crate) answer_roots: Mutex<HashMap<i64, crate::identity::RowId>>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub(crate) upload_effects: crate::db::dispatch::OrderedEffects,
     pub(crate) file_tasks: Arc<tokio::sync::watch::Sender<usize>>,
@@ -289,6 +293,8 @@ impl Sync {
             queue,
             reopened_through,
             account: Mutex::new((None, i64::MIN)),
+            network_returned: Mutex::new(None),
+            answer_roots: Mutex::new(HashMap::new()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             upload_effects: crate::db::dispatch::OrderedEffects::default(),
             file_tasks: Arc::new(tokio::sync::watch::channel(0).0),

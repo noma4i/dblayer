@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -400,6 +401,78 @@ class ValueBridgeTest {
             Projected(scope.stream(User.profile), User, cancelled)
             eventually("the stream left the core") { streamCensus().open == 0uL }
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** K15 (iOS findings b and c): the first delivery of a projection is a snapshot with no list of edits, edits come with a delta, and one missed revision gives exactly one new snapshot to each of two streams. */
+    @Test
+    fun theFirstDeliveryHasNoEditsAndAMissedRevisionGivesEachStreamOneSnapshot() = bounded {
+        val screen = screens()
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val thread = Projected(scope.stream(Moment.recent), Moment, screen)
+            thread.loaded()
+            eventually("the first snapshot arrives") { thread.projection.value.revision != null }
+            assertTrue("the first delivery carried a list of edits", thread.projection.value.lastEdits == null)
+            assertTrue("a screen that asks before the first change must read the rows, not apply nothing", thread.takeEdits() == null)
+
+            val readers = listOf(LossyReader(), LossyReader())
+            val streams = readers.map { reader ->
+                DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Moment.recent.json), reader).also { reader.stream = it }
+            }
+            streams.forEach { DBlayer.database.streamLoaded(it) }
+            eventually("both first snapshots arrive") { readers.all { it.snapshots.get() == 1 } }
+
+            DBlayer.database.setOnline(false)
+            readers.forEach { it.dropNext() }
+            for (number in 1..3) scope.send(Moment, text("m$number"))
+            eventually("both readers hold the three rows again") { readers.all { it.rows() == 3 } }
+
+            assertTrue("a missed revision gives exactly one new snapshot per stream", readers.all { it.snapshots.get() == 2 && it.resyncs.get() == 1 })
+            streams.forEach { DBlayer.database.cancelStream(it) }
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
+    /** K16 (B8): a reader that falls behind keeps at most 256 deliveries, learns that it missed some, and ends with the whole list after one new snapshot. */
+    @Test
+    fun aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList() = bounded {
+        try {
+            openSession()
+            signIn("A")
+            val scope = AccountScope.current()
+            val stream = scope.stream(Moment.recent)
+            stream.loaded()
+            DBlayer.database.setOnline(false)
+            for (number in 1..300) scope.send(Moment, text("m$number"))
+            var projection = ListProjection<Moment>()
+            val received = AtomicInteger(0)
+            val missed = java.util.concurrent.atomic.AtomicLong(0)
+            val rowCount = AtomicInteger(0)
+            val reading = CoroutineScope(Dispatchers.Default).launch {
+                stream.deliveries.collect { delivery ->
+                    received.incrementAndGet()
+                    (delivery.value as? StreamValue.Missed)?.let { missed.addAndGet(it.count.toLong()) }
+                    val step = projection.apply(delivery, Moment)
+                    projection = step.projection
+                    rowCount.set(projection.rows.size)
+                    if (step.applied == Applied.Resync) stream.resync()
+                }
+            }
+            try {
+                eventually("the reader holds the 300 rows") { rowCount.get() == 300 }
+                assertTrue("the reader received ${received.get()} deliveries of a burst of 300: the buffer bounded nothing", received.get() <= 270)
+                assertTrue("the reader was not told that it missed deliveries", missed.get() > 0)
+            } finally {
+                reading.cancel()
+                stream.close()
+            }
         } finally {
             DBlayer.close()
         }

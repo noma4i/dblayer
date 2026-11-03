@@ -21,8 +21,8 @@ import org.junit.Test
 class BridgeProbeTest {
     @Test
     fun aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, null)
-        val initial = Record.send(AccountScope.current(), containerId = "c1", authorId = "u1", text = "hello").row
+        openRecordSession()
+        val initial = settledRecord()
         val row = initial.update(reactions = listOf(RecordReactionNode(body = "A", userId = "u1")))
         val changed = row.react(reactionBody = "C", userId = "u1")
         assertEquals(listOf("u1"), changed.reactions.map { it.userId })
@@ -31,9 +31,9 @@ class BridgeProbeTest {
 
     @Test
     fun anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, null)
+        openRecordSession()
         val ann = User.create(name = "Ann")
-        val record = Record.send(AccountScope.current(), containerId = "c1", authorId = ann.id, text = "hello").row
+        val record = settledRecord()
         val withUser = record.react(reactionBody = "A", userId = ann.id)
         assertEquals("Ann", withUser.reactions.first().user?.name)
         val withoutUser = record.react(reactionBody = "B", userId = "nobody")
@@ -42,7 +42,7 @@ class BridgeProbeTest {
 
     @Test
     fun aSearchPassesWholeWordsToTheCore() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, null)
+        reopenSigned(Config(null, null, 32u), modelsJSON)
         Moment.send(AccountScope.current(), text = "hello world").row
         Moment.send(AccountScope.current(), text = "hel").row
         val whole = Query("Moment", Moment).search("hel", wholeWords = true)
@@ -51,7 +51,7 @@ class BridgeProbeTest {
 
     @Test
     fun aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, null)
+        reopenSigned(Config(null, null, 32u), modelsJSON)
         assertNull(Moment.recent.cached())
         val moment = Moment.send(AccountScope.current(), text = "m").row
         Moment.recent.warm()
@@ -59,7 +59,7 @@ class BridgeProbeTest {
         assertEquals(listOf(moment.id), warm.value.map { it.id })
         assertEquals("m", warm.value.first().text)
         assertNull(Moment.recent.cachedRow("ghost"))
-        reopen(Config(null, null, 32u), modelsJSON, null)
+        reopenSigned(Config(null, null, 32u), modelsJSON)
         assertNull(Moment.recent.cached())
         Moment.send(AccountScope.current(), text = "n").row
         assertEquals(1, withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.size)
@@ -68,7 +68,7 @@ class BridgeProbeTest {
 
     @Test
     fun writesReachTypedLiveRows() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, null)
+        reopenSigned(Config(null, null, 32u), modelsJSON)
         val live = Moment.recent.live.flow
         assertEquals(emptyList<Moment>(), withTimeout(5000) { live.first() })
         val moment = Moment.send(AccountScope.current(), text = "m").row

@@ -243,10 +243,6 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], schem
     }).collect::<Vec<_>>().join("\n") + "\n"
 }
 
-fn creates_locally(model: &ModelSpec) -> bool {
-    model.actions.iter().find(|action| action.name == "create").is_none_or(|action| action.mutation.is_none())
-}
-
 pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
     let decls = checked_enum_decls(models, operations, schema_types);
     let mut out = "import Foundation\nimport DBlayer\n\n".to_string();
@@ -331,7 +327,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
                 else { writeln!(out, "        {args}[\"{name}\"] = try JSONValue.encode({printed})", printed = identifier(name, true)).unwrap(); }
             }
             writeln!(out, "        return try await scope.send(Self.self, values: {values}{})\n    }}", if create_args.is_empty() { String::new() } else { format!(", args: {args}") }).unwrap();
-        } else if creates_locally(model) {
+        } else {
             let params = swift_scope(&params);
             writeln!(out, "    @concurrent public static func create({params}) async throws -> Self {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
             if !create_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
@@ -486,7 +482,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             out.push_str("            }\n");
         }
         writeln!(out, "            return account.send(this, {values}{})\n        }}", if create_args.is_empty() { String::new() } else { format!(", {args}") }).unwrap();
-        } else if creates_locally(model) {
+        } else {
             let params = create_fields.iter().map(|field| {
                 let optional = create_optional(model, field);
                 let mut kind = field_type(field, false);
