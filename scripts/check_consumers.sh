@@ -6,7 +6,9 @@
 #   --maven <dir>     staged Maven directory com/noma4i/dblayer/<version> with the AAR, POM and module file
 #   --package-swift   the generated release Package.swift (the binary target is rewritten to the unzipped local framework)
 # Environment (no machine value is built in; an unset required variable is a clear error):
-#   YUPI_V3_REPO          app repository checkout (worktrees are made from its master)
+#   YUPI_V3_REPO          app repository checkout (worktrees are made from the lane refs below)
+#   CONSUMER_IOS_REF      app ref the iOS lane tests, default master                      (iOS lane)
+#   CONSUMER_ANDROID_REF  app ref the Android lane tests, default master                  (Android lane)
 #   CONSUMER_IOS_SIM      shared simulator name for sim-run                              (iOS lane)
 #   BRICK_HOST            ssh target of the Android build host                           (Android lane)
 #   BRICK_REMOTE_ROOT     absolute library root on that host                             (Android lane)
@@ -62,6 +64,8 @@ done
 
 sim_run="${SIM_RUN:-$HOME/.claude/bin/sim-run}"
 slot_tool="${BUILD_SLOT:-$HOME/.claude/bin/build-slot}"
+ios_ref="${CONSUMER_IOS_REF:-master}"
+android_ref="${CONSUMER_ANDROID_REF:-master}"
 media_cache="${CONSUMER_MEDIA_CACHE:-$HOME/.cache/yupi-v3/libraries}"
 brick_cache="${BRICK_LIBRARIES_CACHE:-.cache/yupi-v3/libraries-dblayer-check}"
 case "$brick_cache" in */libraries | .cache/yupi-v3/libraries | *..*) fail "BRICK_LIBRARIES_CACHE must be a dedicated directory, not a shared cache: $brick_cache" ;; esac
@@ -99,8 +103,9 @@ PY
 : > "$package/.fetched-$version"
 
 new_tree() {
-  local tree="$work/$1"
-  git -C "$YUPI_V3_REPO" worktree add --quiet --detach "$tree" master || return 1
+  local tree="$work/$1" ref="$2"
+  git -C "$YUPI_V3_REPO" rev-parse --verify --quiet "$ref^{commit}" > /dev/null || { echo "app ref not found in $YUPI_V3_REPO: $ref" >&2; return 1; }
+  git -C "$YUPI_V3_REPO" worktree add --quiet --detach "$tree" "$ref" || return 1
   printf '%s\n' "$tree"
 }
 
@@ -111,9 +116,9 @@ in_slot() {
 lane_ios() {
   local log="$logs/ios.log" tree
   [ -x "$sim_run" ] || { echo "sim-run not found: $sim_run (set SIM_RUN)" > "$log"; return 1; }
-  tree="$(new_tree ios-tree)" || { echo 'cannot make the iOS worktree' > "$log"; return 1; }
+  tree="$(new_tree ios-tree "$ios_ref" 2> "$log")" || { echo "cannot make the iOS worktree from $ios_ref" >> "$log"; return 1; }
   {
-    [ -f "$tree/ios/scripts/dblayer_path.sh" ] || { echo 'the app master lacks YUPI_DBLAYER_PATH support (ios/scripts/dblayer_path.sh)'; return 1; }
+    [ -f "$tree/ios/scripts/dblayer_path.sh" ] || { echo 'the app ref $ios_ref lacks YUPI_DBLAYER_PATH support (ios/scripts/dblayer_path.sh)'; return 1; }
     [ ! -f "$YUPI_V3_REPO/ios/Configs/Secrets.xcconfig" ] || cp "$YUPI_V3_REPO/ios/Configs/Secrets.xcconfig" "$tree/ios/Configs/"
     (cd "$tree" && YUPI_DBLAYER_PATH="$package" bash ios/scripts/bootstrap.sh) || return 1
     grep -Fq "$package" "$tree/ios/Yupi.xcodeproj/project.pbxproj" || { echo "the generated project does not name the local package $package"; return 1; }
@@ -124,12 +129,12 @@ lane_ios() {
 
 lane_android() {
   local log="$logs/android.log" tree cache mirror remote_log waited=0 out
-  tree="$(new_tree android-tree)" || { echo 'cannot make the Android worktree' > "$log"; return 1; }
+  tree="$(new_tree android-tree "$android_ref" 2> "$log")" || { echo "cannot make the Android worktree from $android_ref" >> "$log"; return 1; }
   cache="$work/android-cache"
   mirror="dblayer-check-$$"
   remote_log="$mirror.log"
   {
-    grep -q BRICK_LIBRARIES_CACHE "$tree/android/scripts/brick.sh" || { echo 'the app master lacks BRICK_LIBRARIES_CACHE support in android/scripts/brick.sh'; return 1; }
+    grep -q BRICK_LIBRARIES_CACHE "$tree/android/scripts/brick.sh" || { echo 'the app ref $android_ref lacks BRICK_LIBRARIES_CACHE support in android/scripts/brick.sh'; return 1; }
     mkdir -p "$cache/dblayer-maven/com/noma4i/dblayer" "$cache/dblayer-gen"
     mkdir -p "$cache/dblayer" && cp -R "$package/." "$cache/dblayer/"
     cp -R "$maven" "$cache/dblayer-maven/com/noma4i/dblayer/$version"
