@@ -20,7 +20,7 @@ object LoadPhase {
 class Snapshot<M : DBModel>(
     val rows: List<M>,
     val phase: LivePhase?,
-    val error: DbError?,
+    val error: DbException?,
     val total: Long?,
     val hasMore: Boolean,
     val complete: Boolean,

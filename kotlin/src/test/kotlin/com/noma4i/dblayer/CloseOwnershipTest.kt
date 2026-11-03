@@ -25,7 +25,7 @@ class CloseOwnershipTest {
         reopen(Config(null, null, 8u), modelsJSON)
         Moment.send(AccountScope.current(), text = "kept").row
         val received = CopyOnWriteArrayList<Any>()
-        val collecting = launch(Dispatchers.Default) { Moment.recent.live.flow.collect { received += it } }
+        val collecting = launch(Dispatchers.Default) { Moment.recent.live.flow.collect { received.add(it) } }
         eventually("the initial delivery") { received.isNotEmpty() }
         DBlayer.close()
         awaitWithin("the changes flow to end after the close") { collecting.join() }
