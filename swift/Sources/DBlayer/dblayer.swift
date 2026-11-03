@@ -1420,6 +1420,16 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func peekQuery(queryJson: String) async throws  -> CachedQuery?
     
     /**
+     * The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.
+     */
+    func readQuery(queryJson: String) async throws  -> [WireRow]
+    
+    /**
+     * One row read from SQLite once, off the calling thread.
+     */
+    func readRow(model: String, rowId: String) async throws  -> WireRow?
+    
+    /**
      * Loads the relation of the stream again from the server. The answer belongs to the epoch of the stream: it ends as `Interrupted` when the session changed.
      */
     func refreshStream(stream: UInt64) async throws 
@@ -2383,6 +2393,44 @@ open func peekQuery(queryJson: String)async throws  -> CachedQuery?  {
             completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
             freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionTypeCachedQuery.lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+    /**
+     * The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.
+     */
+open func readQuery(queryJson: String)async throws  -> [WireRow]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_read_query(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(queryJson)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeWireRow.lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+    /**
+     * One row read from SQLite once, off the calling thread.
+     */
+open func readRow(model: String, rowId: String)async throws  -> WireRow?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_read_row(
+                        self.uniffiCloneHandle(),FfiConverterString.lower(model),FfiConverterString.lower(rowId)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeWireRow.lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
 }
@@ -10863,6 +10911,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_peek_query() != 2987) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_read_query() != 18199) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_read_row() != 6491) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_refresh_stream() != 53015) {
