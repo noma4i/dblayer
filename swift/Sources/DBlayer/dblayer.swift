@@ -4151,9 +4151,6 @@ public protocol LiveEntitiesProtocol: AnyObject, Sendable {
     
     func decodeFailed(lease: EntityLease, revision: Int64, message: String) 
     
-    /**
-     * `waitForInitialLoad` of a held handle is an explicit call. While the session is ended the handle's own read is parked, so the call makes that read once, and its success opens the session again. With a live session the read of the handle is already running and nothing is sent.
-     */
     func loadInitial(id: String, lease: UInt64) async throws 
     
     func release(leases: [EntityLease]) throws 
@@ -4233,9 +4230,6 @@ open func decodeFailed(lease: EntityLease, revision: Int64, message: String)  {t
 }
 }
     
-    /**
-     * `waitForInitialLoad` of a held handle is an explicit call. While the session is ended the handle's own read is parked, so the call makes that read once, and its success opens the session again. With a live session the read of the handle is already running and nothing is sent.
-     */
 open func loadInitial(id: String, lease: UInt64)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -13636,7 +13630,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_liveentities_decode_failed() != 58925) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_liveentities_load_initial() != 42848) {
+    if (uniffi_dblayer_checksum_method_liveentities_load_initial() != 33937) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_liveentities_release() != 27114) {
