@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "dblayer"
-version = "6.15.2"
+version = "6.15.3"
 dependencies = [
  "aes-gcm",
  "async-trait",
