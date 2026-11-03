@@ -287,6 +287,9 @@ pub(crate) struct Lease {
 impl Lease {
     pub(crate) fn epoch(&self) -> u64 { self.epoch }
 
+    /// The data generation the lease was issued in, when the work reads or writes the data of that generation.
+    pub(crate) fn generation(&self) -> Option<Generation> { self.generation }
+
     /// Whether the epoch this lease was issued in is still the current one.
     pub(crate) fn is_current(&self) -> bool {
         let state = crate::db::locked(&self.life.state);

@@ -121,7 +121,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<Lifecycle>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) entity_cache: Arc<super::entity_pool::EntityCache>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<Lifecycle>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) entity_cache: Arc<super::entity_pool::EntityCache>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -148,7 +148,7 @@ impl Database {
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), testing: false, wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), stream_table: Arc::default(), testing: false, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -558,7 +558,7 @@ impl Database {
     }
 
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "transport is required for server operations".into() }) }
-    fn send_writes(&self) {
+    pub(super) fn send_writes(&self) {
         if let (Some(sync), Ok(executor)) = (self.sync.as_ref(), executor()) {
             let _entered = executor.enter();
             sync.inner.spawn_flush(Duration::ZERO);
@@ -580,7 +580,7 @@ impl Database {
         }).transpose()?.flatten();
         Ok((query, remote))
     }
-    fn subscribed(&self, listener: Arc<dyn QueryListener>, open: impl FnOnce(Arc<LiveFeed>) -> Result<LiveHandles, DbError>) -> Arc<LiveSubscription> {
+    pub(super) fn subscribed(&self, listener: Arc<dyn QueryListener>, open: impl FnOnce(Arc<LiveFeed>) -> Result<LiveHandles, DbError>) -> Arc<LiveSubscription> {
         let feed = LiveFeed::new(listener);
         feed.attach(self.streams.clone());
         if let Ok(sync) = self.sync() { feed.hold_first_screen(sync.first_screen()); }
@@ -676,13 +676,13 @@ impl Database {
             None => (None, None),
         })
     }
-    fn connect_json(&self, json: &str, count: bool, related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
+    pub(super) fn connect_json(&self, json: &str, count: bool, related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let (query, remote) = self.parsed_query(json)?;
         let description: Value = serde_json::from_str(json)?;
         let force = description.get("refreshOnConnect").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or(false);
         self.connect(query, remote, count, related, LoadOptions { force }, feed)
     }
-    fn connect(&self, mut query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, related: Option<String>, options: LoadOptions, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
+    pub(super) fn connect(&self, mut query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, related: Option<String>, options: LoadOptions, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
         let _entered = executor()?.enter();
         let model = query.model.to_string();
         let projection = related.map(|name| -> Result<_, DbError> {

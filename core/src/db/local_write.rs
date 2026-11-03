@@ -151,10 +151,15 @@ impl Db {
         self.create_with(model, values, Map::new())
     }
 
-    pub fn create_with(&self, model: &str, mut values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+    pub fn create_with(&self, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        self.create_in(None, model, values, args)
+    }
+
+    /// Creates the row in the data generation the caller was admitted in: a commit after that generation ended is refused as stale.
+    pub(crate) fn create_in(&self, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
         if !args.is_empty() { self.expire_blobs_before_use()?; }
         self.fill_local_sources(model, &mut values)?;
-        let id = self.insert_local(model, values, args, Action::Create, None, None)?;
+        let id = self.insert_local(model, values, args, Action::Create, (None, pinned), None)?;
         self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
 
@@ -163,7 +168,7 @@ impl Db {
         values.insert("id".into(), Value::String(id.to_string()));
         self.preparing_uploads(model, generation, |files, generation, committed| {
             let item = files.prepare(model, id, uuid::Uuid::new_v4().to_string(), input, state)?;
-            self.insert_local(model, values, Map::new(), Action::Upload(action.to_string()), Some((item, generation)), Some(committed))
+            self.insert_local(model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed))
         })
     }
 
@@ -226,7 +231,7 @@ impl Db {
         })
     }
 
-    fn insert_local<'a>(&'a self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: Option<(crate::commit::UploadAdmission, crate::identity::Generation)>, pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<RowId, DbError> {
+    fn insert_local<'a>(&'a self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<RowId, DbError> {
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &values)?;
         let mut input = values;
@@ -241,10 +246,12 @@ impl Db {
         let now_ms = self.shared.store.lock().now_ms();
         let data = spec.normalize_local(&input, now_ms)?;
         let key = ModelKey::new(model);
-        let (queued_input, upload, generation) = match held {
-            Some((item, generation)) => (Value::Object(item.input.variables.clone()), Some(item), Some(generation)),
-            None => (Value::Object(data.iter().chain(&args).map(|(name, value)| (name.clone(), value.clone())).collect()), None, None),
+        let (item, generation) = held;
+        let queued_input = match &item {
+            Some(item) => Value::Object(item.input.variables.clone()),
+            None => Value::Object(data.iter().chain(&args).map(|(name, value)| (name.clone(), value.clone())).collect()),
         };
+        let upload = item;
         let mut queued = Queued {
             action,
             row_id: id.clone(),
