@@ -38,7 +38,6 @@ enum Act {
     Login,
     Exit { revoke: bool },
     SessionReset,
-    Logout,
     Reset,
     Refresh,
     OpenHeld,
@@ -51,7 +50,6 @@ enum Act {
 #[derive(Clone, Copy, Debug)]
 enum Transition {
     Reset,
-    Logout,
     SessionReset,
     Exit,
 }
@@ -86,7 +84,7 @@ impl Machine {
     fn live(&self) -> bool { self.credential.is_some() && !self.ended }
 
     fn allowed(&self) -> Vec<Act> {
-        let mut acts = vec![Act::Tick, Act::Logout, Act::Reset];
+        let mut acts = vec![Act::Tick, Act::Reset];
         if self.views.len() < 3 && (self.data_empty || self.live()) { acts.push(Act::OpenHeld); }
         if !self.views.is_empty() { acts.push(Act::CancelHeld); }
         if self.credential.is_none() {
@@ -95,7 +93,7 @@ impl Machine {
             acts.extend([Act::Exit { revoke: true }, Act::Exit { revoke: false }, Act::SessionReset, Act::Refresh]);
         }
         if self.live() {
-            acts.extend([Act::Offline, Act::Overlap(Transition::Reset), Act::Overlap(Transition::Logout), Act::Overlap(Transition::SessionReset), Act::Overlap(Transition::Exit)]);
+            acts.extend([Act::Offline, Act::Overlap(Transition::Reset), Act::Overlap(Transition::SessionReset), Act::Overlap(Transition::Exit)]);
         }
         acts
     }
@@ -113,15 +111,9 @@ impl Machine {
             }
             Act::Exit { revoke } => self.exit(revoke).await?,
             Act::SessionReset => {
-                self.rig.database.session_reset().unwrap();
+                self.rig.database.session_reset().await.unwrap();
                 self.credential = None;
                 self.ended = true;
-                self.quiet().await?;
-            }
-            Act::Logout => {
-                bound(self.rig.database.logout()).await.unwrap();
-                self.ended = true;
-                self.data_empty = true;
                 self.quiet().await?;
             }
             Act::Reset => {
@@ -155,8 +147,7 @@ impl Machine {
             bound(database.run("UnregisterDevice".into(), "{}".into())).await.map_err(|error| format!("unregister: {error:?}"))?;
             bound(database.session_call("logout".into(), "{}".into())).await.map_err(|error| format!("logout call: {error:?}"))?;
         }
-        database.session_reset().unwrap();
-        bound(database.logout()).await.unwrap();
+        database.session_reset().await.unwrap();
         let account = self.credential.take();
         self.ended = true;
         self.data_empty = true;
@@ -185,19 +176,13 @@ impl Machine {
         tokio::time::timeout(Duration::from_secs(10), gate.entered_for("the overlapping call")).await.map_err(|_| "the overlapping call never reached the server".to_string())?;
         match transition {
             Transition::Reset => bound(self.rig.database.reset_for_testing()).await.unwrap(),
-            Transition::Logout => {
-                bound(self.rig.database.logout()).await.unwrap();
-                self.ended = true;
-                self.data_empty = true;
-            }
             Transition::SessionReset => {
-                self.rig.database.session_reset().unwrap();
+                self.rig.database.session_reset().await.unwrap();
                 self.credential = None;
                 self.ended = true;
             }
             Transition::Exit => {
-                self.rig.database.session_reset().unwrap();
-                bound(self.rig.database.logout()).await.unwrap();
+                self.rig.database.session_reset().await.unwrap();
                 let account = self.credential.take();
                 self.ended = true;
                 self.data_empty = true;
@@ -255,7 +240,7 @@ async fn run_seed(seed: u64, steps: u64) -> Result<(), String> {
     .await;
     let tape = machine.tape.clone();
     for view in &machine.views { view.held.cancel_all(); }
-    machine.rig.database.shutdown();
+    machine.rig.database.close_now();
     outcome.map_err(|failure| format!("{failure}\ntape {tape:?}"))
 }
 

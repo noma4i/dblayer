@@ -28,11 +28,11 @@ extension BridgeProbeTests {
 struct ReachabilityTests {
   @Test @MainActor
   func thePathStateGatesTheOpenDatabaseAndTheBootstrapRequest() async throws {
-    DB.close()
+    try await DB.close()
     let path = Reachability(monitor: nil)
     DB.reachability = path
     defer {
-      DB.close()
+      try await DB.close()
       DB.reachability = .shared
     }
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("fixtures/encrypted-http/kat.json")

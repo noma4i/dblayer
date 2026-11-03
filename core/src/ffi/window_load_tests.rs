@@ -205,7 +205,7 @@ async fn members_complete_chain() {
         let count = transport.queries.load(Ordering::SeqCst);
         db.set_online(false).unwrap();
         db.set_online(true).unwrap();
-        db.sync().unwrap().resume_settled().await;
+        db.sync().unwrap().settled_for_test().await;
         assert_eq!(transport.queries.load(Ordering::SeqCst), count, "closed readers do no network work");
     }
 }
@@ -228,7 +228,7 @@ async fn members_idle_work() {
     let calls = transport.queries.load(Ordering::SeqCst);
     db.set_online(false).unwrap();
     db.set_online(true).unwrap();
-    db.sync().unwrap().resume_settled().await;
+    db.sync().unwrap().settled_for_test().await;
     assert_eq!(transport.queries.load(Ordering::SeqCst), calls);
     db.db.reset_all().unwrap();
     let pending = db.live_window(WINDOW.into(), 50, Some(200), Arc::new(Tape(Mutex::default())));
@@ -238,7 +238,7 @@ async fn members_idle_work() {
     spin_until("last reader cancels the request", || transport.active.load(Ordering::SeqCst) == 0);
     db.set_online(false).unwrap();
     db.set_online(true).unwrap();
-    db.sync().unwrap().resume_settled().await;
+    db.sync().unwrap().settled_for_test().await;
     assert_eq!(transport.queries.load(Ordering::SeqCst), calls + 2);
     let tail = Arc::new(Tape(Mutex::default()));
     let reopened = db.live_window(WINDOW.into(), 50, Some(200), tail.clone());

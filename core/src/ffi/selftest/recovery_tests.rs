@@ -28,14 +28,14 @@ async fn a_data_reset_between_a_refused_pending_request_and_the_session_reset_ke
     let refused = bound(database.settled("Moment".into(), row.id.clone(), None)).await.unwrap_err();
     assert_eq!(session(refused).0, SessionCode::Unauthenticated);
 
-    bound(database.logout()).await.unwrap();
+    database.db.reset_all().unwrap();
     let blocked = bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap_err();
 
     assert!(matches!(blocked, DbError::Network { .. }), "the data reset dropped the pending request: {blocked:?}");
-    database.session_reset().unwrap();
+    database.session_reset().await.unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     assert!(effects(&rig, "MakeMoment").is_empty(), "the refused request ran at the server");
-    database.shutdown();
+    database.close_now();
 }
 
 /// C17, I32: a pending encrypted request survives the close, the reopen of the same file resumes it once, and a reopen with a new data version keeps the credential and the next sequence.
@@ -47,14 +47,14 @@ async fn a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once(
     let first = rig.open(Some(&path), pin()).await.unwrap();
     rig.server.drop_next_request();
     crate::ffi::encrypted_tests::cancel_on_retry(&rig.retries, first.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into())).await;
-    first.shutdown();
+    first.close_now();
     drop(first);
 
     let reopened = rig.open(Some(&path), pin()).await.unwrap();
     let resumed = reopened.session_resume().await.unwrap();
     assert_eq!(resumed.as_deref(), Some(r#"{"nextStep":"authenticated"}"#));
     assert_eq!(rig.server.executed().len(), 1);
-    reopened.shutdown();
+    reopened.close_now();
     drop(reopened);
 
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
@@ -62,7 +62,7 @@ async fn a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once(
     assert_eq!(migrated.session_resume().await.unwrap(), None, "the new schema resent a request that already ran");
     migrated.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into()).await.unwrap();
     assert_eq!(rig.server.executed().len(), 2, "the next request after the new schema did not run once");
-    migrated.shutdown();
+    migrated.close_now();
 }
 
 struct HeldPut(Arc<Gate>);
@@ -113,7 +113,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
 
         crate::test_wait::yield_until("both settle calls parked", || database.sync.as_ref().unwrap().counters().settle_parks >= 2).await;
 
-        if data_logout { named_bound("logout", database.logout()).await.unwrap() } else { database.session_reset().unwrap() }
+        if data_logout { named_bound("logout", database.session_reset()).await.unwrap() } else { database.session_reset().await.unwrap() }
 
         for (index, waiter) in waiters.into_iter().enumerate() {
             let ended = named_bound(&format!("settled of upload {index}"), waiter).await.unwrap();
@@ -127,6 +127,6 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         let made = effects(&rig, "MakeMoment");
         assert!(made.len() <= 2, "data_logout={data_logout}: {} mutations ran for 2 uploads", made.len());
         if data_logout { assert!(made.is_empty(), "data_logout={data_logout}: the late PUT of cleared work reached the server"); }
-        database.shutdown();
+        database.close_now();
     }
 }

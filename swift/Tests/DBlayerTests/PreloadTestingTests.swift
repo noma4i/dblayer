@@ -26,7 +26,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func openTestingKeepsScopePreloadsQuietUnlessAskedAndLoadsThemWhenAsked() async throws {
     for preload in [false, true] {
-      DB.close()
+      try await DB.close()
       let transport = MockTransport()
       transport.enqueue("PresenceOnline", reply: #"{"data":{"presenceOnline":[]}}"#)
       try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [PresenceOnline.self], preload: preload)
@@ -37,13 +37,13 @@ extension BridgeProbeTests {
       }
       #expect(transport.unscripted.isEmpty)
     }
-    DB.close()
+    try await DB.close()
   }
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aPreloadScopeDerivedFromAnotherScopeLoadsOnceForEachRowOfIt() async throws {
-    DB.close()
+    try await DB.close()
     let transport = MockTransport()
     transport.enqueue("PresenceOnline", reply: #"{"data":{"presenceOnline":[{"id":"p1","userId":"u1","room":"a"},{"id":"p2","userId":"u2","room":"b"}]}}"#)
     transport.enqueue("PresenceHistory", reply: #"{"data":{"presenceHistory":[]}}"#)
@@ -56,13 +56,13 @@ extension BridgeProbeTests {
     }
     #expect(loaded.sorted() == ["p1", "p2"])
     #expect(transport.unscripted.isEmpty)
-    DB.close()
+    try await DB.close()
   }
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func refreshPreloadsReloadsEveryPreloadScopeEvenWhenItIsFresh() async throws {
-    DB.close()
+    try await DB.close()
     let transport = MockTransport()
     transport.enqueue("PresenceOnline", reply: #"{"data":{"presenceOnline":[{"id":"p1","userId":"u1","room":"a"},{"id":"p2","userId":"u2","room":"b"}]}}"#)
     transport.enqueue("PresenceOnline", reply: #"{"data":{"presenceOnline":[{"id":"p1","userId":"u1","room":"a"},{"id":"p2","userId":"u2","room":"b"}]}}"#)
@@ -75,6 +75,6 @@ extension BridgeProbeTests {
     try await DB.refreshPreloads()
     #expect(transport.calls.count == 10)
     #expect(transport.unscripted.isEmpty)
-    DB.close()
+    try await DB.close()
   }
 }

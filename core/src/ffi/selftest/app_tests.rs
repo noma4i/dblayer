@@ -32,7 +32,7 @@ async fn app_login_in_the_ios_and_android_order_fills_the_handles_held_since_lau
         held.lists_show("A").await;
         assert!(rig.world.count("MyProfile") >= 1, "android={android}: the profile was never loaded");
         assert_eq!(rig.world.count("SessionProfile"), usize::from(!android), "android={android}");
-        rig.database.shutdown();
+        rig.database.close_now();
     }
 }
 
@@ -67,7 +67,7 @@ async fn app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_
     let log = held.log.0.lock().unwrap().clone();
     assert!(log.iter().skip(marks.2).all(|snapshot| snapshot.value.as_ref().is_none_or(|row| !named(row, "A"))), "account A reached the singleton after the exit");
     assert!(quiet_since(&held.rows, marks.0, "A") && quiet_since(&held.window_rows, marks.1, "A"), "account A reached a held list after the exit");
-    rig.database.shutdown();
+    rig.database.close_now();
 }
 
 /// C08, R-9: the Android exit cancels the collectors after the session reset. Then the next login reads through fresh handles.
@@ -92,7 +92,7 @@ async fn app_logout_android_order_cancels_the_streams_and_the_next_login_reads_a
     held.shows("B").await;
     assert!(rig.world.count("Users") > before);
     assert!(fresh.never_showed("A"));
-    rig.database.shutdown();
+    rig.database.close_now();
 }
 
 /// C09, R-7: the local-only exit sends neither unregister nor logout. The server session stays and no request follows.
@@ -115,7 +115,7 @@ async fn app_logout_local_only_skips_the_revoke_and_stops_every_read() {
         assert!(rig.world.violations().is_empty(), "cancel={cancel}: a read followed the local exit: {:?} log {:?}", rig.world.violations(), rig.world.log().iter().rev().take(6).collect::<Vec<_>>());
         assert!(held.log.empty());
         assert!(quiet_since(&held.rows, mark.0, "A"));
-        rig.database.shutdown();
+        rig.database.close_now();
     }
 }
 
@@ -135,7 +135,7 @@ async fn app_logout_stops_when_the_unregister_is_refused() {
     assert_eq!(rig.world.count("UnregisterDevice"), 0);
     assert!(rig.database.session.as_ref().unwrap().signed_in().unwrap().is_some(), "the refusal cleared the credential");
     held.shows("A").await;
-    rig.database.shutdown();
+    rig.database.close_now();
 }
 
 /// C12: A, B, A with every kind of handle held. After each exit nothing of the previous account is delivered, a late answer of the old account changes nothing, the history ends on the new account.
@@ -166,7 +166,7 @@ async fn account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_
         assert!(quiet_since(&held.rows, marks.0, previous) && quiet_since(&held.window_rows, marks.1, previous), "{previous} reached a held list while {account} logs in");
         previous = account;
     }
-    rig.database.shutdown();
+    rig.database.close_now();
 }
 
 /// Exit and login of the same account: the handles show it again, the reads repeat, and the server sees one more login.
@@ -186,7 +186,7 @@ async fn logout_then_login_of_the_same_account_reads_it_again() {
     held.shows("A").await;
     held.lists_show("A").await;
     assert!(rig.world.count("MyProfile") > reads, "the same account was not read again");
-    rig.database.shutdown();
+    rig.database.close_now();
 }
 
 /// C19, R-5: login is refused as already authenticated, the confirmed sign-out follows, the login repeats and starts the session. A refused sign-out does not repeat the login.
@@ -202,7 +202,6 @@ async fn login_link_already_authenticated_signs_out_then_repeats_once() {
 
     bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap();
     bound(rig.database.session_call("login_link".into(), body.clone())).await.unwrap();
-    bound(rig.database.logout()).await.unwrap();
     bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
 
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "login_link").count(), logins + 1);
@@ -213,7 +212,7 @@ async fn login_link_already_authenticated_signs_out_then_repeats_once() {
     assert_eq!(session_code(refused), SessionCode::SessionEnded);
     assert!(rig.world.signed(), "a refused sign-out ended the server session");
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "login_link").count(), logins + 1, "a refused sign-out repeated the login");
-    rig.database.shutdown();
+    rig.database.close_now();
 }
 
 /// S5 and G-06: a wait for the initial load of a held list that opens after the exit ends within the bound once a call of the app reads again.
@@ -234,5 +233,5 @@ async fn a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_en
     bound(pending).await.unwrap().unwrap();
     yield_until("the late list shows B", || rows.0.lock().unwrap().iter().any(|row| named(row, "B"))).await;
     assert!(rows.1.lock().unwrap().iter().all(|change| change.rows.iter().all(|row| !named(row, "A"))));
-    rig.database.shutdown();
+    rig.database.close_now();
 }

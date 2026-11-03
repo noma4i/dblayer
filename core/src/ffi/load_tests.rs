@@ -215,7 +215,7 @@ async fn testing_settle_waits_for_a_load_that_outlives_reset() {
     db.reset_for_testing().await.unwrap();
     assert!(within(load).await.unwrap().is_err(), "the explicit load waited for its request after the reset");
     within(db.settle_for_testing()).await.unwrap();
-    assert_eq!(db.testing_busy().unwrap(), None, "the ended load left a flight");
+    assert!(db.streams.quiet(), "the ended load left a lease: {:?}", db.streams.held());
     hold.add_permits(1);
     assert!(!stored(&db));
 
@@ -260,7 +260,7 @@ async fn testing_settle_names_a_held_load_after_the_bound() {
     let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
     let error = crate::test_wait::within_secs(20, db.settle_for_testing()).await.unwrap_err();
-    assert!(error.to_string().contains("load flights"));
+    assert!(error.to_string().contains("Explicit load"), "{error}");
     hold.add_permits(1);
     within(load).await.unwrap().unwrap();
 }

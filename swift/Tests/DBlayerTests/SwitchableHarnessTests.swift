@@ -47,7 +47,7 @@ extension BridgeProbeTests {
   @Test
   func aHarnessResetWithTheTargetUnsetLeavesTheNextWindowClean() async throws {
     for unset in [DbError.Interrupted(detail: "transport unavailable during reset"), DbError.Invalid(detail: "No test transport")] {
-      DB.close()
+      try await DB.close()
       let first = MockTransport(unanswered: .networkError)
       first.enqueue("UserProfile", reply: Self.profile("A"))
       let switchable = SwitchableTransport(first, unset: unset)
@@ -71,7 +71,7 @@ extension BridgeProbeTests {
       #expect(entity.value?.name == "B")
       #expect(second.calls.count == 1)
       if case let .failed(error) = entity.read { Issue.record("the next window inherited \(error)") }
-      DB.close()
+      try await DB.close()
     }
   }
 
@@ -79,18 +79,16 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func reopeningAfterACloseGivesACleanDatabaseWithAndWithoutATransport() async throws {
-    DB.close()
+    try await DB.close()
     let first = MockTransport(unanswered: .networkError)
     first.enqueue("UserProfile", reply: Self.profile("A"))
     try await DB.openTesting(transport: first, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: Self.operations)
     let entity = User.entity()
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    DB.close()
-
+    try await DB.close()
     try await DB.openTesting(transport: nil, modelsJSON: modelsJSON)
-    DB.close()
-
+    try await DB.close()
     let second = MockTransport(unanswered: .networkError)
     second.enqueue("UserProfile", reply: Self.profile("B"))
     try await DB.openTesting(transport: second, modelsJSON: modelsJSON)
@@ -98,6 +96,6 @@ extension BridgeProbeTests {
     let reopened = User.entity()
     await eventually(#"reopened.value?.name == "B""#) { reopened.value?.name == "B" }
     #expect(first.calls.count == 1)
-    DB.close()
+    try await DB.close()
   }
 }

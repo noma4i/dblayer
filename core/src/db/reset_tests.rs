@@ -48,11 +48,11 @@ struct ResetProbe {
     call: ResetCall,
 }
 
-impl crate::lifecycle::Member for ResetProbe {
+impl crate::lifecycle::Holder for ResetProbe {
     fn close(&self) {}
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
-    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
-        if let crate::lifecycle::Change::Reset(models) = &snapshot.change { (self.call)(models.as_deref()); }
+    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
+        if let crate::lifecycle::Change::Cleared(models) = &snapshot.change { (self.call)(models.as_deref()); }
     }
 }
 

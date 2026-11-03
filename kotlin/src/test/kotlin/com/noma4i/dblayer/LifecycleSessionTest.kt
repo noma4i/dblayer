@@ -76,7 +76,7 @@ class LifecycleSessionTest {
     /** The order of the app: sign-in call, data logout, session profile, profile refresh. */
     private suspend fun startSession(name: String) {
         DBlayer.database.sessionCall("login_link", """{"account":"$name"}""")
-        DBlayer.logout()
+        DBlayer.sessionReset()
         DBlayer.run("SessionProfile", JsonObject(emptyMap()))
         User.profile.refresh()
     }
@@ -97,7 +97,7 @@ class LifecycleSessionTest {
             val entity = User.entity()
             eventually("the held entity shows A") { entity.value.value?.name == "A" }
             val before = server.requests.size
-            DBlayer.logout()
+            DBlayer.sessionReset()
             assertNull(entity.value.value)
             server.refuseEverything(true)
             DBlayer.resetForTesting()
@@ -121,7 +121,6 @@ class LifecycleSessionTest {
             eventually("the held entity shows A") { entity.value.value?.name == "A" }
             DBlayer.database.sessionCall("logout", "{}")
             DBlayer.sessionReset()
-            DBlayer.logout()
             assertNull(entity.value.value)
             val before = server.requests.size
             server.refuseEverything(true)
@@ -150,7 +149,6 @@ class LifecycleSessionTest {
             awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
             DBlayer.sessionReset()
             awaitWithin("the cancel of the coroutine that holds the stream") { holding.cancelAndJoin() }
-            awaitWithin("the data logout") { DBlayer.logout() }
             awaitWithin("the wait that was pending at the exit") { pending.await() }
             val late = runCatching { awaitWithin("the first-load wait after the exit") { entity.waitForInitialLoad() } }.exceptionOrNull()
             assertTrue("the wait after the exit must end Interrupted: $late", late is DbException.Interrupted)
@@ -207,7 +205,7 @@ class LifecycleSessionTest {
             try {
                 eventually("the held list shows A") { states.lastOrNull()?.contains("A") == true }
                 val seen = states.size
-                DBlayer.logout()
+                DBlayer.sessionReset()
                 startSession("B")
                 eventually("the held list shows B") { states.lastOrNull()?.contains("B") == true }
                 DBlayer.settleForTesting()
@@ -240,7 +238,6 @@ class LifecycleSessionTest {
                 awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
                 DBlayer.sessionReset()
                 live.cancel()
-                awaitWithin("the data logout") { DBlayer.logout() }
                 awaitWithin("the wait that was pending at the exit") { pending.await() }
                 assertNull(entity.value.value)
                 server.hold(null)
@@ -275,7 +272,6 @@ class LifecycleSessionTest {
                     eventually("the reread waits at the server") { server.parkedCount > 0 }
                     awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
                     DBlayer.sessionReset()
-                    awaitWithin("the data logout") { DBlayer.logout() }
                     assertNull(entity.value.value)
                     val seen = history.states.size
                     server.hold(null)
@@ -306,7 +302,6 @@ class LifecycleSessionTest {
             val reads = server.operationRequests("UserProfile")
             DBlayer.database.sessionCall("logout", "{}")
             DBlayer.sessionReset()
-            DBlayer.logout()
             assertNull(entity.value.value)
             startSession("A")
             eventually("the held entity shows A again") { entity.value.value?.name == "A" }
@@ -325,7 +320,6 @@ class LifecycleSessionTest {
             val entity = User.entity()
             eventually("the held entity shows A") { entity.value.value?.name == "A" }
             DBlayer.sessionReset()
-            DBlayer.logout()
             assertNull(entity.value.value)
             val before = server.requests.size
             server.refuseEverything(true)

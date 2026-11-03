@@ -48,7 +48,7 @@ async fn inv_fresh_07_resume_reloads_a_watched_window_that_is_stale_invalidated_
             rig.clock.advance(Duration::from_secs(case.idle_secs));
             if by_event {
                 rig.sync.enter_foreground();
-                within(rig.sync.resume_settled()).await;
+                within(rig.sync.settled_for_test()).await;
             } else {
                 let report = within(rig.sync.resume()).await.unwrap();
                 assert_eq!((report.chunks, report.loaded, report.failed), (case.chunks, case.loaded, 0), "{}", case.name);
@@ -73,7 +73,7 @@ async fn foreground_and_online_together_reload_a_stale_window_once() {
     rig.sync.enter_foreground();
     rig.sync.set_online(true);
     rig.sync.enter_foreground();
-    within(rig.sync.resume_settled()).await;
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
 }
 
@@ -85,10 +85,10 @@ async fn offline_foreground_is_ignored_and_the_return_online_reloads() {
     rig.sync.set_online(false);
     rig.clock.advance(Duration::from_secs(120));
     rig.sync.enter_foreground();
-    within(rig.sync.resume_settled()).await;
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     rig.sync.set_online(true);
-    within(rig.sync.resume_settled()).await;
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
 }
 
@@ -102,7 +102,7 @@ async fn an_event_during_a_run_reloads_the_window_it_missed() {
     within(rig.transport.await_calls("MomentsFeed", 1)).await;
     let _by_user = rig.sync.watch("moments", "by_user", &params(json!({"userId": "u1"}))).unwrap();
     rig.sync.enter_foreground();
-    within(rig.sync.resume_settled()).await;
+    within(rig.sync.settled_for_test()).await;
     assert_eq!((rig.transport.call_count("MomentsFeed"), rig.transport.call_count("MomentsByUser")), (1, 1));
 }
 
@@ -122,7 +122,7 @@ async fn the_foreground_keeps_a_session_refusal_and_the_manual_resume_clears_it(
     }
     assert!(refused());
     rig.sync.enter_foreground();
-    within(rig.sync.resume_settled()).await;
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("VibeEvents"), 1);
     within(rig.sync.resume()).await.unwrap();
     within(rig.transport.await_calls("VibeEvents", 2)).await;
@@ -138,7 +138,7 @@ async fn a_session_refusal_from_a_normal_load_keeps_events_away_until_the_manual
     assert!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     rig.sync.enter_foreground();
-    within(rig.sync.resume_settled()).await;
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     within(rig.sync.resume()).await.unwrap();
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
@@ -191,7 +191,7 @@ async fn a_manual_resume_gets_the_report_of_the_pass_that_started_after_it_while
     }
     let report = within(report).await.unwrap().unwrap();
     assert_eq!((report.loaded, report.failed), (1, 1));
-    within(rig.sync.resume_settled()).await;
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 3);
 }
 
@@ -202,7 +202,7 @@ async fn a_runner_dropped_before_its_first_poll_fails_the_waiting_resume() {
     let runner = rig.sync.inner.begin_resume(super::resume_machine::Cause::Explicit, Some(sender)).unwrap();
     drop(runner.run());
     assert_eq!(report.try_recv(), Ok(Err(crate::sync::SyncError::Cancelled)));
-    within(rig.sync.resume_settled()).await;
+    within(rig.sync.settled_for_test()).await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -280,17 +280,17 @@ async fn a_committed_credential_resumes_once_and_the_same_credential_does_not() 
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     rig.clock.advance(Duration::from_secs(120));
     rig.transport.set_session(None);
-    rig.sync.session_committed();
-    within(rig.sync.resume_settled()).await;
+    rig.sync.commit_session_for_test();
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1, "no credential");
     rig.transport.set_session(Some("first"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c2"));
-    rig.sync.session_committed();
-    within(rig.sync.resume_settled()).await;
+    rig.sync.commit_session_for_test();
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2, "new credential");
     rig.clock.advance(Duration::from_secs(120));
-    rig.sync.session_committed();
-    within(rig.sync.resume_settled()).await;
+    rig.sync.commit_session_for_test();
+    within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2, "same credential");
 }
 
@@ -303,7 +303,7 @@ async fn refresh_on_foreground_reloads_a_fresh_window_once_per_foreground_event(
         rig.sync.load("moments", relation, &none(), LoadOptions::default()).await.unwrap();
         rig.clock.advance(Duration::from_secs(5));
         rig.sync.enter_foreground();
-        within(rig.sync.resume_settled()).await;
+        within(rig.sync.settled_for_test()).await;
         assert_eq!(rig.transport.call_count("MomentsFeed"), 1 + reloads, "{relation}");
     }
 }

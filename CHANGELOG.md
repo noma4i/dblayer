@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+- One lifecycle owner: every request, load, upload and subscription holds a lease, and a session end, test reset or close ends the old leases.
+- `sessionReset` and `close` are async and return after the clearing; `sessionReset` also clears the data.
+- `resetForTesting` ends the test session and starts the next one; it no longer promises a fresh open.
+- `settleForTesting` returns when no lease is held.
+- A session end replays after a crash between the credential and the data clear.
+
+### Removed
+- `DB.logout` and `DBlayer.logout`: use `sessionReset`.
+- `testing_busy` polling and the fresh-open baseline of `resetForTesting`.
+
 ### Added
 - Lifecycle sequence tests in the core, Swift and Kotlin with a manifest of the sequences C01 to C19.
 

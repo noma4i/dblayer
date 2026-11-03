@@ -83,8 +83,8 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func inv_api_05_openTestingHoldsSubscriptionsUntilRegistrationCompletes() async throws {
-    DB.close()
-    defer { DB.close() }
+    try await DB.close()
+    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [RecordEvents.self], listening: false)
     try await DB.resume()

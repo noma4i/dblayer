@@ -14,6 +14,10 @@ use crate::pacing::ManualClock;
 use crate::test_wait::{join_within, recv_within};
 use crate::transport::TransportError;
 
+fn reset_blocking(client: &EncryptedClient) -> Result<(), TransportError> {
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(client.reset())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
     ResetInGet,
@@ -35,7 +39,7 @@ impl Slot {
     fn reset_once(&self) -> Result<(), TransportError> {
         if self.fired.swap(true, Ordering::SeqCst) { return Ok(()); }
         let client = self.client.lock().unwrap().upgrade().expect("the client is alive");
-        client.reset()
+        reset_blocking(&client)
     }
 }
 
@@ -126,7 +130,7 @@ fn reset_is_not_blocked_by_a_slow_credential_callback() {
     recv_within(&rig.entered);
 
     let client = rig.client.clone();
-    join_within(std::thread::spawn(move || client.reset().unwrap()));
+    join_within(std::thread::spawn(move || reset_blocking(&client).unwrap()));
     rig.release.send(()).unwrap();
 
     assert!(join_within(load).is_err());

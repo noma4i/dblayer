@@ -337,7 +337,6 @@ impl Rig {
     pub(super) async fn login_ios(&self, account: &str) {
         let database = &self.database;
         bound(database.session_call("login_link".into(), json!({"account":account}).to_string())).await.unwrap();
-        bound(database.logout()).await.unwrap();
         bound(database.run("SessionProfile".into(), "{}".into())).await.unwrap();
         bound(database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
     }
@@ -345,7 +344,6 @@ impl Rig {
     pub(super) async fn login_android(&self, account: &str) {
         let database = &self.database;
         bound(database.session_call("social".into(), json!({"account":account}).to_string())).await.unwrap();
-        bound(database.logout()).await.unwrap();
         bound(database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
     }
 
@@ -357,9 +355,8 @@ impl Rig {
             bound(database.session_call("logout".into(), "{}".into())).await.unwrap();
             assert!(!self.world.signed(), "the server did not confirm the logout");
         }
-        database.session_reset().unwrap();
+        database.session_reset().await.unwrap();
         if cancel { held.cancel_streams(); }
-        bound(database.logout()).await.unwrap();
     }
 
     /// A second open through the opener that already owns an open database.

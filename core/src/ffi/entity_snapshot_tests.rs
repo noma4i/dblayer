@@ -143,7 +143,7 @@ async fn entity_snapshot_order() {
     assert!(matches!(error.phase, EntityStage::Failed { .. }) && error.value == fresh.value && error.settled);
     revisions.push(error.revision);
     let generation = live.generation();
-    db.logout().await.unwrap();
+    db.session_reset().await.unwrap();
     let removed = next(&mut receiver, EntityStage::Absent).await;
     assert!(removed.value.is_none() && removed.generation > generation);
     revisions.push(removed.revision);

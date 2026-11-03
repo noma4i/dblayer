@@ -214,7 +214,7 @@ A direct `run` mutation has no queued owner, so `sessionResume()` returns its an
 do {
   try await Moment.feed.load()
 } catch DbError.Session(let code, _) where code == .unauthenticated {
-  try DB.sessionReset()
+  try await DB.sessionReset()
   try await DB.sessionCall("social", body: signIn)
   try await DB.retryAll()
 }
@@ -449,7 +449,7 @@ The final content mutation follows the [write rules](files.md#rules-1): a confir
 | `INVALID_RECEIPT` | retry with a pause if the step returned this code | `Failed`, transactionDisposition is kept |
 | `INVALID_OPERATION` | retry with a pause if the step returned this code | `Failed` |
 | `SERVICE_UNAVAILABLE` | retry with a pause | retry with a pause |
-- `sessionReset()` deletes the credential and the stored state without contacting the server.
+- `sessionReset()` ends the session without contacting the server. It ends the work of the old session, deletes the credential and the stored state, and clears the data of the account. It returns after the clearing. Signing out of the app is this one call.
 - A `logout` answer with `revoked` clears the credential and the state in one step, without confirming the sequence first. If your `CredentialStore.clear` fails, the pending logout stays and `sessionResume()` finishes it with the answer the server stored.
 - The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.
 

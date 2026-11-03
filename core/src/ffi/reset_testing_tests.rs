@@ -125,7 +125,7 @@ async fn prepare(db: &Database, switch: &Switch, next: &Arc<Backend>) {
 fn fetch(id: &str, lease: u64) -> Vec<EntityRequest> { vec![EntityRequest { id: id.into(), lease, fetch: EntityFetch::Force }] }
 
 #[tokio::test]
-async fn reset_for_testing_returns_the_database_to_a_fresh_open() {
+async fn reset_for_testing_ends_the_old_work_and_the_next_declaration_reads_the_next_transport() {
     let switch = Arc::new(Switch::default());
     let held_reply = Arc::new(tokio::sync::Semaphore::new(0));
     let previous = Backend::new(Some(held_reply));
@@ -133,7 +133,6 @@ async fn reset_for_testing_returns_the_database_to_a_fresh_open() {
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, models(), Some(switch.clone() as Arc<dyn Transport>), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(OPERATIONS.into()).unwrap();
     db.set_listening(false).unwrap();
-    db.sync().unwrap().mark_open_baseline();
 
     let _held_notices = db.live_query(NOTICES.into(), Arc::new(Silent));
     yield_until("the subscription of the previous test", || previous.count("Notices") == 1).await;
@@ -145,8 +144,8 @@ async fn reset_for_testing_returns_the_database_to_a_fresh_open() {
 
     let first = Backend::new(None);
     prepare(&db, &switch, &first).await;
-    assert!(db.db.connectivity().is_online());
-    assert_eq!(db.testing_busy().unwrap(), None);
+    db.set_online(true).unwrap();
+    assert!(db.streams.quiet(), "{:?}", db.streams.held());
     assert!(first.names().is_empty(), "work of the previous test called the next transport: {:?}", first.names());
     db.resume().await.unwrap();
     within(db.settle_for_testing()).await.unwrap();
@@ -167,15 +166,14 @@ async fn reset_for_testing_returns_the_database_to_a_fresh_open() {
 
     db.set_online(false).unwrap();
     entities.retain(fetch("m3", 3)).unwrap();
-    yield_until("the parked refresh", || db.testing_busy().unwrap().is_none()).await;
+    yield_until("the parked refresh", || db.streams.quiet()).await;
     let second = Backend::new(None);
     prepare(&db, &switch, &second).await;
-    assert!(db.db.connectivity().is_online(), "the reset kept the network off");
     db.set_online(true).unwrap();
     within(db.settle_for_testing()).await.unwrap();
     assert_eq!(second.count("Node"), 0, "a refresh parked before the reset reached the next transport: {:?}", second.names());
 
-    db.logout().await.unwrap();
+    db.session_reset().await.unwrap();
     assert!(!db.streams.snapshot().signed_in());
     let third = Backend::new(None);
     prepare(&db, &switch, &third).await;

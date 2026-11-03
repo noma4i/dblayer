@@ -52,7 +52,7 @@ extension BridgeProbeTests {
   @Test @MainActor func sessionResumeDecodesTheAnswerAndResetReachesTheCore() async throws {
     try await withRecordingSession { recording in
       #expect(try await DB.sessionResume(as: TicketAnswer.self) == TicketAnswer(ticket: "t-2"))
-      try DB.sessionReset()
+      try await DB.sessionReset()
       #expect(recording.calls == ["resume", "reset"])
     }
   }

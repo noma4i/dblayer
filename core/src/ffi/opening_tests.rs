@@ -16,7 +16,7 @@ async fn a_second_open_is_refused_even_with_equal_arguments_until_the_database_i
             other => panic!("second open gave {:?}", other.map(|_| ())),
         }
     }
-    first.shutdown();
+    first.close_now();
     let second = open(&slot).await.unwrap();
     assert!(!Arc::ptr_eq(&first, &second));
     assert!(open(&slot).await.is_err());
@@ -98,7 +98,7 @@ async fn the_power_and_memory_facts_given_to_open_hold_the_first_preload() {
         let sync = database.sync().unwrap();
         if loads_at_open {
             yield_until("the preload at open", || requests.load(Ordering::SeqCst) == 1).await;
-            database.shutdown();
+            database.close_now();
             continue;
         }
         assert!(requests.load(Ordering::SeqCst) == 0 && !sync.preload_running(), "power_saving={power_saving} low_ram={low_ram} started a preload at open");
@@ -110,7 +110,7 @@ async fn the_power_and_memory_facts_given_to_open_hold_the_first_preload() {
         } else {
             yield_until("the preload after power saving ends", || requests.load(Ordering::SeqCst) == 1).await;
         }
-        database.shutdown();
+        database.close_now();
     }
 }
 
@@ -146,7 +146,7 @@ async fn the_preload_waits_until_the_listener_has_taken_its_first_snapshot() {
     drop(release);
     yield_until("the preload after the first snapshot", || requests.load(Ordering::SeqCst) == 1).await;
     live.cancel();
-    database.shutdown();
+    database.close_now();
 }
 
 #[tokio::test]
@@ -183,6 +183,6 @@ async fn preload_off_sends_no_request_on_any_event_and_on_loads() {
             sync.inner.preload_on_event();
             assert!(requests.load(Ordering::SeqCst) == 0 && !sync.preload_running(), "clocked={clocked} preload off started a request");
         }
-        database.shutdown();
+        database.close_now();
     }
 }

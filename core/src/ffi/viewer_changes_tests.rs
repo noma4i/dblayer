@@ -120,5 +120,5 @@ async fn held_subscriptions_and_model_events_keep_working_through_a_reset_of_the
     current.event(change("NEXT")).unwrap();
     let item = within(events.clone().next()).await.unwrap().expect("the held model event feed ended with the reset");
     assert!(matches!(&item, super::WireModelEventItem::Event { event } if event.kind == "NEXT" && event.id == "m1"), "the first event after the reset must come from the new connection: {item:?}");
-    database.shutdown();
+    database.close_now();
 }

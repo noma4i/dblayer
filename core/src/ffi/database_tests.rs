@@ -43,7 +43,7 @@ async fn unified_open_without_encryption_sends_plain_graphql_through_the_transpo
     let database = Database::open(config(), "[]".into(), Some(Arc::new(Plain)), None, None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).unwrap();
     assert_eq!(database.run("Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
-    assert!(matches!(database.session_reset(), Err(DbError::Invalid { .. })));
+    database.session_reset().await.unwrap();
 }
 
 #[tokio::test]

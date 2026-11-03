@@ -37,6 +37,7 @@ func probeCloudHost() async -> CloudHostReport {
     case .Unavailable: push = "unavailable"
     case .QuotaExceeded: push = "quotaExceeded"
     case .Rejected(let detail): push = "rejected(\(detail))"
+    case .Interrupted(let detail): push = "interrupted(\(detail))"
     }
   } catch {
     push = "error(\(error))"

@@ -21,13 +21,13 @@ extension BridgeProbeTests {
 struct OpenHeadersTests {
   @Test @MainActor
   func openReadsTheHeadersAgainForEveryRequest() async throws {
-    DB.close()
+    try await DB.close()
     let server = try BootstrapListener(responseStatus: "400 Bad Request")
     defer { server.listener.cancel() }
     let origin = try await server.start()
     let token = Token()
     try await DB.open(endpoint: origin, headers: { ["X-Token": token.value] }, modelsJSON: modelsJSON, operations: [HeaderProbe.self])
-    defer { DB.close() }
+    defer { Task { @MainActor in try? await DB.close() } }
 
     _ = try? await DB.run("HeaderProbe", variables: [:])
     token.value = "second"

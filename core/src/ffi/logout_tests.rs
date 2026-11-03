@@ -22,6 +22,6 @@ async fn inv_observe_27_a_leased_row_is_told_removed_before_logout_returns() {
     let live = db.live_entities("Moment".into(), listener.clone()).unwrap();
     live.retain(vec![super::EntityRequest { id: "m1".into(), lease: 1, fetch: super::EntityFetch::None }]).unwrap();
     db.db.await_revision(db.db.revision_seq().unwrap());
-    db.logout().await.unwrap();
+    db.session_reset().await.unwrap();
     assert_eq!(listener.0.lock().unwrap().clone(), vec!["m1".to_string()]);
 }

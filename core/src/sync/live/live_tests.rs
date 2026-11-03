@@ -390,13 +390,13 @@ async fn a_committed_credential_starts_the_model_subscriptions_and_the_end_of_th
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 0, "no credential");
     rig.transport.set_session(Some("first"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     rig.transport.await_calls("MomentListen", 1).await;
-    rig.sync.session_ended();
+    rig.sync.end_session_for_test();
     tokio::time::sleep(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1, "logout");
     rig.transport.set_session(Some("second"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     rig.transport.await_calls("MomentListen", 2).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 2, "next sign-in");
 }
@@ -408,7 +408,7 @@ async fn a_denied_listening_keeps_a_committed_credential_from_opening_subscripti
     rig.transport.set_session(Some("stored"));
     rig.sync.check_session();
     rig.transport.set_session(Some("signed-in"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 0, "stored credential and sign-in while denied");
     rig.sync.set_listening(true);
@@ -433,9 +433,9 @@ async fn allowing_listening_without_a_credential_opens_nothing_and_logout_stops_
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 0, "no credential");
     rig.transport.set_session(Some("first"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     rig.transport.await_calls("MomentListen", 1).await;
-    rig.sync.session_ended();
+    rig.sync.end_session_for_test();
     tokio::time::sleep(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1, "logout");
     rig.sync.set_listening(true);

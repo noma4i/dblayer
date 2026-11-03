@@ -410,7 +410,7 @@ extension BridgeProbeTests {
     let held = Moment.entity(moment.id)
     await eventually(#"held.value?.text == "old""#) { held.value?.text == "old" }
 
-    try await DB.logout()
+    try await DB.sessionReset()
     await eventually(#"held.value == nil"#) { held.value == nil }
     #expect(!held.isClosed)
     _ = try await DB.database.create(model: "Moment", valuesJson: #"{"id":"\#(moment.id)","text":"new"}"#, argsJson: "{}")
@@ -427,7 +427,7 @@ extension BridgeProbeTests {
     let held = Moment.entity(moment.id)
     await eventually(#"held.value?.text == "old""#) { held.value?.text == "old" }
 
-    DB.close()
+    try await DB.close()
     #expect(held.isClosed && held.value == nil)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let fresh = Moment.entity(moment.id)

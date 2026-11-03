@@ -113,7 +113,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     let db = Db::open(&path, models(true), None).unwrap();
     assert_eq!(db.outbox().unwrap()[0].operation.client_mutation_id, key);
     let (sync, client) = encrypted(&db, exchange.clone(), credentials);
-    client.reset().unwrap();
+    client.clear_credential_for_test().unwrap();
     client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
     sync.retry("moments", &id, None).await.unwrap();
     assert!(db.outbox().unwrap().is_empty());

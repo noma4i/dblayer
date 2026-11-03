@@ -68,7 +68,7 @@ extension BridgeProbeTests {
 
   @MainActor
   static func openSealedSession() async throws -> SealedServer {
-    DB.close()
+    try await DB.close()
     let account = Self.account
     account.signOut()
     let server = try SealedServer { path, body in
@@ -99,7 +99,7 @@ extension BridgeProbeTests {
   @MainActor
   static func startSealedSession(_ account: String) async throws {
     try await DB.sessionCall("login_link", body: LoginLink(account: account))
-    try await DB.logout()
+    try await DB.sessionReset()
     try await DB.run("SessionProfile", variables: [:])
     try await User.profile.refresh()
   }
@@ -113,7 +113,7 @@ extension BridgeProbeTests {
     let entity = User.entity()
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let before = server.requests.count
-    try await DB.logout()
+    try await DB.sessionReset()
     #expect(entity.value == nil)
     server.refuseEverything(true)
     try await DB.resetForTesting()
@@ -133,8 +133,7 @@ extension BridgeProbeTests {
     let entity = User.entity()
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     try await DB.sessionCall("logout", body: NoBody())
-    try DB.sessionReset()
-    try await DB.logout()
+    try await DB.sessionReset()
     #expect(entity.value == nil)
     let before = server.requests.count
     server.refuseEverything(true)
@@ -155,11 +154,11 @@ extension BridgeProbeTests {
     let changes = try DB.database.changes(queryJson: #"{"model":"User"}"#)
     let holding = Task { while (try? await changes.next()) != nil {} }
     try await DB.sessionCall("logout", body: NoBody())
-    try DB.sessionReset()
+    try await DB.sessionReset()
     holding.cancel()
     changes.cancel()
     await holding.value
-    try await DB.logout()
+    try await DB.sessionReset()
     await #expect(throws: DbError.self) { try await entity.waitForInitialLoad() }
   }
 
@@ -192,7 +191,7 @@ extension BridgeProbeTests {
     defer { live.cancel() }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     let seen = history.states.count
-    try await DB.logout()
+    try await DB.sessionReset()
     try await Self.startSealedSession("B")
     await eventually("the held list shows B") { history.states.last?.contains("B") == true }
     try await DB.settleForTesting()
@@ -222,9 +221,8 @@ extension BridgeProbeTests {
     }
 
     await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
-    try DB.sessionReset()
+    try await DB.sessionReset()
     live.cancel()
-    await finishes("the data logout") { try? await DB.logout() }
 
     await eventually("the wait that was pending at the exit ended") { pending.isDone }
     #expect(entity.value == nil)
@@ -252,8 +250,7 @@ extension BridgeProbeTests {
       try await DB.resetForTesting()
       await eventually("the reread waits at the server") { server.parkedCount > 0 }
       await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
-      try DB.sessionReset()
-      await finishes("the data logout") { try? await DB.logout() }
+      try await DB.sessionReset()
       #expect(entity.value == nil)
       let seen = history.states.count
       server.hold(operation: nil)
@@ -276,8 +273,7 @@ extension BridgeProbeTests {
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let reads = server.operationRequests("UserProfile")
     try await DB.sessionCall("logout", body: NoBody())
-    try DB.sessionReset()
-    try await DB.logout()
+    try await DB.sessionReset()
     #expect(entity.value == nil)
     try await Self.startSealedSession("A")
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
@@ -292,8 +288,7 @@ extension BridgeProbeTests {
     try await Self.startSealedSession("A")
     let entity = User.entity()
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    try DB.sessionReset()
-    try await DB.logout()
+    try await DB.sessionReset()
     #expect(entity.value == nil)
     let before = server.requests.count
     server.refuseEverything(true)
@@ -316,7 +311,7 @@ extension BridgeProbeTests {
       ended.finish()
     }
     await eventually("the request waits at the server") { server.parkedCount > 0 }
-    DB.close()
+    try await DB.close()
     await eventually("the call ended without its answer") { ended.isDone }
     server.hold(operation: nil)
   }

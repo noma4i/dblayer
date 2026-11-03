@@ -36,7 +36,7 @@ extension BridgeProbeTests {
     #expect(weakEntity != nil)
     let cursor = Cursor(second!)
     #expect(await cursor.next("the held value")??.text == "held")
-    DB.close()
+    try await DB.close()
     #expect(await cursor.next("the closed stream") == nil)
     second = nil
     await eventually("the closed streams release the entity") { weakEntity == nil }

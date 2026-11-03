@@ -35,7 +35,7 @@ extension BridgeProbeTests {
     let path = Reachability(monitor: nil)
     DB.reachability = path
     defer {
-      DB.close()
+      try await DB.close()
       DB.reachability = .shared
     }
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
@@ -44,7 +44,7 @@ extension BridgeProbeTests {
     #expect(await cursor.next("the initial delivery") != nil)
     let waiting = Task { await cursor.next("the end of the stream after the close") }
     await Task.yield()
-    DB.close()
+    try await DB.close()
     let after = await waiting.value
     #expect(after == nil)
     path.changed(true)

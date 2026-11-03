@@ -25,9 +25,9 @@ async fn nodes_answered_after(wipe: fn(&Rig)) {
     let task = tokio::spawn(async move { sync.nodes("chats", "batch", &["c1", "c2"]).await });
     rig.transport.await_calls("ChatsByIds", 1).await;
     wipe(&rig);
-    let rows = task.await.unwrap().unwrap();
+    let ended = task.await.unwrap();
+    assert!(matches!(&ended, Err(super::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))), "the explicit call straddling the reset must end with its outcome: {ended:?}");
     assert_eq!((stored(&rig, "chats", "c1"), stored(&rig, "chats", "c2")), (None, None));
-    assert!(rows.is_empty());
 }
 
 async fn node_answered_after(wipe: fn(&Rig)) {

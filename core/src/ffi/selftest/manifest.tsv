@@ -36,7 +36,7 @@ C12		kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLogoutThenALoginOfTheSameAc
 C12		core	a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_ends	green	S1: the wait after the exit gets Interrupted (design section 5, C12)	library
 C13		core	overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consistent_chain_and_a_clean_reset	green	-	library
 C14		core	a_data_reset_between_a_refused_pending_request_and_the_session_reset_keeps_the_pending	green	S1: the data reset without a session end is resetForTesting, not logout	library
-C14		core	a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_sign_in_then_retry_and_runs_once	green	-	library
+C14		core	a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_sign_in_and_never_runs	green	-	library
 C15		core	an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs_each_once	green	S1: the data logout variant becomes the session reset (it clears the data)	library
 C16		core	repeated_online_listening_and_power_saving_signals_add_no_request	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	library
 C17		core	a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once	green	S1: close is awaited	library

@@ -56,7 +56,7 @@ async fn ending_the_session_cancels_the_put_in_flight_and_frees_the_upload_slot(
     let source = file(b"abcdef");
     rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
     rig.transport.await_put_calls(1).await;
-    rig.sync.session_ended();
+    rig.sync.end_session_for_test();
     crate::test_wait::yield_until("the run left its slot", || crate::sync::locked(&rig.sync.inner.uploads).active.is_empty()).await;
     tokio::time::sleep(Duration::from_secs(10)).await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 0, "the answer of the ended session sent the mutation");
@@ -78,11 +78,11 @@ async fn ending_the_session_keeps_the_queued_upload_for_the_next_session() {
     rig.sync.upload("moments", &rid("m2"), "upload", input(&second)).await.unwrap();
     rig.transport.await_put_calls(1).await;
     assert_eq!(crate::sync::locked(&rig.sync.inner.uploads).ready.len(), 1, "the second file waits behind the file limit");
-    rig.sync.session_ended();
+    rig.sync.end_session_for_test();
     crate::test_wait::yield_until("the run left its slot", || crate::sync::locked(&rig.sync.inner.uploads).active.is_empty()).await;
     assert_eq!(rig.db.outbox().unwrap().len(), 2, "an operation was dropped with the session");
     rig.transport.set_session(Some("second"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     tokio::time::sleep(Duration::from_secs(30)).await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 2, "an upload queued at the end of the session never started again");
     assert!(rig.db.outbox().unwrap().is_empty());

@@ -365,15 +365,15 @@ async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_i
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));
     let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.set_session(Some("first"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     rig.transport.await_calls("Changes", 1).await;
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "one"}})));
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
     assert_eq!(expect_event(within(&events).await).id, "c1");
-    rig.sync.session_ended();
+    rig.sync.end_session_for_test();
     tokio::time::sleep(std::time::Duration::from_secs(31)).await;
     rig.transport.set_session(Some("second"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     let seen = expect_event(within(&events).await);
@@ -386,9 +386,9 @@ async fn queued_events_of_an_ended_session_never_reach_the_next_account() {
     let events = rig.sync.open_model_events("chats").await.unwrap();
     let queued = |id: &str| super::ModelEvent { model: "chats".into(), area: "CHAT".into(), kind: "UPDATED".into(), id: id.into(), before: None, after: None };
     rig.sync.inner.publish_model_event(rig.db.shared.store.lifecycle.snapshot().stamp(), queued("account-a"));
-    rig.sync.session_ended();
+    rig.sync.end_session_for_test();
     rig.transport.set_session(Some("second"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     rig.sync.inner.publish_model_event(rig.db.shared.store.lifecycle.snapshot().stamp(), queued("account-b"));
     assert_eq!(expect_event(within(&events).await).id, "account-b");
 }
@@ -401,7 +401,7 @@ async fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listeni
     rig.transport.await_calls("Changes", 1).await;
     rig.sync.set_listening(false);
     rig.transport.set_session(Some("first"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     rig.sync.set_listening(true);
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "one"}})));
@@ -455,9 +455,9 @@ async fn an_event_received_before_the_session_ended_is_not_published_after_it() 
     }));
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     crate::test_wait::recv_within(&entered_receiver);
-    rig.sync.session_ended();
+    rig.sync.end_session_for_test();
     rig.transport.set_session(Some("second"));
-    rig.sync.session_committed();
+    rig.sync.commit_session_for_test();
     release.send(()).unwrap();
     *rig.db.shared.store.after_commit.lock().unwrap() = None;
     crate::test_wait::within_secs(5, rig.transport.await_calls("Changes", 2)).await;

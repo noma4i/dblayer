@@ -12,7 +12,7 @@ class OpenHeadersTest {
     @Test
     fun openReadsTheHeadersAgainForEveryRequest() = bounded {
         DBlayer.close()
-        for (name in listOf("manager", "sink")) {
+        for (name in listOf("manager")) {
             Reachability::class.java.getDeclaredField(name).apply { isAccessible = true }.set(null, null)
         }
         MockWebServer().use { server ->

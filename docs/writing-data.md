@@ -2,17 +2,17 @@
 
 Resetting a model clears its cached rows and closes its queued changes without sending or rolling them back.
 A full reset applies this to every model. Replies for closed changes are discarded.
-Logout performs a full reset:
+Signing out is `sessionReset`. It ends the work of the old session, clears the credential and performs a full reset of the data:
 
 ```swift
-try await DB.logout()
+try await DB.sessionReset()
 ```
 
 ```kotlin
-DBlayer.logout()
+DBlayer.sessionReset()
 ```
 
-Logout also stops singleton subscriptions and empties their entities. Signing in again restarts them: the app calls nothing.
+The sign-out also stops singleton subscriptions and empties their entities. Signing in again restarts them: the app calls nothing.
 
 All writes are optimistic: they apply to the local database at once, so every live read updates immediately. A write that must reach the server is also placed in a durable queue in the same commit.
 

@@ -49,8 +49,8 @@ private final class SwitchableTestTransport: Transport, @unchecked Sendable {
 extension BridgeProbeTests {
   @MainActor @Test(.timeLimit(.minutes(1)))
   func testingResetGivesTheNextTransportAFreshOpen() async throws {
-    DB.close()
-    defer { DB.close() }
+    try await DB.close()
+    defer { Task { @MainActor in try? await DB.close() } }
     let reply = #"{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#
     let first = MockTransport()
     first.enqueue("MomentsFeed", reply: reply)
@@ -77,14 +77,14 @@ extension BridgeProbeTests {
 
   @MainActor @Test(.timeLimit(.minutes(1)))
   func testingResetClearsRows() async throws {
-    DB.close()
+    try await DB.close()
     let transport = MockTransport()
     let reply = #"{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#
     transport.enqueue("MomentsFeed", reply: reply)
     transport.enqueue("MomentsFeed", reply: reply)
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"id":"created","uuid":"u","createdAt":"2026-10-27T00:00:00Z"}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [TestingFeed.self, TestingCreate.self])
-    defer { DB.close() }
+    defer { Task { @MainActor in try? await DB.close() } }
     try await Moment.feed.load()
     try DB.database.setOnline(online: false)
     let row = try await Moment.create(text: "before")
@@ -104,8 +104,8 @@ extension BridgeProbeTests {
 
   @MainActor @Test(.timeLimit(.minutes(1)))
   func testingSettleWaitsForTheDeliveredLoad() async throws {
-    DB.close()
-    defer { DB.close() }
+    try await DB.close()
+    defer { Task { @MainActor in try? await DB.close() } }
     let transport = HeldTestingTransport()
     transport.mock.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [TestingFeed.self])

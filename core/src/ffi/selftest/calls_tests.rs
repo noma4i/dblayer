@@ -46,25 +46,23 @@ impl Call {
 #[derive(Clone, Copy, Debug)]
 enum Transition {
     Reset,
-    Logout,
     SessionReset,
     Close,
 }
 
-const TRANSITIONS: [Transition; 4] = [Transition::Reset, Transition::Logout, Transition::SessionReset, Transition::Close];
+const TRANSITIONS: [Transition; 3] = [Transition::Reset, Transition::SessionReset, Transition::Close];
 
 impl Transition {
     async fn apply(self, database: &Database) {
         match self {
             Transition::Reset => bound(database.reset_for_testing()).await.unwrap(),
-            Transition::Logout => bound(database.logout()).await.unwrap(),
-            Transition::SessionReset => database.session_reset().unwrap(),
-            Transition::Close => database.shutdown(),
+            Transition::SessionReset => database.session_reset().await.unwrap(),
+            Transition::Close => database.close_now(),
         }
     }
 }
 
-/// C10, G-02, G-09: every explicit call is in flight at the server when reset, logout, sessionReset or close arrives. The call ends within the bound, the late answer (success or sealed refusal) writes nothing into held handles, and the next request of the same key reads the next account.
+/// C10, G-02, G-09: every explicit call is in flight at the server when reset, sessionReset or close arrives. The call ends within the bound, the late answer (success or sealed refusal) writes nothing into held handles, and the next request of the same key reads the next account.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_explicit_call_survives_every_transition_with_a_late_answer() {
     for call in CALLS {
@@ -104,7 +102,7 @@ async fn every_explicit_call_survives_every_transition_with_a_late_answer() {
                 assert!(held.never_showed("late"), "{case}: the late answer ({late:?}) reached a held handle");
                 bound(rig.database.refresh("User".into(), "all".into(), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
                 held.lists_show("B").await;
-                rig.database.shutdown();
+                rig.database.close_now();
             }
         }
     }
@@ -121,11 +119,11 @@ async fn a_call_that_is_never_answered_ends_when_the_database_closes() {
         let running = call.start(rig.database.clone());
         gate.entered_for(&format!("{call:?}")).await;
 
-        rig.database.shutdown();
+        rig.database.close_now();
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(BOUND), running).await.unwrap_or_else(|_| panic!("{call:?}: the call outlived the close")).unwrap();
         assert!(result.is_err(), "{call:?}: the call ended the close with {result:?}");
-        rig.database.shutdown();
+        rig.database.close_now();
     }
 }
 
@@ -145,7 +143,7 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     let changes = held.changes.clone();
     let next = tokio::spawn(async move { within_secs(BOUND, changes.next()).await });
 
-    rig.database.shutdown();
+    rig.database.close_now();
 
     for wait in waits {
         assert!(bound(wait).await.unwrap().is_err(), "a wait for the initial load outlived the close");
@@ -153,5 +151,5 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     let mut last = bound(next).await.unwrap();
     while last.is_some() { last = within_secs(BOUND, held.changes.next()).await; }
     assert!(within_secs(BOUND, held.changes.next()).await.is_none(), "the changes feed delivered after the close");
-    rig.database.shutdown();
+    rig.database.close_now();
 }

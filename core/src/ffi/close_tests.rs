@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
-use crate::lifecycle::{Member, Lifecycle};
+use crate::lifecycle::{Holder, Lifecycle};
 use super::live_feed::LiveFeed;
 use super::open_slot::OpenSlot;
 use super::{Config, Database, DbError, LiveChange, LiveSubscription, LivePhase, QueryListener};
@@ -20,7 +20,7 @@ impl QueryListener for Silent {
 }
 
 struct Counting(AtomicUsize, Option<Arc<Lifecycle>>, Mutex<Vec<usize>>, std::sync::OnceLock<crate::lifecycle::Registration>);
-impl Member for Counting {
+impl Holder for Counting {
     fn close(&self) {
         self.0.fetch_add(1, Ordering::SeqCst);
         if let Some(streams) = &self.1 { crate::db::locked(&self.2).push(streams.enrolled()); }
@@ -94,7 +94,7 @@ async fn stream_close_terminates_waiters() {
     let initial = { let live = unopened.clone(); tokio::spawn(within(async move { live.wait_for_initial_load().await })) };
     tokio::task::yield_now().await;
     assert!(waiters.iter().all(|waiter| !waiter.is_finished()) && !current.is_finished() && !initial.is_finished(), "every waiter is parked before the close");
-    database.shutdown();
+    database.close_now();
     for waiter in waiters { assert!(within(waiter).await.unwrap().is_none()); }
     let closed = within(current).await.unwrap();
     assert_eq!(closed.phase, Some(LivePhase::Closed));
@@ -111,7 +111,7 @@ async fn closing_the_database_ends_a_waiting_model_event_next() {
     let feed = within(database.open_model_events("Notice".into())).await.unwrap();
     let waiting = tokio::spawn(within({ let feed = feed.clone(); async move { feed.next().await } }));
     tokio::task::yield_now().await;
-    database.shutdown();
+    database.close_now();
     assert!(matches!(within(waiting).await.unwrap(), Ok(None)));
 }
 
@@ -131,7 +131,7 @@ async fn closing_the_database_ends_a_waiting_blob_stream() {
     let waiting = tokio::spawn(within({ let changes = changes.clone(); async move { changes.next().await } }));
     tokio::task::yield_now().await;
     assert!(!waiting.is_finished());
-    database.shutdown();
+    database.close_now();
     assert!(within(waiting).await.unwrap().unwrap().is_none());
 }
 
@@ -148,7 +148,7 @@ async fn close_releases_old_engine() {
     let sink = database.online_sink().unwrap();
     let owner = Arc::downgrade(&database.sync.as_ref().unwrap().inner);
     let connectivity = database.db.connectivity();
-    database.shutdown();
+    database.close_now();
     assert!(!link.cloud.is_running(), "the cloud task stops with the database");
     sink.set_online(false);
     assert!(connectivity.is_online(), "a late call through the retained sink is refused");
@@ -183,10 +183,10 @@ struct Journal {
     registration: std::sync::OnceLock<crate::lifecycle::Registration>,
 }
 
-impl Member for Journal {
+impl Holder for Journal {
     fn close(&self) {}
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
-    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
         let held = self.hold.lock().unwrap().take();
         if let Some(release) = held {
             self.entered.send(()).unwrap();
@@ -205,15 +205,16 @@ fn a_transition_returns_after_its_callbacks_ran_even_while_another_thread_delive
     let journal = Arc::new(Journal { log: Mutex::default(), hold: Mutex::new(Some(release_receiver)), entered, registration: Default::default() });
     let at_enrollment = streams.enroll(&journal);
     assert!(at_enrollment.session.is_none() && !at_enrollment.closed);
-    let delivering = { let streams = streams.clone(); std::thread::spawn(move || streams.transition(Change::Online(false))) };
+    let content = |models: Option<Vec<String>>| { let streams = streams.clone(); std::thread::spawn(move || { let permit = streams.begin_blocking(crate::lifecycle::Boundary::Content, None).unwrap(); permit.defer(Change::Cleared(models)); permit.finish(); }) };
+    let delivering = content(None);
     entered_receiver.recv_timeout(std::time::Duration::from_secs(5)).expect("the first callback started");
-    let ending = { let streams = streams.clone(); std::thread::spawn(move || streams.transition(Change::EndSession)) };
+    let ending = content(Some(Vec::new()));
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(!ending.is_finished(), "the end of the session returned before its callbacks ran");
     release.send(()).unwrap();
     join_within(delivering);
     join_within(ending);
-    assert_eq!(*journal.log.lock().unwrap(), ["Online(false)", "EndSession"]);
+    assert_eq!(*journal.log.lock().unwrap(), ["Cleared(None)", "Cleared(Some([]))"]);
 }
 
 #[test]
@@ -225,7 +226,9 @@ fn a_transition_walks_only_the_holders_open_now() {
     let open: Vec<_> = (0..3).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
     for member in &open { streams.enroll(member); }
     let before = streams.work();
-    streams.transition(crate::lifecycle::Change::Reset(None));
+    let permit = streams.begin_blocking(crate::lifecycle::Boundary::Content, None).unwrap();
+    permit.defer(crate::lifecycle::Change::Cleared(None));
+    permit.finish();
     assert_eq!(streams.work() - before, 3, "a reset visited holders that were closed long ago");
 }
 
@@ -236,7 +239,7 @@ struct Blocking {
     registration: std::sync::OnceLock<crate::lifecycle::Registration>,
 }
 
-impl Member for Blocking {
+impl Holder for Blocking {
     fn close(&self) {
         let held = self.hold.lock().unwrap().take();
         if let Some(release) = held {
@@ -257,9 +260,9 @@ async fn a_second_shutdown_returns_after_the_first_closed_every_member_and_the_s
     let (release, release_receiver) = std::sync::mpsc::channel();
     let member = Arc::new(Blocking { entered, hold: Mutex::new(Some(release_receiver)), closed: AtomicUsize::new(0), registration: Default::default() });
     database.streams.enroll(&member);
-    let first = { let database = database.clone(); std::thread::spawn(move || database.shutdown()) };
+    let first = { let database = database.clone(); std::thread::spawn(move || database.close_now()) };
     crate::test_wait::recv_within(&entered_receiver);
-    let second = { let database = database.clone(); std::thread::spawn(move || database.shutdown()) };
+    let second = { let database = database.clone(); std::thread::spawn(move || database.close_now()) };
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(!second.is_finished(), "the second shutdown returned while the first still closed its members");
     assert!(slot.acquire().is_err(), "the slot was free while a member was still closing");
@@ -277,11 +280,11 @@ struct Reentering {
     registration: std::sync::OnceLock<crate::lifecycle::Registration>,
 }
 
-impl Member for Reentering {
+impl Holder for Reentering {
     fn close(&self) {
         let database = self.database.lock().unwrap().take();
         if let Some(database) = database {
-            database.shutdown();
+            database.close_now();
             self.slot_taken_inside.store(usize::from(self.slot.acquire().is_err()), Ordering::SeqCst);
         }
     }
@@ -295,7 +298,7 @@ async fn a_member_that_shuts_the_database_down_again_does_not_wait_for_itself_or
     database.hold(slot.acquire().unwrap());
     let member = Arc::new(Reentering { database: Mutex::new(Some(database.clone())), slot: slot.clone(), slot_taken_inside: AtomicUsize::new(0), registration: Default::default() });
     database.streams.enroll(&member);
-    let closing = { let database = database.clone(); std::thread::spawn(move || database.shutdown()) };
+    let closing = { let database = database.clone(); std::thread::spawn(move || database.close_now()) };
     join_within(closing);
     assert_eq!(member.slot_taken_inside.load(Ordering::SeqCst), 1, "the inner shutdown freed the slot before the outer close finished");
     assert!(slot.acquire().is_ok(), "the outer shutdown did not free the slot");

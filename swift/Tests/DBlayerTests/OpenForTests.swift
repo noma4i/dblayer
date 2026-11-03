@@ -7,7 +7,7 @@ func openDatabase(config: Config, modelsJson: String, transport: Transport?, enc
 
 @MainActor @discardableResult
 func adopt(_ database: Database) -> Database {
-  DB.close()
+  try await DB.close()
   DB.current = database
   return database
 }

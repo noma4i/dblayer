@@ -309,7 +309,7 @@ async fn explicit_session_reset_clears_credential_sequence_and_pending_after_reo
     super::client_tests::cancel_pending(client.mutate(GRAPHQL, json!({ "query": "mutation { pending }" })));
     assert!(rows(&db).1.is_some());
 
-    client.reset().unwrap();
+    client.reset().await.unwrap();
     drop(client);
     drop(db);
 

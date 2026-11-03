@@ -7,7 +7,7 @@ fn mutation_effects(rig: &Rig) -> usize {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_sign_in_then_retry_and_runs_once() {
+async fn a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_sign_in_and_never_runs() {
     let rig = Rig::new();
     let database = signed_in(&rig).await;
     rig.server.reply_with(serde_json::json!({ "makeMoment": { "id": "42", "text": "hello" } }));
@@ -16,13 +16,12 @@ async fn a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_s
 
     let refused = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
     let blocked = database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap_err();
-    database.session_reset().unwrap();
+    database.session_reset().await.unwrap();
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
-    database.retry("Moment".into(), row.id.clone(), None).await.unwrap();
-    let settled = database.settled("Moment".into(), row.id.clone(), None).await;
+    let outbox = database.db.outbox().unwrap().len();
 
     assert_eq!(session(refused).0, SessionCode::Unauthenticated);
     assert!(matches!(blocked, DbError::Network { .. }), "{blocked:?}");
-    assert!(settled.is_ok(), "{settled:?}");
-    assert_eq!(mutation_effects(&rig), 1);
+    assert_eq!(outbox, 0, "the session reset left the refused mutation of the ended session in the outbox");
+    assert_eq!(mutation_effects(&rig), 0);
 }

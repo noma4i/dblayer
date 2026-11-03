@@ -104,7 +104,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         assert!(matches!(result, LoadMoreResult::Loaded { .. } | LoadMoreResult::NoMore | LoadMoreResult::AlreadyLoading), "{case}: {result:?}");
         live.cancel();
         fresh.cancel();
-        database.shutdown();
+        database.close_now();
     }
 }
 
@@ -134,7 +134,7 @@ async fn repeated_online_listening_and_power_saving_signals_add_no_request() {
         rig.settle().await;
 
         assert_eq!(rig.world.hits(), baseline, "observed={observed}: a repeated signal sent {:?}", rig.world.log().iter().skip(baseline).collect::<Vec<_>>());
-        rig.database.shutdown();
+        rig.database.close_now();
     }
 }
 
@@ -182,7 +182,7 @@ async fn memory_expiry_follows_the_last_write_and_a_cloud_reply_after_a_reset_re
     assert!(database.peek_row("notes".into(), id.clone()).unwrap().is_none(), "the cloud reply after the reset restored a row");
 
     link.stop();
-    database.shutdown();
+    database.close_now();
     let calls = fake.calls();
     clock.advance(3_600_000);
     link.remote_changed();
@@ -210,5 +210,5 @@ async fn a_refused_foreground_refresh_keeps_the_views_and_the_credential() {
     held.lists_show("A").await;
     bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
     held.shows("A").await;
-    rig.database.shutdown();
+    rig.database.close_now();
 }

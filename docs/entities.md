@@ -115,7 +115,7 @@ The process has one database. Entities, lists and subscriptions belong to it for
 
 ## Ending a session
 
-`try await DB.logout()` (Swift) and suspending `DBlayer.logout()` (Kotlin) clear the data and drop the kept values. Wait for completion before signing in to another account. Every entity that a screen holds stays the same object, goes back to empty and receives the rows of the next account. The core has told every leased entity that its row is gone before logout returns, and the empty values reach the main actor before the code after `await` runs. Logout deletes every queued, refused and unconfirmed operation.
+`try await DB.sessionReset()` (Swift) and suspending `DBlayer.sessionReset()` (Kotlin) end the session, clear the data and drop the kept values. Wait for completion before signing in to another account. Every entity that a screen holds stays the same object, goes back to empty and receives the rows of the next account. The core has told every leased entity that its row is gone before the reset returns, and the empty values reach the main actor before the code after `await` runs. The reset deletes every queued, refused and unconfirmed operation. An entity that waits for its first load when the session ends gets `Interrupted`.
 
 Signing in again restarts the stopped singleton subscriptions. The app calls nothing after `sessionCall`:
 

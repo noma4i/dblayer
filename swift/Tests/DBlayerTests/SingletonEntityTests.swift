@@ -99,7 +99,7 @@ extension BridgeProbeTests {
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
-    try await DB.logout()
+    try await DB.sessionReset()
     #expect(entity.value == nil && entity.id.isEmpty)
     #expect(User.entity() === entity)
     #expect(try DB.subscriptionCensus().observedQueries == 0)
@@ -113,7 +113,7 @@ extension BridgeProbeTests {
     let entity = User.entity()
     try await Self.login(transport, "1", "Ann")
     await eventually(#"entity.value != nil"#) { entity.value != nil }
-    try await DB.logout()
+    try await DB.sessionReset()
     try await Self.login(transport, "2", "Bob")
     try await DB.resume()
     await eventually(#"entity.value?.name == "Bob""#) { entity.value?.name == "Bob" }
@@ -126,7 +126,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func idleTenSecondsCreatesNoWork() async throws {
-    DB.close()
+    try await DB.close()
     let transport = MockTransport()
     let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
