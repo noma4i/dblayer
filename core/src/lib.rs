@@ -11,7 +11,6 @@ pub mod operation;
 pub mod syncstate;
 pub mod write;
 pub mod commit;
-pub mod cloud;
 pub mod store;
 pub mod query;
 pub mod read;

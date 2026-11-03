@@ -145,7 +145,7 @@ impl Sync {
         let spec = self.inner.db.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| SyncError::UnknownRelation { model:model.into(), relation:relation.into() })?;
         let read = if declared.remote.is_some() {
-            let key = self.inner.resolve(crate::lifecycle::Origin::Observed, model, relation, params)?.window_key;
+            let key = self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?.window_key;
             Some(self.inner.db.register_observed_read(crate::db::ObservedRead { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key }))
         } else { None };
         let failures = self.inner.subscription_failures.subscribe();
@@ -172,7 +172,7 @@ impl Inner {
     }
 
     pub(crate) fn begin_resume(self: &Arc<Self>, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<Runner> {
-        let Ok(lease) = self.lease(crate::lifecycle::Origin::Background, "resume") else {
+        let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "resume") else {
             if cause == Cause::Explicit && self.db.shared.store.lifecycle.snapshot().admits(crate::lifecycle::Origin::Explicit) {
                 if let Some(waiter) = waiter { crate::db::lock::effect(|| { let _ = waiter.send(Ok(ResumeReport::default())); }); }
             }
@@ -190,7 +190,7 @@ impl Inner {
     }
 
     pub(crate) async fn resume_windows(self: &Arc<Self>, cause: Cause) -> Result<ResumeReport, SyncError> {
-        if !self.admitted(crate::lifecycle::Origin::Observed) { return Ok(ResumeReport::default()); }
+        if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(ResumeReport::default()); }
         if cause == Cause::Explicit { self.transport.resume_subscriptions(); }
         self.restart_live(cause);
         let drain = self.config.resume;
@@ -221,7 +221,7 @@ impl Inner {
                 let inner = self.clone();
                 let force = !unloaded.contains(&key);
                 loads.spawn(async move {
-                    let resolved = inner.resolve(crate::lifecycle::Origin::Observed, &model, &relation, &params)?;
+                    let resolved = inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params)?;
                     if resolved.members_complete || resolved.media.is_some() {
                         tokio::select! {
                             _ = inner.owner.unobserved(&resolved.window_key) => Err(SyncError::Cancelled),

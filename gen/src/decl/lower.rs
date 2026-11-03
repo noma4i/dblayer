@@ -1661,7 +1661,7 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
     cx.memory = storage == Storage::Memory;
     let owner = Owner(cx.schema.map(|_| node.name.clone()));
     let mut decl = ModelDecl {
-        name: node.name.clone(), pos: Pos { line: node.line, column: node.column }, file: node.file, storage, expires_in, attributes: Vec::new(), ephemeral: Vec::new(), cloud: None,
+        name: node.name.clone(), pos: Pos { line: node.line, column: node.column }, file: node.file, storage, expires_in, attributes: Vec::new(), ephemeral: Vec::new(),
         indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: Vec::new(), changed_by: Vec::new(), server_revision: None, operations: Vec::new(),
     };
     for call in &node.body {
@@ -1674,16 +1674,6 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
                 if let Some(children) = block(cx, call) {
                     let attributes = children.iter().filter_map(|child| attribute(cx, child, Site::Ephemeral, &Owner(None))).collect();
                     decl.ephemeral.push(EphemeralDecl { pos: line.pos, attributes });
-                }
-            }
-            "cloud" => {
-                no_block(cx, call);
-                line.no_options(cx);
-                let names = call.args.iter().filter_map(|arg| symbol(cx, arg, "cloud attribute name").map(|name| Spanned::new(name, at(arg)))).collect();
-                if decl.cloud.is_some() {
-                    cx.fail(line.pos, "`cloud` is declared twice");
-                } else {
-                    decl.cloud = Some(CloudDecl { pos: line.pos, names });
                 }
             }
             "index" => {

@@ -48,16 +48,16 @@ impl Inner {
     }
 
     pub(crate) fn spawn_flush(self: &Arc<Self>, wait: Duration) -> Option<tokio::task::AbortHandle> {
-        if !self.admitted(crate::lifecycle::Origin::Background) { return None; }
+        if !self.admitted(crate::lifecycle::Origin::Session) { return None; }
         let runtime = Handle::try_current().ok()?;
         let clock = self.clock.clone();
         let deadline = clock.now().saturating_add(wait);
         let inner = Arc::downgrade(self);
-        let reserved = if wait.is_zero() { Some(self.lease(crate::lifecycle::Origin::Background, "outbox flush").ok()?) } else { None };
+        let reserved = if wait.is_zero() { Some(self.lease(crate::lifecycle::Origin::Session, "outbox flush").ok()?) } else { None };
         let task = runtime.spawn(self.until_closed(async move {
             clock.sleep(deadline.saturating_sub(clock.now())).await;
             if let Some(inner) = inner.upgrade() {
-                let Some(_lease) = reserved.or_else(|| inner.lease(crate::lifecycle::Origin::Background, "outbox flush").ok()) else { return };
+                let Some(_lease) = reserved.or_else(|| inner.lease(crate::lifecycle::Origin::Session, "outbox flush").ok()) else { return };
                 let _ = inner.flush_pending().await;
             }
         }));
@@ -71,7 +71,7 @@ impl Inner {
         let inner = Arc::downgrade(self);
         runtime.spawn(self.until_closed(async move {
             let Some(inner) = inner.upgrade() else { return };
-            let Ok(resolved) = inner.resolve(crate::lifecycle::Origin::Observed, &target.model, &target.relation, &target.params) else { return };
+            let Ok(resolved) = inner.resolve(crate::lifecycle::Origin::Session, &target.model, &target.relation, &target.params) else { return };
             if resolved.members_complete || resolved.media.is_some() {
                 tokio::select! {
                     _ = inner.owner.unobserved(&resolved.window_key) => {},

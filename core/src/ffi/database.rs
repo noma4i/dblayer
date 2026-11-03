@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
-use crate::db::{Db, DbConfig, Feed, OpenReport, WindowSpec};
+use crate::db::{Db, DbConfig, Feed, OpenReport};
 use crate::identity::RowId;
 use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::{Query, Where};
@@ -260,12 +260,6 @@ impl Database {
     pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| self.connect_json(&query_json, false, None, feed))
     }
-    pub fn live_window(&self, query_json: String, tail: u32, max: Option<u32>, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.window_handles(&query_json, (tail, max), None, feed))
-    }
-    pub fn live_window_related(&self, query_json: String, tail: u32, max: Option<u32>, name: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.window_handles(&query_json, (tail, max), Some(name), feed))
-    }
     pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
         self.subscribed(listener, |feed| self.connect_json(&query_json, true, None, feed))
     }
@@ -460,17 +454,9 @@ impl Database {
         on_executor(async move { sync.resume().await }).await?;
         Ok(())
     }
-    pub fn put_tasks(&self, tasks: Vec<crate::transport::PutTask>) {
-        if let Some(sync) = &self.sync { sync.put_tasks(tasks); }
-    }
     pub async fn resume_uploads(&self) -> Result<(), DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(()) };
         on_executor(async move { sync.resume_uploads().await }).await?;
-        Ok(())
-    }
-    pub async fn resume_uploads_for(&self, tags: Vec<String>) -> Result<(), DbError> {
-        let Some(sync) = self.sync.clone() else { return Ok(()) };
-        on_executor(async move { sync.resume_uploads_for(tags).await }).await?;
         Ok(())
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
@@ -479,32 +465,6 @@ impl Database {
         if !self.testing { return Err(DbError::Invalid { detail: "enterForegroundForTesting requires openTesting".into() }); }
         self.online_sink()?.enter_foreground();
         Ok(())
-    }
-    /// Ends the session of the test and starts the next one: the old work ends, the data goes, the credential and the pending request stay. Online, listening and power saving keep the values the test gave them.
-    pub async fn reset_for_testing(&self) -> Result<(), DbError> {
-        if !self.testing { return Err(DbError::Invalid { detail: "resetForTesting requires openTesting".into() }); }
-        let db = self.db.clone();
-        on_executor(async move { db.end_session::<DbError>(crate::lifecycle::End::Test, None, true, || Ok(())).await }).await
-    }
-
-    /// Returns when no lease is held: no load, request, subscription opening, delivery or upload is running. It does not change listening, preload or the session.
-    pub async fn settle_for_testing(&self) -> Result<(), DbError> {
-        if !self.testing { return Err(DbError::Invalid { detail: "settleForTesting requires openTesting".into() }); }
-        let (lifecycle, db) = (self.streams.clone(), self.db.clone());
-        on_executor(async move {
-            let quiet = async {
-                loop {
-                    lifecycle.settled().await;
-                    let listeners = db.clone();
-                    blocking(move || { listeners.await_revision(listeners.revision_seq()?); Ok(()) }).await?;
-                    if lifecycle.quiet() { return Ok::<(), DbError>(()); }
-                }
-            };
-            match tokio::time::timeout(Duration::from_secs(10), quiet).await {
-                Ok(result) => result,
-                Err(_) => Err(DbError::Invalid { detail: format!("settleForTesting timed out: {}", lifecycle.held().join("; ")) }),
-            }
-        }).await
     }
     pub fn set_listening(&self, allowed: bool) -> Result<(), DbError> {
         if let Some(sync) = &self.sync {
@@ -576,7 +536,7 @@ impl Database {
         let finished = self.close_holders();
         let lifecycle = self.streams.clone();
         let drained = on_executor(async move {
-            tokio::time::timeout(Duration::from_secs(10), lifecycle.settled()).await.map_err(|_| DbError::Invalid { detail: "close timed out while leases were still held".into() })
+            tokio::time::timeout(Duration::from_secs(10), lifecycle.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", lifecycle.held().join("; ")) })
         }).await;
         if finished { if let Some(lease) = self.lease.get() { lease.release(); } }
         drained
@@ -639,101 +599,6 @@ impl Database {
         self.streams.enroll(&subscription);
         subscription
     }
-    fn window_handles(&self, query_json: &str, (tail, max): (u32, Option<u32>), related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
-        let (query, relation) = self.parsed_query(query_json)?;
-        let members = relation.as_ref().is_some_and(|(name, _)| self.db.spec(query.model.as_str()).is_ok_and(|spec| spec.relations.iter().any(|relation| relation.name == *name && relation.members_complete)));
-        if members && (tail > 200 || max.is_some_and(|max| max > 200 || max < tail)) {
-            return Err(DbError::Invalid { detail: "members_complete windows require tail <= max <= 200".into() });
-        }
-        let description: Value = serde_json::from_str(query_json)?;
-        let force = description.get("refreshOnConnect").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or(false);
-        let _entered = executor()?.enter();
-        let model = query.model.to_string();
-        let mut tracked = None;
-        let mut watch = match (self.sync.as_ref(), relation) {
-            (Some(sync), Some((relation, params))) => {
-                let watch = sync.watch(&model, &relation, &params)?;
-                if self.db.spec(&model)?.relations.iter().any(|declared| declared.name == relation && declared.remote.is_some()) {
-                    feed.expect_load();
-                    tracked = Some((sync.clone(), relation, params));
-                }
-                Some(watch)
-            }
-            _ => None,
-        };
-        let paused = tracked.is_some();
-        let model_key = model.clone();
-        let pager = Arc::new(Pager { page: tracked.clone().map(|(sync, relation, params)| (sync, model.clone(), relation, params)), busy: std::sync::atomic::AtomicBool::new(false), control: OnceLock::new() });
-        let wire = self.wire(&model)?.clone();
-        let sink = feed.clone();
-        let spec = if members { WindowSpec::Members { size: tail as usize, max: max.unwrap_or(200) as usize } } else { WindowSpec::Tail { size: tail as usize, max: max.map(|max| max as usize), paged: paused } };
-        let (window, targets) = match related {
-            None => (self.db.observe_window_feed(query, spec, paused, {
-                let pager = pager.clone();
-                move |item| {
-                    let wanted = match &item { Feed::Rows(change) => change.window.map_or(0, |edge| edge.wanted_before), _ => 0 };
-                    intake(&sink, &wire, item);
-                    pager.wanted(wanted);
-                }
-            })?, None),
-            Some(name) => {
-                let association = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
-                let (target, kind) = (association.target.to_string(), association.kind);
-                feed.show_targets_only();
-                let projection = Arc::new(Mutex::new(RelatedProjection::new(name.clone(), kind, self.db.shared.counters.clone())));
-                let target_wire = self.wire(&target)?.clone();
-                let held: Arc<Mutex<HashMap<RowId, crate::db::ObserverHandle>>> = Arc::default();
-                let db = self.db.clone();
-                let window = self.db.observe_window_feed(query, spec, paused, {
-                    let held = held.clone();
-                    let pager = pager.clone();
-                    move |item| match item {
-                        Feed::Rows(mut change) => {
-                            match db.shared.related_for(&model, &name, &change.rows) {
-                                Ok(found) => change.related = found,
-                                Err(error) => return intake(&sink, &wire, Feed::Failed(error.to_string())),
-                            }
-                            let (shown, (gained, lost)) = {
-                                let mut projection = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                                (projection.apply(&change, &target_wire), projection.take_watch_delta())
-                            };
-                            let mut retired = Vec::new();
-                            {
-                                let mut held = held.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                                for id in lost { retired.extend(held.remove(&id)); }
-                            }
-                            let opened: Vec<_> = gained.into_iter().filter_map(|id| {
-                                let (projection, sink, target_wire) = (projection.clone(), sink.clone(), target_wire.clone());
-                                let known = id.clone();
-                                db.observe_row(&target, &id, move |seen| {
-                                    let row = seen.rows.first().cloned();
-                                    let shown = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).target_changed(&known, row, seen.revision, &target_wire);
-                                    if let Some(shown) = shown { sink.rows(shown); }
-                                }).ok().map(|observer| (id, observer))
-                            }).collect();
-                            {
-                                let mut held = held.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                                for (id, observer) in opened { retired.extend(held.insert(id, observer)); }
-                            }
-                            drop(retired);
-                            match shown {
-                                Some(shown) => sink.rows(shown),
-                                None => sink.reached(change.revision),
-                            }
-                            pager.wanted(change.window.map_or(0, |edge| edge.wanted_before));
-                        }
-                        item => intake(&sink, &wire, item),
-                    }
-                })?;
-                (window, Some(held))
-            }
-        };
-        feed.on_rejoin(Arc::new(window.rejoiner()));
-        let _ = pager.control.set(window.control());
-        let (load, state) = self.follow_load(tracked, model_key, LoadOptions { force }, &feed, window.control())?;
-        let failure = follow_failures(watch.as_mut(), feed);
-        Ok(LiveHandles { _observer: None, window: Some(window), _watch: watch, load, failure, state, targets })
-    }
     fn follow_load(&self, tracked: Option<(Sync, String, Map<String, Value>)>, model: String, options: LoadOptions, feed: &Arc<LiveFeed>, control: crate::db::ObserverControl) -> Result<(Option<tokio::task::AbortHandle>, Option<tokio::task::AbortHandle>), DbError> {
         Ok(match tracked {
             Some((sync, relation, params)) => {
@@ -766,12 +631,12 @@ impl Database {
                     loop {
                         let snapshot = transitions.current();
                         if snapshot.closed { return; }
-                        if !snapshot.admits(crate::lifecycle::Origin::Observed) {
+                        if !snapshot.admits(crate::lifecycle::Origin::Session) {
                             loader.load_finished(None);
                             if transitions.changed().await.is_none() { return; }
                             continue;
                         }
-                        let resolved = match sync.inner.resolve(crate::lifecycle::Origin::Observed, &model, &relation, &params) {
+                        let resolved = match sync.inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) {
                             Ok(resolved) => resolved,
                             Err(error) => { loader.load_finished(Some(DbError::from(error))); return; }
                         };
@@ -859,33 +724,6 @@ impl Database {
         feed.on_rejoin(Arc::new(observer.rejoiner()));
         let (load, state) = self.follow_load(tracked, model, options, &feed, observer.control())?;
         let failure = follow_failures(watch.as_mut(), feed);
-        Ok(LiveHandles { _observer: Some(observer), window: None, _watch: watch, load, failure, state, targets: None })
-    }
-}
-
-struct Pager {
-    page: Option<(Sync, String, String, Map<String, Value>)>,
-    busy: std::sync::atomic::AtomicBool,
-    control: OnceLock<crate::db::ObserverControl>,
-}
-
-impl Pager {
-    /// The window asked for `rows` older rows that the database does not hold: one shared page is loaded and the window grows by what is still missing.
-    fn wanted(self: &Arc<Self>, rows: usize) {
-        use std::sync::atomic::Ordering;
-        let Some((sync, model, relation, params)) = self.page.clone().filter(|_| rows > 0) else { return };
-        if self.busy.swap(true, Ordering::SeqCst) { return }
-        let Ok(runtime) = executor() else {
-            self.busy.store(false, Ordering::SeqCst);
-            return;
-        };
-        let pager = self.clone();
-        runtime.spawn(async move {
-            let loaded = sync.load_more(&model, &relation, &params).await;
-            pager.busy.store(false, Ordering::SeqCst);
-            if let (Ok(outcome), Some(control)) = (loaded, pager.control.get()) {
-                if !matches!(outcome.status, LoadStatus::NoMorePages(_)) { control.grow(rows, 0); }
-            }
-        });
+        Ok(LiveHandles { _observer: Some(observer), _watch: watch, load, failure, state, targets: None })
     }
 }

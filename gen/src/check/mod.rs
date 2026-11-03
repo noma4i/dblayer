@@ -12,8 +12,6 @@ use crate::ParseError;
 
 mod attributes;
 mod changes;
-mod cloud;
-pub(crate) use cloud::selected as cloud_names;
 mod effects;
 mod enums;
 mod nested;
@@ -129,7 +127,6 @@ fn check_model(node: &ModelDecl, all: &[ModelDecl], errors: &mut Vec<Found>) {
     for scope in &node.scopes {
         check_scope(node, all, scope, &mut report);
     }
-    cloud::check_cloud(node, &mut report);
     let attributes = attributes::AttributeCheck { node, report: &mut report };
     attributes.run();
     for operation in &node.operations {

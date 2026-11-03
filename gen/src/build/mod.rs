@@ -71,7 +71,6 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
             field.searchable = true;
         }
     }
-    model.cloud = crate::check::cloud_names(node);
     model.indexes = node.indexes.iter().map(|index| index.columns.clone()).collect();
     model.ephemeral = node.ephemeral.iter().flat_map(|group| &group.attributes).map(|attribute| EphemeralSpec { field: build_field(attribute, &node.name), reset_after: attribute.reset_after.clone() }).collect();
     model.associations = node.associations.iter().map(|association| build_association(association, &node.name)).collect();

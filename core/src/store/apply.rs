@@ -7,7 +7,6 @@ use crate::commit::{
     CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
 use crate::operation::OperationStatus;
-use crate::cloud::{record_local, write_book, LocalEdit};
 use crate::commit::WriteOrigin;
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
@@ -218,21 +217,19 @@ fn visible_scope_ops(operations: &[ScopeOp], hidden: &HiddenRows) -> Vec<ScopeOp
         .collect()
 }
 
-fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>) -> Result<BTreeSet<String>, StoreError> {
+fn take_pending(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, row: &mut Map<String, Value>) -> Result<(), StoreError> {
     let owner = texts(&[model.as_str(), id]);
     let pending = read_trees(connection, "local_pending", &["model", "row_id", "path"], "model = ?1 AND row_id = ?2", &owner)?;
     if pending.is_empty() {
-        return Ok(BTreeSet::new());
+        return Ok(());
     }
-    let mut fields = BTreeSet::new();
     for (key, value) in pending {
         if let Some(slot) = key.last().and_then(|path| match path { rusqlite::types::Value::Text(path) => info.spec.local_slot(path), _ => None }) {
-            fields.insert(slot.field.name.clone());
             slot.write(row, value);
         }
     }
     delete_trees(connection, "local_pending", "model = ?1 AND row_id = ?2", &owner)?;
-    Ok(fields)
+    Ok(())
 }
 
 fn without_nulls(info: &ModelInfo, row: &Map<String, Value>) -> Map<String, Value> {
@@ -290,21 +287,11 @@ fn apply_upsert(
     let old_row = existing.as_ref().map(|stored| &stored.row);
     let mut next = without_nulls(info, row);
     canonicalize(info, &mut next);
-    let mut pending = BTreeSet::new();
     if !envelope.writes_local && info.spec.has_local() {
         match old_row {
             Some(old) => info.spec.keep_local(old, &mut next),
             None => {
-                if envelope.origin != WriteOrigin::Optimistic && !info.spec.cloud.is_empty() {
-                    for (name, _, value) in crate::cloud::row_fields(connection, model.as_str(), &id)? {
-                        if info.spec.cloud.contains(&name) {
-                            if let Some(slot) = info.spec.local_slot(&name) {
-                                slot.write(&mut next, value);
-                            }
-                        }
-                    }
-                }
-                pending = take_pending(connection, info, model, &id, &mut next)?;
+                take_pending(connection, info, model, &id, &mut next)?;
             }
         }
     }
@@ -333,19 +320,6 @@ fn apply_upsert(
     }
     if let Some(old) = old_row {
         membership_moves(info, model, &id, old, row, moves, heads);
-    }
-    if !info.spec.cloud.is_empty() {
-        let fields: BTreeMap<String, Value> = info
-            .spec
-            .cloud
-            .iter()
-            .filter(|name| envelope.origin == WriteOrigin::Optimistic || pending.contains(*name))
-            .filter(|name| kind == RowChangeKind::Inserted || changed.contains(*name))
-            .map(|name| (name.clone(), row.get(name).cloned().unwrap_or(Value::Null)))
-            .collect();
-        if !fields.is_empty() {
-            result.edits.push(LocalEdit { model: model.to_string(), row_id: id.clone(), fields });
-        }
     }
     result.push(model, &id, kind, changed);
     Ok(())
@@ -539,7 +513,6 @@ fn join_heads(
 struct RowChanges {
     changes: Vec<RowChange>,
     renewed: Vec<RowRef>,
-    edits: Vec<LocalEdit>,
 }
 
 impl RowChanges {
@@ -571,7 +544,6 @@ pub(crate) fn apply_envelope(
     let mut moves: Vec<ScopeOp> = Vec::new();
     let mut heads: Vec<(ScopeRef, crate::identity::RowId)> = Vec::new();
     let mut destroyed: Vec<Destroyed> = Vec::new();
-    let mut cloud_deletes: Vec<(String, String)> = Vec::new();
     let mut replaced: Vec<(RowRef, crate::identity::RowId)> = Vec::new();
     let mut result = CommitResult::noop(envelope.tx_id);
     let lands_rows = envelope.entity_ops.iter().any(|operation| matches!(operation, EntityOp::Upsert { .. })) || !envelope.scope_ops.is_empty();
@@ -600,9 +572,6 @@ pub(crate) fn apply_envelope(
                     tombstoned = true;
                 }
                 if removed > 0 {
-                    if envelope.origin == WriteOrigin::Optimistic && info.spec.is_local() && !info.spec.cloud.is_empty() && *reason == DestroyReason::Local {
-                        cloud_deletes.push((model.to_string(), id.as_str().to_string()));
-                    }
                     changes.push(model, id.as_str(), RowChangeKind::Destroyed, BTreeSet::new());
                     if let DestroyReason::Replaced { by } = reason {
                         replaced.push((RowRef::new(model.clone(), id.clone()), by.clone()));
@@ -614,14 +583,6 @@ pub(crate) fn apply_envelope(
         }
     }
 
-    if !changes.edits.is_empty() || !cloud_deletes.is_empty() {
-        result.cloud_logged = record_local(connection, &changes.edits, &cloud_deletes, now_ms)?;
-        wrote |= result.cloud_logged;
-    }
-    if let Some(book) = &envelope.cloud {
-        write_book(connection, book)?;
-        wrote = true;
-    }
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
     wrote |= apply_transitions(connection, models, envelope.generation, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;

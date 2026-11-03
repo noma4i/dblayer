@@ -80,7 +80,6 @@ public struct Query<Model: DBModel>: Sendable {
       refresh: { try await source.refresh() }, loadMore: { try await source.loadMore() }
     )
   }
-  public func window(tail rows: Int, max: Int? = nil) -> Window<Model> { Window(query: self, tail: rows, max: max) }
 
   var json: String {
     get throws { try json(refreshOnConnect: false) }
@@ -195,7 +194,6 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public let replaced: [String: String]
   public let reordered: Bool
   public let edits: [ListEdit<Model>]?
-  public let window: WindowEdges?
   public let seq: UInt64
   public let phase: LoadPhase
   public let isInitialLoading: Bool
@@ -210,7 +208,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
   public let undecodable: [String]
 
   public init(
-    rows: [Model], replaced: [String: String], reordered: Bool = false, edits: [ListEdit<Model>]? = nil, window: WindowEdges? = nil, seq: UInt64 = 0, phase: LoadPhase = .opening,
+    rows: [Model], replaced: [String: String], reordered: Bool = false, edits: [ListEdit<Model>]? = nil, seq: UInt64 = 0, phase: LoadPhase = .opening,
     isInitialLoading: Bool = false, isRefreshing: Bool = false, isFetchingMore: Bool = false, hasMore: Bool = false, total: Int? = nil, loadedAt: Int64? = nil,
     error: (any Error)? = nil, errorKind: String? = nil, undecodable: [String] = [], complete: Bool = false
   ) {
@@ -218,7 +216,6 @@ public struct Snapshot<Model: DBModel>: Sendable {
     self.replaced = replaced
     self.reordered = reordered
     self.edits = edits
-    self.window = window
     self.seq = seq
     self.phase = phase
     self.isInitialLoading = isInitialLoading
@@ -235,7 +232,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
 
   init(_ applied: ListApplied<Model>, _ change: LiveChange) {
     self.init(
-      rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, edits: applied.edits, window: change.window.map(WindowEdges.init), seq: change.seq, phase: LoadPhase(change.phase),
+      rows: applied.rows, replaced: change.replacedIds, reordered: applied.reordered, edits: applied.edits, seq: change.seq, phase: LoadPhase(change.phase),
       isInitialLoading: change.initial, isRefreshing: change.refreshing, isFetchingMore: change.fetchingMore, hasMore: change.hasMore, total: change.total.map(Int.init), loadedAt: change.loadedAt,
       error: applied.failure ?? change.error, errorKind: applied.failure == nil ? change.errorKind : "invalid", undecodable: applied.undecodable, complete: change.complete && applied.failure == nil
     )
@@ -252,7 +249,7 @@ public struct Snapshot<Model: DBModel>: Sendable {
     }
     let edits = ListEdit.composing(older.edits, newer.edits, within: newer.rows.count)
     return Snapshot(
-      rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, edits: edits, window: newer.window ?? older.window, seq: newer.seq, phase: newer.phase,
+      rows: newer.rows, replaced: replaced, reordered: older.reordered || newer.reordered, edits: edits, seq: newer.seq, phase: newer.phase,
       isInitialLoading: newer.isInitialLoading, isRefreshing: newer.isRefreshing, isFetchingMore: newer.isFetchingMore, hasMore: newer.hasMore, total: newer.total, loadedAt: newer.loadedAt,
       error: newer.error, errorKind: newer.errorKind, undecodable: newer.undecodable, complete: newer.complete
     )

@@ -11,19 +11,6 @@ pub struct PutFile {
     pub length: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
-pub enum PutTaskState {
-    Running,
-    Finished { status: u16, etag: Option<String> },
-    Failed { detail: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct PutTask {
-    pub tag: String,
-    pub state: PutTaskState,
-}
-
 #[derive(Clone)]
 pub struct PutRequest {
     pub url: String,

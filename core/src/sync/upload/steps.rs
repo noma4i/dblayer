@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::syncstate::{FailureKind, OperationFailure};
-use crate::transport::{GraphQLRequest, PutFile, PutRequest, PutResponse, PutTaskState, ResponseOutcome, RetryClass, TransportError};
+use crate::transport::{GraphQLRequest, PutFile, PutRequest, PutResponse, ResponseOutcome, RetryClass, TransportError};
 use crate::upload::{copy_range, UploadEvent, UploadStage};
 
 use super::super::extract::root_value;
@@ -129,10 +129,7 @@ impl Runner {
         part: u32,
     ) -> Result<Option<String>, StepError> {
         let tag = format!("{}.{}.{}", self.seq, self.position, part);
-        let response = match self.adopted_put(&tag).await {
-            Some(adopted) => adopted,
-            None => self.send_put(url, headers, offset, length, part, tag).await,
-        };
+        let response = self.send_put(url, headers, offset, length, part, tag).await;
         match response {
             Err(error) => Err(error),
             Ok(response) if !(200..300).contains(&response.status) => {
@@ -171,27 +168,6 @@ impl Runner {
         match sent {
             Err(_) => Err(StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, "put timed out")))),
             Ok(outcome) => outcome.map_err(|error| step_error(error, self.token.is_cancelled())),
-        }
-    }
-
-    async fn adopted_put(&self, tag: &str) -> Option<Result<PutResponse, StepError>> {
-        let mut states = self.inner.adopted_put(tag)?;
-        loop {
-            let state = states.borrow_and_update().clone();
-            match state {
-                PutTaskState::Finished { status, etag } => {
-                    self.inner.forget_put(tag);
-                    return Some(Ok(PutResponse { status, etag }));
-                }
-                PutTaskState::Failed { detail } => {
-                    self.inner.forget_put(tag);
-                    return Some(Err(StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, detail)))));
-                }
-                PutTaskState::Running => tokio::select! {
-                    changed = states.changed() => if changed.is_err() { return None },
-                    () = self.token.cancelled() => return Some(Err(StepError::Cancelled)),
-                },
-            }
         }
     }
 

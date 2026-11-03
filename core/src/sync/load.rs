@@ -460,11 +460,11 @@ impl Inner {
 impl Sync {
     #[cfg(test)]
     pub fn window_key(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<String, SyncError> {
-        Ok(self.inner.resolve(crate::lifecycle::Origin::Observed, model, relation, params)?.window_key)
+        Ok(self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?.window_key)
     }
 
     pub fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<std::collections::BTreeMap<String, Map<String, Value>>, SyncError> {
-        let resolved = self.inner.resolve(crate::lifecycle::Origin::Observed, model, relation, params)?;
+        let resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?;
         let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
         let read = self.inner.db.shared.store.read(&[model], |reader| reader.scope_edges(model, resolved.scope.key.as_str(), &wanted))?;
         {

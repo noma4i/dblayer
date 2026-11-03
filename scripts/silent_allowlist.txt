@@ -1,7 +1,4 @@
 swift/Sources/DBlayer/IDText.swift	if let text = try? container.decode(String.self) {	picks the String or Int64 variant of an id
-swift/Sources/DBlayer/CloudKit/CloudKitWire.swift	guard let token = try? NSKeyedUnarchiver.unarchivedObject(ofClass: CKServerChangeToken.self, from: data) else {	an unreadable change token becomes the thrown changeTokenExpired error
-swift/Sources/DBlayer/CloudKit/CloudKitRecords.swift	if let url = (record[assetField] as? CKAsset)?.fileURL, let bytes = try? Data(contentsOf: url) {	an unreadable asset file becomes the thrown Rejected error on the next line
-swift/Sources/DBlayer/CloudKit/CloudKitRecords.swift	if let url = (record[assetField] as? CKAsset)?.fileURL { try? FileManager.default.removeItem(at: url) }	removes a temporary asset file, a missing file is the goal
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(Bool.self) { self = .bool(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(Int64.self) { self = .integer(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(Double.self) { self = .number(value) }	picks the variant of a JSON value

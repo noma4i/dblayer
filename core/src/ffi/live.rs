@@ -1,5 +1,5 @@
 use std::sync::{Arc, Mutex};
-use crate::db::{Change, Feed, ObserverHandle, WindowHandle};
+use crate::db::{Change, Feed, ObserverHandle};
 use super::live_feed::{LiveFeed, Readiness};
 use super::wire::{WireModel, WireRow};
 
@@ -32,13 +32,6 @@ pub struct Replacement {
     pub to: String,
 }
 
-#[derive(Clone, Debug, uniffi::Record)]
-pub struct LiveWindowEdge {
-    pub has_before: bool,
-    pub has_after: bool,
-    pub total: Option<u32>,
-}
-
 /// With `full` the `rows` are the whole list in order. Otherwise they are the rows that were inserted, updated or replaced, `row_indexes` holds the final index of each, and the wrapper rebuilds its array in this order:
 /// 1. rename every `replaced.from` to its `to`, 2. drop `removed`, 3. take every `placed` id that is in the array out of it, then insert the placed rows in ascending index, each at its index (a row that was in the array keeps its value, a new one comes from `rows`), 4. put every changed row at its row index.
 #[derive(Clone, Debug, uniffi::Record)]
@@ -54,8 +47,6 @@ pub struct LiveChange {
     pub renamed: Vec<Replacement>,
     pub count: Option<i64>,
     pub error: Option<super::DbError>,
-    #[uniffi(default = None)]
-    pub window: Option<LiveWindowEdge>,
     #[uniffi(default = [])]
     pub inserted: Vec<u32>,
     #[uniffi(default = [])]
@@ -97,7 +88,6 @@ impl LiveChange {
             replaced: diff.replaced.iter().map(|(from, to)| Replacement { from: from.to_string(), to: to.to_string() }).collect(),
             renamed: diff.renamed.iter().map(|(from, to)| Replacement { from: from.to_string(), to: to.to_string() }).collect(),
             count: None, error: None,
-            window: change.window.map(|edge| LiveWindowEdge { has_before: edge.has_before, has_after: edge.has_after, total: edge.total.map(|total| total as u32) }),
             inserted: inserted.into_iter().map(|(index, _)| index as u32).collect(),
             updated: updated.into_iter().map(|(index, _)| index as u32).collect(),
             moved: diff.moved.iter().map(|id| Placement { id: id.to_string(), index: diff.at[id] as u32 }).collect(),
@@ -120,7 +110,7 @@ impl LiveChange {
 
     pub(super) fn empty(revision: i64) -> Self {
         Self {
-            revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None, window: None, inserted: Vec::new(), updated: Vec::new(), moved: Vec::new(),
+            revision, full: false, size: 0, rows: Vec::new(), row_indexes: Vec::new(), removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), renamed: Vec::new(), count: None, error: None, inserted: Vec::new(), updated: Vec::new(), moved: Vec::new(),
             seq: 0, phase: None, initial: false, refreshing: false, fetching_more: false, has_more: false, complete: false, total: None, loaded_at: None, error_kind: None,
         }
     }
@@ -143,7 +133,6 @@ pub trait QueryListener: Send + Sync { fn changed(&self, change: LiveChange); }
 
 pub(super) struct LiveHandles {
     pub _observer: Option<ObserverHandle>,
-    pub window: Option<WindowHandle>,
     pub _watch: Option<crate::sync::Watch>,
     pub load: Option<tokio::task::AbortHandle>,
     pub failure: Option<tokio::task::AbortHandle>,
@@ -210,13 +199,6 @@ impl crate::lifecycle::Holder for LiveSubscription {
     fn changed(&self, snapshot: &crate::lifecycle::Snapshot) { self.feed.on_change(snapshot); }
 }
 
-impl LiveSubscription {
-    fn window_control(&self) -> Option<crate::db::ObserverControl> {
-        let handles = crate::db::locked(&self.handles);
-        handles.as_ref().and_then(|handles| handles.window.as_ref()).map(WindowHandle::control)
-    }
-}
-
 #[uniffi::export]
 impl LiveSubscription {
     pub async fn wait_for_initial_load(&self) -> Result<(), super::DbError> {
@@ -251,11 +233,5 @@ impl LiveSubscription {
             let handles = crate::db::locked(&self.handles).take();
             drop(handles);
         }
-    }
-    pub fn expand_before(&self, rows: u32) {
-        if let Some(window) = self.window_control() { window.grow(rows as usize, 0); }
-    }
-    pub fn expand_after(&self, rows: u32) {
-        if let Some(window) = self.window_control() { window.grow(0, rows as usize); }
     }
 }

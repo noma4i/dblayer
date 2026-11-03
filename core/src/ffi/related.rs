@@ -19,13 +19,11 @@ pub(super) struct RelatedProjection {
     shown: Ranked,
     started: bool,
     positional: Option<Vec<Row>>,
-    watched: HashSet<RowId>,
-    watch_delta: (Vec<RowId>, Vec<RowId>),
 }
 
 impl RelatedProjection {
     pub(super) fn new(name: String, kind: AssociationKind, counters: Arc<Mutex<Counters>>) -> Self {
-        Self { name, kind, counters, keys: HashMap::new(), found: HashMap::new(), rows: HashMap::new(), owners: HashMap::new(), shown: Ranked::default(), started: false, positional: None, watched: HashSet::new(), watch_delta: (Vec::new(), Vec::new()) }
+        Self { name, kind, counters, keys: HashMap::new(), found: HashMap::new(), rows: HashMap::new(), owners: HashMap::new(), shown: Ranked::default(), started: false, positional: None }
     }
 
     pub(super) fn apply(&mut self, change: &Change, wire: &WireModel) -> Option<LiveChange> {
@@ -65,43 +63,10 @@ impl RelatedProjection {
         self.emit(&affected, first, change.revision, wire)
     }
 
-    pub(super) fn take_watch_delta(&mut self) -> (Vec<RowId>, Vec<RowId>) {
-        std::mem::take(&mut self.watch_delta)
-    }
-
-    pub(super) fn target_changed(&mut self, id: &RowId, row: Option<Row>, revision: i64, wire: &WireModel) -> Option<LiveChange> {
-        if !self.owners.contains_key(id) {
-            return None;
-        }
-        match row {
-            Some(row) => {
-                if self.rows.get(id).is_some_and(|known| Stamp::of(known, Vec::new()) == Stamp::of(&row, Vec::new())) {
-                    return None;
-                }
-                self.rows.insert(id.clone(), row);
-            }
-            None => {
-                self.rows.remove(id);
-            }
-        }
-        self.emit(&HashSet::from([id.clone()]), false, revision, wire)
-    }
-
     fn emit(&mut self, affected: &HashSet<RowId>, first: bool, revision: i64, wire: &WireModel) -> Option<LiveChange> {
         let before = self.shown.clone();
         let mut sendable: HashMap<RowId, Row> = HashMap::new();
         for target in affected {
-            match (self.owners.contains_key(target), self.watched.contains(target)) {
-                (true, false) => {
-                    self.watched.insert(target.clone());
-                    self.watch_delta.0.push(target.clone());
-                }
-                (false, true) => {
-                    self.watched.remove(target);
-                    self.watch_delta.1.push(target.clone());
-                }
-                _ => {}
-            }
             locked(&self.counters).related_visited += 1;
             match self.first_owner(target) {
                 Some((key, row)) => {

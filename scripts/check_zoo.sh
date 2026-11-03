@@ -101,7 +101,7 @@ for text in contents.values():
 
 for path in files:
     relative = str(path.relative_to(source))
-    if relative.startswith("sync/stress/") or relative in ("cloud/fixtures.rs", "transport/mock.rs", "test_wait.rs"):
+    if relative.startswith("sync/stress/") or relative in ("transport/mock.rs", "test_wait.rs"):
         continue
     text = contents[path]
     code = code_only(text)

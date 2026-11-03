@@ -22,7 +22,6 @@ pub enum WriteOrigin {
     Patch,
     Replace,
     Optimistic,
-    Cloud,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,7 +191,6 @@ pub struct CommitEnvelope {
     pub writes_local: bool,
     pub node_reread: bool,
     pub pending_locals: Vec<PendingLocal>,
-    pub cloud: Option<crate::cloud::CloudBook>,
 }
 
 /// A local value for a row that is not stored yet. It waits in `local_pending` and joins the row when it arrives.
@@ -234,12 +232,11 @@ impl CommitEnvelope {
             writes_local: false,
             node_reread: false,
             pending_locals: Vec::new(),
-            cloud: None,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.pending_locals.is_empty() && self.cloud.is_none()
+        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.pending_locals.is_empty()
     }
 
     pub fn validate(&self, current: Generation) -> Result<(), EnvelopeFault> {
@@ -314,7 +311,6 @@ pub struct CommitResult {
     pub(crate) queue_operations: BTreeMap<i64, Option<crate::operation::QueueOperation>>,
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
-    pub cloud_logged: bool,
 }
 
 impl CommitResult {
@@ -330,7 +326,6 @@ impl CommitResult {
             queue_operations: BTreeMap::new(),
             replaced: Vec::new(),
             unknown_operation_acks: 0,
-            cloud_logged: false,
         }
     }
 

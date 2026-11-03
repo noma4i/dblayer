@@ -30,7 +30,7 @@ impl Sync {
     pub fn refresh_entities(&self, model: &str, ids: &[String], fetch: EntityFetch, sink: RefreshSink) -> Result<CancelToken, SyncError> {
         let cancel = CancelToken::new();
         if fetch == EntityFetch::None { return Ok(cancel); }
-        if !self.inner.admitted(crate::lifecycle::Origin::Observed) {
+        if !self.inner.admitted(crate::lifecycle::Origin::Session) {
             for id in ids { sink(id, None); }
             return Ok(cancel);
         }
@@ -57,7 +57,7 @@ impl Sync {
                 if present { return Ok(()); }
                 if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return Err(SyncError::Cancelled); }
             }
-            inner.node(crate::lifecycle::Origin::Observed, &due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
+            inner.node(crate::lifecycle::Origin::Session, &due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
         };
         let result = tokio::select! { biased; _ = due.cancel.cancelled() => return, result = work => result };
         if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return; }

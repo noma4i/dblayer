@@ -368,11 +368,6 @@ impl ObserverControl {
         }
     }
 
-    pub(crate) fn grow(&self, before: usize, after: usize) {
-        if let Some(shared) = self.shared.upgrade() {
-            shared.command_observers(ObserverCommand::Grow { group: self.group.clone(), before, after });
-        }
-    }
 }
 
 pub(crate) enum ObserverCommand {

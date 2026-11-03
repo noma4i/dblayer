@@ -164,20 +164,12 @@ pub struct WindowHandle {
 }
 
 impl WindowHandle {
-    pub fn expand_before(&self, rows: usize) {
+    pub fn grow_before(&self, rows: usize) {
         self.observer.grow(rows, 0);
     }
 
-    pub fn expand_after(&self, rows: usize) {
+    pub fn grow_after(&self, rows: usize) {
         self.observer.grow(0, rows);
-    }
-
-    pub(crate) fn control(&self) -> super::observe::ObserverControl {
-        self.observer.control()
-    }
-
-    pub(crate) fn rejoiner(&self) -> impl Fn() + Send + Sync + 'static {
-        self.observer.rejoiner()
     }
 }
 
@@ -341,6 +333,7 @@ impl Db {
 }
 
 impl Db {
+    #[cfg(test)]
     pub(crate) fn observe_window_feed(&self, query: Query, spec: WindowSpec, paused: bool, listener: impl Fn(super::listeners::Feed) + Send + Sync + 'static) -> Result<WindowHandle, DbError> {
         if !windowable(&query) {
             return Err(QueryError::NotWindowable.into());

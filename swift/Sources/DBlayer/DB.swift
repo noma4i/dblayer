@@ -10,14 +10,12 @@ public enum DB {
     }
   }
   private static let opener = OpenDatabase()
-  static let wake = BackgroundWake()
 
   /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources.
   @MainActor public static func close() async throws {
     EntityRegistries.closeAll()
     ForegroundEvents.shared.stop()
     PowerSaving.shared.stop()
-    wake.detach()
     reachability.detach()
     let closing = current
     current = nil
@@ -90,17 +88,6 @@ public enum DB {
     ForegroundEvents.shared.start { sink.enterForeground() }
     PowerSaving.shared.start { sink.setPowerSaving(saving: $0) }
     current = opened
-    attachUploads(selectedTransport, to: opened)
-  }
-
-  public static func handleBackgroundSession(identifier: String, completion: @escaping @Sendable () -> Void) {
-    wake.handle(identifier: identifier, completion: completion)
-  }
-
-  static func attachUploads(_ transport: Transport?, to database: Database) {
-    let uploads = transport as? UrlSessionTransport
-    uploads?.connectUploads { database.putTasks(tasks: $0) }
-    wake.attach(uploads: uploads, database: database)
   }
 
   @_spi(Testing) public static func openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations? = nil, clock: TestClock, preload: Bool, listening: Bool = true, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> Database {

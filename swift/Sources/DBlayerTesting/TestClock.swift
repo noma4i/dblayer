@@ -6,8 +6,6 @@ extension TestClock {
 }
 
 extension DB {
-  public static func resetForTesting() async throws { try await database.resetForTesting() }
-  public static func settleForTesting() async throws { try await database.settleForTesting() }
   public static func enterForegroundForTesting() throws { try database.enterForegroundForTesting() }
 
   /// Opens the database on a clock that only `advance(by:)` moves, so freshness windows, retry delays and expiry run without sleeping. Scope preloads send no request unless `preload` is true.

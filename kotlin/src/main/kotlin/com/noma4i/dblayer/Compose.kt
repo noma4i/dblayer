@@ -31,12 +31,6 @@ fun <Model : DBModel> rememberLiveList(related: RelatedQuery<Model>, refreshOnCo
 fun <Model : DBModel> RelatedQuery<Model>.collectAsLive(): State<List<Model>> = live.collectAsLive()
 
 @Composable
-fun <Model : DBModel> rememberLiveWindow(window: Window<Model>): LiveWindow<Model> {
-    val scope = rememberLiveScope(window)
-    return remember(scope) { LiveWindow(window, scope) }
-}
-
-@Composable
 private fun rememberLiveScope(vararg keys: Any?): CoroutineScope {
     val scope = remember(*keys) { CoroutineScope(SupervisorJob()) }
     DisposableEffect(scope) { onDispose { scope.cancel() } }

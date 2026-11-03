@@ -52,9 +52,6 @@ impl Db {
                 }
             }
         }
-        if envelope.origin == WriteOrigin::Optimistic {
-            self.resolve_cloud_conflicts(reader, &mut envelope)?;
-        }
         if matches!(envelope.origin, WriteOrigin::Event | WriteOrigin::Snapshot) {
             self.follow_correlations(reader, &mut envelope)?;
         }

@@ -56,7 +56,6 @@ pub(crate) struct Shared {
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub replaced_ids: Arc<Mutex<HashMap<String, String>>>,
     pub operation_queues: Arc<crate::operation::OperationQueues>,
-    pub cloud_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub connectivity: Arc<crate::transport::Connectivity>,
     pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
@@ -233,14 +232,13 @@ impl Db {
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let replaced_ids = Arc::new(Mutex::new(HashMap::new()));
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
-        let cloud_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let replaced_log = dispatch.clone();
         store.set_commit_log(Box::new(move |event| {
             if let StoreEvent::Committed(result) = event {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), replaced_ids: replaced_ids.clone(), operation_queues: operation_queues.clone(), cloud_changes: cloud_changes.clone()}));
+        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), replaced_ids: replaced_ids.clone(), operation_queues: operation_queues.clone()}));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -260,7 +258,6 @@ impl Db {
             outbox_changes,
             replaced_ids,
             operation_queues,
-            cloud_changes,
             connectivity: crate::transport::Connectivity::new(true),
             ephemeral: ephemeral.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
@@ -334,11 +331,10 @@ struct CommitTargets {
     outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     replaced_ids: Arc<Mutex<HashMap<String, String>>>,
     operation_queues: Arc<crate::operation::OperationQueues>,
-    cloud_changes: Arc<tokio::sync::watch::Sender<u64>>,
 }
 
 fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
-    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, replaced_ids, operation_queues, cloud_changes } = targets;
+    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, replaced_ids, operation_queues } = targets;
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             locked(&replaced_ids).extend(result.replaced.iter().map(|(from, to)| (format!("{}\0{}", from.model.as_str(), from.id.as_str()), to.to_string())));
@@ -371,9 +367,6 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
             }
             if !result.operations.is_empty() {
                 crate::db::lock::effect(|| outbox_changes.send_modify(|version| *version += 1));
-            }
-            if result.cloud_logged {
-                crate::db::lock::effect(|| cloud_changes.send_modify(|version| *version += 1));
             }
             ephemeral.nudge();
             dispatch.push(Event::of_commit(result));

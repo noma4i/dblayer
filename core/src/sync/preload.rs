@@ -198,12 +198,12 @@ impl Inner {
     }
 
     pub(crate) fn preload_start(self: &Arc<Self>) {
-        if !self.admitted(crate::lifecycle::Origin::Background) { return; }
+        if !self.admitted(crate::lifecycle::Origin::Session) { return; }
         if let Ok(runtime) = Handle::try_current() { let _ = self.preload.runtime.set(runtime); }
         let mut state = locked(&self.preload.state);
         if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
         let Some(runtime) = Handle::try_current().ok().or_else(|| self.preload.runtime.get().cloned()) else { return };
-        let Ok(lease) = self.lease(crate::lifecycle::Origin::Background, "preload") else { return };
+        let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "preload") else { return };
         state.running = true;
         let inner = Arc::downgrade(self);
         runtime.spawn(self.until_closed(async move {
@@ -216,7 +216,7 @@ impl Inner {
     }
 
     fn preload_take(&self) -> bool {
-        let signed_in = self.admitted(crate::lifecycle::Origin::Background);
+        let signed_in = self.admitted(crate::lifecycle::Origin::Session);
         let mut state = locked(&self.preload.state);
         let ready = state.due && !state.held() && !state.yielding() && self.connectivity.is_online() && signed_in;
         if ready { state.due = false; } else { state.running = false; }
@@ -227,7 +227,7 @@ impl Inner {
     fn preload_failed(&self, error: &SyncError) {
         let Ok(windows) = self.preloaded_windows() else { return };
         for (model, relation, params) in windows {
-            let Ok(resolved) = self.resolve(crate::lifecycle::Origin::Background, &model, &relation, &params) else { continue };
+            let Ok(resolved) = self.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) else { continue };
             if let Ok(seed) = self.stored(&resolved) {
                 FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, seed).failed(LoadError::of(error));
             }
@@ -256,12 +256,12 @@ impl Inner {
             for (model, relation, params) in windows {
                 let key = format!("{model}|{relation}|{params:?}");
                 if !started.insert(key.clone()) { continue; }
-                let Ok(window_key) = self.resolve(crate::lifecycle::Origin::Background, &model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
+                let Ok(window_key) = self.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
                 let (inner, lanes, loaded) = (self.clone(), lanes.clone(), key.clone());
                 let task = loads.spawn(async move {
                     let _lane = lanes.acquire_owned().await;
                     inner.app_loads_settled().await;
-                    let result = match inner.resolve(crate::lifecycle::Origin::Background, &model, &relation, &params) {
+                    let result = match inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) {
                         Ok(resolved) => inner.load_scope(&resolved, false).await,
                         Err(error) => Err(error),
                     };

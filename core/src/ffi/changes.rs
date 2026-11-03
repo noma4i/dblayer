@@ -43,7 +43,6 @@ impl State {
     fn whole_of(&self, change: &LiveChange) -> LiveChange {
         let mut whole = LiveChange::whole(change.revision, self.shown());
         whole.error = change.error.clone();
-        whole.window = change.window.clone();
         whole.carry_state(change);
         whole
     }

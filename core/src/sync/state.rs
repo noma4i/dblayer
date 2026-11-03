@@ -70,7 +70,7 @@ impl Inner {
 
 impl Sync {
     pub async fn relation_state(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<RelationWatch, SyncError> {
-        let resolved = self.inner.resolve(crate::lifecycle::Origin::Observed, model, relation, params)?;
+        let resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?;
         let watch = self.inner.owner.observe(&resolved.window_key, resolved.target(), None);
         let (inner, window, model, scope) = (self.inner.clone(), resolved.window_key.clone(), resolved.model.clone(), resolved.scope.key.as_str().to_string());
         let seeded = tokio::task::spawn_blocking(move || {

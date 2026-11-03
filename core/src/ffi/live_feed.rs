@@ -5,7 +5,7 @@ use tokio::sync::watch;
 
 use crate::sync::{snapshot_phase, LoadError, LoadPhase, RelationState};
 
-use super::live::{LiveChange, LivePhase, LiveWindowEdge, QueryListener};
+use super::live::{LiveChange, LivePhase, QueryListener};
 use super::DbError;
 
 const MAX_RESYNCS_IN_ROW: u32 = 2;
@@ -40,7 +40,6 @@ struct FeedState {
     rows_at: i64,
     size: u32,
     count: Option<i64>,
-    window: Option<LiveWindowEdge>,
     read_error: Option<String>,
     relation: Option<RelationState>,
     applied: Option<RelationState>,
@@ -69,7 +68,7 @@ impl FeedState {
         let owes = self.draining || !self.queue.is_empty() || (!self.ended && (!self.opened || self.load_pending || self.awaiting_whole));
         if self.lease.as_ref().is_some_and(|lease| !lease.is_current()) { self.lease = None; }
         match (owes, self.lease.is_some()) {
-            (true, false) => if let Some(life) = &self.life { self.lease = life.lease_passive(crate::lifecycle::Origin::Observed, "live query").ok(); },
+            (true, false) => if let Some(life) = &self.life { self.lease = life.lease_passive(crate::lifecycle::Origin::Session, "live query").ok(); },
             (false, true) => self.lease = None,
             _ => {}
         }
@@ -144,7 +143,6 @@ impl LiveFeed {
             rows_at: -1,
             size: 0,
             count: None,
-            window: None,
             read_error: None,
             relation: None,
             applied: None,
@@ -179,7 +177,6 @@ impl LiveFeed {
         state.read_error = None;
         state.rows_at = state.rows_at.max(part.revision);
         state.size = part.size;
-        state.window = part.window.clone();
         self.compose(state, Some(part));
     }
 
@@ -320,7 +317,7 @@ impl LiveFeed {
         let Some(rejoin) = state.rejoin.clone().filter(|_| state.resyncs_in_row < MAX_RESYNCS_IN_ROW) else {
             let detail = "the list is out of sync with the database and a new snapshot did not fix it".to_string();
             let basis = state.queue.back().cloned().or_else(|| self.latest.borrow().clone()).unwrap_or_else(|| LiveChange::empty(state.rows_at.max(0)));
-            let mut change = LiveChange { size: state.size, window: basis.window.clone(), count: basis.count, error: Some(DbError::Invalid { detail }), error_kind: Some("invalid".to_string()), ..LiveChange::empty(basis.revision) };
+            let mut change = LiveChange { size: state.size, count: basis.count, error: Some(DbError::Invalid { detail }), error_kind: Some("invalid".to_string()), ..LiveChange::empty(basis.revision) };
             change.carry_state(&basis);
             change.phase = Some(LivePhase::Failed);
             change.error_kind = Some("invalid".to_string());
@@ -413,9 +410,6 @@ impl LiveFeed {
         change.loaded_at = shown.loaded_at;
         change.size = shown.size;
         change.count = shown.count;
-        if change.window.is_none() {
-            change.window = state.window.clone();
-        }
         change.error = error.as_ref().map(|(error, _)| error.clone());
         change.error_kind = error.map(|(_, kind)| kind);
         state.shown = Some(shown);

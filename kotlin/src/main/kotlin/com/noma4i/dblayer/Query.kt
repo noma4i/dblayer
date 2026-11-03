@@ -80,7 +80,6 @@ class Query<Model : DBModel>(
     fun search(text: String, wholeWords: Boolean = false) = where(Condition.search(text, wholeWords))
     fun order(vararg next: Order) = copy(orders = orders + next)
     fun limit(count: Int) = copy(limitCount = count)
-    fun window(tail: Int, max: Int? = null) = Window(this, tail, max)
 
     internal val json: String
         get() = json(false)

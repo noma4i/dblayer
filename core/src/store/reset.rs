@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-use crate::lifecycle::{Boundary, Change, End, Permit};
+use crate::lifecycle::{Boundary, Change, Permit};
 use crate::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ListKey;
@@ -147,10 +147,6 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
         }
     }
     connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM window_marker; DELETE FROM query_window; DELETE FROM local_pending;")?;
-    connection.execute_batch(
-        "DELETE FROM cloud_field_node; DELETE FROM cloud_field; DELETE FROM cloud_row; \
-         DELETE FROM cloud_log_node; DELETE FROM cloud_log; DELETE FROM cloud_cursor; DELETE FROM cloud_replica;",
-    )?;
     clear_sync(connection, None)?;
     clear_all(connection)?;
     Ok(())
@@ -340,7 +336,7 @@ impl Store {
         let mut inner = self.lock();
         inner.generation = permit.next_generation();
         let now = inner.now_ms();
-        write_intent(&inner.connection, if matches!(permit.boundary(), Boundary::SessionEnd(End::Server | End::Local)) { "session_end" } else { "incompatible" }, &[], now)?;
+        write_intent(&inner.connection, if matches!(permit.boundary(), Boundary::SessionEnd(_)) { "session_end" } else { "incompatible" }, &[], now)?;
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false)?;
         retire_operations(&transaction, None, None)?;

@@ -18,8 +18,6 @@ mod settle_tests;
 mod admission_tests;
 #[cfg(test)]
 mod source_tests;
-#[cfg(test)]
-mod background_tests;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
@@ -34,8 +32,6 @@ use crate::db::OutboxOperation;
 use crate::identity::RowId;
 use crate::operation::Operation;
 use crate::transport::CancelToken;
-use crate::transport::PutTask;
-use crate::transport::PutTaskState;
 use crate::upload::{RunMode, UploadFile, UploadInput, UploadOperations, UploadState};
 
 use super::error::SyncError;
@@ -63,7 +59,6 @@ pub(crate) struct UploadRuns {
     #[cfg(test)]
     walked: usize,
     tasks: JoinSet<()>,
-    adopted: HashMap<String, Arc<watch::Sender<PutTaskState>>>,
 }
 
 async fn survives_panic(work: impl std::future::Future<Output = ()>) -> bool {
@@ -101,7 +96,7 @@ impl Drop for UploadResume {
 
 impl UploadRuns {
     pub(crate) fn new(max_files: usize) -> Self {
-        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: BTreeMap::new(), next_run: 0, #[cfg(test)] walked: 0, tasks: JoinSet::new(), adopted: HashMap::new() }
+        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: BTreeMap::new(), next_run: 0, #[cfg(test)] walked: 0, tasks: JoinSet::new() }
     }
 }
 
@@ -115,7 +110,7 @@ fn upload_entry(entries: Vec<OutboxOperation>, model: &str, id: &RowId, family: 
 
 impl Inner {
     pub(crate) fn start_uploads(self: &Arc<Self>) -> Result<(), SyncError> {
-        if !self.admitted(crate::lifecycle::Origin::Background) { return Ok(()); }
+        if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(()); }
         let sequences = {
             let mut queue = locked(self.operation_queue()?);
             let mut changed = std::mem::take(&mut queue.dirty_uploads);
@@ -146,7 +141,7 @@ impl Inner {
             }
         }
         let mut runs = locked(&self.uploads);
-        if !self.admitted(crate::lifecycle::Origin::Background) {
+        if !self.admitted(crate::lifecycle::Origin::Session) {
             drop(runs);
             self.restart_uploads([seq]);
             return Ok(());
@@ -222,16 +217,6 @@ impl Inner {
         locked(&self.uploads).active.get(&(seq, position)).is_some_and(|active| active.run == run)
     }
 
-    pub(super) fn adopted_put(&self, tag: &str) -> Option<watch::Receiver<PutTaskState>> {
-        locked(&self.uploads).adopted.get(tag).map(|sender| sender.subscribe())
-    }
-
-    pub(super) fn forget_put(&self, tag: &str) {
-        self.with_uploads(|runs, effects| {
-            if let Some(sender) = runs.adopted.remove(tag) { effects.release(sender); }
-        });
-    }
-
     /// Every transition of the upload map goes through here: wakes, sender drops and the destruction of an active run run after the map is released, in transition order.
     fn with_uploads<R>(&self, apply: impl FnOnce(&mut UploadRuns, &mut Effects) -> R) -> R {
         self.upload_effects.under(&self.uploads, apply)
@@ -295,7 +280,7 @@ impl Inner {
 
     fn drain_uploads(self: &Arc<Self>) {
         let mut runs = locked(&self.uploads);
-        if !self.admitted(crate::lifecycle::Origin::Background) { return; }
+        if !self.admitted(crate::lifecycle::Origin::Session) { return; }
         while runs.active_files < runs.max_files {
             let Some(((seq, position), pending)) = runs.ready.pop_first() else { break };
             if runs.active.contains_key(&(seq, position)) { continue; }
@@ -308,7 +293,7 @@ impl Inner {
         let (run, token) = runs.register(seq, position, matches!(mode, RunMode::Transfer));
         let inner = self.clone();
         runs.tasks.spawn(self.until_closed(async move {
-            let Ok(lease) = inner.lease(crate::lifecycle::Origin::Background, "upload") else {
+            let Ok(lease) = inner.lease(crate::lifecycle::Origin::Session, "upload") else {
                 inner.finish_run(seq, position, run);
                 return;
             };
@@ -322,7 +307,7 @@ impl Inner {
 
     fn spawn_file_task(&self, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
         crate::db::lock::effect(|| self.file_tasks.send_modify(|pending| *pending += 1));
-        let finished = FileTask { pending: self.file_tasks.clone(), _lease: self.lease(crate::lifecycle::Origin::Background, "file task").ok() };
+        let finished = FileTask { pending: self.file_tasks.clone(), _lease: self.lease(crate::lifecycle::Origin::Session, "file task").ok() };
         drop(runtime.spawn_blocking(move || { task(); drop(finished); }));
     }
 
@@ -393,7 +378,7 @@ impl Inner {
         let resumed = self.with_uploads(|runs, effects| {
             if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) { return false; }
             if let Some(active) = runs.active.remove(&(seq, owner.position)) { effects.push(move || { crate::db::lock::effect(|| active.done.send_replace(true)); }); }
-            if !self.admitted(crate::lifecycle::Origin::Background) {
+            if !self.admitted(crate::lifecycle::Origin::Session) {
                 parked = true;
                 return false;
             }
@@ -414,37 +399,6 @@ impl Sync {
         self.inner.start_uploads()?;
         self.wait_uploads().await;
         Ok(())
-    }
-
-    pub async fn resume_uploads_for(&self, tags: Vec<String>) -> Result<(), SyncError> {
-        let keys: std::collections::HashSet<(i64, i64)> = tags.iter().filter_map(|tag| {
-            let mut parts = tag.split('.');
-            Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
-        }).collect();
-        self.inner.start_uploads()?;
-        loop {
-            let waiting: Vec<_> = locked(&self.inner.uploads).active.iter().filter(|(key, _)| keys.contains(*key)).map(|(_, active)| active.done.subscribe()).collect();
-            if waiting.is_empty() {
-                return Ok(());
-            }
-            for mut done in waiting {
-                let _ = done.wait_for(|finished| *finished).await;
-            }
-        }
-    }
-
-    pub fn put_tasks(&self, tasks: Vec<PutTask>) {
-        self.inner.with_uploads(|runs, effects| {
-            for task in tasks {
-                match runs.adopted.get(&task.tag) {
-                    Some(sender) => {
-                        let sender = sender.clone();
-                        effects.push(move || { crate::db::lock::effect(|| sender.send_replace(task.state)); });
-                    }
-                    None => { runs.adopted.insert(task.tag, Arc::new(watch::channel(task.state).0)); }
-                }
-            }
-        });
     }
 
     pub fn check_uploads(&self) -> Result<(), SyncError> {
@@ -563,10 +517,6 @@ impl UploadRuns {
     pub(super) fn walked(&self) -> usize { self.walked }
 
     fn finish(&mut self, seq: i64, position: i64, run: u64, effects: &mut Effects) -> bool {
-        let prefix = format!("{seq}.{position}.");
-        let tags: Vec<String> = self.adopted.keys().filter(|tag| tag.starts_with(&prefix)).cloned().collect();
-        let forgotten: Vec<_> = tags.iter().filter_map(|tag| self.adopted.remove(tag)).collect();
-        if !forgotten.is_empty() { effects.release(forgotten); }
         if self.active.get(&(seq, position)).is_none_or(|active| active.run != run) { return false; }
         let Some(active) = self.active.remove(&(seq, position)) else { return false };
         self.active_files -= usize::from(active.file_slot);
@@ -598,5 +548,3 @@ mod observe_tests;
 mod outcome_tests;
 #[cfg(test)]
 mod file_tests;
-#[cfg(test)]
-mod wake_tests;

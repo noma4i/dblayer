@@ -224,8 +224,6 @@ mod nested_tests;
 
 #[cfg(test)]
 mod storage_tests;
-#[cfg(test)]
-mod cloud_tests;
 
 #[cfg(test)]
 mod args_tests;

@@ -87,7 +87,6 @@ data class Snapshot<Model>(
     val replaced: Map<String, String>,
     val reordered: Boolean = false,
     val edits: List<ListEdit<Model>>? = null,
-    val window: WindowEdges? = null,
     val seq: ULong = 0uL,
     val phase: LoadPhase = LoadPhase.Opening,
     val isInitialLoading: Boolean = false,
@@ -106,7 +105,7 @@ data class Snapshot<Model>(
 
     internal companion object {
         fun <Model> of(applied: ListState<Model>, change: LiveChange) = Snapshot(
-            applied.rows, change.replacedIds(), applied.reordered, applied.edits, change.window?.let(::WindowEdges), change.seq,
+            applied.rows, change.replacedIds(), applied.reordered, applied.edits, change.seq,
             when (change.phase) {
                 LivePhase.NOT_LOADED -> LoadPhase.NotLoaded
                 LivePhase.LOADING -> LoadPhase.Loading
@@ -126,7 +125,7 @@ data class Snapshot<Model>(
                 replaced[real] = older.replaced[temporary] ?: temporary
                 if (older.replaced.containsKey(temporary)) replaced.remove(temporary)
             }
-            return newer.copy(replaced = replaced, reordered = older.reordered || newer.reordered, edits = ListEdit.composing(older.edits, newer.edits, newer.rows.size), window = newer.window ?: older.window)
+            return newer.copy(replaced = replaced, reordered = older.reordered || newer.reordered, edits = ListEdit.composing(older.edits, newer.edits, newer.rows.size))
         }
     }
 }

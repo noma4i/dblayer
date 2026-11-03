@@ -8,11 +8,8 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   private let lock = NSLock()
   private var sockets: [String: URLSessionWebSocketTask] = [:]
   var openSocketCount: Int { lock.withLock { sockets.count } }
-  private let uploadSource: UploadTaskSource
-  private lazy var uploadTasks = BackgroundPuts(source: uploadSource)
 
-  public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared, cablePath: String? = nil, uploads: UploadTaskSource? = nil) {
-    self.uploadSource = uploads ?? BackgroundUploadSession()
+  public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared, cablePath: String? = nil) {
     self.endpoint = endpoint
     self.headers = headers
     self.session = session
@@ -103,12 +100,29 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   }
 
   public func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
-    try await uploadTasks.put(url: url, headers: headers, file: file, tag: tag, progress: progress)
+    guard let target = URL(string: url) else { throw DbError.Invalid(detail: "bad upload url") }
+    guard file.offset == 0 else { throw DbError.Invalid(detail: "an upload sends a whole file") }
+    var request = URLRequest(url: target)
+    request.httpMethod = "PUT"
+    headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
+    request.setUserAgent()
+    do {
+      let (_, response) = try await session.upload(for: request, fromFile: URL(fileURLWithPath: file.path), delegate: PutProgress(progress))
+      let http = response as? HTTPURLResponse
+      return PutReply(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"))
+    } catch {
+      throw TransportFailure.classifySocket(error)
+    }
   }
+}
 
-  public var uploadSessionIdentifier: String { uploadSource.identifier }
+private final class PutProgress: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+  private let progress: ByteProgress
 
-  func connectUploads(_ sink: @escaping ([PutTask]) -> Void) { uploadTasks.connect(sink) }
-  func uploadEventsFinished() async { await uploadTasks.eventsFinished() }
-  func uploadDeliveredTags() -> [String] { uploadTasks.deliveredTags() }
+  init(_ progress: ByteProgress) { self.progress = progress }
+
+  func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+    progress.sent(bytes: UInt64(totalBytesSent))
+    if progress.isCancelled() { task.cancel() }
+  }
 }

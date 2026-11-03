@@ -349,7 +349,7 @@ impl Feed {
         }
         let mut failure = None;
         for (relation, params) in targets.into_values() {
-            let outcome = match self.inner.resolve(crate::lifecycle::Origin::Observed, model, &relation, &params) {
+            let outcome = match self.inner.resolve(crate::lifecycle::Origin::Session, model, &relation, &params) {
                 Ok(resolved) => self.inner.load_scope(&resolved, true).await.map(|_| ()),
                 Err(error) => Err(error),
             };
@@ -366,7 +366,7 @@ impl Feed {
             Some(parameter) => Map::from_iter([(parameter.to_string(), json!(id.ok_or_else(|| SyncError::Event("missing event id".into()))?))]),
             None => Map::new(),
         };
-        let mut resolved = self.inner.resolve(crate::lifecycle::Origin::Observed, model, name, &params)?;
+        let mut resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, name, &params)?;
         resolved.node_reread = relation.node == Some(crate::schema::NodeRead::One);
         self.inner.load_scope(&resolved, true).await.map(|_| ())
     }
@@ -673,7 +673,7 @@ impl Feed {
         let mut lifecycle = Lifecycle::new(self.backoff);
         let mut opened = first;
         loop {
-            if !self.inner.admitted(crate::lifecycle::Origin::Observed) {
+            if !self.inner.admitted(crate::lifecycle::Origin::Session) {
                 opened = None;
                 self.mark(|status| status.opening = false);
                 if resets.changed().await.is_none() { return; }
@@ -759,9 +759,9 @@ impl Inner {
                 self.connectivity.online().await;
                 let lifecycle = &self.db.shared.store.lifecycle;
                 let lease = loop {
-                    match self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Observed, "subscription open") {
+                    match self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Session, "subscription open") {
                         Ok(lease) => break lease,
-                        Err(_) if !lifecycle.admission(crate::lifecycle::Origin::Observed).await => return None,
+                        Err(_) if !lifecycle.admission(crate::lifecycle::Origin::Session).await => return None,
                         Err(_) => {}
                     }
                 };
@@ -784,7 +784,7 @@ impl Inner {
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
         let mut resets = self.db.shared.store.lifecycle.watch();
-        let first = if self.connectivity.is_online() && self.admitted(crate::lifecycle::Origin::Observed) {
+        let first = if self.connectivity.is_online() && self.admitted(crate::lifecycle::Origin::Session) {
             tokio::select! {
                 biased;
                 _ = invalidated(&mut resets) => None,

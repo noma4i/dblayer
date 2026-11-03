@@ -65,7 +65,7 @@ pub use upload_accepted::{AcceptedUpload, UploadAccepted, UploadAcceptedCallback
 pub use upload_round::RoundStep;
 pub use warm::Peeked;
 pub(crate) use listeners::{CallState, Feed};
-pub(crate) use local_write::{plan_fault, read_outbox};
+pub(crate) use local_write::read_outbox;
 pub(crate) use open::locked;
 pub(crate) use merge::Admission;
 pub(crate) use prior::Prior;

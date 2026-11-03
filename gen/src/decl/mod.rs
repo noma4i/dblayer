@@ -476,12 +476,6 @@ pub struct EphemeralDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CloudDecl {
-    pub pos: Pos,
-    pub names: Vec<Spanned<String>>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct ModelDecl {
     pub name: String,
     pub pos: Pos,
@@ -490,7 +484,6 @@ pub struct ModelDecl {
     pub expires_in: Option<Spanned<String>>,
     pub attributes: Vec<AttributeDecl>,
     pub ephemeral: Vec<EphemeralDecl>,
-    pub cloud: Option<CloudDecl>,
     pub indexes: Vec<IndexDecl>,
     pub search: Vec<Spanned<String>>,
     pub associations: Vec<AssociationDecl>,

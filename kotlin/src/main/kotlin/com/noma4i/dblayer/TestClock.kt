@@ -4,12 +4,6 @@ package com.noma4i.dblayer
 annotation class DBlayerTestingApi
 
 @DBlayerTestingApi
-suspend fun DBlayer.resetForTesting() = database.resetForTesting()
-
-@DBlayerTestingApi
-suspend fun DBlayer.settleForTesting() = database.settleForTesting()
-
-@DBlayerTestingApi
 fun DBlayer.enterForegroundForTesting() = database.enterForegroundForTesting()
 
 /** Opens the database on a clock that only `advance` moves, so freshness windows, retry delays and expiry run without sleeping. Scope preloads send no request unless `preload` is true. */

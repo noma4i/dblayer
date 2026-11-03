@@ -1,5 +1,21 @@
 mod database;
 #[cfg(test)]
+pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
+    let (lifecycle, db) = (database.streams.clone(), database.db.clone());
+    let quiet = async {
+        loop {
+            lifecycle.settled().await;
+            let listeners = db.clone();
+            database::blocking(move || { listeners.await_revision(listeners.revision_seq()?); Ok(()) }).await?;
+            if lifecycle.quiet() { return Ok::<(), DbError>(()); }
+        }
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(10), quiet).await {
+        Ok(result) => result,
+        Err(_) => Err(DbError::Invalid { detail: format!("settled timed out: {}", lifecycle.held().join("; ")) }),
+    }
+}
+#[cfg(test)]
 mod close_tests;
 mod foreign_future;
 mod lease;
@@ -11,7 +27,6 @@ mod lifecycle_tests;
 mod selftest;
 mod changes;
 mod model_events;
-mod cloud;
 #[cfg(test)]
 mod database_tests;
 mod encrypted;
@@ -26,7 +41,6 @@ mod related;
 #[cfg(test)]
 mod related_tests;
 mod retention;
-mod state;
 mod transport;
 mod upload_accepted;
 mod blob;
@@ -47,18 +61,15 @@ pub use database::{Config, Database, EntityCensus, SubscriptionCensus, TestClock
 pub use opening::{OpenDatabase, OpenOptions};
 pub use changes::LiveChanges;
 pub use model_events::{ModelEventFeed, WireModelEvent, WireModelEventItem};
-pub use cloud::{CloudLink, CloudStateListener};
-pub use crate::cloud::{CloudAccount, CloudBlob, CloudError, CloudIo, CloudPage, CloudState, MergeSource};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use entities::{entity_open_failed, EntityDelivery, EntityFetch, EntityLease, EntityListener, EntityRequest, EntityRefreshError, LiveEntities, WireEntitySnapshot};
 pub use entity_machine::{EntityRead, EntityStage};
 pub use live::{LiveChange, LoadMoreResult, LivePhase, LiveSubscription, QueryListener};
-pub use state::StateSubscription;
 pub use upload_accepted::{UploadAcceptedSink, WireAcceptedUpload, WireRoundStep, WireUploadAccepted};
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
-pub use crate::transport::{PutFile, PutTask, PutTaskState};
+pub use crate::transport::PutFile;
 pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
@@ -147,7 +158,6 @@ mod offload_tests;
 #[cfg(test)]
 mod load_tests;
 #[cfg(test)]
-mod reset_testing_tests;
 #[cfg(test)]
 mod reject_tests;
 #[cfg(test)]
@@ -155,7 +165,6 @@ mod live_tests;
 #[cfg(test)]
 mod live_feed_tests;
 #[cfg(test)]
-mod state_tests;
 #[cfg(test)]
 mod resync_tests;
 #[cfg(test)]
@@ -177,6 +186,5 @@ mod logout_tests;
 #[cfg(test)]
 mod load_more_tests;
 #[cfg(test)]
-mod window_load_tests;
 #[cfg(test)]
 mod follow_failures_tests;

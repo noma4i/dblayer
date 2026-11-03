@@ -243,7 +243,7 @@ impl LiveEntities {
             single.entry.epoch = epoch;
             single.entry.verdict = single.entry.machine.reset();
             single.entry.after_reset = true;
-            if !self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) { single.entry.verdict = single.entry.machine.session_ended(); }
+            if !self.database.streams.snapshot().admits(crate::lifecycle::Origin::Session) { single.entry.verdict = single.entry.machine.session_ended(); }
             snapshots.push(single.entry.snapshot(""));
             detached.subscription = single.subscription.take();
         }
@@ -441,7 +441,7 @@ impl LiveEntities {
     pub async fn load_initial(&self, id: String, lease: u64) -> Result<(), DbError> {
         super::entity_calls::entered();
         let Some(sync) = self.database.sync.clone() else { return Ok(()) };
-        let admitted = self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed);
+        let admitted = self.database.streams.snapshot().admits(crate::lifecycle::Origin::Session);
         if admitted {
             self.redo_failed_read_after_reset(&id, lease);
             return Ok(());
@@ -504,7 +504,7 @@ impl LiveEntities {
         super::entity_calls::entered();
         let pending = {
             let mut state = locked(&self.state);
-            if state.closed || !self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) { return; }
+            if state.closed || !self.database.streams.snapshot().admits(crate::lifecycle::Origin::Session) { return; }
             let Some(single) = &mut state.singleton else { return };
             if single.subscription.is_some() { return; }
             if single.entry.verdict.feed == 0 { single.entry.verdict = single.entry.machine.begin_feed(); }
