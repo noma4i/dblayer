@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
+
 ## 6.16.1 - 2026-11-03
 
 ### Fixed

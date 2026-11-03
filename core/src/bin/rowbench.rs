@@ -104,7 +104,7 @@ fn row(index: usize, count: i64, shape: Shape) -> Map<String, Value> {
         "title": format!("title number {index}"),
         "count": count,
         "ratio": index as f64 / 7.0,
-        "flag": index % 2 == 0,
+        "flag": index.is_multiple_of(2),
         "createdAt": "2026-10-14T00:00:00.000Z",
     })
     .as_object()

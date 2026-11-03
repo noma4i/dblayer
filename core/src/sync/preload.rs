@@ -390,6 +390,11 @@ impl Sync {
         }
     }
 
+    /// False when the transport holds no session: nothing then waits for a session that cannot come.
+    pub fn holds_session(&self) -> bool {
+        matches!(self.inner.transport.session(), Ok(Some(_)))
+    }
+
     pub fn session_ended(&self) {
         self.inner.db.shared.store.end_session();
     }

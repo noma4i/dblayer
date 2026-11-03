@@ -46,6 +46,7 @@ enum Event {
     ReadStarted,
     ReadEnded { error: Option<EntityRefreshError>, feed: Option<u64> },
     Reset,
+    SessionEnded,
     BeginFeed,
     Close,
 }
@@ -130,6 +131,10 @@ impl Flow {
                 self.active = 0;
                 Transition(State::opening())
             }
+            Event::SessionEnded => {
+                self.reading = false;
+                Handled
+            }
             Event::BeginFeed => {
                 self.active = NEXT_FEED.fetch_add(1, Ordering::Relaxed);
                 self.reading = self.singleton;
@@ -143,8 +148,15 @@ impl Flow {
     }
 
     #[state(superstate = "live")]
-    fn opening() -> Outcome<State> {
-        Super
+    fn opening(&mut self, event: &Event) -> Outcome<State> {
+        match event {
+            Event::SessionEnded => {
+                self.reading = false;
+                self.delivered = true;
+                Transition(State::absent())
+            }
+            _ => Super,
+        }
     }
 
     #[state(superstate = "live")]
@@ -214,6 +226,8 @@ impl EntityMachine {
     pub fn read_ended(&self, error: Option<EntityRefreshError>, feed: Option<u64>) -> EntityVerdict { self.send(Event::ReadEnded { error, feed }) }
 
     pub fn reset(&self) -> EntityVerdict { self.send(Event::Reset) }
+
+    pub fn session_ended(&self) -> EntityVerdict { self.send(Event::SessionEnded) }
 
     pub fn begin_feed(&self) -> EntityVerdict { self.send(Event::BeginFeed) }
 

@@ -6,7 +6,7 @@ use serde_json::json;
 
 use super::*;
 use crate::schema::{FieldSpec, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
-use crate::test_wait::within;
+use crate::test_wait::{within, within_secs};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 use crate::value::ScalarKind;
 
@@ -532,5 +532,66 @@ async fn a_confirmed_logout_then_a_session_reset_and_a_clear_never_shows_the_acc
     let states = delivered(&changes).await;
     assert!(states.iter().all(|rows| rows.iter().all(|row| !named(row, "A"))), "account A came back through the changes after the logout: {states:?}");
     assert!(states.last().is_some_and(|last| !last.is_empty() && last.iter().all(|row| named(row, "B"))));
+    database.shutdown();
+}
+
+fn singleton_settled(snapshots: &Entities) -> bool {
+    snapshots.0.lock().unwrap().get(&1).is_some_and(|row| row.settled || row.phase == EntityStage::Closed)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn held_waits_end_after_the_app_logout_order_with_a_held_singleton_and_streams() {
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    let snapshots = Arc::new(Entities::default());
+    let entities = database.live_entities("User".into(), snapshots.clone()).unwrap();
+    entities.singleton(r#"{"model":"User","relation":"profile","params":{}}"#.into(), 1).unwrap();
+    let rows = Arc::new(Rows::default());
+    let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
+    within_secs(20, query.wait_for_initial_load()).await.unwrap();
+    let changes = database.changes(r#"{"model":"User","relation":"all","params":{}}"#.into()).unwrap();
+    within_secs(20, database.settle_for_testing()).await.unwrap();
+    crate::test_wait::yield_until("the held singleton loaded", || singleton_settled(&snapshots)).await;
+    within_secs(20, entities.load_initial(String::new(), 1)).await.unwrap();
+    let reading = { let changes = changes.clone(); tokio::spawn(async move { loop { if within_secs(20, changes.next()).await.is_none() { break; } } }) };
+    within_secs(20, database.session_call("logout".into(), "{}".into())).await.unwrap();
+    database.session_reset().unwrap();
+    reading.abort();
+    let _ = within_secs(20, reading).await;
+    changes.cancel();
+    query.cancel();
+    within_secs(20, database.logout()).await.unwrap();
+    let ended = within_secs(20, entities.load_initial(String::new(), 1)).await;
+    assert!(matches!(ended, Err(DbError::Interrupted { .. })), "load_initial after the credential was cleared must end Interrupted without a request: {ended:?}");
+    within_secs(20, async { while !singleton_settled(&snapshots) { tokio::time::sleep(std::time::Duration::from_millis(5)).await; } }).await;
+    database.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_held_singleton_after_a_data_logout_and_reset_loads_only_when_an_observer_asks() {
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    let snapshots = Arc::new(Entities::default());
+    let entities = database.live_entities("User".into(), snapshots.clone()).unwrap();
+    entities.singleton(r#"{"model":"User","relation":"profile","params":{}}"#.into(), 1).unwrap();
+    within_secs(20, database.settle_for_testing()).await.unwrap();
+    crate::test_wait::yield_until("the held singleton loaded", || singleton_settled(&snapshots)).await;
+    within_secs(20, database.logout()).await.unwrap();
+    server.forbid(true);
+    let before = server.calls();
+    within_secs(20, database.reset_for_testing()).await.unwrap();
+    within_secs(20, database.settle_for_testing()).await.unwrap();
+    assert!(server.violations().is_empty(), "a held read reached the server in the reset window: {:?}", server.violations());
+    assert_eq!(server.calls(), before);
+    crate::test_wait::yield_until("the held singleton ends its wait without a session", || singleton_settled(&snapshots)).await;
+    server.forbid(false);
+    within_secs(20, entities.load_initial(String::new(), 1)).await.unwrap();
+    crate::test_wait::yield_until("the held singleton shows the account after the load it asked for", || {
+        snapshots.0.lock().unwrap().get(&1).is_some_and(|row| row.settled && row.read == EntityRead::Loaded && row.value.as_ref().is_some_and(|row| named(row, "A")))
+    }).await;
+    within_secs(20, database.settle_for_testing()).await.unwrap();
+    assert_eq!(server.calls()["MyProfile"], before["MyProfile"] + 1, "one load for the observer that asked");
     database.shutdown();
 }

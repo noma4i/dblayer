@@ -6,6 +6,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -108,6 +112,30 @@ class LifecycleSessionTest {
             server.refuseEverything(false)
             startSession("B")
             eventually("the held entity shows B") { entity.value.value?.name == "B" }
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    @Test
+    fun theAppExitOrderEndsEveryHeldWaitWhenTheCredentialIsGone() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            val entity = User.entity()
+            eventually("the held entity shows A") { entity.value.value?.name == "A" }
+            val holding = launch(start = CoroutineStart.UNDISPATCHED) {
+                val changes = DBlayer.database.changes("""{"model":"User"}""")
+                while (changes.next() != null) { }
+            }
+            val pending = async(start = CoroutineStart.UNDISPATCHED) { runCatching { entity.waitForInitialLoad() } }
+            awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
+            DBlayer.sessionReset()
+            awaitWithin("the cancel of the coroutine that holds the stream") { holding.cancelAndJoin() }
+            awaitWithin("the data logout") { DBlayer.logout() }
+            awaitWithin("the wait that was pending at the exit") { pending.await() }
+            val late = runCatching { awaitWithin("the first-load wait after the exit") { entity.waitForInitialLoad() } }.exceptionOrNull()
+            assertTrue("the wait after the exit must end Interrupted: $late", late is DbException.Interrupted)
         } finally {
             DBlayer.close()
         }

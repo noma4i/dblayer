@@ -38,7 +38,7 @@ let chat = Chat.entity(id, fetch: .ifMissing)   // no node read when Chat.list a
 val chat = Chat.entity(id, fetch = EntityFetch.IF_MISSING)   // no node read when Chat.list already stored the row
 ```
 
-`waitForInitialLoad()` waits for the first load of an entity. It reuses the read the entity already started and sends no request of its own, except while the session is ended: then it makes the read of the entity once, as an explicit call, which is the first read of `fetch:` for an id entity and the live read of the relation for a singleton. An entity without a read (`fetch: none`) returns after the first local snapshot of the core and makes 0 HTTP requests. It throws the error of a failed read (Swift: `EntityRefreshError`, Kotlin: `EntityReadException` with `error`) and an interrupted error when the database closes.
+`waitForInitialLoad()` waits for the first load of an entity. It reuses the read the entity already started and sends no request of its own, except while the session is ended: then it makes the read of the entity once, as an explicit call, which is the first read of `fetch:` for an id entity and the live read of the relation for a singleton. An entity without a read (`fetch: none`) returns after the first local snapshot of the core and makes 0 HTTP requests. It throws the error of a failed read (Swift: `EntityRefreshError`, Kotlin: `EntityReadException` with `error`) and an interrupted error when the database closes or when no credential is stored: it then sends no request. A session end settles every held entity, one without a value becomes absent, so a wait that was open returns at once.
 
 ```swift
 let me = CurrentUser.entity()

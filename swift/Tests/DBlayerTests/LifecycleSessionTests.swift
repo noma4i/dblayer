@@ -129,6 +129,24 @@ extension BridgeProbeTests {
     await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
   }
 
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func theAppExitOrderEndsEveryHeldWaitWhenTheCredentialIsGone() async throws {
+    _ = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    let entity = User.entity()
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+    let changes = try DB.database.changes(queryJson: #"{"model":"User"}"#)
+    let holding = Task { while (try? await changes.next()) != nil {} }
+    try await DB.sessionCall("logout", body: NoBody())
+    try DB.sessionReset()
+    holding.cancel()
+    changes.cancel()
+    await holding.value
+    try await DB.logout()
+    await #expect(throws: DbError.self) { try await entity.waitForInitialLoad() }
+  }
+
   /// The session stays, only the held reads start over: the reset rereads at once, no login follows, and the held entity shows the data the server holds now.
   @MainActor
   @Test

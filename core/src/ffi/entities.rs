@@ -240,6 +240,7 @@ impl LiveEntities {
             single.entry.generation = generation;
             single.entry.epoch = epoch;
             single.entry.verdict = single.entry.machine.reset();
+            if !self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) { single.entry.verdict = single.entry.machine.session_ended(); }
             snapshots.push(single.entry.snapshot(""));
             detached.subscription = single.subscription.take();
         }
@@ -254,6 +255,22 @@ impl LiveEntities {
             }
         });
         self.outbox.push(effects);
+    }
+
+    fn end_reads(&self) {
+        let _delivering = self.delivering();
+        let mut state = locked(&self.state);
+        if state.closed { return; }
+        let mut snapshots = Vec::new();
+        for (id, entry) in &mut state.entries {
+            entry.verdict = entry.machine.session_ended();
+            snapshots.push(entry.snapshot(id));
+        }
+        if let Some(single) = &mut state.singleton {
+            single.entry.verdict = single.entry.machine.session_ended();
+            snapshots.push(single.entry.snapshot(""));
+        }
+        self.emit(snapshots);
     }
 
     fn read_retained(&self, reads: Vec<(String, u64)>, generation: u64) {
@@ -385,6 +402,7 @@ impl LiveEntities {
         super::entity_calls::entered();
         if self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) { return Ok(()); }
         let sync = self.database.sync()?.clone();
+        if !sync.holds_session() { return Err(DbError::Interrupted { detail: "the session ended".into() }); }
         let singleton = {
             let state = locked(&self.state);
             if state.closed { return Err(DbError::Interrupted { detail: "entities closed".into() }); }
@@ -503,6 +521,7 @@ impl crate::lifecycle::Member for LiveEntities {
     fn close(&self) { self.shutdown(); }
     fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
         if snapshot.rereads(&self.model) { self.reset_core(); }
+        else if matches!(snapshot.change, crate::lifecycle::Change::EndSession) { self.end_reads(); }
     }
     fn registration(&self) -> &OnceLock<crate::lifecycle::Registration> { &self.registration }
     fn busy(&self) -> bool {
