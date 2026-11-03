@@ -1,26 +1,21 @@
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::identity::RowId;
 
 use super::dispatch::{mark_core_thread, Dispatch};
 use super::error::DbError;
 use super::open::Shared;
-use super::row::Row;
 use super::watch::{Evaluated, Loaded, Version};
 
 type ReadRun = Box<dyn FnOnce(&Shared) -> Result<ReadRows, DbError> + Send>;
 
 const READERS: usize = 2;
 
-pub(crate) type Position = (i64, u64);
-
 pub(crate) enum ReadTarget {
     Publish { key: String, token: u64, previous: Arc<Version>, grow: Option<(usize, usize)> },
     Join { key: String, token: u64, joiners: Vec<u64> },
     Open { key: String, token: u64 },
-    Entities { key: String, ids: BTreeSet<RowId>, leases: std::collections::BTreeMap<RowId, u64> },
 }
 
 pub(crate) enum ReadRows {
@@ -28,7 +23,6 @@ pub(crate) enum ReadRows {
     Evaluated(Box<Evaluated>),
     Whole(Loaded),
     Moved,
-    Entities { position: Position, loaded: HashMap<String, Row> },
 }
 
 pub(crate) enum ReadResult {
@@ -40,7 +34,7 @@ impl ReadResult {
     pub(crate) fn key(&self) -> &str {
         let (ReadResult::ReadOk { target, .. } | ReadResult::ReadFailed { target, .. }) = self;
         match target {
-            ReadTarget::Publish { key, .. } | ReadTarget::Join { key, .. } | ReadTarget::Open { key, .. } | ReadTarget::Entities { key, .. } => key,
+            ReadTarget::Publish { key, .. } | ReadTarget::Join { key, .. } | ReadTarget::Open { key, .. } => key,
         }
     }
 }

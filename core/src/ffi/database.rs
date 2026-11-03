@@ -4,25 +4,21 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use serde_json::{Map, Value};
 use tokio::runtime::Runtime;
-use crate::db::{Db, DbConfig, Feed, OpenReport};
+use crate::db::{Db, DbConfig, OpenReport};
 use crate::identity::RowId;
 use crate::pacing::{Clock, ManualClock, SystemClock};
-use crate::query::{Query, Where};
+use crate::query::Query;
 use crate::schema::ModelSpec;
 use crate::read::LoadMoreVerdict;
 use crate::sync::{LoadOptions, LoadStatus, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
 use crate::upload::UploadOperations;
-use super::entities::{self, EntityListener, LiveEntities};
-use super::live::{follow_failures, intake, LiveHandles};
-use super::live_feed::LiveFeed;
-use super::related::RelatedProjection;
 use crate::lifecycle::Lifecycle;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
 use super::wire::{WireModel, WireRow};
-use super::{DbError, LiveChange, LiveSubscription, LoadMoreResult, OnlineSink, QueryListener, Transport};
+use super::{DbError, LoadMoreResult, OnlineSink, Transport};
 
 type ParsedQuery = (Query, Option<(String, Map<String, Value>)>);
 
@@ -105,9 +101,6 @@ pub struct Config { pub path: Option<String>, pub data_version: Option<String>, 
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64 }
 
 #[derive(uniffi::Record)]
-pub struct EntityCensus { pub facts_told: u64, pub position_skips: u64, pub reads_failed: u64 }
-
-#[derive(uniffi::Record)]
 pub struct QueuedAction { pub row: WireRow, pub operation: i64 }
 
 #[derive(uniffi::Object)]
@@ -121,7 +114,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<Lifecycle>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) clock: Arc<dyn Clock>, pub(super) entity_cache: Arc<super::entity_pool::EntityCache>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<Lifecycle>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -148,7 +141,7 @@ impl Database {
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, clock, entity_cache: super::entity_pool::EntityCache::new(), stream_table: Arc::default(), testing: false, wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, stream_table: Arc::default(), testing: false, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -207,12 +200,6 @@ fn id(value: &str) -> Result<RowId, DbError> {
 
 #[uniffi::export]
 impl Database {
-    pub fn live_find(&self, model: String, row_id: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| {
-            let row_id = id(&row_id)?;
-            self.connect(Query::new(&model).filtered(Where::equal("id", serde_json::json!(row_id))), None, false, None, LoadOptions::default(), feed)
-        })
-    }
     pub fn peek_row(&self, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
         let wire = self.wire(&model)?;
         Ok(self.db.peek_row(&model, &id(&row_id)?).map(|row| wire.row(&row)))
@@ -222,15 +209,6 @@ impl Database {
         blocking(move || {
             let params = serde_json::from_str(&params_json)?;
             Ok(serde_json::to_string(&sync.edge_values(&model, &relation, &params, &row_ids)?)?)
-        })
-        .await
-    }
-    pub async fn peek_query(&self, query_json: String) -> Result<Option<LiveChange>, DbError> {
-        let this = self.clone();
-        blocking(move || {
-            let (query, _) = this.parsed_query(&query_json)?;
-            let wire = this.wire(query.model.as_str())?;
-            Ok(this.db.peek_query(&query).map(|peeked| LiveChange::whole(peeked.revision, peeked.rows.iter().map(|row| wire.row(row)).collect())))
         })
         .await
     }
@@ -246,25 +224,6 @@ impl Database {
     pub fn subscription_census(&self) -> SubscriptionCensus {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64 }
-    }
-    pub fn entity_census(&self) -> EntityCensus {
-        let counters = self.db.counters();
-        EntityCensus { facts_told: counters.entity_facts_told as u64, position_skips: counters.entity_position_skips as u64, reads_failed: counters.entity_reads_failed as u64 }
-    }
-    pub fn live_entities(&self, model: String, listener: Arc<dyn EntityListener>) -> Result<Arc<LiveEntities>, DbError> {
-        super::entity_calls::entered();
-        let source = entities::open(self.clone(), &model, self.wire(&model)?.clone(), listener)?;
-        self.streams.enroll(&source);
-        Ok(source)
-    }
-    pub fn live_query(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.connect_json(&query_json, false, None, feed))
-    }
-    pub fn live_count(&self, query_json: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.connect_json(&query_json, true, None, feed))
-    }
-    pub fn live_related(&self, query_json: String, name: String, listener: Arc<dyn QueryListener>) -> Arc<LiveSubscription> {
-        self.subscribed(listener, |feed| self.connect_json(&query_json, false, Some(name), feed))
     }
     pub async fn create(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
         let database = self.clone();
@@ -474,36 +433,29 @@ impl Database {
         Ok(())
     }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.as_ref().map(Sync::downgrade), online: self.db.connectivity() })) }
-    pub async fn upload(&self, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<i64, DbError> {
+    pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<i64, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        on_executor(async move {
+        let lease = self.streams.lease(crate::lifecycle::Origin::Session, "upload").map_err(|_| DbError::Interrupted { detail: "the session of this upload ended".into() })?;
+        if lease.epoch() != epoch { return Err(DbError::Interrupted { detail: "the session of this upload ended".into() }); }
+        let work = on_executor(async move {
             let file = request.into_file()?;
-            Ok::<_, DbError>(sync.upload(&model, &row, &action, file).await?)
-        })
-        .await
+            Ok::<_, DbError>(sync.upload_in(&model, &row, &action, file, Some(epoch)).await?)
+        });
+        lease.run(work).await.map_err(|_| DbError::Interrupted { detail: "the session of this upload ended".into() })?
     }
-    pub async fn upload_create(&self, model: String, action: String, values_json: String, request: WireUploadRequest) -> Result<WireRow, DbError> {
-        let sync = self.sync()?.clone();
-        let (db, wire) = (self.db.clone(), self.wire(&model)?.clone());
-        on_executor(async move {
-            let (values, file) = (serde_json::from_str(&values_json).map_err(DbError::from)?, request.into_file()?);
-            let row_id = sync.upload_create(&model, &action, values, file).await?;
-            let row = db.find(&model, &row_id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {row_id} was not created") })?;
-            Ok::<_, DbError>(wire.row(&row))
-        })
-        .await
-    }
-    pub async fn upload_create_batch(&self, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<Vec<WireRow>, DbError> {
+    pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<Vec<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?.clone();
-        on_executor(async move {
+        let lease = self.streams.lease(crate::lifecycle::Origin::Session, "upload batch").map_err(|_| DbError::Interrupted { detail: "the session of this upload ended".into() })?;
+        if lease.epoch() != epoch { return Err(DbError::Interrupted { detail: "the session of this upload ended".into() }); }
+        let work = on_executor(async move {
             let items = items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?;
             let input = request.into_input()?;
-            let rows = sync.upload_create_batch(&model, items, input).await?;
+            let rows = sync.upload_create_batch_in(&model, items, input, Some(epoch)).await?;
             Ok::<_, DbError>(rows.iter().map(|row| wire.row(row)).collect())
-        })
-        .await
+        });
+        lease.run(work).await.map_err(|_| DbError::Interrupted { detail: "the session of this upload ended".into() })?
     }
     pub async fn confirmed(&self, model: String, row_id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
@@ -579,151 +531,5 @@ impl Database {
             Ok(watch.then_some((name.to_string(), params)))
         }).transpose()?.flatten();
         Ok((query, remote))
-    }
-    pub(super) fn subscribed(&self, listener: Arc<dyn QueryListener>, open: impl FnOnce(Arc<LiveFeed>) -> Result<LiveHandles, DbError>) -> Arc<LiveSubscription> {
-        let feed = LiveFeed::new(listener);
-        feed.attach(self.streams.clone());
-        if let Ok(sync) = self.sync() { feed.hold_first_screen(sync.first_screen()); }
-        let handles = match open(feed.clone()) {
-            Ok(handles) => Some(handles),
-            Err(error) => {
-                let failed = feed.clone();
-                match executor() {
-                    Ok(executor) => { executor.spawn(async move { failed.invalid(error) }); }
-                    Err(_) => failed.invalid(error),
-                }
-                None
-            }
-        };
-        let subscription = Arc::new(LiveSubscription { feed, handles: Mutex::new(handles), registration: Default::default() });
-        self.streams.enroll(&subscription);
-        subscription
-    }
-    fn follow_load(&self, tracked: Option<(Sync, String, Map<String, Value>)>, model: String, options: LoadOptions, feed: &Arc<LiveFeed>, control: crate::db::ObserverControl) -> Result<(Option<tokio::task::AbortHandle>, Option<tokio::task::AbortHandle>), DbError> {
-        Ok(match tracked {
-            Some((sync, relation, params)) => {
-                let mut transitions = self.streams.watch();
-                feed.load_of(model.clone());
-                let ask = control.clone();
-                feed.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
-                let (follower, loader) = (feed.clone(), feed.clone());
-                let (ready, seeded) = tokio::sync::oneshot::channel();
-                let state = executor()?.spawn(async move {
-                    let mut changes = match sync.relation_state(&model, &relation, &params).await {
-                        Ok(changes) => changes,
-                        Err(error) => {
-                            follower.load_finished(Some(DbError::from(error)));
-                            return control.resume();
-                        }
-                    };
-                    let seed = changes.borrow_and_update().clone();
-                    follower.seed(seed);
-                    control.resume();
-                    crate::db::lock::effect(|| { let _ = ready.send((sync, model, relation, params, changes.clone())); });
-                    while changes.changed().await.is_ok() {
-                        let current = changes.borrow_and_update().clone();
-                        follower.state(current);
-                    }
-                }).abort_handle();
-                let load = executor()?.spawn(async move {
-                    let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
-                    let mut force = options.force;
-                    loop {
-                        let snapshot = transitions.current();
-                        if snapshot.closed { return; }
-                        if !snapshot.admits(crate::lifecycle::Origin::Session) {
-                            loader.load_finished(None);
-                            if transitions.changed().await.is_none() { return; }
-                            continue;
-                        }
-                        let resolved = match sync.inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) {
-                            Ok(resolved) => resolved,
-                            Err(error) => { loader.load_finished(Some(DbError::from(error))); return; }
-                        };
-                        let app_load = sync.app_load();
-                        loader.reset_load();
-                        let concerning = async {
-                            loop {
-                                match transitions.changed().await {
-                                    None => break None,
-                                    Some(next) if next.concerns(&model) => break Some(next),
-                                    Some(_) => {}
-                                }
-                            }
-                        };
-                        let result = tokio::select! {
-                            biased;
-                            changed = concerning => {
-                                if changed.is_none() { return; }
-                                continue;
-                            }
-                            result = sync.inner.load_scope(&resolved, force) => result,
-                        };
-                        force = false;
-                        let settled = receiver.borrow().clone();
-                        loader.state(settled);
-                        loader.load_finished(result.err().map(DbError::from));
-                        drop(app_load);
-                        loop {
-                            let Some(next) = transitions.changed().await else { return };
-                            if next.closed { return; }
-                            if next.concerns(&model) { break; }
-                        }
-                    }
-                }).abort_handle();
-                (Some(load), Some(state))
-            }
-            None => (None, None),
-        })
-    }
-    pub(super) fn connect_json(&self, json: &str, count: bool, related: Option<String>, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
-        let (query, remote) = self.parsed_query(json)?;
-        let description: Value = serde_json::from_str(json)?;
-        let force = description.get("refreshOnConnect").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or(false);
-        self.connect(query, remote, count, related, LoadOptions { force }, feed)
-    }
-    pub(super) fn connect(&self, mut query: Query, remote: Option<(String, Map<String, Value>)>, count: bool, related: Option<String>, options: LoadOptions, feed: Arc<LiveFeed>) -> Result<LiveHandles, DbError> {
-        let _entered = executor()?.enter();
-        let model = query.model.to_string();
-        let projection = related.map(|name| -> Result<_, DbError> {
-            let association = self.db.spec(&model)?.associations.iter().find(|association| association.name == name).ok_or_else(|| DbError::Invalid { detail: format!("{model} has no association {name}") })?;
-            let (target, kind) = (association.target.to_string(), association.kind);
-            query.include = vec![name.clone()];
-            feed.show_targets_only();
-            Ok((Mutex::new(RelatedProjection::new(name, kind, self.db.shared.counters.clone())), self.wire(&target)?.clone()))
-        }).transpose()?;
-        let mut tracked = None;
-        let mut watch = match remote {
-            Some((relation, params)) => {
-                let sync = self.sync()?.clone();
-                let watch = sync.watch(&model, &relation, &params)?;
-                if self.db.spec(&model)?.relations.iter().any(|declared| declared.name == relation && declared.remote.is_some()) {
-                    feed.expect_load();
-                    tracked = Some((sync, relation, params));
-                }
-                Some(watch)
-            }
-            None => None,
-        };
-        if !count {
-            self.db.retain_query(&query)?;
-        }
-        let wire = self.wire(&model)?.clone();
-        let sink = feed.clone();
-        let observer = self.db.observe_query_feed(query, count, tracked.is_some(), move |item| match (&projection, item) {
-            (Some((projection, target)), Feed::Rows(change)) => {
-                let shown = projection.lock().unwrap_or_else(std::sync::PoisonError::into_inner).apply(&change, target);
-                match shown {
-                    Some(targets) => sink.rows(targets),
-                    None => sink.reached(change.revision),
-                }
-            }
-            (Some(_), Feed::Count(_)) => {}
-            (_, item) => intake(&sink, &wire, item),
-        })?;
-        feed.on_rejoin(Arc::new(observer.rejoiner()));
-        let (load, state) = self.follow_load(tracked, model, options, &feed, observer.control())?;
-        let failure = follow_failures(watch.as_mut(), feed);
-        Ok(LiveHandles { _observer: Some(observer), _watch: watch, load, failure, state, targets: None })
     }
 }

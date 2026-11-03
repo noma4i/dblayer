@@ -11,7 +11,6 @@ pub(crate) mod spec_fixtures;
 #[cfg(test)]
 mod effects_tests;
 mod ephemeral;
-mod entities;
 mod error;
 mod files;
 mod upload;
@@ -53,7 +52,6 @@ mod window;
 
 pub use diff::{Diff, Entry, Stamp};
 pub(crate) use ranked::{OrderKey, Ranked};
-pub use entities::{EntityChange, EntityObserver};
 pub use error::DbError;
 pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
@@ -85,14 +83,6 @@ mod swap_tests;
 mod await_revision_tests;
 #[cfg(test)]
 mod entity_pin_tests;
-#[cfg(test)]
-mod entity_delta_tests;
-#[cfg(test)]
-mod entity_race_tests;
-#[cfg(test)]
-mod entity_failure_tests;
-#[cfg(test)]
-mod entity_late_row_tests;
 #[cfg(test)]
 mod ephemeral_tests;
 #[cfg(test)]

@@ -4,19 +4,14 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 
 use crate::lifecycle::{Holder, Lifecycle};
-use super::live_feed::LiveFeed;
 use super::open_slot::OpenSlot;
-use super::{Config, Database, DbError, LiveChange, LiveSubscription, LivePhase, QueryListener};
+use super::stream::tape::Rows;
+use super::{Config, Database, DbError, StreamEnd, StreamRequest};
 use crate::pacing::{Clock, ManualClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::{join_within, within, yield_until};
 use crate::transport::{MockTransport, SubscriptionEvent};
 use crate::value::ScalarKind;
-
-struct Silent;
-impl QueryListener for Silent {
-    fn changed(&self, _: LiveChange) {}
-}
 
 struct Counting(AtomicUsize, Option<Arc<Lifecycle>>, Mutex<Vec<usize>>, std::sync::OnceLock<crate::lifecycle::Registration>);
 impl Holder for Counting {
@@ -82,40 +77,38 @@ fn enrolling_a_stream_does_the_same_work_with_existing_streams() {
 #[tokio::test]
 async fn stream_close_terminates_waiters() {
     let database = local_notes().await;
-    let query = r#"{"model":"Note"}"#;
     database.create("Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap();
-    let queue = database.changes(query.into()).unwrap();
-    within(queue.next()).await.expect("initial delivery");
-    let waiters: Vec<_> = (0..2).map(|_| { let queue = queue.clone(); tokio::spawn(within(async move { queue.next().await })) }).collect();
-    let unopened = Arc::new(LiveSubscription { feed: LiveFeed::new(Arc::new(Silent)), handles: Mutex::new(None), registration: Default::default() });
-    database.streams.enroll(&unopened);
-    let current = { let live = unopened.clone(); tokio::spawn(within(async move { live.current().await })) };
-    let initial = { let live = unopened.clone(); tokio::spawn(within(async move { live.wait_for_initial_load().await })) };
+    let rows = Arc::new(Rows::default());
+    let live = database.watch_query(r#"{"model":"Note"}"#, rows.clone());
+    within(live.wait_for_initial_load()).await.unwrap();
+    let pending = database.watch(StreamRequest::Events { model: "Note".into() }, Arc::new(Rows::default()));
+    let waiting = { let pending = pending.clone(); tokio::spawn(within(async move { pending.wait_for_initial_load().await })) };
     tokio::task::yield_now().await;
-    assert!(waiters.iter().all(|waiter| !waiter.is_finished()) && !current.is_finished() && !initial.is_finished(), "every waiter is parked before the close");
     database.close_now();
-    for waiter in waiters { assert!(within(waiter).await.unwrap().is_none()); }
-    let closed = within(current).await.unwrap();
-    assert_eq!(closed.phase, Some(LivePhase::Closed));
-    assert!(matches!(closed.error, Some(DbError::Interrupted { .. })));
-    assert!(matches!(within(initial).await.unwrap(), Err(DbError::Interrupted { .. })));
-    let late = database.changes(query.into()).unwrap();
-    assert!(within(late.next()).await.is_none());
+    assert!(matches!(within(waiting).await.unwrap(), Err(DbError::Interrupted { .. })), "a wait for a stream outlived the close");
+    yield_until("the list ended", || !rows.ended().is_empty()).await;
+    assert_eq!(rows.ended(), vec![StreamEnd::Closed]);
+    let late = Arc::new(Rows::default());
+    database.watch_query(r#"{"model":"Note"}"#, late.clone());
+    yield_until("a stream opened after the close ended", || !late.ended().is_empty()).await;
+    assert_eq!(late.ended(), vec![StreamEnd::Closed]);
+    assert_eq!(database.stream_census().open, 0);
 }
 
 #[tokio::test]
-async fn closing_the_database_ends_a_waiting_model_event_next() {
+async fn closing_the_database_ends_a_model_event_stream_with_one_outcome() {
     let (database, transport) = with_transport(Arc::new(crate::pacing::SystemClock));
     transport.script_subscription("Signal", vec![SubscriptionEvent::Ready]);
-    let feed = within(database.open_model_events("Notice".into())).await.unwrap();
-    let waiting = tokio::spawn(within({ let feed = feed.clone(); async move { feed.next().await } }));
-    tokio::task::yield_now().await;
+    let rows = Arc::new(Rows::default());
+    let live = database.watch(StreamRequest::Events { model: "Notice".into() }, rows.clone());
+    within(live.wait_for_initial_load()).await.ok();
     database.close_now();
-    assert!(matches!(within(waiting).await.unwrap(), Ok(None)));
+    yield_until("the event stream ended", || !rows.ended().is_empty()).await;
+    assert_eq!(rows.ended(), vec![StreamEnd::Closed]);
 }
 
 #[tokio::test]
-async fn closing_the_database_ends_a_waiting_blob_stream() {
+async fn closing_the_database_ends_a_blob_status_stream_with_one_outcome() {
     use std::io::Write;
     let transport = Arc::new(MockTransport::new());
     let wired = transport.clone();
@@ -125,13 +118,13 @@ async fn closing_the_database_ends_a_waiting_blob_stream() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     file.write_all(b"blob").unwrap();
     let id = database.sync.as_ref().unwrap().upload_blob("test", "CreateBlob", crate::upload::UploadFile::new(file.path().to_str().unwrap())).await.unwrap();
-    let changes = database.clone().blob_changes(id).await.unwrap();
-    assert!(within(changes.clone().next()).await.unwrap().is_some());
-    let waiting = tokio::spawn(within({ let changes = changes.clone(); async move { changes.next().await } }));
-    tokio::task::yield_now().await;
-    assert!(!waiting.is_finished());
+    let rows = Arc::new(Rows::default());
+    database.watch(StreamRequest::Blob { id }, rows.clone());
+    yield_until("the first status arrived", || !rows.values().is_empty()).await;
+    assert!(matches!(rows.values()[0], super::StreamValue::Status { .. }));
     database.close_now();
-    assert!(within(waiting).await.unwrap().unwrap().is_none());
+    yield_until("the status stream ended", || !rows.ended().is_empty()).await;
+    assert_eq!(rows.ended(), vec![StreamEnd::Closed]);
 }
 
 #[tokio::test]

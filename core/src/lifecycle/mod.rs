@@ -259,6 +259,8 @@ pub(crate) struct Lifecycle {
     activity: watch::Sender<Activity>,
     #[cfg(test)]
     work: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(crate) pinned_writes: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for Lifecycle {
@@ -271,6 +273,8 @@ impl Default for Lifecycle {
             activity: watch::channel(Activity::default()).0,
             #[cfg(test)]
             work: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            pinned_writes: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }
@@ -286,9 +290,6 @@ pub(crate) struct Lease {
 
 impl Lease {
     pub(crate) fn epoch(&self) -> u64 { self.epoch }
-
-    /// The data generation the lease was issued in, when the work reads or writes the data of that generation.
-    pub(crate) fn generation(&self) -> Option<Generation> { self.generation }
 
     /// Whether the epoch this lease was issued in is still the current one.
     pub(crate) fn is_current(&self) -> bool {
@@ -375,6 +376,12 @@ impl Drop for Permit {
 
 impl Lifecycle {
     pub(crate) fn snapshot(&self) -> Snapshot { crate::db::locked(&self.state).snapshot().clone() }
+
+    /// Whether the epoch is the one now and the database is open. It reads the published snapshot and takes no library lock, so the writer may call it.
+    pub(crate) fn admits_epoch(&self, epoch: u64) -> bool {
+        let published = self.changed.borrow();
+        !published.closed && published.session_epoch == epoch
+    }
 
     pub(crate) fn watch(&self) -> Watch {
         let state = self.changed.subscribe();

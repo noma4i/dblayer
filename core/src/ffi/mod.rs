@@ -25,28 +25,20 @@ mod opening;
 mod lifecycle_tests;
 #[cfg(test)]
 mod selftest;
-mod changes;
-mod model_events;
 #[cfg(test)]
 mod database_tests;
 mod encrypted;
-mod entities;
-mod entity_pool;
-mod entity_calls;
-pub use entity_calls::EntityCallProbe;
-mod entity_machine;
-mod live;
-mod live_feed;
-mod stream;
+pub(crate) mod stream;
 mod command;
 mod related;
 #[cfg(test)]
 mod related_tests;
-mod retention;
 mod transport;
 mod upload_accepted;
 mod blob;
-pub use blob::{BlobChanges, WireBlobSnapshot};
+mod event;
+pub use blob::WireBlobSnapshot;
+pub use event::WireModelEvent;
 pub mod upload_wire;
 pub mod wire;
 
@@ -59,17 +51,12 @@ pub fn user_agent(application: Option<String>) -> String {
     }
 }
 
-pub use database::{Config, Database, EntityCensus, SubscriptionCensus, TestClock};
+pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use opening::{OpenDatabase, OpenOptions};
-pub use changes::LiveChanges;
-pub use model_events::{ModelEventFeed, WireModelEvent, WireModelEventItem};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
-pub use entities::{entity_open_failed, EntityDelivery, EntityFetch, EntityLease, EntityListener, EntityRequest, EntityRefreshError, LiveEntities, WireEntitySnapshot};
-pub use entity_machine::{EntityRead, EntityStage};
-pub use live::{LiveChange, LoadMoreResult, LivePhase, LiveSubscription, Placement, QueryListener, Replacement};
-pub use stream::{StreamCensus, StreamDelivery, StreamEnd, StreamRequest, StreamState, StreamValue, ValueSink};
+pub use stream::{CachedQuery, EntityFetch, LivePhase, LoadMoreResult, Placement, Replacement, StreamCensus, StreamDelivery, StreamEnd, StreamRequest, StreamState, StreamValue, ValueSink};
 pub use command::{CommandReceipt, CommandRequest, CommandStatus};
 pub use upload_accepted::{UploadAcceptedSink, WireAcceptedUpload, WireRoundStep, WireUploadAccepted};
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
@@ -165,10 +152,6 @@ mod load_tests;
 #[cfg(test)]
 mod reject_tests;
 #[cfg(test)]
-mod live_tests;
-#[cfg(test)]
-mod live_feed_tests;
-#[cfg(test)]
 #[cfg(test)]
 mod resync_tests;
 #[cfg(test)]
@@ -181,11 +164,6 @@ mod open_tests;
 #[cfg(test)]
 mod write_calls_tests;
 #[cfg(test)]
-mod retention_tests;
-#[cfg(test)]
-mod viewer_changes_tests;
-#[cfg(test)]
-mod logout_tests;
 #[cfg(test)]
 mod load_more_tests;
 #[cfg(test)]

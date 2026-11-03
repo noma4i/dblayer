@@ -6,7 +6,6 @@ use tokio::task::JoinHandle;
 use super::rig_tests::{bound, Fault, Held, Rig, BOUND};
 use crate::ffi::lifecycle_tests::Rows;
 use crate::ffi::{Database, DbError};
-use crate::test_wait::within_secs;
 
 #[derive(Clone, Copy, Debug)]
 enum Call {
@@ -94,6 +93,7 @@ async fn every_explicit_call_survives_every_transition_with_a_late_answer() {
                 gate.release();
                 let late = bound(running).await.unwrap();
                 rig.settle().await;
+                held.follow(&rig.database);
                 held.shows("B").await;
                 assert!(held.never_showed("late"), "{case}: the late answer ({late:?}) reached a held handle");
                 bound(rig.database.refresh("User".into(), "all".into(), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
@@ -123,7 +123,7 @@ async fn a_call_that_is_never_answered_ends_when_the_database_closes() {
     }
 }
 
-/// C11: a held list, a window, a changes feed and an initial-load wait end at close with nothing delivered after it.
+/// C11: a held list, a window and an initial-load wait end at close with nothing delivered after it.
 #[tokio::test(flavor = "multi_thread")]
 async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     let rig = Rig::encrypted().await;
@@ -132,19 +132,14 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     held.shows("A").await;
     held.lists_show("A").await;
     let gate = rig.world.hold_next("Users");
-    let pending = rig.database.live_query(r#"{"model":"User","relation":"all","params":{},"refreshOnConnect":true}"#.into(), Arc::new(Rows::default()));
+    let pending = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{},"refreshOnConnect":true}"#, Arc::new(Rows::default()));
     gate.entered().await;
     let waits = [tokio::spawn(async move { pending.wait_for_initial_load().await })];
-    let changes = held.changes.clone();
-    let next = tokio::spawn(async move { within_secs(BOUND, changes.next()).await });
-
     rig.database.close_now();
 
     for wait in waits {
         assert!(bound(wait).await.unwrap().is_err(), "a wait for the initial load outlived the close");
     }
-    let mut last = bound(next).await.unwrap();
-    while last.is_some() { last = within_secs(BOUND, held.changes.next()).await; }
-    assert!(within_secs(BOUND, held.changes.next()).await.is_none(), "the changes feed delivered after the close");
+    assert!(held.rows.ended().iter().all(|end| *end == crate::ffi::StreamEnd::Closed) && held.rows.ended().len() == 1, "the held list ends once at the close: {:?}", held.rows.ended());
     rig.database.close_now();
 }

@@ -1,14 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use super::{Config, Database, LiveChange, LivePhase, QueryListener, Transport};
+use super::stream::tape::{Seen, Tape, Watched};
+use super::{Config, Database, LivePhase, StreamRequest, Transport};
 use crate::schema::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
-
-pub(super) struct Tape(pub(super) Mutex<Vec<LiveChange>>);
-
-impl QueryListener for Tape {
-    fn changed(&self, change: LiveChange) { self.0.lock().unwrap().push(change); }
-}
 
 fn id_field() -> FieldSpec { FieldSpec::scalar("id", ScalarKind::Id) }
 
@@ -28,7 +23,7 @@ fn settle(db: &Database) { db.db.await_revision(db.db.revision_seq().unwrap()); 
 
 pub(super) fn ids(tape: &Tape) -> Vec<String> {
     let mut list: Vec<String> = Vec::new();
-    for change in tape.0.lock().unwrap().iter().filter(|change| change.phase.is_some() || !change.rows.is_empty() || change.full) {
+    for change in tape.heard().iter().filter(|change| change.phase.is_some() || !change.rows.is_empty() || change.full) {
         if change.full {
             list = change.rows.iter().map(|row| row.id.clone()).collect();
             continue;
@@ -42,15 +37,15 @@ pub(super) fn ids(tape: &Tape) -> Vec<String> {
     list
 }
 
-fn last(tape: &Tape) -> LiveChange { tape.0.lock().unwrap().last().cloned().expect("a delivery") }
+fn last(tape: &Tape) -> Seen { tape.last().expect("a delivery") }
 
 async fn make(db: &Database, model: &str, json: &str) { db.create(model.into(), json.into(), "{}".into()).await.unwrap(); }
 
 async fn patch(db: &Database, model: &str, id: &str, json: &str) { db.update(model.into(), id.into(), json.into(), "{}".into()).await.unwrap(); }
 
-async fn watch(db: &Database, query: &str, name: &str) -> (Arc<Tape>, Arc<super::LiveSubscription>) {
-    let tape = Arc::new(Tape(Mutex::default()));
-    let live = db.live_related(query.into(), name.into(), tape.clone());
+async fn watch(db: &Database, query: &str, name: &str) -> (Arc<Tape>, Arc<Watched>) {
+    let tape = Arc::new(Tape::default());
+    let live = db.watch(StreamRequest::Related { query_json: query.into(), name: name.into() }, tape.clone());
     settle(db);
     (tape, live)
 }
@@ -190,16 +185,13 @@ async fn related_05_one_edit_reads_sends_and_visits_by_the_touched_rows_for_ever
 }
 
 struct Canceller {
-    live: Mutex<Option<Arc<super::LiveSubscription>>>,
-    targets_free: Mutex<Vec<bool>>,
+    live: std::sync::Mutex<Option<Arc<Watched>>>,
     cancelled: std::sync::mpsc::Sender<()>,
 }
 
-impl QueryListener for Canceller {
-    fn changed(&self, _: LiveChange) {
+impl super::ValueSink for Canceller {
+    fn delivered(&self, _: super::StreamDelivery) {
         let Some(live) = self.live.lock().unwrap().take() else { return };
-        let targets = crate::db::locked(&live.handles).as_ref().and_then(|handles| handles.targets.clone());
-        if let Some(targets) = targets { self.targets_free.lock().unwrap().push(crate::test_wait::mutex_free(&targets)); }
         live.cancel();
         self.cancelled.send(()).unwrap();
     }
@@ -214,16 +206,15 @@ async fn related_cancel_inside_callback() {
         for (id, user) in [("m1", "u1"), ("m2", "u2")] { make(&db, "Moment", &format!(r#"{{"id":"{id}","text":"{id}","userId":"{user}"}}"#)).await; }
         let base = census(&db);
         let (cancelled, done) = std::sync::mpsc::channel();
-        let listener = Arc::new(Canceller { live: Mutex::new(None), targets_free: Mutex::new(Vec::new()), cancelled });
+        let listener = Arc::new(Canceller { live: std::sync::Mutex::new(None), cancelled });
         let query = r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#;
-        let live = db.live_related(query.into(), "author".into(), listener.clone());
+        let live = db.watch(StreamRequest::Related { query_json: query.into(), name: "author".into() }, listener.clone());
         settle(&db);
         *listener.live.lock().unwrap() = Some(live.clone());
         if link_change { patch(&db, "Moment", "m1", r#"{"userId":"u2"}"#).await; } else { patch(&db, "User", "u1", r#"{"name":"Anna"}"#).await; }
         crate::test_wait::recv_within(&done);
         drop(live);
         crate::test_wait::yield_until("the census did not return to its base", || census(&db) == base).await;
-        let probes = listener.targets_free.lock().unwrap().clone();
-        assert_eq!(probes, Vec::<bool>::new(), "link_change={link_change}");
+        assert_eq!(db.stream_census().open, 0, "link_change={link_change}");
     }
 }

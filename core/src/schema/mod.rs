@@ -972,6 +972,9 @@ pub struct ActionDeclaration {
     pub mutation: Option<String>,
     #[serde(default)]
     pub upload: bool,
+    /// The command survives a missing network and a restart of the app: sending a message.
+    #[serde(default)]
+    pub durable: bool,
     #[serde(default)]
     pub variables: BTreeMap<String, String>,
     #[serde(default)]
@@ -1038,6 +1041,7 @@ impl ActionDeclaration {
             members: Vec::new(),
             mutation: None,
             upload: false,
+            durable: false,
             variables: BTreeMap::new(),
             optimistic: Map::new(),
             effects: Vec::new(),

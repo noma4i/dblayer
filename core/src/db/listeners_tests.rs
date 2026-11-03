@@ -114,30 +114,6 @@ fn inv_observe_08_a_rows_call_that_passed_the_cancel_check_does_not_start_after_
     assert_eq!(db.counters().observer_calls, 0);
 }
 
-#[test]
-fn inv_observe_08_an_entity_call_that_passed_the_cancel_check_does_not_start_after_the_cancel_returns() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    let db = super::fixtures::booted();
-    db.shared.executor.refuse_spawn.store(true, Ordering::SeqCst);
-    let calls = Arc::new(AtomicUsize::new(0));
-    let counted = calls.clone();
-    let observer = db.observe_entities("moments", move |_| { counted.fetch_add(1, Ordering::SeqCst); }).unwrap();
-    let (at_the_call, release) = hold_before_the_call(&observer.subscriber.call_state);
-    let delivering = {
-        let (subscriber, executor) = (observer.subscriber.clone(), db.shared.executor.clone());
-        std::thread::spawn(move || {
-            subscriber.post(&executor, vec![(super::fixtures::rid("m1"), (1, 0), None, 1)]);
-            super::listeners::Runnable::run(&*subscriber);
-        })
-    };
-    at_the_call.recv_timeout(WAIT).unwrap();
-    observer.subscriber.call_state.cancel();
-    release.send(()).unwrap();
-    join_within(delivering);
-    assert_eq!(calls.load(Ordering::SeqCst), 0);
-    assert_eq!(db.counters().entity_facts_told, 0);
-}
-
 fn feed_log(sink: std::sync::mpsc::Sender<String>) -> Listener {
     use super::listeners::Feed;
     Listener::Feed(Box::new(move |feed| {
@@ -153,7 +129,7 @@ fn feed_log(sink: std::sync::mpsc::Sender<String>) -> Listener {
 
 #[test]
 fn listener_thread_creation_failure() {
-    use super::fixtures::{booted, rid};
+    use super::fixtures::booted;
     use crate::test_wait::recv_within;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc::channel;
@@ -171,24 +147,14 @@ fn listener_thread_creation_failure() {
     assert!(feed_lines.try_recv().is_err() && row_revisions.try_recv().is_err(), "no callback runs on the posting thread");
     assert!(feed.idle() && rows.idle(), "a refused start leaves no subscriber waiting for a worker");
 
-    let (entity_sink, entity_changes) = channel();
-    let entity = db.observe_entities("moments", move |change| entity_sink.send(change.clone()).unwrap()).unwrap();
-    entity.subscriber.post(&executor, vec![(rid("m1"), (1, 0), None, 7)]);
-    assert!(entity_changes.try_recv().is_err() && entity.subscriber.idle());
-
     executor.refuse_spawn.store(false, Ordering::SeqCst);
     feed.reach(&executor, 1);
     let delivered: Vec<String> = (0..3).map(|_| recv_within(&feed_lines)).collect();
     assert_eq!(delivered, ["rows 1", "reached 1", "failed refused by the test"], "the subscriber learns of the refusal from its own mailbox");
-    entity.subscriber.post(&executor, vec![(rid("m1"), (2, 0), None, 7)]);
-    let told = recv_within(&entity_changes);
-    assert_eq!(told.failure.as_deref(), Some("refused by the test"));
-    assert_eq!((told.revision, told.removed), (2, vec![rid("m1")]), "the entity facts are still merged to the latest");
-
     executor.refuse_spawn.store(true, Ordering::SeqCst);
     rows.post(&executor, version(2), &[], Loaded::default());
     assert_eq!(recv_within(&row_revisions), 2, "a live worker serves the others although the next start is refused");
-    assert_eq!(db.counters().listener_spawn_failures, 3, "only the starts that left a subscriber without a worker are counted");
+    assert_eq!(db.counters().listener_spawn_failures, 2, "only the starts that left a subscriber without a worker are counted");
 }
 
 struct Capture {

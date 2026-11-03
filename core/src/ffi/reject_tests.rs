@@ -3,45 +3,24 @@ use std::sync::Arc;
 use serde_json::Map;
 
 use super::load_tests::rig;
-use super::{LiveChange, QueryListener};
+use super::stream::tape::Rows;
+use super::{LivePhase, StreamEnd};
 use crate::sync::LoadPhase;
 
-struct Quiet;
-
-impl QueryListener for Quiet {
-    fn changed(&self, _: LiveChange) {}
-}
-
 #[tokio::test]
-async fn inv_loadm_12_a_query_the_core_rejects_tells_its_subscriber_in_the_snapshot_and_leaves_the_relation_window_alone() {
+async fn inv_loadm_12_a_query_the_core_rejects_tells_its_subscriber_in_the_state_ends_the_stream_and_leaves_the_relation_window_alone() {
     let (db, _) = rig().await;
     let sync = db.sync.as_ref().unwrap();
     let state = sync.relation_state("Moment", "feed", &Map::new()).await.unwrap();
     let query = r#"{"model":"Moment","relation":"feed","params":{},"where":{"type":"equal","field":"nope","value":1}}"#;
-    let rejected = db.live_query(query.into(), Arc::new(Quiet));
-    let first = rejected.current().await;
-    assert_eq!((first.phase, first.error_kind.as_deref(), first.rows.len()), (Some(super::LivePhase::Failed), Some("invalid"), 0));
+    let rows = Arc::new(Rows::default());
+    let rejected = db.watch_query(query, rows.clone());
+    crate::test_wait::yield_until("the rejected query ended", || !rows.ended().is_empty()).await;
+    let first = rows.state().unwrap();
+    assert_eq!((first.phase, first.error_kind.as_deref(), rows.len()), (Some(LivePhase::Failed), Some("invalid"), 0));
+    assert_eq!(rows.ended(), vec![StreamEnd::Invalid], "a rejected query ends with one outcome");
+    assert_eq!(db.stream_census().open, 0, "an ended stream leaves the table");
+    assert!(rejected.wait_for_initial_load().await.is_err());
     let untouched = state.borrow().clone();
     assert_eq!((untouched.phase, untouched.error.map(|error| error.kind)), (LoadPhase::NotLoaded, None));
-}
-
-struct Failures(std::sync::Mutex<Vec<Option<String>>>);
-
-impl super::EntityListener for Failures {
-    fn changed(&self, delivery: super::EntityDelivery) {
-        self.0.lock().unwrap().extend(delivery.snapshots.into_iter().map(|snapshot| match snapshot.phase { super::EntityStage::Failed { message } => Some(message), _ => None }));
-    }
-}
-
-#[tokio::test]
-async fn inv_observe_24_an_entity_read_failure_reaches_the_foreign_listener() {
-    let (db, _) = rig().await;
-    let listener = Arc::new(Failures(std::sync::Mutex::new(Vec::new())));
-    let live = db.live_entities("Moment".into(), listener.clone()).unwrap();
-    db.db.shared.store.fail_next_entity_reads(1);
-    live.retain(vec![super::EntityRequest { id: "m1".into(), lease: 1, fetch: super::EntityFetch::None }]).unwrap();
-    db.db.await_revision(db.db.revision_seq().unwrap());
-    let told = listener.0.lock().unwrap().clone();
-    assert_eq!(told.len(), 1);
-    assert!(told[0].is_some(), "deliveries {told:?}");
 }

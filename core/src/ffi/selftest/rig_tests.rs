@@ -9,9 +9,10 @@ use tokio::sync::{Notify, Semaphore};
 use crate::ffi::lifecycle_tests::{models, named, Rows};
 use crate::ffi::session_guards_tests::WatchedHeld;
 use crate::ffi::{
-    ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSessionOperation, EncryptedSocketEvent, EntityDelivery, EntityFetch, EntityListener, EntityRequest,
-    LiveChanges, LiveSubscription, OpenDatabase, PutReply, SessionCode, SubscriptionSink, TestClock, Transport, TransportRequest, WireEntitySnapshot,
+    ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSessionOperation, EncryptedSocketEvent, EntityFetch, OpenDatabase, PutReply, SessionCode, StreamRequest,
+    SubscriptionSink, TestClock, Transport, TransportRequest,
 };
+use crate::ffi::stream::tape::Watched;
 use crate::test_wait::{within_secs, yield_until};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 
@@ -318,6 +319,7 @@ fn message_spec() -> crate::schema::ModelSpec {
     message.relations.push(thread);
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("SendMessage".into());
+    create.durable = true;
     create.has_optimistic = true;
     create.has_temp_row_retention = true;
     for field in ["chatId", "text", "at"] { create.variables.insert(field.into(), field.into()); }
@@ -406,101 +408,93 @@ impl Rig {
 
 }
 
-/// Every delivery of the held entities, in order.
-#[derive(Default)]
-pub(super) struct EntityLog(pub(super) Mutex<Vec<WireEntitySnapshot>>);
-
-impl EntityListener for EntityLog {
-    fn changed(&self, delivery: EntityDelivery) { self.0.lock().unwrap().extend(delivery.snapshots); }
-}
-
-impl EntityLog {
-    pub(super) fn latest(&self, lease: u64) -> Option<WireEntitySnapshot> { self.0.lock().unwrap().iter().rev().find(|snapshot| snapshot.lease == lease).cloned() }
-    pub(super) fn ever_showed(&self, account: &str) -> bool { self.0.lock().unwrap().iter().any(|snapshot| snapshot.value.as_ref().is_some_and(|row| named(row, account))) }
-    pub(super) fn len(&self) -> usize { self.0.lock().unwrap().len() }
-    pub(super) fn shows(&self, account: &str) -> bool {
-        (1..=2).all(|lease| self.latest(lease).is_some_and(|snapshot| snapshot.value.as_ref().is_some_and(|row| named(row, account)) && !matches!(snapshot.read, crate::ffi::EntityRead::Failed { .. })))
-    }
-    pub(super) fn empty(&self) -> bool { (1..=2).all(|lease| self.latest(lease).is_some_and(|snapshot| snapshot.value.is_none())) }
-}
-
-/// The handles the app holds across its whole life: the singleton and the id entity (CurrentUser), a list, a window and a changes feed.
+/// The streams the app holds for the account it shows: the singleton and the id entity (CurrentUser), a list and a second list in another order.
+/// A new account gets new streams on the same screens: `follow` opens them for the epoch now, the deliveries of every epoch stay in the same logs.
 pub(super) struct Held {
-    pub(super) entities: Arc<crate::ffi::LiveEntities>,
-    pub(super) log: Arc<EntityLog>,
-    pub(super) query: Arc<LiveSubscription>,
+    pub(super) single: Arc<Rows>,
+    pub(super) entity: Arc<Rows>,
     pub(super) rows: Arc<Rows>,
-    pub(super) window: Arc<LiveSubscription>,
     pub(super) window_rows: Arc<Rows>,
-    pub(super) changes: Arc<LiveChanges>,
+    open: Mutex<Vec<Arc<Watched>>>,
+    stopped: std::sync::atomic::AtomicBool,
 }
 
 impl Held {
     pub(super) fn open(database: &Database) -> Held {
-        let log = Arc::new(EntityLog::default());
-        let entities = database.live_entities("User".into(), log.clone()).unwrap();
-        entities.singleton(r#"{"model":"User","relation":"profile","params":{}}"#.into(), 1).unwrap();
-        entities.retain(vec![EntityRequest { id: "user".into(), lease: 2, fetch: EntityFetch::Force }]).unwrap();
-        let rows = Arc::new(Rows::default());
-        let window_rows = Arc::new(Rows::default());
-        let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
-        let window = database.live_query(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#.into(), window_rows.clone());
-        let changes = database.changes(r#"{"model":"User","relation":"all","params":{}}"#.into()).unwrap();
-        Held { entities, log, query, rows, window, window_rows, changes }
+        let held = Held { single: Arc::default(), entity: Arc::default(), rows: Arc::default(), window_rows: Arc::default(), open: Mutex::new(Vec::new()), stopped: Default::default() };
+        held.follow(database);
+        held
     }
 
-    /// The app cancels its collectors and lists before the data clear. The entities stay held, as CurrentUser does.
+    /// Opens the streams for the epoch now. Streams of an epoch that has gone are cancelled first.
+    pub(super) fn follow(&self, database: &Database) {
+        let mut open = self.open.lock().unwrap();
+        if open.first().is_some_and(|stream| stream.epoch == database.session_epoch()) { return; }
+        self.stopped.store(false, Ordering::SeqCst);
+        for stream in open.drain(..) { stream.cancel(); }
+        open.push(database.watch(StreamRequest::Query { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() }, self.single.clone()));
+        open.push(database.watch(StreamRequest::Entity { model: "User".into(), id: "user".into(), fetch: EntityFetch::Force }, self.entity.clone()));
+        open.push(database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, self.rows.clone()));
+        open.push(database.watch_query(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#, self.window_rows.clone()));
+    }
+
+    /// The app cancels its collectors and lists before the data clear.
     pub(super) fn cancel_streams(&self) {
-        self.query.cancel();
-        self.window.cancel();
-        self.changes.cancel();
+        self.stopped.store(true, Ordering::SeqCst);
+        for stream in self.open.lock().unwrap().drain(..) { stream.cancel(); }
     }
 
-    pub(super) fn cancel_all(&self) {
-        self.cancel_streams();
-        self.entities.shutdown();
+    pub(super) fn cancel_all(&self) { self.cancel_streams(); }
+
+    /// The stream of the main list.
+    pub(super) fn query(&self) -> Arc<Watched> { self.open.lock().unwrap()[2].clone() }
+
+    /// The singleton and the id entity are over: their streams ended with their account or the reader stopped them.
+    pub(super) fn entities_empty(&self) -> bool { self.stopped.load(Ordering::SeqCst) || [&self.single, &self.entity].iter().all(|rows| Self::over(rows)) }
+
+    fn over(rows: &Rows) -> bool { !rows.ended().is_empty() || rows.len() == 0 }
+
+    fn shown(rows: &Rows, account: &str) -> bool {
+        let rows = rows.0.lock().unwrap();
+        !rows.is_empty() && rows.iter().all(|row| named(row, account))
     }
 
     pub(super) async fn shows(&self, account: &str) {
-        yield_until(&format!("the held entities show {account}"), || self.log.shows(account)).await;
+        yield_until(&format!("the held entities show {account}"), || Self::shown(&self.single, account) && Self::shown(&self.entity, account)).await;
     }
 
     pub(super) async fn lists_show(&self, account: &str) {
         for rows in [&self.rows, &self.window_rows] {
-            yield_until(&format!("the held list shows {account}"), || {
-                let rows = rows.0.lock().unwrap();
-                !rows.is_empty() && rows.iter().all(|row| named(row, account))
-            })
-            .await;
+            yield_until(&format!("the held list shows {account}"), || Self::shown(rows, account)).await;
         }
     }
 
     /// Every kept view shows the account: both entities and both lists.
     pub(super) fn displays(&self, account: &str) -> bool {
-        let listed = |rows: &Rows| { let rows = rows.0.lock().unwrap(); !rows.is_empty() && rows.iter().all(|row| named(row, account)) };
-        self.log.shows(account) && listed(&self.rows) && listed(&self.window_rows)
+        Self::shown(&self.single, account) && Self::shown(&self.entity, account) && Self::shown(&self.rows, account) && Self::shown(&self.window_rows, account)
     }
 
-    /// No kept view shows a row.
+    /// No kept view shows a row of an account: every stream ended with its account, was stopped, or has no row.
     pub(super) fn is_clear(&self) -> bool {
-        let none = |rows: &Rows| rows.0.lock().unwrap().is_empty();
-        (1..=2).all(|lease| self.log.latest(lease).is_none_or(|snapshot| snapshot.value.is_none())) && none(&self.rows) && none(&self.window_rows)
+        self.stopped.load(Ordering::SeqCst) || [&self.single, &self.entity, &self.rows, &self.window_rows].iter().all(|rows| Self::over(rows))
     }
 
-    pub(super) fn deliveries(&self) -> (usize, usize, usize) {
-        (self.rows.1.lock().unwrap().len(), self.window_rows.1.lock().unwrap().len(), self.log.len())
+    pub(super) fn deliveries(&self) -> (usize, usize, usize, usize) {
+        let length = |rows: &Rows| rows.1.lock().unwrap().len();
+        (length(&self.rows), length(&self.window_rows), length(&self.single), length(&self.entity))
+    }
+
+    fn showed(rows: &Rows, from: usize, account: &str) -> bool {
+        rows.1.lock().unwrap().iter().skip(from).any(|seen| seen.rows.iter().any(|row| named(row, account)))
     }
 
     /// No delivery after `mark` shows the account.
-    pub(super) fn quiet_since(&self, mark: (usize, usize, usize), account: &str) -> bool {
-        let rows = |rows: &Rows, from: usize| rows.1.lock().unwrap().iter().skip(from).all(|change| change.rows.iter().all(|row| !named(row, account)));
-        let log = self.log.0.lock().unwrap();
-        rows(&self.rows, mark.0) && rows(&self.window_rows, mark.1) && log.iter().skip(mark.2).all(|snapshot| snapshot.value.as_ref().is_none_or(|row| !named(row, account)))
+    pub(super) fn quiet_since(&self, mark: (usize, usize, usize, usize), account: &str) -> bool {
+        !Self::showed(&self.rows, mark.0, account) && !Self::showed(&self.window_rows, mark.1, account) && !Self::showed(&self.single, mark.2, account) && !Self::showed(&self.entity, mark.3, account)
     }
 
-    /// The account never appears in a list delivery, an entity delivery or a change.
+    /// The account never appears in a delivery of any held stream.
     pub(super) fn never_showed(&self, account: &str) -> bool {
-        let listed = |rows: &Rows| rows.1.lock().unwrap().iter().any(|change| change.rows.iter().any(|row| named(row, account)));
-        !self.log.ever_showed(account) && !listed(&self.rows) && !listed(&self.window_rows)
+        ![&self.rows, &self.window_rows, &self.single, &self.entity].iter().any(|rows| Self::showed(rows, 0, account))
     }
 }

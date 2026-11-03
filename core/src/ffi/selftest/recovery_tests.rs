@@ -103,7 +103,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         for id in ["42", "43"] {
             let source = directory.path().join(format!("{id}.mp4"));
             std::fs::write(&source, b"abc").unwrap();
-            named_bound(&format!("upload {id}"), database.upload("Moment".into(), id.into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())))).await.unwrap();
+            named_bound(&format!("upload {id}"), database.upload(database.session_epoch(), "Moment".into(), id.into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())))).await.unwrap();
         }
         gate.entered_for("the first PUT").await;
         let waiters: Vec<_> = ["42", "43"].into_iter().map(|id| {

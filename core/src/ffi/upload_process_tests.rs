@@ -59,7 +59,7 @@ async fn child(mode: &str) {
         let source = format!("{path}.mp4");
         std::fs::write(&source, b"abc").unwrap();
         let input = UploadFile::new(&source);
-        database.upload("Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
+        database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         assert_eq!(database.db.outbox().unwrap().len(), 1);
     } else {

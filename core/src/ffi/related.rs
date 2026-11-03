@@ -5,7 +5,7 @@ use crate::db::{locked, Change, Diff, Entry, OrderKey, Ranked, Related, Row, Sta
 use crate::identity::RowId;
 use crate::pacing::Counters;
 use crate::schema::AssociationKind;
-use super::live::LiveChange;
+use super::stream::Frame;
 use super::wire::WireModel;
 
 pub(super) struct RelatedProjection {
@@ -26,7 +26,7 @@ impl RelatedProjection {
         Self { name, kind, counters, keys: HashMap::new(), found: HashMap::new(), rows: HashMap::new(), owners: HashMap::new(), shown: Ranked::default(), started: false, positional: None }
     }
 
-    pub(super) fn apply(&mut self, change: &Change, wire: &WireModel) -> Option<LiveChange> {
+    pub(super) fn apply(&mut self, change: &Change, wire: &WireModel) -> Option<Frame> {
         let first = !std::mem::replace(&mut self.started, true);
         if self.positional.is_none() && self.keys.is_empty() && change.rows.iter().any(|row| !change.keys.contains_key(&row.id)) {
             self.positional = Some(Vec::new());
@@ -63,7 +63,7 @@ impl RelatedProjection {
         self.emit(&affected, first, change.revision, wire)
     }
 
-    fn emit(&mut self, affected: &HashSet<RowId>, first: bool, revision: i64, wire: &WireModel) -> Option<LiveChange> {
+    fn emit(&mut self, affected: &HashSet<RowId>, first: bool, revision: i64, wire: &WireModel) -> Option<Frame> {
         let before = self.shown.clone();
         let mut sendable: HashMap<RowId, Row> = HashMap::new();
         for target in affected {
@@ -89,7 +89,7 @@ impl RelatedProjection {
         sent.sort_by_key(|id| diff.at.get(*id).copied().unwrap_or(usize::MAX));
         let sent: Vec<Row> = sent.into_iter().filter_map(|id| sendable.get(id).cloned()).collect();
         let sent = Change { revision, rows: sent, related: Related::new(), diff, full: first, size: self.shown.len(), window: None, keys: HashMap::new() };
-        Some(LiveChange::rows(&sent, wire))
+        Some(Frame::rows(&sent, wire))
     }
 
     fn replace_parent(&mut self, parent: &RowId, targets: Vec<Row>, affected: &mut HashSet<RowId>) {

@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use crate::upload::{BlobSnapshot, BlobState};
 use super::{Database, DbError};
 
@@ -20,44 +20,6 @@ impl From<BlobSnapshot> for WireBlobSnapshot {
     }
 }
 
-#[derive(uniffi::Object)]
-pub struct BlobChanges {
-    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
-    sync: crate::sync::Sync,
-    id: String,
-    changes: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
-    last: Mutex<Option<WireBlobSnapshot>>,
-    cancel: crate::transport::CancelToken,
-}
-
-#[uniffi::export]
-impl BlobChanges {
-    pub async fn next(self: Arc<Self>) -> Result<Option<WireBlobSnapshot>, DbError> {
-        super::database::on_executor(async move {
-            let mut changes = self.changes.lock().await;
-            loop {
-                if self.cancel.is_cancelled() { return Ok::<_, DbError>(None); }
-                changes.borrow_and_update();
-                let next: WireBlobSnapshot = self.sync.blob_snapshot(&self.id).map_err(DbError::from)?.into();
-                let changed = {
-                    let mut last = self.last.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if last.as_ref() == Some(&next) { false } else { *last = Some(next.clone()); true }
-                };
-                if changed { return Ok(Some(next)); }
-                tokio::select! { _ = self.cancel.cancelled() => return Ok(None), changed = changes.changed() => if changed.is_err() { return Ok(None); } }
-            }
-        }).await
-    }
-    pub fn cancel(&self) { self.cancel.cancel(); }
-}
-
-impl crate::lifecycle::Holder for BlobChanges {
-    fn close(&self) { self.cancel.cancel(); }
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
-}
-
-impl Drop for BlobChanges { fn drop(&mut self) { self.cancel.cancel(); } }
-
 #[uniffi::export]
 impl Database {
     pub async fn upload_blob(self: Arc<Self>, name: String, create: String, request: super::upload_wire::WireUploadRequest) -> Result<WireBlobSnapshot, DbError> {
@@ -69,16 +31,6 @@ impl Database {
     }
     pub async fn blob(self: Arc<Self>, id: String) -> Result<WireBlobSnapshot, DbError> {
         super::database::blocking(move || Ok(self.sync()?.blob_snapshot(&id)?.into())).await
-    }
-    pub async fn blob_changes(self: Arc<Self>, id: String) -> Result<Arc<BlobChanges>, DbError> {
-        let sync = self.sync()?.clone();
-        let changes = self.db.outbox_changes();
-        let changes = super::database::blocking(move || {
-            sync.blob_snapshot(&id)?;
-            Ok(Arc::new(BlobChanges { sync, id, changes: tokio::sync::Mutex::new(changes), last: Mutex::new(None), cancel: crate::transport::CancelToken::new(), registration: Default::default() }))
-        }).await?;
-        self.streams.enroll(&changes);
-        Ok(changes)
     }
     pub async fn wait_blob(self: Arc<Self>, id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();

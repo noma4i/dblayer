@@ -117,7 +117,6 @@ impl ForeignWaker {
         self.entered.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn held_classes(&self) -> Vec<&'static str> { self.held_classes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone() }
 }
 
 impl Wake for ForeignWaker {

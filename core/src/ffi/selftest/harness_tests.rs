@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use super::rig_tests::{bound, Held, Rig, World};
 use crate::ffi::lifecycle_tests::{named, Rows};
-use crate::ffi::{DbError, LiveSubscription, Transport};
+use crate::ffi::stream::tape::Watched;
+use crate::ffi::{DbError, Transport};
 use crate::test_wait::yield_until;
 
 const ALL: &str = r#"{"model":"User","relation":"all","params":{}}"#;
@@ -13,9 +14,9 @@ fn trace(rows: &Rows) -> Vec<String> { rows.1.lock().unwrap().iter().map(|change
 
 fn never_listed(rows: &Rows, account: &str) -> bool { rows.1.lock().unwrap().iter().all(|change| change.rows.iter().all(|row| !named(row, account))) }
 
-async fn window(rig: &Rig) -> (Arc<LiveSubscription>, Arc<Rows>) {
+async fn window(rig: &Rig) -> (Arc<Watched>, Arc<Rows>) {
     let rows = Arc::new(Rows::default());
-    let live = rig.database.live_query(ALL.into(), rows.clone());
+    let live = rig.database.watch_query(ALL, rows.clone());
     (live, rows)
 }
 
@@ -95,7 +96,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
     rig.database.close_now();
     let local = rig.open_again(None).await.expect("the opener refused a reopen after the close");
     let rows = Arc::new(Rows::default());
-    let live = local.live_query(r#"{"model":"User"}"#.into(), rows.clone());
+    let live = local.watch_query(r#"{"model":"User"}"#, rows.clone());
     bound(live.wait_for_initial_load()).await.unwrap();
     assert!(rows.0.lock().unwrap().is_empty(), "the reopened database holds rows of the closed one");
     live.cancel();
@@ -105,7 +106,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
     let remote = rig.open_again(Some(switch as Arc<dyn Transport>)).await.expect("the opener refused the second reopen");
     remote.register_operations(r#"[{"name":"Users","document":"query Users { users { id name } }"}]"#.into()).unwrap();
     let rows = Arc::new(Rows::default());
-    let live = remote.live_query(ALL.into(), rows.clone());
+    let live = remote.watch_query(ALL, rows.clone());
     bound(live.wait_for_initial_load()).await.unwrap();
     shows(&rows, "B").await;
     assert!(never_listed(&rows, "A"));
@@ -132,7 +133,7 @@ async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscription
             "offline" => rig.database.set_online(false).unwrap(),
             "logout" => bound(rig.database.session_reset()).await.unwrap(),
             "subscription" => {
-                kept.push((rig.database.live_query(r#"{"model":"Notice","relation":"recent","params":{}}"#.into(), Arc::new(Rows::default())), Arc::new(Rows::default())));
+                kept.push((rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, Arc::new(Rows::default())), Arc::new(Rows::default())));
                 yield_until("the server subscription opened", || rig.switch.opened() > 0).await;
             }
             _ => {}
@@ -156,7 +157,7 @@ async fn the_harness_cycle_releases_the_token_of_a_held_server_subscription_exac
         let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
         let mut rig = Rig::plain(a.clone(), invalid).await;
         let rows = Arc::new(Rows::default());
-        let live = rig.database.live_query(r#"{"model":"Notice","relation":"recent","params":{}}"#.into(), rows.clone());
+        let live = rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, rows.clone());
         bound(live.wait_for_initial_load()).await.unwrap();
         yield_until("the subscription opened on A", || rig.switch.opened() == 1).await;
 
@@ -177,13 +178,13 @@ async fn a_subscription_declared_on_the_next_database_opens_once_on_the_next_tar
         let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
         let mut rig = Rig::plain(a.clone(), invalid).await;
         let rows = Arc::new(Rows::default());
-        let live = rig.database.live_query(r#"{"model":"Notice","relation":"recent","params":{}}"#.into(), rows.clone());
+        let live = rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, rows.clone());
         bound(live.wait_for_initial_load()).await.unwrap();
         yield_until("the subscription opened on A", || rig.switch.opened() == 1).await;
 
         rig.harness_cycle(Some(b.clone())).await;
 
-        let again = rig.database.live_query(r#"{"model":"Notice","relation":"recent","params":{}}"#.into(), Arc::new(Rows::default()));
+        let again = rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, Arc::new(Rows::default()));
         let reopened = tokio::time::timeout(std::time::Duration::from_secs(5), async { while rig.switch.opened() < 2 { rig.clock.advance(60_000); tokio::task::yield_now().await; } }).await.is_ok();
         assert!(reopened, "invalid={invalid}: a new declaration did not reopen the subscription on the next target (subscribe attempts: {}, opened: {}, failures: {:?})", rig.switch.attempts(), rig.switch.opened(), rig.switch.failures());
         again.cancel();

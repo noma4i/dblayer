@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::load_tests::relation;
-use super::{Config, Database, DbError, LiveChange, LivePhase, QueryListener, TestClock, Transport};
+use super::stream::tape::{folded, Seen, Tape};
+use super::{Config, Database, DbError, LivePhase, StreamRequest, TestClock, Transport};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
@@ -27,20 +28,12 @@ impl Transport for Replying {
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
-struct Tape(Mutex<Vec<LiveChange>>);
-
-impl QueryListener for Tape {
-    fn changed(&self, change: LiveChange) {
-        self.0.lock().unwrap().push(change);
-    }
-}
-
 fn tape() -> Arc<Tape> {
-    Arc::new(Tape(Mutex::new(Vec::new())))
+    Arc::default()
 }
 
-fn heard(tape: &Tape) -> Vec<LiveChange> {
-    tape.0.lock().unwrap().clone()
+fn heard(tape: &Tape) -> Vec<Seen> {
+    tape.heard()
 }
 
 async fn open(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
@@ -53,7 +46,7 @@ async fn open(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
     (db, clock)
 }
 
-fn consistent(changes: &[LiveChange]) {
+fn consistent(changes: &[Seen]) {
     let mut last = 0;
     for change in changes {
         assert!(change.seq > last, "seq {} after {last}", change.seq);
@@ -68,13 +61,13 @@ async fn inv_loadm_16_the_first_value_of_a_loaded_window_holds_its_rows_and_the_
     let (db, _) = open(&[ONE_ROW]).await;
     db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let listener = tape();
-    let live = db.live_query(FEED.into(), listener.clone());
+    let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let changes = heard(&listener);
     assert_eq!((changes[0].phase, changes[0].rows.len(), changes[0].size), (Some(LivePhase::Loaded), 1, 1), "first value {:?}", changes[0].phase);
     assert!(changes[0].loaded_at.is_some());
     consistent(&changes);
-    assert_eq!(live.current().await.seq, changes.last().unwrap().seq);
+    assert_eq!(listener.last().unwrap().seq, changes.last().unwrap().seq);
 }
 
 #[tokio::test]
@@ -82,7 +75,7 @@ async fn inv_loadm_16_a_cold_window_never_shows_loaded_or_empty_before_its_rows_
     for (reply, phase, size) in [(ONE_ROW, LivePhase::Loaded, 1), (NO_ROWS, LivePhase::Empty, 0)] {
         let (db, _) = open(&[reply]).await;
         let listener = tape();
-        let live = db.live_query(FEED.into(), listener.clone());
+        let live = db.watch_query(FEED, listener.clone());
         tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends").unwrap();
         let changes = heard(&listener);
         consistent(&changes);
@@ -101,7 +94,7 @@ async fn inv_loadm_16_a_background_failure_is_loaded_with_the_error_when_rows_ex
     db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     clock.advance(6 * 60_000);
     let listener = tape();
-    let live = db.live_query(FEED.into(), listener.clone());
+    let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let last = heard(&listener).pop().unwrap();
     assert_eq!((last.phase, last.size, last.error_kind.as_deref()), (Some(LivePhase::Loaded), 1, Some("server")));
@@ -109,7 +102,7 @@ async fn inv_loadm_16_a_background_failure_is_loaded_with_the_error_when_rows_ex
 
     let (cold, _) = open(&[REFUSED]).await;
     let listener = tape();
-    let live = cold.live_query(FEED.into(), listener.clone());
+    let live = cold.watch_query(FEED, listener.clone());
     assert!(matches!(live.wait_for_initial_load().await, Err(DbError::Graphql { .. })), "the load error of the connect reaches the waiter");
     let failed = heard(&listener).pop().unwrap();
     assert_eq!((failed.phase, failed.size, failed.error_kind.as_deref()), (Some(LivePhase::Failed), 0, Some("server")));
@@ -119,20 +112,26 @@ async fn inv_loadm_16_a_background_failure_is_loaded_with_the_error_when_rows_ex
 async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_snapshot() {
     let (db, _) = open(&[]).await;
     let bad = r#"{"model":"Moment","where":{"type":"equal","field":"nope","value":1}}"#;
-    let subscriptions = [
-        db.live_query(bad.into(), tape()),
-        db.live_query("not json".into(), tape()),
-        db.live_count(bad.into(), tape()),
-        db.live_find("Moment".into(), "".into(), tape()),
-        db.live_related(r#"{"model":"Moment"}"#.into(), "nope".into(), tape()),
-        db.live_query(r#"{"model":"Nope"}"#.into(), tape()),
+    let requests = [
+        StreamRequest::Query { query_json: bad.into() },
+        StreamRequest::Query { query_json: "not json".into() },
+        StreamRequest::Count { query_json: bad.into() },
+        StreamRequest::Entity { model: "Moment".into(), id: String::new(), fetch: super::EntityFetch::None },
+        StreamRequest::Related { query_json: r#"{"model":"Moment"}"#.into(), name: "nope".into() },
+        StreamRequest::Query { query_json: r#"{"model":"Nope"}"#.into() },
     ];
-    for (index, subscription) in subscriptions.iter().enumerate() {
-        let first = tokio::time::timeout(Duration::from_secs(5), subscription.current()).await.expect("a failed open still tells");
+    for (index, request) in requests.into_iter().enumerate() {
+        let listener = tape();
+        let subscription = db.watch(request, listener.clone());
+        let first = loop {
+            if let Some(first) = listener.heard().into_iter().next() { break first; }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
         assert_eq!((first.phase, first.error_kind.as_deref(), first.size, first.seq), (Some(LivePhase::Failed), Some("invalid"), 0, 1), "call {index}");
         assert!(first.error.is_some(), "call {index}");
-        subscription.wait_for_initial_load().await.unwrap();
+        assert!(subscription.wait_for_initial_load().await.is_err(), "call {index}: a stream that ended has no initial load to wait for");
     }
+    assert_eq!(db.stream_census().open, 0, "a failed open leaves nothing in the table");
 }
 
 #[tokio::test]
@@ -140,14 +139,14 @@ async fn inv_loadm_16_a_refresh_that_changes_no_row_still_shows_its_state_once_t
     let (db, clock) = open(&[ONE_ROW, ONE_ROW]).await;
     db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let listener = tape();
-    let live = db.live_query(FEED.into(), listener.clone());
+    let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let first_loaded_at = heard(&listener).last().and_then(|change| change.loaded_at).expect("the first frame is loaded");
     clock.advance(60_000);
     db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let shown = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let current = live.current().await;
+            let current = listener.last().expect("the first value arrived");
             if current.loaded_at.is_some_and(|at| at > first_loaded_at) && !current.refreshing {
                 return current;
             }
@@ -180,14 +179,14 @@ async fn inv_loadm_16_a_refresh_that_only_changes_a_related_row_still_shows_its_
     let (db, clock) = open_with_authors(&[ANN, BOB]).await;
     db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let listener = tape();
-    let live = db.live_query(FEED.into(), listener.clone());
+    let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let first_loaded_at = heard(&listener).last().and_then(|change| change.loaded_at).expect("the first frame is loaded");
     clock.advance(60_000);
     db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let shown = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let current = live.current().await;
+            let current = listener.last().expect("the first value arrived");
             if current.loaded_at.is_some_and(|at| at > first_loaded_at) && !current.refreshing {
                 return current;
             }
@@ -205,12 +204,12 @@ async fn related_rows_and_the_source_load_arrive_in_one_snapshot_with_the_typed_
     const RELATED_FEED: &str = r#"{"model":"Moment","relation":"feed","params":{}}"#;
     let (db, _) = open_with_authors(&[AUTHORED]).await;
     let listener = tape();
-    let live = db.live_related(RELATED_FEED.into(), "author".into(), listener.clone());
+    let live = db.watch(StreamRequest::Related { query_json: RELATED_FEED.into(), name: "author".into() }, listener.clone());
     tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends").unwrap();
     let frames = heard(&listener);
     let shown = frames.last().unwrap();
     assert_eq!((shown.phase, shown.size, shown.total), (Some(LivePhase::Loaded), 1, None));
-    let snapshots = super::live_feed_tests::folded(&frames);
+    let snapshots = folded(&frames);
     assert!(snapshots.iter().all(|(phase, ids, _)| *phase != Some(LivePhase::Loaded) || ids == &["u1"]), "no Loaded snapshot without the related row: {snapshots:?}");
     assert_eq!(snapshots.last().map(|(_, ids, _)| ids.clone()), Some(vec!["u1".to_string()]));
     consistent(&frames);
@@ -219,7 +218,7 @@ async fn related_rows_and_the_source_load_arrive_in_one_snapshot_with_the_typed_
 
     let (refused, _) = open_with_authors(&[REFUSED]).await;
     let listener = tape();
-    let live = refused.live_related(RELATED_FEED.into(), "author".into(), listener.clone());
+    let live = refused.watch(StreamRequest::Related { query_json: RELATED_FEED.into(), name: "author".into() }, listener.clone());
     let waited = tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends");
     assert!(matches!(waited, Err(DbError::Graphql { .. })), "the load error reaches the waiter");
     let failed = heard(&listener).pop().unwrap();

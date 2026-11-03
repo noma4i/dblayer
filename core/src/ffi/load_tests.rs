@@ -5,7 +5,8 @@ use std::time::Duration;
 use serde_json::Map;
 use tokio::sync::Notify;
 
-use super::{Config, Database, DbError, LiveChange, QueryListener, TestClock, Transport};
+use super::stream::tape::{Rows, Tape};
+use super::{Config, Database, DbError, StreamDelivery, StreamRequest, StreamValue, TestClock, Transport, ValueSink};
 use crate::identity::RowId;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
@@ -43,38 +44,18 @@ impl Transport for Counting {
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
-struct Silent;
-impl QueryListener for Silent {
-    fn changed(&self, _: LiveChange) {}
-}
-
-#[derive(Default)]
-struct Recording(std::sync::Mutex<Vec<u32>>);
-impl QueryListener for Recording {
-    fn changed(&self, change: LiveChange) { self.0.lock().unwrap().push(change.size); }
-}
-
-#[derive(Default)]
-struct RecordingEntity(std::sync::Mutex<Vec<super::EntityDelivery>>);
-impl super::EntityListener for RecordingEntity {
-    fn changed(&self, delivery: super::EntityDelivery) { self.0.lock().unwrap().push(delivery); }
-}
-
 #[tokio::test]
-async fn held_queries_reload_after_a_data_reset() {
+async fn a_data_reset_ends_the_held_stream_with_its_epoch_and_a_new_stream_reloads() {
     let (db, transport) = rig().await;
-    let listener = Arc::new(Recording::default());
-    let query = r#"{"model":"Moment","relation":"feed","params":{},"order":[{"field":"text","direction":"asc"}]}"#.into();
-    let live = db.live_query(query, listener.clone());
+    let listener = Arc::new(Tape::default());
+    let query = r#"{"model":"Moment","relation":"feed","params":{},"order":[{"field":"text","direction":"asc"}]}"#;
+    let live = db.watch_query(query, listener.clone());
     within(live.wait_for_initial_load()).await.unwrap();
-    crate::test_wait::yield_until("the first row", || listener.0.lock().unwrap().contains(&1)).await;
-    listener.0.lock().unwrap().clear();
+    crate::test_wait::yield_until("the first row", || listener.heard().iter().any(|seen| seen.size == 1)).await;
     db.db.reset_all().unwrap();
-    crate::test_wait::yield_until("the reset and reloaded row", || {
-        let seen = listener.0.lock().unwrap();
-        seen.iter().position(|size| *size == 0).is_some_and(|empty| seen[empty + 1..].contains(&1))
-    }).await;
-    within(live.wait_for_initial_load()).await.unwrap();
+    let ended = Arc::new(Rows::default());
+    let _watching = db.watch_query(query, ended.clone());
+    crate::test_wait::yield_until("the reset and the reloaded row", || ended.last().is_some_and(|seen| seen.size == 1)).await;
     assert_eq!(transport.queries.load(Ordering::SeqCst), 2);
     live.cancel();
 }
@@ -82,9 +63,11 @@ async fn held_queries_reload_after_a_data_reset() {
 #[tokio::test]
 async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without_http() {
     struct Listener(std::sync::mpsc::Sender<DbError>);
-    impl QueryListener for Listener {
-        fn changed(&self, change: LiveChange) {
-            if let Some(error) = change.error { self.0.send(error).unwrap(); }
+    impl ValueSink for Listener {
+        fn delivered(&self, delivery: StreamDelivery) {
+            if let StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } = delivery.value {
+                if let Some(error) = state.error { self.0.send(error).unwrap(); }
+            }
         }
     }
     for shared_changes in [false, true] {
@@ -107,7 +90,7 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), Some(transport.clone()), None, None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"},{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).unwrap();
     let (failures, received) = std::sync::mpsc::channel();
-    let live = database.live_query(r#"{"model":"Notice","relation":"recent","params":{}}"#.into(), Arc::new(Listener(failures)));
+    let live = database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, Arc::new(Listener(failures)));
     live.wait_for_initial_load().await.unwrap();
     let initial_reads = transport.queries.load(Ordering::SeqCst);
     let sink = subscriptions.recv_timeout(Duration::from_secs(2)).unwrap();
@@ -134,11 +117,9 @@ async fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_lo
     let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), hold: None, gate: None, subscriptions: None });
     let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body } }","rootPath":"bulletinAdded"}]"#.into()).unwrap();
-    let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#.into();
-    let live = db.live_query(query, Arc::new(Silent));
-    let handles = live.handles.lock().unwrap();
-    assert!(handles.as_ref().unwrap()._watch.is_some());
-    assert!(handles.as_ref().unwrap().load.is_none());
+    let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#;
+    let live = db.watch_query(query, Arc::new(Rows::default()));
+    assert_eq!(db.stream_probe(live.id), Some((true, false)), "a local memory query holds a subscription watch and starts no load");
 }
 
 pub(super) fn relation(name: &str, stale: &str) -> RelationSpec {
@@ -210,12 +191,12 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
 
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let (db, transport, _) = open_rig(Some(TestClock::new(1_000_000)), Some(hold.clone()), None).await;
-    let listener = Arc::new(Recording::default());
-    let _live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), listener.clone());
+    let listener = Arc::new(Tape::default());
+    let _live = db.watch_query(r#"{"model":"Moment","relation":"feed","params":{}}"#, listener.clone());
     within(transport.started.notified()).await;
     hold.add_permits(1);
     crate::ffi::settled(&db).await.unwrap();
-    assert!(listener.0.lock().unwrap().contains(&1), "the loaded row reached the listener");
+    crate::test_wait::yield_until("the loaded row reached the listener", || listener.heard().iter().any(|seen| seen.size == 1)).await;
 
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None, subscriptions: None });
@@ -231,16 +212,15 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     model.relations.push(node);
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
-    let listener = Arc::new(RecordingEntity::default());
-    let entity = db.live_entities("Moment".into(), listener.clone()).unwrap();
-    entity.retain(vec![super::EntityRequest { id: "m1".into(), lease: 1, fetch: super::EntityFetch::Force }]).unwrap();
+    let listener = Arc::new(Rows::default());
+    let _entity = db.watch(StreamRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::EntityFetch::Force }, listener.clone());
     within(transport.started.notified()).await;
     let settling = tokio::spawn({ let db = db.clone(); async move { crate::ffi::settled(&db).await } });
     for _ in 0..200 { tokio::task::yield_now().await; }
     assert!(!settling.is_finished());
     hold.add_permits(1);
     within(settling).await.unwrap().unwrap();
-    assert!(listener.0.lock().unwrap().iter().flat_map(|delivery| &delivery.snapshots).any(|snapshot| snapshot.value.is_some()));
+    crate::test_wait::yield_until("the entity row", || listener.len() == 1).await;
 }
 
 #[tokio::test]
@@ -265,7 +245,7 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
 #[tokio::test]
 async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
     let (db, transport, hold) = held_rig().await;
-    let _live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent));
+    let _live = db.watch_query(r#"{"model":"Moment","relation":"feed","params":{}}"#, Arc::new(Rows::default()));
     within(transport.started.notified()).await;
     let already = db.sync().unwrap().joined_loads();
     let sharing = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
@@ -279,10 +259,10 @@ async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
 async fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() {
     let (db, transport, _) = open_rig(None, None, None).await;
     let query = r#"{"model":"Moment","relation":"feed","params":{}}"#;
-    let first = db.live_query(query.into(), Arc::new(Silent));
+    let first = db.watch_query(query, Arc::new(Rows::default()));
     first.wait_for_initial_load().await.unwrap();
     assert_eq!(queries(&transport), 1);
-    let second = db.live_query(query.into(), Arc::new(Silent));
+    let second = db.watch_query(query, Arc::new(Rows::default()));
     second.wait_for_initial_load().await.unwrap();
     assert_eq!(queries(&transport), 1);
     db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
@@ -304,9 +284,11 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
         }
         let before = queries(&transport);
         tokio::spawn({ let gate = gate.clone(); async move { tokio::time::sleep(Duration::from_secs(3)).await; gate.add_permits(1); } });
-        let live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{},"refreshOnConnect":true}"#.into(), Arc::new(Silent));
+        let seen = Arc::new(Tape::default());
+        let live = db.watch_query(r#"{"model":"Moment","relation":"feed","params":{},"refreshOnConnect":true}"#, seen.clone());
         if preloaded {
-            assert_eq!(live.current().await.size, 1, "cached rows stay visible during the forced load");
+            crate::test_wait::yield_until("the cached row", || seen.last().is_some()).await;
+            assert_eq!(seen.last().unwrap().size, 1, "cached rows stay visible during the forced load");
         }
         within(transport.started.notified()).await;
         hold.add_permits(1);
@@ -321,7 +303,7 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
 #[tokio::test]
 async fn cancelling_a_live_query_finishes_its_initial_wait() {
     let (db, transport, _hold) = held_rig().await;
-    let live = db.live_query(r#"{"model":"Moment","relation":"feed"}"#.into(), Arc::new(Silent));
+    let live = db.watch_query(r#"{"model":"Moment","relation":"feed"}"#, Arc::new(Rows::default()));
     within(transport.started.notified()).await;
     live.cancel();
     let result = live.wait_for_initial_load().await;

@@ -394,7 +394,21 @@ impl Inner {
     }
 }
 
+/// Runs a write that belongs to a session epoch, when the caller names one.
+fn pinned<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch: Option<u64>, write: impl FnOnce() -> R) -> R {
+    match epoch {
+        Some(epoch) => crate::store::pinned_to_epoch(life, epoch, write),
+        None => write(),
+    }
+}
+
 impl Sync {
+    pub async fn upload_create_batch(&self, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput) -> Result<Vec<crate::db::Row>, SyncError> { self.upload_create_batch_in(model, items, input, None).await }
+
+    pub async fn upload(&self, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<i64, SyncError> { self.upload_in(model, id, action, file, None).await }
+
+    pub async fn upload_create(&self, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<RowId, SyncError> { self.upload_create_in(model, action, values, file, None).await }
+
     pub async fn resume_uploads(&self) -> Result<(), SyncError> {
         self.inner.start_uploads()?;
         self.wait_uploads().await;
@@ -406,12 +420,13 @@ impl Sync {
         Ok(())
     }
 
-    pub async fn upload_create_batch(&self, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput) -> Result<Vec<crate::db::Row>, SyncError> {
+    pub async fn upload_create_batch_in(&self, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput, epoch: Option<u64>) -> Result<Vec<crate::db::Row>, SyncError> {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let model = model.to_string();
         tokio::task::spawn_blocking(move || {
-            let ids = inner.db.create_upload_batch(generation, &model, items, input, inner.upload_operations()?)?;
+            let life = inner.db.shared.store.lifecycle.clone();
+            let ids = pinned(&life, epoch, || inner.db.create_upload_batch(generation, &model, items, input, inner.upload_operations()?))?;
             let rows = ids.iter().map(|id| inner.db.find(&model, id)?.ok_or_else(|| crate::db::DbError::NotFound { model: model.clone(), id: id.to_string() })).collect::<Result<Vec<_>, _>>()?;
             inner.start_uploads()?;
             inner.db.report_upload_accepted(&model, inner.db.accepted_items(&ids)?);
@@ -419,25 +434,27 @@ impl Sync {
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload(&self, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<i64, SyncError> {
+    pub async fn upload_in(&self, model: &str, id: &RowId, action: &str, file: UploadFile, epoch: Option<u64>) -> Result<i64, SyncError> {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let (model, id, action) = (model.to_string(), id.clone(), action.to_string());
         tokio::task::spawn_blocking(move || {
-            let seq = inner.begin_upload(generation, &model, &id, &action, &file, UploadState::queued())?;
+            let life = inner.db.shared.store.lifecycle.clone();
+            let seq = pinned(&life, epoch, || inner.begin_upload(generation, &model, &id, &action, &file, UploadState::queued()))?;
             inner.start_uploads()?;
             inner.db.report_upload_accepted(&model, vec![crate::db::AcceptedUpload { seq, position: 0 }]);
             Ok(seq)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload_create(&self, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<RowId, SyncError> {
+    pub async fn upload_create_in(&self, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile, epoch: Option<u64>) -> Result<RowId, SyncError> {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let (model, action) = (model.to_string(), action.to_string());
         tokio::task::spawn_blocking(move || {
             let input = inner.upload_input(&model, &action, file)?;
-            let id = inner.db.create_held(generation, &model, &action, values, input, UploadState::queued())?;
+            let life = inner.db.shared.store.lifecycle.clone();
+            let id = pinned(&life, epoch, || inner.db.create_held(generation, &model, &action, values, input, UploadState::queued()))?;
             inner.start_uploads()?;
             inner.db.report_upload_accepted(&model, inner.db.accepted_items(std::slice::from_ref(&id))?);
             Ok(id)

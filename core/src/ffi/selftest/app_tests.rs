@@ -3,15 +3,7 @@ use serde_json::json;
 use super::rig_tests::{bound, Fault, Held, Rig};
 use crate::ffi::lifecycle_tests::named;
 use crate::ffi::{Database, DbError, SessionCode};
-use crate::test_wait::{within_secs, yield_until};
-use super::rig_tests::BOUND;
-
-fn deliveries(rows: &crate::ffi::lifecycle_tests::Rows) -> usize { rows.1.lock().unwrap().len() }
-
-/// No delivery after `mark` shows the account.
-fn quiet_since(rows: &crate::ffi::lifecycle_tests::Rows, mark: usize, account: &str) -> bool {
-    rows.1.lock().unwrap().iter().skip(mark).all(|change| change.rows.iter().all(|row| !named(row, account)))
-}
+use crate::test_wait::yield_until;
 
 fn session_code(error: DbError) -> SessionCode {
     let DbError::Session { code, .. } = error else { panic!("expected a session error, got {error:?}") };
@@ -28,6 +20,7 @@ async fn app_login_in_the_ios_and_android_order_fills_the_handles_held_since_lau
         let held = Held::open(&rig.database);
         if android { rig.login_android("A").await } else { rig.login_ios("A").await }
         ends(&rig.database).await;
+        held.follow(&rig.database);
         held.shows("A").await;
         held.lists_show("A").await;
         assert!(rig.world.count("MyProfile") >= 1, "android={android}: the profile was never loaded");
@@ -44,18 +37,18 @@ async fn app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_
     let held = Held::open(&rig.database);
     held.shows("A").await;
     held.lists_show("A").await;
-    bound(held.query.wait_for_initial_load()).await.unwrap();
+    bound(held.query().wait_for_initial_load()).await.unwrap();
     let gate = rig.world.hold_next("Users");
     let _late = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh("User".into(), "all".into(), "{}".into()).await }) };
     gate.entered().await;
-    let waiting = held.query.clone();
+    let waiting = held.query();
     let pending = tokio::spawn(async move { waiting.wait_for_initial_load().await });
 
     rig.exit(&held, true, false).await;
-    let marks = (deliveries(&held.rows), deliveries(&held.window_rows), held.log.len());
+    let marks = held.deliveries();
 
     drop(bound(pending).await.unwrap());
-    assert!(held.log.empty(), "the held singleton and entity still show a row after the exit: {:?}", held.log.latest(1));
+    assert!(held.entities_empty(), "the held singleton and entity still show a row after the exit");
     rig.world.forbid(true);
     ends(&rig.database).await;
     assert!(rig.world.violations().is_empty(), "a read followed the exit: {:?}", rig.world.violations());
@@ -63,10 +56,9 @@ async fn app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_
     gate.release();
     rig.login_ios("B").await;
     ends(&rig.database).await;
+    held.follow(&rig.database);
     held.shows("B").await;
-    let log = held.log.0.lock().unwrap().clone();
-    assert!(log.iter().skip(marks.2).all(|snapshot| snapshot.value.as_ref().is_none_or(|row| !named(row, "A"))), "account A reached the singleton after the exit");
-    assert!(quiet_since(&held.rows, marks.0, "A") && quiet_since(&held.window_rows, marks.1, "A"), "account A reached a held list after the exit");
+    assert!(held.quiet_since(marks, "A"), "account A reached a held stream after the exit");
     rig.database.close_now();
 }
 
@@ -81,14 +73,14 @@ async fn app_logout_android_order_cancels_the_streams_and_the_next_login_reads_a
 
     rig.exit(&held, true, true).await;
 
-    assert!(held.log.empty());
-    assert!(within_secs(BOUND, held.changes.next()).await.is_none(), "a cancelled changes feed delivered after the exit");
+    assert!(held.entities_empty());
     let before = rig.world.count("Users");
     rig.login_android("B").await;
     let fresh = Held::open(&rig.database);
     ends(&rig.database).await;
     fresh.shows("B").await;
     fresh.lists_show("B").await;
+    held.follow(&rig.database);
     held.shows("B").await;
     assert!(rig.world.count("Users") > before);
     assert!(fresh.never_showed("A"));
@@ -106,15 +98,15 @@ async fn app_logout_local_only_skips_the_revoke_and_stops_every_read() {
         held.lists_show("A").await;
 
         rig.exit(&held, false, cancel).await;
-        let mark = (deliveries(&held.rows), held.log.len());
+        let mark = held.deliveries();
 
         assert!(rig.world.signed(), "cancel={cancel}: the local-only exit revoked the server session");
         assert_eq!(rig.world.count("UnregisterDevice"), 0);
         rig.world.forbid(true);
         ends(&rig.database).await;
         assert!(rig.world.violations().is_empty(), "cancel={cancel}: a read followed the local exit: {:?} log {:?}", rig.world.violations(), rig.world.log().iter().rev().take(6).collect::<Vec<_>>());
-        assert!(held.log.empty());
-        assert!(quiet_since(&held.rows, mark.0, "A"));
+        assert!(held.entities_empty());
+        assert!(held.quiet_since(mark, "A"));
         rig.database.close_now();
     }
 }
@@ -153,17 +145,16 @@ async fn account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_
         gate.entered().await;
 
         rig.exit(&held, true, false).await;
-        let marks = (deliveries(&held.rows), deliveries(&held.window_rows), held.log.len());
+        let marks = held.deliveries();
         rig.login_ios(account).await;
         ends(&rig.database).await;
+        held.follow(&rig.database);
         held.shows(account).await;
         held.lists_show(account).await;
         gate.release();
         ends(&rig.database).await;
 
-        let log = held.log.0.lock().unwrap().clone();
-        assert!(log.iter().skip(marks.2).all(|snapshot| snapshot.value.as_ref().is_none_or(|row| !named(row, previous))), "{previous} reached the singleton or entity while {account} logs in");
-        assert!(quiet_since(&held.rows, marks.0, previous) && quiet_since(&held.window_rows, marks.1, previous), "{previous} reached a held list while {account} logs in");
+        assert!(held.quiet_since(marks, previous), "{previous} reached a held stream while {account} logs in");
         previous = account;
     }
     rig.database.close_now();
@@ -179,10 +170,11 @@ async fn logout_then_login_of_the_same_account_reads_it_again() {
     let reads = rig.world.count("MyProfile");
 
     rig.exit(&held, true, false).await;
-    assert!(held.log.empty());
+    assert!(held.entities_empty());
     rig.login_ios("A").await;
     ends(&rig.database).await;
 
+    held.follow(&rig.database);
     held.shows("A").await;
     held.lists_show("A").await;
     assert!(rig.world.count("MyProfile") > reads, "the same account was not read again");
@@ -215,7 +207,7 @@ async fn login_link_already_authenticated_signs_out_then_repeats_once() {
     rig.database.close_now();
 }
 
-/// S5 and G-06: a wait for the initial load of a held list that opens after the exit ends within the bound once a call of the app reads again.
+/// S5 and G-06: a list opened after the exit belongs to the epoch of no account: its wait returns at once and the next login ends it with one outcome, and a list opened after the login loads and shows B.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_ends() {
     let rig = Rig::encrypted().await;
@@ -223,15 +215,20 @@ async fn a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_en
     let held = Held::open(&rig.database);
     held.shows("A").await;
     rig.exit(&held, true, true).await;
-    let rows = std::sync::Arc::new(crate::ffi::lifecycle_tests::Rows::default());
-    let late = rig.database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
+    let early = std::sync::Arc::new(crate::ffi::stream::tape::Rows::default());
+    let late = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, early.clone());
     let waiting = late.clone();
     let pending = tokio::spawn(async move { waiting.wait_for_initial_load().await });
 
     rig.login_ios("B").await;
 
-    bound(pending).await.unwrap().unwrap();
-    yield_until("the late list shows B", || rows.0.lock().unwrap().iter().any(|row| named(row, "B"))).await;
-    assert!(rows.1.lock().unwrap().iter().all(|change| change.rows.iter().all(|row| !named(row, "A"))));
+    assert!(matches!(bound(pending).await.unwrap(), Err(DbError::Interrupted { .. })), "the wait of a list of the anonymous epoch ends at the login");
+    yield_until("the list of the anonymous epoch ended", || !early.ended().is_empty()).await;
+    assert_eq!(early.ended(), vec![crate::ffi::StreamEnd::SessionEnded], "the login ends a list that no account owned, with one outcome");
+    let rows = std::sync::Arc::new(crate::ffi::stream::tape::Rows::default());
+    let fresh = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, rows.clone());
+    bound(fresh.wait_for_initial_load()).await.unwrap();
+    yield_until("the fresh list shows B", || rows.0.lock().unwrap().iter().any(|row| named(row, "B"))).await;
+    assert!(rows.0.lock().unwrap().iter().all(|row| !named(row, "A")));
     rig.database.close_now();
 }

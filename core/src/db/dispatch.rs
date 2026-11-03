@@ -1,6 +1,5 @@
 use std::cell::Cell;
 use std::collections::{BTreeSet, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use crate::commit::{CommitResult, ScopeRef};
@@ -234,7 +233,6 @@ impl Event {
 pub(crate) struct Progress {
     generation: Mutex<u64>,
     changed: Condvar,
-    entity_reads: AtomicUsize,
 }
 
 impl Progress {
@@ -252,19 +250,6 @@ impl Progress {
         while *generation == seen {
             generation = wait(&self.changed, generation);
         }
-    }
-
-    pub(crate) fn entity_read_started(&self) {
-        self.entity_reads.fetch_add(1, Ordering::SeqCst);
-    }
-
-    pub(crate) fn entity_read_finished(&self) {
-        self.entity_reads.fetch_sub(1, Ordering::SeqCst);
-        self.advance();
-    }
-
-    pub(crate) fn entity_reads(&self) -> usize {
-        self.entity_reads.load(Ordering::SeqCst)
     }
 }
 
@@ -377,17 +362,6 @@ impl Dispatch {
     pub(crate) fn quiet_through(&self, revision: i64) -> bool {
         let pending = held(&self.pending);
         pending.reads.is_empty() && pending.processing_through.is_none_or(|through| through > revision) && pending.events.iter().all(|event| event.revision > revision)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn wait_owner_through(&self, revision: i64) {
-        loop {
-            let seen = self.progress.generation();
-            if self.quiet_through(revision) && self.progress.entity_reads() == 0 {
-                return;
-            }
-            self.progress.wait_after(seen);
-        }
     }
 
     pub(crate) fn replaced_between(&self, after: i64, upto: i64) -> Vec<(RowId, RowId)> {

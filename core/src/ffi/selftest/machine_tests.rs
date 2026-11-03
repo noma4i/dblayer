@@ -54,7 +54,7 @@ enum Transition {
 
 struct Tracked {
     held: Held,
-    exits: Vec<(String, (usize, usize, usize))>,
+    exits: Vec<(String, (usize, usize, usize, usize))>,
 }
 
 /// The independent model of the app: what the client holds and what every kept view must show.
@@ -199,6 +199,7 @@ impl Machine {
         }
         if let (true, Some(account)) = (self.live(), self.credential.clone()) {
             for (index, view) in self.views.iter().enumerate() {
+                view.held.follow(&self.rig.database);
                 eventually(&format!("view {index} to show {account}"), || view.held.displays(&account)).await?;
             }
         }

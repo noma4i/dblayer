@@ -1,25 +1,19 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use super::{Config, Database, LiveChange, QueryListener};
+use super::stream::tape::Rows;
+use super::stream::StreamValue;
+use super::{Config, Database};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
 
-struct Tape(Mutex<Vec<LiveChange>>);
-
-impl QueryListener for Tape {
-    fn changed(&self, change: LiveChange) {
-        self.0.lock().unwrap().push(change);
-    }
-}
-
-async fn heard(tape: &Tape, count: usize) -> Vec<LiveChange> {
+async fn heard(tape: &Rows, count: usize) -> Vec<StreamValue> {
     for _ in 0..200 {
-        let seen = tape.0.lock().unwrap().clone();
+        let seen = tape.values();
         if seen.len() >= count { return seen; }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    panic!("expected {count} changes, heard {}", tape.0.lock().unwrap().len());
+    panic!("expected {count} values, heard {}", tape.values().len());
 }
 
 #[tokio::test]
@@ -32,18 +26,16 @@ async fn a_reported_desync_makes_the_next_delivery_the_whole_list_of_the_databas
         database.create("Note".into(), serde_json::json!({"text": text}).to_string(), "{}".into()).await.unwrap();
         settle();
     }
-    let tape = Arc::new(Tape(Mutex::new(Vec::new())));
-    let subscription = database.live_query(r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#.into(), tape.clone());
+    let tape = Arc::new(Rows::default());
+    let stream = database.watch_query(r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#, tape.clone());
     let first = heard(&tape, 1).await;
-    assert!(first[0].full && first[0].rows.len() == 3);
+    assert!(matches!(&first[0], StreamValue::Snapshot { rows, .. } if rows.len() == 3));
     database.create("Note".into(), r#"{"text":"d"}"#.into(), "{}".into()).await.unwrap();
     settle();
     let seen = heard(&tape, 2).await;
-    assert!(!seen[1].full, "a later change arrives as a delta");
-    subscription.report_desync();
+    assert!(matches!(seen[1], StreamValue::Delta { .. }), "a later change arrives as a delta");
+    stream.report_desync();
     let seen = heard(&tape, 3).await;
-    let whole = &seen[2];
-    assert!(whole.full && whole.size == 4);
-    assert_eq!(whole.rows.len(), 4);
-    subscription.cancel();
+    assert!(matches!(&seen[2], StreamValue::Snapshot { rows, .. } if rows.len() == 4), "the answer to a reported desync is one whole list");
+    stream.cancel();
 }

@@ -118,11 +118,11 @@ async fn the_power_and_memory_facts_given_to_open_hold_the_first_preload() {
 async fn the_preload_waits_until_the_listener_has_taken_its_first_snapshot() {
     use crate::sync::rig::{moments_spec, users_spec};
     use crate::test_wait::{recv_or_closed, yield_until};
-    use super::super::{LiveChange, QueryListener};
+    use super::super::{StreamDelivery, ValueSink};
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Taking { entered: std::sync::mpsc::Sender<()>, release: std::sync::Mutex<std::sync::mpsc::Receiver<()>> }
-    impl QueryListener for Taking {
-        fn changed(&self, _: LiveChange) {
+    impl ValueSink for Taking {
+        fn delivered(&self, _: StreamDelivery) {
             let _ = self.entered.send(());
             let _ = recv_or_closed(&self.release.lock().unwrap());
         }
@@ -136,7 +136,7 @@ async fn the_preload_waits_until_the_listener_has_taken_its_first_snapshot() {
     let database = OpenDatabase::new().open(config(), models, options, Some(Arc::new(CountingFeed(requests.clone()))), None, None, None, None).await.unwrap();
     let (entered, inside) = std::sync::mpsc::channel();
     let (release, waiting) = std::sync::mpsc::channel();
-    let live = database.live_query(r#"{"model":"users"}"#.into(), Arc::new(Taking { entered, release: std::sync::Mutex::new(waiting) }));
+    let live = database.watch_query(r#"{"model":"users"}"#, Arc::new(Taking { entered, release: std::sync::Mutex::new(waiting) }));
     inside.recv_timeout(std::time::Duration::from_secs(5)).expect("the listener takes its first snapshot");
     let sync = database.sync().unwrap();
     let _entered = super::super::database::executor().unwrap().enter();

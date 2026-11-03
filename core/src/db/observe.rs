@@ -8,7 +8,6 @@ use crate::query::{Query, Where};
 use serde_json::Value;
 
 use super::dispatch::Event;
-use super::entities::{EntityGroup, EntitySubscriber};
 use super::error::DbError;
 use super::listeners::{Feed, Listener, Subscriber};
 use super::open::{locked, Db, Shared};
@@ -16,7 +15,6 @@ use super::reads::{CompletedRead, ReadJob, ReadResult, ReadRows, ReadTarget};
 use super::window::WindowSeed;
 use super::watch::{Body, Change, CountChange, Deps, Evaluated, Loaded, RowsBody, Step, Subject, Version};
 
-type TouchedModel = (String, ModelKey, BTreeSet<RowId>);
 
 const MAX_PROBED_ROWS: usize = 8;
 
@@ -118,7 +116,6 @@ pub(crate) struct Observers {
     groups: HashMap<String, Group>,
     opening: HashMap<String, Opening>,
     by_row: HashMap<RowRef, BTreeSet<String>>,
-    pub(crate) entities: HashMap<String, EntityGroup>,
     pub(crate) warm_ids: HashSet<u64>,
     read_ready: BTreeMap<u64, String>,
     read_order: HashMap<String, u64>,
@@ -172,8 +169,7 @@ impl Observers {
             read && group.subscribers.iter().chain(&group.facts.joining).all(|(_, subscriber)| subscriber.idle())
         });
         let opening = self.opening.values().all(|opening| opening.read_error.is_some() && !opening.reading && opening.waiting.iter().all(|(_, subscriber)| subscriber.idle()));
-        let entities = self.entities.values().all(EntityGroup::idle);
-        groups && opening && entities
+        groups && opening
     }
 
     #[cfg(test)]
@@ -182,60 +178,8 @@ impl Observers {
     }
 
     #[cfg(test)]
-    pub(crate) fn groups_seen_through(&self, revision: i64) -> bool {
-        self.top >= revision
-    }
-
-    #[cfg(test)]
-    pub(crate) fn deferred_reads(&self) -> usize {
-        self.read_ready.len()
-    }
-
-    #[cfg(test)]
     pub(crate) fn keyed_rows(&self) -> usize {
         self.by_row.len()
-    }
-
-    pub(crate) fn entities_key(&mut self) -> String {
-        let key = format!("entities:{}", self.next_id);
-        self.next_id += 1;
-        key
-    }
-
-    pub(crate) fn group_entities(&mut self, key: &str, model: &ModelKey, subscriber: &Arc<EntitySubscriber>) -> &mut EntityGroup {
-        self.entities.entry(key.to_string()).or_insert_with(|| EntityGroup::new(model.clone(), subscriber.clone()))
-    }
-
-    pub(crate) fn drop_unused_entities(&mut self, key: &str) {
-        if self.entities.get(key).is_some_and(EntityGroup::unused) {
-            self.remove_entities(key);
-        }
-    }
-
-    pub(crate) fn index_rows<'a>(&mut self, key: &str, model: &ModelKey, ids: impl Iterator<Item = &'a RowId>) {
-        for id in ids {
-            self.by_row.entry(RowRef::new(model.clone(), id.clone())).or_default().insert(key.to_string());
-        }
-    }
-
-    pub(crate) fn unindex_rows<'a>(&mut self, key: &str, model: &ModelKey, ids: impl Iterator<Item = &'a RowId>) {
-        for id in ids {
-            let row = RowRef::new(model.clone(), id.clone());
-            if let Some(keys) = self.by_row.get_mut(&row) {
-                keys.remove(key);
-                if keys.is_empty() {
-                    self.by_row.remove(&row);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn remove_entities(&mut self, key: &str) {
-        self.remove_deferred(key);
-        let Some(group) = self.entities.remove(key) else { return };
-        let ids: Vec<RowId> = group.ids().cloned().collect();
-        self.unindex_rows(key, group.model(), ids.iter());
-        self.retire(group);
     }
 
     fn add_group(&mut self, key: &str, group: Group) {
@@ -286,7 +230,6 @@ impl Observers {
             }
             if event.reset_all || !event.reset_models.is_empty() {
                 keys.extend(self.groups.iter().filter(|(_, group)| group.deps.keyed() && group.deps.hit(event)).map(|(key, _)| key.clone()));
-                keys.extend(self.entities.iter().filter(|(_, group)| group.resets(event)).map(|(key, _)| key.clone()));
             }
         }
         for (key, group) in &self.groups {
@@ -310,7 +253,7 @@ impl Observers {
 
     pub(crate) fn subscription_count(&self) -> usize {
         let live = |subscribers: &Subscribers| subscribers.iter().filter(|(id, _)| !self.warm_ids.contains(id)).count();
-        self.groups.values().map(|group| live(&group.subscribers) + live(&group.facts.joining)).sum::<usize>() + self.opening.values().map(|opening| live(&opening.waiting)).sum::<usize>() + self.entities.values().filter(|group| group.holds_ids()).count()
+        self.groups.values().map(|group| live(&group.subscribers) + live(&group.facts.joining)).sum::<usize>() + self.opening.values().map(|opening| live(&opening.waiting)).sum::<usize>()
     }
 }
 
@@ -483,7 +426,6 @@ struct Due {
 
 pub(crate) struct Refresh {
     due: Vec<Due>,
-    touched: Vec<(String, ModelKey, BTreeSet<RowId>)>,
 }
 
 impl Shared {
@@ -493,20 +435,13 @@ impl Shared {
     }
 
     pub(crate) fn plan_refresh(&self, batch: &[Event]) -> Refresh {
-        let (due, touched): (Vec<Due>, Vec<TouchedModel>) = {
+        let due: Vec<Due> = {
             let mut observers = self.observers();
             for opening in observers.opening.values_mut() {
                 opening.missed |= batch.iter().any(|event| opening.deps.hit(event));
             }
             let mut keys = observers.candidates(batch);
             keys.extend(observers.groups.iter().filter(|(_, group)| group.facts.read_error.is_some()).map(|(key, _)| key.clone()));
-            let touched = observers
-                .entities
-                .iter()
-                .filter(|(key, group)| keys.contains(*key) || !group.dirty.is_empty())
-                .map(|(key, group)| (key.clone(), group.model().clone(), group.touched(batch)))
-                .filter(|(_, _, ids)| !ids.is_empty())
-                .collect();
             let due = keys
                 .into_iter()
                 .filter_map(|key| observers.groups.get(&key).map(|group| (key, group)))
@@ -524,16 +459,13 @@ impl Shared {
                     key,
                 })
                 .collect();
-            (due, touched)
+            due
         };
-        Refresh { due, touched }
+        Refresh { due }
     }
 
     /// `top` rises only after every group the batch hit is scheduled: a group with an unread commit is not idle at that revision.
-    pub(crate) fn run_refresh(&self, batch: &[Event], Refresh { due, touched }: Refresh) {
-        for (key, model, ids) in touched {
-            self.contained(&key, || self.refresh_entities(&key, &model, ids));
-        }
+    pub(crate) fn run_refresh(&self, batch: &[Event], Refresh { due }: Refresh) {
         for due in due {
             self.contained(&due.key.clone(), || {
                 let mut observers = self.observers();
@@ -640,7 +572,7 @@ impl Shared {
 
     pub(crate) fn reached_through(&self, revision: i64) -> bool {
         let observers = self.observers();
-        observers.reached_through(revision) && self.dispatch.progress.entity_reads() == 0
+        observers.reached_through(revision)
     }
 
     fn tell_failure(&self, observers: &Observers, key: &str, error: &DbError) {
@@ -693,11 +625,7 @@ impl Shared {
         while self.reads.has_capacity() {
             let Some((_, key)) = observers.read_ready.pop_first() else { break };
             observers.read_order.remove(&key);
-            if observers.entities.contains_key(&key) {
-                self.pump_entities(&mut observers, &key);
-            } else {
-                self.pump(&mut observers, &key);
-            }
+            self.pump(&mut observers, &key);
         }
     }
 
@@ -726,12 +654,10 @@ impl Shared {
                 (ReadTarget::Join { key, token, joiners }, ReadRows::Whole(loaded)) => self.apply_join(&key, token, &joiners, loaded),
                 (ReadTarget::Join { key, token, .. }, ReadRows::Moved) => self.rejoin_after_publish(&key, token),
                 (ReadTarget::Open { key, token }, ReadRows::Evaluated(evaluated)) => self.apply_open(&key, token, *evaluated),
-                (ReadTarget::Entities { key, ids, leases }, ReadRows::Entities { position, loaded }) => self.apply_entities(&key, &ids, &leases, Ok((position, loaded))),
                 _ => {}
             },
             ReadResult::ReadFailed { target, error } => {
                 match target {
-                    ReadTarget::Entities { key, ids, leases } => self.apply_entities(&key, &ids, &leases, Err(error)),
                     ReadTarget::Publish { key, token, .. } | ReadTarget::Join { key, token, .. } => {
                         locked(&self.counters).query_reads_failed += 1;
                         let mut observers = self.observers();

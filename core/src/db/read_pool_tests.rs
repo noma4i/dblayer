@@ -7,7 +7,7 @@ use super::watch::Subject;
 use super::window::WindowSpec;
 use crate::identity::{ModelKey, RowRef};
 use crate::query::Query;
-use crate::test_wait::{join_within, recv_or_closed, spin_until};
+use crate::test_wait::join_within;
 
 #[test]
 fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() {
@@ -18,8 +18,6 @@ fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() 
     let (window_log, window_callback) = recorder();
     let query = Query::new("users").ordered(vec![crate::query::Order::new("id", crate::value::SortDirection::Asc)]);
     let window = db.observe_window(query, WindowSpec::Tail { size: 0, max: None, paged: false }, window_callback).unwrap();
-    let (entity_log, entity_callback) = entity_recorder();
-    let entities = db.observe_entities("users", entity_callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let paused = db.shared.dispatch.pause_owner();
     db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -34,7 +32,6 @@ fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() 
     let (joined, joined_callback) = recorder();
     let _joined_observer = db.observe(Query::new("users"), joined_callback).unwrap();
     window.grow_before(1);
-    entities.retain(&[rid("u1")]).unwrap();
     let cancelled = logs.pop().unwrap();
     drop(observers.pop());
     let issued = db.counters().observation_reads - before;
@@ -45,32 +42,7 @@ fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() 
     assert!(logs.iter().all(|log| log.lock().unwrap().last().is_some_and(|change| change.rows.len() == 1 && change.rows[0].text("name") == Some("latest"))), "every deferred opening reaches the last committed row");
     assert_eq!(calls(&joined).last(), Some(&1), "deferred join retains its subscriber");
     assert_eq!(window_log.lock().unwrap().last().unwrap().rows.len(), 1, "deferred growth retains its requested size");
-    assert_eq!(entity_log.lock().unwrap().last().unwrap().rows[0].text("name"), Some("latest"), "deferred retain reaches the row");
     assert!(cancelled.lock().unwrap().is_empty(), "cancelled deferred opening stays silent");
-}
-
-#[test]
-fn inv_observe_29_entity_refreshes_merge_until_the_in_flight_read_is_applied() {
-    let db = booted();
-    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
-    let (log, callback) = entity_recorder();
-    let observer = db.observe_entities("users", callback).unwrap();
-    observer.retain(&[rid("u1")]).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let key = db.shared.observers().entities.keys().next().cloned().unwrap();
-    let paused = db.shared.dispatch.pause_owner();
-    db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
-    let before = db.counters().observation_reads;
-    for _ in 0..64 {
-        db.shared.refresh_entities(&key, &ModelKey::new("users"), [rid("u1")].into());
-    }
-    let issued = db.counters().observation_reads - before;
-    db.update("users", &rid("u1"), obj(json!({"name": "latest"}))).unwrap();
-    drop(paused);
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(issued, 1, "one retained group has one read in flight");
-    assert_eq!(log.lock().unwrap().last().unwrap().rows[0].text("name"), Some("latest"));
-    assert!(db.counters().observation_reads - before <= 3, "repeated refreshes become one following read plus the committed update");
 }
 
 #[test]
@@ -146,35 +118,6 @@ fn inv_observe_21_a_window_grows_by_a_read_outside_the_owner() {
 }
 
 #[test]
-fn inv_observe_21_a_retain_reads_outside_the_owner_and_delivers_the_row() {
-    let db = booted();
-    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
-    let (log, callback) = entity_recorder();
-    let observer = db.observe_entities("users", callback).unwrap();
-    observer.retain(&[rid("u1")]).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let rows: Vec<_> = log.lock().unwrap().iter().flat_map(|change| change.rows.iter().map(|row| row.id.to_string())).collect();
-    assert_eq!(rows, ["u1"]);
-    assert_eq!(db.counters().sql_under_owner, 0);
-}
-
-#[test]
-fn inv_observe_22_a_retain_whose_read_failed_keeps_the_id_and_reports_the_failure_by_event() {
-    let db = booted();
-    let (log, callback) = entity_recorder();
-    let observer = db.observe_entities("users", callback).unwrap();
-    db.shared.store.fail_next_entity_reads(1);
-    observer.retain(&[rid("late")]).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(db.counters().entity_reads_failed, 1);
-    assert_eq!(log.lock().unwrap().iter().filter(|change| change.failure.is_some()).count(), 1, "the failure reaches the subscriber of the ids");
-    put(&db, "users", json!({"id": "late", "name": "arrived"}));
-    let rows: Vec<_> = log.lock().unwrap().iter().flat_map(|change| change.rows.iter().map(|row| row.id.to_string())).collect();
-    assert_eq!(rows, ["late"]);
-    assert_eq!(db.counters().sql_under_owner, 0);
-}
-
-#[test]
 fn inv_observe_22_a_group_that_cannot_be_read_is_counted_and_read_again_by_the_next_commit() {
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
@@ -217,77 +160,6 @@ fn inv_observe_23_a_panic_while_applying_one_group_fails_that_group_and_leaves_t
     assert_eq!(calls(&users), [0, 1], "a batch of another model reads the failed group again");
     put(&db, "users", json!({"id": "u2", "name": "Bob"}));
     assert_eq!(calls(&users), [0, 1, 2]);
-}
-
-#[test]
-fn inv_observe_29_a_refresh_deferred_by_saturation_still_reads_only_the_touched_rows() {
-    use super::reads::{ReadJob, ReadRows, ReadTarget};
-    let db = booted();
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    for index in 0..500 {
-        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&format!("u{index:03}")), row: obj(json!({"id": format!("u{index:03}"), "name": "Ann"})) });
-    }
-    db.land(envelope).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let (log, callback) = recorder();
-    let _observer = db.observe(Query::new("users"), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let (release, gate) = std::sync::mpsc::channel::<()>();
-    let gate = std::sync::Arc::new(std::sync::Mutex::new(gate));
-    for _ in 0..2 {
-        let gate = gate.clone();
-        let run = Box::new(move |_: &super::open::Shared| {
-            let _ = recv_or_closed(&gate.lock().unwrap());
-            Ok(ReadRows::Skipped { revision: 0, epoch: 0 })
-        });
-        let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default(), leases: Default::default() }, run };
-        assert!(db.shared.reads.submit(&db.shared, job));
-    }
-    let before = db.counters().rows_loaded;
-    db.update("users", &rid("u001"), obj(json!({"name": "latest"}))).unwrap();
-    spin_until("an observer read was deferred", || db.shared.observers().deferred_reads() > 0);
-    drop(release);
-    db.await_revision(db.revision_seq().unwrap());
-    let loaded = db.counters().rows_loaded - before;
-    assert_eq!(log.lock().unwrap().last().unwrap().rows.iter().find(|row| row.id.as_str() == "u001").unwrap().text("name"), Some("latest"));
-    assert!(loaded <= 1, "a deferred refresh of one touched row loaded {loaded} rows");
-}
-
-#[test]
-fn inv_observe_29_refreshes_deferred_by_saturation_merge_their_touched_rows() {
-    use super::reads::{ReadJob, ReadRows, ReadTarget};
-    let db = booted();
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    for index in 0..500 {
-        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&format!("u{index:03}")), row: obj(json!({"id": format!("u{index:03}"), "name": "Ann"})) });
-    }
-    db.land(envelope).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let (log, callback) = recorder();
-    let _observer = db.observe(Query::new("users"), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let (release, gate) = std::sync::mpsc::channel::<()>();
-    let gate = std::sync::Arc::new(std::sync::Mutex::new(gate));
-    for _ in 0..2 {
-        let gate = gate.clone();
-        let run = Box::new(move |_: &super::open::Shared| {
-            let _ = recv_or_closed(&gate.lock().unwrap());
-            Ok(ReadRows::Skipped { revision: 0, epoch: 0 })
-        });
-        let job = ReadJob { target: ReadTarget::Entities { key: "saturating".into(), ids: Default::default(), leases: Default::default() }, run };
-        assert!(db.shared.reads.submit(&db.shared, job));
-    }
-    let before = db.counters().rows_loaded;
-    db.update("users", &rid("u001"), obj(json!({"name": "latest"}))).unwrap();
-    spin_until("an observer read was deferred", || db.shared.observers().deferred_reads() > 0);
-    db.update("users", &rid("u002"), obj(json!({"name": "second"}))).unwrap();
-    let revision = db.revision_seq().unwrap();
-    spin_until("the groups saw the revision", || db.shared.observers().groups_seen_through(revision));
-    drop(release);
-    db.await_revision(db.revision_seq().unwrap());
-    let loaded = db.counters().rows_loaded - before;
-    assert_eq!(log.lock().unwrap().last().unwrap().rows.iter().find(|row| row.id.as_str() == "u001").unwrap().text("name"), Some("latest"));
-    assert!(loaded <= 2, "two deferred refreshes of one touched row each loaded {loaded} rows");
 }
 
 fn returns_while_the_registry_is_held(call: impl FnOnce() + Send + 'static, db: &crate::db::Db) -> bool {

@@ -71,8 +71,32 @@ pub(crate) struct Inner {
     pub counters: Counters,
 }
 
+thread_local! {
+    static PINNED: std::cell::RefCell<Option<(Arc<crate::lifecycle::Lifecycle>, u64)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs a write on this thread that belongs to one session epoch: the writer refuses its commit once the epoch moved or the database closed.
+pub(crate) fn pinned_to_epoch<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch: u64, write: impl FnOnce() -> R) -> R {
+    #[cfg(test)]
+    life.pinned_writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let before = PINNED.replace(Some((life.clone(), epoch)));
+    let result = write();
+    PINNED.set(before);
+    #[cfg(test)]
+    life.pinned_writes.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    result
+}
+
+fn ensure_pinned_epoch() -> Result<(), StoreError> {
+    PINNED.with(|pinned| match &*pinned.borrow() {
+        Some((life, epoch)) if !life.admits_epoch(*epoch) => Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)),
+        _ => Ok(()),
+    })
+}
+
 impl Inner {
     pub(crate) fn ensure_generation(&self, generation: Generation) -> Result<(), StoreError> {
+        ensure_pinned_epoch()?;
         if generation != self.generation {
             return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration));
         }
@@ -184,9 +208,9 @@ pub struct Store {
     commit_log: OnceLock<CommitLog>,
     line: AnnounceLine,
     session_end_replay: std::sync::atomic::AtomicBool,
-    recreated: Option<RecreateReason>,
     #[cfg(test)]
     failing_entity_reads: std::sync::atomic::AtomicUsize,
+    recreated: Option<RecreateReason>,
     #[cfg(test)]
     pub(crate) require_unlocked_responses: std::sync::atomic::AtomicBool,
     #[cfg(test)]

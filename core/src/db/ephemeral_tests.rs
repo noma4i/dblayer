@@ -421,23 +421,6 @@ fn a_query_pinned_to_an_id_sees_the_write_and_the_reset_of_its_row() {
 }
 
 #[test]
-fn a_retained_row_receives_the_write_and_the_reset_of_its_ephemeral_value() {
-    let (db, clock) = rig();
-    let (log, callback) = entity_recorder();
-    let observer = db.observe_entities("people", callback).unwrap();
-    observer.retain(&[rid("p1")]).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    typing(&db, true);
-    clock.advance(seconds(6));
-    db.expire_ephemeral().unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let seen = log.lock().unwrap().clone();
-    assert_eq!(seen.len(), 3);
-    assert_eq!(seen[1].rows[0].get("typing").cloned(), Some(json!(true)));
-    assert_eq!(seen[2].rows[0].get("typing").cloned(), Some(json!(false)));
-}
-
-#[test]
 fn advancing_the_clock_expires_a_memory_row_and_tells_the_observer() {
     let (db, clock) = rig();
     let (log, callback) = recorder();

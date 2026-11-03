@@ -65,7 +65,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         let (database, pages) = open_pages().await;
         bound(database.load("Moment".into(), "feed".into(), "{}".into())).await.unwrap();
         let rows = Arc::new(Rows::default());
-        let live = database.live_query(FEED.into(), rows.clone());
+        let live = database.watch_query(FEED, rows.clone());
         bound(live.wait_for_initial_load()).await.unwrap();
         let (first, second) = (Gate::new(), Gate::new());
         pages.gates.lock().unwrap().insert(1, first.clone());
@@ -95,7 +95,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         bound(crate::ffi::settled(&database)).await.unwrap();
         let before = pages.queries.load(Ordering::SeqCst);
         let fresh_rows = Arc::new(Rows::default());
-        let fresh = database.live_query(FEED.into(), fresh_rows.clone());
+        let fresh = database.watch_query(FEED, fresh_rows.clone());
         bound(fresh.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("{case}: the window after the reset inherited {error:?}"));
         assert!(fresh_rows.1.lock().unwrap().iter().all(|change| change.error.is_none()), "{case}: the window after the reset delivered an error");
         assert!(pages.queries.load(Ordering::SeqCst) - before <= 1, "{case}: the window after the reset read more than once");
@@ -187,7 +187,7 @@ async fn a_refused_foreground_refresh_keeps_the_views_and_the_credential() {
     assert!(matches!(refused, DbError::Session { code: crate::ffi::SessionCode::Unauthenticated, .. }), "{refused:?}");
     rig.settle().await;
     assert!(rig.database.session.as_ref().unwrap().signed_in().unwrap().is_some(), "the refusal cleared the credential");
-    assert!((1..=2).all(|lease| held.log.latest(lease).is_some_and(|snapshot| snapshot.value.as_ref().is_some_and(|row| crate::ffi::lifecycle_tests::named(row, "A")))), "the refusal removed the value of a held entity");
+    assert!(held.single.0.lock().unwrap().iter().all(|row| crate::ffi::lifecycle_tests::named(row, "A")) && held.entity.0.lock().unwrap().iter().all(|row| crate::ffi::lifecycle_tests::named(row, "A")) && !held.entities_empty(), "the refusal removed the value of a held entity");
     held.lists_show("A").await;
     bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
     held.shows("A").await;

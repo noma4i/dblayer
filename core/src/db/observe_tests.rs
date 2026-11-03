@@ -278,9 +278,6 @@ fn attach_cancelled_at_any_moment_leaves_no_subscription() {
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log).len(), 1);
     drop(after_first);
-    let entities = db.observe_entities("users", |_| {}).unwrap();
-    entities.retain(&[rid("u1")]).unwrap();
-    drop(entities);
     db.await_revision(db.revision_seq().unwrap());
     let census = db.observer_census();
     assert_eq!((census.observed_queries, census.subscriptions), (0, 0));
