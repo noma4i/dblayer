@@ -1435,6 +1435,7 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     let mut decl = OperationDecl {
         pos: line.pos, name: name.clone(), kind, upload, durable, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
         on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
+        removes_receiver: None, copies_receiver_to: None, scope_effects: Vec::new(),
     };
     let mut seen: Vec<&str> = Vec::new();
     for item in lines {
@@ -1445,12 +1446,13 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
                 | (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter")
                 | (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure")
                 | (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates")
+                | (OperationKind::Custom, "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
         );
         if !allowed {
             cx.fail(Pos::of(item), format!("`{word}` does not apply to operation `{name}`"));
             continue;
         }
-        if !matches!(word, "parameter" | "local" | "upsert" | "refetch") && seen.contains(&word) {
+        if !matches!(word, "parameter" | "local" | "upsert" | "refetch" | "joins_scope" | "leaves_scope") && seen.contains(&word) {
             cx.fail(Pos::of(item), format!("`{word}` is declared twice"));
             continue;
         }
@@ -1573,6 +1575,61 @@ fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl) {
             line.finish(cx);
             if let Some(scope) = scope {
                 decl.refetch.push(RefetchDecl { pos: line.pos, scope, model });
+            }
+        }
+        "removes_receiver" => {
+            no_block(cx, call);
+            line.no_args(cx);
+            line.no_options(cx);
+            decl.removes_receiver = Some(line.pos);
+        }
+        "copies_receiver_to" => {
+            no_block(cx, call);
+            let arg = match call.args.as_slice() {
+                [node] => symbol(cx, node, "the argument that names the target"),
+                _ => {
+                    cx.fail(line.pos, "`copies_receiver_to` needs an argument like `copies_receiver_to :targetChatId, field: :chatId`");
+                    None
+                }
+            };
+            let field = line.opt(cx, "field").and_then(|pair| symbol(cx, &pair.value, "`field`"));
+            line.finish(cx);
+            let field = require(cx, &line, "field", field);
+            if let (Some(arg), Some(field)) = (arg, field) {
+                decl.copies_receiver_to = Some(ReceiverCopyDecl { pos: line.pos, arg, field });
+            }
+        }
+        "joins_scope" | "leaves_scope" => {
+            no_block(cx, call);
+            let scope = match call.args.as_slice() {
+                [node] => symbol(cx, node, "the scope"),
+                _ => {
+                    cx.fail(line.pos, format!("`{}` needs a scope like `{} :group_members, model: User, rows: :userIds, with: {{ groupId: :id }}, order: :order, orders: [\"JOINED\", \"OWNER_FIRST\"]`", call.word, call.word));
+                    None
+                }
+            };
+            let model = line.opt(cx, "model").and_then(|pair| konst(cx, &pair.value, "`model`"));
+            let rows = line.opt(cx, "rows").and_then(|pair| symbol(cx, &pair.value, "`rows`"));
+            let with_pair = line.opt(cx, "with");
+            let with = symbol_pairs(cx, with_pair, "`with`");
+            let order = line.opt(cx, "order").and_then(|pair| symbol(cx, &pair.value, "`order`"));
+            let orders: Vec<String> = match line.opt(cx, "orders") {
+                Some(pair) => match &pair.value.item {
+                    Value::Array(items) => items.iter().filter_map(|item| string(cx, item, "an order")).collect(),
+                    _ => {
+                        cx.fail(at(&pair.value), "`orders` must be a list like `[\"JOINED\"]`");
+                        Vec::new()
+                    }
+                },
+                None => Vec::new(),
+            };
+            line.finish(cx);
+            let (model, rows, order) = (require(cx, &line, "model", model), require(cx, &line, "rows", rows), require(cx, &line, "order", order));
+            if orders.is_empty() {
+                cx.fail(line.pos, format!("`{}` needs `orders:`", call.word));
+            }
+            if let (Some(scope), Some(model), Some(rows), Some(order)) = (scope, model, rows, order) {
+                decl.scope_effects.push(ScopeEffectDecl { pos: line.pos, joins: call.word == "joins_scope", scope, model, rows, with, order, orders });
             }
         }
         "returns" => decl.returns = returns(cx, call, true),

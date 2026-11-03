@@ -1000,6 +1000,46 @@ val groups = Group.nodes(ids)
 - `scope.entity(Model, id)` is the way to watch a row. A node read fills it.
 - The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has an attribute that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.
 
+## Effects of an operation before the answer
+
+An operation that waits for the server shows its change at once and takes it back when the server refuses. Four effects exist, one per operation, and no others: `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`. Write `optimistic false` next to them.
+
+```ruby
+model Club do
+  attribute :name, :string
+  operation :leave do
+    mutation "LeaveClub"
+    variables clubId: :id
+    optimistic false
+    removes_receiver
+    response :ignore
+  end
+  operation :add_member do
+    mutation "AddClubMember"
+    parameter :userIds, [:id]
+    variables clubId: :id, userIds: :userIds
+    optimistic false
+    joins_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: ["JOINED", "OWNER_FIRST"]
+    response from: "addClubMember"
+  end
+end
+```
+
+- `removes_receiver` takes the row out of every list before the answer. A refusal puts it back at its place.
+- `copies_receiver_to :target, field: :chatId` adds a copy of the row with `chatId` set to the argument `target`. The answer row replaces the copy, a refusal removes it.
+- `joins_scope` adds the rows named by `rows:` to the end of the scope list, and `leaves_scope` takes them out. `orders:` lists every value of the order parameter, so all sort orders of the list change together. A refusal restores the ids and the order of every list.
+- The call returns after the answer. A network error ends it with `Network` and restores the lists, and nothing sends it later.
+
+```swift
+let left = try await club.leave()
+let added = try await club.addMember(userIds: ["u4"])
+```
+
+```kotlin
+val left = club.leave()
+val added = club.addMember(userIds = listOf("u4"))
+```
+
 ## Validation
 
 `dblayer-gen` reports mistakes with file and line (`user.dbl:12: unknown key `touch` for `has_many``). The same checks run in the core when a database is opened: unknown models, missing indexes on foreign keys, duplicate names and invalid combinations.

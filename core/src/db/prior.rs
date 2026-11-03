@@ -25,6 +25,8 @@ pub(crate) enum PriorRow {
     Created { model: String, id: String },
     Edited { model: String, id: String, before: Map<String, Value>, owned: BTreeMap<String, i64> },
     Destroyed { model: String, id: String, before: Map<String, Value>, members: Vec<PriorMember>, files: Vec<PriorFile> },
+    Joined { model: String, id: String, scope_key: String },
+    Left { model: String, id: String, scope_key: String, order_key: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,11 +51,19 @@ pub(crate) struct HeldFile {
 impl PriorRow {
     pub fn id(&self) -> &str {
         match self {
-            PriorRow::Created { id, .. } | PriorRow::Edited { id, .. } | PriorRow::Destroyed { id, .. } => id,
+            PriorRow::Created { id, .. } | PriorRow::Edited { id, .. } | PriorRow::Destroyed { id, .. } | PriorRow::Joined { id, .. } | PriorRow::Left { id, .. } => id,
         }
     }
 
     pub fn reappearing(&self) -> (Option<EntityOp>, Vec<ScopeOp>) {
+        if let PriorRow::Left { model, id, scope_key, order_key } = self {
+            let Ok(row_id) = RowId::new(id) else { return (None, Vec::new()) };
+            return (None, vec![ScopeOp::Append { scope: ScopeRef::new(ModelKey::new(model), ListKey::from_raw(scope_key)), row: row_id, order_key: order_key.clone() }]);
+        }
+        if let PriorRow::Joined { model, id, scope_key } = self {
+            let Ok(row_id) = RowId::new(id) else { return (None, Vec::new()) };
+            return (None, vec![ScopeOp::Detach { scope: ScopeRef::new(ModelKey::new(model), ListKey::from_raw(scope_key)), row: row_id }]);
+        }
         let PriorRow::Destroyed { model, id, before, members, .. } = self else { return (None, Vec::new()) };
         let (Ok(row_id), key) = (RowId::new(id), ModelKey::new(model)) else { return (None, Vec::new()) };
         let mut scopes = Vec::new();
@@ -92,7 +102,7 @@ impl Prior {
 
     pub(crate) fn related_operations(reader: &Reader<'_>, entry: &OutboxOperation) -> Result<Vec<OutboxOperation>, StoreError> {
         let keys: BTreeSet<_> = Self::of(entry)?.into_iter().flat_map(|prior| prior.rows).map(|row| match row {
-            PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } => (model, id),
+            PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } | PriorRow::Joined { model, id, .. } | PriorRow::Left { model, id, .. } => (model, id),
         }).collect();
         let mut sequences = crate::operation::row_operation_sequences(reader.connection(), &keys)?;
         let mut statement = reader.connection().prepare_cached("SELECT ids.seq FROM op_value AS ids JOIN op_value AS models ON models.seq = ids.seq AND models.item_position = -1 AND models.part = 'prior' AND models.parent = ids.parent AND models.name = 'model' AND models.text = ?1 WHERE ids.item_position = -1 AND ids.part = 'prior' AND ids.name = 'id' AND ids.text = ?2")?;
@@ -202,7 +212,7 @@ impl Prior {
         let mut changed = false;
         for row in &mut self.rows {
             let (model, id, before) = match row {
-                PriorRow::Created { model, id } => (model, id, None),
+                PriorRow::Created { model, id } | PriorRow::Joined { model, id, .. } | PriorRow::Left { model, id, .. } => (model, id, None),
                 PriorRow::Edited { model, id, before, .. } | PriorRow::Destroyed { model, id, before, .. } => (model, id, Some(before)),
             };
             if model == parent && id == temp.as_str() {

@@ -328,6 +328,9 @@ impl Db {
         let input_args = args.clone();
         let mut input = args;
         input.insert("id".to_string(), Value::String(id.to_string()));
+        let declared = spec.actions.iter().find(|declared| declared.name == action).cloned();
+        let now_ms = self.shared.store.lock().now_ms();
+        let receiver_row = self.find(model, id)?;
         let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
         let committed = self.commit_local_optional(spec, &mut queued, None, None, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
@@ -354,12 +357,126 @@ impl Db {
                 touches.extend(self.touch_ops(reader, self.shared.spec(&edited_model)?, &[&after, &before], &RowRef::new(edited_key.clone(), edited_row.clone()))?);
                 plan.update(edited_key, edited_row, after);
             }
+            if let Some(declared) = &declared {
+                self.apply_closed_effect(reader, spec, declared, (&own, &input_args), now_ms, plan, &mut rows, &mut touches, queued)?;
+            }
             queued.rollback = Some(Prior { rows }.to_value());
             Ok(Some(touches))
         })?;
         let operation = committed.operations.first().copied().ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
-        let row = self.find(model, id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+        let row = match self.find(model, id)? {
+            Some(row) => row,
+            None if declared.as_ref().is_some_and(|declared| declared.removes_receiver) => receiver_row.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?,
+            None => return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() }),
+        };
         Ok(Acted { row, operation })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_closed_effect(
+        &self,
+        reader: &Reader<'_>,
+        spec: &ModelSpec,
+        declared: &crate::schema::ActionDeclaration,
+        (own, args): (&RowRef, &Map<String, Value>),
+        now_ms: i64,
+        plan: &mut WritePlan,
+        rows: &mut Vec<PriorRow>,
+        touches: &mut Vec<EntityOp>,
+        queued: &mut Queued,
+    ) -> Result<(), DbError> {
+        if declared.removes_receiver {
+            self.remove_receiver(reader, own, rows, touches)?;
+        }
+        if let Some(copy) = &declared.copies_receiver_to {
+            self.copy_receiver(reader, spec, copy, (own, args), now_ms, plan, rows, queued)?;
+        }
+        for effect in &declared.scope_effects {
+            self.move_scope_rows(reader, effect, (own, args), rows, queued)?;
+        }
+        Ok(())
+    }
+
+    fn remove_receiver(&self, reader: &Reader<'_>, own: &RowRef, rows: &mut Vec<PriorRow>, touches: &mut Vec<EntityOp>) -> Result<(), DbError> {
+        let destroyed = self.destroy_targets(reader, own, WriteOrigin::Optimistic)?;
+        for target in &destroyed {
+            rows.extend(PriorRow::destroyed(reader, target.model.as_str(), target.id.as_str())?);
+            touches.push(EntityOp::Destroy { model: target.model.clone(), id: target.id.clone(), reason: DestroyReason::Local });
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn copy_receiver(
+        &self,
+        reader: &Reader<'_>,
+        spec: &ModelSpec,
+        copy: &crate::schema::ReceiverCopy,
+        (own, args): (&RowRef, &Map<String, Value>),
+        now_ms: i64,
+        plan: &mut WritePlan,
+        rows: &mut Vec<PriorRow>,
+        queued: &mut Queued,
+    ) -> Result<(), DbError> {
+        let target = args.get(&copy.arg).cloned().ok_or_else(|| DbError::Internal(format!("the argument {} of the copy is missing", copy.arg)))?;
+        let mut values = reader.point(own.model.as_str(), own.id.as_str())?.ok_or_else(|| DbError::NotFound { model: own.model.to_string(), id: own.id.to_string() })?;
+        let copy_id = RowId::generate_temp(None);
+        values.insert("id".to_string(), Value::String(copy_id.to_string()));
+        values.insert(copy.field.clone(), target);
+        let data = spec.normalize_local(&values, now_ms)?;
+        queued.scope_ops.extend(local_scope_ops(reader, spec, &copy_id, &data)?);
+        plan.upsert(own.model.clone(), vec![data]);
+        rows.push(PriorRow::Created { model: own.model.to_string(), id: copy_id.to_string() });
+        Ok(())
+    }
+
+    fn move_scope_rows(
+        &self,
+        reader: &Reader<'_>,
+        effect: &crate::schema::ScopeEffect,
+        (own, args): (&RowRef, &Map<String, Value>),
+        rows: &mut Vec<PriorRow>,
+        queued: &mut Queued,
+    ) -> Result<(), DbError> {
+        use crate::schema::ScopeEffectKind;
+        let ids: Vec<String> = match args.get(&effect.rows) {
+            Some(Value::Array(items)) => items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect(),
+            Some(Value::String(one)) => vec![one.clone()],
+            _ => return Err(DbError::Internal(format!("the argument {} of the scope effect is missing", effect.rows))),
+        };
+        let target = self.shared.spec(&effect.model)?;
+        let model = ModelKey::new(&effect.model);
+        for order in &effect.orders {
+            let mut params = Map::new();
+            for (name, source) in &effect.with {
+                let value = if source == "id" { Value::String(own.id.to_string()) } else { args.get(source).cloned().ok_or_else(|| DbError::Internal(format!("the argument {source} of the scope effect is missing")))? };
+                params.insert(name.clone(), value);
+            }
+            params.insert(effect.order_param.clone(), Value::String(order.clone()));
+            let key = target.selection_key(&effect.scope, &params)?;
+            let scope = ScopeRef::new(model.clone(), key.clone());
+            for id in &ids {
+                let row = RowId::new(id)?;
+                match effect.kind {
+                    ScopeEffectKind::Join => {
+                        if reader.point(&effect.model, id)?.is_none() {
+                            return Err(DbError::NotFound { model: effect.model.clone(), id: id.clone() });
+                        }
+                        if reader.scope_has_member(&effect.model, key.as_str(), id)? { continue; }
+                        let last = reader.scope_last_key(&effect.model, key.as_str())?;
+                        let order_key = fractional_between(last.as_deref(), None).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
+                        queued.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row, order_key });
+                        rows.push(PriorRow::Joined { model: effect.model.clone(), id: id.clone(), scope_key: key.to_string() });
+                    }
+                    ScopeEffectKind::Leave => {
+                        let Some(order_key) = reader.scope_member_key(&effect.model, key.as_str(), id)? else { continue };
+                        queued.scope_ops.push(ScopeOp::Detach { scope: scope.clone(), row });
+                        rows.push(PriorRow::Left { model: effect.model.clone(), id: id.clone(), scope_key: key.to_string(), order_key });
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn destroy(&self, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {

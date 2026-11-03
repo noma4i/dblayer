@@ -572,6 +572,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
         }
     }
     effects::check_local_from(node, all, operation, report);
+    effects::check_closed_effects(node, all, operation, report);
     let ignored = matches!(operation.response, Some(ResponseDecl::Ignore));
     if ignored && (!operation.upserts.is_empty() || operation.match_by.is_some()) {
         report(operation.pos, format!("operation `{name}` ignores its response: `upsert` and `match_by` read it"));

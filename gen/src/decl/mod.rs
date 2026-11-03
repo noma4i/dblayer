@@ -449,6 +449,28 @@ pub struct OperationDecl {
     pub returns: Option<Vec<AttributeDecl>>,
     pub batch: Option<BatchDecl>,
     pub length: Option<LengthDecl>,
+    pub removes_receiver: Option<Pos>,
+    pub copies_receiver_to: Option<ReceiverCopyDecl>,
+    pub scope_effects: Vec<ScopeEffectDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceiverCopyDecl {
+    pub pos: Pos,
+    pub arg: String,
+    pub field: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScopeEffectDecl {
+    pub pos: Pos,
+    pub joins: bool,
+    pub scope: String,
+    pub model: String,
+    pub rows: String,
+    pub with: Vec<(String, String)>,
+    pub order: String,
+    pub orders: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

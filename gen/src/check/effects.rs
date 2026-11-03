@@ -1,7 +1,7 @@
 use dblayer::value::ScalarKind;
 
 use crate::build::scope_is_singleton;
-use crate::decl::{ModelDecl, OperationDecl, ParamBase, Pos, SourceDecl, TypeRef};
+use crate::decl::{ModelDecl, OperationDecl, OptimisticDecl, ParamBase, Pos, SourceDecl, TypeRef};
 
 type Report<'a> = &'a mut dyn FnMut(Pos, String);
 
@@ -69,5 +69,55 @@ fn source_of(site: &Site<'_>, source: &SourceDecl, pos: Pos, report: Report<'_>)
             }
         },
         _ => {}
+    }
+}
+
+/// The closed set of effects of an operation (`removes_receiver`, `copies_receiver_to`, `joins_scope`, `leaves_scope`): one effect per operation, and every name it uses exists.
+pub(super) fn check_closed_effects(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDecl, report: Report<'_>) {
+    let kinds = usize::from(operation.removes_receiver.is_some()) + usize::from(operation.copies_receiver_to.is_some()) + operation.scope_effects.len();
+    if kinds > 1 {
+        report(operation.pos, format!("operation `{}` declares more than one effect: `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope` do not combine", operation.name));
+    }
+    if kinds > 0 && matches!(&operation.optimistic, Some((OptimisticDecl::Fields(_), _))) {
+        report(operation.pos, format!("operation `{}` declares an effect and `optimistic` fields: the effect is the optimistic change, write `optimistic false`", operation.name));
+    }
+    let site = Site { node, all, operation };
+    if let Some(copy) = &operation.copies_receiver_to {
+        if !site.id_parameter(&copy.arg) {
+            report(copy.pos, format!("`copies_receiver_to` names `:{}`, which must be an id parameter", copy.arg));
+        }
+        if !node.attributes.iter().any(|attribute| attribute.name == copy.field) {
+            report(copy.pos, format!("`copies_receiver_to` names unknown attribute `{}`", copy.field));
+        }
+    }
+    for effect in &operation.scope_effects {
+        let Some(target) = site.model(&effect.model) else {
+            report(effect.pos, format!("`{}` names unknown model `{}`", if effect.joins { "joins_scope" } else { "leaves_scope" }, effect.model));
+            continue;
+        };
+        let Some(scope) = target.scopes.iter().find(|scope| scope.name == effect.scope) else {
+            report(effect.pos, format!("model `{}` has no scope `{}`", effect.model, effect.scope));
+            continue;
+        };
+        let known = |name: &str| scope.parameters.iter().any(|parameter| parameter.name == name);
+        if !known(&effect.order) {
+            report(effect.pos, format!("scope `{}` has no parameter `{}`", effect.scope, effect.order));
+        }
+        for (name, source) in &effect.with {
+            if !known(name) {
+                report(effect.pos, format!("scope `{}` has no parameter `{name}`", effect.scope));
+            }
+            if source != "id" && site.parameter(source).is_none() {
+                report(effect.pos, format!("`with` reads `:{source}`, which is not `:id` or a declared parameter"));
+            }
+        }
+        let missing: Vec<&str> = scope.parameters.iter().filter(|parameter| parameter.name != effect.order && parameter.default.is_none() && !effect.with.iter().any(|(name, _)| name == &parameter.name)).map(|parameter| parameter.name.as_str()).collect();
+        if !missing.is_empty() {
+            report(effect.pos, format!("scope `{}` needs `with:` for {}", effect.scope, missing.join(", ")));
+        }
+        match site.parameter(&effect.rows) {
+            Some(parameter) if parameter.ty.base == ParamBase::Id => {}
+            _ => report(effect.pos, format!("`rows` names `:{}`, which must be an id parameter or a list of ids", effect.rows)),
+        }
     }
 }

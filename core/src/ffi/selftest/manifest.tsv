@@ -100,7 +100,9 @@ K09	B	core	a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_
 K10	A	core	a_durable_command_that_failed_on_the_network_goes_out_at_once_when_the_network_returns	green	-	arch-r3c offline finding A
 K11	B	core	a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_shows_the_error	green	-	arch-r3c offline finding B
 K12	forward	core	a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_returns_it	green	-	arch-r3c consumer finding: forward
-K13	B6	core	a_group_action_shows_as_unsent_before_the_server_answers_and_as_synced_after	green	-	arch-r3c B6 leave and members
+K13	B6	core	member_actions_change_both_member_lists_before_the_answer_and_a_refusal_restores_them	green	-	arch-r3c B6 leave and members
+K13	B6	core	leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_restores_it	green	-	arch-r3c B6 leave and members
+K22	B6	core	forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_it	green	-	arch-r3c B6 leave and members
 K09	B	swift	BridgeProbeTests.aListThatRefreshesOnConnectLoadsAgainOnceWhenTheNetworkReturns	green	-	arch-r3c
 K10	A	swift	BridgeProbeTests.aDurableSendThatFailedOnTheNetworkGoesOutAtOnceWhenTheNetworkReturns	green	-	arch-r3c
 K11	B	swift	BridgeProbeTests.aRefreshAndALoadMoreFailAtOnceOfflineAndTheStreamShowsTheError	green	-	arch-r3c
@@ -115,8 +117,10 @@ K15	iOS b c	kotlin	com.noma4i.dblayer.ValueBridgeTest.theFirstDeliveryHasNoEdits
 K16	B8	kotlin	com.noma4i.dblayer.ValueBridgeTest.aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList	green	-	arch-r3c
 K04	B4	swift	BridgeProbeTests.aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork	green	-	arch-r3c
 K04	B4	kotlin	com.noma4i.dblayer.ClubTest.aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork	green	-	arch-r3c
-K13	B6	swift	BridgeProbeTests.aClubActionShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
-K13	B6	kotlin	com.noma4i.dblayer.ClubTest.aClubActionShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
+K13	B6	swift	BridgeProbeTests.aClubActionChangesItsListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
+K22	B6	swift	BridgeProbeTests.aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt	green	-	arch-r3c
+K13	B6	kotlin	com.noma4i.dblayer.ClubTest.aClubActionChangesItsListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
+K22	B6	kotlin	com.noma4i.dblayer.ClubTest.aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt	green	-	arch-r3c
 K12	forward	swift	BridgeProbeTests.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
 K12	forward	kotlin	com.noma4i.dblayer.ClubTest.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
 RC09	C09	swift	ProjectionRecoveryTests.aLostRecoverySnapshotAsksAgainAndTheNextSnapshotClosesTheGap	green	-	arch-r3d review C09

@@ -101,7 +101,7 @@ fn writes(row: &PriorRow, hidden: bool, model: &str, id: &str, field: &str) -> b
     match row {
         PriorRow::Edited { model: owner, id: row_id, owned, .. } => owner == model && row_id == id && owned.contains_key(field),
         PriorRow::Destroyed { model: owner, id: row_id, .. } => hidden && owner == model && row_id == id,
-        PriorRow::Created { .. } => false,
+        PriorRow::Created { .. } | PriorRow::Joined { .. } | PriorRow::Left { .. } => false,
     }
 }
 
@@ -126,6 +126,10 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
             PriorRow::Destroyed { .. } => {
                 let (entity_ops, scope_ops) = row.reappearing();
                 plan.entity_ops.extend(entity_ops);
+                plan.scope_ops.extend(scope_ops);
+            }
+            PriorRow::Joined { .. } | PriorRow::Left { .. } => {
+                let (_, scope_ops) = row.reappearing();
                 plan.scope_ops.extend(scope_ops);
             }
             PriorRow::Edited { model, id, before, owned } => {

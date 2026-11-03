@@ -1,7 +1,5 @@
 model Club do
   attribute :name, :string
-  attribute :left, :bool, null: true
-  attribute :membership, :string, null: true
   operation :create do
     mutation "CreateClub"
     variables name: :name
@@ -9,20 +7,36 @@ model Club do
   operation :leave do
     mutation "LeaveClub"
     variables clubId: :id
-    optimistic left: true
-    response from: "leaveClub"
+    optimistic false
+    removes_receiver
+    response :ignore
   end
   operation :add_member do
     mutation "AddClubMember"
-    variables clubId: :id
-    optimistic membership: "added"
+    optimistic false
+    parameter :userIds, [:id]
+    variables clubId: :id, userIds: :userIds
+    joins_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: ["JOINED", "OWNER_FIRST"]
     response from: "addClubMember"
   end
   operation :remove_member do
     mutation "RemoveClubMember"
-    variables clubId: :id
-    optimistic membership: "removed"
+    optimistic false
+    parameter :userIds, [:id]
+    variables clubId: :id, userIds: :userIds
+    leaves_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: ["JOINED", "OWNER_FIRST"]
     response from: "removeClubMember"
+  end
+end
+
+model Person do
+  attribute :name, :string
+  scope :club_members do
+    parameter :clubId, :string
+    parameter :order, :string
+    query "ClubMembers"
+    response from: "node.members"
+    paginate size: 30, direction: :forward
   end
 end
 
@@ -43,6 +57,7 @@ model Letter do
     mutation "ForwardLetter"
     optimistic false
     parameter :targetChatId, :id
+    copies_receiver_to :targetChatId, field: :chatId
     variables letterId: :id, chatId: :targetChatId
     response from: "forwardLetter.letter"
   end

@@ -5,7 +5,7 @@ use std::thread::ThreadId;
 
 use serde_json::json;
 
-use super::rig_tests::{bound, Rig};
+use super::rig_tests::{bound, Fault, Rig};
 use crate::ffi::lifecycle_tests::named;
 use crate::ffi::{CommandRequest, CommandStatus, DbError, Placement, Replacement, StreamDelivery, StreamEnd, StreamRequest, StreamValue, ValueSink, WireRow, WireSyncState};
 use crate::test_wait::yield_until;
@@ -798,24 +798,131 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
     }
 }
 
-/// K13 (B6; old lines: no rule for these actions): leave group, add member and remove member show their change at once as unsent, before the server answers, and end as synced after the answer.
+fn groups() -> StreamRequest { StreamRequest::Query { query_json: r#"{"model":"Group","relation":"all","params":{}}"#.into() } }
+
+fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
+    let spec = rig.database.db.spec("Member").unwrap();
+    let params = json!({"groupId": group, "order": order}).as_object().unwrap().clone();
+    let key = spec.selection_key("group_members", &params).unwrap();
+    rig.database.db.shared.store.scope_members("Member", key.as_str()).unwrap().into_iter().map(|(id, _)| id).collect()
+}
+
+/// The members u1 u2 u3 of the group in both lists (JOINED: u1 u2 u3, OWNER_FIRST: u2 u1 u3) and the row u4 that is in neither list.
+fn seed_members(rig: &Rig, group: &str) {
+    use crate::commit::{CommitEnvelope, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
+    use crate::identity::{ModelKey, RowId};
+    let db = &rig.database.db;
+    let spec = db.spec("Member").unwrap();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    for id in ["u1", "u2", "u3", "u4"] {
+        let row = json!({"id": id, "name": id}).as_object().unwrap().clone();
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("Member"), id: RowId::new(id).unwrap(), row });
+    }
+    for (order, ids) in [("JOINED", ["u1", "u2", "u3"]), ("OWNER_FIRST", ["u2", "u1", "u3"])] {
+        let params = json!({"groupId": group, "order": order}).as_object().unwrap().clone();
+        let scope = ScopeRef::new(ModelKey::new("Member"), spec.selection_key("group_members", &params).unwrap());
+        for (index, id) in ids.iter().enumerate() {
+            envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id).unwrap(), order_key: format!("k{index}") });
+        }
+    }
+    db.land(envelope).unwrap();
+}
+
+fn ids_of(rows: Vec<WireRow>) -> Vec<String> { rows.into_iter().map(|row| row.id).collect() }
+
+fn strings(ids: &[&str]) -> Vec<String> { ids.iter().map(|id| id.to_string()).collect() }
+
+/// K13 (B6, C05; old lines: no rule for these actions): add member and remove member change both member lists (JOINED and OWNER_FIRST) at once, before the server answers. The answer keeps the change, a refusal restores the ids and the order of both lists.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_group_action_shows_as_unsent_before_the_server_answers_and_as_synced_after() {
-    for (action, operation) in [("leave", "LeaveGroup"), ("add_member", "AddMember"), ("remove_member", "RemoveMember")] {
+async fn member_actions_change_both_member_lists_before_the_answer_and_a_refusal_restores_them() {
+    let joined = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+    type Case = (&'static str, &'static str, &'static str, [&'static [&'static str]; 2], [&'static [&'static str]; 2]);
+    let cases: [Case; 2] = [
+        ("add_member", "AddMember", "u4", [&["u1", "u2", "u3", "u4"], &["u2", "u1", "u3", "u4"]], [&["u1", "u2", "u3"], &["u2", "u1", "u3"]]),
+        ("remove_member", "RemoveMember", "u2", [&["u1", "u3"], &["u1", "u3"]], [&["u1", "u2", "u3"], &["u2", "u1", "u3"]]),
+    ];
+    for (action, operation, user, changed, original) in cases {
+        for refusal in [false, true] {
+            let case = format!("{action} {}", if refusal { "refused" } else { "answered" });
+            let rig = Rig::encrypted().await;
+            rig.login_ios("A").await;
+            let epoch = rig.database.session_epoch();
+            let (values, args) = group("friends");
+            let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+            seed_members(&rig, &created.id);
+            let gate = if refusal { rig.world.hold_then(operation, Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next(operation) };
+            let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": [user]}).to_string()).await }) };
+            gate.entered_for(&case).await;
+            assert_eq!((member_list(&rig, &created.id, "JOINED"), member_list(&rig, &created.id, "OWNER_FIRST")), (joined(changed[0]), joined(changed[1])), "{case}: the lists before the answer");
+            gate.release();
+            let result = bound(acting).await.unwrap();
+            settle(&rig).await;
+            let expected = if refusal { original } else { changed };
+            assert_eq!((member_list(&rig, &created.id, "JOINED"), member_list(&rig, &created.id, "OWNER_FIRST")), (joined(expected[0]), joined(expected[1])), "{case}: the lists after the outcome");
+            assert_eq!(result.is_err(), refusal, "{case}: the outcome of the call was {:?}", result.as_ref().err());
+            rig.database.close_now();
+        }
+    }
+}
+
+/// K13 (B6, C05): leave removes the group from the list before the answer. The answer keeps it away, a refusal puts it back.
+#[tokio::test(flavor = "multi_thread")]
+async fn leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_restores_it() {
+    for refusal in [false, true] {
+        let case = if refusal { "refused" } else { "answered" };
         let rig = Rig::encrypted().await;
         rig.login_ios("A").await;
         let epoch = rig.database.session_epoch();
         let (values, args) = group("friends");
         let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-        let gate = rig.world.hold_next(operation);
-        bound(rig.database.act(epoch, "Group".into(), created.id.clone(), action.into(), "{}".into(), "{}".into())).await.unwrap();
-        gate.entered_for(action).await;
-        let during = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap().expect("the group row");
-        assert!(matches!(during.sync.state, WireSyncState::Pending | WireSyncState::Sending), "{action}: the row was {:?} while the server had not answered", during.sync.state);
+        let reader = Reader::open();
+        let stream = rig.database.subscribe(epoch, groups(), reader.clone());
+        bound(rig.database.stream_loaded(stream)).await.unwrap();
+        yield_until("the list shows the group", || ids_of(reader.rows()) == strings(&[created.id.as_str()])).await;
+        let gate = if refusal { rig.world.hold_then("LeaveGroup", Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next("LeaveGroup") };
+        let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "leave".into(), "{}".into(), "{}".into()).await }) };
+        gate.entered_for(case).await;
+        yield_until("the group left the list before the answer", || ids_of(reader.rows()).is_empty()).await;
         gate.release();
-        bound(rig.database.settled(epoch, "Group".into(), created.id.clone(), Some(action.into()))).await.unwrap();
-        let after = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap().expect("the group row");
-        assert_eq!(after.sync.state, WireSyncState::Synced, "{action}: the row did not end as synced");
+        let result = bound(acting).await.unwrap();
+        settle(&rig).await;
+        assert_eq!(result.is_err(), refusal, "{case}: the outcome of the call was {:?}", result.as_ref().err());
+        if refusal {
+            yield_until("the refusal put the group back", || ids_of(reader.rows()) == strings(&[created.id.as_str()])).await;
+        } else {
+            assert!(ids_of(reader.rows()).is_empty(), "{case}: the group came back after the answer");
+        }
+        rig.database.close_now();
+    }
+}
+
+/// K13 (B6, C05): forward puts a local copy of the message into the thread of the target chat before the answer. The answer replaces the copy with its own row, a refusal removes the copy.
+#[tokio::test(flavor = "multi_thread")]
+async fn forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_it() {
+    for refusal in [false, true] {
+        let case = if refusal { "refused" } else { "answered" };
+        let rig = Rig::encrypted().await;
+        rig.world.seed_message("A", "m1", "hello", 1);
+        rig.login_ios("A").await;
+        let epoch = rig.database.session_epoch();
+        let reader = Reader::open();
+        let stream = rig.database.subscribe(epoch, thread(), reader.clone());
+        bound(rig.database.stream_loaded(stream)).await.unwrap();
+        yield_until("the thread shows the source", || ids_of(reader.rows()) == strings(&["m1"])).await;
+        let gate = if refusal { rig.world.hold_then("MessageForward", Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next("MessageForward") };
+        let acting = { let database = rig.database.clone(); tokio::spawn(async move { database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": "c1"}).to_string()).await }) };
+        gate.entered_for(case).await;
+        yield_until("the thread shows the copy before the answer", || ids_of(reader.rows()).len() == 2).await;
+        let during = ids_of(reader.rows());
+        assert!(during.contains(&"m1".to_string()), "{case}: the source left the thread: {during:?}");
+        let copy = during.iter().find(|id| id.as_str() != "m1").unwrap();
+        assert!(crate::identity::RowId::new(copy).unwrap().is_temp(), "{case}: the copy {copy} is not a temporary row");
+        gate.release();
+        let result = bound(acting).await.unwrap();
+        settle(&rig).await;
+        assert_eq!(result.is_err(), refusal, "{case}: the outcome of the call was {:?}", result.as_ref().err());
+        let expected = if refusal { strings(&["m1"]) } else { strings(&["m1", "forwarded-1"]) };
+        yield_until("the thread shows the outcome", || ids_of(reader.rows()) == expected).await;
         rig.database.close_now();
     }
 }
@@ -861,12 +968,11 @@ async fn a_plain_action_that_never_reached_the_server_ends_with_the_network_erro
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
     let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    rig.world.fail_next("LeaveGroup", super::rig_tests::Fault::Down);
-    bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await.unwrap();
-    let settled = bound(rig.database.settled(epoch, "Group".into(), created.id.clone(), Some("leave".into()))).await;
-    assert!(settled.is_err(), "the action whose request never reached the server did not end with an error: {settled:?}");
-    let after = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap().expect("the group row");
-    assert_eq!(after.sync.state, WireSyncState::Synced, "the optimistic change stayed after the failed request");
+    rig.world.fail_next("LeaveGroup", Fault::Down);
+    let acted = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await;
+    assert!(matches!(acted, Err(DbError::Network { .. })), "the action whose request never reached the server did not end with the network error: {:?}", acted.as_ref().err());
+    let after = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap();
+    assert!(after.is_some(), "the group stayed removed after the failed request");
     assert!(rig.database.db.outbox().unwrap().is_empty(), "the failed action stayed queued");
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
@@ -886,10 +992,13 @@ async fn a_plain_action_unsent_when_the_network_drops_never_goes_out_after_it_re
     let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
     let sync = rig.database.sync.as_ref().expect("the database has a sync").clone();
     let sender_busy = sync.inner.outbox_gate.lock().await;
-    bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await.unwrap();
+    let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "leave".into(), "{}".into(), "{}".into()).await }) };
+    yield_until("the action is queued", || !rig.database.db.outbox().unwrap().is_empty()).await;
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
     drop(sender_busy);
+    let acted = bound(acting).await.unwrap();
+    assert!(matches!(acted, Err(DbError::Network { .. })), "an action unsent at the drop did not end with the network error: {:?}", acted.as_ref().err());
     bound(rig.database.flush()).await.unwrap();
     settle(&rig).await;
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 0, "an action queued before the drop went out after the network returned");

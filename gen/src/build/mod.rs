@@ -1,6 +1,6 @@
 use dblayer::schema::{
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, CursorSpec, Dependent, EphemeralSpec, FieldKind, FieldSpec, MergeRule, ModelSpec, Newer, NodeRead,
-    PageDirection, RelationSpec, RemoteShape, RemoteSpec, RootShape, Sort, SortField, SubscriptionAction, SubscriptionApply, UpdatesSpec, VariableSource, NODE_PARAM, EffectSource,
+    PageDirection, ReceiverCopy, RelationSpec, RemoteShape, RemoteSpec, RootShape, ScopeEffect, ScopeEffectKind, Sort, SortField, SubscriptionAction, SubscriptionApply, UpdatesSpec, VariableSource, NODE_PARAM, EffectSource,
 };
 use dblayer::value::ScalarKind;
 use serde_json::{json, Map, Value as Json};
@@ -383,6 +383,17 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
         action.optimistic = fields.iter().map(|(name, value, _)| (name.clone(), optimistic_json(value))).collect();
     }
     action.durable = operation.durable.is_some();
+    action.removes_receiver = operation.removes_receiver.is_some();
+    action.copies_receiver_to = operation.copies_receiver_to.as_ref().map(|copy| ReceiverCopy { arg: copy.arg.clone(), field: copy.field.clone() });
+    action.scope_effects = operation.scope_effects.iter().map(|effect| ScopeEffect {
+        kind: if effect.joins { ScopeEffectKind::Join } else { ScopeEffectKind::Leave },
+        model: effect.model.clone(),
+        scope: effect.scope.clone(),
+        rows: effect.rows.clone(),
+        with: effect.with.iter().cloned().collect(),
+        order_param: effect.order.clone(),
+        orders: effect.orders.clone(),
+    }).collect();
     if operation.kind == OperationKind::Custom && action.variables.is_empty() {
         action.variables.insert(format!("{}Id", lower(owner)), "id".into());
     }

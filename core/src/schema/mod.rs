@@ -997,6 +997,40 @@ pub struct ActionDeclaration {
     pub lands: Vec<ActionLanding>,
     #[serde(default)]
     pub result: BTreeMap<String, String>,
+    /// Closed effect: the receiver row leaves every list before the answer and returns when the server refuses.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub removes_receiver: bool,
+    /// Closed effect: a copy of the receiver row appears with `field` set to the argument `arg` before the answer, and the answer row replaces it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copies_receiver_to: Option<ReceiverCopy>,
+    /// Closed effect: rows join or leave the member lists of a scope before the answer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scope_effects: Vec<ScopeEffect>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiverCopy {
+    pub arg: String,
+    pub field: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopeEffectKind {
+    Join,
+    Leave,
+}
+
+/// `rows` names an argument that holds the ids. `with` binds each parameter of the scope to `id` (the receiver) or to an argument. The parameter `order_param` takes each value of `orders`, so one effect changes every sort order of the list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeEffect {
+    pub kind: ScopeEffectKind,
+    pub model: String,
+    pub scope: String,
+    pub rows: String,
+    pub with: BTreeMap<String, String>,
+    pub order_param: String,
+    pub orders: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1055,6 +1089,9 @@ impl ActionDeclaration {
             root: None,
             lands: Vec::new(),
             result: BTreeMap::new(),
+            removes_receiver: false,
+            copies_receiver_to: None,
+            scope_effects: Vec::new(),
         }
     }
 

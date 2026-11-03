@@ -317,8 +317,8 @@ const OPERATIONS: &str = r#"[
     {"name":"SendMessage","document":"mutation SendMessage($chatId: ID!, $text: String!, $at: Int!) { sendMessage(chatId: $chatId, text: $text, at: $at) { id chatId text at } }"},
     {"name":"CreateGroup","document":"mutation CreateGroup($name: String!) { createGroup(name: $name) { id name } }"},
     {"name":"LeaveGroup","document":"mutation LeaveGroup($groupId: ID!) { leaveGroup(groupId: $groupId) { id name left membership } }"},
-    {"name":"AddMember","document":"mutation AddMember($groupId: ID!) { addMember(groupId: $groupId) { id name left membership } }"},
-    {"name":"RemoveMember","document":"mutation RemoveMember($groupId: ID!) { removeMember(groupId: $groupId) { id name left membership } }"},
+    {"name":"AddMember","document":"mutation AddMember($groupId: ID!, $userIds: [ID!]!) { addMember(groupId: $groupId, userIds: $userIds) { id name left membership } }"},
+    {"name":"RemoveMember","document":"mutation RemoveMember($groupId: ID!, $userIds: [ID!]!) { removeMember(groupId: $groupId, userIds: $userIds) { id name left membership } }"},
     {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at } chat { id updatedAt } } }"}
 ]"#;
 
@@ -333,6 +333,7 @@ fn plain_models() -> String {
     models.push(notice);
     models.push(message_spec());
     models.push(group_spec());
+    models.push(member_spec());
     serde_json::to_string(&models).unwrap()
 }
 
@@ -362,6 +363,7 @@ fn message_spec() -> crate::schema::ModelSpec {
     forward.variables.insert("chatId".into(), "targetChatId".into());
     forward.wrap = Some("input".into());
     forward.root = Some("messageForward.message".into());
+    forward.copies_receiver_to = Some(crate::schema::ReceiverCopy { arg: "targetChatId".into(), field: "chatId".into() });
     message.actions.push(forward);
     message
 }
@@ -380,16 +382,42 @@ fn group_spec() -> crate::schema::ModelSpec {
     create.has_temp_row_retention = true;
     create.variables.insert("name".into(), "name".into());
     group.actions.push(create);
-    for (name, mutation, root, field, value) in [("leave", "LeaveGroup", "leaveGroup", "left", json!(true)), ("add_member", "AddMember", "addMember", "membership", json!("added")), ("remove_member", "RemoveMember", "removeMember", "membership", json!("removed"))] {
+    group.relations.push(crate::schema::RelationSpec::global("all"));
+    let mut leave = ActionDeclaration::new("leave", RootShape::Upsert);
+    leave.mutation = Some("LeaveGroup".into());
+    leave.variables.insert("groupId".into(), "id".into());
+    leave.ignore_response = true;
+    leave.removes_receiver = true;
+    group.actions.push(leave);
+    for (name, mutation, root, kind) in [("add_member", "AddMember", "addMember", crate::schema::ScopeEffectKind::Join), ("remove_member", "RemoveMember", "removeMember", crate::schema::ScopeEffectKind::Leave)] {
         let mut action = ActionDeclaration::new(name, RootShape::Upsert);
         action.mutation = Some(mutation.into());
-        action.has_optimistic = true;
-        action.optimistic.insert(field.into(), value);
+        action.args.insert("userIds".into(), "ids".into());
         action.variables.insert("groupId".into(), "id".into());
+        action.variables.insert("userIds".into(), "userIds".into());
         action.root = Some(root.into());
+        action.scope_effects.push(crate::schema::ScopeEffect {
+            kind,
+            model: "Member".into(),
+            scope: "group_members".into(),
+            rows: "userIds".into(),
+            with: [("groupId".to_string(), "id".to_string())].into_iter().collect(),
+            order_param: "order".into(),
+            orders: vec!["JOINED".into(), "OWNER_FIRST".into()],
+        });
         group.actions.push(action);
     }
     group
+}
+
+/// The member of a group: two lists of the same rows, one ordered by the join and one with the owner first.
+fn member_spec() -> crate::schema::ModelSpec {
+    use crate::schema::{FieldSpec, RelationSpec};
+    let mut member = crate::schema::ModelSpec::new("Member", vec![FieldSpec::scalar("id", crate::value::ScalarKind::Id), FieldSpec::scalar("name", crate::value::ScalarKind::Str)]);
+    let mut members = RelationSpec::new("group_members", &[]);
+    members.text_params = vec!["groupId".to_string(), "order".to_string()];
+    member.relations.push(members);
+    member
 }
 
 fn plain_operations() -> String {

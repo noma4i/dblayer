@@ -220,6 +220,9 @@ mod docs_tests;
 mod short_form_tests;
 
 #[cfg(test)]
+mod closed_effects_tests;
+
+#[cfg(test)]
 mod nested_tests;
 
 #[cfg(test)]

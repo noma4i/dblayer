@@ -42,6 +42,7 @@
 - After a network return the first retry skips the backoff once; a second failure waits by the backoff.
 - A projection asks for a snapshot again when a jump in the delivery sequence shows that a delivery, also the recovery snapshot, was dropped.
 - A create the server answers has a generated typed `create` in Swift and Kotlin.
+- Operations declare `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`; the change shows before the answer and a refusal restores it.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.
