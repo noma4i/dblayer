@@ -14,9 +14,9 @@ fun DBlayer.enterForegroundForTesting() = database.enterForegroundForTesting()
 
 /** Opens the database on a clock that only `advance` moves, so freshness windows, retry delays and expiry run without sleeping. Scope preloads send no request unless `preload` is true. */
 @DBlayerTestingApi
-suspend fun DBlayer.openTesting(transport: Transport?, modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList(), uploads: UploadOperations? = null, startMillis: Long = System.currentTimeMillis(), preload: Boolean = false, listening: Boolean = true): TestClock {
+suspend fun DBlayer.openTesting(transport: Transport?, modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList(), uploads: UploadOperations? = null, startMillis: Long = System.currentTimeMillis(), preload: Boolean = false, listening: Boolean = true, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): TestClock {
     val clock = TestClock(startMillis.toULong())
-    install(openOnClock(Config(path, null, 2000u), modelsJson, transport, uploads, clock, preload, listening), transport, operations)
+    install(openOnClock(Config(path, null, 2000u), modelsJson, transport, uploads, clock, preload, listening, encrypted, credentials, http, retries), transport, operations)
     return clock
 }
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `openTesting` takes the encrypted session parameters of `open`.
+
+### Fixed
+- Signing in again after a logout loads held entities and queries.
+- `settleForTesting` returns after a logout.
+- Queued changes and model events of a closed account never reach the next one.
+- A reply to a request that started before a session reset or close is discarded.
+- A close ends calls that wait for a response.
+
 ## 6.15.3 - 2026-11-03
 
 ### Fixed

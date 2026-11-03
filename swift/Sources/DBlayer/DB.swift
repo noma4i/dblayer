@@ -35,10 +35,9 @@ public enum DB {
 
   public static func openReport() throws -> OpenReport { try database.openReport() }
 
-  /// Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions and singleton entities.
+  /// Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions.
   @concurrent public static func resume() async throws {
     try await database.resume()
-    await EntityRegistries.resumeAll()
   }
 
   @concurrent public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type) async throws -> Answer {
@@ -51,13 +50,11 @@ public enum DB {
 
   @concurrent public static func sessionCall<Body: Encodable & Sendable, Answer: Decodable & Sendable>(_ operation: String, body: Body, as _: Answer.Type) async throws -> Answer {
     let answer = try JSONDecoder().decode(Answer.self, from: Data(try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body)).utf8))
-    await EntityRegistries.resumeAll()
     return answer
   }
 
   @concurrent public static func sessionCall<Body: Encodable & Sendable>(_ operation: String, body: Body) async throws {
     _ = try await database.sessionCall(operation: operation, bodyJson: sessionBodyText(body))
-    await EntityRegistries.resumeAll()
   }
 
   @concurrent public static func sessionResume<Answer: Decodable & Sendable>(as _: Answer.Type) async throws -> Answer? {
@@ -105,8 +102,8 @@ public enum DB {
     wake.attach(uploads: uploads, database: database)
   }
 
-  @_spi(Testing) public static func openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations? = nil, clock: TestClock, preload: Bool, listening: Bool = true) async throws -> Database {
-    try await opener.openWithClock(config: config, modelsJson: modelsJson, transport: transport, uploads: uploads?.wire, clock: clock, preload: preload, listening: listening)
+  @_spi(Testing) public static func openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations? = nil, clock: TestClock, preload: Bool, listening: Bool = true, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> Database {
+    try await opener.openWithClock(config: config, modelsJson: modelsJson, transport: transport, uploads: uploads?.wire, clock: clock, preload: preload, listening: listening, encrypted: encrypted, credentials: credentials, http: http, retries: retries)
   }
 
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) throws {

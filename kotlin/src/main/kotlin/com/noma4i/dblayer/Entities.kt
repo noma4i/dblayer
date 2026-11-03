@@ -147,7 +147,6 @@ class Entities<Model : DBModel> internal constructor(private val modelName: Stri
         core.close()
         held.forEach { it.publish(EntitySnapshot(null, EntityPhase.Closed, it.snapshot.value.read, it.snapshot.value.revision, false, true)) }
     }
-    internal fun resume() = core.resume()
 
     companion object {
         internal val flusher = Executors.newSingleThreadExecutor { task -> Thread(task, "dblayer-entities").apply { isDaemon = true } }
@@ -183,7 +182,6 @@ internal class CoreEntitySource<Model : DBModel>(
         perform(listOf(EntityLease("", lease))) { open().singleton(query, lease) }
     }
     fun reset() = submit { observer?.reset() }
-    fun resume() = submit { observer?.resume() }
     fun close() = submit { observer?.shutdown(); observer = null; values.clear() }
     suspend fun delivered(): Unit = suspendCancellableCoroutine { continuation -> submit { continuation.resume(Unit) } }
 
@@ -225,7 +223,6 @@ internal object EntityRegistries {
     fun leaseFailures(): Int = registries.values.sumOf { it.leaseFailures }
     suspend fun settleAll() { registries.values.forEach { it.delivered() } }
     fun closeAll() { registries.values.forEach { it.close() }; registries.clear() }
-    fun resumeAll() = registries.values.forEach { it.resume() }
 }
 
 fun <Model : DBModel> entityOf(modelName: String, decoder: ModelDecoder<Model>, id: String, fetch: EntityFetch = EntityFetch.NONE): Entity<Model> =

@@ -115,7 +115,7 @@ DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
 val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))
 ```
 
-`sessionCall` encodes an `Encodable` (`@Serializable` in Kotlin) body, sends a configured operation and decodes the answer into the type you name. Without an answer type it returns nothing (`sessionSend` in Kotlin). `sessionResume` decodes the resume answer the same way and returns `nil` / `null` when there is nothing to resume. `sessionReset()` drops the stored session. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`.
+`sessionCall` encodes an `Encodable` (`@Serializable` in Kotlin) body, sends a configured operation and decodes the answer into the type you name. Without an answer type it returns nothing (`sessionSend` in Kotlin). `sessionResume` decodes the resume answer the same way and returns `nil` / `null` when there is nothing to resume. `sessionReset()` drops the stored session. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`. After `logout()` the core keeps background reads and subscriptions idle until a call you made (`sessionCall`, `run`, `load`, `refresh` or `node`) succeeds while a credential is stored. `sessionReset()` and a confirmed server logout clear the credential, so they never reopen them.
 
 Each `EncryptedSessionOperation` declares `path` and `sessionless`. This replaces the former path string on both platforms.
 For `sessionless: true`, the request contains exactly `audience`, `kid`, `method`, `path`, `requestId`, `issuedAt`, `responseKey`, and `body`.

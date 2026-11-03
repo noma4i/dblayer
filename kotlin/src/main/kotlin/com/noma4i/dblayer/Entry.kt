@@ -21,10 +21,9 @@ object DBlayer {
 
     internal fun openedDatabase(): Database? = opened
 
-    /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions and singleton entities. */
+    /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions. */
     suspend fun resume() {
         offCaller { database.resume() }
-        EntityRegistries.resumeAll()
     }
 
     /** Tells the library whether the app lets the model subscriptions run. `open(listening = false)` starts none from a committed credential until `setListening(true)`. Allowed with a committed credential, they start once. `setListening(false)`, `logout()` and `sessionReset()` stop them. Call it from the app state that gates subscriptions, for example registration complete. */
@@ -41,14 +40,11 @@ object DBlayer {
     suspend fun retryAll(): ULong = offCaller { database.retryAll() }
 
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
-        offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }.also { resumeEntities() }
+        offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
 
     suspend inline fun <reified Body> sessionSend(operation: String, body: Body) {
         offCaller { database.sessionCall(operation, dbJson.encodeToString(body)) }
-        resumeEntities()
     }
-
-    @PublishedApi internal fun resumeEntities() = EntityRegistries.resumeAll()
 
     suspend inline fun <reified Answer> sessionResume(): Answer? =
         offCaller { database.sessionResume()?.let { dbJson.decodeFromString<Answer>(it) } }
@@ -143,7 +139,7 @@ object DBlayer {
         ready.complete(made)
     }
 
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock, preload: Boolean, listening: Boolean = true): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock, preload, listening) }
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock, preload: Boolean, listening: Boolean = true, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock, preload, listening, encrypted, credentials, http, retries) }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }

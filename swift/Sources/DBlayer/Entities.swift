@@ -169,14 +169,12 @@ public final class Entities<Model: DBModel> {
       entity.publish(EntitySnapshot(value: nil, phase: .closed, read: entity.snapshot.read, revision: entity.snapshot.revision, isStale: false, settled: true))
     }
   }
-  fileprivate func resume() { core.resume() }
 }
 
 @MainActor
 enum EntityRegistries {
   private static var registries: [ObjectIdentifier: AnyObject] = [:]
   private static var settles: [() async -> Void] = []
-  private static var resumes: [() -> Void] = []
   private static var closes: [() -> Void] = []
   private static var failures: [() -> Int] = []
   static func registry<Model: DBModel>(for _: Model.Type) -> Entities<Model> {
@@ -185,15 +183,13 @@ enum EntityRegistries {
     let made = Entities<Model>()
     registries[key] = made
     settles.append { await made.delivered() }
-    resumes.append { made.resume() }
     closes.append { made.close() }
     failures.append { made.leaseFailures }
     return made
   }
   static func leaseFailures() -> Int { failures.reduce(0) { $0 + $1() } }
   static func settleAll() async { for settle in settles { await settle() } }
-  static func closeAll() { closes.forEach { $0() }; registries = [:]; settles = []; resumes = []; closes = []; failures = [] }
-  static func resumeAll() { resumes.forEach { $0() } }
+  static func closeAll() { closes.forEach { $0() }; registries = [:]; settles = []; closes = []; failures = [] }
 }
 
 extension DBModel {
@@ -239,7 +235,6 @@ final class CoreEntitySource<Model: DBModel>: @unchecked Sendable {
     queue.async { self.perform([EntityLease(id: "", lease: lease)]) { try self.open().singleton(queryJson: query.json, lease: lease) } }
   }
   func reset() { queue.async { self.observer?.reset() } }
-  func resume() { queue.async { self.observer?.resume() } }
   func close() { queue.async { self.observer?.shutdown(); self.observer = nil; self.values = [:]; self.queue.async { self.deliver = nil } } }
   func delivered() async {
     await withCheckedContinuation { continuation in queue.async { DispatchQueue.main.async { continuation.resume() } } }

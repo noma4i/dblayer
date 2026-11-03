@@ -43,6 +43,20 @@ Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlay
 
 Held entities and live queries reconnect and load again after `resetForTesting`.
 
+After `logout()` a test database reads again when its next explicit call succeeds while a credential is stored, the same rule as in production. `settleForTesting` returns without a sign-in.
+
+`openTesting` also takes the encrypted session parameters of `open`: `encrypted`, `credentials`, `http` and `retries`, all optional. With them the test runs the real encrypted session path and replaces only the HTTP exchange. Without them the database has no session client, as before.
+
+```swift
+let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, encrypted: encrypted, credentials: credentials, http: fakeServer)
+try await DB.sessionCall("login_link", body: LoginLink(account: "A"))
+```
+
+```kotlin
+val clock = DBlayer.openTesting(transport, modelsJSON, encrypted = encrypted, credentials = credentials, http = fakeServer)
+DBlayer.sessionSend("login_link", LoginLink(account = "A"))
+```
+
 ```swift
 try await DB.resetForTesting()
 try await DB.settleForTesting()
