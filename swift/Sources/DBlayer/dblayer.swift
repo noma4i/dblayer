@@ -1426,6 +1426,21 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func changes(queryJson: String) throws  -> LiveChanges
     
+    /**
+     * Waits for the one outcome of the command: delivered, refused, or ended with its session.
+     */
+    func commandOutcome(receipt: CommandReceipt) async throws  -> CommandStatus
+    
+    /**
+     * The status of the command now.
+     */
+    func commandStatus(receipt: CommandReceipt) throws  -> CommandStatus
+    
+    /**
+     * Writes the row locally in the epoch of the caller and queues it for the server.
+     */
+    func send(request: CommandRequest) async throws  -> CommandReceipt
+    
     func act(model: String, rowId: String, action: String, patchJson: String, argsJson: String) async throws  -> QueuedAction
     
     func answer(model: String, operation: Int64) async throws  -> String
@@ -1541,6 +1556,43 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func sessionResume() async throws  -> String?
     
     func openModelEvents(model: String) async throws  -> ModelEventFeed
+    
+    /**
+     * The reader stopped. The stream ends in the core and nothing is delivered after this call returns.
+     */
+    func cancelStream(stream: UInt64) 
+    
+    /**
+     * Loads the next page of the relation of the stream.
+     */
+    func loadMoreStream(stream: UInt64) async throws  -> LoadMoreResult
+    
+    /**
+     * Loads the relation of the stream again from the server. The answer belongs to the epoch of the stream: it ends as `Interrupted` when the session changed.
+     */
+    func refreshStream(stream: UInt64) async throws 
+    
+    /**
+     * The reader could not apply a delta (its revision is not the delta's base). The core sends one new snapshot.
+     */
+    func resyncStream(stream: UInt64) 
+    
+    /**
+     * The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
+     */
+    func sessionEpoch()  -> UInt64
+    
+    func streamCensus()  -> StreamCensus
+    
+    /**
+     * Returns when the first load of the stream settled. Fails when the epoch of the stream ended first.
+     */
+    func streamLoaded(stream: UInt64) async throws 
+    
+    /**
+     * Opens a stream and returns its number at once. The first value arrives as a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
+     */
+    func subscribe(epoch: UInt64, request: StreamRequest, sink: ValueSink)  -> UInt64
     
     func backgroundRefused(items: [WireAcceptedUpload], detail: String) throws 
     
@@ -1714,6 +1766,57 @@ open func changes(queryJson: String)throws  -> LiveChanges  {
         FfiConverterString.lower(queryJson),uniffiCallStatus
     )
 })
+}
+    
+    /**
+     * Waits for the one outcome of the command: delivered, refused, or ended with its session.
+     */
+open func commandOutcome(receipt: CommandReceipt)async throws  -> CommandStatus  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_command_outcome(
+                        self.uniffiCloneHandle(),FfiConverterTypeCommandReceipt_lower(receipt)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCommandStatus_lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+    /**
+     * The status of the command now.
+     */
+open func commandStatus(receipt: CommandReceipt)throws  -> CommandStatus  {
+    return try  FfiConverterTypeCommandStatus_lift(try rustCallWithError(FfiConverterTypeDbError_lift) {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_command_status(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeCommandReceipt_lower(receipt),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Writes the row locally in the epoch of the caller and queues it for the server.
+     */
+open func send(request: CommandRequest)async throws  -> CommandReceipt  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_send(
+                        self.uniffiCloneHandle(),FfiConverterTypeCommandRequest_lower(request)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeCommandReceipt_lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
 }
     
 open func act(model: String, rowId: String, action: String, patchJson: String, argsJson: String)async throws  -> QueuedAction  {
@@ -2517,6 +2620,123 @@ open func openModelEvents(model: String)async throws  -> ModelEventFeed  {
             liftFunc: FfiConverterTypeModelEventFeed_lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
+}
+    
+    /**
+     * The reader stopped. The stream ends in the core and nothing is delivered after this call returns.
+     */
+open func cancelStream(stream: UInt64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_cancel_stream(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(stream),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Loads the next page of the relation of the stream.
+     */
+open func loadMoreStream(stream: UInt64)async throws  -> LoadMoreResult  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_load_more_stream(
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(stream)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeLoadMoreResult_lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+    /**
+     * Loads the relation of the stream again from the server. The answer belongs to the epoch of the stream: it ends as `Interrupted` when the session changed.
+     */
+open func refreshStream(stream: UInt64)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_refresh_stream(
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(stream)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+    /**
+     * The reader could not apply a delta (its revision is not the delta's base). The core sends one new snapshot.
+     */
+open func resyncStream(stream: UInt64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_resync_stream(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(stream),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
+     */
+open func sessionEpoch() -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_session_epoch(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+open func streamCensus() -> StreamCensus  {
+    return try!  FfiConverterTypeStreamCensus_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_stream_census(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Returns when the first load of the stream settled. Fails when the epoch of the stream ended first.
+     */
+open func streamLoaded(stream: UInt64)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_stream_loaded(
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(stream)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+    /**
+     * Opens a stream and returns its number at once. The first value arrives as a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
+     */
+open func subscribe(epoch: UInt64, request: StreamRequest, sink: ValueSink) -> UInt64  {
+    return try!  FfiConverterUInt64.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_subscribe(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(epoch),
+        FfiConverterTypeStreamRequest_lower(request),
+        FfiConverterTypeValueSink_lower(sink),uniffiCallStatus
+    )
+})
 }
     
 open func backgroundRefused(items: [WireAcceptedUpload], detail: String)throws   {try rustCallWithError(FfiConverterTypeDbError_lift) {
@@ -5958,6 +6178,204 @@ public func FfiConverterTypeUploadAcceptedSink_lower(_ value: UploadAcceptedSink
 
 
 
+
+
+public protocol ValueSink: AnyObject, Sendable {
+    
+    func delivered(delivery: StreamDelivery) 
+    
+}
+open class ValueSinkImpl: ValueSink, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_dblayer_fn_clone_valuesink(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_dblayer_fn_free_valuesink(handle, $0) }
+    }
+
+    
+
+    
+open func delivered(delivery: StreamDelivery)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_valuesink_delivered(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeStreamDelivery_lower(delivery),uniffiCallStatus
+    )
+}
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceValueSink {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceValueSink = UniffiVTableCallbackInterfaceValueSink(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeValueSink.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface ValueSink: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeValueSink.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface ValueSink: handle missing in uniffiClone")
+            }
+        },
+        delivered: { (
+            uniffiHandle: UInt64,
+            delivery: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeValueSink.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.delivered(
+                     delivery: try FfiConverterTypeStreamDelivery_lift(delivery)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceValueSink> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceValueSink>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitValueSink() {
+    uniffi_dblayer_fn_init_callback_vtable_valuesink(UniffiCallbackInterfaceValueSink.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeValueSink: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<ValueSink>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = ValueSink
+
+    public static func lift(_ handle: UInt64) throws -> ValueSink {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return ValueSinkImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: ValueSink) -> UInt64 {
+         if let rustImpl = value as? ValueSinkImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ValueSink {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: ValueSink, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeValueSink_lift(_ handle: UInt64) throws -> ValueSink {
+    return try FfiConverterTypeValueSink.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeValueSink_lower(_ value: ValueSink) -> UInt64 {
+    return FfiConverterTypeValueSink.lower(value)
+}
+
+
+
+
 public struct CellEntry: Equatable, Hashable {
     public var key: String
     public var value: Cell
@@ -6009,6 +6427,141 @@ public func FfiConverterTypeCellEntry_lift(_ buf: RustBuffer) throws -> CellEntr
 #endif
 public func FfiConverterTypeCellEntry_lower(_ value: CellEntry) -> RustBuffer {
     return FfiConverterTypeCellEntry.lower(value)
+}
+
+
+public struct CommandReceipt: Equatable, Hashable {
+    public var epoch: UInt64
+    public var model: String
+    /**
+     * The local row. Its id is a temporary id until the server confirms the command.
+     */
+    public var row: WireRow
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(epoch: UInt64, model: String, 
+        /**
+         * The local row. Its id is a temporary id until the server confirms the command.
+         */row: WireRow) {
+        self.epoch = epoch
+        self.model = model
+        self.row = row
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CommandReceipt: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCommandReceipt: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CommandReceipt {
+        return
+            try CommandReceipt(
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                model: FfiConverterString.read(from: &buf), 
+                row: FfiConverterTypeWireRow.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CommandReceipt, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterString.write(value.model, into: &buf)
+        FfiConverterTypeWireRow.write(value.row, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandReceipt_lift(_ buf: RustBuffer) throws -> CommandReceipt {
+    return try FfiConverterTypeCommandReceipt.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandReceipt_lower(_ value: CommandReceipt) -> RustBuffer {
+    return FfiConverterTypeCommandReceipt.lower(value)
+}
+
+
+/**
+ * A durable command: the row is written locally at once and the library sends it, also after the network returned or the app restarted.
+ */
+public struct CommandRequest: Equatable, Hashable {
+    /**
+     * The session epoch the caller was admitted in. A command for an epoch that has gone is refused.
+     */
+    public var epoch: UInt64
+    public var model: String
+    public var valuesJson: String
+    public var argsJson: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The session epoch the caller was admitted in. A command for an epoch that has gone is refused.
+         */epoch: UInt64, model: String, valuesJson: String, argsJson: String) {
+        self.epoch = epoch
+        self.model = model
+        self.valuesJson = valuesJson
+        self.argsJson = argsJson
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CommandRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCommandRequest: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CommandRequest {
+        return
+            try CommandRequest(
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                model: FfiConverterString.read(from: &buf), 
+                valuesJson: FfiConverterString.read(from: &buf), 
+                argsJson: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CommandRequest, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterString.write(value.model, into: &buf)
+        FfiConverterString.write(value.valuesJson, into: &buf)
+        FfiConverterString.write(value.argsJson, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandRequest_lift(_ buf: RustBuffer) throws -> CommandRequest {
+    return try FfiConverterTypeCommandRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandRequest_lower(_ value: CommandRequest) -> RustBuffer {
+    return FfiConverterTypeCommandRequest.lower(value)
 }
 
 
@@ -7417,6 +7970,219 @@ public func FfiConverterTypeServerConfig_lift(_ buf: RustBuffer) throws -> Serve
 #endif
 public func FfiConverterTypeServerConfig_lower(_ value: ServerConfig) -> RustBuffer {
     return FfiConverterTypeServerConfig.lower(value)
+}
+
+
+public struct StreamCensus: Equatable, Hashable {
+    public var `open`: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(`open`: UInt64) {
+        self.`open` = `open`
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension StreamCensus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStreamCensus: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StreamCensus {
+        return
+            try StreamCensus(
+                open: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: StreamCensus, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.`open`, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamCensus_lift(_ buf: RustBuffer) throws -> StreamCensus {
+    return try FfiConverterTypeStreamCensus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamCensus_lower(_ value: StreamCensus) -> RustBuffer {
+    return FfiConverterTypeStreamCensus.lower(value)
+}
+
+
+public struct StreamDelivery: Equatable, Hashable {
+    public var stream: UInt64
+    /**
+     * The session epoch the stream was opened in. A delivery whose epoch the reader does not hold belongs to an account that has gone.
+     */
+    public var epoch: UInt64
+    /**
+     * Counts the deliveries of this stream from 1, with no gap.
+     */
+    public var seq: UInt64
+    public var value: StreamValue
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(stream: UInt64, 
+        /**
+         * The session epoch the stream was opened in. A delivery whose epoch the reader does not hold belongs to an account that has gone.
+         */epoch: UInt64, 
+        /**
+         * Counts the deliveries of this stream from 1, with no gap.
+         */seq: UInt64, value: StreamValue) {
+        self.stream = stream
+        self.epoch = epoch
+        self.seq = seq
+        self.value = value
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension StreamDelivery: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStreamDelivery: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StreamDelivery {
+        return
+            try StreamDelivery(
+                stream: FfiConverterUInt64.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf), 
+                seq: FfiConverterUInt64.read(from: &buf), 
+                value: FfiConverterTypeStreamValue.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: StreamDelivery, into buf: inout [UInt8]) {
+        FfiConverterUInt64.write(value.stream, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+        FfiConverterUInt64.write(value.seq, into: &buf)
+        FfiConverterTypeStreamValue.write(value.value, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamDelivery_lift(_ buf: RustBuffer) throws -> StreamDelivery {
+    return try FfiConverterTypeStreamDelivery.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamDelivery_lower(_ value: StreamDelivery) -> RustBuffer {
+    return FfiConverterTypeStreamDelivery.lower(value)
+}
+
+
+/**
+ * The loading state that goes with a value. It is the state of the whole stream, not of one row.
+ */
+public struct StreamState: Equatable, Hashable {
+    public var phase: LivePhase
+    public var initial: Bool
+    public var refreshing: Bool
+    public var fetchingMore: Bool
+    public var hasMore: Bool
+    public var complete: Bool
+    public var total: Int64?
+    public var loadedAt: Int64?
+    public var error: DbError?
+    public var errorKind: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(phase: LivePhase, initial: Bool, refreshing: Bool, fetchingMore: Bool, hasMore: Bool, complete: Bool, total: Int64?, loadedAt: Int64?, error: DbError?, errorKind: String?) {
+        self.phase = phase
+        self.initial = initial
+        self.refreshing = refreshing
+        self.fetchingMore = fetchingMore
+        self.hasMore = hasMore
+        self.complete = complete
+        self.total = total
+        self.loadedAt = loadedAt
+        self.error = error
+        self.errorKind = errorKind
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension StreamState: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStreamState: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StreamState {
+        return
+            try StreamState(
+                phase: FfiConverterTypeLivePhase.read(from: &buf), 
+                initial: FfiConverterBool.read(from: &buf), 
+                refreshing: FfiConverterBool.read(from: &buf), 
+                fetchingMore: FfiConverterBool.read(from: &buf), 
+                hasMore: FfiConverterBool.read(from: &buf), 
+                complete: FfiConverterBool.read(from: &buf), 
+                total: FfiConverterOptionInt64.read(from: &buf), 
+                loadedAt: FfiConverterOptionInt64.read(from: &buf), 
+                error: FfiConverterOptionTypeDbError.read(from: &buf), 
+                errorKind: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: StreamState, into buf: inout [UInt8]) {
+        FfiConverterTypeLivePhase.write(value.phase, into: &buf)
+        FfiConverterBool.write(value.initial, into: &buf)
+        FfiConverterBool.write(value.refreshing, into: &buf)
+        FfiConverterBool.write(value.fetchingMore, into: &buf)
+        FfiConverterBool.write(value.hasMore, into: &buf)
+        FfiConverterBool.write(value.complete, into: &buf)
+        FfiConverterOptionInt64.write(value.total, into: &buf)
+        FfiConverterOptionInt64.write(value.loadedAt, into: &buf)
+        FfiConverterOptionTypeDbError.write(value.error, into: &buf)
+        FfiConverterOptionString.write(value.errorKind, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamState_lift(_ buf: RustBuffer) throws -> StreamState {
+    return try FfiConverterTypeStreamState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamState_lower(_ value: StreamState) -> RustBuffer {
+    return FfiConverterTypeStreamState.lower(value)
 }
 
 
@@ -8832,6 +9598,118 @@ public func FfiConverterTypeCell_lower(_ value: Cell) -> RustBuffer {
 
 
 
+public enum CommandStatus: Equatable, Hashable {
+    
+    case queued
+    case sending
+    /**
+     * The server confirmed. `id` is the id of the row on the server.
+     */
+    case delivered(id: String
+    )
+    /**
+     * The server refused, or the attempts ran out. The row stays until the caller retries or discards it.
+     */
+    case failed(message: String
+    )
+    /**
+     * The request left and the answer did not come back.
+     */
+    case unknown
+    /**
+     * The session of the command ended first. Its pending work ended with it.
+     */
+    case ended
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CommandStatus: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCommandStatus: FfiConverterRustBuffer {
+    typealias SwiftType = CommandStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CommandStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .queued
+        
+        case 2: return .sending
+        
+        case 3: return .delivered(id: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 4: return .failed(message: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 5: return .unknown
+        
+        case 6: return .ended
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CommandStatus, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .queued:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .sending:
+            writeInt(&buf, Int32(2))
+        
+        
+        case let .delivered(id):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(id, into: &buf)
+            
+        
+        case let .failed(message):
+            writeInt(&buf, Int32(4))
+            FfiConverterString.write(message, into: &buf)
+            
+        
+        case .unknown:
+            writeInt(&buf, Int32(5))
+        
+        
+        case .ended:
+            writeInt(&buf, Int32(6))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandStatus_lift(_ buf: RustBuffer) throws -> CommandStatus {
+    return try FfiConverterTypeCommandStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCommandStatus_lower(_ value: CommandStatus) -> RustBuffer {
+    return FfiConverterTypeCommandStatus.lower(value)
+}
+
+
+
+
 public enum ConfigCode: Equatable, Hashable {
     
     case invalidFormat
@@ -9944,6 +10822,289 @@ public func FfiConverterTypeSessionCode_lift(_ buf: RustBuffer) throws -> Sessio
 #endif
 public func FfiConverterTypeSessionCode_lower(_ value: SessionCode) -> RustBuffer {
     return FfiConverterTypeSessionCode.lower(value)
+}
+
+
+
+/**
+ * Why a stream ended on its own. A stream the reader cancels ends without a delivery.
+ */
+
+public enum StreamEnd: Equatable, Hashable {
+    
+    /**
+     * The session of its epoch ended, or the reader asked for an epoch that had gone.
+     */
+    case sessionEnded
+    /**
+     * The database closed.
+     */
+    case closed
+    /**
+     * The query is not valid. The state of the last delivery carries the error.
+     */
+    case invalid
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension StreamEnd: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStreamEnd: FfiConverterRustBuffer {
+    typealias SwiftType = StreamEnd
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StreamEnd {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .sessionEnded
+        
+        case 2: return .closed
+        
+        case 3: return .invalid
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: StreamEnd, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .sessionEnded:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .closed:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .invalid:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamEnd_lift(_ buf: RustBuffer) throws -> StreamEnd {
+    return try FfiConverterTypeStreamEnd.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamEnd_lower(_ value: StreamEnd) -> RustBuffer {
+    return FfiConverterTypeStreamEnd.lower(value)
+}
+
+
+
+/**
+ * What a stream reads. Both kinds deliver rows as values; an entity is a query that finds one row.
+ */
+
+public enum StreamRequest: Equatable, Hashable {
+    
+    /**
+     * The JSON of a query: model, filters, order, and for a server relation its name and parameters.
+     */
+    case query(queryJson: String
+    )
+    /**
+     * One row by id.
+     */
+    case entity(model: String, id: String
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension StreamRequest: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStreamRequest: FfiConverterRustBuffer {
+    typealias SwiftType = StreamRequest
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StreamRequest {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .query(queryJson: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 2: return .entity(model: try FfiConverterString.read(from: &buf), id: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: StreamRequest, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .query(queryJson):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(queryJson, into: &buf)
+            
+        
+        case let .entity(model,id):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(model, into: &buf)
+            FfiConverterString.write(id, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamRequest_lift(_ buf: RustBuffer) throws -> StreamRequest {
+    return try FfiConverterTypeStreamRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamRequest_lower(_ value: StreamRequest) -> RustBuffer {
+    return FfiConverterTypeStreamRequest.lower(value)
+}
+
+
+
+
+public enum StreamValue: Equatable, Hashable {
+    
+    /**
+     * The whole result at a revision. The first value of a stream, and the answer to a missed revision.
+     */
+    case snapshot(revision: Int64, rows: [WireRow], state: StreamState
+    )
+    /**
+     * The rows that changed since `base`, keyed by id. `rows` are the inserted, updated and replaced rows with their final index in `row_indexes`.
+     * Apply in this order: rename every `replaced.from` to its `to`, drop `removed`, take every `placed` id out and insert the placed rows in ascending index, write every row at its index. The result has `size` rows.
+     */
+    case delta(base: Int64, revision: Int64, size: UInt32, rows: [WireRow], rowIndexes: [UInt32], removed: [String], placed: [Placement], replaced: [Replacement], renamed: [Replacement], state: StreamState
+    )
+    /**
+     * The state changed and the rows did not.
+     */
+    case state(state: StreamState
+    )
+    /**
+     * The last value of a stream that ended by itself. Exactly one per stream.
+     */
+    case ended(reason: StreamEnd
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension StreamValue: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStreamValue: FfiConverterRustBuffer {
+    typealias SwiftType = StreamValue
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StreamValue {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .snapshot(revision: try FfiConverterInt64.read(from: &buf), rows: try FfiConverterSequenceTypeWireRow.read(from: &buf), state: try FfiConverterTypeStreamState.read(from: &buf)
+        )
+        
+        case 2: return .delta(base: try FfiConverterInt64.read(from: &buf), revision: try FfiConverterInt64.read(from: &buf), size: try FfiConverterUInt32.read(from: &buf), rows: try FfiConverterSequenceTypeWireRow.read(from: &buf), rowIndexes: try FfiConverterSequenceUInt32.read(from: &buf), removed: try FfiConverterSequenceString.read(from: &buf), placed: try FfiConverterSequenceTypePlacement.read(from: &buf), replaced: try FfiConverterSequenceTypeReplacement.read(from: &buf), renamed: try FfiConverterSequenceTypeReplacement.read(from: &buf), state: try FfiConverterTypeStreamState.read(from: &buf)
+        )
+        
+        case 3: return .state(state: try FfiConverterTypeStreamState.read(from: &buf)
+        )
+        
+        case 4: return .ended(reason: try FfiConverterTypeStreamEnd.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: StreamValue, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .snapshot(revision,rows,state):
+            writeInt(&buf, Int32(1))
+            FfiConverterInt64.write(revision, into: &buf)
+            FfiConverterSequenceTypeWireRow.write(rows, into: &buf)
+            FfiConverterTypeStreamState.write(state, into: &buf)
+            
+        
+        case let .delta(base,revision,size,rows,rowIndexes,removed,placed,replaced,renamed,state):
+            writeInt(&buf, Int32(2))
+            FfiConverterInt64.write(base, into: &buf)
+            FfiConverterInt64.write(revision, into: &buf)
+            FfiConverterUInt32.write(size, into: &buf)
+            FfiConverterSequenceTypeWireRow.write(rows, into: &buf)
+            FfiConverterSequenceUInt32.write(rowIndexes, into: &buf)
+            FfiConverterSequenceString.write(removed, into: &buf)
+            FfiConverterSequenceTypePlacement.write(placed, into: &buf)
+            FfiConverterSequenceTypeReplacement.write(replaced, into: &buf)
+            FfiConverterSequenceTypeReplacement.write(renamed, into: &buf)
+            FfiConverterTypeStreamState.write(state, into: &buf)
+            
+        
+        case let .state(state):
+            writeInt(&buf, Int32(3))
+            FfiConverterTypeStreamState.write(state, into: &buf)
+            
+        
+        case let .ended(reason):
+            writeInt(&buf, Int32(4))
+            FfiConverterTypeStreamEnd.write(reason, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamValue_lift(_ buf: RustBuffer) throws -> StreamValue {
+    return try FfiConverterTypeStreamValue.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStreamValue_lower(_ value: StreamValue) -> RustBuffer {
+    return FfiConverterTypeStreamValue.lower(value)
 }
 
 
@@ -11642,6 +12803,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_changes() != 56337) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_database_command_outcome() != 31193) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_command_status() != 22301) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_send() != 63577) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_act() != 59548) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11807,6 +12977,30 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_open_model_events() != 41671) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_database_cancel_stream() != 26346) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_load_more_stream() != 12640) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_refresh_stream() != 53015) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_resync_stream() != 47656) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_session_epoch() != 24339) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_stream_census() != 24018) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_stream_loaded() != 5168) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_subscribe() != 33600) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_background_refused() != 14297) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11915,6 +13109,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 15298) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_valuesink_delivered() != 64848) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_byteprogress_is_cancelled() != 6714) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -12004,6 +13201,7 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitRetryProgressListener()
     uniffiCallbackInitTransport()
     uniffiCallbackInitUploadAcceptedSink()
+    uniffiCallbackInitValueSink()
     return InitializationResult.ok
 }()
 
