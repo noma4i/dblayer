@@ -18,7 +18,7 @@ async fn a_permanently_refused_pending_owner_is_failed_by_resume() {
     let rig = Rig::new();
     let database = signed_in(&rig).await;
     if resume { rig.server.interrupt_next_request(); } else { rig.server.status_next(400); }
-    let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
     database.flush().await.unwrap();
     if resume {
         assert_eq!(database.db.outbox().unwrap()[0].operation.status, OperationStatus::DeliveryUnknown);
@@ -38,7 +38,7 @@ async fn a_queued_create_refused_without_a_sequence_is_executed_once_by_resume_a
     let rig = Rig::new();
     let database = signed_in(&rig).await;
     rig.server.reply_with(serde_json::json!({ "makeMoment": { "id": "42", "text": "hello" } }));
-    let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
 
     let refused = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
@@ -76,7 +76,7 @@ async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_th
     rig.server.register("mutation MakeMoment { makeMoment { id text } }");
     rig.server.reply_with(serde_json::json!({ "makeMoment": { "id": "42", "text": "hello" } }));
     rig.server.interrupt_next_answer();
-    let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
 
     database.flush().await.unwrap();
     let effects_when_lost = mutation_effects(&rig);

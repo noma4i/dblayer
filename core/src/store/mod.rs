@@ -37,7 +37,7 @@ pub use boot::BootReport;
 pub use error::StoreError;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
 pub use rows::{EdgeRead, Reader, StoredRow};
-pub(crate) use rows::{PendingMembers, PendingPriors};
+pub(crate) use rows::PendingPriors;
 pub(crate) use response::coalesce_rows;
 #[cfg(test)]
 pub use rows::ScopeRowsResult;

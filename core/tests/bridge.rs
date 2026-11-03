@@ -1,7 +1,7 @@
 #![recursion_limit = "256"]
 use std::sync::Arc;
-use dblayer::ffi::{Config, Database, LivePhase, StreamDelivery, StreamEnd, StreamRequest, StreamValue, Transport, ValueSink};
-use dblayer::schema::{FieldSpec, ModelSpec};
+use dblayer::ffi::{CommandRequest, Config, Database, LivePhase, StreamDelivery, StreamEnd, StreamRequest, StreamValue, Transport, ValueSink};
+use dblayer::schema::{ActionDeclaration, FieldSpec, ModelSpec, RootShape};
 use dblayer::value::ScalarKind;
 
 #[derive(Default)]
@@ -12,14 +12,18 @@ impl ValueSink for Listener {
 
 #[tokio::test]
 async fn bridge_file_calls_reach_the_file_store() {
-    let model = ModelSpec::new("Moment", vec![
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.durable = true;
+    let mut model = ModelSpec::new("Moment", vec![
         FieldSpec::scalar("id", ScalarKind::Id),
         FieldSpec::scalar("text", ScalarKind::Str),
         FieldSpec::file("media").nullable(),
     ]);
+    model.actions.push(create);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 32 },
         serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None, None).await.unwrap();
-    let id = db.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap().id;
+    let epoch = db.session_epoch();
+    let id = db.send(CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"hello"}"#.into(), args_json: "{}".into(), upload: None }).await.unwrap().row.id;
     db.attach("Moment".into(), id.clone(), "media".into(), b"abc".to_vec(), "a.txt".into(), "text/plain".into()).await.unwrap();
     assert_eq!(db.read("Moment".into(), id, "media".into()).await.unwrap(), Some(b"abc".to_vec()));
 }
@@ -69,6 +73,7 @@ async fn a_create_left_pending_by_the_last_session_waits_for_registration_after_
     use dblayer::schema::{ActionDeclaration, RootShape};
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("CreateMoment".into());
+    create.durable = true;
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     model.actions.push(create);
     let models = serde_json::to_string(&vec![model]).unwrap();
@@ -76,7 +81,7 @@ async fn a_create_left_pending_by_the_last_session_waits_for_registration_after_
     let path = folder.path().join("db.sqlite").to_string_lossy().into_owned();
     let config = || Config { path: Some(path.clone()), data_version: None, cache_rows: 32 };
     let first = Database::open(config(), models.clone(), None::<Arc<dyn Transport>>, None, None, None, None, None).await.unwrap();
-    first.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    first.send(CommandRequest { epoch: first.session_epoch(), model: "Moment".into(), values_json: r#"{"text":"hello"}"#.into(), args_json: "{}".into(), upload: None }).await.unwrap();
     drop(first);
 
     let transport = Arc::new(Recorder(Default::default()));

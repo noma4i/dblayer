@@ -92,7 +92,7 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             let rig = Rig::new();
             let database = signed_in(&rig).await;
             let credential = rig.credentials.inner.value();
-            let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+            let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
             rig.server.refuse_next(wire, confirmed);
 
             let error = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
@@ -127,7 +127,7 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_l
 
         let load = database.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
         let run = database.run("MakeMoment".into(), "{}".into()).await.unwrap_err();
-        let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+        let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
         let settled = database.settled("Moment".into(), row.id, None).await.unwrap_err();
 
         for error in [load, run, settled] {
@@ -145,7 +145,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
     for (wire, code) in [("UNAUTHENTICATED", SessionCode::Unauthenticated), ("ACCOUNT_UNAVAILABLE", SessionCode::AccountUnavailable)] {
         let rig = Rig::new();
         let database = signed_in(&rig).await;
-        let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+        let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
         rig.server.refuse_next(wire, false);
 
         let error = database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();
@@ -170,7 +170,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
 async fn any_other_session_refusal_rolls_the_queued_mutation_back() {
     let rig = Rig::new();
     let database = signed_in(&rig).await;
-    let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
     rig.server.refuse_next("RATE_LIMITED", true);
 
     database.settled("Moment".into(), row.id.clone(), None).await.unwrap_err();

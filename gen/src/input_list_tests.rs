@@ -141,7 +141,7 @@ fn a_list_of_scalars_is_not_an_arg_kind() {
 
 #[test]
 fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
-    let source = "model Moment do\n  attribute :text, :string, null: true\n  operation :create do\n    mutation \"WidgetsSend\"\n    parameter :widgets, [WidgetInput], null: true\n    variables widgets: :widgets\n  end\n  operation :decorate do\n    mutation \"WidgetsSend\"\n    optimistic false\n    parameter :widgets, [WidgetInput]\n    variables widgets: :widgets\n  end\nend\n";
+    let source = "model Moment do\n  attribute :text, :string, null: true\n  operation :create, durable: true do\n    mutation \"WidgetsSend\"\n    parameter :widgets, [WidgetInput], null: true\n    variables widgets: :widgets\n  end\n  operation :decorate do\n    mutation \"WidgetsSend\"\n    optimistic false\n    parameter :widgets, [WidgetInput]\n    variables widgets: :widgets\n  end\nend\n";
     let declared = compile(source, SEND_MUTATION, SCHEMA).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [

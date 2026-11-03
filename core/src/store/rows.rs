@@ -122,13 +122,6 @@ pub(crate) const MEMBER_EXISTS_SQL: &str = "SELECT 1 FROM scope_member WHERE mod
 #[derive(Debug, Default)]
 pub(crate) struct PendingPriors {
     pub fields: BTreeMap<(String, String), BTreeMap<String, HashSet<i64>>>,
-    pub members: BTreeMap<(String, String), PendingMembers>,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct PendingMembers {
-    pub joined: HashSet<String>,
-    pub left: HashSet<String>,
 }
 
 pub(crate) fn read_revision(connection: &Connection) -> Result<i64, StoreError> {

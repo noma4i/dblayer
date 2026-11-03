@@ -185,16 +185,6 @@ fn observed_rereads_need_a_remote_read_and_take_no_node_arguments() {
 }
 
 #[test]
-fn only_models_with_changed_by_get_an_events_stream() {
-    let source = "model Record do\n  attribute :title, :string\n  scope :read do\n    query \"Read\"\n  end\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  changed_by \"WALLET\", via: :observed\nend\n\nmodel Plain do\n  attribute :title, :string\nend\n";
-    let models = parse_models(source).unwrap();
-    let swift = crate::emit_swift(&models, &[], &Default::default());
-    let kotlin = crate::emit_kotlin(&models, &[], &Default::default());
-    assert_eq!(swift.matches("static func events() async throws -> LiveStream<ModelEventItem<Self>>").count(), 1);
-    assert_eq!(kotlin.matches("suspend fun events(): kotlinx.coroutines.flow.Flow<ModelEventItem<Record>>").count(), 1);
-}
-
-#[test]
 fn node_and_observed_forms_share_an_area_and_equal_forms_stay_refused() {
     let source = |lines: &str| format!("model Record do\n  attribute :title, :string\n  scope :by_id, node: :one do\n    parameter :id, :id\n    query \"ById\"\n    variables id: :id\n  end\n  scope :read do\n    query \"Read\"\n  end\n  changes \"RecordEvents\", from: \"recordEvents.entries\", area: \"topic\", kind: \"action\", id: \"recordId\"\n  {lines}\nend\n");
     let models = check_source(&source("changed_by \"CHAT\", via: :by_id, removes_on: [\"DELETED\"]\n  changed_by \"CHAT\", via: :observed")).unwrap();

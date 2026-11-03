@@ -26,18 +26,12 @@ public struct BlobProfile: DBSingleton {
     }
 
     public static let label = Column<BlobProfile, String?>("label")
-    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static var current: Query<Self> {
         let built = Query<Self>(relation: "current", params: [:])
         return built
     }
     public static var singleton: Query<Self> { current }
-    @concurrent public static func create(label: String? = nil) async throws -> Self {
-        var values: [String: JSONValue] = [:]
-        if let value = label { values["label"] = try JSONValue.encode(value) }
-        return try await create(values: values)
-    }
     @concurrent public func update(label: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = label { values["label"] = try JSONValue.encode(value) }
@@ -48,7 +42,7 @@ public struct BlobProfile: DBSingleton {
         return try await act("set_video", values: values, args: ["video": try JSONValue.encode(video)])
     }
     @concurrent public static func setVideo(video: Blob) async throws -> Self {
-        guard let current = try await singleton.live.current().first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
+        guard let current = try await singleton.cached()?.value.first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
         return try await current.setVideo(video: video)
     }
 }
@@ -78,25 +72,19 @@ public struct Clip: DBModel {
     }
 
     public static let title = Column<Clip, String?>("title")
-    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func createFileVariables(widgets: [StickerWidgetInput]? = nil) throws -> [String: JSONValue] {
         var variables: [String: JSONValue] = [:]
         if let value = widgets { variables["widgets"] = try JSONValue.encode(value) }
         return variables
     }
-    @concurrent public static func create(title: String? = nil) async throws -> Self {
-        var values: [String: JSONValue] = [:]
-        if let value = title { values["title"] = try JSONValue.encode(value) }
-        return try await create(values: values)
-    }
     @concurrent public func update(title: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
         if let value = title { values["title"] = try JSONValue.encode(value) }
         return try await update(values: values)
     }
-    @concurrent public func createFile(_ request: UploadRequest) async throws -> ActionAnswer<Self, ClipCreateFileResult> {
-        try await upload(action: "create_file", request)
+    @concurrent public func createFile(_ request: UploadRequest, in scope: AccountScope) async throws -> ActionAnswer<Self, ClipCreateFileResult> {
+        try await scope.upload(self, action: "create_file", request)
     }
 }
 
@@ -132,17 +120,10 @@ public struct Inbox: DBModel {
 
     public static let title = Column<Inbox, String>("title")
     public static let stance = Column<Inbox, String?>("stance")
-    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func shelf(list: ContainerShelfKind) throws -> Query<Self> {
         let built = Query<Self>(relation: "shelf", params: ["list": try JSONValue.encode(list)])
         return built
-    }
-    @concurrent public static func create(title: String, stance: String? = nil) async throws -> Self {
-        var values: [String: JSONValue] = [:]
-        values["title"] = try JSONValue.encode(title)
-        if let value = stance { values["stance"] = try JSONValue.encode(value) }
-        return try await create(values: values)
     }
     @concurrent public func update(title: String? = nil, stance: String?? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
@@ -185,17 +166,10 @@ public struct MediaEntry: DBModel {
 
     public static let text = Column<MediaEntry, String?>("text")
     public static let sequenceNumber = Column<MediaEntry, Int>("sequenceNumber")
-    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func media(_ chatId: String) throws -> Query<Self> {
         let built = Query<Self>(relation: "media", params: ["chatId": try JSONValue.encode(chatId)])
         return built
-    }
-    @concurrent public static func create(text: String? = nil, sequenceNumber: Int) async throws -> Self {
-        var values: [String: JSONValue] = [:]
-        if let value = text { values["text"] = try JSONValue.encode(value) }
-        values["sequenceNumber"] = try JSONValue.encode(sequenceNumber)
-        return try await create(values: values)
     }
     @concurrent public func update(text: String?? = nil, sequenceNumber: Int? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
@@ -230,7 +204,6 @@ public struct Roster: DBModel {
     }
 
     public static let title = Column<Roster, String>("title")
-    public static func find(_ id: String) -> LiveSource<Self?> { Query<Self>().find(id) }
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static func containerMembers(_ containerId: String, order: ContainerMemberOrder = .joined) throws -> Query<Self> {
         let built = Query<Self>(relation: "container_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
@@ -239,11 +212,6 @@ public struct Roster: DBModel {
     public static func completeMembers(_ containerId: String, order: ContainerMemberOrder = .joined) throws -> Query<Self> {
         let built = Query<Self>(relation: "complete_members", params: ["containerId": try JSONValue.encode(containerId), "order": try JSONValue.encode(order)])
         return built
-    }
-    @concurrent public static func create(title: String) async throws -> Self {
-        var values: [String: JSONValue] = [:]
-        values["title"] = try JSONValue.encode(title)
-        return try await create(values: values)
     }
     @concurrent public func update(title: String? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]

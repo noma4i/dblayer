@@ -77,7 +77,7 @@ fn enrolling_a_stream_does_the_same_work_with_existing_streams() {
 #[tokio::test]
 async fn stream_close_terminates_waiters() {
     let database = local_notes().await;
-    database.create("Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap();
+    database.create_for_test("Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap();
     let rows = Arc::new(Rows::default());
     let live = database.watch_query(r#"{"model":"Note"}"#, rows.clone());
     within(live.wait_for_initial_load()).await.unwrap();

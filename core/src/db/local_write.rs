@@ -329,8 +329,6 @@ impl Db {
         let mut input = args;
         input.insert("id".to_string(), Value::String(id.to_string()));
         let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
-        let effects = spec.actions.iter().find(|declared| declared.name == action).map(|declared| declared.effects.as_slice()).unwrap_or_default();
-        let now_ms = self.shared.store.lock().now_ms();
         let committed = self.commit_local_optional(spec, &mut queued, None, None, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
@@ -343,8 +341,7 @@ impl Db {
                 }
             }
             let mut edits = Edits::of_owner(model, id, current, merged);
-            self.apply_flagged(reader, &mut edits, &Call { owner: &own, args: &input_args, now_ms }, &flagged)?;
-            let planned = self.plan_effects(reader, &mut edits, &Call { owner: &own, args: &input_args, now_ms }, effects)?;
+            self.apply_flagged(reader, &mut edits, &Call { owner: &own, args: &input_args }, &flagged)?;
             let mut rows = Vec::new();
             let mut touches = Vec::new();
             for ((edited_model, edited_id), (before, after)) in edits.into_rows() {
@@ -357,12 +354,6 @@ impl Db {
                 touches.extend(self.touch_ops(reader, self.shared.spec(&edited_model)?, &[&after, &before], &RowRef::new(edited_key.clone(), edited_row.clone()))?);
                 plan.update(edited_key, edited_row, after);
             }
-            rows.extend(planned.prior);
-            for (created_model, created) in planned.created {
-                touches.extend(self.touch_ops(reader, self.shared.spec(created_model.as_str())?, &[&created], &RowRef::new(created_model.clone(), created.get("id").and_then(read_id).ok_or_else(|| DbError::Internal("a created row has no id".into()))?))?);
-                plan.upsert(created_model, vec![created]);
-            }
-            queued.scope_ops.extend(planned.scope_ops);
             queued.rollback = Some(Prior { rows }.to_value());
             Ok(Some(touches))
         })?;

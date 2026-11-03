@@ -14,7 +14,6 @@ use super::diff::longest_increasing;
 use super::error::DbError;
 use super::local_write::plan_fault;
 use super::open::Db;
-use super::prior::Prior;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OnAbsent {
@@ -91,15 +90,12 @@ impl Db {
             Some(base) => reader.stored_rows(model.as_str(), &names)?.into_iter().filter(|(_, row)| row.revision > base).map(|(id, _)| id).collect(),
             None => HashSet::new(),
         };
-        let pending = Prior::pending_members(reader, model.as_str(), scope_key)?;
-        let joined = |id: &str| pending.is_some_and(|pending| pending.joined.contains(id));
-        let withheld = |id: &str| pending.is_some_and(|pending| pending.left.contains(id));
-        let is_local = |id: &str| crate::identity::is_temp_id(id) || busy.contains(id) || newer.contains(id) || joined(id);
+        let is_local = |id: &str| crate::identity::is_temp_id(id) || busy.contains(id) || newer.contains(id);
 
         let anchor = (request.coverage == Coverage::Page && !request.replace_all)
             .then(|| incoming_ids.last().and_then(|last| current.iter().position(|member| &member.id == last)))
             .flatten();
-        let mut result: Vec<String> = incoming_ids.iter().filter(|id| !withheld(id)).cloned().collect();
+        let mut result: Vec<String> = incoming_ids.clone();
         if let Some(position) = anchor {
             result.extend(current.iter().skip(position + 1).filter(|member| !seen.contains(&member.id)).map(|member| member.id.clone()));
         }

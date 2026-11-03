@@ -225,15 +225,8 @@ impl Database {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64 }
     }
-    pub async fn create(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
-        let database = self.clone();
-        blocking(move || {
-            let row = database.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
-            database.send_writes();
-            Ok(database.wire(&model)?.row(&row))
-        }).await
-    }
     pub async fn update(&self, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireRow, DbError> {
+        self.refuse_offline(&model, "update")?;
         let database = self.clone();
         blocking(move || {
             let row = database.db.update_with(&model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
@@ -248,6 +241,7 @@ impl Database {
         }).await
     }
     pub async fn act(&self, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
+        self.refuse_offline(&model, &action)?;
         let database = self.clone();
         blocking(move || {
             let acted = database.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
@@ -256,6 +250,7 @@ impl Database {
         }).await
     }
     pub async fn destroy(&self, model: String, row_id: String) -> Result<(), DbError> {
+        self.refuse_offline(&model, "destroy")?;
         let database = self.clone();
         blocking(move || {
             database.db.destroy(&model, &id(&row_id)?)?;
@@ -516,6 +511,15 @@ impl Database {
             sync.inner.spawn_flush(Duration::ZERO);
         }
     }
+    /// An action that needs the server fails at once while the network is away. Only sending a message and a media upload wait for it (`send`, `upload`).
+    fn refuse_offline(&self, model: &str, action: &str) -> Result<(), DbError> {
+        let declared = self.db.spec(model)?.actions.iter().any(|declared| declared.name == action && declared.mutation.is_some());
+        if declared && !self.db.connectivity().is_online() {
+            return Err(DbError::Network { detail: format!("{model}.{action} needs the network") });
+        }
+        Ok(())
+    }
+
     pub(super) fn parsed_query(&self, json: &str) -> Result<ParsedQuery, DbError> {
         let description: Value = serde_json::from_str(json)?;
         let mut query: Query = serde_json::from_value(description.clone())?;
@@ -531,5 +535,17 @@ impl Database {
             Ok(watch.then_some((name.to_string(), params)))
         }).transpose()?.flatten();
         Ok((query, remote))
+    }
+}
+
+#[cfg(test)]
+impl Database {
+    pub(crate) async fn create_for_test(&self, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
+        let database = self.clone();
+        blocking(move || {
+            let row = database.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
+            database.send_writes();
+            Ok(database.wire(&model)?.row(&row))
+        }).await
     }
 }

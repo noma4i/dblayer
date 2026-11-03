@@ -61,7 +61,7 @@ async fn graphql_extensions_reach_run_refresh_and_settled() {
                 "run" => database.run("MakeMoment".into(), "{}".into()).await.unwrap_err(),
                 "refresh" => database.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
                 _ => {
-                    let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+                    let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
                     database.settled("Moment".into(), row.id, None).await.unwrap_err()
                 }
             };
@@ -91,7 +91,7 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_code_and_detail_th
         database.register_operations(OPERATIONS.into()).unwrap();
 
         let run = database.run("MakeMoment".into(), "{}".into()).await.unwrap_err();
-        let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+        let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
         let settled = database.settled("Moment".into(), row.id, None).await.unwrap_err();
 
         let expected = (code, detail.to_string());
@@ -105,7 +105,7 @@ async fn a_failed_queued_mutation_keeps_the_session_code_and_detail_in_its_store
     for (code, detail) in [(SessionCode::Unauthenticated, "token expired"), (SessionCode::AccountUnavailable, "blocked until Monday")] {
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code, detail.to_string()))), None, None, None, None, None).await.unwrap();
         database.register_operations(OPERATIONS.into()).unwrap();
-        let row = database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+        let row = database.create_for_test("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
         database.settled("Moment".into(), row.id, None).await.unwrap_err();
 
         let stored: Vec<_> = database.db.outbox().unwrap().iter().map(|entry| entry.operation.error.clone()).collect();

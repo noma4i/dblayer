@@ -18,8 +18,6 @@ mod nested;
 #[cfg(test)]
 mod changes_tests;
 #[cfg(test)]
-mod effects_tests;
-#[cfg(test)]
 mod attribute_tests;
 #[cfg(test)]
 mod operation_tests;
@@ -531,12 +529,12 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
             OptimisticValue::Literal(_) => false,
         }));
         let implicit = operation.upload.is_some() && operation.variables.is_none() || parameter.ty.base == ParamBase::Blob;
-        if !(in_variables || in_optimistic || implicit || effects::used_parameter(operation, &parameter.name)) {
+        if !(in_variables || in_optimistic || implicit) {
             report(parameter.pos, format!("parameter `{}` is used by neither `variables` nor `optimistic`", parameter.name));
         }
     }
     match (&operation.optimistic, operation.kind) {
-        (None, OperationKind::Custom) if operation.effects.is_empty() => report(operation.pos, format!("operation `{name}` must declare `optimistic` fields or `optimistic false`")),
+        (None, OperationKind::Custom) => report(operation.pos, format!("operation `{name}` must declare `optimistic` fields or `optimistic false`")),
         (Some((OptimisticDecl::Fields(fields), _)), _) => {
             for (field, value, pos) in fields {
                 if !attributes.contains(field.as_str()) {
@@ -578,7 +576,6 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
     if ignored && (!operation.upserts.is_empty() || operation.match_by.is_some()) {
         report(operation.pos, format!("operation `{name}` ignores its response: `upsert` and `match_by` read it"));
     }
-    effects::check(node, all, operation, report);
     check_batch(node, operation, report);
 }
 

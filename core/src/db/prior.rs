@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::commit::{DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, ListKey};
-use crate::store::{PendingMembers, PendingPriors, Reader, StoreError};
+use crate::store::{PendingPriors, Reader, StoreError};
 use crate::value::read_id;
 use crate::write::restore_patch;
 
@@ -25,7 +25,6 @@ pub(crate) enum PriorRow {
     Created { model: String, id: String },
     Edited { model: String, id: String, before: Map<String, Value>, owned: BTreeMap<String, i64> },
     Destroyed { model: String, id: String, before: Map<String, Value>, members: Vec<PriorMember>, files: Vec<PriorFile> },
-    Member { model: String, id: String, scope_key: String, before: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -50,7 +49,7 @@ pub(crate) struct HeldFile {
 impl PriorRow {
     pub fn id(&self) -> &str {
         match self {
-            PriorRow::Created { id, .. } | PriorRow::Edited { id, .. } | PriorRow::Destroyed { id, .. } | PriorRow::Member { id, .. } => id,
+            PriorRow::Created { id, .. } | PriorRow::Edited { id, .. } | PriorRow::Destroyed { id, .. } => id,
         }
     }
 
@@ -93,7 +92,7 @@ impl Prior {
 
     pub(crate) fn related_operations(reader: &Reader<'_>, entry: &OutboxOperation) -> Result<Vec<OutboxOperation>, StoreError> {
         let keys: BTreeSet<_> = Self::of(entry)?.into_iter().flat_map(|prior| prior.rows).map(|row| match row {
-            PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } | PriorRow::Member { model, id, .. } => (model, id),
+            PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } => (model, id),
         }).collect();
         let mut sequences = crate::operation::row_operation_sequences(reader.connection(), &keys)?;
         let mut statement = reader.connection().prepare_cached("SELECT ids.seq FROM op_value AS ids JOIN op_value AS models ON models.seq = ids.seq AND models.item_position = -1 AND models.part = 'prior' AND models.parent = ids.parent AND models.name = 'model' AND models.text = ?1 WHERE ids.item_position = -1 AND ids.part = 'prior' AND ids.name = 'id' AND ids.text = ?2")?;
@@ -120,10 +119,6 @@ impl Prior {
                             let owner = pending.fields.entry((model, id)).or_default();
                             for field in fields.into_keys() { owner.entry(field).or_default().insert(seq); }
                         }
-                        PriorRow::Member { model, id, scope_key, before } => {
-                            let members = pending.members.entry((model, scope_key)).or_default();
-                            if before.is_some() { members.left.insert(id); } else { members.joined.insert(id); }
-                        }
                         _ => {}
                     }
                 }
@@ -136,10 +131,6 @@ impl Prior {
     pub fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, id: &str) -> Result<HashSet<String>, StoreError> {
         Ok(Self::pending(reader)?.fields.get(&(model.to_string(), id.to_string())).into_iter().flatten()
             .filter(|(_, owners)| owners.iter().any(|seq| Some(*seq) != closing)).map(|(field, _)| field.clone()).collect())
-    }
-
-    pub fn pending_members<'a>(reader: &'a Reader<'_>, model: &str, scope_key: &str) -> Result<Option<&'a PendingMembers>, StoreError> {
-        Ok(Self::pending(reader)?.members.get(&(model.to_string(), scope_key.to_string())))
     }
 
     pub fn created_rows(reader: &Reader<'_>, seq: i64) -> Result<Vec<(String, String)>, StoreError> {
@@ -214,7 +205,7 @@ impl Prior {
         let mut changed = false;
         for row in &mut self.rows {
             let (model, id, before) = match row {
-                PriorRow::Created { model, id } | PriorRow::Member { model, id, .. } => (model, id, None),
+                PriorRow::Created { model, id } => (model, id, None),
                 PriorRow::Edited { model, id, before, .. } | PriorRow::Destroyed { model, id, before, .. } => (model, id, Some(before)),
             };
             if model == parent && id == temp.as_str() {

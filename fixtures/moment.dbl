@@ -44,7 +44,7 @@ model Moment do
       attribute :rank, :enum, values: ["top", "normal"], as: FeedRank, null: true
     end
   end
-  operation :create do
+  operation :create, durable: true do
     mutation "CreateMoment"
     variables text: :text, media: :media
   end

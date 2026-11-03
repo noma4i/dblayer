@@ -35,10 +35,10 @@ end
     assert_eq!(moment.relations[1].remote.as_ref().unwrap().operation, "MomentsFeed");
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    for token in ["struct Moment", "DBModel", "func create(", "func set(", "static var recent", "static var feed", "func like("] {
+    for token in ["struct Moment", "DBModel", "func set(", "static var recent", "static var feed", "func like("] {
         assert!(swift.contains(token), "missing Swift {token}");
     }
-    for token in ["ModelDecoder<Moment>", "data class Moment", "fun create(", "fun set(", "val recent", "val feed", "fun like(", "fun ids("] {
+    for token in ["ModelDecoder<Moment>", "data class Moment", "fun set(", "val recent", "val feed", "fun like(", "fun ids("] {
         assert!(kotlin.contains(token), "missing Kotlin {token}");
     }
 }
@@ -134,7 +134,7 @@ fn create_takes_only_the_fields_the_mutation_input_maps() {
   attribute :name, :string, null: true
   attribute :unreadCount, :int
   attribute :createdAt, :date
-  operation :create do
+  operation :create, durable: true do
     mutation "ContainerGroupCreate"
     variables name: :name
     local :unreadCount
@@ -143,8 +143,8 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("@concurrent public static func create(name: String? = nil, unreadCount: Int) async throws -> Self"));
-    assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long): Container"));
+    assert!(swift.contains("@concurrent public static func send(in scope: AccountScope, name: String? = nil, unreadCount: Int) async throws -> Sent<Self>"));
+    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String? = null, unreadCount: Long): Sent<Container>"));
 }
 
 #[test]
@@ -187,7 +187,7 @@ fn model_with_one_single_record_relation_gets_a_singleton_entity() {
         let models = parse_models(source).unwrap();
         let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
         assert_eq!(swift.contains("struct Me: DBSingleton") && swift.contains("static var singleton: Query<Self> { profile }"), singleton, "{swift}");
-        assert_eq!(kotlin.contains("fun entity() = singletonEntityOf(\"Me\", this, profile)"), singleton, "{kotlin}");
+        assert!(!kotlin.contains("singletonEntityOf"), "{kotlin}");
     }
 }
 
@@ -197,8 +197,8 @@ fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
-    assert!(swift.contains("@concurrent public static func create(text: String)") && swift.contains("@concurrent public func update(text: String? = nil)"), "{swift}");
-    assert!(kotlin.contains("suspend fun create(text: String)") && kotlin.contains("suspend fun update(text: String? = null)"), "{kotlin}");
+    assert!(swift.contains("@concurrent public func update(text: String? = nil)") && !swift.contains("func create(") && !swift.contains("func send("), "{swift}");
+    assert!(kotlin.contains("suspend fun update(text: String? = null)") && !kotlin.contains("fun create(") && !kotlin.contains("fun send("), "{kotlin}");
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn a_local_attribute_with_a_source_is_optional_in_create_and_a_map_reaches_the_c
   attribute :name, :string
   attribute :unreadCount, :int
   attribute :stance, :string, null: true
-  operation :create do
+  operation :create, durable: true do
     mutation "ContainerGroupCreate"
     variables name: :name
     local :unreadCount, from: { of: Counter, field: :total }
@@ -260,8 +260,8 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("static func create(name: String, unreadCount: Int? = nil) async throws -> Self"));
-    assert!(kotlin.contains("suspend fun create(name: String, unreadCount: Long? = null): Container"));
+    assert!(swift.contains("static func send(in scope: AccountScope, name: String, unreadCount: Int? = nil) async throws -> Sent<Self>"));
+    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String, unreadCount: Long? = null): Sent<Container>"));
     let map = r#"{"stance":{"$map":{"from":"shelf","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#;
     assert!(swift.contains(map), "Swift literal");
     assert!(kotlin.contains(&map.replace('$', "${'$'}")), "Kotlin literal");
@@ -272,8 +272,7 @@ fn model_with_two_node_relations_gets_one_entity_per_platform() {
     let source = "model Message do\n  attribute :text, :string\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"MessageNode\"\n    variables id: :id\n  end\n  scope :transcode_status, node: :one do\n    parameter :id, :id\n    query \"MessageTranscodeStatus\"\n    variables id: :id\n  end\nend\n";
     let models = parse_models(source).unwrap();
     let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
-    assert_eq!(swift.matches("entity(_ id: String, fetch: EntityFetch)").count(), 1, "{swift}");
-    assert_eq!(kotlin.matches("fun entity(id: String, fetch: EntityFetch)").count(), 1, "{kotlin}");
+    assert!(!swift.contains("entity(_ id: String") && !kotlin.contains("fun entity("), "{swift}\n{kotlin}");
     assert!(swift.contains("func node(_ id: String") && swift.contains("func transcodeStatus(_ id: String"), "{swift}");
     assert!(kotlin.contains("fun node(id: String") && kotlin.contains("fun transcodeStatus(id: String"), "{kotlin}");
 }

@@ -36,23 +36,13 @@ data class BlobProfile(
         }
 
         val label = Column<BlobProfile, String?>("label")
-        fun find(id: String) = Query("BlobProfile", this).find(id)
         fun where(condition: Condition) = Query("BlobProfile", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("BlobProfile", this, ids)
-        fun entity(id: String) = entityOf("BlobProfile", this, id)
         val current: Query<BlobProfile> get() {
             var built = Query("BlobProfile", this, relation = "current", params = buildJsonObject {  })
             return built
         }
-        fun entity() = singletonEntityOf("BlobProfile", this, current)
-        suspend fun setVideo(video: Blob) = requireNotNull(current.live.current().firstOrNull()) { "singleton is missing" }.setVideo(video)
-        suspend fun create(label: String? = null): BlobProfile = offCaller {
-            val values = buildJsonObject {
-                label?.let { put("label", jsonValue(it)) }
-            }
-            read(DBlayer.database.create("BlobProfile", values.jsonText(), "{}"))
-        }
-    }
+        suspend fun setVideo(video: Blob) = requireNotNull(current.cached()?.value?.firstOrNull()) { "singleton is missing" }.setVideo(video)
     suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted): BlobProfile = offCaller {
         val values = buildJsonObject {
             put("label", label)
@@ -84,27 +74,18 @@ data class Clip(
         }
 
         val title = Column<Clip, String?>("title")
-        fun find(id: String) = Query("Clip", this).find(id)
         fun where(condition: Condition) = Query("Clip", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Clip", this, ids)
-        fun entity(id: String) = entityOf("Clip", this, id)
         fun createFileVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
             if (widgets != null) put("widgets", jsonValue(widgets))
         }
-        suspend fun create(title: String? = null): Clip = offCaller {
-            val values = buildJsonObject {
-                title?.let { put("title", jsonValue(it)) }
-            }
-            read(DBlayer.database.create("Clip", values.jsonText(), "{}"))
-        }
-    }
     suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted): Clip = offCaller {
         val values = buildJsonObject {
             put("title", title)
         }
         Clip.read(DBlayer.database.update(modelName, id, values.jsonText(), "{}"))
     }
-    suspend fun createFile(request: UploadRequest): ActionAnswer<Clip, ClipCreateFileResult> = upload("create_file", request, ClipCreateFileResult.serializer())
+    suspend fun createFile(account: AccountScope, request: UploadRequest): ActionAnswer<Clip, ClipCreateFileResult> = account.upload(this, "create_file", request, ClipCreateFileResult.serializer())
 }
 
 @Immutable
@@ -136,22 +117,12 @@ data class Inbox(
 
         val title = Column<Inbox, String>("title")
         val stance = Column<Inbox, String?>("stance")
-        fun find(id: String) = Query("Inbox", this).find(id)
         fun where(condition: Condition) = Query("Inbox", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Inbox", this, ids)
-        fun entity(id: String) = entityOf("Inbox", this, id)
         fun shelf(list: ContainerShelfKind): Query<Inbox> {
             var built = Query("Inbox", this, relation = "shelf", params = buildJsonObject { put("list", jsonValue(list)) })
             return built
         }
-        suspend fun create(title: String, stance: String? = null): Inbox = offCaller {
-            val values = buildJsonObject {
-                put("title", jsonValue(title))
-                stance?.let { put("stance", jsonValue(it)) }
-            }
-            read(DBlayer.database.create("Inbox", values.jsonText(), "{}"))
-        }
-    }
     suspend fun update(title: String? = null, stance: GraphQLNullable<String> = GraphQLNullable.Omitted): Inbox = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
@@ -187,22 +158,12 @@ data class MediaEntry(
 
         val text = Column<MediaEntry, String?>("text")
         val sequenceNumber = Column<MediaEntry, Long>("sequenceNumber")
-        fun find(id: String) = Query("MediaEntry", this).find(id)
         fun where(condition: Condition) = Query("MediaEntry", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("MediaEntry", this, ids)
-        fun entity(id: String) = entityOf("MediaEntry", this, id)
         fun media(chatId: String): Query<MediaEntry> {
             var built = Query("MediaEntry", this, relation = "media", params = buildJsonObject { put("chatId", jsonValue(chatId)) })
             return built
         }
-        suspend fun create(text: String? = null, sequenceNumber: Long): MediaEntry = offCaller {
-            val values = buildJsonObject {
-                text?.let { put("text", jsonValue(it)) }
-                put("sequenceNumber", jsonValue(sequenceNumber))
-            }
-            read(DBlayer.database.create("MediaEntry", values.jsonText(), "{}"))
-        }
-    }
     suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, sequenceNumber: Long? = null): MediaEntry = offCaller {
         val values = buildJsonObject {
             put("text", text)
@@ -234,10 +195,8 @@ data class Roster(
         }
 
         val title = Column<Roster, String>("title")
-        fun find(id: String) = Query("Roster", this).find(id)
         fun where(condition: Condition) = Query("Roster", this).where(condition)
         fun ids(ids: List<String>) = idsQuery("Roster", this, ids)
-        fun entity(id: String) = entityOf("Roster", this, id)
         fun containerMembers(containerId: String, order: ContainerMemberOrder = ContainerMemberOrder.Joined): Query<Roster> {
             var built = Query("Roster", this, relation = "container_members", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("order", jsonValue(order)) })
             return built
@@ -246,13 +205,6 @@ data class Roster(
             var built = Query("Roster", this, relation = "complete_members", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("order", jsonValue(order)) })
             return built
         }
-        suspend fun create(title: String): Roster = offCaller {
-            val values = buildJsonObject {
-                put("title", jsonValue(title))
-            }
-            read(DBlayer.database.create("Roster", values.jsonText(), "{}"))
-        }
-    }
     suspend fun update(title: String? = null): Roster = offCaller {
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }

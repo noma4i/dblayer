@@ -2,8 +2,6 @@ mod entity_fetch;
 #[cfg(test)]
 mod dsl_tests;
 mod error;
-#[cfg(test)]
-mod effects_tests;
 mod extract;
 mod freshness;
 mod invalidate;

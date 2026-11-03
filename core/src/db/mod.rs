@@ -6,10 +6,6 @@ mod correlate;
 mod diff;
 pub(crate) mod dispatch;
 mod effects;
-#[cfg(test)]
-pub(crate) mod spec_fixtures;
-#[cfg(test)]
-mod effects_tests;
 mod ephemeral;
 mod error;
 mod files;
