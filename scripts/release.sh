@@ -10,7 +10,7 @@ version="$1"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'version must be x.y.z'
 publish="${2:-}"
 [ -z "$publish" ] || [ "$publish" = --publish ] || fail 'usage: release.sh <version> [--publish]'
-[ -z "$(git status --porcelain)" ] || fail 'working tree is not clean'
+[ -z "$(git status --porcelain -- . ':(exclude)swift/Sources/DBlayer/dblayer.swift')" ] || fail 'working tree is not clean'
 [ "$(git branch --show-current)" = master ] || fail 'branch must be master'
 previous_tag="$(git describe --tags --abbrev=0 --exclude "$version")" || fail 'previous tag not found'
 subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read commits since previous tag'
@@ -115,6 +115,7 @@ if [ "$publish" = --publish ]; then
   if [ "$package_commits" = 0 ]; then
     cp "$tmp/Package.swift" Package.swift
     git add Package.swift
+    cp "$stage/dblayer.swift" swift/Sources/DBlayer/dblayer.swift
     git add -f swift/Sources/DBlayer/dblayer.swift
     git commit -m "Package release $version"
   elif [ "$package_commits" = 1 ] && [ "$(git log -1 --format=%s)" = "Package release $version" ]; then
@@ -128,12 +129,15 @@ if [ "$publish" = --publish ]; then
   git tag "$version" 2>/dev/null || {
     [ "$(git rev-parse "$version^{commit}")" = "$(git rev-parse HEAD)" ] || fail "tag $version already points elsewhere"
   }
+  git show "$version":swift/Sources/DBlayer/dblayer.swift > "$tmp/tagged-dblayer.swift"
+  cmp -s "$stage/dblayer.swift" "$tmp/tagged-dblayer.swift" || fail 'tagged dblayer.swift differs from the release package'
 else
   printf '%s\n' 'Package.swift to be written:'
   cat "$tmp/Package.swift"
   mkdir -p "$tmp/package/swift/Sources/DBlayer" "$tmp/package/swift/Sources/DBlayerTesting"
   cp "$tmp/Package.swift" "$tmp/package/Package.swift"
   cp swift/Sources/DBlayer/*.swift "$tmp/package/swift/Sources/DBlayer/"
+  cp "$stage/dblayer.swift" "$tmp/package/swift/Sources/DBlayer/dblayer.swift"
   cp swift/Sources/DBlayerTesting/*.swift "$tmp/package/swift/Sources/DBlayerTesting/"
   swift package --package-path "$tmp/package" dump-package > "$tmp/package.json"
 fi

@@ -15,6 +15,8 @@ The root `Package.swift` pins the tag URL and the checksum of `DBlayerFFI.xcfram
 
 Android coordinates are `com.noma4i:dblayer:X.Y.Z`. The Maven branch contains `com/noma4i/dblayer/X.Y.Z/` at its root. Consumers use the raw branch URL and dependency shown in [Getting started](getting-started.md#use-a-release). Publication uses a local staging directory and does not need credentials.
 
+The packaging commit carries the staged `dblayer.swift`, and the script fails if the tag differs from the asset.
+
 The release script checks for exactly one `Release X.Y.Z` commit since the previous tag. The additional `Package release X.Y.Z` commit follows it. A rerun after removing the tag reuses the packaging commit and existing Maven version.
 
 ## Release page

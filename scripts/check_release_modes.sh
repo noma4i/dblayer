@@ -148,7 +148,14 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     dry_events = (base / "events").read_text().splitlines()
     assert not any(line.startswith("gh ") or line.startswith("git push ") for line in dry_events), dry_events
     print("ok dry run stages four release files without publishing")
+    (stage / "dblayer.swift").write_bytes(b"staged binding")
+    sums_file = stage / "SHA256SUMS"
+    sums_file.write_text(subprocess.check_output(["shasum", "-a", "256", *attachments], cwd=stage, text=True))
+    (repo / "swift/Sources/DBlayer/dblayer.swift").write_bytes(b"dirty binding")
     run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
+    staged_binding = (stage / "dblayer.swift").read_bytes()
+    for revision in ("HEAD", version):
+        assert subprocess.check_output([real_git, "-C", str(repo), "show", f"{revision}:swift/Sources/DBlayer/dblayer.swift"]) == staged_binding
     sums = [line.split("  ", 1)[1] for line in (stage / "SHA256SUMS").read_text().splitlines()]
     assert sorted(sums) == sorted(attachments), sums
     assert (stage / "NOTES.md").read_text() == "\n### Fixed\n- Release selftest.\n\n"
@@ -172,9 +179,9 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     run(["bash", "scripts/release.sh", "9.9.9"], wrong, wrong_env, expected=1, contains="core version does not match")
     print("ok wrong version is rejected")
     dirty, dirty_env = fixture(base / "dirty")
-    (dirty / "untracked").write_text("dirty")
+    (dirty / "Package.swift").write_text("dirty")
     run(["bash", "scripts/release.sh", version], dirty, dirty_env, expected=1, contains="working tree is not clean")
-    print("ok dirty tree is rejected")
+    print("ok dirty tracked file is rejected")
     incomplete, incomplete_env = fixture(base / "incomplete")
     stage = incomplete / "target/release-1.2.3"
     stage.mkdir(parents=True)
