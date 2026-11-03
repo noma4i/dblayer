@@ -87,8 +87,10 @@ sys.exit(subprocess.run([os.environ["REAL_GIT"], *a]).returncode)
 ''',
         "cargo": '''#!/usr/bin/env python3
 import pathlib, sys
-a=sys.argv[1:]; target=a[a.index("--target")+1]
-p=pathlib.Path("target")/target/"release/dblayer-gen"; p.parent.mkdir(parents=True,exist_ok=True); p.write_text("generator")
+a=sys.argv[1:]
+for i, arg in enumerate(a):
+    if arg == "--target":
+        p=pathlib.Path("target")/a[i+1]/"release/dblayer-gen"; p.parent.mkdir(parents=True,exist_ok=True); p.write_text("generator")
 ''',
         "lipo": '''#!/usr/bin/env python3
 import pathlib, sys
@@ -133,7 +135,7 @@ if a[:2] == ["release", "download"]:
         path.write_text(text)
         path.chmod(0o755)
     bash_env = base / "bash_env"
-    bash_env.write_text("cargo() { local target=; while [ \"$#\" -gt 0 ]; do if [ \"$1\" = --target ]; then target=$2; break; fi; shift; done; mkdir -p \"target/$target/release\"; printf generator > \"target/$target/release/dblayer-gen\"; }\nxcodebuild() { return 97; }\nexport -f cargo xcodebuild\n")
+    bash_env.write_text("cargo() { while [ \"$#\" -gt 0 ]; do if [ \"$1\" = --target ]; then mkdir -p \"target/$2/release\"; printf generator > \"target/$2/release/dblayer-gen\"; fi; shift; done; }\nxcodebuild() { return 97; }\nexport -f cargo xcodebuild\n")
     env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", BASH_ENV=str(bash_env), REAL_GIT=real_git, TEST_ROOT=str(repo), TEST_EVENTS=str(events), GRADLE=str(bin_dir / "gradle"))
     return repo, env
 

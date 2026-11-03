@@ -32,9 +32,9 @@ if bash "$root/scripts/native_source_hash.sh" --fresh "$stamp" ios "${targets[@]
 fi
 hash="$(bash "$root/scripts/native_source_hash.sh" ios "${targets[@]}")"
 
-for target in "${targets[@]}"; do
-  cargo build --release --manifest-path "$root/core/Cargo.toml" --target "$target"
-done
+target_args=()
+for target in "${targets[@]}"; do target_args+=(--target "$target"); done
+cargo build --release --manifest-path "$root/core/Cargo.toml" "${target_args[@]}"
 
 bash "$root/scripts/build_bindgen.sh"
 /bin/rm -rf "$build" "$bridge/DBlayerFFI.xcframework"

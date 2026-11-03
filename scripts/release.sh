@@ -20,9 +20,7 @@ grep -Fq "## $version - " CHANGELOG.md || fail 'changelog heading missing'
 for check in check_docs check_invariants check_zoo; do bash "scripts/$check.sh" || fail "$check failed"; done
 bash scripts/build_ios.sh
 bash scripts/build_kotlin.sh --abis
-for target in aarch64-apple-darwin x86_64-apple-darwin; do
-  cargo build --release --manifest-path Cargo.toml -p dblayer-gen --target "$target"
-done
+cargo build --release --manifest-path Cargo.toml -p dblayer-gen --target aarch64-apple-darwin --target x86_64-apple-darwin
 
 stage="$root/target/release-$version"
 tmp="$(mktemp -d)"

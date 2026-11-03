@@ -12,6 +12,14 @@ case "$part" in
   *) echo "usage: build_kotlin.sh [--host | --jvm | --abis | --release]" >&2; exit 2 ;;
 esac
 jvm_targets=(aarch64-apple-darwin x86_64-apple-darwin)
+android_triple() {
+  case "$1" in
+    arm64-v8a) echo aarch64-linux-android ;;
+    armeabi-v7a) echo armv7-linux-androideabi ;;
+    x86_64) echo x86_64-linux-android ;;
+    x86) echo i686-linux-android ;;
+  esac
+}
 if [ "${DBLAYER_BUILD_TARGETS_ONLY:-0}" = 1 ]; then
   if [ "$part" = --host ]; then printf '%s\n' host; elif [ "$part" = --jvm ]; then printf '%s\n' "${jvm_targets[@]}"; else printf '%s\n' "${abis[@]}"; fi
   exit 0
@@ -49,7 +57,9 @@ fi
 hash="$(bash "$root/scripts/native_source_hash.sh" "$kind" "${targets[@]}")"
 
 if [ "$part" = --jvm ]; then
-  for target in "${targets[@]}"; do cargo build --release --manifest-path "$root/core/Cargo.toml" --target "$target"; done
+  target_args=()
+  for target in "${targets[@]}"; do target_args+=(--target "$target"); done
+  cargo build --release --manifest-path "$root/core/Cargo.toml" "${target_args[@]}"
   mkdir -p "$root/target/jvm-build"
   lipo -create "${outputs[1]}" "${outputs[2]}" -output "${outputs[0]}"
   printf '%s\n' "$hash" > "$stamp"
@@ -65,12 +75,21 @@ else
 fi
 
 if [ "$part" != --host ]; then
-  arguments=()
-  for abi in "${abis[@]}"; do arguments+=(-t "$abi"); done
+  ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin"
+  target_args=()
+  for abi in "${abis[@]}"; do
+    triple="$(android_triple "$abi")"
+    clang="$ndk_bin/${triple/armv7-/armv7a-}33-clang"
+    export "CARGO_TARGET_$(printf '%s' "$triple" | tr 'a-z-' 'A-Z_')_LINKER=$clang" "CC_${triple//-/_}=$clang" "AR_${triple//-/_}=$ndk_bin/llvm-ar"
+    target_args+=(--target "$triple")
+  done
+  cargo build --release --manifest-path "$root/core/Cargo.toml" "${target_args[@]}"
   /bin/rm -rf "$module/src/main/jniLibs"
-  (cd -- "$root/core" && cargo ndk "${arguments[@]}" --platform 33 \
-    -o "$module/src/main/jniLibs" build --release)
-  for abi in "${abis[@]}"; do printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"; done
+  for abi in "${abis[@]}"; do
+    mkdir -p "$module/src/main/jniLibs/$abi"
+    cp "$root/target/$(android_triple "$abi")/release/libdblayer.so" "$module/src/main/jniLibs/$abi/libdblayer.so"
+    printf '%s\n' "$module/src/main/jniLibs/$abi/libdblayer.so"
+  done
   library="$root/target/aarch64-linux-android/release/libdblayer.a"
 fi
 

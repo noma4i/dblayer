@@ -8,7 +8,7 @@ Android 13 (API 33) or newer.
 | ---- | --- |
 | Xcode (iOS 17+, macOS 14+) | Swift package and iOS simulator build |
 | Homebrew `rustup` with targets `aarch64-apple-ios`, `aarch64-apple-ios-sim`, `x86_64-apple-ios`, `aarch64-apple-darwin`, `x86_64-apple-darwin`, `aarch64-linux-android`, `x86_64-linux-android`, `armv7-linux-androideabi`, `i686-linux-android` | Rust core for every platform |
-| `cargo-ndk` and Android NDK | Android libraries |
+| Android NDK | Android libraries (linker `<triple>33-clang`) |
 | JDK 17 and Gradle 9 | Kotlin module |
 
 ## Use a release
