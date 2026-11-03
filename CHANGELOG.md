@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.15.2 - 2026-11-03
 
 ### Fixed
 - Held entities and live queries load again after a data reset.
