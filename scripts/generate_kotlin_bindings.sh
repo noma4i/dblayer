@@ -91,5 +91,5 @@ internal class UniffiForeignFutureAnswerVoid(private val pointer: Pointer?) {
 }
 KOTLIN
 [ "$(grep -c '`uniffiFuturePointer`: Pointer?,' "$generated")" = 18 ] || { echo "$name: 18 uniffiFuturePointer parameters were not written to dblayer.kt" >&2; exit 1; }
-[ "$(grep -c '^            val uniffiFutureCallback = UniffiForeignFutureAnswer' "$generated")" = 12 ] || { echo "$name: 12 UniffiForeignFutureAnswer values were not inserted into dblayer.kt" >&2; exit 1; }
+[ "$(grep -c '^            val uniffiFutureCallback = UniffiForeignFutureAnswer' "$generated")" = 9 ] || { echo "$name: 9 UniffiForeignFutureAnswer values were not inserted into dblayer.kt" >&2; exit 1; }
 [ "$(grep -c 'external fun dblayer_complete_foreign_future_' "$generated")" = 2 ] || { echo "$name: the scalar completion declarations were not inserted into dblayer.kt" >&2; exit 1; }

@@ -162,6 +162,7 @@ async fn the_harness_cycle_releases_the_token_of_a_held_server_subscription_exac
 
         rig.harness_cycle(Some(b.clone())).await;
         live.cancel();
+        yield_until("the token of the old target was released", || !rig.switch.unsubscribed().is_empty()).await;
         rig.settle().await;
 
         assert_eq!(rig.switch.unsubscribed(), vec!["A-0".to_string()], "invalid={invalid}: the token of the old target was not released exactly once");
