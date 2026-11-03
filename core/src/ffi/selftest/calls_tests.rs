@@ -14,10 +14,10 @@ enum Call {
     RefreshProfile,
     LoadAll,
     Node,
-    SessionCall,
+    SignIn,
 }
 
-const CALLS: [Call; 6] = [Call::Run, Call::RefreshList, Call::RefreshProfile, Call::LoadAll, Call::Node, Call::SessionCall];
+const CALLS: [Call; 6] = [Call::Run, Call::RefreshList, Call::RefreshProfile, Call::LoadAll, Call::Node, Call::SignIn];
 
 impl Call {
     fn operation(self) -> &'static str {
@@ -25,7 +25,7 @@ impl Call {
             Call::Run | Call::RefreshProfile => "MyProfile",
             Call::RefreshList | Call::LoadAll => "Users",
             Call::Node => "UserNode",
-            Call::SessionCall => "login_link",
+            Call::SignIn => "login_link",
         }
     }
 
@@ -37,7 +37,7 @@ impl Call {
                 Call::RefreshProfile => database.refresh("User".into(), "profile".into(), "{}".into()).await,
                 Call::LoadAll => database.load_all("User".into(), "all".into(), "{}".into(), true).await,
                 Call::Node => database.node("User".into(), "node".into(), "user".into(), true).await.map(|_| ()),
-                Call::SessionCall => database.session_call("login_link".into(), json!({"account":"B"}).to_string()).await.map(|_| ()),
+                Call::SignIn => database.session_call("login_link".into(), json!({"account":"B"}).to_string()).await.map(|_| ()),
             }
         })
     }

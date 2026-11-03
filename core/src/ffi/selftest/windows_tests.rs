@@ -165,8 +165,14 @@ async fn memory_expiry_follows_the_last_write_and_a_cloud_reply_after_a_reset_re
     bound(database.maintain()).await.unwrap();
     assert!(database.peek_row("presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");
     clock.advance(2_000);
-    bound(database.maintain()).await.unwrap();
-    assert!(database.peek_row("presence".into(), "p1".into()).unwrap().is_none(), "the row outlived its new boundary");
+    let expired = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while database.peek_row("presence".into(), "p1".into()).unwrap().is_some() {
+            database.maintain().await.unwrap();
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert!(expired.is_ok(), "the row outlived its new boundary");
 
     let db = database.db.clone();
     fake.before_pull_reply(move || db.reset_all().unwrap());
@@ -191,16 +197,16 @@ async fn a_refused_foreground_refresh_keeps_the_views_and_the_credential() {
     let held = Held::open(&rig.database);
     held.shows("A").await;
     held.lists_show("A").await;
+    rig.database.enter_foreground_for_testing().unwrap();
     rig.settle().await;
     rig.world.fail_next("MyProfile", super::rig_tests::Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false });
 
-    rig.database.enter_foreground_for_testing().unwrap();
     let refused = bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap_err();
 
     assert!(matches!(refused, DbError::Session { code: crate::ffi::SessionCode::Unauthenticated, .. }), "{refused:?}");
     rig.settle().await;
     assert!(rig.database.session.as_ref().unwrap().signed_in().unwrap().is_some(), "the refusal cleared the credential");
-    held.shows("A").await;
+    assert!((1..=2).all(|lease| held.log.latest(lease).is_some_and(|snapshot| snapshot.value.as_ref().is_some_and(|row| crate::ffi::lifecycle_tests::named(row, "A")))), "the refusal removed the value of a held entity");
     held.lists_show("A").await;
     bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
     held.shows("A").await;

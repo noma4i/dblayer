@@ -10,7 +10,7 @@ use crate::ffi::lifecycle_tests::{models, named, Rows};
 use crate::ffi::session_guards_tests::WatchedHeld;
 use crate::ffi::{
     ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSessionOperation, EncryptedSocketEvent, EntityDelivery, EntityFetch, EntityListener, EntityRequest,
-    LiveChanges, LiveSubscription, OpenDatabase, PutReply, SessionCode, SubscriptionSink, TestClock, Transport, TransportRequest, WireEntitySnapshot, WireRow,
+    LiveChanges, LiveSubscription, OpenDatabase, PutReply, SessionCode, SubscriptionSink, TestClock, Transport, TransportRequest, WireEntitySnapshot,
 };
 use crate::test_wait::{within_secs, yield_until};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
@@ -29,13 +29,11 @@ pub(super) struct Gate {
     account: Mutex<Option<String>>,
     entered: Notify,
     release: Semaphore,
-    count: AtomicUsize,
 }
 
 impl Gate {
-    pub(super) fn new() -> Arc<Self> { Arc::new(Self { account: Mutex::new(None), entered: Notify::new(), release: Semaphore::new(0), count: AtomicUsize::new(0) }) }
+    pub(super) fn new() -> Arc<Self> { Arc::new(Self { account: Mutex::new(None), entered: Notify::new(), release: Semaphore::new(0) }) }
     pub(super) async fn pass(&self) {
-        self.count.fetch_add(1, Ordering::SeqCst);
         self.entered.notify_one();
         self.release.acquire().await.unwrap().forget();
     }
@@ -46,7 +44,6 @@ impl Gate {
         tokio::time::timeout(std::time::Duration::from_secs(BOUND), notified).await.unwrap_or_else(|_| panic!("{case}: the request never reached the server"));
     }
     pub(super) fn release(&self) { self.release.add_permits(1) }
-    pub(super) fn count(&self) -> usize { self.count.load(Ordering::SeqCst) }
     /// The held request carries rows of this account, whatever the server shows to the others.
     pub(super) fn as_account(self: &Arc<Self>, account: &str) -> Arc<Self> {
         *self.account.lock().unwrap() = Some(account.into());
@@ -60,10 +57,7 @@ pub(super) enum Fault {
     Hold(Arc<Gate>),
     /// The request is held, then ends in the inner fault.
     HoldThen(Arc<Gate>, Box<Fault>),
-    Network,
-    Status(u16),
     Refuse { code: &'static str, confirmed: bool },
-    Graphql(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -108,7 +102,6 @@ impl World {
     pub(super) fn signed(&self) -> bool { self.state.lock().unwrap().signed }
     pub(super) fn forbid(&self, forbidden: bool) { self.state.lock().unwrap().forbidden = forbidden; }
     pub(super) fn violations(&self) -> Vec<String> { self.state.lock().unwrap().violations.clone() }
-    pub(super) fn calls(&self) -> BTreeMap<String, usize> { self.state.lock().unwrap().calls.clone() }
     pub(super) fn count(&self, operation: &str) -> usize { self.state.lock().unwrap().calls.get(operation).copied().unwrap_or(0) }
     pub(super) fn log(&self) -> Vec<Entry> { self.state.lock().unwrap().log.clone() }
     pub(super) fn hits(&self) -> usize { self.state.lock().unwrap().log.len() }
@@ -127,7 +120,8 @@ impl World {
     fn enter(&self, operation: &str, sequence: Option<i64>, body: &Value) -> Option<(Value, Option<Fault>)> {
         let mut state = self.state.lock().unwrap();
         if state.forbidden {
-            let detail = format!("{} {operation}", self.label);
+            let frames = std::backtrace::Backtrace::force_capture().to_string().lines().filter(|line| line.contains("dblayer::sync") || line.contains("dblayer::ffi") || line.contains("dblayer::transport")).take(8).map(|line| line.trim().to_string()).collect::<Vec<_>>().join(" | ");
+            let detail = format!("{} {operation} via {frames}", self.label);
             state.violations.push(detail);
             return None;
         }
@@ -176,10 +170,7 @@ impl World {
             return Err(DbError::Http { status: 400, detail: format!("forbidden {operation}") });
         };
         match pass_gate(fault).await {
-            Some(Fault::Network) => return Err(DbError::Network { detail: "offline".into() }),
-            Some(Fault::Status(status)) => return Err(DbError::Http { status, detail: String::new() }),
             Some(Fault::Refuse { code, .. }) => return Err(DbError::Session { code: SessionCode::Unauthenticated, detail: code.into() }),
-            Some(Fault::Graphql(code)) => return Ok(json!({"errors":[{"message":code,"extensions":{"code":code}}]}).to_string()),
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
         }
         Ok(answer.to_string())
@@ -202,13 +193,10 @@ impl EncryptedHttp for World {
         };
         let mut sealed_sequence = sequence;
         match pass_gate(fault).await {
-            Some(Fault::Network) => return Err(DbError::Network { detail: "offline".into() }),
-            Some(Fault::Status(status)) => return Ok(EncryptedReply { status, body: String::new() }),
             Some(Fault::Refuse { code, confirmed }) => {
                 answer = json!({"error": code});
                 if !confirmed { sealed_sequence = None; }
             }
-            Some(Fault::Graphql(code)) => answer = json!({"errors":[{"message":code,"extensions":{"code":code}}]}),
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
         }
         Ok(EncryptedReply { status: 200, body: seal_response(&request, sealed_sequence, answer) })
@@ -480,5 +468,3 @@ impl Held {
         !self.log.ever_showed(account) && !listed(&self.rows) && !listed(&self.window_rows)
     }
 }
-
-pub(super) fn rows_named(rows: &[WireRow], account: &str) -> bool { rows.iter().any(|row| named(row, account)) }
