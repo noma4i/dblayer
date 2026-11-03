@@ -71,13 +71,13 @@ pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Ru
 }
 
 pub(super) async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'static>(work: impl std::future::Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-    crate::task::spawn_on(executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
+    crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
 }
 
 pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
     struct Cancel(tokio::task::AbortHandle);
     impl Drop for Cancel { fn drop(&mut self) { crate::db::lock::effect(|| self.0.abort()); } }
-    let task = crate::task::spawn_on(executor()?.handle(), work);
+    let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), work);
     let _cancel = Cancel(task.abort_handle());
     task.await.map_err(|error| DbError::Invalid { detail: error.to_string() })
 }
@@ -91,7 +91,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
             work()
         }
     };
-    crate::task::spawn_blocking_on(executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
+    crate::task::spawn_blocking_on(crate::task::Carry::here(), executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
@@ -234,15 +234,19 @@ impl Database {
         }
         if remote { self.refuse_offline(&model, "create")?; }
         let written = self.write_in_epoch(epoch, "create", { let model = model.clone(); move |database| {
-            let row = database.db.create_with(&model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
+            let created = database.db.create_queued(None, &model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
             database.send_writes();
-            Ok(row)
+            Ok(created)
         } }).await?;
+        let (written, operation) = written;
         if !remote { return Ok(self.wire(&model)?.row(&written)); }
         let sync = self.sync()?.clone();
         let (db, wire, temporary) = (self.db.clone(), self.wire(&model)?.clone(), written.id.clone());
         self.serve_in_epoch(epoch, "create", async move {
-            let real = sync.confirmed(&model, &temporary).await?;
+            let real = match operation {
+                Some(operation) => sync.confirmed_by(&model, &temporary, operation).await?,
+                None => sync.confirmed(&model, &temporary).await?,
+            };
             let row = db.find(&model, &real)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {real} was not created") })?;
             Ok::<_, DbError>(wire.row(&row))
         }).await

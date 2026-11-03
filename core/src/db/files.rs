@@ -58,7 +58,7 @@ impl Db {
         };
         let generation = self.generation();
         let mut replaced: Option<String> = None;
-        let committed = self.commit_following_deferred(generation, |reader| {
+        let committed = self.commit_following_deferred(&self.authority()?, generation, |reader| {
             let mut row = reader
                 .point(model, id.as_str())?
                 .ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
@@ -116,7 +116,7 @@ impl Db {
         let _gate = locked(&self.shared.files_gate);
         let generation = self.generation();
         let mut removed: Option<String> = None;
-        let (result, _) = self.commit_following_deferred(generation, |reader| {
+        let (result, _) = self.commit_following_deferred(&self.authority()?, generation, |reader| {
                 removed = None;
                 let mut row = reader
                     .point(model, id.as_str())?

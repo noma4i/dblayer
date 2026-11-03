@@ -51,7 +51,7 @@ pub(in crate::ffi) fn follow(failures: crate::sync::Failures, stream: Arc<Stream
     let post = |stream: &Stream, failure: crate::transport::SubscriptionFailure| stream.subscription_failed(Some(DbError::from(crate::sync::SyncError::Transport(failure.error))));
     let mut failed = current.is_some();
     if let Some(failure) = current { post(&stream, failure); }
-    crate::task::spawn(async move {
+    crate::task::spawn(stream.carry(), async move {
         loop {
             match receiver.recv().await {
                 Ok(None) => { failed = false; stream.subscription_failed(None); }
@@ -124,7 +124,7 @@ impl Database {
         let mut skip = !connectivity.is_online();
         let mut returns = connectivity.returns();
         let this = self.clone();
-        let task = crate::task::spawn_on(executor()?.handle(), async move {
+        let task = crate::task::spawn_on(crate::task::Carry::Epoch(crate::lifecycle::Epoch::new(&self.db.shared.store.lifecycle, epoch)), executor()?.handle(), async move {
             while returns.changed().await.is_ok() {
                 if std::mem::take(&mut skip) { continue; }
                 let refreshing = sync.clone();
@@ -140,7 +140,7 @@ impl Database {
         let wire = self.wire_of(model)?;
         let cell: Arc<OnceLock<Arc<ModelEvents>>> = Arc::default();
         let (opened, weak, model) = (cell.clone(), Arc::downgrade(stream), model.to_string());
-        let task = crate::task::spawn_on(executor()?.handle(), async move {
+        let task = crate::task::spawn_on(stream.carry(), executor()?.handle(), async move {
             let events = match sync.open_model_events(&model).await {
                 Ok(events) => Arc::new(events),
                 Err(error) => {
@@ -169,7 +169,7 @@ impl Database {
         let sync = self.sync()?.clone();
         let mut changes = self.db.outbox_changes();
         let (weak, id) = (Arc::downgrade(stream), id.to_string());
-        let task = crate::task::spawn_on(executor()?.handle(), async move {
+        let task = crate::task::spawn_on(stream.carry(), executor()?.handle(), async move {
             let mut last: Option<WireBlobSnapshot> = None;
             loop {
                 changes.borrow_and_update();
@@ -265,7 +265,7 @@ impl Database {
         stream.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
         let (follower, loader) = (stream.clone(), stream.clone());
         let (ready, seeded) = tokio::sync::oneshot::channel();
-        let state = crate::task::spawn_on(executor()?.handle(), async move {
+        let state = crate::task::spawn_on(stream.carry(), executor()?.handle(), async move {
             let mut changes = match sync.relation_state(&model, &relation, &params).await {
                 Ok(changes) => changes,
                 Err(error) => {
@@ -282,7 +282,7 @@ impl Database {
                 follower.relation_changed(current);
             }
         }).abort_handle();
-        let load = crate::task::spawn_on(executor()?.handle(), async move {
+        let load = crate::task::spawn_on(stream.carry(), executor()?.handle(), async move {
             let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
             let mut force = options.force;
             loop {

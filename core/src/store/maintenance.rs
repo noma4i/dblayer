@@ -70,7 +70,7 @@ impl Store {
             .iter()
             .map(|(model, id)| EntityOp::Destroy { model: model.clone(), id: id.clone(), reason: DestroyReason::Expired })
             .collect();
-        let result = self.commit(envelope)?;
+        let result = self.commit_as(&crate::lifecycle::Authority::Epoch(self.lifecycle.epoch_now()), envelope)?;
         Ok(MaintenanceReport { tombstone_drops, temp_rows_dropped: ids.len(), commit: Some(result) })
     }
 }

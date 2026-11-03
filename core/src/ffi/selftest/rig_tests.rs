@@ -443,6 +443,7 @@ impl Rig {
             .open_with_clock(config(), plain_models(), Some(switch.clone()), None, clock.clone(), false, false, Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
             .await
             .unwrap();
+        database.db.shared.store.lifecycle.require_epoch();
         database.register_operations(plain_operations()).unwrap();
         Rig { opener, database, world, switch, clock }
     }
@@ -453,6 +454,7 @@ impl Rig {
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
         let database = opener.open_with_clock(config(), plain_models(), Some(switch.clone()), None, clock.clone(), false, false, None, None, None, None).await.unwrap();
+        database.db.shared.store.lifecycle.require_epoch();
         database.register_operations(plain_operations()).unwrap();
         Rig { opener, database, world: first, switch, clock }
     }

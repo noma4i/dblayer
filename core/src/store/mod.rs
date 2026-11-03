@@ -71,47 +71,15 @@ pub(crate) struct Inner {
     pub counters: Counters,
 }
 
-thread_local! {
-    static PINNED: std::cell::RefCell<Option<(Arc<crate::lifecycle::Lifecycle>, u64)>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Runs a write on this thread that belongs to one session epoch: the writer refuses its commit once the epoch moved or the database closed.
 pub(crate) fn pinned_to_epoch<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch: u64, write: impl FnOnce() -> R) -> R {
-    #[cfg(test)]
-    life.pinned_writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let before = PINNED.replace(Some((life.clone(), epoch)));
-    let result = write();
-    PINNED.set(before);
-    #[cfg(test)]
-    life.pinned_writes.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    result
-}
-
-tokio::task_local! {
-    /// The epoch of the caller that started the work of this task. Every lease and every SQL commit of the task belongs to that epoch.
-    pub(crate) static ORIGIN: (Arc<crate::lifecycle::Lifecycle>, u64);
-}
-
-/// The lifecycle and epoch of the caller that started the work of this task, if the task has one.
-pub(crate) fn origin_epoch() -> Option<(Arc<crate::lifecycle::Lifecycle>, u64)> {
-    ORIGIN.try_with(Clone::clone).ok()
-}
-
-/// The lifecycle and epoch that the SQL commit on this thread belongs to: a pinned write, else the origin of the running task.
-pub(crate) fn pinned_epoch() -> Option<(Arc<crate::lifecycle::Lifecycle>, u64)> {
-    PINNED.with(|pinned| pinned.borrow().clone()).or_else(origin_epoch)
-}
-
-fn ensure_pinned_epoch() -> Result<(), StoreError> {
-    match pinned_epoch() {
-        Some((life, epoch)) if !life.admits_epoch(epoch) => Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)),
-        _ => Ok(()),
-    }
+    crate::lifecycle::Epoch::new(life, epoch).pinned(write)
 }
 
 impl Inner {
-    pub(crate) fn ensure_generation(&self, generation: Generation) -> Result<(), StoreError> {
-        ensure_pinned_epoch()?;
+    pub(crate) fn ensure_generation(&self, authority: &crate::lifecycle::Authority, generation: Generation) -> Result<(), StoreError> {
+        if let crate::lifecycle::Authority::Epoch(epoch) = authority {
+            if !epoch.life().admits_epoch(epoch.value()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
+        }
         if generation != self.generation {
             return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration));
         }

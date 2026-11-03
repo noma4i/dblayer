@@ -93,16 +93,16 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     let live = database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, Arc::new(Listener(failures)));
     live.wait_for_initial_load().await.unwrap();
     let initial_reads = transport.queries.load(Ordering::SeqCst);
-    let sink = crate::test_wait::recv_within(&subscriptions);
+    let sink = subscriptions.recv_timeout(Duration::from_secs(2)).unwrap();
     sink.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "session_unknown".into() });
-    let error = crate::test_wait::recv_within(&received);
+    let error = received.recv_timeout(Duration::from_secs(2)).expect("query listener receives terminal subscription failure");
     assert!(matches!(error, DbError::Session { code: super::SessionCode::Unauthenticated, detail } if detail == "session_unknown"));
     assert!(subscriptions.try_recv().is_err());
     assert_eq!(transport.queries.load(Ordering::SeqCst), initial_reads);
     database.resume().await.unwrap();
-    let resumed = crate::test_wait::recv_within(&subscriptions);
+    let resumed = subscriptions.recv_timeout(Duration::from_secs(2)).expect("resume restarts the stopped subscription");
     resumed.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "second_session".into() });
-    assert!(matches!(crate::test_wait::recv_within(&received), DbError::Session { detail, .. } if detail == "second_session"));
+    assert!(matches!(received.recv_timeout(Duration::from_secs(2)).expect("observer receives the next session failure"), DbError::Session { detail, .. } if detail == "second_session"));
     live.cancel();
     }
 }

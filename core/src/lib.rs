@@ -1,4 +1,4 @@
-#![cfg_attr(any(test, feature = "stress"), allow(clippy::disallowed_methods))]
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
 uniffi::setup_scaffolding!();
 
 pub mod identity;

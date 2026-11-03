@@ -391,7 +391,7 @@ async fn a_refresh_of_an_epoch_that_left_sends_nothing_from_the_load_waiting_for
     rig.transport.respond_with(|_| Some(feed_reply(&["m1"], false, "c1").after(Duration::from_secs(10))));
     let life = rig.db.shared.store.lifecycle.clone();
     let epoch = life.snapshot().session_epoch;
-    let refreshing = { let sync = rig.sync.clone(); crate::store::ORIGIN.scope((life.clone(), epoch), async move { sync.refresh_preloads().await }) };
+    let refreshing = { let sync = rig.sync.clone(); crate::lifecycle::Epoch::new(&life, epoch).scope(async move { sync.refresh_preloads().await }) };
     let running = tokio::spawn(refreshing);
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(requests(&rig), 3, "three loads hold the lanes and the fourth waits");

@@ -118,6 +118,8 @@ impl Stream {
 
     pub(super) fn pinned<R>(&self, work: impl FnOnce() -> R) -> R { crate::store::pinned_to_epoch(&self.life, self.epoch, work) }
 
+    pub(super) fn carry(&self) -> crate::task::Carry { crate::task::Carry::Epoch(crate::lifecycle::Epoch::new(&self.life, self.epoch)) }
+
     pub(super) fn holds(&self, snapshot: &Snapshot) -> bool { !snapshot.closed && snapshot.session_epoch == self.epoch }
 
     pub(super) fn attach(&self, handles: Handles) {

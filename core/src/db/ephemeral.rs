@@ -314,7 +314,7 @@ impl Db {
 
     pub(crate) fn destroy_claimed(&self, generation: Generation, claimed: &[(RowKey, i64)]) -> Result<usize, DbError> {
         let mut destroyed = 0;
-        let committed = self.commit_following(generation, |reader| {
+        let committed = self.commit_following(&crate::lifecycle::Authority::Epoch(self.shared.store.lifecycle.epoch_now()), generation, |reader| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
             let mut targets: Vec<RowRef> = Vec::new();
             let mut expired: Vec<&RowKey> = Vec::new();

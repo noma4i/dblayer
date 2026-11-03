@@ -7,7 +7,12 @@ use tokio::sync::watch;
 use crate::db::dispatch::{Effects, OrderedEffects};
 use crate::identity::Generation;
 
+mod authority;
 mod machine;
+
+pub(crate) use authority::{Authority, Epoch};
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) use authority::Internal;
 
 use machine::Event;
 
@@ -265,6 +270,8 @@ pub(crate) struct Lifecycle {
     work: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     pub(crate) pinned_writes: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    strict: std::sync::atomic::AtomicBool,
 }
 
 impl Default for Lifecycle {
@@ -282,6 +289,8 @@ impl Default for Lifecycle {
             work: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             pinned_writes: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            strict: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -306,10 +315,10 @@ impl Lease {
     }
 
     pub(crate) fn pinned<F: std::future::Future>(&self, work: F) -> impl std::future::Future<Output = F::Output> {
-        crate::store::ORIGIN.scope(self.scope(), work)
+        self.epoch_value().scope(work)
     }
 
-    pub(crate) fn scope(&self) -> crate::task::Epoch { (self.life.clone(), self.epoch) }
+    pub(crate) fn epoch_value(&self) -> Epoch { Epoch::new(&self.life, self.epoch) }
 
     /// Runs the work inside the lease. A transition or the close of the database ends the work with `Ended`, and work that has not started when that happens never starts.
     pub(crate) async fn run<T>(&self, work: impl std::future::Future<Output = T>) -> Result<T, Ended> {
@@ -319,7 +328,7 @@ impl Lease {
         tokio::select! {
             biased;
             _ = changes.wait_for(|published| published.closed || published.session_epoch != epoch || generation.is_some_and(|issued| issued != published.generation)) => Err(Ended),
-            result = work => Ok(result),
+            result = self.epoch_value().scope(work) => Ok(result),
         }
     }
 }
@@ -388,6 +397,15 @@ impl Drop for Permit {
 }
 
 impl Lifecycle {
+    #[cfg(all(feature = "test-support", not(test)))]
+    pub(crate) fn strict_epoch(&self) -> bool { false }
+
+    #[cfg(test)]
+    pub(crate) fn strict_epoch(&self) -> bool { self.strict.load(std::sync::atomic::Ordering::SeqCst) }
+
+    #[cfg(test)]
+    pub(crate) fn require_epoch(&self) { self.strict.store(true, std::sync::atomic::Ordering::SeqCst); }
+
     pub(crate) fn snapshot(&self) -> Snapshot { crate::db::locked(&self.state).snapshot().clone() }
 
     /// Whether the epoch is the one now and the database is open. It reads the published snapshot and takes no library lock, so the writer may call it.
@@ -431,7 +449,7 @@ impl Lifecycle {
         let (lease, activity) = {
             let mut state = crate::db::locked(&self.state);
             if !state.snapshot().admits(origin) { return Err(Ended); }
-            if crate::store::ORIGIN.try_with(|(_, held)| *held != state.snapshot().session_epoch).unwrap_or(false) { return Err(Ended); }
+            if Epoch::ambient().is_some_and(|held| held.value() != state.snapshot().session_epoch) { return Err(Ended); }
             let (id, epoch) = (state.next_lease, state.snapshot().session_epoch);
             state.next_lease += 1;
             state.leases.insert(id, LeaseInfo { target, passive });

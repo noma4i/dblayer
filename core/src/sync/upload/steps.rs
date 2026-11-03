@@ -157,13 +157,13 @@ impl Runner {
             file: file.clone(),
             tag,
             cancel: self.token.clone(),
-            sent: Arc::new(crate::task::bind(move |bytes| runner.report(part, bytes))),
+            sent: Arc::new(crate::task::bind(crate::task::Carry::here(), move |bytes| runner.report(part, bytes))),
         };
         crate::db::lock::assert_no_library_lock("Transport::put");
         let sent = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await;
         if !whole {
             let path = file.path.clone();
-            let _ = crate::task::spawn_blocking_unpinned(move || std::fs::remove_file(path)).await;
+            let _ = crate::task::spawn_blocking(crate::task::Carry::Detached, move || std::fs::remove_file(path)).await;
         }
         match sent {
             Err(_) => Err(StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, "put timed out")))),

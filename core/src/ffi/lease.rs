@@ -153,7 +153,7 @@ impl TokenLease {
         let mut reply = Reply::new();
         crate::db::locked(&self.hold).handle_with_context(&signal, &mut reply);
         if let Some(token) = reply.dispose.take() {
-            crate::task::spawn_on_unpinned(&self.handle, (self.release)(token));
+            crate::task::spawn_on(crate::task::Carry::Detached, &self.handle, (self.release)(token));
         }
         reply
     }

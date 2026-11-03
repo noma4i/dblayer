@@ -135,7 +135,7 @@ impl Inner {
         let serial = locked(&self.landing);
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
-        let committed = self.db.commit_following_deferred(attempt.generation, |reader| {
+        let committed = self.db.commit_following_deferred(&self.db.authority()?, attempt.generation, |reader| {
             drops = 0;
             let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
@@ -193,7 +193,7 @@ impl Inner {
         let keeps_member_order = self.db.spec(&model)?.stable_order(&scope.key).is_some();
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
-        let committed = self.db.commit_following_deferred(generation, |reader| {
+        let committed = self.db.commit_following_deferred(&self.db.authority()?, generation, |reader| {
             drops = 0;
             let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();

@@ -92,8 +92,8 @@ pub(crate) struct Runner {
 
 impl Runner {
     pub(crate) async fn run_in_epoch(self) {
-        let epoch = self._lease.scope();
-        crate::store::ORIGIN.scope(epoch, self.run()).await
+        let epoch = self._lease.epoch_value();
+        epoch.scope(self.run()).await
     }
 
     pub(crate) async fn run(self) {
@@ -189,7 +189,7 @@ impl Inner {
     pub(crate) fn request_resume(self: &Arc<Self>, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Result<(), SyncError> {
         let runtime = Handle::try_current().map_err(|_| SyncError::Store("no async runtime to run the resume".into()))?;
         if let Some(runner) = self.begin_resume(cause, waiter) {
-            crate::task::spawn_on_unpinned(&runtime, self.until_closed(runner.run_in_epoch()));
+            crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(runner.run_in_epoch()));
         }
         Ok(())
     }
@@ -225,7 +225,7 @@ impl Inner {
                 let Some((model, relation, params)) = watched.get(&key).cloned() else { continue };
                 let inner = self.clone();
                 let force = !unloaded.contains(&key);
-                loads.spawn(async move {
+                loads.spawn(crate::task::Carry::here(), async move {
                     let resolved = inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params)?;
                     if resolved.members_complete || resolved.media.is_some() {
                         tokio::select! {

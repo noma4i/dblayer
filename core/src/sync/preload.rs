@@ -206,7 +206,7 @@ impl Inner {
         let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "preload") else { return };
         state.running = true;
         let inner = Arc::downgrade(self);
-        crate::task::spawn_on_unpinned(&runtime, self.until_closed(async move {
+        crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
             let _lease = lease;
             while let Some(inner) = inner.upgrade() {
                 if !inner.preload_take() { return; }
@@ -263,7 +263,7 @@ impl Inner {
                 if !started.insert(key.clone()) { continue; }
                 let Ok(window_key) = self.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
                 let (inner, lanes, loaded) = (self.clone(), lanes.clone(), key.clone());
-                let task = loads.spawn(async move {
+                let task = loads.spawn(crate::task::Carry::here(), async move {
                     let _lane = lanes.acquire_owned().await;
                     inner.app_loads_settled().await;
                     let result = match inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) {
@@ -350,7 +350,7 @@ impl Sync {
             let mut loads = Children::new();
             for window in windows {
                 let (inner, lanes) = (self.inner.clone(), lanes.clone());
-                loads.spawn(async move {
+                loads.spawn(crate::task::Carry::here(), async move {
                     let _lane = lanes.acquire_owned().await;
                     let (model, relation, params) = window;
                     let fetched = match inner.resolve(crate::lifecycle::Origin::Explicit, &model, &relation, &params) {

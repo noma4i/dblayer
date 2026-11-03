@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, OperationTransition, WriteOrigin};
 use crate::identity::Generation;
+use crate::lifecycle::{Authority, Epoch};
 use crate::store::{Committed, PlanCommitError, Reader};
 
 use super::error::DbError;
@@ -10,30 +11,42 @@ use super::open::Db;
 use super::parent_pointer::Followed;
 
 impl Db {
+    pub(crate) fn authority(&self) -> Result<Authority, DbError> {
+        match Epoch::ambient() {
+            Some(epoch) => Ok(Authority::Epoch(epoch)),
+            #[cfg(any(test, feature = "test-support"))]
+            None if !self.shared.store.lifecycle.strict_epoch() => Ok(Authority::Internal(crate::lifecycle::Internal::for_tests())),
+            None => Err(DbError::Internal("a write of the database needs the session epoch of its caller".into())),
+        }
+    }
+
     /// Plans on a read connection while the writer stays free and writes when no commit landed in between, otherwise plans again under the writer. `plan` runs once or twice and must only read and build from data it can build again: it must not consume captures, write files or announce anything.
     pub(crate) fn commit_following<E: From<DbError>>(
         &self,
+        authority: &Authority,
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<CommitResult, PlanCommitError<E>> {
-        self.commit_following_report(generation, plan).map(|(result, _)| result)
+        self.commit_following_report(authority, generation, plan).map(|(result, _)| result)
     }
 
     pub(crate) fn commit_following_report<E: From<DbError>>(
         &self,
+        authority: &Authority,
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<(CommitResult, Followed), PlanCommitError<E>> {
-        self.commit_following_deferred(generation, plan).map(|(committed, followed)| (committed.publish(), followed))
+        self.commit_following_deferred(authority, generation, plan).map(|(committed, followed)| (committed.publish(), followed))
     }
 
     pub(crate) fn commit_following_deferred<E: From<DbError>>(
         &self,
+        authority: &Authority,
         generation: Generation,
         mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<(Committed<'_>, Followed), PlanCommitError<E>> {
         let mut followed = Followed::default();
-        let result = self.shared.store.commit_prepared_deferred(generation, |reader| {
+        let result = self.shared.store.commit_prepared_deferred(authority, generation, |reader| {
             followed = Followed::default();
             let Some(envelope) = plan(reader)? else { return Ok(None) };
             let (envelope, found) = self.follow(reader, envelope)?;

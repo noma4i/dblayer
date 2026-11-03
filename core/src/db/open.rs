@@ -55,6 +55,7 @@ pub(crate) struct Shared {
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub replaced_ids: Arc<Mutex<HashMap<String, String>>>,
+    pub creates: Arc<Mutex<HashMap<String, i64>>>,
     pub operation_queues: Arc<crate::operation::OperationQueues>,
     pub connectivity: Arc<crate::transport::Connectivity>,
     pub ephemeral: Arc<Ephemerals>,
@@ -231,6 +232,7 @@ impl Db {
         let reads = ReadPool::new(dispatch.clone());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let replaced_ids = Arc::new(Mutex::new(HashMap::new()));
+        let creates = Arc::new(Mutex::new(HashMap::new()));
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
         let replaced_log = dispatch.clone();
         store.set_commit_log(Box::new(move |event| {
@@ -238,7 +240,7 @@ impl Db {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), replaced_ids: replaced_ids.clone(), operation_queues: operation_queues.clone()}));
+        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), replaced_ids: replaced_ids.clone(), creates: creates.clone(), operation_queues: operation_queues.clone()}));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -257,6 +259,7 @@ impl Db {
             dispatch: dispatch.clone(),
             outbox_changes,
             replaced_ids,
+            creates,
             operation_queues,
             connectivity: crate::transport::Connectivity::new(true),
             ephemeral: ephemeral.clone(),
@@ -330,14 +333,16 @@ struct CommitTargets {
     ephemeral: Arc<Ephemerals>,
     outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     replaced_ids: Arc<Mutex<HashMap<String, String>>>,
+    creates: Arc<Mutex<HashMap<String, i64>>>,
     operation_queues: Arc<crate::operation::OperationQueues>,
 }
 
 fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
-    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, replaced_ids, operation_queues } = targets;
+    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, replaced_ids, creates, operation_queues } = targets;
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             locked(&replaced_ids).extend(result.replaced.iter().map(|(from, to)| (format!("{}\0{}", from.model.as_str(), from.id.as_str()), to.to_string())));
+            for (from, _) in &result.replaced { locked(&creates).remove(&format!("{}\0{}", from.model.as_str(), from.id.as_str())); }
             operation_queues.changed(&result.queue_operations);
             {
                 let mut cache = locked(&cache);
@@ -440,7 +445,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
     }
     let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, store.generation());
     envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
-    store.commit(envelope)?;
+    store.commit_as(&crate::lifecycle::Authority::Internal(store.lifecycle.opening()), envelope)?;
     Ok(())
 }
 

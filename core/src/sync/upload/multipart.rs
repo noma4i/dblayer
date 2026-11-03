@@ -62,7 +62,7 @@ impl Runner {
                 let Some((url, headers)) = targets.remove(&number) else { break };
                 let (offset, length) = part_range(total, config.part_size, number);
                 let runner = self.clone();
-                flight.spawn(async move {
+                flight.spawn(crate::task::Carry::here(), async move {
                     let outcome = runner.retrying(UploadStage::Part, number, || runner.put_once(&url, &headers, offset, length, number)).await;
                     (number, outcome)
                 });

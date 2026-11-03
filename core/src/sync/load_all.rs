@@ -17,7 +17,7 @@ impl Inner {
         if !self.admitted(origin) { return Err(SyncError::Cancelled); }
         let (inner, model, relation, params) = (self.clone(), resolved.model.clone(), resolved.relation.clone(), resolved.params.clone());
         let mut reader = self.owner.members(&resolved.window_key, |result| {
-            crate::task::spawn(self.until_closed(async move {
+            crate::task::spawn(crate::task::Carry::here(), self.until_closed(async move {
                 let loaded = match inner.resolve(origin, &model, &relation, &params) {
                     Ok(resolved) => inner.members_chain(&resolved, force).await,
                     Err(error) => Err(error),

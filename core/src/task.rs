@@ -1,55 +1,64 @@
-//! Every task boundary of the library goes through this module. A boundary either carries the session epoch of the work that crosses it (`spawn`, `spawn_on`, `spawn_blocking`, `Children`, `bind`) or says that it carries none (`*_unpinned`): lifecycle-internal work and work without SQL.
 
 use std::future::Future;
-use std::sync::Arc;
 
 use tokio::runtime::Handle;
 use tokio::task::{AbortHandle, JoinError, JoinHandle, JoinSet};
 
-use crate::lifecycle::Lifecycle;
-use crate::store::{pinned_epoch, pinned_to_epoch, ORIGIN};
+use crate::lifecycle::{Authority, Epoch};
 
-pub(crate) type Epoch = (Arc<Lifecycle>, u64);
+#[derive(Clone)]
+pub(crate) enum Carry {
+    Epoch(Epoch),
+    Internal,
+    Detached,
+}
 
-#[allow(clippy::disallowed_methods)]
-pub(crate) fn spawn<F>(work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
-    match pinned_epoch() {
-        Some(epoch) => tokio::spawn(ORIGIN.scope(epoch, work)),
-        None => tokio::spawn(work),
+impl Carry {
+    pub(crate) fn here() -> Self {
+        match Epoch::ambient() {
+            Some(epoch) => Self::Epoch(epoch),
+            None => Self::Detached,
+        }
+    }
+}
+
+impl From<Epoch> for Carry {
+    fn from(epoch: Epoch) -> Self { Self::Epoch(epoch) }
+}
+
+impl From<&Authority> for Carry {
+    fn from(authority: &Authority) -> Self {
+        match authority {
+            Authority::Epoch(epoch) => Self::Epoch(epoch.clone()),
+            Authority::Internal(_) => Self::Internal,
+        }
     }
 }
 
 #[allow(clippy::disallowed_methods)]
-pub(crate) fn spawn_on<F>(runtime: &Handle, work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
-    match pinned_epoch() {
-        Some(epoch) => runtime.spawn(ORIGIN.scope(epoch, work)),
-        None => runtime.spawn(work),
+pub(crate) fn spawn<F>(carry: Carry, work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
+    match carry {
+        Carry::Epoch(epoch) => tokio::spawn(epoch.scope(work)),
+        Carry::Internal | Carry::Detached => tokio::spawn(work),
     }
 }
 
 #[allow(clippy::disallowed_methods)]
-pub(crate) fn spawn_unpinned<F>(work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
-    tokio::spawn(work)
+pub(crate) fn spawn_on<F>(carry: Carry, runtime: &Handle, work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
+    match carry {
+        Carry::Epoch(epoch) => runtime.spawn(epoch.scope(work)),
+        Carry::Internal | Carry::Detached => runtime.spawn(work),
+    }
 }
 
 #[allow(clippy::disallowed_methods)]
-pub(crate) fn spawn_on_unpinned<F>(runtime: &Handle, work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
-    runtime.spawn(work)
+pub(crate) fn spawn_blocking<R: Send + 'static>(carry: Carry, work: impl FnOnce() -> R + Send + 'static) -> JoinHandle<R> {
+    tokio::task::spawn_blocking(bind_once(carry, work))
 }
 
 #[allow(clippy::disallowed_methods)]
-pub(crate) fn spawn_blocking<R: Send + 'static>(work: impl FnOnce() -> R + Send + 'static) -> JoinHandle<R> {
-    tokio::task::spawn_blocking(bind_once(work))
-}
-
-#[allow(clippy::disallowed_methods)]
-pub(crate) fn spawn_blocking_on<R: Send + 'static>(runtime: &Handle, work: impl FnOnce() -> R + Send + 'static) -> JoinHandle<R> {
-    runtime.spawn_blocking(bind_once(work))
-}
-
-#[allow(clippy::disallowed_methods)]
-pub(crate) fn spawn_blocking_unpinned<R: Send + 'static>(work: impl FnOnce() -> R + Send + 'static) -> JoinHandle<R> {
-    tokio::task::spawn_blocking(work)
+pub(crate) fn spawn_blocking_on<R: Send + 'static>(carry: Carry, runtime: &Handle, work: impl FnOnce() -> R + Send + 'static) -> JoinHandle<R> {
+    runtime.spawn_blocking(bind_once(carry, work))
 }
 
 #[allow(clippy::disallowed_methods)]
@@ -57,19 +66,17 @@ pub(crate) fn spawn_thread(name: String, body: impl FnOnce() + Send + 'static) -
     std::thread::Builder::new().name(name).spawn(body)
 }
 
-fn bind_once<R>(work: impl FnOnce() -> R) -> impl FnOnce() -> R {
-    let epoch = pinned_epoch();
-    move || match epoch {
-        Some((life, value)) => pinned_to_epoch(&life, value, work),
-        None => work(),
+fn bind_once<R>(carry: Carry, work: impl FnOnce() -> R) -> impl FnOnce() -> R {
+    move || match carry {
+        Carry::Epoch(epoch) => epoch.pinned(work),
+        Carry::Internal | Carry::Detached => work(),
     }
 }
 
-pub(crate) fn bind<A, R>(callback: impl Fn(A) -> R) -> impl Fn(A) -> R {
-    let epoch = pinned_epoch();
-    move |argument| match &epoch {
-        Some((life, value)) => pinned_to_epoch(life, *value, || callback(argument)),
-        None => callback(argument),
+pub(crate) fn bind<A, R>(carry: Carry, callback: impl Fn(A) -> R) -> impl Fn(A) -> R {
+    move |argument| match &carry {
+        Carry::Epoch(epoch) => epoch.pinned(|| callback(argument)),
+        Carry::Internal | Carry::Detached => callback(argument),
     }
 }
 
@@ -85,21 +92,19 @@ impl<T: Send + 'static> Children<T> {
     pub(crate) fn new() -> Self { Self::default() }
 
     #[allow(clippy::disallowed_methods)]
-    pub(crate) fn spawn<F>(&mut self, work: F) -> AbortHandle where F: Future<Output = T> + Send + 'static {
-        match pinned_epoch() {
-            Some(epoch) => self.set.spawn(ORIGIN.scope(epoch, work)),
-            None => self.set.spawn(work),
+    pub(crate) fn spawn<F>(&mut self, carry: Carry, work: F) -> AbortHandle where F: Future<Output = T> + Send + 'static {
+        match carry {
+            Carry::Epoch(epoch) => self.set.spawn(epoch.scope(work)),
+            Carry::Internal | Carry::Detached => self.set.spawn(work),
         }
     }
 
     #[allow(clippy::disallowed_methods)]
-    pub(crate) fn spawn_unpinned<F>(&mut self, work: F) -> AbortHandle where F: Future<Output = T> + Send + 'static {
-        self.set.spawn(work)
-    }
-
-    #[allow(clippy::disallowed_methods)]
-    pub(crate) fn spawn_unpinned_on<F>(&mut self, work: F, runtime: &Handle) -> AbortHandle where F: Future<Output = T> + Send + 'static {
-        self.set.spawn_on(work, runtime)
+    pub(crate) fn spawn_on<F>(&mut self, carry: Carry, work: F, runtime: &Handle) -> AbortHandle where F: Future<Output = T> + Send + 'static {
+        match carry {
+            Carry::Epoch(epoch) => self.set.spawn_on(epoch.scope(work), runtime),
+            Carry::Internal | Carry::Detached => self.set.spawn_on(work, runtime),
+        }
     }
 
     pub(crate) async fn join_next(&mut self) -> Option<Result<T, JoinError>> { self.set.join_next().await }

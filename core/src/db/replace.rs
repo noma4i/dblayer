@@ -51,7 +51,7 @@ impl Db {
         }).collect::<Result<Vec<_>, DbError>>()?;
         let rows = crate::store::coalesce_rows(rows.into_iter().map(|row| (request.scope.model.clone(), row)));
         let generation = self.generation();
-        self.commit_following(generation, |reader| {
+        self.commit_following(&self.authority()?, generation, |reader| {
                 let model = request.scope.model.as_str();
                 let rows = rows
                     .iter()

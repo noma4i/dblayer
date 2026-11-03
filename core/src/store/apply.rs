@@ -22,7 +22,9 @@ use super::shape::{delete_tables, insert_children, member_values, normalize, nor
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
-use super::{pinned_epoch, Committed, Inner, ModelInfo, Store, StoreError};
+use crate::lifecycle::Authority;
+
+use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PlanCommitError<E> {
@@ -39,11 +41,16 @@ impl<E> From<StoreError> for PlanCommitError<E> {
 }
 
 impl Store {
-    pub fn commit(&self, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
+    #[cfg(test)]
+    pub(crate) fn commit(&self, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
+        self.commit_as(&Authority::Internal(crate::lifecycle::Internal::for_tests()), envelope)
+    }
+
+    pub(crate) fn commit_as(&self, authority: &Authority, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        inner.ensure_generation(envelope.generation)?;
-        match self.write_planned(inner, Ok::<_, std::convert::Infallible>(Some(envelope))) {
+        inner.ensure_generation(authority, envelope.generation)?;
+        match self.write_planned(authority, inner, Ok::<_, std::convert::Infallible>(Some(envelope))) {
             Ok(committed) => Ok(committed.publish()),
             Err(PlanCommitError::Store(error)) => Err(error),
             Err(PlanCommitError::Plan(never)) => match never {},
@@ -52,33 +59,36 @@ impl Store {
 
     fn plan_under_writer<E>(
         &self,
+        authority: &Authority,
         generation: Generation,
         plan: impl FnOnce(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<Committed<'_>, PlanCommitError<E>> {
         let mut inner = self.lock();
         inner.ensure_healthy()?;
-        inner.ensure_generation(generation)?;
+        inner.ensure_generation(authority, generation)?;
         inner.counters.plans_under_writer += 1;
         let planned = plan(&Reader::new(&inner.connection, &inner.models));
-        self.write_planned(inner, planned)
+        self.write_planned(authority, inner, planned)
     }
 
     /// Plans on a read connection while the writer stays free. The writer only compares the revision the plan was read at and applies it. When another commit landed first, the writer is released and the plan runs again off the writer. Every repeat means another commit succeeded, so the loop has no attempt limit. Databases with `memory` models and in-memory databases plan under the writer. `plan` must only read and build from data it can build again.
-    pub fn commit_prepared<E>(
+    #[cfg(test)]
+    pub(crate) fn commit_prepared<E>(
         &self,
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<CommitResult, PlanCommitError<E>> {
-        self.commit_prepared_deferred(generation, plan).map(Committed::publish)
+        self.commit_prepared_deferred(&Authority::Internal(crate::lifecycle::Internal::for_tests()), generation, plan).map(Committed::publish)
     }
 
     pub(crate) fn commit_prepared_deferred<E>(
         &self,
+        authority: &Authority,
         generation: Generation,
         mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<Committed<'_>, PlanCommitError<E>> {
         if !self.reads_off_writer() {
-            return self.plan_under_writer(generation, plan);
+            return self.plan_under_writer(authority, generation, plan);
         }
         loop {
             let (revision, planned) = self.read(&[], |reader| Ok((reader.revision_seq()?, plan(reader))))?;
@@ -91,16 +101,16 @@ impl Store {
             }
             let mut inner = self.lock();
             inner.ensure_healthy()?;
-            inner.ensure_generation(generation)?;
+            inner.ensure_generation(authority, generation)?;
             inner.counters.plans_off_writer += 1;
             if Reader::new(&inner.connection, &inner.models).revision_seq()? != revision {
                 continue;
             }
-            return self.write_planned(inner, planned);
+            return self.write_planned(authority, inner, planned);
         }
     }
 
-    fn write_planned<'a, E>(&'a self, inner: std::sync::MutexGuard<'_, Inner>, planned: Result<Option<CommitEnvelope>, E>) -> Result<Committed<'a>, PlanCommitError<E>> {
+    fn write_planned<'a, E>(&'a self, authority: &Authority, inner: std::sync::MutexGuard<'_, Inner>, planned: Result<Option<CommitEnvelope>, E>) -> Result<Committed<'a>, PlanCommitError<E>> {
         let now_ms = inner.now_ms();
         let envelope = planned.map_err(PlanCommitError::Plan)?;
         let Some(envelope) = envelope else {
@@ -110,9 +120,9 @@ impl Store {
         if envelope.is_empty() {
             return Ok(Committed::unannounced(CommitResult::noop(envelope.tx_id)));
         }
-        match self.attempt_in_epoch(&inner, &envelope, now_ms) {
+        match self.attempt_in_epoch(authority, &inner, &envelope, now_ms) {
             Ok(result) => Ok(self.finish(inner, result)),
-            Err(first) if first.is_apply_failure() => match self.attempt_in_epoch(&inner, &envelope, now_ms) {
+            Err(first) if first.is_apply_failure() => match self.attempt_in_epoch(authority, &inner, &envelope, now_ms) {
                 Ok(result) => Ok(self.finish(inner, result)),
                 Err(second) => {
                     if second.is_apply_failure() {
@@ -126,17 +136,21 @@ impl Store {
     }
 
     /// The SQL commit of a write that belongs to a session epoch: the epoch check and the commit happen while the lifecycle holds its commit line, so a transition either comes before the check and refuses the write, or waits for the commit.
-    fn attempt_in_epoch(&self, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
-        let pinned = pinned_epoch();
-        let _line = pinned.as_ref().map(|(life, _)| life.commit_line());
-        if let Some((life, epoch)) = &pinned {
-            if !life.epoch_holds(*epoch) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
-        }
+    fn attempt_in_epoch(&self, authority: &Authority, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
+        let _line = match authority {
+            Authority::Epoch(epoch) => {
+                let line = epoch.life().commit_line();
+                if !epoch.life().epoch_holds(epoch.value()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
+                Some(line)
+            }
+            Authority::Internal(_) => None,
+        };
         #[cfg(test)]
-        if pinned.is_some() {
+        if matches!(authority, Authority::Epoch(_)) {
             let hook = self.after_epoch_check.lock().unwrap_or_else(|error| error.into_inner()).take();
             if let Some(hook) = hook { hook(); }
         }
+        if envelope.network.as_ref().is_some_and(|network| !network.holds()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::NetworkMoved)); }
         attempt(inner, envelope, now_ms)
     }
 

@@ -142,7 +142,10 @@ impl Inner {
 
     /// Boxed here once: the future of a pass is large in a debug build and must not sit inside the future of every caller.
     pub(crate) fn flush(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FlushReport, SyncError>> + Send + '_>> {
-        Box::pin(self.flush_pass())
+        Box::pin(async move {
+            let Ok(lease) = self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Session, "flush") else { return Ok(FlushReport::default()) };
+            lease.run(self.flush_pass()).await.unwrap_or_else(|_| Ok(FlushReport::default()))
+        })
     }
 
     async fn flush_pass(&self) -> Result<FlushReport, SyncError> {
@@ -531,8 +534,11 @@ impl Inner {
             frozen = None;
             let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
             if entry.operation.status != OperationStatus::Pending || entry.operation.transport_started || entry.operation.client_mutation_id != sending.entry.operation.client_mutation_id { return Ok(None); }
-            if sending.checked.is_some_and(|checked| checked != self.refusal_state()) { return Ok(None); }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
+            if let Some(checked) = sending.checked {
+                let (lost, account, connectivity) = (self.network_lost.clone(), self.account.clone(), self.connectivity.clone());
+                envelope.network = Some(crate::commit::NetworkAdmission::new(checked, std::sync::Arc::new(move || (*locked(&lost), locked(&account).1, connectivity.is_online()))));
+            }
             if let Some(batch) = batch {
                 let items = crate::operation::read_operation_uploads(reader.connection(), seq).map_err(StoreError::from)?;
                 if items.iter().any(|(key, state)| key.0 == seq && !state.is_sendable()) { return Ok(None); }
@@ -795,10 +801,11 @@ impl Inner {
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
     ) -> Result<Option<CommitResult>, SyncError> {
-        crate::blocking::blocking_unit(|| match self.db.commit_following(generation, plan) {
+        let authority = self.db.authority()?;
+        crate::blocking::blocking_unit(|| match self.db.commit_following(&authority, generation, plan) {
             Ok(result) => Ok(Some(result)),
             Err(PlanCommitError::Plan(error)) => Err(error),
-            Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => Ok(None),
+            Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration | EnvelopeFault::NetworkMoved))) => Ok(None),
             Err(PlanCommitError::Store(error)) => Err(error.into()),
         })
     }
@@ -808,10 +815,11 @@ impl Inner {
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
     ) -> Result<Option<crate::store::Committed<'_>>, SyncError> {
-        crate::blocking::blocking_unit(|| match self.db.commit_following_deferred(generation, plan) {
+        let authority = self.db.authority()?;
+        crate::blocking::blocking_unit(|| match self.db.commit_following_deferred(&authority, generation, plan) {
             Ok((committed, _)) => Ok(Some(committed)),
             Err(PlanCommitError::Plan(error)) => Err(error),
-            Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration))) => Ok(None),
+            Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration | EnvelopeFault::NetworkMoved))) => Ok(None),
             Err(PlanCommitError::Store(error)) => Err(error.into()),
         })
     }

@@ -34,3 +34,40 @@ async fn a_waiter_woken_by_the_commit_of_a_create_gets_the_real_id() {
     *locked(&rig.sync.inner.landed_probe) = None;
     assert_eq!(confirmed.into_iter().map(|result| result.unwrap().to_string()).collect::<Vec<_>>(), ["m77"]);
 }
+
+fn temp_create_reply(id: &str) -> Reply {
+    Reply::data(json!({"createMoment": {"id": id, "text": "hello", "userId": null}}))
+}
+
+/// F03: the wait of a create belongs to the operation queued with it, also after that operation left the queue and another operation of the same row has a refusal waiting.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_late_wait_for_a_confirmed_create_ignores_the_refusal_of_another_operation_of_its_row() {
+    let rig = rig();
+    let temp = rig.db.create("moments", params(json!({"id": "temp-late", "text": "hello"}))).unwrap().id.clone();
+    rig.transport.enqueue("CreateMoment", temp_create_reply("m78"));
+    rig.sync.flush().await.unwrap();
+    assert!(rig.db.outbox().unwrap().is_empty(), "the create is still queued");
+    let refusal = super::super::SendResult::Rejected(crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "late update refusal"));
+    locked(&rig.sync.inner.outcomes).keep(9_999, "moments", "moments:update", vec![temp.clone()], &refusal);
+    let confirmed = crate::test_wait::within(rig.sync.confirmed("moments", &temp)).await;
+    assert_eq!(confirmed.unwrap().to_string(), "m78");
+}
+
+/// F04: a temporary id that two models hold is told apart by the model: the wait of one model never takes the operation of the other.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_wait_for_a_create_never_takes_the_operation_of_another_model_with_the_same_temporary_id() {
+    let mut vibes = vibes_spec();
+    vibes.actions = vec![moments_spec().actions.into_iter().find(|action| action.name == "create").unwrap()];
+    vibes.actions[0].mutation = Some("StarMoment".into());
+    vibes.actions[0].variables.clear();
+    let mut moments = moments_spec();
+    moments.actions.iter_mut().filter(|action| action.name != "destroy").for_each(|action| action.on_failure = crate::schema::OnFailure::Keep);
+    let rig = rig_on(crate::db::Db::open_in_memory(vec![users_spec(), moments, vibes], None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig::default());
+    rig.db.create("moments", params(json!({"id": "temp-shared", "text": "a"}))).unwrap();
+    rig.transport.enqueue("CreateMoment", Reply::graphql_error("not allowed", "BAD_USER_INPUT"));
+    rig.sync.flush().await.unwrap();
+    let temp = rig.db.create("vibes", params(json!({"id": "temp-shared", "kind": "b"}))).unwrap().id.clone();
+    rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"id": "v1", "kind": "b"}})));
+    let confirmed = crate::test_wait::within(rig.sync.confirmed("vibes", &temp)).await;
+    assert_eq!(confirmed.unwrap().to_string(), "v1");
+}

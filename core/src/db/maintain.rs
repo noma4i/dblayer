@@ -85,7 +85,7 @@ impl Db {
                 field: reference.field.clone(),
             });
         }
-        let (committed, _) = self.commit_following_deferred(generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
+        let (committed, _) = self.commit_following_deferred(&crate::lifecycle::Authority::Epoch(self.shared.store.lifecycle.epoch_now()), generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
         let ids: Vec<String> = references.iter().map(|reference| reference.id.clone()).collect();
         let cleanup = self.shared.files.discard(&ids).map_err(super::files::io_fault);
         Ok((committed, cleanup))

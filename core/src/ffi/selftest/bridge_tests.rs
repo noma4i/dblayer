@@ -601,7 +601,8 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("g");
-    rig.database.db.create_with("Group", serde_json::from_str(&values).unwrap(), serde_json::from_str(&args).unwrap()).unwrap();
+    let held = rig.database.db.shared.store.lifecycle.epoch_now();
+    held.pinned(|| rig.database.db.create_with("Group", serde_json::from_str(&values).unwrap(), serde_json::from_str(&args).unwrap())).unwrap();
     assert_eq!(rig.database.db.outbox().unwrap().len(), 1, "the plain action was queued once");
     rig.database.set_online(false).unwrap();
     bound(rig.database.flush()).await.unwrap();
@@ -831,7 +832,7 @@ fn seed_members(rig: &Rig, group: &str) {
             envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id).unwrap(), order_key });
         }
     }
-    db.land(envelope).unwrap();
+    db.shared.store.lifecycle.epoch_now().pinned(|| db.land(envelope)).unwrap();
 }
 
 fn ids_of(rows: Vec<WireRow>) -> Vec<String> { rows.into_iter().map(|row| row.id).collect() }
@@ -1196,4 +1197,66 @@ async fn a_network_that_dropped_and_returned_right_after_the_refusal_decision_re
         assert_eq!(rig.world.count(operation), sent_before, "{case}: the action went out after the network dropped and returned");
         rig.database.close_now();
     }
+}
+
+/// K29 (F02, old lines sync/send/flush.rs start and store/apply.rs attempt_in_epoch): a network that moves after the plan of the start of an action and before its commit refuses the start, and the action does not go out.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_network_that_moves_between_the_plan_and_the_commit_of_a_start_refuses_the_action() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (values, args) = group("friends");
+    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    settle(&rig).await;
+    let sent_before = rig.world.count("LeaveGroup");
+    let (shared, inner) = (rig.database.db.shared.clone(), rig.database.sync.as_ref().unwrap().inner.clone());
+    let armed = inner.clone();
+    *inner.refusal_probe.lock().unwrap() = Some(Box::new(move || {
+        let moving = armed.clone();
+        *shared.store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { *moving.network_lost.lock().unwrap() = i64::MAX; }));
+    }));
+    let result = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await;
+    assert!(matches!(result, Err(DbError::Network { .. })), "the action ended with {:?}", result.as_ref().err());
+    settle(&rig).await;
+    assert_eq!(rig.world.count("LeaveGroup"), sent_before, "the action went out although the network moved before its start was committed");
+    rig.database.close_now();
+}
+
+/// K30 (F01, old lines ffi/database.rs flush and sync/send/flush.rs flush_pass): the public flush of a queued durable command lands its SQL commits in the epoch of its own lease, so a session start waits for the commit that is running and the epoch does not change under it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_public_flush_holds_the_commit_line_of_its_epoch_while_it_commits() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    rig.database.set_online(false).unwrap();
+    bound(rig.database.send(message(epoch, "queued", 1))).await.unwrap();
+    let store = &rig.database.db.shared.store;
+    let (entered, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release) = std::sync::mpsc::channel::<()>();
+    *store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { entered.send(()).unwrap(); let _ = release.recv_timeout(std::time::Duration::from_secs(20)); }));
+    rig.database.db.connectivity().set_online(true);
+    let flushing = { let database = rig.database.clone(); tokio::spawn(async move { database.flush().await }) };
+    tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
+    let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
+    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session(Some("another-account".into()), epoch)) };
+    yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
+    assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while a commit of the flush was held");
+    release_tx.send(()).unwrap();
+    let _ = bound(flushing).await.unwrap();
+    assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
+    settle(&rig).await;
+    rig.database.close_now();
+}
+
+/// K31 (F01): a write of the database that carries no session epoch is refused, never written without the epoch check.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_without_a_session_epoch_is_refused() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let (values, _) = group("friends");
+    let values: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&values).unwrap();
+    let database = rig.database.clone();
+    let refused = tokio::task::spawn_blocking(move || database.db.create("Group", values)).await.unwrap();
+    assert!(matches!(refused, Err(crate::db::DbError::Internal(_))), "a write without an epoch ended with {:?}", refused.as_ref().err());
+    rig.database.close_now();
 }

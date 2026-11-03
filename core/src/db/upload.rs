@@ -65,7 +65,7 @@ impl Db {
     // Preparation closures only copy files and reserve deferred commits; they must not publish or call foreign code.
     pub(crate) fn prepare_blob<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
         let _gate = locked(&self.shared.files_gate);
-        self.shared.store.lock().ensure_generation(generation).map_err(DbError::from)?;
+        self.shared.store.lock().ensure_generation(&self.authority()?, generation).map_err(DbError::from)?;
         let mut files = UploadFiles { files: &self.shared.files, owned: Vec::new(), now: self.shared.store.lock().now_ms() };
         let mut committed = None;
         let result = run(&mut files, &mut committed);
@@ -88,7 +88,7 @@ impl Db {
             return Err(DbError::InvalidUpload("upload requires a server model".into()).into());
         }
         let _gate = locked(&self.shared.files_gate);
-        self.shared.store.lock().ensure_generation(generation).map_err(DbError::from)?;
+        self.shared.store.lock().ensure_generation(&self.authority()?, generation).map_err(DbError::from)?;
         let mut files = UploadFiles { files: &self.shared.files, owned: Vec::new(), now: self.shared.store.lock().now_ms() };
         let mut committed = None;
         let result = run(&mut files, generation, &mut committed);

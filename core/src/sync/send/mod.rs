@@ -141,13 +141,24 @@ impl Sync {
         if !id.is_temp() {
             return Ok(id.clone());
         }
-        let create = locked(self.inner.operation_queue()?).entries.values().find(|entry| entry.operation.temp_id.as_ref() == Some(id)).map(|entry| entry.operation.id.0);
+        let key = format!("{model}\0{id}");
+        let create = locked(&self.inner.db.shared.creates).get(&key).copied();
+        let replaced = || locked(&self.inner.db.shared.replaced_ids).get(&key).cloned();
         match create {
             Some(operation) => self.settled_operation(model, operation).await?,
-            None => self.settled(model, id, None).await?,
+            None if replaced().is_none() => self.settled(model, id, None).await?,
+            None => {}
         }
-        let key = format!("{model}\0{id}");
-        let real = locked(&self.inner.db.shared.replaced_ids).get(&key).cloned();
+        let real = replaced();
+        match real {
+            Some(real) => RowId::new(&real).map_err(|error| SyncError::Malformed(error.to_string())),
+            None => Err(SyncError::Store(format!("{model} {id} was not confirmed"))),
+        }
+    }
+
+    pub async fn confirmed_by(&self, model: &str, id: &RowId, operation: i64) -> Result<RowId, SyncError> {
+        self.settled_operation(model, operation).await?;
+        let real = locked(&self.inner.db.shared.replaced_ids).get(&format!("{model}\0{id}")).cloned();
         match real {
             Some(real) => RowId::new(&real).map_err(|error| SyncError::Malformed(error.to_string())),
             None => Err(SyncError::Store(format!("{model} {id} was not confirmed"))),

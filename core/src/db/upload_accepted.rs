@@ -50,7 +50,7 @@ impl Db {
     pub fn note_background_refused(&self, items: &[AcceptedUpload], detail: &str) -> Result<usize, DbError> {
         let generation = self.generation();
         let mut noted = 0;
-        self.commit_following(generation, |reader| {
+        self.commit_following(&crate::lifecycle::Authority::Epoch(self.shared.store.lifecycle.epoch_now()), generation, |reader| {
             noted = 0;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             for item in items {

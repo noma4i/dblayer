@@ -74,12 +74,21 @@ class BridgeProbeTest {
         transport.enqueue("DeleteMoment", """{"data":{"deleteMoment":{"id":"1"}}}""")
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
-        Moment.feed.load()
-        val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.map { row -> row.text } == listOf("m") } }.first()
-        moment.update(text = GraphQLNullable.Value("edited"))
-        withTimeout(5000) { Moment.recent.live.flow.first { it.map { row -> row.text } == listOf("edited") } }
-        moment.destroy()
-        assertEquals(emptyList<Moment>(), withTimeout(5000) { Moment.recent.live.flow.first { it.isEmpty() } })
+        val scope = CoroutineScope(SupervisorJob())
+        val deliveries = java.util.concurrent.CopyOnWriteArrayList<List<String?>>()
+        scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }) } }
+        try {
+            eventually("the open list shows its first value") { deliveries.isNotEmpty() }
+            Moment.feed.load()
+            eventually("the open list shows the loaded row") { deliveries.lastOrNull() == listOf<String?>("m") }
+            val moment = Moment.recent.current().first()
+            moment.update(text = GraphQLNullable.Value("edited"))
+            eventually("the same open list shows the edited row") { deliveries.lastOrNull() == listOf<String?>("edited") }
+            moment.destroy()
+            eventually("the same open list loses the row") { deliveries.lastOrNull() == emptyList<String?>() }
+        } finally {
+            scope.cancel()
+        }
     }
 
     @Test

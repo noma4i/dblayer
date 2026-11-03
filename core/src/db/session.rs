@@ -10,7 +10,7 @@ impl Db {
         E: From<DbError> + From<Refused> + Send + 'static,
     {
         let db = self.clone();
-        crate::task::spawn_unpinned(async move { db.end_session_owned(end, expected, drain, clear).await })
+        crate::task::spawn(crate::task::Carry::Detached, async move { db.end_session_owned(end, expected, drain, clear).await })
             .await
             .map_err(|error| DbError::Internal(error.to_string()))?
     }
@@ -26,7 +26,7 @@ impl Db {
             Err(refused) => return Err(refused.into()),
         };
         let db = self.clone();
-        let permit = crate::task::spawn_blocking_unpinned(move || -> Result<_, E> {
+        let permit = crate::task::spawn_blocking(crate::task::Carry::Detached, move || -> Result<_, E> {
             permit.run_on_this_thread();
             db.shared.store.write_session_end_intent().map_err(DbError::from)?;
             db.shared.store.end_session(&permit);
@@ -36,7 +36,7 @@ impl Db {
         .map_err(|error| DbError::Internal(error.to_string()))??;
         if drain { permit.drained().await; }
         let db = self.clone();
-        crate::task::spawn_blocking_unpinned(move || -> Result<(), E> {
+        crate::task::spawn_blocking(crate::task::Carry::Detached, move || -> Result<(), E> {
             permit.run_on_this_thread();
             clear()?;
             db.reset_all_in(&permit)?;

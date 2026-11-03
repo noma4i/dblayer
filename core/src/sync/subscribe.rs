@@ -192,7 +192,9 @@ impl Feed {
         }
     }
 
-    async fn invalidation(&self, response: &Response, generation: Generation, received: crate::lifecycle::Stamp) -> bool {
+    async fn invalidation(&self, response: &Response, generation: Generation, received: crate::lifecycle::Stamp) -> bool { self.now().scope(self.invalidation_in(response, generation, received)).await }
+
+    async fn invalidation_in(&self, response: &Response, generation: Generation, received: crate::lifecycle::Stamp) -> bool {
         let Some(data) = response.data.as_ref() else { return false };
         let Some((_, feed)) = self.inner.change_feed().filter(|(_, feed)| feed.subscription == self.def.operation) else { return false };
         if generation != self.inner.db.generation() { return true; }
@@ -371,7 +373,11 @@ impl Feed {
         self.inner.load_scope(&resolved, true).await.map(|_| ())
     }
 
-    async fn apply_event(&self, response: &Response) -> bool {
+    fn now(&self) -> crate::lifecycle::Epoch { self.inner.db.shared.store.lifecycle.epoch_now() }
+
+    async fn apply_event(&self, response: &Response) -> bool { self.now().scope(self.apply_event_in(response)).await }
+
+    async fn apply_event_in(&self, response: &Response) -> bool {
         use crate::schema::SubscriptionAction;
         let Some(apply) = &self.def.apply else { return false };
         if matches!(apply.action, SubscriptionAction::Upsert | SubscriptionAction::Delete) { return false; }
@@ -439,7 +445,9 @@ impl Feed {
         Some(Pending { definition: self.def.clone(), bucket: format!("{}|{}", self.def.model, self.def.event.bucket_key(id.as_str())), id, node, generation: self.inner.db.generation(), stamp: self.received })
     }
 
-    async fn apply_active(&self, mut items: Vec<Pending>) -> bool {
+    async fn apply_active(&self, items: Vec<Pending>) -> bool { self.now().scope(self.apply_active_in(items)).await }
+
+    async fn apply_active_in(&self, mut items: Vec<Pending>) -> bool {
         if self.shared {
             let definitions = self.inner.live_definitions(&self.def.operation, &self.def.variables);
             items.retain(|item| definitions.contains(&item.definition));
@@ -447,7 +455,9 @@ impl Feed {
         self.apply(items).await
     }
 
-    async fn apply(&self, mut items: Vec<Pending>) -> bool {
+    async fn apply(&self, items: Vec<Pending>) -> bool { self.now().scope(self.apply_in(items)).await }
+
+    async fn apply_in(&self, mut items: Vec<Pending>) -> bool {
         let current = self.inner.db.generation();
         items.retain(|item| item.generation == current);
         if items.is_empty() {
@@ -507,7 +517,7 @@ impl Feed {
         let mut count = 0;
         let mut announced: Vec<(String, RowId, Map<String, Value>)> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
-        let committed = db.commit_following_report(generation, |reader| {
+        let committed = db.commit_following_report(&crate::lifecycle::Authority::Epoch(db.shared.store.lifecycle.epoch_now()), generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();
@@ -797,7 +807,7 @@ impl Inner {
         let backoff = RetryPolicy::Subscription.backoff().randomized();
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
         let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp() };
-        let task = crate::task::spawn(self.until_closed(feed.run(request, first, resets)));
+        let task = crate::task::spawn(crate::task::Carry::Detached, self.until_closed(feed.run(request, first, resets)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }
 }

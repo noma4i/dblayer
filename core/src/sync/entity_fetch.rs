@@ -41,7 +41,7 @@ impl Sync {
         let generation = self.inner.db.generation();
         for id in ids {
             let due = DueRefresh { model: model.into(), relation: relation.clone(), id: id.clone(), fetch, generation, cancel: cancel.clone(), sink: sink.clone(), session: false };
-            crate::task::spawn_on(&runtime, self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
+            crate::task::spawn_on(crate::task::Carry::here(), &runtime, self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
         }
         Ok(cancel)
     }
@@ -52,7 +52,7 @@ impl Sync {
             if due.fetch == EntityFetch::IfMissing {
                 let db = inner.db.clone();
                 let (model, id) = (due.model.clone(), due.id.clone());
-                let present = crate::task::spawn_blocking(move || db.entity_present(&model, &id)).await
+                let present = crate::task::spawn_blocking(crate::task::Carry::here(), move || db.entity_present(&model, &id)).await
                     .map_err(|error| SyncError::Store(error.to_string()))??;
                 if present { return Ok(()); }
                 if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return Err(SyncError::Cancelled); }
@@ -116,7 +116,7 @@ impl Inner {
         };
         let Ok(runtime) = Handle::try_current() else { return };
         for due in waiting.into_iter().filter(|due| !due.cancel.is_cancelled() && due.generation == self.db.generation()) {
-            crate::task::spawn_on_unpinned(&runtime, self.until_closed(Sync::refresh_entity(self.clone(), due)));
+            crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(Sync::refresh_entity(self.clone(), due)));
         }
     }
 }

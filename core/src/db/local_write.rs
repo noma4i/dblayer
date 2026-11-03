@@ -159,11 +159,16 @@ impl Db {
     }
 
     /// Creates the row in the data generation the caller was admitted in: a commit after that generation ended is refused as stale.
-    pub(crate) fn create_in(&self, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+    pub(crate) fn create_in(&self, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        self.create_queued(pinned, model, values, args).map(|(row, _)| row)
+    }
+
+    pub(crate) fn create_queued(&self, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>), DbError> {
         if !args.is_empty() { self.expire_blobs_before_use()?; }
         self.fill_local_sources(model, &mut values)?;
-        let id = self.insert_local(model, values, args, Action::Create, (None, pinned), None)?;
-        self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
+        let (id, operation) = self.insert_local(model, values, args, Action::Create, (None, pinned), None)?;
+        let row = self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+        Ok((row, operation))
     }
 
     pub(crate) fn create_held(&self, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
@@ -171,7 +176,7 @@ impl Db {
         values.insert("id".into(), Value::String(id.to_string()));
         self.preparing_uploads(model, generation, |files, generation, committed| {
             let item = files.prepare(model, id, uuid::Uuid::new_v4().to_string(), input, state)?;
-            self.insert_local(model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed))
+            self.insert_local(model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed)).map(|(id, _)| id)
         })
     }
 
@@ -220,7 +225,7 @@ impl Db {
         };
         self.preparing_uploads(model, generation, |prepared, generation, pending| {
             let files = files.into_iter().map(|(row, key, input)| prepared.prepare(model, row, key, input, UploadState::queued())).collect::<Result<Vec<_>, _>>()?;
-            let (committed, _) = self.commit_following_deferred(generation, |reader| {
+            let (committed, _) = self.commit_following_deferred(&self.authority()?, generation, |reader| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 for (id, data) in &rows {
                     envelope.scope_ops.extend(local_scope_ops(reader, spec, id, data)?);
@@ -234,7 +239,7 @@ impl Db {
         })
     }
 
-    fn insert_local<'a>(&'a self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<RowId, DbError> {
+    fn insert_local<'a>(&'a self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>), DbError> {
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &values)?;
         let mut input = values;
@@ -264,7 +269,7 @@ impl Db {
             scope_ops: Vec::new(),
             upload,
         };
-        self.commit_local_optional(spec, &mut queued, generation, pending, |reader, plan, queued| {
+        let committed = self.commit_local_optional(spec, &mut queued, generation, pending, |reader, plan, queued| {
             if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
                 return Err(DbError::AlreadyExists { model: model.to_string(), id: id.to_string() });
             }
@@ -273,7 +278,9 @@ impl Db {
             queued.rollback = Some(Prior { rows: vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }] }.to_value());
             Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
         })?;
-        Ok(id)
+        let operation = committed.operations.first().copied();
+        if let (Some(operation), true) = (operation, id.is_temp()) { crate::db::locked(&self.shared.creates).insert(format!("{model}\0{id}"), operation); }
+        Ok((id, operation))
     }
 
     pub fn update(&self, model: &str, id: &RowId, patch: Map<String, Value>) -> Result<Row, DbError> {
@@ -509,7 +516,7 @@ impl Db {
         let created_at = self.shared.store.lock().now_ms();
         let mut destroyed: Vec<RowRef> = Vec::new();
         let mut discarded: Vec<String> = Vec::new();
-        self.commit_following(generation, |reader| {
+        self.commit_following(&self.authority()?, generation, |reader| {
                 if reader.point(model, id.as_str())?.is_none() {
                     return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
                 }
@@ -579,7 +586,7 @@ impl Db {
     ) -> Result<CommitResult, DbError> {
         let generation = generation.unwrap_or_else(|| self.generation());
         let created_at = self.shared.store.lock().now_ms();
-        let (result, _) = self.commit_following_deferred(generation, |reader| {
+        let (result, _) = self.commit_following_deferred(&self.authority()?, generation, |reader| {
                 queued.scope_ops.clear();
                 let mut plan = WritePlan::new();
                 let Some(touches) = build(reader, &mut plan, queued)? else { return Ok(None) };

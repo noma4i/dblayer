@@ -153,9 +153,9 @@ pub(crate) struct Inner {
     /// The newest operation the outbox held when this database opened. A pending action that is not durable and is this old or older does not survive the open.
     pub(crate) reopened_through: i64,
     /// The identity of the session now and the newest pending operation when another identity took its place: an operation of that age belongs to the account that left and never goes out.
-    pub(crate) account: Mutex<(Option<String>, i64)>,
+    pub(crate) account: Arc<Mutex<(Option<String>, i64)>>,
     /// The newest pending operation when the network was last lost: an action that is not a durable command and is not newer than it never goes out.
-    pub(crate) network_lost: Mutex<i64>,
+    pub(crate) network_lost: Arc<Mutex<i64>>,
     /// The operations that waited for a retry when the network came back. They do not wait for their backoff once: the first attempt after the return takes them out, and a second failure waits by the normal backoff.
     pub(crate) backoff_released: Mutex<std::collections::BTreeSet<i64>>,
     /// The row the answer of an operation carried at its root, by operation: the call that waits for the answer returns it.
@@ -296,8 +296,8 @@ impl Sync {
             outbox_gate: tokio::sync::Mutex::new(()),
             queue,
             reopened_through,
-            account: Mutex::new((None, i64::MIN)),
-            network_lost: Mutex::new(i64::MIN),
+            account: Arc::new(Mutex::new((None, i64::MIN))),
+            network_lost: Arc::new(Mutex::new(i64::MIN)),
             backoff_released: Mutex::new(std::collections::BTreeSet::new()),
             answers: Mutex::new(send::Answers::default()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
@@ -390,6 +390,7 @@ impl crate::lifecycle::Holder for Inner {
 #[cfg(any(test, feature = "stress"))]
 pub mod rig;
 #[cfg(feature = "stress")]
+#[allow(clippy::disallowed_methods)]
 pub mod stress;
 
 #[cfg(test)]

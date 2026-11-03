@@ -176,6 +176,26 @@ pub struct WindowSave {
     pub cleared_at: Option<i64>,
 }
 
+#[derive(Clone)]
+pub struct NetworkAdmission {
+    expected: (i64, i64, bool),
+    current: std::sync::Arc<dyn Fn() -> (i64, i64, bool) + Send + Sync>,
+}
+
+impl NetworkAdmission {
+    pub fn new(expected: (i64, i64, bool), current: std::sync::Arc<dyn Fn() -> (i64, i64, bool) + Send + Sync>) -> Self { Self { expected, current } }
+
+    pub fn holds(&self) -> bool { (self.current)() == self.expected }
+}
+
+impl std::fmt::Debug for NetworkAdmission {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "NetworkAdmission({:?})", self.expected) }
+}
+
+impl PartialEq for NetworkAdmission {
+    fn eq(&self, other: &Self) -> bool { self.expected == other.expected && std::sync::Arc::ptr_eq(&self.current, &other.current) }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommitEnvelope {
     pub schema_version: u32,
@@ -191,6 +211,7 @@ pub struct CommitEnvelope {
     pub writes_local: bool,
     pub node_reread: bool,
     pub pending_locals: Vec<PendingLocal>,
+    pub network: Option<NetworkAdmission>,
 }
 
 /// A local value for a row that is not stored yet. It waits in `local_pending` and joins the row when it arrives.
@@ -208,6 +229,8 @@ pub enum EnvelopeFault {
     SchemaVersionMismatch,
     #[error("envelope generation is stale")]
     StaleGeneration,
+    #[error("the network moved between the plan and the commit")]
+    NetworkMoved,
     #[error("envelope holds several entity ops for one row")]
     ConflictingRowOps,
     #[error("envelope holds several scope ops for one member")]
@@ -232,6 +255,7 @@ impl CommitEnvelope {
             writes_local: false,
             node_reread: false,
             pending_locals: Vec::new(),
+            network: None,
         }
     }
 

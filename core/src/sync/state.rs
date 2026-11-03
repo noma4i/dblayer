@@ -73,7 +73,7 @@ impl Sync {
         let resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?;
         let watch = self.inner.owner.observe(&resolved.window_key, resolved.target(), None);
         let (inner, window, model, scope) = (self.inner.clone(), resolved.window_key.clone(), resolved.model.clone(), resolved.scope.key.as_str().to_string());
-        let seeded = crate::task::spawn_blocking(move || {
+        let seeded = crate::task::spawn_blocking(crate::task::Carry::Detached, move || {
             let seed = inner.stored_of(&model, &scope, &window);
             if let Ok(seed) = seed { inner.owner.seed_observed(&window, model, seed); }
         });
