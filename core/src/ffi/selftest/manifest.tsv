@@ -84,3 +84,4 @@ B12		swift	BridgeProbeTests.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	gr
 B12		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
 B13		core	a_prepared_delivery_is_withdrawn_by_the_cancel_of_the_reader	green	S3 R5: a prepared delivery is withdrawn by the cancel	arch-r3 specs/architecture.md A-F
 B14		kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionInACancelledScopeLeavesNoStreamInTheCore	green	S3 R6: a projection in a cancelled scope leaves no stream in the core	arch-r3 specs/architecture.md A-F
+B15		core	work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_gets_one_value_per_write	green	S3: spec F counters for the entity and count paths	arch-r3 specs/architecture.md F

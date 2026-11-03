@@ -315,6 +315,41 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
     rig.database.close_now();
 }
 
+/// B15, spec F: a write to one row of a list delivers nothing to the entity stream of another row, and one value to a count stream, however long the list is.
+#[tokio::test(flavor = "multi_thread")]
+async fn work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_gets_one_value_per_write() {
+    let rig = Rig::encrypted().await;
+    for (at, text) in [(1, "one"), (2, "two"), (3, "three"), (4, "four"), (5, "five")] { rig.world.seed_message("A", &format!("s{at}"), text, at); }
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (entity, count, list) = (Reader::open(), Reader::open(), Reader::open());
+    let streams = [
+        rig.database.subscribe(epoch, StreamRequest::Entity { model: "Message".into(), id: "s1".into(), fetch: crate::ffi::EntityFetch::None }, entity.clone()),
+        rig.database.subscribe(epoch, StreamRequest::Count { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#.into() }, count.clone()),
+        rig.database.subscribe(epoch, thread(), list.clone()),
+    ];
+    for stream in streams { bound(rig.database.stream_loaded(stream)).await.unwrap(); }
+    yield_until("the list holds 5 rows", || list.rows().len() == 5).await;
+    settle(&rig).await;
+    assert_eq!(rig.database.subscription_census().subscriptions, 3, "subscriptions are readers");
+
+    let mut costs = Vec::new();
+    for (index, text) in ["six", "seven"].into_iter().enumerate() {
+        let (entity_mark, count_mark) = (entity.len(), count.len());
+        let receipt = bound(rig.database.send(message(epoch, text, 6 + index as i64))).await.unwrap();
+        bound(rig.database.command_outcome(receipt)).await.unwrap();
+        settle(&rig).await;
+        let entity_values = entity.deliveries().len() - entity_mark;
+        let counts: Vec<i64> = count.deliveries().iter().skip(count_mark).filter_map(|delivery| if let StreamValue::Count { count, .. } = &delivery.value { Some(*count) } else { None }).collect();
+        assert_eq!(entity_values, 0, "a write to another row reached the entity stream");
+        assert_eq!(counts.last().copied(), Some(6 + index as i64), "the count stream shows {counts:?}");
+        costs.push(counts.len());
+    }
+    assert_eq!(costs[0], costs[1], "the cost of one write to the count stream grew with the list: {costs:?}");
+    assert!(costs[1] <= 2, "one write delivered {} count values", costs[1]);
+    rig.database.close_now();
+}
+
 /// A missed revision gives exactly one new snapshot, never a replay of the history.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_missed_revision_gives_one_new_snapshot() {
@@ -344,6 +379,7 @@ async fn a_missed_revision_gives_one_new_snapshot() {
 
 /// B09 (R1, old line command.rs:46-55): a send that waits for the writer while the session ends writes no row. The commit takes the epoch of the caller, not the generation of the data, which moves later.
 #[tokio::test(flavor = "multi_thread")]
+#[allow(clippy::await_holding_lock)]
 async fn a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row() {
     use crate::lifecycle::{Boundary, End};
     let rig = Rig::encrypted().await;

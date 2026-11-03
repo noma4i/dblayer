@@ -408,3 +408,53 @@ fn a_mapped_patch_value_follows_the_parameter_and_rolls_back_with_the_action() {
     db.act("moments", "decide", &rid("m1"), patch(), obj(json!({"decision": "ACCEPT"}))).unwrap();
     assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("yes"));
 }
+
+fn authored_notes() -> Db {
+    let remote_single = |operation: &str| crate::sync::rig::remote(operation, crate::schema::RemoteShape::Single, "5.minutes");
+    let singleton = |name: &str| {
+        let mut spec = crate::schema::ModelSpec::new(name, vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("balance", ScalarKind::Int)]);
+        let mut current = crate::schema::RelationSpec::global("current");
+        current.remote = Some(remote_single("Current"));
+        spec.relations.push(current);
+        spec
+    };
+    let mut notes = crate::schema::ModelSpec::new("notes", vec![
+        FieldSpec::scalar("id", ScalarKind::Id),
+        FieldSpec::scalar("roomId", ScalarKind::Id).indexed(),
+        FieldSpec::scalar("authorId", ScalarKind::Id).optional(),
+        FieldSpec::scalar("regionId", ScalarKind::Id).optional(),
+    ]);
+    let mut create = crate::schema::ActionDeclaration::new("create", crate::schema::RootShape::Upsert);
+    create.mutation = Some("CreateNote".to_string());
+    create.local = vec!["authorId".to_string(), "regionId".to_string()];
+    for (field, model) in [("authorId", "wallets"), ("regionId", "regions")] {
+        create.local_from.insert(field.to_string(), crate::schema::EffectSource::Row { model: model.to_string(), row: None, field: "id".to_string() });
+    }
+    notes.actions.push(create);
+    Db::open_in_memory(vec![notes, singleton("wallets"), singleton("regions")], None).unwrap()
+}
+
+fn join_current(db: &Db, model: &str, id: &str) {
+    let key = db.spec(model).unwrap().selection_key("current", &Default::default()).unwrap();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    envelope.scope_ops.push(ScopeOp::Append { scope: ScopeRef::new(ModelKey::new(model), key), row: crate::identity::RowId::new(id).unwrap(), order_key: "a".to_string() });
+    db.land(envelope).unwrap();
+}
+
+#[test]
+fn inv_dsl_09_a_create_fills_a_local_attribute_from_the_singleton_row_and_skips_it_without_one() {
+    let db = authored_notes();
+    let created = |arguments: serde_json::Value| {
+        let row = db.create("notes", obj(arguments)).unwrap();
+        json!([row.get("authorId").cloned().filter(|value| !value.is_null()), row.get("regionId").cloned().filter(|value| !value.is_null())])
+    };
+    assert_eq!(created(json!({"roomId": "a"})), json!([null, null]));
+    put(&db, "wallets", json!({"id": "w1", "balance": 1}));
+    join_current(&db, "wallets", "w1");
+    assert_eq!(created(json!({"roomId": "a"})), json!(["w1", null]));
+    put(&db, "regions", json!({"id": "r1", "balance": 0}));
+    join_current(&db, "regions", "r1");
+    assert_eq!(created(json!({"roomId": "a"})), json!(["w1", "r1"]));
+    assert_eq!(created(json!({"roomId": "a", "authorId": null, "regionId": null})), json!(["w1", "r1"]));
+    assert_eq!(created(json!({"roomId": "a", "authorId": "w9", "regionId": "r9"})), json!(["w9", "r9"]));
+}

@@ -20,7 +20,7 @@ fn object(value: Value) -> Map<String, Value> {
 }
 
 fn stored(last_key: &str, incoming: Vec<&str>) -> StoredScope {
-    StoredScope { last_key: Some(last_key.into()), incoming: incoming.into_iter().map(String::from).collect(), ..StoredScope::default() }
+    StoredScope { last_key: Some(last_key.into()), incoming: incoming.into_iter().map(String::from).collect() }
 }
 
 fn land(name: &str, stored: &StoredScope, incoming: &[Map<String, Value>]) -> LandingPlan {

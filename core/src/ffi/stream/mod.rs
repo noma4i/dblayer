@@ -95,6 +95,7 @@ pub enum StreamEnd {
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
+#[allow(clippy::large_enum_variant)]
 pub enum StreamValue {
     /// The whole result at a revision. The first value of a stream, and the answer to a missed revision.
     Snapshot { revision: i64, rows: Vec<WireRow>, state: StreamState },

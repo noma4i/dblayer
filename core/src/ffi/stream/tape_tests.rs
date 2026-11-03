@@ -30,6 +30,7 @@ pub(crate) struct Seen {
     pub(crate) error_kind: Option<String>,
 }
 
+#[allow(clippy::result_large_err)]
 fn seen_of(delivery: StreamDelivery, size: &mut u32) -> Result<Seen, StreamValue> {
     let (revision, state, full, rows, row_indexes, removed, placed, replaced, count) = match delivery.value {
         StreamValue::Snapshot { revision, rows, state } => { *size = rows.len() as u32; (revision, state, true, rows, Vec::new(), Vec::new(), Vec::new(), Vec::new(), None) }

@@ -54,8 +54,8 @@ fn the_manifest_lists_every_sequence_and_each_listed_test_exists() {
         };
         assert!(text.contains(&format!("{keyword} {}(", name_of(&row.test))), "{} lists {} which does not exist in the {} lane", row.id, row.test, row.lane);
     }
-    let core_only = ["B09", "B11", "B13"];
-    for number in 1..=14 {
+    let core_only = ["B09", "B11", "B13", "B15"];
+    for number in 1..=15 {
         let id = format!("B{number:02}");
         for lane in ["core", "swift", "kotlin"] {
             let present = rows.iter().any(|row| row.id == id && row.lane == lane);

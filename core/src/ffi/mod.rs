@@ -17,6 +17,8 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
 }
 #[cfg(test)]
 mod close_tests;
+#[cfg(test)]
+mod pending_registration_tests;
 mod foreign_future;
 mod lease;
 mod open_slot;

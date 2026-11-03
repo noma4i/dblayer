@@ -114,12 +114,9 @@ impl Prior {
             for seq in sequences {
                 let prior = crate::operation::read_value(reader.connection(), seq, "prior")?.map(Self::decode).transpose()?;
                 for row in prior.into_iter().flat_map(|prior| prior.rows) {
-                    match row {
-                        PriorRow::Edited { model, id, owned: fields, .. } => {
-                            let owner = pending.fields.entry((model, id)).or_default();
-                            for field in fields.into_keys() { owner.entry(field).or_default().insert(seq); }
-                        }
-                        _ => {}
+                    if let PriorRow::Edited { model, id, owned: fields, .. } = row {
+                        let owner = pending.fields.entry((model, id)).or_default();
+                        for field in fields.into_keys() { owner.entry(field).or_default().insert(seq); }
                     }
                 }
             }
