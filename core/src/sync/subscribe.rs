@@ -742,7 +742,7 @@ impl Feed {
 async fn invalidated(resets: &mut crate::lifecycle::Watch) -> Option<crate::lifecycle::Snapshot> {
     loop {
         let next = resets.changed().await?;
-        if !matches!(next.change, crate::lifecycle::Change::Session(..)) { return Some(next); }
+        if !matches!(next.change, crate::lifecycle::Change::SessionStarted(_)) { return Some(next); }
     }
 }
 
@@ -760,10 +760,18 @@ impl Inner {
             _ = stopped.wait_for(|stopped| *stopped) => None,
             result = async {
                 self.connectivity.online().await;
-                if !self.admitted(crate::lifecycle::Origin::Observed) { return None; }
+                let lifecycle = &self.db.shared.store.lifecycle;
+                let lease = loop {
+                    match self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Observed, "subscription open") {
+                        Ok(lease) => break lease,
+                        Err(_) if !lifecycle.admission(crate::lifecycle::Origin::Observed).await => return None,
+                        Err(_) => {}
+                    }
+                };
                 let generation = self.db.generation();
                 crate::db::lock::assert_no_library_lock("Transport::subscribe");
-                Some((generation, self.transport.subscribe(request).await))
+                let opened = lease.run(self.transport.subscribe(request)).await;
+                Some((generation, opened.unwrap_or_else(|ended| Err(ended.into()))))
             } => result,
         }
     }

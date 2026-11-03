@@ -75,11 +75,14 @@ async fn survives_panic(work: impl std::future::Future<Output = ()>) -> bool {
     }).await
 }
 
-struct FileTask(Arc<watch::Sender<usize>>);
+struct FileTask {
+    pending: Arc<watch::Sender<usize>>,
+    _lease: Option<crate::lifecycle::Lease>,
+}
 
 impl Drop for FileTask {
     fn drop(&mut self) {
-        crate::db::lock::effect(|| self.0.send_modify(|pending| *pending -= 1));
+        crate::db::lock::effect(|| self.pending.send_modify(|pending| *pending -= 1));
     }
 }
 
@@ -97,12 +100,6 @@ impl Drop for UploadResume {
 }
 
 impl UploadRuns {
-    pub(crate) fn idle(&mut self) -> (bool, Vec<Result<(), tokio::task::JoinError>>) {
-        let mut finished = Vec::new();
-        while let Some(result) = self.tasks.try_join_next() { finished.push(result); }
-        (self.ready.is_empty() && self.active.is_empty() && self.tasks.is_empty(), finished)
-    }
-
     pub(crate) fn new(max_files: usize) -> Self {
         Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: BTreeMap::new(), next_run: 0, #[cfg(test)] walked: 0, tasks: JoinSet::new(), adopted: HashMap::new() }
     }
@@ -308,19 +305,21 @@ impl Inner {
 
     fn launch_run(self: &Arc<Self>, runs: &mut UploadRuns, seq: i64, position: i64, mode: RunMode, resumed: Option<Result<crate::transport::Response, crate::transport::TransportError>>) {
         while runs.tasks.try_join_next().is_some() {}
+        let Ok(lease) = self.lease(crate::lifecycle::Origin::Background, "upload") else { return };
         let (run, token) = runs.register(seq, position, matches!(mode, RunMode::Transfer));
         let inner = self.clone();
         runs.tasks.spawn(self.until_closed(async move {
-            if !survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed)).await {
+            if let Ok(false) = lease.run(survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed))).await {
                 inner.fail_upload(seq, SyncError::Store("the upload task panicked".into()));
             }
             inner.finish_run(seq, position, run);
+            drop(lease);
         }));
     }
 
     fn spawn_file_task(&self, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
         crate::db::lock::effect(|| self.file_tasks.send_modify(|pending| *pending += 1));
-        let finished = FileTask(self.file_tasks.clone());
+        let finished = FileTask { pending: self.file_tasks.clone(), _lease: self.lease(crate::lifecycle::Origin::Background, "file task").ok() };
         drop(runtime.spawn_blocking(move || { task(); drop(finished); }));
     }
 

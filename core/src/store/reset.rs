@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-use crate::db::dispatch::Effects;
+use crate::lifecycle::{Boundary, Change, End, Permit};
 use crate::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ListKey;
@@ -22,13 +22,11 @@ pub(crate) struct ResetCommitted<'a> {
     revision: i64,
     models: Option<Vec<String>>,
     operations: Vec<crate::operation::QueueOperation>,
-    effects: Option<Effects>,
 }
 
 impl ResetCommitted<'_> {
     pub(crate) fn run(mut self) {
         self.announce();
-        if let Some(effects) = self.effects.take() { effects.run(); }
     }
 
     fn announce(&mut self) {
@@ -252,7 +250,7 @@ pub(crate) fn current_fingerprints(inner: &Inner) -> BTreeMap<String, String> {
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
     let Some(mode) = pending_intent(&inner.connection)? else { return Ok(false) };
     let models: Vec<String> = inner.connection.prepare("SELECT model FROM reset_intent_model ORDER BY pos")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
-    if !matches!(mode.as_str(), "cache_only" | "incompatible") {
+    if !matches!(mode.as_str(), "cache_only" | "incompatible" | "session_end") {
         let transaction = inner.connection.unchecked_transaction()?;
         quarantine_add(&transaction, None, &serde_json::json!({ "mode": mode }), QuarantineReason::CorruptResetIntent)?;
         clear_intent(&transaction)?;
@@ -281,19 +279,33 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
 }
 
 impl Store {
+    /// Records that a session end began, before anything is cleared. A crash before the clearing ends is replayed at the next open: the data is wiped and the credential cleared.
+    pub(crate) fn write_session_end_intent(&self) -> Result<(), StoreError> {
+        let inner = self.lock();
+        let now = inner.now_ms();
+        write_intent(&inner.connection, "session_end", &[], now)
+    }
+
+    /// True once after an open that finished an interrupted session end: the credential is still to clear.
+    pub(crate) fn take_session_end_replay(&self) -> bool {
+        self.session_end_replay.swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
     pub fn reset_cache_only(&self, models: &[&str]) -> Result<(), StoreError> {
-        self.reset_cache_only_held(models)?.run();
+        let permit = self.lifecycle.begin_blocking(Boundary::Models, None).map_err(StoreError::refused)?;
+        self.reset_cache_only_held(&permit, models)?.run();
+        permit.finish();
         Ok(())
     }
 
-    pub(crate) fn reset_cache_only_held(&self, models: &[&str]) -> Result<ResetCommitted<'_>, StoreError> {
+    pub(crate) fn reset_cache_only_held(&self, permit: &Permit, models: &[&str]) -> Result<ResetCommitted<'_>, StoreError> {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         let tables: Vec<(String, String)> = models
             .iter()
             .map(|model| inner.model(model).map(|info| (model.to_string(), info.table.clone())))
             .collect::<Result<_, _>>()?;
-        inner.generation = self.lifecycle.transition_deferred(crate::lifecycle::Change::BeginReset);
+        inner.generation = permit.next_generation();
         let now = inner.now_ms();
         let names: Vec<String> = models.iter().map(|model| model.to_string()).collect();
         write_intent(&inner.connection, "cache_only", &names, now)?;
@@ -308,25 +320,27 @@ impl Store {
         transaction.commit()?;
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
-        let effects = self.reset_effects(Some(names.clone()));
+        permit.defer(Change::Cleared(Some(names.clone())));
         let event = StoreEvent::Reset { revision, models: Some(names.clone()), operations: operations.clone() };
         if let Some(log) = self.commit_log.get() { log(&event); }
         let ticket = self.line.ticket();
         drop(inner);
-        Ok(ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(names), operations, effects: Some(effects) })
+        Ok(ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(names), operations })
     }
 
     pub fn reset_incompatible(&self) -> Result<(), StoreError> {
-        self.reset_incompatible_held()?.run();
+        let permit = self.lifecycle.begin_blocking(Boundary::Content, None).map_err(StoreError::refused)?;
+        self.reset_incompatible_held(&permit)?.run();
+        permit.finish();
         Ok(())
     }
 
-    pub(crate) fn reset_incompatible_held(&self) -> Result<ResetCommitted<'_>, StoreError> {
+    pub(crate) fn reset_incompatible_held(&self, permit: &Permit) -> Result<ResetCommitted<'_>, StoreError> {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
-        inner.generation = self.lifecycle.transition_deferred(crate::lifecycle::Change::BeginReset);
+        inner.generation = permit.next_generation();
         let now = inner.now_ms();
-        write_intent(&inner.connection, "incompatible", &[], now)?;
+        write_intent(&inner.connection, if matches!(permit.boundary(), Boundary::SessionEnd(End::Server | End::Local)) { "session_end" } else { "incompatible" }, &[], now)?;
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false)?;
         retire_operations(&transaction, None, None)?;
@@ -337,12 +351,12 @@ impl Store {
         transaction.commit()?;
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
-        let effects = self.reset_effects(None);
+        permit.defer(Change::Cleared(None));
         let event = StoreEvent::Reset { revision, models: None, operations: operations.clone() };
         if let Some(log) = self.commit_log.get() { log(&event); }
         let ticket = self.line.ticket();
         drop(inner);
-        Ok(ResetCommitted { store: self, ticket: Some(ticket), revision, models: None, operations, effects: Some(effects) })
+        Ok(ResetCommitted { store: self, ticket: Some(ticket), revision, models: None, operations })
     }
 
     #[cfg(test)]

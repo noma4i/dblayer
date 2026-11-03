@@ -100,6 +100,7 @@ impl Cloud {
     }
 
     pub async fn resolve_initial_merge(&self, source: MergeSource) -> Result<(), CloudError> {
+        let _lease = self.inner.lease()?;
         let _turn = self.inner.pass.lock().await;
         let generation = self.inner.db.generation();
         let rows = self.inner.db.cloud_unstamped(generation)?;
@@ -188,9 +189,16 @@ impl Inner {
         });
     }
 
+    fn lease(&self) -> Result<crate::lifecycle::Lease, CloudError> {
+        self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Cloud, "cloud pass").map_err(|_| CloudError::Interrupted { detail: "the database closed or its session changed".into() })
+    }
+
     async fn pass(&self, pull: bool, attempt: Option<u32>) -> Result<(), Failure> {
+        let lease = self.lease().map_err(|error| Failure { error, retry: None })?;
         let _turn = self.pass.lock().await;
-        let Err(error) = self.cycle(pull).await else { return Ok(()) };
+        let ended = || CloudError::Interrupted { detail: "the database closed or its session changed".into() };
+        let cycled = lease.run(self.cycle(pull)).await.unwrap_or_else(|_| Err(ended()));
+        let Err(error) = cycled else { return Ok(()) };
         let retry = attempt.and_then(|attempt| Self::retry_of(&error, attempt));
         self.publish(match (&retry, attempt, &error) {
             (Some(_), _, _) => PhaseEvent::Wait,

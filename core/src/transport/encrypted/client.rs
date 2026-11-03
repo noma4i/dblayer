@@ -11,6 +11,7 @@ use super::key::ServerKey;
 use super::state::{self, Pending};
 use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
+use crate::lifecycle::{End, Origin};
 use crate::pacing::{Clock, RetryPolicy};
 use crate::transport::{SessionCode, TransportError};
 use crate::transport::retry::{RetryClass, RetryCalls, Retrying};
@@ -79,7 +80,7 @@ pub struct EncryptedClient {
     db: Db,
     pub(super) clock: Arc<dyn Clock>,
     pub(crate) online: Arc<crate::transport::Connectivity>,
-    credential: CredentialCell,
+    credential: Arc<CredentialCell>,
     mutations: Gate<()>,
     progress: Arc<RetryCalls>,
 }
@@ -165,12 +166,16 @@ pub(super) fn temporary_error(body: &Value) -> Option<TransportError> {
     Some(TransportError::Graphql { messages: codes.into_iter().map(str::to_string).collect(), extensions: None })
 }
 
-impl EncryptedClient {
-    fn epoch(&self) -> u64 { self.db.shared.store.lifecycle.snapshot().session_epoch }
+/// What the caller does once its lease has ended: the answer was committed under the lease, and a change of the session needs the whole database.
+enum After {
+    Nothing,
+    Confirm,
+    Revoked,
+}
 
-    /// Each public call runs in one scope that the close of the database and the end of the session cancel, whatever the call waits for: a queue, a retry, a request or an answer.
-    async fn scope<T>(&self, work: impl std::future::Future<Output = Result<T, TransportError>>) -> Result<T, TransportError> {
-        self.db.shared.store.lifecycle.request(work).await
+impl EncryptedClient {
+    fn lease(&self, target: &'static str) -> Result<crate::lifecycle::Lease, TransportError> {
+        Ok(self.db.shared.store.lifecycle.lease_for_session(Origin::Explicit, target)?)
     }
 
     fn write_in<T>(&self, epoch: u64, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {
@@ -179,23 +184,35 @@ impl EncryptedClient {
 
     fn confirm_session(&self, epoch: u64) -> Result<(), TransportError> {
         if let Some(current) = self.signed_in()? {
-            self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(Some(current), epoch));
+            self.db.shared.store.lifecycle.start_session(Some(current), epoch);
         }
         Ok(())
     }
 
-    pub async fn session_call(&self, operation: &str, body: Value) -> Result<Answer, TransportError> {
-        let epoch = self.epoch();
-        self.scope(self.session_call_in(epoch, operation.to_string(), body)).await
+    async fn conclude(&self, epoch: u64, after: After) -> Result<(), TransportError> {
+        match after {
+            After::Nothing => Ok(()),
+            After::Confirm => self.confirm_session(epoch),
+            After::Revoked => self.end_session(End::Server, Some(epoch)).await,
+        }
     }
 
-    async fn session_call_in(&self, epoch: u64, operation: String, body: Value) -> Result<Answer, TransportError> {
+    pub async fn session_call(&self, operation: &str, body: Value) -> Result<Answer, TransportError> {
+        let lease = self.lease("session call")?;
+        let epoch = lease.epoch();
+        let (answer, after) = lease.run(self.session_call_in(epoch, operation.to_string(), body)).await??;
+        drop(lease);
+        self.conclude(epoch, after).await?;
+        Ok(answer)
+    }
+
+    async fn session_call_in(&self, epoch: u64, operation: String, body: Value) -> Result<(Answer, After), TransportError> {
         if operation == "logout" { return self.mutate_in(epoch, &self.config.endpoints.logout, body, None, false).await; }
         let operation = self.config.endpoints.session_operations.get(&operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
         if !operation.sessionless {
-            let answer = self.mutate_in(epoch, &operation.path, body, None, false).await?;
-            if confirmed_error(&answer.body).is_none() { self.confirm_session(epoch)?; }
-            return Ok(answer);
+            let (answer, after) = self.mutate_in(epoch, &operation.path, body, None, false).await?;
+            let after = if matches!(after, After::Nothing) && confirmed_error(&answer.body).is_none() { After::Confirm } else { after };
+            return Ok((answer, after));
         }
         let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
         loop {
@@ -206,8 +223,8 @@ impl EncryptedClient {
             let result = self.post(&operation.path, token, &request_id, &response_key, false).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
             match result {
                 Ok(answer) => {
-                    if confirmed_error(&answer.body).is_none() { self.confirm_session(epoch)?; }
-                    return Ok(answer);
+                    let after = if confirmed_error(&answer.body).is_none() { After::Confirm } else { After::Nothing };
+                    return Ok((answer, after));
                 }
                 Err(error) => retry.failed(error).await?,
             }
@@ -237,7 +254,12 @@ impl EncryptedClient {
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
         let online = db.connectivity();
-        Ok(Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: CredentialCell::default(), mutations: Gate::new(()), progress: Arc::default() })
+        let client = Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Arc::default(), mutations: Gate::new(()), progress: Arc::default() };
+        if client.db.shared.store.take_session_end_replay() {
+            client.credentials.clear()?;
+            client.with_connection(state::clear)?;
+        }
+        Ok(client)
     }
 
     pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -245,11 +267,15 @@ impl EncryptedClient {
     }
 
     pub(crate) async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, upload: bool) -> Result<Answer, TransportError> {
-        let epoch = self.epoch();
-        self.scope(self.mutate_in(epoch, path, body, owner, upload)).await
+        let lease = self.lease("mutation")?;
+        let epoch = lease.epoch();
+        let (answer, after) = lease.run(self.mutate_in(epoch, path, body, owner, upload)).await??;
+        drop(lease);
+        self.conclude(epoch, after).await?;
+        Ok(answer)
     }
 
-    async fn mutate_in(&self, epoch: u64, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, upload: bool) -> Result<Answer, TransportError> {
+    async fn mutate_in(&self, epoch: u64, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, upload: bool) -> Result<(Answer, After), TransportError> {
         check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
@@ -298,11 +324,16 @@ impl EncryptedClient {
     }
 
     pub(crate) async fn resume_pending(&self) -> Result<Option<Answer>, TransportError> {
-        let epoch = self.epoch();
-        self.scope(self.resume_in(epoch)).await
+        let lease = self.lease("session resume")?;
+        let epoch = lease.epoch();
+        let resumed = lease.run(self.resume_in(epoch)).await??;
+        drop(lease);
+        let Some((answer, after)) = resumed else { return Ok(None) };
+        self.conclude(epoch, after).await?;
+        Ok(Some(answer))
     }
 
-    async fn resume_in(&self, epoch: u64) -> Result<Option<Answer>, TransportError> {
+    async fn resume_in(&self, epoch: u64) -> Result<Option<(Answer, After)>, TransportError> {
         let _turn = self.mutations.lock().await;
         let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
         if self.config.endpoints.session_operations.values().any(|operation| operation.sessionless && operation.path == pending.path) {
@@ -316,7 +347,8 @@ impl EncryptedClient {
     }
 
     pub async fn read(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
-        self.scope(self.read_in(path, body)).await
+        let lease = self.lease("read")?;
+        lease.run(self.read_in(path, body)).await?
     }
 
     async fn read_in(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
@@ -333,23 +365,26 @@ impl EncryptedClient {
         Ok(self.with_connection(state::session)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
     }
 
-    pub fn reset(&self) -> Result<(), TransportError> {
-        self.reset_in(None)
+    /// Ends the session: the old epoch's work ends, the credential and its tables clear, and the data of the account goes. A caller that carries the epoch it was admitted in is refused once that epoch has gone.
+    pub(crate) async fn end_session(&self, end: End, expected: Option<u64>) -> Result<(), TransportError> {
+        let (credentials, cell, db) = (self.credentials.clone(), self.credential.clone(), self.db.clone());
+        let clear = move || -> Result<(), TransportError> {
+            crate::db::lock::assert_no_library_lock("CredentialSlot::clear");
+            credentials.clear()?;
+            let mut state = crate::db::locked(&cell.state);
+            state.cached = None;
+            state.generation += 1;
+            #[cfg(test)]
+            cell.park();
+            let cleared = { let inner = db.shared.store.lock(); state::clear(&inner.connection).map_err(storage) };
+            drop(state);
+            cleared
+        };
+        self.db.end_session(end, expected, end != End::Server, clear).await
     }
 
-    /// Ends the session, then clears the credential and its tables. A confirmed logout carries its epoch and the check shares the writer lock with the end, so an answer that outlived a close or a newer session ends nothing.
-    fn reset_in(&self, admitted: Option<u64>) -> Result<(), TransportError> {
-        self.db.shared.store.end_session_in(admitted, || TransportError::Interrupted("the session ended while its answer was pending".into()))?;
-        crate::db::lock::assert_no_library_lock("CredentialSlot::clear");
-        self.credentials.clear()?;
-        let mut state = crate::db::locked(&self.credential.state);
-        state.cached = None;
-        state.generation += 1;
-        #[cfg(test)]
-        self.credential.park();
-        let cleared = self.with_connection(state::clear);
-        drop(state);
-        cleared
+    pub async fn reset(&self) -> Result<(), TransportError> {
+        self.end_session(End::Local, None).await
     }
 
     fn pending_token(&self, credential: &str, pending: &Pending) -> Result<String, TransportError> {
@@ -357,7 +392,7 @@ impl EncryptedClient {
         self.request_token(Some(RequestSession { credential: credential.into(), sequence: Some(pending.sequence) }), &pending.request_id, &pending.response_key, &pending.path, &body)
     }
 
-    async fn await_answer(&self, epoch: u64, mut pending: Pending) -> Result<Answer, TransportError> {
+    async fn await_answer(&self, epoch: u64, mut pending: Pending) -> Result<(Answer, After), TransportError> {
       let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
       loop {
         self.online.online().await;
@@ -396,14 +431,14 @@ impl EncryptedClient {
                 None => TransportError::Decode("the answer does not confirm the sequence".into()),
             });
         }
-        match pending.path == self.config.endpoints.logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
-            true => self.reset_in(Some(epoch))?,
+        let after = match pending.path == self.config.endpoints.logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
+            true => After::Revoked,
             false => {
                 self.write_in(epoch, |connection| state::commit(connection, pending.sequence))?;
-                if confirmed_error(&answer.body).is_none() { self.confirm_session(epoch)?; }
+                if confirmed_error(&answer.body).is_none() { After::Confirm } else { After::Nothing }
             }
-        }
-        return Ok(answer);
+        };
+        return Ok((answer, after));
       }
     }
 
@@ -507,6 +542,14 @@ impl EncryptedClient {
         let park = Arc::new(ResetPark::default());
         *crate::db::locked(&self.credential.parked) = Some(park.clone());
         park
+    }
+
+    /// Clears the credential and the session state without ending the session of the database.
+    #[cfg(test)]
+    pub(crate) fn clear_credential_for_test(&self) -> Result<(), TransportError> {
+        self.credentials.clear()?;
+        crate::db::locked(&self.credential.state).cached = None;
+        self.with_connection(state::clear)
     }
 
     #[cfg(test)]

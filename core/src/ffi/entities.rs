@@ -398,11 +398,19 @@ impl LiveEntities {
         Ok(())
     }
 
+    /// The read of this entry failed: a first-load wait then asks for the load again instead of returning the old failure.
+    fn read_failed(&self, id: &str, lease: u64) -> bool {
+        let state = locked(&self.state);
+        let entry = if id.is_empty() { state.singleton.as_ref().map(|single| &single.entry) } else { state.entries.get(id) };
+        entry.is_some_and(|entry| entry.lease == lease && matches!(entry.verdict.read, EntityRead::Failed { .. }))
+    }
+
     pub async fn load_initial(&self, id: String, lease: u64) -> Result<(), DbError> {
         super::entity_calls::entered();
-        if self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) { return Ok(()); }
-        let sync = self.database.sync()?.clone();
-        if !sync.holds_session() { return Err(DbError::Interrupted { detail: "the session ended".into() }); }
+        let Some(sync) = self.database.sync.clone() else { return Ok(()) };
+        let admitted = self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed);
+        if admitted && !self.read_failed(&id, lease) { return Ok(()); }
+        if !admitted && !matches!(sync.inner.transport.session(), Ok(Some(_))) { return Err(DbError::Interrupted { detail: "the session ended".into() }); }
         let singleton = {
             let state = locked(&self.state);
             if state.closed { return Err(DbError::Interrupted { detail: "entities closed".into() }); }
@@ -517,20 +525,13 @@ impl LiveEntities {
     }
 }
 
-impl crate::lifecycle::Member for LiveEntities {
+impl crate::lifecycle::Holder for LiveEntities {
     fn close(&self) { self.shutdown(); }
-    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
         if snapshot.rereads(&self.model) { self.reset_core(); }
-        else if matches!(snapshot.change, crate::lifecycle::Change::EndSession) { self.end_reads(); }
+        else if matches!(snapshot.change, crate::lifecycle::Change::SessionEnded) { self.end_reads(); }
     }
     fn registration(&self) -> &OnceLock<crate::lifecycle::Registration> { &self.registration }
-    fn busy(&self) -> bool {
-        let state = locked(&self.state);
-        let reading = state.entries.values().any(|entry| entry.machine.is_reading())
-            || state.singleton.as_ref().is_some_and(|single| single.entry.machine.is_reading());
-        drop(state);
-        reading && self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) || !self.outbox.is_idle()
-    }
 }
 
 impl Drop for LiveEntities {

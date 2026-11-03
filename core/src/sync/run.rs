@@ -8,7 +8,8 @@ use super::{locked, Sync};
 impl Sync {
     /// Sends a registered operation without adding it to the outbox.
     pub async fn run(&self, operation: &str, variables: Value) -> Result<Value, SyncError> {
-        let epoch = self.inner.db.shared.store.lifecycle.snapshot().session_epoch;
+        let lease = self.inner.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Explicit, "run")?;
+        let epoch = lease.epoch();
         let definition = locked(&self.inner.operations).get(operation).cloned().ok_or_else(|| SyncError::UnknownOperation(operation.to_string()))?;
         if !self.inner.connectivity.is_online() {
             return Err(SyncError::Offline);
@@ -16,9 +17,10 @@ impl Sync {
         let request = GraphQLRequest::new(&definition.document, operation, variables);
         let transport = &self.inner.transport;
         crate::db::lock::assert_no_library_lock("Transport::request");
-        let response = self.inner.db.shared.store.lifecycle.request(async {
+        let response = lease.run(async {
             if definition.document.trim_start().starts_with("mutation") { transport.mutate(request).await } else { transport.query(request).await }
-        }).await.map_err(SyncError::Transport)?;
+        }).await?.map_err(SyncError::Transport)?;
+        drop(lease);
         if response.shape().outcome() != ResponseOutcome::Commit {
             let messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
             return Err(SyncError::Graphql { messages: if messages.is_empty() { vec!["empty response".to_string()] } else { messages }, extensions: response.extensions() });

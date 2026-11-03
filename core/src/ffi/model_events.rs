@@ -38,7 +38,7 @@ impl Database {
     }
 }
 
-impl crate::lifecycle::Member for ModelEventFeed {
+impl crate::lifecycle::Holder for ModelEventFeed {
     fn close(&self) { self.events.close(); }
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 }

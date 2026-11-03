@@ -60,18 +60,6 @@ impl Inner {
         }
     }
 
-    pub(crate) fn drop_dead_live(&self) -> bool {
-        self.live_effects.under(&self.lives, |lives, effects| {
-            let dead: Vec<String> = lives.iter().filter(|(_, live)| live.subscription.as_ref().is_some_and(|subscription| { let status = subscription.status(); !status.connected && !status.opening })).map(|(key, _)| key.clone()).collect();
-            for key in &dead { effects.release(lives.remove(key)); }
-            !dead.is_empty()
-        })
-    }
-
-    pub(crate) fn live_opening(&self) -> bool {
-        locked(&self.lives).values().any(|live| live.starting.is_some() || live.subscription.as_ref().is_some_and(|subscription| subscription.status().opening))
-    }
-
     pub(crate) fn restart_live(self: &std::sync::Arc<Self>, cause: super::resume_machine::Cause) {
         let explicit = cause == super::resume_machine::Cause::Explicit;
         if explicit { crate::db::lock::effect(|| { let _ = self.subscription_failures.send(None); }); }
@@ -193,6 +181,9 @@ impl Inner {
             }
             if let Some(closing) = live.closing.take() {
                 effects.push(move || crate::db::lock::effect(|| closing.abort()));
+            }
+            if live.subscription.as_ref().is_some_and(|subscription| { let status = subscription.status(); !status.connected && !status.opening }) {
+                effects.release(live.subscription.take());
             }
             if live.subscription.is_some() || live.starting.is_some() {
                 return;

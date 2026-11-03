@@ -19,6 +19,8 @@ pub enum StoreError {
     Poisoned(String),
     #[error("constraint violated: {0}")]
     Constraint(String),
+    #[error("the database is closed or its state moved")]
+    Refused,
 }
 
 impl From<rusqlite::Error> for StoreError {
@@ -33,6 +35,8 @@ impl From<rusqlite::Error> for StoreError {
 }
 
 impl StoreError {
+    pub(crate) fn refused(_: crate::lifecycle::Refused) -> Self { StoreError::Refused }
+
     pub(crate) fn is_apply_failure(&self) -> bool {
         match self {
             StoreError::Sqlite(rusqlite::Error::SqliteFailure(failure, _)) => !matches!(

@@ -25,7 +25,6 @@ struct OwnerState {
     machine: ResumeMachine,
     current: Vec<oneshot::Sender<Outcome>>,
     queued: Vec<oneshot::Sender<Outcome>>,
-    settled: Vec<oneshot::Sender<()>>,
     runner: Option<u64>,
     runners: u64,
 }
@@ -36,12 +35,8 @@ pub(crate) struct ResumeOwner {
 }
 
 impl ResumeOwner {
-    pub(crate) fn idle(&self) -> bool {
-        locked(&self.state).machine.is_idle() && self.effects.is_idle()
-    }
-
     pub(crate) fn new() -> Self {
-        Self { state: std::sync::Mutex::new(OwnerState { machine: ResumeMachine::new(), current: Vec::new(), queued: Vec::new(), settled: Vec::new(), runner: None, runners: 0 }), effects: OrderedEffects::default() }
+        Self { state: std::sync::Mutex::new(OwnerState { machine: ResumeMachine::new(), current: Vec::new(), queued: Vec::new(), runner: None, runners: 0 }), effects: OrderedEffects::default() }
     }
 
     fn request(&self, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<(u64, Cause)> {
@@ -61,16 +56,13 @@ impl ResumeOwner {
             if state.runner != Some(runner) { return None; }
             let answered = std::mem::take(&mut state.current);
             let next = state.machine.handle(&ResumeEvent::Finished);
-            let settled = if next.is_some() {
+            if next.is_some() {
                 state.current = std::mem::take(&mut state.queued);
-                Vec::new()
             } else {
                 state.runner = None;
-                std::mem::take(&mut state.settled)
-            };
+            }
             effects.push(move || {
                 for waiter in answered { crate::db::lock::effect(|| { let _ = waiter.send(outcome.clone()); }); }
-                for waiter in settled { crate::db::lock::effect(|| { let _ = waiter.send(()); }); }
             });
             next
         })
@@ -83,20 +75,10 @@ impl ResumeOwner {
             waiters.append(&mut state.queued);
             while !state.machine.is_idle() { state.machine.handle(&ResumeEvent::Finished); }
             state.runner = None;
-            let settled = std::mem::take(&mut state.settled);
             effects.push(move || {
                 for waiter in waiters { crate::db::lock::effect(|| { let _ = waiter.send(Err(error.clone())); }); }
-                for waiter in settled { crate::db::lock::effect(|| { let _ = waiter.send(()); }); }
             });
         });
-    }
-
-    fn settled(&self) -> Option<oneshot::Receiver<()>> {
-        let mut state = locked(&self.state);
-        if state.machine.is_idle() { return None; }
-        let (sender, receiver) = oneshot::channel();
-        state.settled.push(sender);
-        Some(receiver)
     }
 }
 
@@ -105,6 +87,7 @@ pub(crate) struct Runner {
     inner: std::sync::Weak<Inner>,
     id: u64,
     first: Cause,
+    _lease: crate::lifecycle::Lease,
 }
 
 impl Runner {
@@ -176,10 +159,6 @@ impl Sync {
         receiver.await.unwrap_or(Err(SyncError::Cancelled))
     }
 
-    pub(crate) async fn resume_settled(&self) {
-        if let Some(settled) = self.inner.resume.settled() { let _ = settled.await; }
-    }
-
     pub fn enter_foreground(&self) {
         self.inner.resume_on_event();
     }
@@ -193,7 +172,8 @@ impl Inner {
     }
 
     pub(crate) fn begin_resume(self: &Arc<Self>, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<Runner> {
-        self.resume.request(cause, waiter).map(|(id, first)| Runner { inner: Arc::downgrade(self), id, first })
+        let lease = self.lease(crate::lifecycle::Origin::Background, "resume").ok()?;
+        self.resume.request(cause, waiter).map(|(id, first)| Runner { inner: Arc::downgrade(self), id, first, _lease: lease })
     }
 
     pub(crate) fn request_resume(self: &Arc<Self>, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Result<(), SyncError> {

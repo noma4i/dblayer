@@ -204,11 +204,10 @@ pub struct LiveSubscription {
     pub(super) registration: std::sync::OnceLock<crate::lifecycle::Registration>,
 }
 
-impl crate::lifecycle::Member for LiveSubscription {
+impl crate::lifecycle::Holder for LiveSubscription {
     fn close(&self) { self.cancel(); }
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
-    fn busy(&self) -> bool { self.feed.busy() }
-    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) { self.feed.lifecycle(snapshot); }
+    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) { self.feed.on_change(snapshot); }
 }
 
 impl LiveSubscription {

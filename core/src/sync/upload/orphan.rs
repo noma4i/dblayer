@@ -10,8 +10,10 @@ use super::super::{locked, Inner, SyncError};
 impl Inner {
     pub(crate) fn spawn_upload_housekeeping(self: &Arc<Self>, expire: bool) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
+        let Ok(lease) = self.lease(crate::lifecycle::Origin::Background, "upload housekeeping") else { return };
         let inner = self.clone();
         let task = self.until_closed(async move {
+            let _lease = lease;
             if inner.run_housekeeping(expire).await.is_err() {
                 inner.upload_housekeeping_due.store(true, Ordering::SeqCst);
             }

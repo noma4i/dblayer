@@ -47,6 +47,8 @@ pub enum CloudError {
     QuotaExceeded { detail: String },
     #[error("cloud rejected the request: {detail}")]
     Rejected { detail: String },
+    #[error("cloud work interrupted: {detail}")]
+    Interrupted { detail: String },
 }
 
 #[uniffi::export(with_foreign)]

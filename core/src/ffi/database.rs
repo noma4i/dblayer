@@ -480,43 +480,29 @@ impl Database {
         self.online_sink()?.enter_foreground();
         Ok(())
     }
+    /// Ends the session of the test and starts the next one: the old work ends, the data goes, the credential and the pending request stay. Online, listening and power saving keep the values the test gave them.
     pub async fn reset_for_testing(&self) -> Result<(), DbError> {
         if !self.testing { return Err(DbError::Invalid { detail: "resetForTesting requires openTesting".into() }); }
-        if let Some(sync) = &self.sync {
-            let _entered = executor()?.enter();
-            sync.restore_open_baseline();
-        }
-        let database = self.db.clone();
-        blocking(move || { database.reset_all()?; Ok(()) }).await
+        let db = self.db.clone();
+        on_executor(async move { db.end_session::<DbError>(crate::lifecycle::End::Test, None, true, || Ok(())).await }).await
     }
 
+    /// Returns when no lease is held: no load, request, subscription opening, delivery or upload is running. It does not change listening, preload or the session.
     pub async fn settle_for_testing(&self) -> Result<(), DbError> {
         if !self.testing { return Err(DbError::Invalid { detail: "settleForTesting requires openTesting".into() }); }
-        let database = self.clone();
+        let (lifecycle, db) = (self.streams.clone(), self.db.clone());
         on_executor(async move {
-            let mut busy = "background work";
-            let finished = tokio::time::timeout(Duration::from_secs(10), async {
+            let quiet = async {
                 loop {
-                    if let Some(sync) = &database.sync {
-                        busy = "resume";
-                        sync.resume_settled().await;
-                        busy = "load flights";
-                        sync.inner.app_loads_settled().await;
-                    }
-                    let checking = database.clone();
-                    busy = match blocking(move || checking.testing_busy()).await? {
-                        Some(part) => part,
-                        None => {
-                            if let Some(sync) = &database.sync { sync.finish_reset(); }
-                            return Ok::<(), DbError>(());
-                        }
-                    };
-                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    lifecycle.settled().await;
+                    let listeners = db.clone();
+                    blocking(move || { listeners.await_revision(listeners.revision_seq()?); Ok(()) }).await?;
+                    if lifecycle.quiet() { return Ok::<(), DbError>(()); }
                 }
-            }).await;
-            match finished {
+            };
+            match tokio::time::timeout(Duration::from_secs(10), quiet).await {
                 Ok(result) => result,
-                Err(_) => Err(DbError::Invalid { detail: format!("settleForTesting timed out: {busy}") }),
+                Err(_) => Err(DbError::Invalid { detail: format!("settleForTesting timed out: {}", lifecycle.held().join("; ")) }),
             }
         }).await
     }
@@ -585,56 +571,30 @@ impl Database {
         let db = self.db.clone();
         blocking(move || Ok(db.maintain(&[]).map(|_| ())?)).await
     }
-    pub fn shutdown(&self) {
-        let mut finished = self.streams.close();
-        if let Some(sync) = &self.sync { finished &= sync.close(); }
+    /// Closes the database: every lease ends, every holder closes, the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
+    pub async fn close_database(&self) -> Result<(), DbError> {
+        let finished = self.close_holders();
+        let lifecycle = self.streams.clone();
+        let drained = on_executor(async move {
+            tokio::time::timeout(Duration::from_secs(10), lifecycle.settled()).await.map_err(|_| DbError::Invalid { detail: "close timed out while leases were still held".into() })
+        }).await;
         if finished { if let Some(lease) = self.lease.get() { lease.release(); } }
-    }
-    pub async fn logout(&self) -> Result<(), DbError> {
-        if let Some(sync) = &self.sync {
-            let _entered = executor()?.enter();
-            sync.session_ended();
-        }
-        let database = self.clone();
-        blocking(move || {
-            database.db.reset_all()?;
-            database.db.await_revision(database.db.revision_seq()?);
-            Ok(())
-        }).await
+        drained
     }
 }
 
 impl Database {
-    pub(super) fn testing_busy(&self) -> Result<Option<&'static str>, DbError> {
-        if let Some(sync) = &self.sync {
-            let inner = &sync.inner;
-            if !crate::sync::locked(&inner.flights).waiting.is_empty() { return Ok(Some("load flights")); }
-            if !inner.resume.idle() { return Ok(Some("resume")); }
-            if !inner.preload.idle() { return Ok(Some("preload")); }
-            if inner.connectivity.is_online() && inner.live_opening() { return Ok(Some("subscriptions")); }
-            if inner.connectivity.is_online() {
-                let queue = inner.operation_queue().map_err(DbError::from)?;
-                let queue = crate::sync::locked(queue);
-                if queue.entries.values().any(|entry| entry.uploading && entry.operation.status == crate::operation::OperationStatus::Pending && !inner.is_waiting(&entry.operation)) {
-                    return Ok(Some("uploads"));
-                }
-                if queue.pending.iter().filter_map(|seq| queue.entries.get(seq)).any(|entry| !inner.is_waiting(&entry.operation) && !queue.blocked_before(&entry.operation).0 && !queue.blocked_before(&entry.operation).1) {
-                    return Ok(Some("outbox send"));
-                }
-            }
-            if inner.outbox_gate.try_lock().is_err() { return Ok(Some("outbox send")); }
-            let (uploads_idle, finished) = crate::sync::locked(&inner.uploads).idle();
-            for result in finished {
-                result.map_err(|error| DbError::Invalid { detail: format!("upload task failed: {error}") })?;
-            }
-            if !uploads_idle || *inner.file_tasks.borrow() != 0 || !inner.upload_effects.is_idle() {
-                return Ok(Some("uploads"));
-            }
-            if !inner.live_effects.is_idle() { return Ok(Some("live listeners")); }
-        }
-        if let Some(part) = self.db.testing_busy()? { return Ok(Some(part)); }
-        if self.streams.busy() { return Ok(Some("listeners")); }
-        Ok(None)
+    /// Closes the lifecycle and every holder. True when this call finished the close.
+    fn close_holders(&self) -> bool {
+        let mut finished = self.streams.close();
+        if let Some(sync) = &self.sync { finished &= sync.close(); }
+        finished
+    }
+
+    /// The part of `close` that does not wait: for a caller that cannot await.
+    #[cfg(test)]
+    pub(super) fn close_now(&self) {
+        if self.close_holders() { if let Some(lease) = self.lease.get() { lease.release(); } }
     }
 
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "transport is required for server operations".into() }) }
@@ -662,6 +622,7 @@ impl Database {
     }
     fn subscribed(&self, listener: Arc<dyn QueryListener>, open: impl FnOnce(Arc<LiveFeed>) -> Result<LiveHandles, DbError>) -> Arc<LiveSubscription> {
         let feed = LiveFeed::new(listener);
+        feed.attach(self.streams.clone());
         if let Ok(sync) = self.sync() { feed.hold_first_screen(sync.first_screen()); }
         let handles = match open(feed.clone()) {
             Ok(handles) => Some(handles),

@@ -177,14 +177,22 @@ impl Database {
     pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
         let client = self.session()?.clone();
         let sync = self.sync.clone();
-        let lifecycle = self.streams.clone();
-        cancellable(async move { lifecycle.scoped(resume(client, sync)).await }).await?
-            .map_err(|_| DbError::Interrupted { detail: "the session ended or the database closed".into() })?
+        let lease = self.streams.lease(crate::lifecycle::Origin::Explicit, "session resume").map_err(|_| DbError::Interrupted { detail: "the session ended or the database closed".into() })?;
+        cancellable(async move {
+            let _lease = lease;
+            resume(client, sync).await
+        }).await?
     }
 
-    pub fn session_reset(&self) -> Result<(), DbError> {
-        let _entered = super::database::executor()?.enter();
-        self.session()?.reset().map_err(typed)
+    /// Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
+    pub async fn session_reset(&self) -> Result<(), DbError> {
+        match self.session.clone() {
+            Some(client) => cancellable(async move { client.reset().await }).await?.map_err(typed),
+            None => {
+                let db = self.db.clone();
+                cancellable(async move { db.end_session::<DbError>(crate::lifecycle::End::Local, None, true, || Ok(())).await }).await?
+            }
+        }
     }
 }
 

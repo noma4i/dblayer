@@ -19,6 +19,7 @@ fn stopped(error: &CloudError) -> State {
         CloudError::NeedsAuthorization { .. } => State::needs_authorization(),
         CloudError::QuotaExceeded { .. } => State::quota_exceeded(),
         CloudError::Rejected { detail } => State::failed(detail.clone()),
+        CloudError::Interrupted { .. } => State::idle(),
     }
 }
 

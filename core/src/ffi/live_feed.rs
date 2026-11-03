@@ -59,7 +59,39 @@ struct FeedState {
     resyncs_in_row: u32,
     reported: bool,
     load_model: Option<String>,
+    life: Option<Arc<crate::lifecycle::Lifecycle>>,
+    lease: Option<crate::lifecycle::Lease>,
 }
+
+impl FeedState {
+    /// The feed holds a lease while it owes its listener a value: before the first one, while a load runs, while a whole snapshot is awaited, and while its queue drains.
+    fn refresh_lease(&mut self) {
+        let owes = self.draining || !self.queue.is_empty() || (!self.ended && (!self.opened || self.load_pending || self.awaiting_whole));
+        if self.lease.as_ref().is_some_and(|lease| !lease.is_current()) { self.lease = None; }
+        match (owes, self.lease.is_some()) {
+            (true, false) => if let Some(life) = &self.life { self.lease = life.lease_passive(crate::lifecycle::Origin::Observed, "live query").ok(); },
+            (false, true) => self.lease = None,
+            _ => {}
+        }
+    }
+}
+
+struct FeedGuard<'a>(std::sync::MutexGuard<'a, FeedState>);
+
+impl std::ops::Deref for FeedGuard<'_> {
+    type Target = FeedState;
+    fn deref(&self) -> &FeedState { &self.0 }
+}
+
+impl std::ops::DerefMut for FeedGuard<'_> {
+    fn deref_mut(&mut self) -> &mut FeedState { &mut self.0 }
+}
+
+impl Drop for FeedGuard<'_> {
+    fn drop(&mut self) { self.0.refresh_lease(); }
+}
+
+fn held_feed(mutex: &Mutex<FeedState>) -> FeedGuard<'_> { FeedGuard(held(mutex)) }
 
 pub(super) struct LiveFeed {
     state: Mutex<FeedState>,
@@ -101,9 +133,8 @@ fn live_phase(phase: LoadPhase) -> LivePhase {
 }
 
 impl LiveFeed {
-    pub(super) fn busy(&self) -> bool {
-        let state = held(&self.state);
-        state.draining || !state.queue.is_empty() || (!state.ended && (!state.opened || state.load_pending || state.awaiting_whole))
+    pub(super) fn attach(&self, life: Arc<crate::lifecycle::Lifecycle>) {
+        held_feed(&self.state).life = Some(life);
     }
 
     pub(super) fn new(listener: Arc<dyn QueryListener>) -> Arc<Self> {
@@ -132,12 +163,14 @@ impl LiveFeed {
             resyncs_in_row: 0,
             reported: false,
             load_model: None,
+            life: None,
+            lease: None,
         };
         Arc::new(Self { state: Mutex::new(state), listener, calls: crate::db::CallState::new(), latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0, first_screen: Mutex::new(None) })
     }
 
     pub(super) fn rows(&self, part: LiveChange) {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         if state.awaiting_whole && !part.full {
             return;
         }
@@ -151,7 +184,7 @@ impl LiveFeed {
     }
 
     pub(super) fn count(&self, part: LiveChange) {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         state.opened = true;
         state.read_error = None;
         state.rows_at = state.rows_at.max(part.revision);
@@ -160,14 +193,14 @@ impl LiveFeed {
     }
 
     pub(super) fn reached(&self, revision: i64) {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         state.read_error = None;
         state.rows_at = state.rows_at.max(revision);
         self.compose(state, None);
     }
 
     pub(super) fn read_failed(&self, detail: String) {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         state.opened = true;
         state.read_error = Some(detail);
         self.compose(state, None);
@@ -175,14 +208,14 @@ impl LiveFeed {
 
     /// The state the key held before this window opened. A failure of an earlier load is not the failure of a load that has not begun, so a window that will load itself does not show it.
     pub(super) fn seed(&self, mut relation: RelationState) {
-        if held(&self.state).load_pending && relation.error.take().is_some() && relation.phase == LoadPhase::Failed {
+        if held_feed(&self.state).load_pending && relation.error.take().is_some() && relation.phase == LoadPhase::Failed {
             relation.phase = LoadPhase::NotLoaded;
         }
         self.state(relation);
     }
 
     pub(super) fn state(&self, relation: RelationState) {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         if !state.load_pending && relation.error.is_none() && matches!(relation.phase, LoadPhase::Loaded | LoadPhase::Empty) {
             state.load_error = None;
         }
@@ -197,40 +230,40 @@ impl LiveFeed {
 
     /// Asks the observed group to tell this feed through `reached` once it has read through a revision the relation state is ahead of.
     pub(super) fn on_ahead(&self, ask: Arc<dyn Fn(i64) + Send + Sync>) {
-        let replaced = held(&self.state).reach_request.replace(ask);
+        let replaced = held_feed(&self.state).reach_request.replace(ask);
         drop(replaced);
     }
 
     /// Sets how to make the observer deliver the whole result again.
     pub(super) fn on_rejoin(&self, rejoin: Arc<dyn Fn() + Send + Sync>) {
-        let replaced = held(&self.state).rejoin.replace(rejoin);
+        let replaced = held_feed(&self.state).rejoin.replace(rejoin);
         drop(replaced);
     }
 
     pub(super) fn show_targets_only(&self) {
-        held(&self.state).targets_only = true;
+        held_feed(&self.state).targets_only = true;
     }
 
     pub(super) fn expect_load(&self) {
-        held(&self.state).load_pending = true;
+        held_feed(&self.state).load_pending = true;
     }
 
     pub(super) fn load_of(&self, model: String) {
-        held(&self.state).load_model = Some(model);
+        held_feed(&self.state).load_model = Some(model);
     }
 
     /// A reset of the loaded model makes the old readiness untrue in the same transition, before any background task polls.
-    pub(super) fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+    pub(super) fn on_change(&self, snapshot: &crate::lifecycle::Snapshot) {
         let concerned = {
-            let state = held(&self.state);
-            !state.ended && matches!(snapshot.change, crate::lifecycle::Change::Reset(_)) && state.load_model.as_deref().is_some_and(|model| snapshot.rereads(model))
+            let state = held_feed(&self.state);
+            !state.ended && matches!(snapshot.change, crate::lifecycle::Change::Cleared(_)) && state.load_model.as_deref().is_some_and(|model| snapshot.rereads(model))
         };
         if concerned { self.reset_load(); }
     }
 
     pub(super) fn reset_load(&self) {
         {
-            let mut state = held(&self.state);
+            let mut state = held_feed(&self.state);
             if state.ended { return; }
             state.load_pending = true;
             state.load_error = None;
@@ -244,24 +277,24 @@ impl LiveFeed {
     }
 
     pub(super) fn load_error(&self) -> Option<DbError> {
-        held(&self.state).load_error.clone()
+        held_feed(&self.state).load_error.clone()
     }
 
     pub(super) fn load_finished(&self, error: Option<DbError>) {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         state.load_pending = false;
         state.load_error = error;
         self.compose(state, None);
     }
 
     pub(super) fn subscription_failed(&self, error: Option<DbError>) {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         state.subscription_error = error;
         self.compose(state, None);
     }
 
     pub(super) fn invalid(&self, error: DbError) {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         state.opened = true;
         let mut change = LiveChange::empty(0);
         change.error = Some(error.clone());
@@ -276,7 +309,7 @@ impl LiveFeed {
 
     /// The wrapper could not apply the delivery it was just given. The observer sends the whole list again, and the feed stops with a failure once that did not help twice in a row. Returns true when the feed stopped.
     pub(super) fn resync(&self) -> bool {
-        let mut state = held(&self.state);
+        let mut state = held_feed(&self.state);
         state.reported = true;
         if state.ended {
             return true;
@@ -299,7 +332,7 @@ impl LiveFeed {
             state.ready_pending = true;
             drop(state);
             crate::db::lock::effect(|| self.readiness.send_replace(Readiness::Ended));
-            self.deliver(held(&self.state), change);
+            self.deliver(held_feed(&self.state), change);
             return true;
         };
         state.resyncs_in_row += 1;
@@ -324,11 +357,11 @@ impl LiveFeed {
         self.calls.cancel();
         let hold = held(&self.first_screen).take();
         drop(hold);
-        held(&self.state).ended = true;
+        held_feed(&self.state).ended = true;
         crate::db::lock::effect(|| self.readiness.send_replace(Readiness::Ended));
     }
 
-    fn compose<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, part: Option<LiveChange>) {
+    fn compose<'a>(&'a self, mut state: FeedGuard<'a>, part: Option<LiveChange>) {
         if !state.opened || state.ended {
             return;
         }
@@ -408,7 +441,7 @@ impl LiveFeed {
         }));
     }
 
-    fn deliver<'a>(&'a self, mut state: std::sync::MutexGuard<'a, FeedState>, change: LiveChange) {
+    fn deliver<'a>(&'a self, mut state: FeedGuard<'a>, change: LiveChange) {
         state.queue.push_back(change);
         if state.draining {
             return;
@@ -430,7 +463,7 @@ impl LiveFeed {
             self.calls.call(|| self.listener.changed(next));
             let hold = held(&self.first_screen).take();
             if let Some(hold) = hold { hold.delivered(); }
-            state = held(&self.state);
+            state = held_feed(&self.state);
             if delta && !state.reported {
                 state.resyncs_in_row = 0;
             }

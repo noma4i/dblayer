@@ -211,7 +211,7 @@ struct Closer {
     registration: std::sync::OnceLock<crate::lifecycle::Registration>,
 }
 
-impl crate::lifecycle::Member for Closer {
+impl crate::lifecycle::Holder for Closer {
     fn close(&self) {
         crate::db::lock::effect(|| self.stop.send_replace(true));
         self.owner.submit(load_machine::Event::Close);
@@ -305,7 +305,7 @@ impl Sync {
         let _ = this.inner.this.set(preloads);
         if let Ok(session) = this.inner.transport.session() {
             let epoch = this.inner.db.shared.store.lifecycle.snapshot().session_epoch;
-            this.inner.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(session, epoch));
+            this.inner.db.shared.store.lifecycle.start_session(session, epoch);
         }
         this.inner.db.shared.store.lifecycle.enroll(&this.inner);
         this
@@ -336,15 +336,15 @@ impl Sync {
     }
 }
 
-impl crate::lifecycle::Member for Inner {
+impl crate::lifecycle::Holder for Inner {
     fn close(&self) {}
 
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 
-    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
         let Some(inner) = self.this.get().and_then(std::sync::Weak::upgrade) else { return };
         match &snapshot.change {
-            crate::lifecycle::Change::Reset(models) => {
+            crate::lifecycle::Change::Cleared(models) => {
                 self.owner.reset(models.as_deref());
                 self.reset_live_ready();
                 self.reopen_live();
@@ -352,8 +352,8 @@ impl crate::lifecycle::Member for Inner {
                 if models.is_none() { inner.end_uploads_of_reset(); }
                 inner.preload_on_event();
             }
-            crate::lifecycle::Change::Session(_, _) | crate::lifecycle::Change::EndSession => {
-                if matches!(snapshot.change, crate::lifecycle::Change::EndSession) { inner.cancel_uploads(); }
+            crate::lifecycle::Change::SessionStarted(_) | crate::lifecycle::Change::SessionEnded => {
+                if matches!(snapshot.change, crate::lifecycle::Change::SessionEnded) { inner.cancel_uploads(); }
                 inner.preload_session();
                 if snapshot.session.is_some() {
                     inner.refresh_due_entities(true);

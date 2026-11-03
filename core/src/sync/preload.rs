@@ -23,9 +23,6 @@ struct State {
     power_saving: bool,
     low_ram: bool,
     suppressed: bool,
-    baseline_suppressed: bool,
-    baseline_listening_denied: bool,
-    reset_pending: bool,
     unseen: usize,
     app_loads: usize,
     first_snapshot: bool,
@@ -61,11 +58,6 @@ pub(crate) struct PreloadOwner {
 }
 
 impl PreloadOwner {
-    pub(crate) fn idle(&self) -> bool {
-        let state = locked(&self.state);
-        !state.running && state.app_loads == 0 && self.effects.is_idle()
-    }
-
     pub(crate) fn attach(&self, inner: Weak<Inner>) {
         let _ = self.inner.set(inner);
     }
@@ -149,8 +141,12 @@ impl Inner {
 
     pub(crate) fn explicit_succeeded(&self, epoch: u64) {
         if let Ok(Some(session)) = self.transport.session() {
-            self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(Some(session), epoch));
+            self.db.shared.store.lifecycle.start_session(Some(session), epoch);
         }
+    }
+
+    pub(crate) fn lease(&self, origin: crate::lifecycle::Origin, target: &'static str) -> Result<crate::lifecycle::Lease, crate::lifecycle::Ended> {
+        self.db.shared.store.lifecycle.lease(origin, target)
     }
 
     pub(super) fn preloaded_windows(&self) -> Result<Vec<Window>, SyncError> {
@@ -207,9 +203,11 @@ impl Inner {
         let mut state = locked(&self.preload.state);
         if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
         let Some(runtime) = Handle::try_current().ok().or_else(|| self.preload.runtime.get().cloned()) else { return };
+        let Ok(lease) = self.lease(crate::lifecycle::Origin::Background, "preload") else { return };
         state.running = true;
         let inner = Arc::downgrade(self);
         runtime.spawn(self.until_closed(async move {
+            let _lease = lease;
             while let Some(inner) = inner.upgrade() {
                 if !inner.preload_take() { return; }
                 inner.preload_windows().await;
@@ -380,7 +378,7 @@ impl Sync {
         if snapshot.ended { return; }
         match self.inner.transport.session() {
             Ok(session) => {
-                lifecycle.transition(crate::lifecycle::Change::Session(session, snapshot.session_epoch));
+                lifecycle.start_session(session, snapshot.session_epoch);
                 if !self.inner.registered.swap(true, std::sync::atomic::Ordering::SeqCst) {
                     self.inner.preload_session();
                     self.inner.preload_on_event();
@@ -390,53 +388,31 @@ impl Sync {
         }
     }
 
-    /// False when the transport holds no session: nothing then waits for a session that cannot come.
-    pub fn holds_session(&self) -> bool {
-        matches!(self.inner.transport.session(), Ok(Some(_)))
-    }
-
-    pub fn session_ended(&self) {
-        self.inner.db.shared.store.end_session();
-    }
-
-    pub fn mark_open_baseline(&self) {
-        let mut state = locked(&self.inner.preload.state);
-        state.baseline_suppressed = state.suppressed;
-        state.baseline_listening_denied = state.listening_denied;
-    }
-
-    pub fn restore_open_baseline(&self) {
-        locked(&self.inner.preload.state).reset_pending = true;
-        self.set_online(true);
-        self.set_power_saving(false);
-        let (suppressed, denied) = {
-            let mut state = locked(&self.inner.preload.state);
-            state.low_ram = false;
-            (state.baseline_suppressed, state.baseline_listening_denied)
-        };
-        self.set_preload(!suppressed);
-        locked(&self.inner.preload.state).listening_denied = denied;
-    }
-
-    pub fn finish_reset(&self) {
-        if !std::mem::take(&mut locked(&self.inner.preload.state).reset_pending) { return; }
-        if self.inner.drop_dead_live() { locked(&self.inner.preload.state).listened = false; }
-    }
-
     pub fn set_listening(&self, allowed: bool) {
         self.inner.preload.with_state(|state, effects| {
             state.listening_denied = !allowed;
             self.inner.apply_listen(state, effects);
         });
     }
-
-    pub fn session_committed(&self) {
-        self.inner.explicit_succeeded(self.inner.db.shared.store.lifecycle.snapshot().session_epoch);
-    }
 }
 
 #[cfg(test)]
 impl Sync {
+    /// Ends the session the way a confirmed logout does, without a credential.
+    pub(crate) fn end_session_for_test(&self) {
+        let lifecycle = &self.inner.db.shared.store.lifecycle;
+        let permit = lifecycle.begin_blocking(crate::lifecycle::Boundary::SessionEnd(crate::lifecycle::End::Server), None).expect("the database is open");
+        self.inner.db.shared.store.end_session(&permit);
+    }
+
+    pub(crate) fn commit_session_for_test(&self) {
+        self.inner.explicit_succeeded(self.inner.db.shared.store.lifecycle.snapshot().session_epoch);
+    }
+
+    pub(crate) async fn settled_for_test(&self) {
+        self.inner.db.shared.store.lifecycle.settled().await;
+    }
+
     pub(crate) fn preload_running(&self) -> bool {
         locked(&self.inner.preload.state).running
     }

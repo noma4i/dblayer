@@ -481,7 +481,8 @@ impl Inner {
 
     /// A send that the end of the session or the close of the database cancels. The answer of an ended session is never read.
     pub(crate) async fn mutate_scoped(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
-        self.db.shared.store.lifecycle.request(self.transport.mutate(request)).await
+        let lease = self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Explicit, "mutation")?;
+        lease.run(self.transport.mutate(request)).await?
     }
 
     async fn deliver(&self, request: GraphQLRequest) -> Delivery {

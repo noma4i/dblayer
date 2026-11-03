@@ -1,0 +1,52 @@
+use crate::lifecycle::{Boundary, End, Refused};
+
+use super::error::DbError;
+use super::open::Db;
+
+impl Db {
+    /// Ends the session of this database in one exclusive transition: the work of the old epoch ends, the credential clears, and the data of the account goes. A repeat that finds the same end running waits for it and returns. A caller that carries the epoch it was admitted in is refused once that epoch has gone. `drain` waits for the leases of the old epoch before anything is cleared: a caller that holds a lease itself passes false.
+    pub(crate) async fn end_session<E>(&self, end: End, expected: Option<u64>, drain: bool, clear: impl FnOnce() -> Result<(), E> + Send + 'static) -> Result<(), E>
+    where
+        E: From<DbError> + From<Refused> + Send + 'static,
+    {
+        let db = self.clone();
+        tokio::spawn(async move { db.end_session_owned(end, expected, drain, clear).await })
+            .await
+            .map_err(|error| DbError::Internal(error.to_string()))?
+    }
+
+    /// The transition runs on its own task: a caller whose lease the transition ended is dropped at its next poll, and the transition must still finish.
+    async fn end_session_owned<E>(&self, end: End, expected: Option<u64>, drain: bool, clear: impl FnOnce() -> Result<(), E> + Send + 'static) -> Result<(), E>
+    where
+        E: From<DbError> + From<Refused> + Send + 'static,
+    {
+        let permit = match self.shared.store.lifecycle.begin(Boundary::SessionEnd(end), expected).await {
+            Ok(permit) => permit,
+            Err(Refused::Joined) => return Ok(()),
+            Err(refused) => return Err(refused.into()),
+        };
+        let db = self.clone();
+        let permit = tokio::task::spawn_blocking(move || -> Result<_, E> {
+            permit.run_on_this_thread();
+            if end != End::Test {
+                db.shared.store.write_session_end_intent().map_err(DbError::from)?;
+                db.shared.store.end_session(&permit);
+            }
+            Ok(permit)
+        })
+        .await
+        .map_err(|error| DbError::Internal(error.to_string()))??;
+        if drain { permit.drained().await; }
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), E> {
+            permit.run_on_this_thread();
+            if end != End::Test { clear()?; }
+            db.reset_all_in(&permit)?;
+            db.await_revision(db.revision_seq()?);
+            permit.finish();
+            Ok(())
+        })
+        .await
+        .map_err(|error| DbError::Internal(error.to_string()))?
+    }
+}

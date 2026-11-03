@@ -30,3 +30,7 @@ impl TransportError {
         }
     }
 }
+
+impl From<crate::db::DbError> for TransportError {
+    fn from(error: crate::db::DbError) -> Self { TransportError::Network(format!("session end: {error}")) }
+}

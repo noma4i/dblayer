@@ -222,18 +222,18 @@ impl Inner {
     }
 
     pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
-        let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
-        if resolved.origin != crate::lifecycle::Origin::Explicit { return self.fetch_in(resolved, cursor, force).await; }
-        let result = self.db.shared.store.lifecycle.bound(self.fetch_in(resolved, cursor, force)).await.map_err(SyncError::from).and_then(|result| result);
-        if result.as_ref().is_ok_and(|outcome| outcome.kept_error.is_none()) {
+        let explicit = resolved.origin == crate::lifecycle::Origin::Explicit;
+        let lease = self.lease(resolved.origin, "load").map_err(|ended| if explicit { SyncError::from(ended) } else { SyncError::Cancelled })?;
+        let epoch = lease.epoch();
+        let result = self.fetch_in(resolved, cursor, force, &lease).await;
+        drop(lease);
+        if explicit && result.as_ref().is_ok_and(|outcome| outcome.kept_error.is_none()) {
             self.explicit_succeeded(epoch);
         }
         result
     }
 
-    async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
-        if !self.admitted(resolved.origin) { return Err(SyncError::Cancelled); }
-        let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
+    async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Lease) -> FlightResult {
         let generation = self.db.generation();
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
@@ -297,7 +297,7 @@ impl Inner {
                     let seed = match self.stored(resolved) { Ok(seed) => seed, Err(error) => { guard.finish(Err(error.clone())); return Err(error); } };
                     let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), seed);
                     let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
-                    let executed = Box::pin(self.execute_bound(resolved, cursor, force, epoch)).await;
+                    let executed = Box::pin(self.execute_bound(resolved, cursor, force, lease)).await;
                     let result = match executed {
                         Executed::Landed(outcome, revision) => {
                             match outcome.status {
@@ -327,7 +327,7 @@ impl Inner {
                         let joined = locked(&self.flights).joined.0.clone();
                         crate::db::lock::effect(|| joined.send_modify(|joined| *joined += 1));
                     }
-                    let end = self.db.shared.store.lifecycle.scoped(async { receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone()) }).await?;
+                    let end = lease.run(async { receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone()) }).await?;
                     if let Some(FlightEnd::Settled(result)) = end {
                         if generation == self.db.generation() && matches!(&result, Ok(outcome) if outcome.status == LoadStatus::Discarded(DiscardReason::StaleGeneration)) { continue; }
                         return result;
@@ -338,15 +338,10 @@ impl Inner {
         }
     }
 
-    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, epoch: u64) -> Executed {
-        if resolved.origin == crate::lifecycle::Origin::Explicit { return self.execute(resolved, cursor, force).await; }
-        let lifecycle = &self.db.shared.store.lifecycle;
-        match lifecycle.bound(Box::pin(self.execute(resolved, cursor, force))).await {
+    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Lease) -> Executed {
+        match lease.run(self.execute(resolved, cursor, force)).await {
             Ok(executed) => executed,
-            Err(ended) => {
-                let now = lifecycle.snapshot();
-                if now.closed || now.session_epoch != epoch { Executed::Failed(ended.into()) } else { Executed::Landed(LoadOutcome::of(LoadStatus::Discarded(DiscardReason::StaleGeneration)), 0) }
-            }
+            Err(ended) => Executed::Failed(ended.into()),
         }
     }
 
@@ -431,7 +426,7 @@ impl Inner {
         let (response, attempts) = tokio::select! {
             biased;
             () = self.connectivity.offline() => return Err(SyncError::Offline),
-            result = self.db.shared.store.lifecycle.request(crate::transport::retry::query(self.transport.as_ref(), request, self.clock.as_ref(), &self.connectivity, || locked(&self.counters).record_transport_call())) => result.map_err(SyncError::Transport)?,
+            result = crate::transport::retry::query(self.transport.as_ref(), request, self.clock.as_ref(), &self.connectivity, || locked(&self.counters).record_transport_call()) => result.map_err(SyncError::Transport)?,
         };
         if response.shape().outcome() == ResponseOutcome::Commit || return_invalid_cursor && response.errors.iter().any(|error| error.code() == Some(INVALID_CURSOR)) {
             return Ok((response, attempts));

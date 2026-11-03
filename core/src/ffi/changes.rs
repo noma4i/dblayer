@@ -106,13 +106,13 @@ impl Database {
     }
 }
 
-impl crate::lifecycle::Member for LiveChanges {
+impl crate::lifecycle::Holder for LiveChanges {
     fn close(&self) { self.cancel(); }
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
-    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
         let Some((db, model)) = self.context.get() else { return };
-        let ended = matches!(snapshot.change, crate::lifecycle::Change::EndSession);
-        if !ended && !(matches!(snapshot.change, crate::lifecycle::Change::Reset(_)) && snapshot.rereads(model)) { return; }
+        let ended = matches!(snapshot.change, crate::lifecycle::Change::SessionEnded);
+        if !ended && !(matches!(snapshot.change, crate::lifecycle::Change::Cleared(_)) && snapshot.rereads(model)) { return; }
         let Ok(revision) = db.revision_seq() else { return };
         self.with_state(|state| {
             state.pending.clear();

@@ -51,7 +51,7 @@ impl BlobChanges {
     pub fn cancel(&self) { self.cancel.cancel(); }
 }
 
-impl crate::lifecycle::Member for BlobChanges {
+impl crate::lifecycle::Holder for BlobChanges {
     fn close(&self) { self.cancel.cancel(); }
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 }

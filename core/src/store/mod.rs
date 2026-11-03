@@ -183,6 +183,7 @@ pub struct Store {
     hook: OnceLock<StoreHook>,
     commit_log: OnceLock<CommitLog>,
     line: AnnounceLine,
+    session_end_replay: std::sync::atomic::AtomicBool,
     recreated: Option<RecreateReason>,
     #[cfg(test)]
     failing_entity_reads: std::sync::atomic::AtomicUsize,
@@ -231,6 +232,7 @@ impl Store {
             before_freshness: Mutex::new(None),
             #[cfg(test)]
             writes_waiting: std::sync::atomic::AtomicUsize::new(0),
+            session_end_replay: std::sync::atomic::AtomicBool::new(false),
             recreated: None,
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
@@ -263,15 +265,6 @@ impl Store {
         let _ = self.commit_log.set(log);
     }
 
-    fn reset_effects(&self, models: Option<Vec<String>>) -> crate::db::dispatch::Effects {
-        let lifecycle = self.lifecycle.clone();
-        let mut effects = crate::db::dispatch::Effects::default();
-        effects.push(move || {
-            lifecycle.transition(crate::lifecycle::Change::Reset(models));
-        });
-        effects
-    }
-
     pub(crate) fn announce(&self, event: StoreEvent<'_>) {
         #[cfg(test)]
         if let (StoreEvent::Committed(result), Some(probe)) = (&event, self.after_commit.lock().unwrap_or_else(|error| error.into_inner()).as_ref()) {
@@ -299,24 +292,15 @@ impl Store {
         self.lifecycle.snapshot().generation
     }
 
-    /// Ends the session and moves the generation under the writer lock, so a response write that checked the stamp under the same lock lands before the end or is refused.
-    pub(crate) fn end_session(&self) {
-        let _ = self.end_session_in::<()>(None, || ());
-    }
-
-    /// Ends the session. A caller that carries the epoch it was admitted in is refused when the database closed or the epoch moved: the check and the end are one step under the writer lock.
-    pub(crate) fn end_session_in<E>(&self, admitted: Option<u64>, refused: impl FnOnce() -> E) -> Result<(), E> {
+    /// Ends the session and moves the generation under the writer lock, so a response write that checked the epoch under the same lock lands before the end or is refused.
+    pub(crate) fn end_session(&self, permit: &crate::lifecycle::Permit) {
         let ticket = {
-            #[cfg(test)]
-            if admitted.is_some() { self.writes_waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
             let mut inner = self.lock();
-            if admitted.is_some_and(|epoch| !self.holds(epoch)) { return Err(refused()); }
-            let (generation, ticket) = self.lifecycle.transition_ticketed(crate::lifecycle::Change::EndSession);
+            let (generation, ticket) = permit.ended();
             inner.generation = generation;
             ticket
         };
         self.lifecycle.delivered(ticket);
-        Ok(())
     }
 
     fn holds(&self, epoch: u64) -> bool {
@@ -335,9 +319,10 @@ impl Store {
 
     #[cfg(test)]
     pub(crate) fn advance_generation_for_test(&self) {
-        let generation = self.lifecycle.transition_deferred(crate::lifecycle::Change::BeginReset);
-        self.lock().generation = generation;
-        self.lifecycle.transition(crate::lifecycle::Change::Reset(Some(Vec::new())));
+        let permit = self.lifecycle.begin_blocking(crate::lifecycle::Boundary::Models, None).expect("the database is open");
+        self.lock().generation = permit.next_generation();
+        permit.defer(crate::lifecycle::Change::Cleared(Some(Vec::new())));
+        permit.finish();
     }
 
     #[cfg(test)]

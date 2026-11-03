@@ -13,7 +13,6 @@ impl Sync {
         self.inner.connectivity.set_online(online);
         crate::db::lock::assert_no_library_lock("Transport::set_online");
         self.inner.transport.set_online(online);
-        if online != was_online { self.inner.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Online(online)); }
         if !online {
             let wake = locked(&self.inner.wake).take();
             if let Some(wake) = wake { crate::db::lock::effect(|| wake.abort()); }
@@ -54,9 +53,11 @@ impl Inner {
         let clock = self.clock.clone();
         let deadline = clock.now().saturating_add(wait);
         let inner = Arc::downgrade(self);
+        let reserved = if wait.is_zero() { Some(self.lease(crate::lifecycle::Origin::Background, "outbox flush").ok()?) } else { None };
         let task = runtime.spawn(self.until_closed(async move {
             clock.sleep(deadline.saturating_sub(clock.now())).await;
             if let Some(inner) = inner.upgrade() {
+                let Some(_lease) = reserved.or_else(|| inner.lease(crate::lifecycle::Origin::Background, "outbox flush").ok()) else { return };
                 let _ = inner.flush_pending().await;
             }
         }));

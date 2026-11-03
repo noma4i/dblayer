@@ -39,7 +39,7 @@ impl OpenDatabase {
                 sync.set_listening(options.listening);
             }
             if let Err(error) = database.register_operations(options.operations).and_then(|()| Ok(database.sync()?.check_uploads()?)) {
-                database.shutdown();
+                let _ = database.close_database().await;
                 return Err(error);
             }
         }
@@ -55,7 +55,6 @@ impl OpenDatabase {
             sync.set_preload(preload);
             let _entered = super::database::executor()?.enter();
             sync.set_listening(listening);
-            sync.mark_open_baseline();
         }
         Ok(database)
     }

@@ -20,12 +20,13 @@ impl Sync {
     }
 
     pub async fn nodes(&self, model: &str, relation: &str, ids: &[&str]) -> Result<Vec<Row>, SyncError> {
-        let epoch = self.inner.db.shared.store.lifecycle.snapshot().session_epoch;
+        let lease = self.inner.lease(crate::lifecycle::Origin::Explicit, "nodes")?;
+        let epoch = lease.epoch();
         let _app = self.app_load();
         let resolved = self.inner.resolve_node(crate::lifecycle::Origin::Explicit, model, relation, NodeRead::Many, Map::new())?;
         let attempt = self.inner.begin_attempt(&resolved.window_key)?;
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, json!({ "ids": ids }));
-        let (response, _) = self.inner.query_with_retry(request).await?;
+        let (response, _) = lease.run(self.inner.query_with_retry(request)).await??;
         let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;
         let root = resolved.remote.root.as_deref().unwrap_or(&resolved.operation.root_path);
         let extracted = extract(&data, root, &RemoteShape::List { coverage: Coverage::Complete }, None)?;
@@ -37,6 +38,7 @@ impl Sync {
         for id in &normalized.order {
             rows.extend(self.inner.db.find(model, id)?);
         }
+        drop(lease);
         self.inner.explicit_succeeded(epoch);
         Ok(rows)
     }

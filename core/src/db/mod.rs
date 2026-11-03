@@ -43,6 +43,7 @@ mod replace;
 mod record_sync;
 mod references;
 mod reset;
+mod session;
 mod roll_back;
 mod row;
 mod swap;

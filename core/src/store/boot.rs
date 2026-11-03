@@ -30,6 +30,7 @@ impl Store {
         inner.models = std::sync::Arc::new(models.iter().map(|spec| (spec.key.as_str().to_string(), ModelInfo::new(spec))).collect());
         *reading_models = inner.models.clone();
 
+        self.session_end_replay.store(super::reset::pending_intent(&inner.connection)?.as_deref() == Some("session_end"), std::sync::atomic::Ordering::SeqCst);
         let finished_interrupted_reset = finish_interrupted_reset(&mut inner)?;
         let fingerprints: BTreeMap<String, String> = current_fingerprints(&inner);
         let verdict = manifest_verify(&inner.connection, data_version, &fingerprints)?;

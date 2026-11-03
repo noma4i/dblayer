@@ -61,7 +61,7 @@ pub(crate) struct EventQueue {
     ready: tokio::sync::Notify,
 }
 
-impl crate::lifecycle::Member for EventQueue {
+impl crate::lifecycle::Holder for EventQueue {
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 
     fn close(&self) {
@@ -74,8 +74,8 @@ impl crate::lifecycle::Member for EventQueue {
         crate::db::lock::effect(|| self.ready.notify_waiters());
     }
 
-    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
-        if matches!(snapshot.change, crate::lifecycle::Change::EndSession) || matches!(snapshot.change, crate::lifecycle::Change::Reset(_)) && snapshot.rereads(&self.model) {
+    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
+        if matches!(snapshot.change, crate::lifecycle::Change::SessionEnded) || matches!(snapshot.change, crate::lifecycle::Change::Cleared(_)) && snapshot.rereads(&self.model) {
             let mut state = locked(&self.state);
             state.slots.clear();
             state.events = 0;
@@ -174,7 +174,7 @@ impl ModelEvents {
     }
 
     pub fn close(&self) {
-        crate::lifecycle::Member::close(&*self.queue);
+        crate::lifecycle::Holder::close(&*self.queue);
         let keys = std::mem::take(&mut *locked(&self.keys));
         for key in keys { self.inner.release_live(&key); }
     }

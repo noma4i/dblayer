@@ -28,7 +28,7 @@ impl Database {
     }
 }
 
-impl crate::lifecycle::Member for CloudLink {
+impl crate::lifecycle::Holder for CloudLink {
     fn close(&self) { self.cloud.stop(); }
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 }
