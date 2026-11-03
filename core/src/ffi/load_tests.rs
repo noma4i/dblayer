@@ -345,3 +345,74 @@ async fn inv_fresh_15_a_test_clock_moves_fresh_for_without_sleeping() {
         assert_eq!(queries(&transport), expected, "advanced by {advance_ms} ms");
     }
 }
+
+struct Interrupting {
+    inner: Counting,
+    on_open: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+#[async_trait::async_trait]
+impl Transport for Interrupting {
+    async fn open_cable(&self, lease: Arc<super::CableLease>) -> Result<(), DbError> { self.inner.open_cable(lease).await }
+    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> { self.inner.cable_send(token, text).await }
+    async fn cable_next(&self, token: String) -> Option<crate::ffi::EncryptedSocketEvent> { self.inner.cable_next(token).await }
+    async fn cable_close(&self, token: String) { self.inner.cable_close(token).await }
+    async fn query(&self, request: super::TransportRequest) -> Result<String, DbError> { self.inner.query(request).await }
+    async fn mutate(&self, request: super::TransportRequest) -> Result<String, DbError> { self.inner.mutate(request).await }
+    async fn subscribe(&self, request: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), DbError> {
+        self.inner.subscribe(request, sink).await?;
+        let hook = self.on_open.lock().unwrap().take();
+        if let Some(hook) = hook { hook(); }
+        Ok(())
+    }
+    fn unsubscribe(&self, token: String) { self.inner.unsubscribe(token) }
+    async fn put(&self, url: String, headers: std::collections::HashMap<String, String>, file: crate::transport::PutFile, tag: String, progress: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { self.inner.put(url, headers, file, tag, progress).await }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_connection_that_a_reset_ends_between_its_open_and_its_delivery_hands_the_failure_to_the_connection_that_replaced_it() {
+    let (opened, subscriptions) = std::sync::mpsc::channel();
+    let counting = Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: None, gate: None, subscriptions: Some(opened) };
+    let database_slot: Arc<std::sync::Mutex<Option<Arc<Database>>>> = Arc::default();
+    let hook_slot = database_slot.clone();
+    let transport = Arc::new(Interrupting { inner: counting, on_open: std::sync::Mutex::new(Some(Box::new(move || {
+        let database = hook_slot.lock().unwrap().clone().unwrap();
+        let life = database.db.shared.store.lifecycle.clone();
+        let before = life.snapshot().notice;
+        let resetting = std::thread::spawn(move || database.db.reset_all());
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while life.snapshot().notice == before && std::time::Instant::now() < deadline { std::thread::yield_now(); }
+        drop(resetting);
+    }))) });
+    let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+    model.storage = crate::schema::Storage::Memory;
+    let mut relation = RelationSpec::global("recent");
+    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() });
+    model.relations.push(relation);
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
+    *database_slot.lock().unwrap() = Some(database.clone());
+    database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).unwrap();
+    let (failures, mut received) = tokio::sync::mpsc::unbounded_channel();
+    struct Async(tokio::sync::mpsc::UnboundedSender<DbError>);
+    impl ValueSink for Async {
+        fn delivered(&self, delivery: StreamDelivery) {
+            if let StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } = delivery.value {
+                if let Some(error) = state.error { let _ = self.0.send(error); }
+            }
+        }
+    }
+    let query = r#"{"model":"Notice","relation":"recent","params":{}}"#;
+    let ended = database.watch_query(query, Arc::new(Async(failures.clone())));
+    let _ = within(ended.wait_for_initial_load()).await;
+    let live = database.watch_query(query, Arc::new(Async(failures)));
+    within(live.wait_for_initial_load()).await.unwrap();
+    let mut sinks = Vec::new();
+    crate::test_wait::yield_until("the replacing connection opened", || { sinks.extend(subscriptions.try_iter()); sinks.len() >= 2 }).await;
+    for sink in &sinks {
+        sink.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "session_unknown".into() });
+    }
+    let first = within(received.recv()).await.expect("the connection that replaced the ended one delivers the failure");
+    assert!(matches!(first, DbError::Session { detail, .. } if detail == "session_unknown"));
+    assert!(within(async { tokio::time::sleep(Duration::from_millis(200)).await; received.try_recv().ok() }).await.is_none(), "the failure was delivered more than once");
+    live.cancel();
+}
