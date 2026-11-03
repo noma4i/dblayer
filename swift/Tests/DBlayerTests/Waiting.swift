@@ -107,9 +107,11 @@ final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Senda
   }
 }
 
-func isState(_ delivery: StreamDelivery) -> Bool {
-  if case .state = delivery.value { return true }
-  return false
+func carriesRows(_ delivery: StreamDelivery) -> Bool {
+  switch delivery.value {
+  case .snapshot, .delta: return true
+  default: return false
+  }
 }
 
 extension Query {
@@ -146,7 +148,7 @@ struct TestLive<Model: DBModel>: Sendable {
         for await delivery in value {
           let applied = projection.apply(delivery)
           if applied == .resync { value.resync() }
-          if applied == .changed, !isState(delivery) { continuation.yield(projection.rows) }
+          if applied == .changed, carriesRows(delivery) { continuation.yield(projection.rows) }
         }
         continuation.finish()
       }
