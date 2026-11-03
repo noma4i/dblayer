@@ -48,6 +48,7 @@ public final class Entity<Model: DBModel> {
   }
 
   public func waitForInitialLoad() async throws {
+    try await registry.loadInitial(id: fixedId ?? "", lease: lease)
     if !snapshot.settled && snapshot.phase != .closed {
       let key = UUID()
       await withTaskCancellationHandler {
@@ -144,6 +145,12 @@ public final class Entities<Model: DBModel> {
     return made
   }
 
+  fileprivate func loadInitial(id: String, lease: UInt64) async throws {
+    if !pending.isEmpty { flush() }
+    try await core.loadInitial(id: id, lease: lease)
+    await core.delivered()
+  }
+
   private func flush() {
     flushing = false
     let requests = Array(pending.values)
@@ -233,6 +240,10 @@ final class CoreEntitySource<Model: DBModel>: @unchecked Sendable {
   }
   func singleton(_ query: Query<Model>, lease: UInt64) {
     queue.async { self.perform([EntityLease(id: "", lease: lease)]) { try self.open().singleton(queryJson: query.json, lease: lease) } }
+  }
+  func loadInitial(id: String, lease: UInt64) async throws {
+    let held = await withCheckedContinuation { continuation in queue.async { continuation.resume(returning: self.observer) } }
+    try await held?.loadInitial(id: id, lease: lease)
   }
   func reset() { queue.async { self.observer?.reset() } }
   func close() { queue.async { self.observer?.shutdown(); self.observer = nil; self.values = [:]; self.queue.async { self.deliver = nil } } }

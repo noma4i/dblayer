@@ -23,6 +23,9 @@ struct State {
     power_saving: bool,
     low_ram: bool,
     suppressed: bool,
+    baseline_suppressed: bool,
+    baseline_listening_denied: bool,
+    reset_pending: bool,
     unseen: usize,
     app_loads: usize,
     first_snapshot: bool,
@@ -389,6 +392,30 @@ impl Sync {
 
     pub fn session_ended(&self) {
         self.inner.db.shared.store.end_session();
+    }
+
+    pub fn mark_open_baseline(&self) {
+        let mut state = locked(&self.inner.preload.state);
+        state.baseline_suppressed = state.suppressed;
+        state.baseline_listening_denied = state.listening_denied;
+    }
+
+    pub fn restore_open_baseline(&self) {
+        locked(&self.inner.preload.state).reset_pending = true;
+        self.set_online(true);
+        self.set_power_saving(false);
+        let (suppressed, denied) = {
+            let mut state = locked(&self.inner.preload.state);
+            state.low_ram = false;
+            (state.baseline_suppressed, state.baseline_listening_denied)
+        };
+        self.set_preload(!suppressed);
+        locked(&self.inner.preload.state).listening_denied = denied;
+    }
+
+    pub fn finish_reset(&self) {
+        if !std::mem::take(&mut locked(&self.inner.preload.state).reset_pending) { return; }
+        if self.inner.drop_dead_live() { locked(&self.inner.preload.state).listened = false; }
     }
 
     pub fn set_listening(&self, allowed: bool) {

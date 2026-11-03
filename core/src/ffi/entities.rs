@@ -354,7 +354,8 @@ impl LiveEntities {
                 let mut entry = Entry::new(request.lease, false, generation, epoch);
                 entry.fetch = request.fetch;
                 if request.fetch != EntityFetch::None { entry.verdict = entry.machine.read_started(); }
-                if let Some(cached) = self.database.entity_cache.take(&self.model, &request.id, now, generation, epoch) {
+                let unchanged = |cached: &CachedEntity| self.database.db.revision_seq().is_ok_and(|current| cached.revision >= current);
+                if let Some(cached) = self.database.entity_cache.take(&self.model, &request.id, now, generation, epoch).filter(unchanged) {
                     entry.verdict = if cached.row.is_some() { entry.machine.seed(cached.revision) } else { entry.machine.accept(cached.revision, false, None) };
                     entry.value = cached.row;
                     entry.value_token = NEXT_VALUE.fetch_add(1, Ordering::Relaxed);
@@ -377,6 +378,34 @@ impl LiveEntities {
             return Err(DbError::Invalid { detail: "entity fetch needs a network session".into() });
         }
         self.refresh_retained(fetches, generation);
+        Ok(())
+    }
+
+    pub async fn load_initial(&self, id: String, lease: u64) -> Result<(), DbError> {
+        super::entity_calls::entered();
+        if self.database.streams.snapshot().admits(crate::lifecycle::Origin::Observed) { return Ok(()); }
+        let sync = self.database.sync()?.clone();
+        let singleton = {
+            let state = locked(&self.state);
+            if state.closed { return Err(DbError::Interrupted { detail: "entities closed".into() }); }
+            if id.is_empty() {
+                let Some(single) = state.singleton.as_ref().filter(|single| single.entry.lease == lease) else { return Ok(()) };
+                Some(single.query.clone())
+            } else if state.entries.get(&id).is_some_and(|entry| entry.lease == lease) {
+                None
+            } else {
+                return Ok(());
+            }
+        };
+        match singleton {
+            Some(json) => {
+                let (_, remote) = self.database.parsed_query(&json)?;
+                if let Some((relation, params)) = remote {
+                    sync.load(&self.model, &relation, &params, crate::sync::LoadOptions::default()).await.map_err(DbError::from)?;
+                }
+            }
+            None => sync.load_entity(&self.model, &id).await.map_err(DbError::from)?,
+        }
         Ok(())
     }
 

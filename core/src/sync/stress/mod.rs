@@ -310,6 +310,5 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     oracle::reloaded_client(&world);
     check::cache(&world.rig.db, &world.universe, &findings);
     watchers.finish(&world.rig.db, &findings);
-    let report = StressReport { findings: findings.all(), ops, digest: oracle::digest(&world), requests: world.server.received() };
-    report
+    StressReport { findings: findings.all(), ops, digest: oracle::digest(&world), requests: world.server.received() }
 }

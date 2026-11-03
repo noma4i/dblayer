@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- `resetForTesting` returns the database to a fresh open and ends old work before `settleForTesting`.
+
 ## 6.16.0 - 2026-11-03
 
 ### Added

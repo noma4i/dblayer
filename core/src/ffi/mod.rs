@@ -145,6 +145,8 @@ mod offload_tests;
 #[cfg(test)]
 mod load_tests;
 #[cfg(test)]
+mod reset_testing_tests;
+#[cfg(test)]
 mod reject_tests;
 #[cfg(test)]
 mod live_tests;

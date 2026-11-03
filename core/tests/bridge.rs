@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 use std::sync::Arc;
 use dblayer::ffi::{Config, Database, LiveChange, QueryListener, Transport};
 use dblayer::schema::{FieldSpec, ModelSpec};

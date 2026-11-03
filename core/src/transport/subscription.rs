@@ -66,6 +66,7 @@ impl SubscriptionFailure {
     pub fn from_error(error: super::TransportError) -> Self {
         let kind = match &error {
             super::TransportError::Graphql { .. } => SubscriptionFailureKind::Graphql,
+            super::TransportError::Interrupted(_) => SubscriptionFailureKind::Transport,
             error if super::RetryClass::of_error(error) != super::RetryClass::Fatal => SubscriptionFailureKind::Transport,
             _ => SubscriptionFailureKind::Internal,
         };

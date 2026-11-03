@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,6 +22,20 @@ private class HeldTestingTransport(val mock: MockTransport = MockTransport()) : 
     }
 }
 
+private class SwitchableTestTransport(@Volatile var target: MockTransport?) : Transport {
+    private fun selected(): MockTransport = target ?: throw DbException.Interrupted("transport unavailable during reset")
+    override suspend fun openCable(lease: CableLease) = selected().openCable(lease)
+    override suspend fun cableSend(token: String, text: String) = selected().cableSend(token, text)
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = target?.cableNext(token)
+    override suspend fun cableClose(token: String) { target?.cableClose(token) }
+    override suspend fun query(request: TransportRequest): String = selected().query(request)
+    override suspend fun mutate(request: TransportRequest): String = selected().mutate(request)
+    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) = selected().subscribe(request, sink)
+    override fun unsubscribe(token: String) { target?.unsubscribe(token) }
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, tag: String, progress: ByteProgress): PutReply =
+        selected().put(url, headers, file, tag, progress)
+}
+
 @OptIn(DBlayerTestingApi::class)
 class TestingCallsTest {
     private object Feed : GraphQLOperation {
@@ -30,6 +45,39 @@ class TestingCallsTest {
     private object Create : GraphQLOperation {
         override val operationName = "CreateMoment"
         override val document = "mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid createdAt } }"
+    }
+
+    @Test
+    fun testingResetGivesTheNextTransportAFreshOpen() = bounded {
+        DBlayer.close()
+        val scope = CoroutineScope(SupervisorJob())
+        try {
+            val reply = """{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"""
+            val first = MockTransport()
+            first.enqueue("MomentsFeed", reply)
+            val switched = SwitchableTestTransport(first)
+            DBlayer.openTesting(switched, modelsJSON, operations = listOf(Feed))
+            val held = LiveList(Moment.feed, scope)
+            held.waitForInitialLoad()
+            DBlayer.database.setOnline(false)
+            switched.target = null
+            DBlayer.resetForTesting()
+            DBlayer.settleForTesting()
+            val next = MockTransport()
+            repeat(3) { next.enqueue("MomentsFeed", reply) }
+            switched.target = next
+            assertTrue(next.calls.isEmpty())
+            val fresh = LiveList(Moment.feed, scope)
+            fresh.waitForInitialLoad()
+            assertEquals(listOf("m1"), fresh.ids.value)
+            assertTrue(next.calls.isNotEmpty() && next.calls.all { it.operationName == "MomentsFeed" })
+            val entity = Moment.entity("m1")
+            entity.waitForInitialLoad()
+            assertNotNull(entity.value.value)
+        } finally {
+            scope.cancel()
+            DBlayer.close()
+        }
     }
 
     @Test

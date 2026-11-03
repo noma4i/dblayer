@@ -73,6 +73,13 @@ impl Sync {
         (due.sink)(&due.id, outcome);
     }
 
+    pub async fn load_entity(&self, model: &str, id: &str) -> Result<(), SyncError> {
+        let spec = self.inner.db.spec(model).map_err(|_| SyncError::UnknownModel(model.into()))?;
+        let relation = spec.relations.iter().find(|declared| declared.node == Some(NodeRead::One))
+            .ok_or_else(|| SyncError::UnknownRelation { model: model.into(), relation: "node".into() })?.name.clone();
+        self.inner.node(crate::lifecycle::Origin::Explicit, model, &relation, id, true).await.map(|_| ())
+    }
+
     pub fn cancel_entity_refresh(&self, cancel: &CancelToken) {
         cancel.cancel();
         let cancelled = {
@@ -90,6 +97,16 @@ impl Sync {
 }
 
 impl Inner {
+    pub(crate) fn drop_due_refreshes(&self, models: Option<&[String]>) {
+        let dropped: Vec<DueRefresh> = {
+            let mut due = locked(&self.entity_due);
+            let (dropped, kept) = std::mem::take(&mut *due).into_iter().partition(|due| models.is_none_or(|models| models.contains(&due.model)));
+            *due = kept;
+            dropped
+        };
+        drop(dropped);
+    }
+
     pub(crate) fn refresh_due_entities(self: &Arc<Self>, session: bool) {
         let waiting: Vec<DueRefresh> = {
             let mut due = locked(&self.entity_due);

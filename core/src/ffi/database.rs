@@ -482,6 +482,10 @@ impl Database {
     }
     pub async fn reset_for_testing(&self) -> Result<(), DbError> {
         if !self.testing { return Err(DbError::Invalid { detail: "resetForTesting requires openTesting".into() }); }
+        if let Some(sync) = &self.sync {
+            let _entered = executor()?.enter();
+            sync.restore_open_baseline();
+        }
         let database = self.db.clone();
         blocking(move || { database.reset_all()?; Ok(()) }).await
     }
@@ -502,7 +506,10 @@ impl Database {
                     let checking = database.clone();
                     busy = match blocking(move || checking.testing_busy()).await? {
                         Some(part) => part,
-                        None => return Ok::<(), DbError>(()),
+                        None => {
+                            if let Some(sync) = &database.sync { sync.finish_reset(); }
+                            return Ok::<(), DbError>(());
+                        }
                     };
                     tokio::time::sleep(Duration::from_millis(1)).await;
                 }
@@ -604,6 +611,7 @@ impl Database {
             if !crate::sync::locked(&inner.flights).waiting.is_empty() { return Ok(Some("load flights")); }
             if !inner.resume.idle() { return Ok(Some("resume")); }
             if !inner.preload.idle() { return Ok(Some("preload")); }
+            if inner.connectivity.is_online() && inner.live_opening() { return Ok(Some("subscriptions")); }
             if inner.connectivity.is_online() {
                 let queue = inner.operation_queue().map_err(DbError::from)?;
                 let queue = crate::sync::locked(queue);
@@ -636,7 +644,7 @@ impl Database {
             sync.inner.spawn_flush(Duration::ZERO);
         }
     }
-    fn parsed_query(&self, json: &str) -> Result<ParsedQuery, DbError> {
+    pub(super) fn parsed_query(&self, json: &str) -> Result<ParsedQuery, DbError> {
         let description: Value = serde_json::from_str(json)?;
         let mut query: Query = serde_json::from_value(description.clone())?;
         let remote = description["relation"].as_str().map(|name| -> Result<_, DbError> {

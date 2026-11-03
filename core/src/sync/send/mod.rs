@@ -43,7 +43,7 @@ fn failed_upload_error(row: &crate::db::Row, action: Option<&str>) -> Option<cra
 
 impl Sync {
     pub async fn settled(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
-        self.inner.db.shared.store.lifecycle.scoped(self.settled_in(model, id, action)).await?
+        self.inner.db.shared.store.lifecycle.bound(Box::pin(self.settled_in(model, id, action))).await?
     }
 
     async fn settled_in(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
@@ -78,7 +78,7 @@ impl Sync {
 
     /// Waits until the queued action is answered and returns the declared `result` fields of its payload. Fails with the refusal. An answer is read once.
     pub async fn answer(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {
-        self.inner.db.shared.store.lifecycle.scoped(self.answer_in(model, operation)).await?
+        self.inner.db.shared.store.lifecycle.bound(Box::pin(self.answer_in(model, operation))).await?
     }
 
     async fn answer_in(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {

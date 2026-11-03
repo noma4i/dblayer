@@ -24,7 +24,57 @@ private final class HeldTestingTransport: Transport, @unchecked Sendable {
   func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply { try await mock.put(url: url, headers: headers, file: file, tag: tag, progress: progress) }
 }
 
+private final class SwitchableTestTransport: Transport, @unchecked Sendable {
+  private let lock = NSLock()
+  private var target: MockTransport?
+
+  init(_ target: MockTransport?) { self.target = target }
+
+  func use(_ next: MockTransport?) { lock.withLock { target = next } }
+  private func selected() throws -> MockTransport {
+    guard let current = lock.withLock({ target }) else { throw DbError.Interrupted(detail: "transport unavailable during reset") }
+    return current
+  }
+  func query(request: TransportRequest) async throws -> String { try await selected().query(request: request) }
+  func mutate(request: TransportRequest) async throws -> String { try await selected().mutate(request: request) }
+  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { try await selected().subscribe(request: request, sink: sink) }
+  func unsubscribe(token: String) { try? selected().unsubscribe(token: token) }
+  func openCable(lease: CableLease) async throws { try await selected().openCable(lease: lease) }
+  func cableSend(token: String, text: String) async throws { try await selected().cableSend(token: token, text: text) }
+  func cableNext(token: String) async -> EncryptedSocketEvent? { await (try? selected())?.cableNext(token: token) }
+  func cableClose(token: String) async { await (try? selected())?.cableClose(token: token) }
+  func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply { try await selected().put(url: url, headers: headers, file: file, tag: tag, progress: progress) }
+}
+
 extension BridgeProbeTests {
+  @MainActor @Test(.timeLimit(.minutes(1)))
+  func testingResetGivesTheNextTransportAFreshOpen() async throws {
+    DB.close()
+    defer { DB.close() }
+    let reply = #"{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#
+    let first = MockTransport()
+    first.enqueue("MomentsFeed", reply: reply)
+    let switched = SwitchableTestTransport(first)
+    try await DB.openTesting(transport: switched, modelsJSON: modelsJSON, operations: [TestingFeed.self])
+    let held = LiveList(Moment.feed)
+    try await held.waitForInitialLoad()
+    try DB.database.setOnline(online: false)
+    switched.use(nil)
+    try await DB.resetForTesting()
+    try await DB.settleForTesting()
+    let next = MockTransport()
+    for _ in 0..<3 { next.enqueue("MomentsFeed", reply: reply) }
+    switched.use(next)
+    #expect(next.calls.isEmpty)
+    let fresh = LiveList(Moment.feed)
+    try await fresh.waitForInitialLoad()
+    #expect(fresh.ids == ["m1"])
+    #expect(!next.calls.isEmpty && next.calls.allSatisfy { $0.operationName == "MomentsFeed" })
+    let entity = Moment.entity("m1")
+    try await entity.waitForInitialLoad()
+    #expect(entity.value != nil)
+  }
+
   @MainActor @Test(.timeLimit(.minutes(1)))
   func testingResetClearsRows() async throws {
     DB.close()

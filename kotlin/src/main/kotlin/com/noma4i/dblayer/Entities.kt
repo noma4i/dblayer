@@ -64,6 +64,7 @@ class Entity<Model : DBModel> internal constructor(
     val isClosed: Boolean get() = shown.value.phase == EntityPhase.Closed
     internal fun publish(snapshot: EntitySnapshot<Model>) { shown.value = snapshot }
     suspend fun waitForInitialLoad() {
+        owner.loadInitial(fixedId.orEmpty(), lease)
         val ready = shown.first { it.settled || it.phase == EntityPhase.Closed }
         if (ready.phase == EntityPhase.Closed) throw DbException.Interrupted("entity closed")
         (ready.read as? EntityRead.Failed)?.let { throw EntityReadException(it.error) }
@@ -113,6 +114,12 @@ class Entities<Model : DBModel> internal constructor(private val modelName: Stri
         single = made
         core.singleton(query.json, lease)
         made
+    }
+
+    internal suspend fun loadInitial(id: String, lease: ULong) {
+        flush()
+        core.loadInitial(id, lease)
+        core.delivered()
     }
 
     private fun flush() {
@@ -180,6 +187,10 @@ internal class CoreEntitySource<Model : DBModel>(
     }
     fun singleton(query: String, lease: ULong) = submit {
         perform(listOf(EntityLease("", lease))) { open().singleton(query, lease) }
+    }
+    suspend fun loadInitial(id: String, lease: ULong) {
+        val held = suspendCancellableCoroutine<LiveEntities?> { continuation -> submit { continuation.resume(observer) } }
+        held?.loadInitial(id, lease)
     }
     fun reset() = submit { observer?.reset() }
     fun close() = submit { observer?.shutdown(); observer = null; values.clear() }

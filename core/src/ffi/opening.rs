@@ -55,6 +55,7 @@ impl OpenDatabase {
             sync.set_preload(preload);
             let _entered = super::database::executor()?.enter();
             sync.set_listening(listening);
+            sync.mark_open_baseline();
         }
         Ok(database)
     }

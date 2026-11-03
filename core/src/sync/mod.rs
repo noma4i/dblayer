@@ -347,6 +347,9 @@ impl crate::lifecycle::Member for Inner {
             crate::lifecycle::Change::Reset(models) => {
                 self.owner.reset(models.as_deref());
                 self.reset_live_ready();
+                self.reopen_live();
+                inner.drop_due_refreshes(models.as_deref());
+                if models.is_none() { inner.end_uploads_of_reset(); }
                 inner.preload_on_event();
             }
             crate::lifecycle::Change::Session(_, _) | crate::lifecycle::Change::EndSession => {

@@ -247,6 +247,11 @@ impl Inner {
         for token in tokens { token.cancel(); }
     }
 
+    pub(super) fn end_uploads_of_reset(&self) {
+        let (tokens, _) = locked(&self.uploads).end_all();
+        for token in tokens { token.cancel(); }
+    }
+
     fn restart_uploads(&self, sequences: impl IntoIterator<Item = i64>) {
         if let Ok(queue) = self.operation_queue() { locked(queue).dirty_uploads.extend(sequences); }
     }

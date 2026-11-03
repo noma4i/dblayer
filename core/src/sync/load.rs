@@ -233,6 +233,7 @@ impl Inner {
 
     async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
         if !self.admitted(resolved.origin) { return Err(SyncError::Cancelled); }
+        let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
         let generation = self.db.generation();
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
@@ -296,7 +297,7 @@ impl Inner {
                     let seed = match self.stored(resolved) { Ok(seed) => seed, Err(error) => { guard.finish(Err(error.clone())); return Err(error); } };
                     let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), seed);
                     let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
-                    let executed = self.execute(resolved, cursor, force).await;
+                    let executed = Box::pin(self.execute_bound(resolved, cursor, force, epoch)).await;
                     let result = match executed {
                         Executed::Landed(outcome, revision) => {
                             match outcome.status {
@@ -333,6 +334,18 @@ impl Inner {
                     }
                 }
                 Err(None) => return Ok(LoadOutcome::of(LoadStatus::SkippedFresh)),
+            }
+        }
+    }
+
+    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, epoch: u64) -> Executed {
+        if resolved.origin == crate::lifecycle::Origin::Explicit { return self.execute(resolved, cursor, force).await; }
+        let lifecycle = &self.db.shared.store.lifecycle;
+        match lifecycle.bound(Box::pin(self.execute(resolved, cursor, force))).await {
+            Ok(executed) => executed,
+            Err(ended) => {
+                let now = lifecycle.snapshot();
+                if now.closed || now.session_epoch != epoch { Executed::Failed(ended.into()) } else { Executed::Landed(LoadOutcome::of(LoadStatus::Discarded(DiscardReason::StaleGeneration)), 0) }
             }
         }
     }

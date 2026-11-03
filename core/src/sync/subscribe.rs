@@ -104,6 +104,8 @@ pub struct SubscriptionStatus {
     pub rejected: usize,
     pub degraded: bool,
     pub stopped: bool,
+    pub connected: bool,
+    pub opening: bool,
     pub failure: Option<SubscriptionFailure>,
 }
 
@@ -122,6 +124,11 @@ impl Updates {
 
     pub fn cancel(&self) {
         crate::db::lock::effect(|| self.abort.abort());
+    }
+
+    pub(crate) fn reopening(&self) {
+        let mut status = locked(&self.status);
+        if !status.stopped { status.connected = false; status.opening = true; }
     }
 }
 
@@ -167,6 +174,10 @@ impl Feed {
             def: Arc::new(def), shared: false, operation_root: self.operation_root.clone(),
             status: self.status.clone(), backoff: self.backoff, ready: None, received,
         }).collect()
+    }
+
+    fn mark(&self, change: impl FnOnce(&mut SubscriptionStatus)) {
+        change(&mut locked(&self.status));
     }
 
     fn opening(&self, result: Result<(), SyncError>) {
@@ -664,10 +675,12 @@ impl Feed {
         loop {
             if !self.inner.admitted(crate::lifecycle::Origin::Observed) {
                 opened = None;
+                self.mark(|status| status.opening = false);
                 if resets.changed().await.is_none() { return; }
                 continue;
             }
             lifecycle.handle(Event::Resumed);
+            self.mark(|status| status.opening = true);
             let (generation, attempt) = tokio::select! {
                 biased;
                 _ = invalidated(&mut resets) => { opened = None; lifecycle = Lifecycle::new(self.backoff); continue; }
@@ -676,13 +689,15 @@ impl Feed {
                         Some(attempt) => Some(attempt),
                         None => self.inner.open_subscription(request.clone()).await,
                     }
-                } => match attempt { Some(attempt) => attempt, None => return },
+                } => match attempt { Some(attempt) => attempt, None => { self.mark(|status| status.opening = false); return } },
             };
+            self.mark(|status| status.opening = false);
             let kind = match attempt {
                 Ok(mut connection) => {
                     let reconnected = {
                         let mut status = locked(&self.status);
                         status.connects += 1;
+                        status.connected = true;
                         status.connects > 1
                     };
                     if reconnected {
@@ -697,7 +712,7 @@ impl Feed {
                     lifecycle.handle(Event::Connected);
                     tokio::select! {
                         biased;
-                        _ = invalidated(&mut resets) => { lifecycle = Lifecycle::new(self.backoff); continue; },
+                        _ = invalidated(&mut resets) => { self.mark(|status| status.connected = false); lifecycle = Lifecycle::new(self.backoff); continue; },
                         kind = self.pump(&mut connection, &mut lifecycle, generation) => kind,
                     }
                 }
@@ -709,6 +724,7 @@ impl Feed {
                     failure.kind
                 }
             };
+            self.mark(|status| status.connected = false);
             lifecycle.handle(Event::Lost { kind, online: self.inner.connectivity.is_online() });
             self.publish(&lifecycle);
             match lifecycle.step() {
