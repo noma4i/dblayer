@@ -30,7 +30,7 @@ class ForegroundEventsTest {
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         val scope = CoroutineScope(SupervisorJob())
-        val list = LiveList(Moment.feed, scope)
+        val list = ListReader(Moment.feed, scope)
         withTimeout(5000) { list.snapshot.first { it.phase == LoadPhase.Failed } }
         owner.lifecycle.currentState = Lifecycle.State.CREATED
         val sink = DBlayer.database.onlineSink()

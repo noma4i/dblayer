@@ -30,7 +30,7 @@ extension BridgeProbeTests {
 
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"id":"m2","uuid":"second","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    let list = LiveList(Moment.feed)
+    let list = ListReader(Moment.feed)
     try await list.waitForInitialLoad()
     #expect(transport.calls.map(\.operationName) == ["MomentsFeed"])
     try DB.enterForegroundForTesting()

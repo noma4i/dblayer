@@ -74,7 +74,7 @@ class ContainerMembersTest {
         val query = User.completeMembers("c1")
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
         try {
-            val members = LiveList(query, scope)
+            val members = ListReader(query, scope)
             eventually("complete members") { members.snapshot.value.complete }
             assertEquals(LoadPhase.Loaded, members.snapshot.value.phase)
             assertEquals(listOf("a0", "a1"), members.snapshot.value.rows.map { it.id })

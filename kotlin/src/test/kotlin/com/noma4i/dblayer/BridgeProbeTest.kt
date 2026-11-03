@@ -122,7 +122,7 @@ class BridgeProbeTest {
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
 
         val listScope = CoroutineScope(SupervisorJob())
-        val list = LiveList(Moment.feed, listScope)
+        val list = ListReader(Moment.feed, listScope)
         withTimeout(5000) { list.rows.first { it.isNotEmpty() } }
         val state = withTimeout(5000) { list.snapshot.first { it.loadedAt != null } }
         assertEquals("a", list.rows.value.first().uuid)
@@ -149,7 +149,7 @@ class BridgeProbeTest {
             }
             val listScope = CoroutineScope(SupervisorJob())
             try {
-                val list = LiveList(Moment.feed, listScope, refreshOnConnect = true)
+                val list = ListReader(Moment.feed, listScope, refreshOnConnect = true)
                 val failure = runCatching { withTimeout(5000) { list.waitForInitialLoad() } }.exceptionOrNull()
                 if (index == 2) assertEquals(true, failure is DbException.Http) else assertNull(failure)
                 assertEquals(index + 1, transport.calls.count { it.operationName == "MomentsFeed" })
@@ -218,7 +218,7 @@ class BridgeProbeTest {
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         val listScope = CoroutineScope(SupervisorJob())
-        val list = LiveList(Moment.feed, listScope)
+        val list = ListReader(Moment.feed, listScope)
         withTimeout(5000) { list.snapshot.first { it.phase == LoadPhase.Failed } }
         val before = transport.calls.size
 

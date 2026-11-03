@@ -66,7 +66,7 @@ class TestLive<M : DBModel>(private val query: Query<M>) {
 val <M : DBModel> Query<M>.live: TestLive<M> get() = TestLive(this)
 val <M : DBModel> Query<M>.snapshots: TestSnapshots<M> get() = TestSnapshots(this)
 
-class LiveList<M : DBModel>(private val query: Query<M>, scope: CoroutineScope, refreshOnConnect: Boolean = false) {
+class ListReader<M : DBModel>(private val query: Query<M>, scope: CoroutineScope, refreshOnConnect: Boolean = false) {
     private val projected = Projected(AccountScope.current().stream(query), query.decoder, scope)
     val rows: StateFlow<List<M>> = projected.projection.map { it.rows }.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val ids: Flow<List<String>> = rows.map { list -> list.map { it.id } }

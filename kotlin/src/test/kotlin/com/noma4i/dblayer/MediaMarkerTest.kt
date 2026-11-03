@@ -39,7 +39,7 @@ class MediaMarkerTest {
         marker(2, 2)
         val scope = CoroutineScope(Dispatchers.Default + Job())
         try {
-            val media = LiveList(MediaEntry.media("c1"), scope)
+            val media = ListReader(MediaEntry.media("c1"), scope)
             media.waitForInitialLoad()
             eventually("media initial snapshot") { media.snapshot.value.complete }
             assertEquals(listOf("1", "2"), media.rows.value.map { it.id })

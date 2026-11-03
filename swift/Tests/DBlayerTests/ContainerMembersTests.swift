@@ -64,7 +64,7 @@ extension BridgeProbeTests {
     transport.enqueue("ContainerMembers", reply: membersPage("a0", hasNext: true))
     transport.enqueue("ContainerMembers", reply: membersPage("a1", hasNext: false))
     let query = try User.completeMembers("c1")
-    let members = LiveList(query)
+    let members = ListReader(query)
     await eventually("complete members") { members.snapshot.complete }
     #expect(members.snapshot.phase == .loaded)
     #expect(members.snapshot.rows.map(\.id) == ["a0", "a1"])

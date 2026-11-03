@@ -45,7 +45,7 @@ class ForegroundTestingTest {
 
             transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
             transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"id":"m2","uuid":"second","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
-            val list = LiveList(Moment.feed, scope)
+            val list = ListReader(Moment.feed, scope)
             list.waitForInitialLoad()
             assertEquals(listOf("MomentsFeed"), transport.calls.map { it.operationName })
             DBlayer.enterForegroundForTesting()

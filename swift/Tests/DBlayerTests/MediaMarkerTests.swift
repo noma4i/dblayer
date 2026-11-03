@@ -25,7 +25,7 @@ extension BridgeProbeTests {
     marker(0, 2)
     marker(2, 2)
     let query = try MediaEntry.media("c1")
-    let media = LiveList(query)
+    let media = ListReader(query)
     try await media.waitForInitialLoad()
     await eventually("media initial snapshot") { media.snapshot.complete }
     #expect(media.rows.map(\.id) == ["1", "2"])

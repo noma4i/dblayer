@@ -191,7 +191,7 @@ struct TestListState<Model: DBModel>: Sendable {
 }
 
 @MainActor
-final class LiveList<Model: DBModel> {
+final class ListReader<Model: DBModel> {
   let projected: Projected<Model>
 
   init(_ query: Query<Model>, refreshOnConnect: Bool = false) {
