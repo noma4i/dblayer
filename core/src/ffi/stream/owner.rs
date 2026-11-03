@@ -130,17 +130,15 @@ impl Stream {
 
     /// Runs one change of the state. Deliveries it queues reach the reader after every library lock is released, in the order of the changes.
     fn change<R>(&self, apply: impl FnOnce(&mut State, &mut Effects) -> R) -> R {
-        let (result, owes) = self.outbox.under(&self.state, |state, effects| {
-            let result = apply(state, effects);
-            (result, !state.ended && (!state.opened || state.load_pending || state.awaiting_whole))
-        });
-        self.keep_lease(owes);
+        let result = self.outbox.under(&self.state, apply);
+        self.keep_lease();
         result
     }
 
-    /// The stream holds a lease while it owes its reader a value: before the first one, while a load runs, and while a whole snapshot is awaited.
-    fn keep_lease(&self, owes: bool) {
+    /// The stream holds a lease while it owes its reader a value: before the first one, while a load runs, and while a whole snapshot is awaited. The need is read under the lease guard, so the last caller applies the latest state.
+    fn keep_lease(&self) {
         let mut lease = self.lease.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let owes = { let state = locked(&self.state); !state.ended && (!state.opened || state.load_pending || state.awaiting_whole) };
         if lease.as_ref().is_some_and(|held| !held.is_current()) { lease.take(); }
         match (owes, lease.is_some()) {
             (true, false) => *lease = self.life.lease_passive(Origin::Session, "stream").ok(),
