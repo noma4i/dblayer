@@ -68,6 +68,18 @@ val rows = Moment.recent.cached()?.value ?: emptyList()
 val row = Moment.recent.cachedRow(id)
 ```
 
+`query.read()` and `query.readRow(id)` read storage once, also when the core holds nothing. They send no request and keep no stream.
+
+```swift
+let stored = try await Moment.recent.read()
+let one = try await Moment.recent.readRow(id)
+```
+
+```kotlin
+val stored = Moment.recent.read()
+val one = Moment.recent.readRow(id)
+```
+
 ## Ephemeral values
 
 Ephemeral fields (see [models](models.md)) arrive in the same stream. A write or a timed reset puts the row in a delta and `revision` moves, because the value is part of the row the reader holds.

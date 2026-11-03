@@ -96,6 +96,12 @@ class Query<Model : DBModel>(
     suspend fun cached(): Cached<List<Model>>? =
         offCaller { DBlayer.database.peekQuery(json)?.let { change -> Cached(change.rows.map(decoder::read), change.revision) } }
 
+    /** The rows of this query read from storage once. It sends no request and keeps no stream. */
+    suspend fun read(): List<Model> = offCaller { DBlayer.database.readQuery(json).map(decoder::read) }
+
+    /** One row read from storage, or null when the row does not exist. */
+    suspend fun readRow(id: String): Model? = offCaller { DBlayer.database.readRow(modelName, id)?.let(decoder::read) }
+
     suspend fun cachedRow(id: String): Model? =
         offCaller { DBlayer.database.peekRow(modelName, id)?.let(decoder::read) }
 

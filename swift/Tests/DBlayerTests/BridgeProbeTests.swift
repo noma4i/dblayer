@@ -191,6 +191,7 @@ struct BridgeProbeTests {
     #expect(row.authorId == "u1" && row.regionId == "r1")
   }
 
+  @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() async throws {
     let transport = MockTransport()

@@ -194,7 +194,7 @@ impl Database {
     }
 }
 
-fn id(value: &str) -> Result<RowId, DbError> {
+pub(super) fn id(value: &str) -> Result<RowId, DbError> {
     RowId::new(value).map_err(|error| DbError::Invalid { detail: error.to_string() })
 }
 

@@ -336,8 +336,9 @@ public struct AccountScope: Sendable {
     epoch = database.sessionEpoch()
   }
 
-  public func stream<Model: DBModel>(_ query: Query<Model>) throws -> ValueStream {
-    database.openValueStream(epoch: epoch, request: .query(queryJson: try query.json))
+  /// `refreshOnConnect` loads the relation again when the stream opens, also when it is fresh. The first rows stay visible.
+  public func stream<Model: DBModel>(_ query: Query<Model>, refreshOnConnect: Bool = false) throws -> ValueStream {
+    database.openValueStream(epoch: epoch, request: .query(queryJson: try query.json(refreshOnConnect: refreshOnConnect)))
   }
 
   public func count<Model: DBModel>(_ query: Query<Model>) throws -> ValueStream {

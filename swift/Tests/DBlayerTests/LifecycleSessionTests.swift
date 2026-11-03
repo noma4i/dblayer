@@ -24,12 +24,14 @@ private final class SignedAccount: @unchecked Sendable {
 private final class RowHistory: ValueSink, @unchecked Sendable {
   private let lock = NSLock()
   private var projection = ListProjection<User>()
+  private var stream: UInt64?
   private var history: [[String]] = []
 
   var states: [[String]] { lock.withLock { history } }
 
   func delivered(delivery: StreamDelivery) {
     lock.withLock {
+      if stream != delivery.stream { stream = delivery.stream; projection = ListProjection<User>() }
       if projection.apply(delivery) == .changed { history.append(projection.rows.map(\.name)) }
     }
   }
@@ -86,8 +88,8 @@ extension BridgeProbeTests {
     return server
   }
 
-  fileprivate static func holdList(_ history: RowHistory) -> UInt64 {
-    DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .query(queryJson: #"{"model":"User"}"#), sink: history)
+  fileprivate static func holdList(_ history: RowHistory) throws -> UInt64 {
+    try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .query(queryJson: #"{"model":"User"}"#), sink: history)
   }
 
   /// The order of the app: sign-in call, session profile, profile refresh.
@@ -157,13 +159,13 @@ extension BridgeProbeTests {
     _ = try await Self.openSealedSession()
     try await Self.startSealedSession("A")
     let history = RowHistory()
-    let live = Self.holdList(history)
-    defer { DB.database.cancelStream(stream: live) }
+    let live = try Self.holdList(history)
+    defer { _ = try? DB.database.cancelStream(stream: live) }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     let seen = history.states.count
     try await DB.sessionReset()
     try await Self.startSealedSession("B")
-    _ = Self.holdList(history)
+    _ = try Self.holdList(history)
     await eventually("the held list shows B") { history.states.last?.contains("B") == true }
     let after = history.states.dropFirst(seen)
     #expect(after.allSatisfy { !$0.contains("A") }, "account A came back after the logout: \(after)")
@@ -178,8 +180,8 @@ extension BridgeProbeTests {
     var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let history = RowHistory()
-    let live = Self.holdList(history)
-    defer { DB.database.cancelStream(stream: live) }
+    let live = try Self.holdList(history)
+    defer { _ = try? DB.database.cancelStream(stream: live) }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     server.hold(operation: "UserProfile")
     Task { @MainActor in _ = try? await User.profile.refresh() }
@@ -192,7 +194,7 @@ extension BridgeProbeTests {
 
     await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
     try await DB.sessionReset()
-    DB.database.cancelStream(stream: live)
+    try DB.database.cancelStream(stream: live)
 
     await eventually("the wait that was pending at the exit ended") { pending.isDone }
     #expect(entity.projection.ended == .sessionEnded)
@@ -212,8 +214,8 @@ extension BridgeProbeTests {
     var entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let history = RowHistory()
-    let live = Self.holdList(history)
-    defer { DB.database.cancelStream(stream: live) }
+    let live = try Self.holdList(history)
+    defer { _ = try? DB.database.cancelStream(stream: live) }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     for (next, previous) in [("B", "A"), ("A", "B")] {
       server.hold(operation: "UserProfile")
@@ -226,7 +228,7 @@ extension BridgeProbeTests {
       server.hold(operation: nil)
       try await Self.startSealedSession(next)
       entity = Projected<User>(try DB.account().stream(User.profile))
-      _ = Self.holdList(history)
+      _ = try Self.holdList(history)
       await eventually("the held entity shows \(next)") { entity.value?.name == next }
         await eventually("the held list shows \(next)") { history.states.last?.contains(next) == true }
       let after = history.states.dropFirst(seen)

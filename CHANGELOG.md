@@ -10,6 +10,8 @@
 - Streams for counts, related rows, rows by id, model events and upload status.
 - `AccountScope.send` carries a media upload; `uploadBatch` sends many files.
 - `durable: true` on `operation :create` generates `Model.send`.
+- `Query.read` and `Query.readRow` read storage once without a stream.
+- `AccountScope.stream` takes `refreshOnConnect`.
 - A projection keeps the edits of its deltas and the temporary id of a row.
 
 ### Changed

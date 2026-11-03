@@ -66,7 +66,7 @@ fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model}
 impl Database {
     /// Runs the work in the epoch of the caller: it starts only while that epoch is current and ends with it.
     async fn in_epoch<T>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
-        let lease = self.streams.lease(Origin::Session, target).map_err(|_| ended())?;
+        let lease = self.streams.lease(Origin::Explicit, target).map_err(|_| ended())?;
         if lease.epoch() != epoch { return Err(ended()); }
         lease.run(work).await.map_err(|_| ended())?
     }

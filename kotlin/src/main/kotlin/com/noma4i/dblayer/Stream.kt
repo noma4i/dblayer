@@ -251,7 +251,8 @@ class Sent<Model : DBModel> internal constructor(val row: Model, private val rec
 
 /** The streams and commands of one signed-in account. The root of the app makes one after the sign-in and recreates its screens when the account changes: a scope whose session ended opens streams that end at once. */
 class AccountScope private constructor(val epoch: ULong, private val database: Database) {
-    fun <Model : DBModel> stream(query: Query<Model>): ValueStream = database.openValueStream(epoch, StreamRequest.Query(query.json))
+    /** [refreshOnConnect] loads the relation again when the stream opens, also when it is fresh. The first rows stay visible. */
+    fun <Model : DBModel> stream(query: Query<Model>, refreshOnConnect: Boolean = false): ValueStream = database.openValueStream(epoch, StreamRequest.Query(query.json(refreshOnConnect)))
 
     fun <Model : DBModel> count(query: Query<Model>): ValueStream = database.openValueStream(epoch, StreamRequest.Count(query.json))
 

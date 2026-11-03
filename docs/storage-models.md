@@ -25,14 +25,14 @@ end
 ```swift
 let session = try await Session.create(token: "saved")
 let edited = try await session.update(token: "changed")
-let cached = try await Query<Session>().cachedRow(edited.id)
+let cached = try await Query<Session>().readRow(edited.id)
 try await edited.destroy()
 ```
 
 ```kotlin
 val session = Session.create(token = "saved")
 val edited = session.update(token = "changed")
-val cached = Query("Session", Session).cachedRow(edited.id)
+val cached = Query("Session", Session).readRow(edited.id)
 edited.destroy()
 ```
 

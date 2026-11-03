@@ -235,7 +235,7 @@ extension BridgeProbeTests {
     try await Self.signIn("A")
     let scope = try DB.account()
     let reader = LossyReader()
-    let stream = DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
+    let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
     reader.stream = stream
     try await DB.database.streamLoaded(stream: stream)
     await eventually("the first snapshot arrives") { reader.snapshots == 1 }
@@ -247,7 +247,7 @@ extension BridgeProbeTests {
 
     #expect(reader.resyncs == 1, "the queue of later deltas asked for more than one new snapshot")
     #expect(reader.snapshots == 2, "a missed revision gives exactly one new snapshot")
-    DB.database.cancelStream(stream: stream)
+    try DB.database.cancelStream(stream: stream)
   }
 
   /// B10: the outcome of a command sent offline waits, and ends with the session of its receipt.
@@ -276,7 +276,7 @@ extension BridgeProbeTests {
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
     let reader = LossyReader()
-    let stream = DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .none), sink: reader)
+    let stream = try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .none), sink: reader)
     await eventually("the failed stream ended") { !reader.ended.isEmpty }
 
     #expect(reader.ended == [.invalid])
@@ -308,7 +308,7 @@ private final class LossyReader: ValueSink, @unchecked Sendable {
       if applied == .resync { resyncs += 1 }
       return applied == .resync
     }
-    if ask { DB.database.resyncStream(stream: stream) }
+    if ask { try? DB.database.resyncStream(stream: stream) }
   }
 }
 

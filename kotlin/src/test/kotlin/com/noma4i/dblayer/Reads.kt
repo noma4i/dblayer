@@ -28,10 +28,10 @@ class Snapshot<M : DBModel>(
     val errorKind: String?,
 )
 
-suspend fun <M : DBModel> Query<M>.current(): List<M> = cached()?.value ?: emptyList()
+suspend fun <M : DBModel> Query<M>.current(): List<M> = read()
 
 class TestRow<M : DBModel>(private val decoder: ModelDecoder<M>, private val id: String) {
-    suspend fun current(): M? = Query(decoder.modelName, decoder).cachedRow(id)
+    suspend fun current(): M? = Query(decoder.modelName, decoder).readRow(id)
 }
 
 fun <M : DBModel> ModelDecoder<M>.find(id: String) = TestRow(this, id)
@@ -67,7 +67,7 @@ val <M : DBModel> Query<M>.live: TestLive<M> get() = TestLive(this)
 val <M : DBModel> Query<M>.snapshots: TestSnapshots<M> get() = TestSnapshots(this)
 
 class ListReader<M : DBModel>(private val query: Query<M>, scope: CoroutineScope, refreshOnConnect: Boolean = false) {
-    private val projected = Projected(AccountScope.current().stream(query), query.decoder, scope)
+    private val projected = Projected(AccountScope.current().stream(query, refreshOnConnect), query.decoder, scope)
     val rows: StateFlow<List<M>> = projected.projection.map { it.rows }.stateIn(scope, SharingStarted.Eagerly, emptyList())
     val ids: Flow<List<String>> = rows.map { list -> list.map { it.id } }
     val snapshot: StateFlow<Snapshot<M>> = projected.projection.map { projection ->

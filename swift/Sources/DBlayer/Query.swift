@@ -85,6 +85,17 @@ public struct Query<Model: DBModel>: Sendable {
     return try Model.decode(row)
   }
 
+  /// The rows of this query read from storage once. It sends no request and keeps no stream.
+  @concurrent public func read() async throws -> [Model] {
+    try await DB.database.readQuery(queryJson: json).map { try Model.decode($0) }
+  }
+
+  /// One row read from storage. It is `nil` when the row does not exist.
+  @concurrent public func readRow(_ id: String) async throws -> Model? {
+    guard let row = try await DB.database.readRow(model: Model.modelName, rowId: id) else { return nil }
+    return try Model.decode(row)
+  }
+
   @concurrent public func warm() async throws { try await DB.database.warm(queryJson: json) }
 
   @concurrent public func edgeValues(of id: String) async throws -> [String: JSONValue]? {

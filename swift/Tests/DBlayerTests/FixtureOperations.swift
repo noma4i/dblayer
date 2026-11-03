@@ -47,7 +47,7 @@ public struct BlobProfile: DBSingleton {
         return try await act("set_video", values: values, args: ["video": try JSONValue.encode(video)])
     }
     @concurrent public static func setVideo(video: Blob) async throws -> Self {
-        guard let current = try await singleton.cached()?.value.first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
+        guard let current = try await singleton.read().first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
         return try await current.setVideo(video: video)
     }
 }

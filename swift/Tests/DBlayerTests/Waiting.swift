@@ -108,12 +108,12 @@ final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Senda
 }
 
 extension Query {
-  func current() async throws -> [Model] { try await cached()?.value ?? [] }
+  func current() async throws -> [Model] { try await read() }
 }
 
 struct RowRead<Model: DBModel>: Sendable {
   let id: String
-  func current() async throws -> Model? { try await Query<Model>().cachedRow(id) }
+  func current() async throws -> Model? { try await Query<Model>().readRow(id) }
 }
 
 extension DBModel {
@@ -195,10 +195,11 @@ final class ListReader<Model: DBModel> {
   let projected: Projected<Model>
 
   init(_ query: Query<Model>, refreshOnConnect: Bool = false) {
-    projected = Projected(try! AccountScope().stream(query))
+    projected = Projected(try! AccountScope().stream(query, refreshOnConnect: refreshOnConnect))
   }
 
   var rows: [Model] { projected.rows }
+  var ids: [String] { projected.rows.map(\.id) }
   var snapshot: TestListState<Model> {
     let state = projected.state
     return TestListState(phase: state?.phase, total: state?.total.map { Int($0) }, hasMore: state?.hasMore ?? false, loadedAt: state?.loadedAt.map { UInt64($0) }, errorKind: state?.errorKind, complete: state?.complete ?? false, error: state?.error, rows: projected.rows)

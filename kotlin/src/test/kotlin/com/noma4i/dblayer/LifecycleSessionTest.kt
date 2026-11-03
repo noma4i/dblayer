@@ -34,9 +34,11 @@ private class LifecycleCredential : CredentialStore {
 private class RowHistory : ValueSink {
     val states = CopyOnWriteArrayList<List<String>>()
     private var projection = ListProjection<User>()
+    private var stream: ULong? = null
 
     override fun delivered(delivery: StreamDelivery) {
         synchronized(this) {
+            if (stream != delivery.stream) { stream = delivery.stream; projection = ListProjection<User>() }
             val step = projection.apply(delivery, User)
             projection = step.projection
             if (step.applied == Applied.Changed) states.add(projection.rows.map { it.name })

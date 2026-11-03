@@ -47,10 +47,10 @@ struct SubscriptionTokenTests {
     transport.mock.enqueue("documentBySlug", reply: #"{"data":{"documentBySlug":{"id":"d1","slug":"a"}}}"#)
     var database: Database? = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
     try database?.registerOperations(defsJson: #"[{"name":"documentBySlug","document":"query documentBySlug($slug: String!, $source: String!) { documentBySlug(slug: $slug, source: $source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated($slug: String!, $source: String!) { documentUpdated(slug: $slug, source: $source) { id slug } }","rootPath":"documentUpdated"}]"#)
-    let opened = try #require(database)
-    let live = opened.subscribe(epoch: opened.sessionEpoch(), request: .query(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#), sink: IgnoredChanges())
+    let epoch = try #require(database).sessionEpoch()
+    let live = try #require(database).subscribe(epoch: epoch, request: .query(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#), sink: IgnoredChanges())
     await eventually("subscribe in flight", timeout: .seconds(5)) { transport.hasEntered }
-    opened.cancelStream(stream: live)
+    try #require(database).cancelStream(stream: live)
     database = nil
     await eventually("foreign task cancelled", timeout: .seconds(5)) { transport.wasCancelled }
     #expect(transport.revokedTokens.isEmpty)

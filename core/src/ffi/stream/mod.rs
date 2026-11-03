@@ -286,6 +286,27 @@ impl Database {
         })
         .await
     }
+
+    /// The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.
+    pub async fn read_query(&self, query_json: String) -> Result<Vec<WireRow>, DbError> {
+        let this = self.clone();
+        super::database::blocking(move || {
+            let (query, _) = this.parsed_query(&query_json)?;
+            let wire = this.wire(query.model.as_str())?;
+            Ok(this.db.query(&query)?.iter().map(|row| wire.row(row)).collect())
+        })
+        .await
+    }
+
+    /// One row read from SQLite once, off the calling thread.
+    pub async fn read_row(&self, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
+        let this = self.clone();
+        super::database::blocking(move || {
+            let wire = this.wire(&model)?;
+            Ok(this.db.find(&model, &super::database::id(&row_id)?)?.map(|row| wire.row(&row)))
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
