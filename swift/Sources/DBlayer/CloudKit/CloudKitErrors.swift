@@ -38,6 +38,7 @@ enum CloudKitErrors {
 
   private static func rank(_ error: CloudError) -> Int {
     switch error {
+    case .Interrupted: return -1
     case .Offline: return 0
     case .Unavailable: return 1
     case .Throttled: return 2

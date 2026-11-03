@@ -195,7 +195,8 @@ enum EntityRegistries {
     return made
   }
   static func leaseFailures() -> Int { failures.reduce(0) { $0 + $1() } }
-  static func settleAll() async { for settle in settles { await settle() } }
+  /// Returns when the queues of the wrapper delivered what the core already published. Goes with the wrapper queues.
+  static func delivered() async { for settle in settles { await settle() } }
   static func closeAll() { closes.forEach { $0() }; registries = [:]; settles = []; closes = []; failures = [] }
 }
 

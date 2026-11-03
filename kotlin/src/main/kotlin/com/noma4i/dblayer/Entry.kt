@@ -26,13 +26,8 @@ object DBlayer {
         offCaller { database.resume() }
     }
 
-    /** Tells the library whether the app lets the model subscriptions run. `open(listening = false)` starts none from a committed credential until `setListening(true)`. Allowed with a committed credential, they start once. `setListening(false)`, `logout()` and `sessionReset()` stop them. Call it from the app state that gates subscriptions, for example registration complete. */
+    /** Tells the library whether the app lets the model subscriptions run. `open(listening = false)` starts none from a committed credential until `setListening(true)`. Allowed with a committed credential, they start once. `setListening(false)` and `sessionReset()` stop them. Call it from the app state that gates subscriptions, for example registration complete. */
     fun setListening(allowed: Boolean) = database.setListening(allowed)
-
-    suspend fun logout() {
-        offCaller { database.logout() }
-        EntityRegistries.settleAll()
-    }
 
     /** Reloads every `preload` scope now, fresh or not, and returns when all have settled. Offline it throws without a request. When some scopes fail the error names them. Call it for pull to refresh instead of refreshing each reference list. */
     suspend fun refreshPreloads() = offCaller { database.refreshPreloads() }
@@ -49,16 +44,22 @@ object DBlayer {
     suspend inline fun <reified Answer> sessionResume(): Answer? =
         offCaller { database.sessionResume()?.let { dbJson.decodeFromString<Answer>(it) } }
 
-    fun sessionReset() = database.sessionReset()
+    /** Ends the session: work of the old session ends, the credential and the data of the account go. Call it for every sign-out; the library clears the data itself. */
+    suspend fun sessionReset() {
+        offCaller { database.sessionReset() }
+        EntityRegistries.delivered()
+    }
 
-    fun close() {
+    /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
+    suspend fun close() {
         EntityRegistries.closeAll()
         ForegroundEvents.stop()
         PowerSaving.stop()
         Reachability.disconnect()
-        opened?.shutdown()
+        val closing = opened
         opened = null
         ready = CompletableDeferred()
+        closing?.let { offCaller { it.closeDatabase() } }
     }
 
     fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()

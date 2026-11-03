@@ -232,7 +232,8 @@ internal object EntityRegistries {
     fun <Model : DBModel> of(modelName: String, decoder: ModelDecoder<Model>): Entities<Model> =
         registries.getOrPut(modelName) { Entities(modelName, decoder) } as Entities<Model>
     fun leaseFailures(): Int = registries.values.sumOf { it.leaseFailures }
-    suspend fun settleAll() { registries.values.forEach { it.delivered() } }
+    /** Returns when the queues of the wrapper delivered what the core already published. Goes with the wrapper queues. */
+    suspend fun delivered() { registries.values.forEach { it.delivered() } }
     fun closeAll() { registries.values.forEach { it.close() }; registries.clear() }
 }
 
