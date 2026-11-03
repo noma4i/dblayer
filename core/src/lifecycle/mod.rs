@@ -11,12 +11,12 @@ mod machine;
 
 use machine::Event;
 
-/// The kind of work a lease covers. All four share the database: they conflict only with a transition.
+/// What work needs to start: `Explicit` work runs without a session, `Session` work needs one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Origin { Explicit, Observed, Background, Cloud }
+pub(crate) enum Origin { Explicit, Session }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum End { Server, Local, Test }
+pub(crate) enum End { Server, Local }
 
 /// The exclusive transitions. Each one ends every lease of the old epoch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,8 +123,8 @@ impl Snapshot {
     /// Whether work of this kind may start now. A transition admits nothing: the work of its old epoch ends, and the next work waits for the transition to finish.
     pub(crate) fn admits(&self, origin: Origin) -> bool {
         !self.closed && self.transition.is_none() && match origin {
-            Origin::Explicit | Origin::Cloud => true,
-            Origin::Observed | Origin::Background => self.signed_in(),
+            Origin::Explicit => true,
+            Origin::Session => self.signed_in(),
         }
     }
 
@@ -221,9 +221,7 @@ impl Holders {
 
 #[derive(Clone, Debug)]
 struct LeaseInfo {
-    origin: Origin,
     target: &'static str,
-    epoch: u64,
     passive: bool,
 }
 
@@ -402,7 +400,7 @@ impl Lifecycle {
             if !state.snapshot().admits(origin) { return Err(Ended); }
             let (id, epoch) = (state.next_lease, state.snapshot().session_epoch);
             state.next_lease += 1;
-            state.leases.insert(id, LeaseInfo { origin, target, epoch, passive });
+            state.leases.insert(id, LeaseInfo { target, passive });
             let generation = data_bound.then(|| state.snapshot().generation);
             (Lease { life: self.clone(), id, epoch, generation }, state.activity())
         };
@@ -436,6 +434,7 @@ impl Lifecycle {
     }
 
     /// True when no lease is held and no transition runs.
+    #[cfg(test)]
     pub(crate) fn quiet(&self) -> bool {
         let state = crate::db::locked(&self.state);
         state.leases.is_empty() && state.snapshot().transition.is_none()
@@ -447,10 +446,10 @@ impl Lifecycle {
         changes.wait_for(|published| published.closed || published.admits(origin)).await.is_ok_and(|published| !published.closed)
     }
 
-    /// Leases held now, as `mode target epoch`, for a report that names what a wait is waiting for.
+    /// The work that holds a lease now, for a report that names what a wait is waiting for.
     pub(crate) fn held(&self) -> Vec<String> {
         let state = crate::db::locked(&self.state);
-        let mut held: Vec<_> = state.leases.iter().map(|(id, info)| format!("#{id} {:?} {} epoch {}", info.origin, info.target, info.epoch)).collect();
+        let mut held: Vec<_> = state.leases.iter().map(|(id, info)| format!("#{id} {}", info.target)).collect();
         held.sort();
         held
     }

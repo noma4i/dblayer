@@ -28,10 +28,8 @@ impl Db {
         let db = self.clone();
         let permit = tokio::task::spawn_blocking(move || -> Result<_, E> {
             permit.run_on_this_thread();
-            if end != End::Test {
-                db.shared.store.write_session_end_intent().map_err(DbError::from)?;
-                db.shared.store.end_session(&permit);
-            }
+            db.shared.store.write_session_end_intent().map_err(DbError::from)?;
+            db.shared.store.end_session(&permit);
             Ok(permit)
         })
         .await
@@ -40,7 +38,7 @@ impl Db {
         let db = self.clone();
         tokio::task::spawn_blocking(move || -> Result<(), E> {
             permit.run_on_this_thread();
-            if end != End::Test { clear()?; }
+            clear()?;
             db.reset_all_in(&permit)?;
             db.await_revision(db.revision_seq()?);
             permit.finish();
