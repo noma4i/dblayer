@@ -4797,7 +4797,7 @@ public protocol OpenDatabaseProtocol: AnyObject, Sendable {
     
     func `open`(config: Config, modelsJson: String, options: OpenOptions, transport: Transport?, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?) async throws  -> Database
     
-    func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, preload: Bool, listening: Bool) async throws  -> Database
+    func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, preload: Bool, listening: Bool, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?) async throws  -> Database
     
 }
 open class OpenDatabase: OpenDatabaseProtocol, @unchecked Sendable {
@@ -4877,12 +4877,12 @@ open func `open`(config: Config, modelsJson: String, options: OpenOptions, trans
         )
 }
     
-open func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, preload: Bool, listening: Bool)async throws  -> Database  {
+open func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, preload: Bool, listening: Bool, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?)async throws  -> Database  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_opendatabase_open_with_clock(
-                        self.uniffiCloneHandle(),FfiConverterTypeConfig_lower(config),FfiConverterString.lower(modelsJson),FfiConverterOptionTypeTransport.lower(transport),FfiConverterOptionTypeWireUploadOperations.lower(uploads),FfiConverterTypeTestClock_lower(clock),FfiConverterBool.lower(preload),FfiConverterBool.lower(listening)
+                        self.uniffiCloneHandle(),FfiConverterTypeConfig_lower(config),FfiConverterString.lower(modelsJson),FfiConverterOptionTypeTransport.lower(transport),FfiConverterOptionTypeWireUploadOperations.lower(uploads),FfiConverterTypeTestClock_lower(clock),FfiConverterBool.lower(preload),FfiConverterBool.lower(listening),FfiConverterOptionTypeEncryptedConfig.lower(encrypted),FfiConverterOptionTypeCredentialStore.lower(credentials),FfiConverterOptionTypeEncryptedHttp.lower(http),FfiConverterOptionTypeRetryProgress.lower(retries)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_u64,
@@ -13663,7 +13663,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_opendatabase_open() != 52767) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 14610) {
+    if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 15298) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_statesubscription_cancel() != 54578) {
