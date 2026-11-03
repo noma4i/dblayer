@@ -97,7 +97,7 @@ Expired Blobs fail before the consumer mutation is sent. Local bytes are removed
 Before every multipart part is confirmed, failure can abort the multipart.
 After confirmation, retry repeats complete and startup cleanup preserves the confirmed parts.
 Explicit discard and failed expiry still abort an unfinished multipart, including confirmed parts awaiting complete.
-On Android the foreground service and the user-initiated job carry the transfer. iOS uploads run while the app runs.
+On Android the foreground task and the user-initiated job carry the transfer. iOS uploads run while the app runs.
 An unused uploaded Blob without readers sends no periodic requests and schedules no wakeups.
 
 An upload sends a local file to storage and then runs one content mutation with the stored blob. It is an operation of the library: it lives in the same queue as other pending operations, survives restarts, and shows its state on the record.
@@ -153,12 +153,7 @@ moment.cancelUpload("upload_clip")
 
 On iOS uploads go through the outbox of the core while the app runs.
 
-On Android the app gives the text and the small icon of the notification to `open`:
-
-```kotlin
-val notification = UploadNotification("Uploading", "Your files are on their way", R.drawable.ic_upload)
-DBlayer.open(context, endpoint = endpoint, modelsJson = models, uploadNotification = notification)
-```
+On Android the app gives the text and the small icon of the notification to `DBlayer.open` as `uploadNotification = UploadNotification(title, text, icon)`.
 
 API 34 and later run one user-initiated job with a network requirement. API 33 runs a sticky `dataSync` foreground task that starts its notification before `open` finishes. The library does not use WorkManager. A job or foreground task never repeats a transfer: retries follow the upload `Backoff` of the core. When the system refuses the start, the reason appears in the `error` of the accepted upload and nothing else changes. Upload requests (the file `PUT`, the steps and the content mutation) use the network of the job, all other requests use the default route. A restart or a force stop continues at the next `open`.
 
