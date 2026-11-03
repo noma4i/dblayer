@@ -175,6 +175,9 @@ impl LiveFeed {
 
     pub(super) fn state(&self, relation: RelationState) {
         let mut state = held(&self.state);
+        if !state.load_pending && relation.error.is_none() && matches!(relation.phase, LoadPhase::Loaded | LoadPhase::Empty) {
+            state.load_error = None;
+        }
         let wanted = (relation.revision > state.rows_at).then_some(relation.revision);
         state.relation = Some(relation);
         let request = wanted.zip(state.reach_request.clone());

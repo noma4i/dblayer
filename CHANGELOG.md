@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Held reads wait after logout and reload when the next session commits.
+
 ## 6.15.2 - 2026-11-03
 
 ### Fixed

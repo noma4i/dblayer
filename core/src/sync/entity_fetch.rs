@@ -23,6 +23,7 @@ pub(crate) struct DueRefresh {
     generation: Generation,
     cancel: CancelToken,
     sink: RefreshSink,
+    session: bool,
 }
 
 impl Sync {
@@ -35,13 +36,13 @@ impl Sync {
         let runtime = Handle::try_current().map_err(|_| SyncError::Store("no async runtime to refresh entities".into()))?;
         let generation = self.inner.db.generation();
         for id in ids {
-            let due = DueRefresh { model: model.into(), relation: relation.clone(), id: id.clone(), fetch, generation, cancel: cancel.clone(), sink: sink.clone() };
+            let due = DueRefresh { model: model.into(), relation: relation.clone(), id: id.clone(), fetch, generation, cancel: cancel.clone(), sink: sink.clone(), session: false };
             runtime.spawn(self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
         }
         Ok(cancel)
     }
 
-    async fn refresh_entity(inner: Arc<Inner>, due: DueRefresh) {
+    async fn refresh_entity(inner: Arc<Inner>, mut due: DueRefresh) {
         if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return; }
         let work = async {
             if due.fetch == EntityFetch::IfMissing {
@@ -58,9 +59,10 @@ impl Sync {
         if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return; }
         let outcome = match result {
             Ok(()) => None,
-            Err(SyncError::Offline) => {
+            Err(error @ (SyncError::Offline | SyncError::Transport(crate::transport::TransportError::Session { .. }))) => {
+                due.session = error != SyncError::Offline;
                 locked(&inner.entity_due).push(due.clone());
-                Some(RefreshError::Offline)
+                Some(if error == SyncError::Offline { RefreshError::Offline } else { RefreshError::Failed(error.to_string()) })
             }
             Err(error) => Some(RefreshError::Failed(error.to_string())),
         };
@@ -78,8 +80,13 @@ impl Sync {
         drop::<Vec<DueRefresh>>(cancelled);
     }
 
-    pub(crate) fn refresh_due_entities(&self) {
-        let waiting = std::mem::take(&mut *locked(&self.inner.entity_due));
+    pub(crate) fn refresh_due_entities(&self, session: bool) {
+        let waiting: Vec<DueRefresh> = {
+            let mut due = locked(&self.inner.entity_due);
+            let (waiting, kept) = std::mem::take(&mut *due).into_iter().partition(|due| due.session == session);
+            *due = kept;
+            waiting
+        };
         let Ok(runtime) = Handle::try_current() else { return };
         for due in waiting.into_iter().filter(|due| !due.cancel.is_cancelled() && due.generation == self.inner.db.generation()) {
             runtime.spawn(self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));

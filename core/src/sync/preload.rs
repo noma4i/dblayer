@@ -58,6 +58,7 @@ pub(crate) struct PreloadOwner {
     effects: OrderedEffects,
     busy: watch::Sender<usize>,
     changed: watch::Sender<u64>,
+    session_ready: watch::Sender<bool>,
     inner: OnceLock<Weak<Inner>>,
     runtime: OnceLock<Handle>,
 }
@@ -88,7 +89,7 @@ impl PreloadOwner {
 
 impl Default for PreloadOwner {
     fn default() -> Self {
-        Self { state: Mutex::new(State::default()), effects: OrderedEffects::default(), busy: watch::channel(0).0, changed: watch::channel(0).0, inner: OnceLock::new(), runtime: OnceLock::new() }
+        Self { state: Mutex::new(State::default()), effects: OrderedEffects::default(), busy: watch::channel(0).0, changed: watch::channel(0).0, session_ready: watch::channel(true).0, inner: OnceLock::new(), runtime: OnceLock::new() }
     }
 }
 
@@ -145,6 +146,16 @@ fn limited_combinations(parameters: &[(&String, Vec<Value>)], at: usize, params:
 }
 
 impl Inner {
+    pub(crate) async fn wait_for_session(&self) -> Result<(), SyncError> {
+        let mut ready = self.preload.session_ready.subscribe();
+        let mut stopped = self.stopped.clone();
+        tokio::select! {
+            biased;
+            _ = stopped.wait_for(|stopped| *stopped) => Err(SyncError::Cancelled),
+            result = ready.wait_for(|ready| *ready) => result.map(|_| ()).map_err(|_| SyncError::Cancelled),
+        }
+    }
+
     pub(super) fn preloaded_windows(&self) -> Result<Vec<Window>, SyncError> {
         let mut windows = Vec::new();
         for (model, spec) in &self.db.shared.specs {
@@ -387,6 +398,8 @@ impl Sync {
     pub fn session_ended(&self) {
         self.inner.preload.with_state(|state, effects| {
             state.session = None;
+            let ready = self.inner.preload.session_ready.clone();
+            effects.push(move || { crate::db::lock::effect(|| ready.send_replace(false)); });
             self.inner.apply_listen(state, effects);
         });
     }
@@ -399,7 +412,15 @@ impl Sync {
     }
 
     pub fn session_committed(&self) {
-        if self.inner.preload_on_session() {
+        let changed = self.inner.preload_on_session();
+        let resumed = self.inner.preload.with_state(|state, effects| {
+            if state.session.is_none() || *self.inner.preload.session_ready.borrow() { return false; }
+            let ready = self.inner.preload.session_ready.clone();
+            effects.push(move || { crate::db::lock::effect(|| ready.send_replace(true)); });
+            true
+        });
+        if changed || resumed {
+            self.refresh_due_entities(true);
             let _ = self.inner.request_resume(super::resume_machine::Cause::Explicit, None);
         }
     }
@@ -407,6 +428,10 @@ impl Sync {
 
 #[cfg(test)]
 impl Sync {
+    pub(crate) fn suspended_reads(&self) -> usize {
+        self.inner.preload.session_ready.receiver_count()
+    }
+
     pub(crate) fn preload_running(&self) -> bool {
         locked(&self.inner.preload.state).running
     }

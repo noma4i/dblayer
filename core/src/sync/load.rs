@@ -269,7 +269,11 @@ impl Inner {
                     let seed = match self.stored(resolved) { Ok(seed) => seed, Err(error) => { guard.finish(Err(error.clone())); return Err(error); } };
                     let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), seed);
                     let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
-                    let result = match self.execute(resolved, cursor, force).await {
+                    let executed = match self.wait_for_session().await {
+                        Ok(()) => self.execute(resolved, cursor, force).await,
+                        Err(error) => Executed::Failed(error),
+                    };
+                    let result = match executed {
                         Executed::Landed(outcome, revision) => {
                             match outcome.status {
                                 LoadStatus::Discarded(_) => ticket.discarded(),

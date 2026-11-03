@@ -664,10 +664,7 @@ impl Feed {
                 attempt = async {
                     match opened.take() {
                         Some(attempt) => Some(attempt),
-                        None => {
-                            let generation = self.inner.db.generation();
-                            self.inner.open_subscription(request.clone()).await.map(|attempt| (generation, attempt))
-                        }
+                        None => self.inner.open_subscription(request.clone()).await,
                     }
                 } => match attempt { Some(attempt) => attempt, None => return },
             };
@@ -723,16 +720,18 @@ impl Sync {
 }
 
 impl Inner {
-    async fn open_subscription(&self, request: GraphQLRequest) -> Option<Result<ServerSubscription, TransportError>> {
+    async fn open_subscription(&self, request: GraphQLRequest) -> Option<(Generation, Result<ServerSubscription, TransportError>)> {
         let mut stopped = self.stopped.clone();
         tokio::select! {
             biased;
             _ = stopped.wait_for(|stopped| *stopped) => None,
             result = async {
                 self.connectivity.online().await;
+                self.wait_for_session().await.ok()?;
+                let generation = self.db.generation();
                 crate::db::lock::assert_no_library_lock("Transport::subscribe");
-                self.transport.subscribe(request).await
-            } => Some(result),
+                Some((generation, self.transport.subscribe(request).await))
+            } => result,
         }
     }
 
@@ -747,12 +746,11 @@ impl Inner {
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
         let mut resets = self.subscription_reset.subscribe();
-        let generation = self.db.generation();
         let first = if self.connectivity.is_online() {
             tokio::select! {
                 biased;
                 _ = resets.changed() => None,
-                attempt = self.open_subscription(request.clone()) => attempt.map(|attempt| (generation, attempt)),
+                attempt = self.open_subscription(request.clone()) => attempt,
             }
         } else { None };
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));

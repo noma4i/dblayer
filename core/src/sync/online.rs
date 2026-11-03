@@ -26,7 +26,7 @@ impl Sync {
             }
             self.inner.resume_on_event();
             self.inner.preload_start();
-            self.refresh_due_entities();
+            self.refresh_due_entities(false);
         }
     }
 }

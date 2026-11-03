@@ -205,6 +205,7 @@ impl Inner {
     }
 
     pub(crate) async fn resume_windows(self: &Arc<Self>, cause: Cause) -> Result<ResumeReport, SyncError> {
+        self.wait_for_session().await?;
         if cause == Cause::Explicit { self.transport.resume_subscriptions(); }
         self.restart_live(cause);
         let drain = self.config.resume;
@@ -215,11 +216,14 @@ impl Inner {
         let now_ms = self.now_ms();
         let stale_ms = i64::try_from(drain.stale_time.as_millis()).unwrap_or(i64::MAX);
         let mut stale = Vec::with_capacity(watched.len());
+        let mut unloaded = std::collections::BTreeSet::new();
         for key in watched.keys() {
             if cause == Cause::Event && self.owner.session_refused(key) { continue; }
             let (model, relation, _) = &watched[key];
             let on_foreground = cause == Cause::Event && self.db.spec(model).is_ok_and(|spec| spec.relations.iter().any(|declared| &declared.name == relation && declared.refresh_on_foreground));
-            if on_foreground || !self.db.shared.store.window_freshness(key)?.is_some_and(|freshness| freshness.is_fresh(now_ms, stale_ms)) {
+            let freshness = self.db.shared.store.window_freshness(key)?;
+            if freshness.is_none() { unloaded.insert(key.clone()); }
+            if on_foreground || (cause == Cause::Explicit && self.owner.session_refused(key)) || !freshness.is_some_and(|freshness| freshness.is_fresh(now_ms, stale_ms)) {
                 stale.push(key.clone());
             }
         }
@@ -230,14 +234,15 @@ impl Inner {
             for key in chunk {
                 let Some((model, relation, params)) = watched.get(&key).cloned() else { continue };
                 let inner = self.clone();
+                let force = !unloaded.contains(&key);
                 loads.spawn(async move {
                     let resolved = inner.resolve(&model, &relation, &params)?;
                     if resolved.members_complete || resolved.media.is_some() {
                         tokio::select! {
                             _ = inner.owner.unobserved(&resolved.window_key) => Err(SyncError::Cancelled),
-                            result = inner.load_scope(&resolved, true) => result,
+                            result = inner.load_scope(&resolved, force) => result,
                         }
-                    } else { inner.fetch(&resolved, None, true).await }
+                    } else { inner.fetch(&resolved, None, force).await }
                 });
             }
             while let Some(finished) = loads.join_next().await {
