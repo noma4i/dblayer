@@ -47,6 +47,7 @@ impl Queue {
 
 pub(crate) struct EventQueue {
     registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    lifecycle: Arc<crate::lifecycle::Lifecycle>,
     model: String,
     state: std::sync::Mutex<Queue>,
     ready: tokio::sync::Notify,
@@ -56,6 +57,7 @@ impl crate::lifecycle::Member for EventQueue {
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 
     fn close(&self) {
+        if let Some(registration) = self.registration.get() { registration.remove(); }
         let mut state = locked(&self.state);
         state.closed = true;
         state.slots.clear();
@@ -80,9 +82,12 @@ impl EventQueue {
 }
 
 impl EventQueue {
-    fn push(&self, event: &ModelEvent) {
+    /// An event of an ended session never enters the queue, and one of an older generation leaves a gap, since the reader cannot know what it covered. The check shares the queue lock with the clearing that follows each transition.
+    fn push(&self, event: &ModelEvent, stamp: crate::lifecycle::Stamp) {
         let mut state = locked(&self.state);
-        if state.events >= EVENT_QUEUE_LIMIT {
+        let now = self.lifecycle.snapshot().stamp();
+        if now.session_epoch != stamp.session_epoch { return; }
+        if now.generation != stamp.generation || state.events >= EVENT_QUEUE_LIMIT {
             state.gap(1);
         } else {
             state.slots.push_back(Slot::Event(event.clone()));
@@ -110,7 +115,12 @@ impl Inner {
     }
 
     pub(crate) fn publish_model_event(&self, event: ModelEvent) {
-        for queue in self.readers_of(&event.model) { queue.push(&event); }
+        let stamp = self.db.shared.store.lifecycle.snapshot().stamp();
+        self.publish_model_event_at(stamp, event);
+    }
+
+    pub(crate) fn publish_model_event_at(&self, stamp: crate::lifecycle::Stamp, event: ModelEvent) {
+        for queue in self.readers_of(&event.model) { queue.push(&event, stamp); }
     }
 
     pub(crate) fn publish_model_gap(&self, model: &str) {
@@ -176,7 +186,7 @@ impl Sync {
     pub async fn open_model_events(&self, model: &str) -> Result<ModelEvents, SyncError> {
         let spec = self.inner.db.spec(model)?;
         if spec.changes.is_empty() && spec.listens.is_empty() { return Err(SyncError::Event(format!("{model} declares no event source"))); }
-        let queue = Arc::new(EventQueue { registration: Default::default(), model: model.to_string(), state: Default::default(), ready: tokio::sync::Notify::new() });
+        let queue = Arc::new(EventQueue { registration: Default::default(), lifecycle: self.inner.db.shared.store.lifecycle.clone(), model: model.to_string(), state: Default::default(), ready: tokio::sync::Notify::new() });
         self.inner.db.shared.store.lifecycle.enroll(&queue);
         locked(&self.inner.model_events).push(Arc::downgrade(&queue));
         let mut keys = Vec::new();

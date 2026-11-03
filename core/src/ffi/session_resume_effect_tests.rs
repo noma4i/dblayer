@@ -106,3 +106,17 @@ async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_th
     assert_eq!(database.db.outbox().unwrap().len(), 0);
   }
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_resumed_request_after_a_logout_reopens_the_background() {
+    let rig = Rig::new();
+    let database = signed_in(&rig).await;
+    rig.server.interrupt_next_request();
+    database.create("Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap();
+    database.flush().await.unwrap();
+    crate::test_wait::within(database.logout()).await.unwrap();
+    assert!(!database.streams.snapshot().signed_in());
+    database.session_resume().await.unwrap();
+    assert!(database.streams.snapshot().signed_in(), "a resumed request with the same credential did not reopen the background");
+    database.shutdown();
+}

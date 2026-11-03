@@ -98,6 +98,7 @@ struct FlightGuard<'a> {
     inner: &'a Inner,
     key: String,
     sender: Option<watch::Sender<Option<FlightEnd>>>,
+    token: u64,
 }
 
 impl FlightGuard<'_> {
@@ -109,9 +110,14 @@ impl FlightGuard<'_> {
         let Some(sender) = self.sender.take() else { return };
         let waiting = {
             let mut flights = locked(&self.inner.flights);
-            flights.coalescing.finish(&self.key);
-            flights.node_rereads.remove(&self.key);
-            flights.waiting.remove(&self.key)
+            if flights.owners.get(&self.key).is_some_and(|(token, _)| *token == self.token) {
+                flights.owners.remove(&self.key);
+                flights.coalescing.finish(&self.key);
+                flights.node_rereads.remove(&self.key);
+                flights.waiting.remove(&self.key)
+            } else {
+                None
+            }
         };
         crate::db::lock::effect(|| sender.send_replace(Some(end)));
         drop(waiting);
@@ -217,6 +223,14 @@ impl Inner {
 
     pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
         let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
+        let result = self.fetch_in(resolved, cursor, force).await;
+        if resolved.origin == crate::lifecycle::Origin::Explicit && result.as_ref().is_ok_and(|outcome| outcome.kept_error.is_none()) {
+            self.explicit_succeeded(epoch);
+        }
+        result
+    }
+
+    async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
         if !self.admitted(resolved.origin) { return Err(SyncError::Cancelled); }
         let generation = self.db.generation();
         let flight_key = match &cursor {
@@ -233,6 +247,13 @@ impl Inner {
             let freshness = if forced { Ok(false) } else { self.window_is_fresh(resolved) };
             let verdict = {
                 let mut flights = locked(&self.flights);
+                let current = self.db.generation();
+                if flights.owners.get(&flight_key).is_some_and(|(_, started)| *started != current) {
+                    flights.owners.remove(&flight_key);
+                    flights.coalescing.finish(&flight_key);
+                    flights.node_rereads.remove(&flight_key);
+                    flights.waiting.remove(&flight_key);
+                }
                 if !forced && !flights.coalescing.in_flight().contains(&flight_key) && flights.started != started {
                     continue;
                 }
@@ -255,7 +276,9 @@ impl Inner {
                         flights.started = flights.started.wrapping_add(1);
                         let sender = watch::channel(None).0;
                         flights.waiting.insert(flight_key.clone(), sender.clone());
-                        Ok(Some(sender))
+                        let token = flights.started;
+                        flights.owners.insert(flight_key.clone(), (token, current));
+                        Ok((sender, token))
                     }
                     FetchVerdict::AwaitInFlight => match flights.waiting.get(&flight_key) {
                         Some(receiver) => {
@@ -267,8 +290,8 @@ impl Inner {
                 }
             };
             match verdict {
-                Ok(sender) => {
-                    let mut guard = FlightGuard { inner: self, key: flight_key, sender };
+                Ok((sender, token)) => {
+                    let mut guard = FlightGuard { inner: self, key: flight_key, sender: Some(sender), token };
                     let seed = match self.stored(resolved) { Ok(seed) => seed, Err(error) => { guard.finish(Err(error.clone())); return Err(error); } };
                     let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), seed);
                     let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
@@ -294,9 +317,6 @@ impl Inner {
                         }
                     };
                     guard.finish(result.clone());
-                    if resolved.origin == crate::lifecycle::Origin::Explicit && result.as_ref().is_ok_and(|outcome| outcome.kept_error.is_none()) {
-                        self.explicit_succeeded(epoch);
-                    }
                     return result;
                 }
                 Err(Some(mut receiver)) => {
@@ -305,7 +325,7 @@ impl Inner {
                         let joined = locked(&self.flights).joined.0.clone();
                         crate::db::lock::effect(|| joined.send_modify(|joined| *joined += 1));
                     }
-                    let end = receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone());
+                    let end = self.db.shared.store.lifecycle.scoped(async { receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone()) }).await?;
                     if let Some(FlightEnd::Settled(result)) = end {
                         if generation == self.db.generation() && matches!(&result, Ok(outcome) if outcome.status == LoadStatus::Discarded(DiscardReason::StaleGeneration)) { continue; }
                         return result;

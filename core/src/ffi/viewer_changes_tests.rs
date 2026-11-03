@@ -11,6 +11,7 @@ pub(super) struct Recording {
     queries: AtomicUsize,
     subscribed: Mutex<Vec<String>>,
     subscribed_event: tokio::sync::Notify,
+    released: AtomicUsize,
 }
 
 impl Recording {
@@ -37,7 +38,7 @@ impl Transport for Recording {
         sink.ready();
         Ok(())
     }
-    fn unsubscribe(&self, _: String) {}
+    fn unsubscribe(&self, _: String) { self.released.fetch_add(1, Ordering::SeqCst); }
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
@@ -60,17 +61,21 @@ fn feed_relation(name: &str, text_param: Option<&str>) -> RelationSpec {
 }
 
 async fn open_viewer() -> (Arc<Database>, Arc<Recording>) {
+    open_viewer_as(false).await
+}
+
+async fn open_viewer_as(testing: bool) -> (Arc<Database>, Arc<Recording>) {
     let mut moment = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     moment.relations.extend([feed_relation("feed", None), feed_relation("vibeFeed", Some("vibeId"))]);
     moment.changes.push(ChangeRead { area: "MOMENT".into(), relation: "feed".into(), parameter: None, removes_on: vec![], observed: false, payload: None, id_of: None });
     let mut notice = ModelSpec::new("ChangeNotice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     notice.storage = crate::schema::Storage::Memory;
     notice.change_feed = Some(ChangeFeed { subscription: "DblayerViewerChanges".into(), root: "viewerChanges.changes".into(), area: "area".into(), kind: "kind".into(), id: "entityId".into() });
-    let transport = Arc::new(Recording { queries: AtomicUsize::new(0), subscribed: Mutex::new(Vec::new()), subscribed_event: tokio::sync::Notify::new() });
+    let transport = Arc::new(Recording { queries: AtomicUsize::new(0), subscribed: Mutex::new(Vec::new()), subscribed_event: tokio::sync::Notify::new(), released: AtomicUsize::new(0) });
     let models = serde_json::to_string(&vec![moment, notice]).unwrap();
     let config = Config { path: None, data_version: None, cache_rows: 8 };
     let handle = Some(transport.clone() as Arc<dyn Transport>);
-    let database = Database::open(config, models, handle, None, None, None, None, None).await.unwrap();
+    let database = if testing { Database::open_with_clock(config, models, handle, None, super::TestClock::new(1_000_000), None, None, None, None).await.unwrap() } else { Database::open(config, models, handle, None, None, None, None, None).await.unwrap() };
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"},{"name":"DblayerViewerChanges","document":"subscription DblayerViewerChanges { viewerChanges { changes { area } } }","rootPath":"viewerChanges"}]"#.into()).unwrap();
     (database, transport)
 }
@@ -91,4 +96,20 @@ async fn switching_the_observed_list_from_a_foreign_thread_keeps_the_one_viewer_
     yield_until("the viewer changes live status settled", || live() == Some((2, true))).await;
 
     assert_eq!(transport.subscriptions("DblayerViewerChanges"), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn held_subscriptions_and_model_events_keep_working_through_a_reset_of_the_database() {
+    let (database, transport) = open_viewer_as(true).await;
+    let feed = database.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), Arc::new(Silent));
+    feed.wait_for_initial_load().await.unwrap();
+    let events = within(database.open_model_events("Moment".into())).await.unwrap();
+    yield_until("the viewer changes subscription is open", || transport.subscriptions("DblayerViewerChanges") == 1).await;
+    let queries = transport.queries.load(Ordering::SeqCst);
+    within(database.reset_for_testing()).await.unwrap();
+    yield_until("the subscription opened again and the old one was released", || transport.subscriptions("DblayerViewerChanges") == 2 && transport.released.load(Ordering::SeqCst) >= 1).await;
+    within(feed.wait_for_initial_load()).await.unwrap();
+    assert_eq!(transport.queries.load(Ordering::SeqCst), queries + 1, "the held list rereads once");
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(300), events.next()).await.is_err(), "the held model event feed ended with the reset");
+    database.shutdown();
 }

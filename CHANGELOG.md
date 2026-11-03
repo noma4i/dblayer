@@ -10,7 +10,10 @@
 - `settleForTesting` returns after a logout.
 - Queued changes and model events of a closed account never reach the next one.
 - A reply to a request that started before a session reset or close is discarded.
-- A close ends calls that wait for a response.
+- A close or a session reset ends calls that wait in a retry, a queue or for a response.
+- A session reset or logout stops sends and uploads in flight.
+- `waitForInitialLoad` after a reset waits for the new load.
+- A load after a reset starts its own request instead of joining the earlier one.
 
 ## 6.15.3 - 2026-11-03
 

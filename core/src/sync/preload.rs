@@ -388,7 +388,7 @@ impl Sync {
     }
 
     pub fn session_ended(&self) {
-        self.inner.db.shared.store.lifecycle.transition(crate::lifecycle::Change::EndSession);
+        self.inner.db.shared.store.end_session();
     }
 
     pub fn set_listening(&self, allowed: bool) {

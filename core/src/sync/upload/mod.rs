@@ -47,6 +47,7 @@ struct ActiveRun {
     token: CancelToken,
     done: watch::Sender<bool>,
     file_slot: bool,
+    ended: bool,
 }
 
 struct ReadyRun {
@@ -230,6 +231,20 @@ impl Inner {
     /// Every transition of the upload map goes through here: wakes, sender drops and the destruction of an active run run after the map is released, in transition order.
     fn with_uploads<R>(&self, apply: impl FnOnce(&mut UploadRuns, &mut Effects) -> R) -> R {
         self.upload_effects.under(&self.uploads, apply)
+    }
+
+    /// Ends every running upload, including the platform PUT, and drops the queued ones. The operations stay pending for the next session.
+    pub(super) fn cancel_uploads(&self) {
+        let tokens: Vec<CancelToken> = {
+            let mut runs = locked(&self.uploads);
+            runs.ready.clear();
+            runs.active.values_mut().map(|active| { active.ended = true; active.token.clone() }).collect()
+        };
+        for token in tokens { token.cancel(); }
+    }
+
+    pub(super) fn run_ended(&self, seq: i64, position: i64, run: u64) -> bool {
+        locked(&self.uploads).active.get(&(seq, position)).is_some_and(|active| active.run == run && active.ended)
     }
 
     pub(super) fn running_uploads(&self, seq: i64, position: Option<i64>) -> Vec<(CancelToken, watch::Receiver<bool>)> {
@@ -525,7 +540,7 @@ impl UploadRuns {
         let run = self.next_run;
         let token = CancelToken::new();
         self.active_files += usize::from(file_slot);
-        self.active.insert((seq, position), ActiveRun { run, token: token.clone(), done: watch::channel(false).0, file_slot });
+        self.active.insert((seq, position), ActiveRun { run, token: token.clone(), done: watch::channel(false).0, file_slot, ended: false });
         (run, token)
     }
 }

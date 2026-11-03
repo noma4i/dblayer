@@ -208,6 +208,7 @@ impl crate::lifecycle::Member for LiveSubscription {
     fn close(&self) { self.cancel(); }
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
     fn busy(&self) -> bool { self.feed.busy() }
+    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) { self.feed.lifecycle(snapshot); }
 }
 
 impl LiveSubscription {

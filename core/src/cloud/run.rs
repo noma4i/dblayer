@@ -201,9 +201,6 @@ impl Inner {
     }
 
     async fn cycle(&self, pull: bool) -> Result<(), CloudError> {
-        if !self.db.shared.store.lifecycle.snapshot().admits(crate::lifecycle::Origin::Cloud) {
-            return Err(CloudError::Rejected { detail: "the database is closed".into() });
-        }
         let generation = self.db.generation();
         let unstamped = crate::blocking::blocking_unit(|| self.db.cloud_unstamped(generation))?;
         if !unstamped.is_empty() {

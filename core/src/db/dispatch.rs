@@ -62,28 +62,50 @@ impl Effects {
 }
 
 #[derive(Default)]
-pub(crate) struct OrderedEffects(Mutex<Ordered>);
+pub(crate) struct OrderedEffects {
+    ordered: Mutex<Ordered>,
+    settled: Condvar,
+}
 
 #[derive(Default)]
 struct Ordered {
     batches: VecDeque<Effects>,
     running: bool,
+    runner: Option<std::thread::ThreadId>,
+    pushed: u64,
+    done: u64,
 }
 
 struct Unwinding<'a> {
-    ordered: &'a Mutex<Ordered>,
+    effects: &'a OrderedEffects,
     armed: bool,
 }
 
 impl Drop for Unwinding<'_> {
     fn drop(&mut self) {
-        if self.armed { held(self.ordered).running = false; }
+        if self.armed {
+            let mut ordered = held(&self.effects.ordered);
+            ordered.running = false;
+            ordered.runner = None;
+            ordered.done += 1;
+            drop(ordered);
+            self.effects.settled.notify_all();
+        }
     }
 }
 
 impl OrderedEffects {
     pub(crate) fn push(&self, batch: Effects) {
-        if !batch.is_empty() { held(&self.0).batches.push_back(batch); }
+        self.push_ticket(batch);
+    }
+
+    /// Queues a batch and returns its place in the queue, which `run_until` waits for.
+    pub(crate) fn push_ticket(&self, batch: Effects) -> u64 {
+        let mut ordered = held(&self.ordered);
+        if batch.is_empty() { return ordered.pushed; }
+        ordered.batches.push_back(batch);
+        ordered.pushed += 1;
+        ordered.pushed
     }
 
     pub(crate) fn under<S, R>(&self, state: &Mutex<S>, apply: impl FnOnce(&mut S, &mut Effects) -> R) -> R {
@@ -101,32 +123,54 @@ impl OrderedEffects {
     pub(crate) fn run(&self) {
         super::lock::assert_no_library_lock("OrderedEffects::run");
         {
-            let mut ordered = held(&self.0);
+            let mut ordered = held(&self.ordered);
             if ordered.running || ordered.batches.is_empty() { return; }
             ordered.running = true;
+            ordered.runner = Some(std::thread::current().id());
         }
-        let mut unwinding = Unwinding { ordered: &self.0, armed: true };
+        let mut unwinding = Unwinding { effects: self, armed: true };
         loop {
             let batch = {
-                let mut ordered = held(&self.0);
+                let mut ordered = held(&self.ordered);
                 let Some(batch) = ordered.batches.pop_front() else {
                     ordered.running = false;
+                    ordered.runner = None;
                     unwinding.armed = false;
+                    drop(ordered);
+                    self.settled.notify_all();
                     return;
                 };
                 batch
             };
             batch.run();
+            held(&self.ordered).done += 1;
+            self.settled.notify_all();
+        }
+    }
+
+    /// Returns once the batch with this ticket ran. A call from inside a running batch returns at once, since that batch must finish first.
+    pub(crate) fn run_until(&self, ticket: u64) {
+        self.run();
+        let mut ordered = held(&self.ordered);
+        while ordered.done < ticket {
+            if ordered.runner == Some(std::thread::current().id()) { return; }
+            if !ordered.running && !ordered.batches.is_empty() {
+                drop(ordered);
+                self.run();
+                ordered = held(&self.ordered);
+                continue;
+            }
+            ordered = wait(&self.settled, ordered);
         }
     }
 
     pub(crate) fn is_idle(&self) -> bool {
-        self.0.try_lock().is_ok_and(|ordered| !ordered.running && ordered.batches.is_empty())
+        self.ordered.try_lock().is_ok_and(|ordered| !ordered.running && ordered.batches.is_empty())
     }
 
     #[cfg(test)]
     pub(crate) fn is_free(&self) -> bool {
-        crate::test_wait::mutex_free(&self.0)
+        crate::test_wait::mutex_free(&self.ordered)
     }
 }
 

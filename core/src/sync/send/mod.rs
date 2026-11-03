@@ -43,6 +43,10 @@ fn failed_upload_error(row: &crate::db::Row, action: Option<&str>) -> Option<cra
 
 impl Sync {
     pub async fn settled(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
+        self.inner.db.shared.store.lifecycle.scoped(self.settled_in(model, id, action)).await?
+    }
+
+    async fn settled_in(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
         let key = self.inner.db.action_operation_key(model, action)?;
         let waiting = |row: &RowId| -> Result<Vec<i64>, SyncError> {
             if let Some(failure) = self.inner.db.find(model, row)?.and_then(|row| failed_upload_error(&row, action)) {
@@ -74,6 +78,10 @@ impl Sync {
 
     /// Waits until the queued action is answered and returns the declared `result` fields of its payload. Fails with the refusal. An answer is read once.
     pub async fn answer(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {
+        self.inner.db.shared.store.lifecycle.scoped(self.answer_in(model, operation)).await?
+    }
+
+    async fn answer_in(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {
         let waiting = || -> Result<bool, SyncError> { Ok(locked(self.inner.operation_queue()?).entries.get(&operation).is_some_and(|entry| entry.operation.status == OperationStatus::Pending)) };
         let mut changes = self.inner.db.outbox_changes();
         while waiting()? {

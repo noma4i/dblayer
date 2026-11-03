@@ -144,15 +144,35 @@ pub(super) fn temporary_error(body: &Value) -> Option<TransportError> {
 }
 
 impl EncryptedClient {
+    fn epoch(&self) -> u64 { self.db.shared.store.lifecycle.snapshot().session_epoch }
+
+    /// Each public call runs in one scope that the close of the database and the end of the session cancel, whatever the call waits for: a queue, a retry, a request or an answer.
+    async fn scope<T>(&self, work: impl std::future::Future<Output = Result<T, TransportError>>) -> Result<T, TransportError> {
+        self.db.shared.store.lifecycle.request(work).await
+    }
+
+    fn write_in<T>(&self, epoch: u64, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {
+        self.db.shared.store.in_epoch(epoch, || TransportError::Interrupted("the session ended while its answer was pending".into()), |connection| run(connection).map_err(storage))
+    }
+
+    fn confirm_session(&self, epoch: u64) -> Result<(), TransportError> {
+        if let Some(current) = self.signed_in()? {
+            self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(Some(current), epoch));
+        }
+        Ok(())
+    }
+
     pub async fn session_call(&self, operation: &str, body: Value) -> Result<Answer, TransportError> {
-        let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
-        if operation == "logout" { return self.mutate(&self.config.endpoints.logout, body).await; }
-        let operation = self.config.endpoints.session_operations.get(operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
+        let epoch = self.epoch();
+        self.scope(self.session_call_in(epoch, operation.to_string(), body)).await
+    }
+
+    async fn session_call_in(&self, epoch: u64, operation: String, body: Value) -> Result<Answer, TransportError> {
+        if operation == "logout" { return self.mutate_in(epoch, &self.config.endpoints.logout, body, None, false).await; }
+        let operation = self.config.endpoints.session_operations.get(&operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
         if !operation.sessionless {
-            let answer = self.mutate(&operation.path, body).await?;
-            if confirmed_error(&answer.body).is_none() {
-                self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(self.signed_in()?, epoch));
-            }
+            let answer = self.mutate_in(epoch, &operation.path, body, None, false).await?;
+            if confirmed_error(&answer.body).is_none() { self.confirm_session(epoch)?; }
             return Ok(answer);
         }
         let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
@@ -162,7 +182,13 @@ impl EncryptedClient {
             let response_key = random_token();
             let token = self.request_token(None, &request_id, &response_key, &operation.path, &body)?;
             let result = self.post(&operation.path, token, &request_id, &response_key, false).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
-            match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }
+            match result {
+                Ok(answer) => {
+                    if confirmed_error(&answer.body).is_none() { self.confirm_session(epoch)?; }
+                    return Ok(answer);
+                }
+                Err(error) => retry.failed(error).await?,
+            }
         }
     }
 
@@ -197,6 +223,11 @@ impl EncryptedClient {
     }
 
     pub(crate) async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, upload: bool) -> Result<Answer, TransportError> {
+        let epoch = self.epoch();
+        self.scope(self.mutate_in(epoch, path, body, owner, upload)).await
+    }
+
+    async fn mutate_in(&self, epoch: u64, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, upload: bool) -> Result<Answer, TransportError> {
         check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
@@ -219,11 +250,11 @@ impl EncryptedClient {
                     upload,
                 };
                 self.pending_token(&credential, &pending)?;
-                self.with_connection(|connection| state::store_pending(connection, &pending))?;
+                self.write_in(epoch, |connection| state::store_pending(connection, &pending))?;
                 pending
             }
         };
-        self.await_answer(pending).await
+        self.await_answer(epoch, pending).await
     }
 
     pub fn pending_call(&self) -> Result<Option<(String, Value)>, TransportError> {
@@ -245,19 +276,28 @@ impl EncryptedClient {
     }
 
     pub(crate) async fn resume_pending(&self) -> Result<Option<Answer>, TransportError> {
+        let epoch = self.epoch();
+        self.scope(self.resume_in(epoch)).await
+    }
+
+    async fn resume_in(&self, epoch: u64) -> Result<Option<Answer>, TransportError> {
         let _turn = self.mutations.lock().await;
         let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
         if self.config.endpoints.session_operations.values().any(|operation| operation.sessionless && operation.path == pending.path) {
-            self.with_connection(state::drop_pending)?;
+            self.write_in(epoch, state::drop_pending)?;
             return Ok(None);
         }
         let credential = self.credential()?;
         let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
         self.pending_token(&credential, &pending)?;
-        self.await_answer(pending).await.map(Some)
+        self.await_answer(epoch, pending).await.map(Some)
     }
 
     pub async fn read(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
+        self.scope(self.read_in(path, body)).await
+    }
+
+    async fn read_in(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
         check_path(path)?;
         let credential = self.credential()?;
         let mut answer = self.exchange(&credential, &uuid::Uuid::new_v4().to_string(), &random_token(), None, path, &body).await?;
@@ -272,7 +312,7 @@ impl EncryptedClient {
     }
 
     pub fn reset(&self) -> Result<(), TransportError> {
-        self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::EndSession);
+        self.db.shared.store.end_session();
         crate::db::lock::assert_no_library_lock("CredentialSlot::clear");
         self.credentials.clear()?;
         let mut state = crate::db::locked(&self.credential.state);
@@ -286,15 +326,14 @@ impl EncryptedClient {
         self.request_token(Some(RequestSession { credential: credential.into(), sequence: Some(pending.sequence) }), &pending.request_id, &pending.response_key, &pending.path, &body)
     }
 
-    async fn await_answer(&self, mut pending: Pending) -> Result<Answer, TransportError> {
-      let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
+    async fn await_answer(&self, epoch: u64, mut pending: Pending) -> Result<Answer, TransportError> {
       let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
       loop {
         self.online.online().await;
         let token = self.pending_token(&self.credential()?, &pending)?;
         let answer = match self.post(&pending.path, token, &pending.request_id, &pending.response_key, pending.upload).await {
             Err(error) if permanently_refused(&error) => {
-                self.with_connection(state::drop_pending)?;
+                self.write_in(epoch, state::drop_pending)?;
                 return Err(error);
             }
             Err(error) => {
@@ -304,9 +343,6 @@ impl EncryptedClient {
             }
             Ok(answer) => answer,
         };
-        if self.db.shared.store.lifecycle.snapshot().session_epoch != epoch {
-            return Err(TransportError::Interrupted("the session was reset while its answer was pending".into()));
-        }
         if let Some(error) = temporary_error(&answer.body) {
             if answer.sequence == Some(pending.sequence) {
                 let confirmed = pending.sequence;
@@ -314,10 +350,10 @@ impl EncryptedClient {
                 pending.request_id = uuid::Uuid::new_v4().to_string();
                 pending.response_key = random_token();
                 if let Err(error) = self.pending_token(&self.credential()?, &pending) {
-                    self.with_connection(|connection| state::commit(connection, confirmed))?;
+                    self.write_in(epoch, |connection| state::commit(connection, confirmed))?;
                     return Err(error);
                 }
-                self.with_connection(|connection| state::retry_confirmed(connection, &pending))?;
+                self.write_in(epoch, |connection| state::retry_confirmed(connection, &pending))?;
             }
             if pending.owner.is_some() { return Err(error); }
             retry.failed(error).await?;
@@ -330,14 +366,13 @@ impl EncryptedClient {
             });
         }
         match pending.path == self.config.endpoints.logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
-            true => self.reset()?,
+            true => {
+                self.write_in(epoch, |_| Ok(()))?;
+                self.reset()?
+            }
             false => {
-                let previous = self.signed_in()?;
-                self.with_connection(|connection| state::commit(connection, pending.sequence))?;
-                let current = self.signed_in()?;
-                if previous != current && confirmed_error(&answer.body).is_none() {
-                    self.db.shared.store.lifecycle.transition(crate::lifecycle::Change::Session(current, epoch));
-                }
+                self.write_in(epoch, |connection| state::commit(connection, pending.sequence))?;
+                if confirmed_error(&answer.body).is_none() { self.confirm_session(epoch)?; }
             }
         }
         return Ok(answer);
@@ -374,7 +409,7 @@ impl EncryptedClient {
 
     async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, upload: bool) -> Result<Answer, TransportError> {
         crate::db::lock::assert_no_library_lock("HttpExchange::post");
-        let reply = self.db.shared.store.lifecycle.request(self.http.post(path, token, upload)).await?;
+        let reply = self.http.post(path, token, upload).await?;
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });
         }
@@ -437,6 +472,11 @@ impl EncryptedClient {
         }
         state.cached = Some(credential.clone());
         Ok(credential)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sequence_for_test(&self) -> i64 {
+        self.with_connection(state::session).ok().flatten().map_or(0, |session| session.sequence)
     }
 
     #[cfg(test)]

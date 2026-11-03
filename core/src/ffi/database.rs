@@ -769,6 +769,7 @@ impl Database {
         Ok(match tracked {
             Some((sync, relation, params)) => {
                 let mut transitions = self.streams.watch();
+                feed.load_of(model.clone());
                 let ask = control.clone();
                 feed.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
                 let (follower, loader) = (feed.clone(), feed.clone());

@@ -175,3 +175,56 @@ async fn dropping_the_last_cloud_handle_stops_its_task() {
     drop(link);
     yield_until("the cloud task released its io", || Arc::strong_count(&cloud) == 1).await;
 }
+
+struct Journal {
+    log: Mutex<Vec<String>>,
+    hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    entered: std::sync::mpsc::Sender<()>,
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+}
+
+impl Member for Journal {
+    fn close(&self) {}
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+    fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+        let held = self.hold.lock().unwrap().take();
+        if let Some(release) = held {
+            self.entered.send(()).unwrap();
+            crate::test_wait::recv_within(&release);
+        }
+        self.log.lock().unwrap().push(format!("{:?}", snapshot.change));
+    }
+}
+
+#[test]
+fn a_transition_returns_after_its_callbacks_ran_even_while_another_thread_delivers() {
+    use crate::lifecycle::Change;
+    let streams = Arc::new(Lifecycle::default());
+    let (entered, entered_receiver) = std::sync::mpsc::channel();
+    let (release, release_receiver) = std::sync::mpsc::channel();
+    let journal = Arc::new(Journal { log: Mutex::default(), hold: Mutex::new(Some(release_receiver)), entered, registration: Default::default() });
+    let at_enrollment = streams.enroll(&journal);
+    assert!(at_enrollment.session.is_none() && !at_enrollment.closed);
+    let delivering = { let streams = streams.clone(); std::thread::spawn(move || streams.transition(Change::Online(false))) };
+    entered_receiver.recv_timeout(std::time::Duration::from_secs(5)).expect("the first callback started");
+    let ending = { let streams = streams.clone(); std::thread::spawn(move || streams.transition(Change::EndSession)) };
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!ending.is_finished(), "the end of the session returned before its callbacks ran");
+    release.send(()).unwrap();
+    join_within(delivering);
+    join_within(ending);
+    assert_eq!(*journal.log.lock().unwrap(), ["Online(false)", "EndSession"]);
+}
+
+#[test]
+fn a_transition_walks_only_the_holders_open_now() {
+    let streams = Arc::new(Lifecycle::default());
+    let crowd: Vec<_> = (0..4096).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
+    for member in &crowd { streams.enroll(member); }
+    drop(crowd);
+    let open: Vec<_> = (0..3).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
+    for member in &open { streams.enroll(member); }
+    let before = streams.work();
+    streams.transition(crate::lifecycle::Change::Reset(None));
+    assert_eq!(streams.work() - before, 3, "a reset visited holders that were closed long ago");
+}

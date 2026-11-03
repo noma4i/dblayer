@@ -22,15 +22,23 @@ struct Probe {
     op: Mutex<Option<(Reenter, u64)>>,
     seen: Mutex<Vec<EntityDelivery>>,
     guarded: AtomicU64,
+    finished: AtomicU64,
     retained: Mutex<Option<bool>>,
 }
 
 impl EntityListener for Probe {
     fn changed(&self, delivery: EntityDelivery) {
+        self.run(delivery);
+        self.finished.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl Probe {
+    fn run(&self, delivery: EntityDelivery) {
         let first = delivery.snapshots[0].clone();
         locked(&self.seen).push(delivery);
         let Some(live) = self.live.get().and_then(Weak::upgrade) else { return };
-        if !(mutex_free(&live.state) && live.outbox.is_free()) { self.guarded.fetch_add(1, Ordering::SeqCst); }
+        if !crate::db::lock::is_empty() { self.guarded.fetch_add(1, Ordering::SeqCst); }
         let armed = locked(&self.op).take();
         let Some((op, lease)) = armed else { return };
         match op {
@@ -60,6 +68,8 @@ async fn reenter_case(trigger: Trigger, op: Reenter) {
     probe.live.set(Arc::downgrade(&live)).unwrap();
     live.retain(vec![request("m1", 1)]).unwrap();
     yield_until("the first snapshot", || has(&probe, |snapshot| snapshot.phase == EntityStage::Present)).await;
+    let delivered = locked(&probe.seen).len() as u64;
+    yield_until("the callbacks of the first snapshot returned", || probe.finished.load(Ordering::SeqCst) >= delivered).await;
     let present = locked(&probe.seen).iter().flat_map(|delivery| delivery.snapshots.clone()).find(|snapshot| snapshot.phase == EntityStage::Present).unwrap();
     let mut lease = 1;
     if matches!(trigger, Trigger::RetainCached) {

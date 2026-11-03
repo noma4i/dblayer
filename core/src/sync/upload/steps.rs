@@ -82,7 +82,7 @@ impl Runner {
         let call = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.step_timeout, async {
             match resumed {
                 Some(result) => result,
-                None => { crate::db::lock::assert_no_library_lock("Transport::mutate"); self.inner.transport.mutate(request).await },
+                None => { crate::db::lock::assert_no_library_lock("Transport::mutate"); self.inner.mutate_scoped(request).await },
             }
         });
         let outcome = if interruptible {

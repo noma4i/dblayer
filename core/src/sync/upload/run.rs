@@ -209,6 +209,7 @@ impl Runner {
         };
         match result {
             Ok(()) | Err(Stop::Superseded) => Ok(()),
+            Err(Stop::Cancelled) if self.inner.run_ended(self.seq, self.position, self.run) => Ok(()),
             Err(Stop::Cancelled) => self.cancelled().await,
             Err(Stop::Failed(failure)) => self.failed(*failure).await,
             Err(Stop::Expired) => self.failed(OperationFailure::new(FailureKind::Rejected, EXPIRED_MESSAGE)).await,

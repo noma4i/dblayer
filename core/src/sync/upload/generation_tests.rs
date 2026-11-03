@@ -47,3 +47,18 @@ async fn inv_upload_04_a_transfer_in_flight_during_a_reset_does_not_send_its_mut
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(rig.db.count(&crate::query::Query::new("moments")).unwrap(), 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn ending_the_session_cancels_the_put_in_flight_and_frees_the_upload_slot() {
+    let rig = upload_rig(small());
+    single_replies(&rig);
+    rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(4)));
+    let source = file(b"abcdef");
+    rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
+    rig.transport.await_put_calls(1).await;
+    rig.sync.session_ended();
+    crate::test_wait::yield_until("the run left its slot", || crate::sync::locked(&rig.sync.inner.uploads).active.is_empty()).await;
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 0, "the answer of the ended session sent the mutation");
+    assert_eq!(rig.db.outbox().unwrap().len(), 1, "the pending upload operation was dropped instead of kept for the next session");
+}

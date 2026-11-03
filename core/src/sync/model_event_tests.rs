@@ -436,3 +436,17 @@ async fn every_model_event_wake_runs_unlocked() {
         assert!(matches!(waiting.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(())));
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_event_stamped_before_the_session_ended_never_enters_a_queue_after_it() {
+    let rig = chat_rig();
+    let events = rig.sync.open_model_events("chats").await.unwrap();
+    let queued = |id: &str| super::ModelEvent { model: "chats".into(), area: "CHAT".into(), kind: "UPDATED".into(), id: id.into(), before: None, after: None };
+    let stamp = rig.db.shared.store.lifecycle.snapshot().stamp();
+    rig.sync.session_ended();
+    rig.transport.set_session(Some("second"));
+    rig.sync.session_committed();
+    rig.sync.inner.publish_model_event_at(stamp, queued("account-a"));
+    rig.sync.inner.publish_model_event(queued("account-b"));
+    assert_eq!(expect_event(within(&events).await).id, "account-b");
+}

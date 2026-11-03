@@ -295,6 +295,24 @@ impl Store {
         self.lifecycle.snapshot().generation
     }
 
+    /// Ends the session and moves the generation under the writer lock, so a response write that checked the stamp under the same lock lands before the end or is refused.
+    pub(crate) fn end_session(&self) {
+        let ticket = {
+            let mut inner = self.lock();
+            let (generation, ticket) = self.lifecycle.transition_ticketed(crate::lifecycle::Change::EndSession);
+            inner.generation = generation;
+            ticket
+        };
+        self.lifecycle.delivered(ticket);
+    }
+
+    /// Runs a write only while the session epoch is the one the caller was admitted in. The check and the write share the writer lock that `end_session` takes.
+    pub(crate) fn in_epoch<T, E>(&self, epoch: u64, refused: impl FnOnce() -> E, write: impl FnOnce(&rusqlite::Connection) -> Result<T, E>) -> Result<T, E> {
+        let inner = self.lock();
+        if self.lifecycle.snapshot().session_epoch != epoch { return Err(refused()); }
+        write(&inner.connection)
+    }
+
     #[cfg(test)]
     pub(crate) fn advance_generation_for_test(&self) {
         let generation = self.lifecycle.transition_deferred(crate::lifecycle::Change::BeginReset);

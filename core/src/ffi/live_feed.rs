@@ -58,6 +58,7 @@ struct FeedState {
     awaiting_whole: bool,
     resyncs_in_row: u32,
     reported: bool,
+    load_model: Option<String>,
 }
 
 pub(super) struct LiveFeed {
@@ -130,6 +131,7 @@ impl LiveFeed {
             awaiting_whole: false,
             resyncs_in_row: 0,
             reported: false,
+            load_model: None,
         };
         Arc::new(Self { state: Mutex::new(state), listener, calls: crate::db::CallState::new(), latest: watch::channel(None).0, readiness: watch::channel(Readiness::Waiting).0, first_screen: Mutex::new(None) })
     }
@@ -203,6 +205,19 @@ impl LiveFeed {
 
     pub(super) fn expect_load(&self) {
         held(&self.state).load_pending = true;
+    }
+
+    pub(super) fn load_of(&self, model: String) {
+        held(&self.state).load_model = Some(model);
+    }
+
+    /// A reset of the loaded model makes the old readiness untrue in the same transition, before any background task polls.
+    pub(super) fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
+        let concerned = {
+            let state = held(&self.state);
+            !state.ended && matches!(snapshot.change, crate::lifecycle::Change::Reset(_)) && state.load_model.as_deref().is_some_and(|model| snapshot.rereads(model))
+        };
+        if concerned { self.reset_load(); }
     }
 
     pub(super) fn reset_load(&self) {

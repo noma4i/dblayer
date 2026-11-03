@@ -479,11 +479,16 @@ impl Inner {
         Ok(committed.filter(|result| !result.is_noop()).and(frozen))
     }
 
+    /// A send that the end of the session or the close of the database cancels. The answer of an ended session is never read.
+    pub(crate) async fn mutate_scoped(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
+        self.db.shared.store.lifecycle.request(self.transport.mutate(request)).await
+    }
+
     async fn deliver(&self, request: GraphQLRequest) -> Delivery {
         locked(&self.counters).record_transport_call();
         let owner = request.owner.clone();
         crate::db::lock::assert_no_library_lock("Transport::mutate");
-        let result = self.transport.mutate(request).await;
+        let result = self.mutate_scoped(request).await;
         let replayable = match owner.map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage)).transpose() {
             Ok(pending) => pending.unwrap_or(false),
             Err(error) => return Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),

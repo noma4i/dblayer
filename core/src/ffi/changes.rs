@@ -85,9 +85,9 @@ impl Database {
         let queue = LiveChanges::new();
         let model = serde_json::from_str::<serde_json::Value>(&query_json)?["model"].as_str().unwrap_or_default().to_string();
         let _ = queue.context.set((self.db.clone(), model));
+        self.streams.enroll(&queue);
         let subscription = self.live_query(query_json, Arc::new(Listener(Arc::downgrade(&queue))));
         *crate::db::locked(&queue.subscription) = Some(subscription);
-        self.streams.enroll(&queue);
         Ok(queue)
     }
 }
@@ -97,13 +97,20 @@ impl crate::lifecycle::Member for LiveChanges {
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
     fn lifecycle(&self, snapshot: &crate::lifecycle::Snapshot) {
         let Some((db, model)) = self.context.get() else { return };
-        if !matches!(snapshot.change, crate::lifecycle::Change::Reset(_)) || !snapshot.rereads(model) { return; }
+        let ended = matches!(snapshot.change, crate::lifecycle::Change::EndSession);
+        if !ended && !(matches!(snapshot.change, crate::lifecycle::Change::Reset(_)) && snapshot.rereads(model)) { return; }
         let Ok(revision) = db.revision_seq() else { return };
         self.with_state(|state| {
-            state.min_revision = revision;
             state.pending.clear();
-            state.rows.clear();
-            state.pending.push_back(LiveChange::whole(revision, Vec::new()));
+            if ended {
+                state.min_revision = revision + 1;
+                let rows = state.rows.clone();
+                state.pending.push_back(LiveChange::whole(revision, rows));
+            } else {
+                state.min_revision = revision;
+                state.rows.clear();
+                state.pending.push_back(LiveChange::whole(revision, Vec::new()));
+            }
         });
     }
 }
@@ -123,6 +130,7 @@ impl LiveChanges {
     }
 
     pub fn cancel(&self) {
+        if let Some(registration) = self.registration.get() { registration.remove(); }
         let subscription = crate::db::locked(&self.subscription).take();
         if let Some(subscription) = subscription { subscription.cancel(); }
         self.with_state(|state| {

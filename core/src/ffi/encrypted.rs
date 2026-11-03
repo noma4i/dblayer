@@ -177,7 +177,9 @@ impl Database {
     pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
         let client = self.session()?.clone();
         let sync = self.sync.clone();
-        cancellable(resume(client, sync)).await?
+        let lifecycle = self.streams.clone();
+        cancellable(async move { lifecycle.scoped(resume(client, sync)).await }).await?
+            .map_err(|_| DbError::Interrupted { detail: "the session ended or the database closed".into() })?
     }
 
     pub fn session_reset(&self) -> Result<(), DbError> {

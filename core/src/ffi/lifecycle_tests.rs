@@ -26,11 +26,20 @@ struct ServerState {
     account: String,
     signed: bool,
     forbidden: bool,
+    status: Option<u16>,
+    hits: usize,
     calls: BTreeMap<String, usize>,
     violations: Vec<String>,
 }
 
 impl Server {
+    fn hits(&self) -> usize { self.state.lock().unwrap().hits }
+    fn fail_with(&self, status: Option<u16>) { self.state.lock().unwrap().status = status; }
+    fn pause_next(&self) -> Arc<Pause> {
+        let pause = Arc::new(Pause { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0) });
+        *self.pause.lock().unwrap() = Some(pause.clone());
+        pause
+    }
     fn calls(&self) -> BTreeMap<String, usize> { self.state.lock().unwrap().calls.clone() }
     fn forbid(&self, forbidden: bool) { self.state.lock().unwrap().forbidden = forbidden; }
     fn violations(&self) -> Vec<String> { self.state.lock().unwrap().violations.clone() }
@@ -46,7 +55,13 @@ impl EncryptedHttp for Server {
                 state.violations.push(format!("{path} {}", request["body"]["operationName"]));
                 return Ok(EncryptedReply { status: 400, body: String::new() });
             }
-            if path == "/api/auth/login_link" {
+            state.hits += 1;
+            if let Some(status) = state.status {
+                return Ok(EncryptedReply { status, body: String::new() });
+            }
+            if path == "/api/auth/otp" {
+                json!({"sent":true})
+            } else if path == "/api/auth/login_link" {
                 state.account = request["body"]["account"].as_str().unwrap().into();
                 state.signed = true;
                 json!({"sessionId":state.account})
@@ -85,10 +100,11 @@ impl EntityListener for Entities {
 }
 
 #[derive(Default)]
-struct Rows(Mutex<Vec<WireRow>>);
+struct Rows(Mutex<Vec<WireRow>>, Mutex<Vec<LiveChange>>);
 
 impl QueryListener for Rows {
     fn changed(&self, change: LiveChange) {
+        self.1.lock().unwrap().push(change.clone());
         let mut rows = self.0.lock().unwrap();
         if change.full { rows.clear(); }
         rows.retain(|row| !change.removed.contains(&row.id));
@@ -122,6 +138,7 @@ fn models() -> String {
 async fn open(server: Arc<Server>) -> Arc<Database> {
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), sessionless: false });
+    encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), sessionless: true });
     let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, models(), Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), None, TestClock::new(1_000_000), false, false, Some(encrypted), Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), Some(server), None).await.unwrap();
     database.register_operations(json!([
         {"name":"MyProfile","document":"query MyProfile { me { id name } }"},
@@ -164,11 +181,20 @@ async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_cur
     entities.singleton(r#"{"model":"User","relation":"profile","params":{}}"#.into(), 1).unwrap();
     entities.retain(vec![EntityRequest { id: "user".into(), lease: 2, fetch: EntityFetch::Force }]).unwrap();
     let rows = Arc::new(Rows::default());
+    let window_rows = Arc::new(Rows::default());
     let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
+    let window = database.live_window(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#.into(), 10, None, window_rows.clone());
     within(query.wait_for_initial_load()).await.unwrap();
+    within(window.wait_for_initial_load()).await.unwrap();
+    crate::test_wait::yield_until("both held entities loaded", || {
+        let snapshots = snapshots.0.lock().unwrap();
+        snapshots.len() == 2 && snapshots.values().all(|row| row.settled && row.read == EntityRead::Loaded && row.value.is_some())
+    }).await;
     let changes = database.changes(r#"{"model":"User","relation":"all","params":{}}"#.into()).unwrap();
     within(database.settle_for_testing()).await.unwrap();
     for account in ["A", "B"] {
+        for listener in [&rows, &window_rows] { listener.1.lock().unwrap().clear(); }
+        let emptied_generation = database.db.generation().value();
         within(database.logout()).await.unwrap();
         server.forbid(true);
         let before = server.calls();
@@ -176,15 +202,26 @@ async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_cur
         within(database.settle_for_testing()).await.unwrap();
         assert!(server.violations().is_empty(), "REL-24: held request after logout: {:?}", server.violations());
         assert_eq!(server.calls(), before, "REL-24: no held request after logout");
-        assert!(snapshots.0.lock().unwrap().values().all(|row| row.value.is_none()));
+        {
+            let snapshots = snapshots.0.lock().unwrap();
+            assert_eq!(snapshots.len(), 2, "both held entities publish after the logout");
+            assert!(snapshots.values().all(|row| row.value.is_none() && row.generation > emptied_generation && !matches!(row.read, EntityRead::Failed { .. })), "the held entities must be empty, of a newer generation and not failed: {snapshots:?}");
+        }
+        for listener in [&rows, &window_rows] {
+            crate::test_wait::yield_until("the held list publishes the reset", || listener.1.lock().unwrap().iter().any(|change| change.size == 0 && change.rows.is_empty())).await;
+            assert!(listener.1.lock().unwrap().iter().all(|change| change.error.is_none()), "a held list shows an error after the logout");
+        }
         server.forbid(false);
         start_session(&database, account).await;
         within(database.settle_for_testing()).await.unwrap();
         crate::test_wait::yield_until("both held entities show the new account", || {
             let snapshots = snapshots.0.lock().unwrap();
-            snapshots.len() == 2 && snapshots.values().all(|row| row.settled && row.value.as_ref().is_some_and(|row| named(row, account)))
+            snapshots.len() == 2 && snapshots.values().all(|row| row.settled && row.read == EntityRead::Loaded && row.generation > emptied_generation && row.value.as_ref().is_some_and(|row| named(row, account)))
         }).await;
-        assert!(rows.0.lock().unwrap().iter().all(|row| named(row, account)));
+        within(window.wait_for_initial_load()).await.unwrap();
+        for listener in [&rows, &window_rows] {
+            crate::test_wait::yield_until("the held list shows the new account", || { let rows = listener.0.lock().unwrap(); !rows.is_empty() && rows.iter().all(|row| named(row, account)) }).await;
+        }
         let previous = if account == "A" { "initial" } else { "A" };
         let states = delivered(&changes).await;
         assert!(states.first().is_some_and(|first| first.iter().all(|row| !named(row, previous))), "D7: the first change after the logout shows the previous account: {states:?}");
@@ -195,6 +232,10 @@ async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_cur
         for operation in ["MyProfile", "UserNode", "Users"] {
             assert_eq!(server.calls()[operation], before[operation] + 1, "reset keeps session: {operation}");
         }
+        let after_reset = server.calls();
+        within(database.session_call("login_link".into(), json!({"account":account}).to_string())).await.unwrap();
+        within(database.settle_for_testing()).await.unwrap();
+        assert_eq!(server.calls(), after_reset, "repeating the same session commit rereads nothing");
     }
     database.session_reset().unwrap();
     server.state.lock().unwrap().signed = false;
@@ -241,4 +282,114 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
             database.shutdown();
         }
     }
+}
+
+fn end_it(database: &Database, end: &str) {
+    match end {
+        "close" => database.shutdown(),
+        _ => database.session_reset().unwrap(),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_the_close() {
+    for end in ["session_reset", "close"] {
+        let server = Arc::new(Server::default());
+        let database = open(server.clone()).await;
+        start_session(&database, "A").await;
+        server.fail_with(Some(500));
+        let hits = server.hits();
+        let caller = database.clone();
+        let retrying = tokio::spawn(async move { caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ()) });
+        crate::test_wait::yield_until("the request failed and the call waits for its retry", || server.hits() > hits).await;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        end_it(&database, end);
+        assert!(within(retrying).await.unwrap().is_err(), "{end}: a call in a retry wait outlived the transition");
+        database.shutdown();
+    }
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    let pause = server.pause_next();
+    let (first, second) = (database.clone(), database.clone());
+    let running = tokio::spawn(async move { first.session_call("login_link".into(), json!({"account":"first"}).to_string()).await.map(|_| ()) });
+    within(pause.entered.notified()).await;
+    let queued = tokio::spawn(async move { second.session_call("login_link".into(), json!({"account":"queued"}).to_string()).await.map(|_| ()) });
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    database.session_reset().unwrap();
+    assert!(within(running).await.unwrap().is_err());
+    assert!(within(queued).await.unwrap().is_err(), "a call queued behind another one ran after the session reset");
+    assert!(database.session.as_ref().unwrap().signed_in().unwrap().is_none());
+    database.shutdown();
+}
+
+#[allow(clippy::await_holding_lock)]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_answer_that_reaches_the_commit_after_the_session_ended_writes_nothing() {
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    let sequence = || database.session.as_ref().unwrap().sequence_for_test();
+    let before = sequence();
+    let pause = server.pause_next();
+    let caller = database.clone();
+    let work = tokio::spawn(async move { caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ()) });
+    within(pause.entered.notified()).await;
+    let writer = database.db.shared.store.lock();
+    pause.release.add_permits(1);
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    database.streams.transition(crate::lifecycle::Change::EndSession);
+    drop(writer);
+    assert!(within(work).await.unwrap().is_err(), "the answer of the ended session was accepted");
+    assert_eq!(sequence(), before, "the answer wrote its sequence after the session ended");
+    database.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation() {
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    let pause = server.pause_next();
+    let first = database.clone();
+    let old = tokio::spawn(async move { first.refresh("User".into(), "all".into(), "{}".into()).await });
+    within(pause.entered.notified()).await;
+    let before = server.calls()["Users"];
+    within(database.reset_for_testing()).await.unwrap();
+    within(database.refresh("User".into(), "all".into(), "{}".into())).await.unwrap();
+    assert_eq!(server.calls()["Users"], before + 1, "the refresh after the reset waited for the old request");
+    assert!(!old.is_finished());
+    pause.release.add_permits(1);
+    let _ = within(old).await.unwrap();
+    database.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_initial_load_wait_after_a_reset_does_not_return_the_old_ready() {
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    let rows = Arc::new(Rows::default());
+    let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
+    within(query.wait_for_initial_load()).await.unwrap();
+    let pause = server.pause_next();
+    within(database.reset_for_testing()).await.unwrap();
+    let waiting = tokio::time::timeout(std::time::Duration::from_millis(300), query.wait_for_initial_load()).await;
+    assert!(waiting.is_err(), "wait_for_initial_load returned while the new load was still running");
+    within(pause.entered.notified()).await;
+    pause.release.add_permits(1);
+    within(query.wait_for_initial_load()).await.unwrap();
+    database.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sessionless_call_that_succeeds_after_a_logout_reopens_the_background() {
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    within(database.logout()).await.unwrap();
+    assert!(!database.streams.snapshot().signed_in());
+    within(database.session_call("otp".into(), "{}".into())).await.unwrap();
+    assert!(database.streams.snapshot().signed_in(), "a successful sessionless call with a stored credential did not reopen the background");
+    database.shutdown();
 }

@@ -12,7 +12,7 @@ mod machine;
 const EVENT_BACKLOG: usize = 64;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Origin { Explicit, Observed, Background, Cloud }
+pub(crate) enum Origin { Explicit, Observed, Background }
 
 #[derive(Clone, Debug)]
 pub(crate) enum Change {
@@ -37,6 +37,25 @@ pub(crate) struct Snapshot {
     pub change: Change,
 }
 
+/// What a call saw when it was admitted. A write that carries an older stamp belongs to a database state that no longer exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Stamp {
+    pub generation: Generation,
+    pub session_epoch: u64,
+}
+
+/// The scope of a call ended because the database closed or its session ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Ended;
+
+impl From<Ended> for crate::transport::TransportError {
+    fn from(_: Ended) -> Self { crate::transport::TransportError::Interrupted("database session ended or database closed".into()) }
+}
+
+impl From<Ended> for crate::sync::SyncError {
+    fn from(ended: Ended) -> Self { crate::sync::SyncError::Transport(ended.into()) }
+}
+
 impl Default for Snapshot {
     fn default() -> Self {
         Self { generation: Generation::INITIAL, session: None, ended: false, online: true, resetting: false, closed: false, revision: 0, session_epoch: 0, change: Change::Session(None, 0) }
@@ -49,7 +68,7 @@ impl Snapshot {
             Change::BeginReset => { self.generation = self.generation.next(); self.resetting = true; }
             Change::Reset(_) => self.resetting = false,
             Change::Session(session, _) => { self.session = session.clone(); self.ended = false; }
-            Change::EndSession => { self.session = None; self.ended = true; self.session_epoch += 1; }
+            Change::EndSession => { self.session = None; self.ended = true; self.session_epoch += 1; self.generation = self.generation.next(); }
             Change::Online(online) => self.online = *online,
             Change::Close => self.closed = true,
         }
@@ -59,9 +78,11 @@ impl Snapshot {
 
     pub(crate) fn signed_in(&self) -> bool { self.session.is_some() && !self.ended }
 
+    pub(crate) fn stamp(&self) -> Stamp { Stamp { generation: self.generation, session_epoch: self.session_epoch } }
+
     pub(crate) fn admits(&self, origin: Origin) -> bool {
         !self.closed && match origin {
-            Origin::Explicit | Origin::Cloud => true,
+            Origin::Explicit => true,
             Origin::Observed | Origin::Background => !self.resetting && self.signed_in(),
         }
     }
@@ -135,9 +156,40 @@ impl Drop for Registration {
     fn drop(&mut self) { self.remove(); }
 }
 
+/// Open holders in a vector without gaps, so a walk costs the number of open holders however many were open before.
+#[derive(Default)]
+struct Members {
+    order: Vec<(usize, Weak<dyn Member>)>,
+    index: HashMap<usize, usize>,
+}
+
+impl Members {
+    fn insert(&mut self, id: usize, member: Weak<dyn Member>) {
+        self.index.insert(id, self.order.len());
+        self.order.push((id, member));
+    }
+
+    fn remove(&mut self, id: &usize) -> Option<Weak<dyn Member>> {
+        let at = self.index.remove(id)?;
+        let (_, removed) = self.order.swap_remove(at);
+        if let Some((moved, _)) = self.order.get(at) { self.index.insert(*moved, at); }
+        Some(removed)
+    }
+
+    fn open(&self) -> Vec<Weak<dyn Member>> { self.order.iter().map(|(_, member)| member.clone()).collect() }
+
+    #[cfg(test)]
+    fn len(&self) -> usize { self.order.len() }
+
+    fn clear(&mut self) {
+        self.order = Vec::new();
+        self.index = HashMap::new();
+    }
+}
+
 struct State {
     machine: InitializedStateMachine<machine::Phases>,
-    members: HashMap<usize, Weak<dyn Member>>,
+    members: Members,
 }
 
 pub(crate) struct Lifecycle {
@@ -151,7 +203,7 @@ pub(crate) struct Lifecycle {
 
 impl Default for Lifecycle {
     fn default() -> Self {
-        Self { state: Mutex::new(State { machine: machine::new(), members: HashMap::new() }), effects: OrderedEffects::default(), changed: watch::channel(Snapshot::default()).0, events: broadcast::channel(EVENT_BACKLOG).0, #[cfg(test)] work: std::sync::atomic::AtomicUsize::new(0) }
+        Self { state: Mutex::new(State { machine: machine::new(), members: Members::default() }), effects: OrderedEffects::default(), changed: watch::channel(Snapshot::default()).0, events: broadcast::channel(EVENT_BACKLOG).0, #[cfg(test)] work: std::sync::atomic::AtomicUsize::new(0) }
     }
 }
 
@@ -165,33 +217,49 @@ impl Lifecycle {
         Watch { events, state, seen }
     }
 
-    pub(crate) async fn request<T>(&self, work: impl std::future::Future<Output = Result<T, crate::transport::TransportError>>) -> Result<T, crate::transport::TransportError> {
+    /// Runs the call inside the scope of the database state it was admitted in. The scope ends the call when the database closes or its session ends, whatever the call waits for: a queue, a retry, a request or an answer.
+    pub(crate) async fn scoped<T>(&self, work: impl std::future::Future<Output = T>) -> Result<T, Ended> {
         let mut changes = self.changed.subscribe();
         let before = self.snapshot();
-        let interrupted = || crate::transport::TransportError::Interrupted("database session ended or database closed".into());
-        if before.closed { return Err(interrupted()); }
+        if before.closed { return Err(Ended); }
         tokio::select! {
             biased;
-            _ = changes.wait_for(|snapshot| snapshot.closed || snapshot.session_epoch != before.session_epoch) => Err(interrupted()),
-            result = work => result,
+            _ = changes.wait_for(|published| published.closed || published.session_epoch > before.session_epoch) => Err(Ended),
+            result = work => Ok(result),
         }
     }
 
+    pub(crate) async fn request<T>(&self, work: impl std::future::Future<Output = Result<T, crate::transport::TransportError>>) -> Result<T, crate::transport::TransportError> {
+        self.scoped(work).await?
+    }
+
+    /// Returns after every member ran its callback for this change, unless a callback of this lifecycle made the call.
     pub(crate) fn transition(&self, change: Change) {
-        self.transition_deferred(change);
-        self.effects.run();
+        let (_, ticket) = self.transition_ticketed(change);
+        self.effects.run_until(ticket);
     }
 
     pub(crate) fn transition_deferred(&self, change: Change) -> Generation {
+        self.transition_ticketed(change).0
+    }
+
+    /// Returns when the change with this ticket reached its members.
+    pub(crate) fn delivered(&self, ticket: u64) {
+        self.effects.run_until(ticket);
+    }
+
+    pub(crate) fn transition_ticketed(&self, change: Change) -> (Generation, u64) {
         let mut state = crate::db::locked(&self.state);
         let previous = &state.machine.inner().snapshot;
         if previous.closed || matches!(&change, Change::Session(session, epoch) if *epoch != previous.session_epoch || previous.session == *session && !previous.ended) {
-            return previous.generation;
+            return (previous.generation, 0);
         }
         state.machine.handle(&change);
         let snapshot = state.machine.inner().snapshot.clone();
         let generation = snapshot.generation;
-        let members: Vec<_> = state.members.values().cloned().collect();
+        let members = state.members.open();
+        #[cfg(test)]
+        self.work.fetch_add(members.len(), std::sync::atomic::Ordering::SeqCst);
         if snapshot.closed { state.members.clear(); }
         let (changed, events) = (self.changed.clone(), self.events.clone());
         let mut effects = Effects::default();
@@ -204,31 +272,32 @@ impl Lifecycle {
                 let _ = events.send(snapshot);
             });
         });
-        self.effects.push(effects);
-        generation
+        let ticket = self.effects.push_ticket(effects);
+        (generation, ticket)
     }
 
     pub(crate) fn busy(&self) -> bool {
-        let open: Vec<_> = crate::db::locked(&self.state).members.values().cloned().collect();
+        let open = crate::db::locked(&self.state).members.open();
         !self.effects.is_idle() || open.into_iter().filter_map(|member| member.upgrade()).any(|member| member.busy())
     }
 
-    pub(crate) fn enroll<M: Member + 'static>(self: &Arc<Self>, member: &Arc<M>) {
+    /// Registers a holder and returns the state at that moment. Every change after it reaches the holder's callback.
+    pub(crate) fn enroll<M: Member + 'static>(self: &Arc<Self>, member: &Arc<M>) -> Snapshot {
         assert!(member.registration().get().is_none());
         let mut state = crate::db::locked(&self.state);
-        if state.machine.inner().snapshot.closed {
+        let snapshot = state.machine.inner().snapshot.clone();
+        if snapshot.closed {
             drop(state);
             member.close();
-            return;
+            return snapshot;
         }
         let id = Arc::as_ptr(member) as usize;
         assert!(member.registration().set(Registration { owner: Arc::downgrade(self), id }).is_ok());
         state.members.insert(id, Arc::downgrade(member) as Weak<dyn Member>);
+        snapshot
     }
 
     pub(crate) fn close(&self) {
-        #[cfg(test)]
-        self.work.fetch_add(crate::db::locked(&self.state).members.len(), std::sync::atomic::Ordering::SeqCst);
         self.transition(Change::Close);
     }
 

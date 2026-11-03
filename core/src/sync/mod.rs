@@ -114,6 +114,7 @@ pub(crate) struct Flights {
     pub started: u64,
     pub waiting: HashMap<String, watch::Sender<Option<FlightEnd>>>,
     pub node_rereads: std::collections::HashSet<String>,
+    pub owners: HashMap<String, (u64, crate::identity::Generation)>,
     #[cfg(test)]
     pub joined: JoinedLoads,
 }
@@ -199,22 +200,30 @@ pub struct Sync {
 }
 
 struct Lifetime {
-    stop: watch::Sender<bool>,
-    owner: Arc<load_owner::LoadOwner>,
-    closed: std::sync::atomic::AtomicBool,
+    lifecycle: Arc<crate::lifecycle::Lifecycle>,
+    closer: Arc<Closer>,
 }
 
-impl Lifetime {
+/// Stops the background tasks and the window machines when the database lifecycle closes. The lifecycle is the only place that decides a close.
+struct Closer {
+    stop: watch::Sender<bool>,
+    owner: Arc<load_owner::LoadOwner>,
+    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+}
+
+impl crate::lifecycle::Member for Closer {
     fn close(&self) {
-        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) { return; }
         crate::db::lock::effect(|| self.stop.send_replace(true));
         self.owner.submit(load_machine::Event::Close);
     }
+
+    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 }
 
 impl Drop for Lifetime {
     fn drop(&mut self) {
-        self.close();
+        let _keep = &self.closer;
+        self.lifecycle.close();
     }
 }
 
@@ -239,7 +248,9 @@ impl Sync {
         let max_files = config.upload.max_files;
         let (stop, stopped) = watch::channel(false);
         let owner = Arc::new(load_owner::LoadOwner::default());
-        let lifetime = Lifetime { stop, owner: owner.clone(), closed: std::sync::atomic::AtomicBool::new(false) };
+        let closer = Arc::new(Closer { stop, owner: owner.clone(), registration: std::sync::OnceLock::new() });
+        let lifetime = Lifetime { lifecycle: db.shared.store.lifecycle.clone(), closer: closer.clone() };
+        db.shared.store.lifecycle.enroll(&closer);
         let connectivity = db.connectivity();
         let change_feed = db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| (spec.key.to_string(), feed.clone())));
         let mut change_targets: BTreeMap<String, BTreeMap<String, Vec<crate::schema::ChangeRead>>> = BTreeMap::new();
@@ -301,12 +312,11 @@ impl Sync {
     }
 
     pub fn close(&self) {
-        self.inner.db.shared.store.lifecycle.close();
-        self._lifetime.close();
+        self._lifetime.lifecycle.close();
     }
 
     pub(crate) fn is_closed(&self) -> bool {
-        self._lifetime.closed.load(std::sync::atomic::Ordering::SeqCst)
+        self._lifetime.lifecycle.snapshot().closed
     }
 
     pub(crate) fn downgrade(&self) -> WeakSync {
@@ -327,7 +337,7 @@ impl Sync {
 }
 
 impl crate::lifecycle::Member for Inner {
-    fn close(&self) { self.owner.submit(load_machine::Event::Close); }
+    fn close(&self) {}
 
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 
@@ -340,6 +350,7 @@ impl crate::lifecycle::Member for Inner {
                 inner.preload_on_event();
             }
             crate::lifecycle::Change::Session(_, _) | crate::lifecycle::Change::EndSession => {
+                if matches!(snapshot.change, crate::lifecycle::Change::EndSession) { inner.cancel_uploads(); }
                 inner.preload_session();
                 if snapshot.session.is_some() {
                     inner.refresh_due_entities(true);

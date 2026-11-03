@@ -127,3 +127,21 @@ fn every_stream_wake_runs_unlocked() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_change_queued_before_the_session_ended_never_reaches_the_next_session() {
+    let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
+    model.storage = Storage::Local;
+    let database = Database::open(super::super::Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None, None).await.unwrap();
+    let queue = database.changes(r#"{"model":"Note"}"#.into()).unwrap();
+    assert!(within(queue.next()).await.unwrap().full);
+    database.create("Note".into(), r#"{"text":"account A"}"#.into(), "{}".into()).await.unwrap();
+    let queued = database.db.revision_seq().unwrap();
+    database.db.await_revision(queued);
+    crate::test_wait::yield_until("the change of account A is queued", || !crate::db::locked(&queue.state).pending.is_empty()).await;
+    database.streams.transition(crate::lifecycle::Change::EndSession);
+    let first = within(queue.next()).await.unwrap();
+    assert!(first.full, "an incremental change of the ended session was delivered after it");
+    queue.push(LiveChange::whole(queued, Vec::new()));
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(200), queue.next()).await.is_err(), "a delayed change of the ended session entered the queue");
+}
