@@ -36,6 +36,12 @@
 - `refresh`, `loadMore` and a one-off load fail at once with the network error while offline, and the stream state shows it.
 - An action whose answer carries another row returns that row and leaves the receiver row unchanged.
 - The first delivery of a projection is a snapshot; `takeEdits` returns `nil` until a delta arrives.
+- `run`, loads, node reads, cache reads, `retryAll`, `cancelUpload` and the Blob calls carry the session epoch and are refused when that session ended.
+- A scope keeps the database it was made for; a call with an old scope never reaches a database opened later.
+- A plain action whose request never reached the server, or that was unsent when the network dropped, ends with the network error and rolls back.
+- After a network return the first retry skips the backoff once; a second failure waits by the backoff.
+- A projection asks for a snapshot again when a jump in the delivery sequence shows that a delivery, also the recovery snapshot, was dropped.
+- A create the server answers has a generated typed `create` in Swift and Kotlin.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

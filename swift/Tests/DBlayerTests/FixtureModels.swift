@@ -223,11 +223,11 @@ public struct Container: DBModel {
     public static let isPublic = Column<Container, Bool?>("isPublic")
     public static let shelves = Column<Container, [ContainerShelf]?>("shelves")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
-        try await readNode(relation: "node", id: id, force: force)
+    @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
+        try await readNode(relation: "node", id: id, force: force, in: scope)
     }
-    @concurrent public static func nodes(_ ids: [String]) async throws -> [Self] {
-        try await readNodes(relation: "nodes", ids: ids)
+    @concurrent public static func nodes(_ ids: [String], in scope: AccountScope? = nil) async throws -> [Self] {
+        try await readNodes(relation: "nodes", ids: ids, in: scope)
     }
     public static var recent: Query<Self> {
         var built = Query<Self>(relation: "recent", params: [:])
@@ -352,8 +352,8 @@ public struct Chat: DBModel {
     public static let serverRevision = Column<Chat, Int>("serverRevision")
     public static let lists = Column<Chat, [String]>("lists")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
-        try await readNode(relation: "node", id: id, force: force)
+    @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
+        try await readNode(relation: "node", id: id, force: force, in: scope)
     }
     public static func list(_ list: String) throws -> Query<Self> {
         let built = Query<Self>(relation: "list", params: ["list": try JSONValue.encode(list)])
@@ -405,8 +405,8 @@ public struct Message: DBModel {
     public static let text = Column<Message, String>("text")
     public static let chatId = Column<Message, String>("chatId")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
-        try await readNode(relation: "node", id: id, force: force)
+    @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
+        try await readNode(relation: "node", id: id, force: force, in: scope)
     }
     @concurrent public static func create(text: String, chatId: String, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
@@ -452,8 +452,8 @@ public struct InterfaceRecord: DBModel {
     public static let slug = Column<InterfaceRecord, String>("slug")
     public static let spec = Column<InterfaceRecord, SampleSpec?>("spec")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
-        try await readNode(relation: "node", id: id, force: force)
+    @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
+        try await readNode(relation: "node", id: id, force: force, in: scope)
     }
     @concurrent public static func create(slug: String, spec: SampleSpec? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]
@@ -654,8 +654,8 @@ public struct Moment: DBModel {
     public static let tone = Column<Moment, String?>("tone")
     public static let createdAt = Column<Moment, String>("createdAt")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func transcodeStatus(_ id: String, force: Bool = false) async throws -> Self? {
-        try await readNode(relation: "transcode_status", id: id, force: force)
+    @concurrent public static func transcodeStatus(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
+        try await readNode(relation: "transcode_status", id: id, force: force, in: scope)
     }
     public static var recent: Query<Self> {
         var built = Query<Self>(relation: "recent", params: [:])
@@ -1178,11 +1178,11 @@ public struct Record: DBModel {
         let built = Query<Self>(relation: "thread", params: ["containerId": try JSONValue.encode(containerId)])
         return built
     }
-    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
-        try await readNode(relation: "node", id: id, force: force)
+    @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
+        try await readNode(relation: "node", id: id, force: force, in: scope)
     }
-    @concurrent public static func transcodeStatus(_ id: String, force: Bool = false) async throws -> Self? {
-        try await readNode(relation: "transcode_status", id: id, force: force)
+    @concurrent public static func transcodeStatus(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
+        try await readNode(relation: "transcode_status", id: id, force: force, in: scope)
     }
     public static func containerMedia(_ containerId: String) throws -> Query<Self> {
         let built = Query<Self>(relation: "container_media", params: ["containerId": try JSONValue.encode(containerId)])
@@ -1349,8 +1349,8 @@ public struct CustomScreen: DBModel {
     public static let requires = Column<CustomScreen, ScreenRequires>("requires")
     public static let spec = Column<CustomScreen, ScreenSpec?>("spec")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func node(_ id: String, force: Bool = false) async throws -> Self? {
-        try await readNode(relation: "node", id: id, force: force)
+    @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
+        try await readNode(relation: "node", id: id, force: force, in: scope)
     }
     @concurrent public static func create(slug: String, version: Int, requires: ScreenRequires, spec: ScreenSpec? = nil, in scope: AccountScope? = nil) async throws -> Self {
         var values: [String: JSONValue] = [:]

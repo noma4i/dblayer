@@ -51,13 +51,13 @@ async fn open(last_has_next: bool) -> (Arc<Database>, Arc<Paged>) {
 }
 
 async fn more(db: &Database) -> LoadMoreResult {
-    db.load_more("Moment".into(), "feed".into(), "{}".into()).await.unwrap()
+    db.load_more(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap()
 }
 
 #[tokio::test]
 async fn inv_loadm_18_a_load_more_during_another_flight_says_already_loading_not_no_more() {
     let (db, transport) = open(true).await;
-    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let first = tokio::spawn({ let db = db.clone(); async move { more(&db).await } });
     within(transport.held.notified()).await;
     assert_eq!(more(&db).await, LoadMoreResult::AlreadyLoading);
@@ -70,7 +70,7 @@ async fn inv_loadm_18_a_load_more_during_another_flight_says_already_loading_not
 async fn inv_loadm_18_the_last_page_says_loaded_without_more_and_a_closed_chain_says_no_more() {
     let (db, transport) = open(false).await;
     assert_eq!(more(&db).await, LoadMoreResult::NoMore);
-    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let last = tokio::spawn({ let db = db.clone(); async move { more(&db).await } });
     within(transport.held.notified()).await;
     transport.release.notify_one();

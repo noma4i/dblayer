@@ -130,8 +130,8 @@ async fn open(server: Arc<Server>) -> Arc<Database> {
 
 async fn start_session(database: &Database, account: &str) {
     within(database.session_call("login_link".into(), json!({"account":account}).to_string())).await.unwrap();
-    within(database.run("SessionProfile".into(), "{}".into())).await.unwrap();
-    within(database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
+    within(database.run(database.session_epoch(), "SessionProfile".into(), "{}".into())).await.unwrap();
+    within(database.refresh(database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
 }
 
 pub(super) fn named(row: &WireRow, name: &str) -> bool { row.cells.contains(&super::wire::Cell::Text { value: name.into() }) }
@@ -150,7 +150,7 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
             if session_call {
                 caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ())
             } else {
-                caller.refresh("User".into(), "profile".into(), "{}".into()).await.map(|_| ())
+                caller.refresh(caller.session_epoch(), "User".into(), "profile".into(), "{}".into()).await.map(|_| ())
             }
         });
         within(pause.entered.notified()).await;
@@ -273,11 +273,12 @@ async fn a_credential_created_while_a_reset_clears_keeps_its_session_state() {
     let reset = tokio::spawn(async move { resetting.session_reset().await });
     crate::test_wait::yield_until("the reset is parked after the generation moved", || park.entered.load(std::sync::atomic::Ordering::SeqCst)).await;
     let reading = database.clone();
-    let mut read = tokio::spawn(async move { reading.refresh("User".into(), "all".into(), "{}".into()).await });
+    let epoch = reading.session_epoch();
+    let mut read = tokio::spawn(async move { reading.refresh(epoch, "User".into(), "all".into(), "{}".into()).await });
     assert!(within(&mut read).await.unwrap().is_err(), "an explicit read ran while the reset was clearing");
     park.release.store(true, std::sync::atomic::Ordering::SeqCst);
     within(reset).await.unwrap().unwrap();
-    within(database.refresh("User".into(), "all".into(), "{}".into())).await.unwrap();
+    within(database.refresh(database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap();
     database.close_now();
 }
 
@@ -288,12 +289,13 @@ async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation(
     start_session(&database, "A").await;
     let pause = server.pause_next();
     let first = database.clone();
-    let old = tokio::spawn(async move { first.refresh("User".into(), "all".into(), "{}".into()).await });
+    let epoch = first.session_epoch();
+    let old = tokio::spawn(async move { first.refresh(epoch, "User".into(), "all".into(), "{}".into()).await });
     within(pause.entered.notified()).await;
     let before = server.calls()["Users"];
     within(database.session_reset()).await.unwrap();
     start_session(&database, "B").await;
-    within(database.refresh("User".into(), "all".into(), "{}".into())).await.unwrap();
+    within(database.refresh(database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap();
     assert_eq!(server.calls()["Users"], before + 1, "the refresh after the reset waited for the old request");
     assert!(within(old).await.unwrap().is_err(), "the refresh of the old data waited for its request after the reset");
     pause.release.add_permits(1);
@@ -307,10 +309,12 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     start_session(&database, "A").await;
     let pause = server.pause_next();
     let first = database.clone();
-    let owner = tokio::spawn(async move { first.refresh("User".into(), "all".into(), "{}".into()).await });
+    let epoch = first.session_epoch();
+    let owner = tokio::spawn(async move { first.refresh(epoch, "User".into(), "all".into(), "{}".into()).await });
     within(pause.entered.notified()).await;
     let second = database.clone();
-    let joined = tokio::spawn(async move { second.load("User".into(), "all".into(), "{}".into()).await });
+    let epoch = second.session_epoch();
+    let joined = tokio::spawn(async move { second.load(epoch, "User".into(), "all".into(), "{}".into()).await });
     crate::test_wait::yield_until("the load joined the flight", || database.sync.as_ref().unwrap().joined_loads() > 0).await;
     within(database.session_reset()).await.unwrap();
     assert!(within(owner).await.unwrap().is_err(), "the owner of the old flight waited for its request");

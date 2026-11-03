@@ -37,7 +37,7 @@ class GraphqlExtensionsTest(private val queued: Boolean) {
                     if (queued) {
                         val row = database.send(CommandRequest(database.sessionEpoch(), "Moment", """{"text":"hello","media":null}""", "{}", null)).row
                         database.settled(database.sessionEpoch(), "Moment", row.id, null)
-                    } else database.run(operation, "{}")
+                    } else database.run(database.sessionEpoch(), operation, "{}")
                 }
             }.exceptionOrNull() as? DbException.Graphql ?: throw AssertionError("the refused purchase did not throw Graphql")
             assertEquals(code, error.extensions?.code)

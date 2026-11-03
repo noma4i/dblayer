@@ -442,21 +442,21 @@ impl Rig {
     pub(super) async fn login_ios(&self, account: &str) {
         let database = &self.database;
         bound(database.session_call("login_link".into(), json!({"account":account}).to_string())).await.unwrap();
-        bound(database.run("SessionProfile".into(), "{}".into())).await.unwrap();
-        bound(database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
+        bound(database.run(database.session_epoch(), "SessionProfile".into(), "{}".into())).await.unwrap();
+        bound(database.refresh(database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     }
 
     pub(super) async fn login_android(&self, account: &str) {
         let database = &self.database;
         bound(database.session_call("social".into(), json!({"account":account}).to_string())).await.unwrap();
-        bound(database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
+        bound(database.refresh(database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     }
 
     /// The exit of the app. `revoke`: unregister the device and the confirmed server logout come first. `cancel`: the Android app cancels its collectors after the session reset, the iOS app keeps them held.
     pub(super) async fn exit(&self, held: &Held, revoke: bool, cancel: bool) {
         let database = &self.database;
         if revoke {
-            bound(database.run("UnregisterDevice".into(), "{}".into())).await.unwrap();
+            bound(database.run(database.session_epoch(), "UnregisterDevice".into(), "{}".into())).await.unwrap();
             bound(database.session_call("logout".into(), "{}".into())).await.unwrap();
             assert!(!self.world.signed(), "the server did not confirm the logout");
         }

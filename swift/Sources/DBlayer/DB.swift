@@ -11,10 +11,11 @@ public enum DB {
   }
   private static let opener = OpenDatabase()
 
-  /// The database and the epoch a command belongs to: the epoch of the scope when the caller holds one, else the epoch of the session now.
+  /// The database and the epoch a command belongs to: the pair the scope holds when the caller has one, else the open database and the epoch of its session now.
   static func admitted(_ scope: AccountScope?) throws -> (Database, UInt64) {
+    if let scope { return (scope.database, scope.epoch) }
     let database = try database
-    return (database, scope?.epoch ?? database.sessionEpoch())
+    return (database, database.sessionEpoch())
   }
 
   /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources.
@@ -36,12 +37,14 @@ public enum DB {
     try await database.resume()
   }
 
-  @concurrent public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type) async throws -> Answer {
-    try JSONDecoder().decode(Answer.self, from: Data(try await database.run(operation: operation, variablesJson: JSONValue.object(variables).text).utf8))
+  @concurrent public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type, in scope: AccountScope? = nil) async throws -> Answer {
+    let (database, epoch) = try admitted(scope)
+    return try JSONDecoder().decode(Answer.self, from: Data(try await database.run(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text).utf8))
   }
 
-  @concurrent public static func run(_ operation: String, variables: [String: JSONValue]) async throws {
-    _ = try await database.run(operation: operation, variablesJson: JSONValue.object(variables).text)
+  @concurrent public static func run(_ operation: String, variables: [String: JSONValue], in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try admitted(scope)
+    _ = try await database.run(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text)
   }
 
   @concurrent public static func sessionCall<Body: Encodable & Sendable, Answer: Decodable & Sendable>(_ operation: String, body: Body, as _: Answer.Type) async throws -> Answer {
@@ -66,9 +69,15 @@ public enum DB {
   public static func setListening(_ allowed: Bool) throws { try database.setListening(allowed: allowed) }
 
   /// Reloads every `preload` scope now, fresh or not, and returns when all have settled. Offline it throws without a request. When some scopes fail the error names them. Call it for pull to refresh instead of refreshing each reference list.
-  @concurrent public static func refreshPreloads() async throws { try await database.refreshPreloads() }
+  @concurrent public static func refreshPreloads(in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try admitted(scope)
+    try await database.refreshPreloads(epoch: epoch)
+  }
 
-  @discardableResult @concurrent public static func retryAll() async throws -> UInt64 { try await database.retryAll() }
+  @discardableResult @concurrent public static func retryAll(in scope: AccountScope? = nil) async throws -> UInt64 {
+    let (database, epoch) = try admitted(scope)
+    return try await database.retryAll(epoch: epoch)
+  }
 
   private static func sessionBodyText<Body: Encodable>(_ body: Body) throws -> String {
     String(decoding: try JSONEncoder().encode(body), as: UTF8.self)

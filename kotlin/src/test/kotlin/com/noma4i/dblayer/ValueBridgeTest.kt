@@ -406,6 +406,26 @@ class ValueBridgeTest {
         }
     }
 
+    /** K21 (C02): a scope keeps the database it was made for. After that database closed and another one opened with the same epoch number, a command and a read of the old scope are refused and the new database does not change. */
+    @Test
+    fun aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced() = bounded {
+        try {
+            openSession()
+            signIn("A")
+            val oldScope = AccountScope.current()
+            val row = User.profile.read(oldScope).first()
+            DBlayer.close()
+            openSession()
+            signIn("A")
+
+            assertTrue("a command of the old scope reached the new database", runCatching { row.update(name = "hijacked", account = oldScope) }.isFailure)
+            assertTrue("a read of the old scope reached the new database", runCatching { User.profile.read(oldScope) }.isFailure)
+            assertEquals("a command of the old scope changed the new database", "A", User.profile.read().first().name)
+        } finally {
+            DBlayer.close()
+        }
+    }
+
     /** K15 (iOS findings b and c): the first delivery of a projection is a snapshot with no list of edits, edits come with a delta, and one missed revision gives exactly one new snapshot to each of two streams. */
     @Test
     fun theFirstDeliveryHasNoEditsAndAMissedRevisionGivesEachStreamOneSnapshot() = bounded {
@@ -467,7 +487,7 @@ class ValueBridgeTest {
             }
             try {
                 eventually("the reader holds the 300 rows") { rowCount.get() == 300 }
-                assertTrue("the reader received ${received.get()} deliveries of a burst of 300: the buffer bounded nothing", received.get() <= 270)
+                assertTrue("the reader received ${received.get()} deliveries of a burst of 300: the buffer bounded nothing", received.get() <= 260)
                 assertTrue("the reader was not told that it missed deliveries", missed.get() > 0)
             } finally {
                 reading.cancel()

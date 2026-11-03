@@ -2,6 +2,7 @@ package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.*
 import java.io.File
+import kotlinx.coroutines.cancel
 import kotlinx.serialization.json.*
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

@@ -43,18 +43,18 @@ data class BlobProfile(
             return built
         }
         suspend fun setVideo(video: Blob) = requireNotNull(current.read().firstOrNull()) { "singleton is missing" }.setVideo(video)
-        suspend fun create(label: String? = null, account: AccountScope? = null): BlobProfile = offCaller {
+        suspend fun create(label: String? = null, account: AccountScope? = null): BlobProfile = onAccount(account) { database, epoch ->
             val values = buildJsonObject {
                 label?.let { put("label", jsonValue(it)) }
             }
-            read(DBlayer.database.create(admitted(account), "BlobProfile", values.jsonText(), "{}"))
+            read(database.create(epoch, "BlobProfile", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): BlobProfile = offCaller {
+    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): BlobProfile = onAccount(account) { database, epoch ->
         val values = buildJsonObject {
             put("label", label)
         }
-        BlobProfile.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
+        BlobProfile.read(database.update(epoch, modelName, id, values.jsonText(), "{}"))
     }
     suspend fun setVideo(video: Blob, account: AccountScope? = null): BlobProfile = act("set_video", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf("video" to jsonValue(video))), BlobProfile, account)
 }
@@ -86,18 +86,18 @@ data class Clip(
         fun createFileVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
             if (widgets != null) put("widgets", jsonValue(widgets))
         }
-        suspend fun create(title: String? = null, account: AccountScope? = null): Clip = offCaller {
+        suspend fun create(title: String? = null, account: AccountScope? = null): Clip = onAccount(account) { database, epoch ->
             val values = buildJsonObject {
                 title?.let { put("title", jsonValue(it)) }
             }
-            read(DBlayer.database.create(admitted(account), "Clip", values.jsonText(), "{}"))
+            read(database.create(epoch, "Clip", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): Clip = offCaller {
+    suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): Clip = onAccount(account) { database, epoch ->
         val values = buildJsonObject {
             put("title", title)
         }
-        Clip.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
+        Clip.read(database.update(epoch, modelName, id, values.jsonText(), "{}"))
     }
     suspend fun createFile(account: AccountScope, request: UploadRequest): ActionAnswer<Clip, ClipCreateFileResult> = account.upload(this, "create_file", request, ClipCreateFileResult.serializer())
 }
@@ -137,20 +137,20 @@ data class Inbox(
             var built = Query("Inbox", this, relation = "shelf", params = buildJsonObject { put("list", jsonValue(list)) })
             return built
         }
-        suspend fun create(title: String, stance: String? = null, account: AccountScope? = null): Inbox = offCaller {
+        suspend fun create(title: String, stance: String? = null, account: AccountScope? = null): Inbox = onAccount(account) { database, epoch ->
             val values = buildJsonObject {
                 put("title", jsonValue(title))
                 stance?.let { put("stance", jsonValue(it)) }
             }
-            read(DBlayer.database.create(admitted(account), "Inbox", values.jsonText(), "{}"))
+            read(database.create(epoch, "Inbox", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, stance: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): Inbox = offCaller {
+    suspend fun update(title: String? = null, stance: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): Inbox = onAccount(account) { database, epoch ->
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
             put("stance", stance)
         }
-        Inbox.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
+        Inbox.read(database.update(epoch, modelName, id, values.jsonText(), "{}"))
     }
     suspend fun move(list: ContainerShelfKind, account: AccountScope? = null): Inbox = act("move", JsonObject(parseJsonObject("""{"stance":{"${'$'}map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}""") + mapOf()), JsonObject(mapOf("list" to jsonValue(list))), Inbox, account)
 }
@@ -186,20 +186,20 @@ data class MediaEntry(
             var built = Query("MediaEntry", this, relation = "media", params = buildJsonObject { put("chatId", jsonValue(chatId)) })
             return built
         }
-        suspend fun create(text: String? = null, sequenceNumber: Long, account: AccountScope? = null): MediaEntry = offCaller {
+        suspend fun create(text: String? = null, sequenceNumber: Long, account: AccountScope? = null): MediaEntry = onAccount(account) { database, epoch ->
             val values = buildJsonObject {
                 text?.let { put("text", jsonValue(it)) }
                 put("sequenceNumber", jsonValue(sequenceNumber))
             }
-            read(DBlayer.database.create(admitted(account), "MediaEntry", values.jsonText(), "{}"))
+            read(database.create(epoch, "MediaEntry", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, sequenceNumber: Long? = null, account: AccountScope? = null): MediaEntry = offCaller {
+    suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, sequenceNumber: Long? = null, account: AccountScope? = null): MediaEntry = onAccount(account) { database, epoch ->
         val values = buildJsonObject {
             put("text", text)
             sequenceNumber?.let { put("sequenceNumber", jsonValue(it)) }
         }
-        MediaEntry.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
+        MediaEntry.read(database.update(epoch, modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -235,18 +235,18 @@ data class Roster(
             var built = Query("Roster", this, relation = "complete_members", params = buildJsonObject { put("containerId", jsonValue(containerId)); put("order", jsonValue(order)) })
             return built
         }
-        suspend fun create(title: String, account: AccountScope? = null): Roster = offCaller {
+        suspend fun create(title: String, account: AccountScope? = null): Roster = onAccount(account) { database, epoch ->
             val values = buildJsonObject {
                 put("title", jsonValue(title))
             }
-            read(DBlayer.database.create(admitted(account), "Roster", values.jsonText(), "{}"))
+            read(database.create(epoch, "Roster", values.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, account: AccountScope? = null): Roster = offCaller {
+    suspend fun update(title: String? = null, account: AccountScope? = null): Roster = onAccount(account) { database, epoch ->
         val values = buildJsonObject {
             title?.let { put("title", jsonValue(it)) }
         }
-        Roster.read(DBlayer.database.update(admitted(account), modelName, id, values.jsonText(), "{}"))
+        Roster.read(database.update(epoch, modelName, id, values.jsonText(), "{}"))
     }
 }
 
@@ -528,51 +528,51 @@ data class ContainerMediaLoadResult(
 )
 
 object Operations {
-    suspend fun `when`(`class`: String): WhenResult = offCaller {
+    suspend fun `when`(`class`: String, account: AccountScope? = null): WhenResult {
         val variables = mutableMapOf<String, JsonElement>()
         variables["class"] = jsonValue(`class`)
-        DBlayer.run("KeywordCall", JsonObject(variables), WhenResult.serializer())
+        return DBlayer.run("KeywordCall", JsonObject(variables), WhenResult.serializer(), account)
     }
-    suspend fun qrCodeCreate(kind: String, size: Long? = null): QrCodeCreateResult = offCaller {
+    suspend fun qrCodeCreate(kind: String, size: Long? = null, account: AccountScope? = null): QrCodeCreateResult {
         val variables = mutableMapOf<String, JsonElement>()
         variables["kind"] = jsonValue(kind)
         if (size != null) variables["size"] = jsonValue(size)
-        DBlayer.run("QrCodeCreate", JsonObject(mapOf("input" to JsonObject(variables))), QrCodeCreateResult.serializer())
+        return DBlayer.run("QrCodeCreate", JsonObject(mapOf("input" to JsonObject(variables))), QrCodeCreateResult.serializer(), account)
     }
-    suspend fun signOut() = offCaller {
+    suspend fun signOut(account: AccountScope? = null) {
         val variables = mutableMapOf<String, JsonElement>()
-        DBlayer.run("SignOut", JsonObject(variables))
+        DBlayer.run("SignOut", JsonObject(variables), account)
     }
-    suspend fun stickerSend(input: StickerInput): StickerSendResult = offCaller {
-        val variables = mutableMapOf<String, JsonElement>()
-        variables["input"] = jsonValue(input)
-        DBlayer.run("StickerSend", JsonObject(variables), StickerSendResult.serializer())
-    }
-    suspend fun pricingLoad(): PricingLoadResult = offCaller {
-        val variables = mutableMapOf<String, JsonElement>()
-        DBlayer.run("Pricing", JsonObject(variables), PricingLoadResult.serializer())
-    }
-    suspend fun momentCreate(input: MomentInput): MomentCreateResult = offCaller {
+    suspend fun stickerSend(input: StickerInput, account: AccountScope? = null): StickerSendResult {
         val variables = mutableMapOf<String, JsonElement>()
         variables["input"] = jsonValue(input)
-        DBlayer.run("MomentCreate", JsonObject(variables), MomentCreateResult.serializer())
+        return DBlayer.run("StickerSend", JsonObject(variables), StickerSendResult.serializer(), account)
     }
-    suspend fun giphyLoad(type: String, limit: Long? = null): List<GiphyLoadResult> = offCaller {
+    suspend fun pricingLoad(account: AccountScope? = null): PricingLoadResult {
+        val variables = mutableMapOf<String, JsonElement>()
+        return DBlayer.run("Pricing", JsonObject(variables), PricingLoadResult.serializer(), account)
+    }
+    suspend fun momentCreate(input: MomentInput, account: AccountScope? = null): MomentCreateResult {
+        val variables = mutableMapOf<String, JsonElement>()
+        variables["input"] = jsonValue(input)
+        return DBlayer.run("MomentCreate", JsonObject(variables), MomentCreateResult.serializer(), account)
+    }
+    suspend fun giphyLoad(type: String, limit: Long? = null, account: AccountScope? = null): List<GiphyLoadResult> {
         val variables = mutableMapOf<String, JsonElement>()
         variables["type"] = jsonValue(type)
         if (limit != null) variables["limit"] = jsonValue(limit)
-        DBlayer.run("Giphy", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()))
+        return DBlayer.run("Giphy", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()), account)
     }
-    suspend fun widgetsSend(widgets: List<StickerWidgetInput>? = null): WidgetsSendResult = offCaller {
+    suspend fun widgetsSend(widgets: List<StickerWidgetInput>? = null, account: AccountScope? = null): WidgetsSendResult {
         val variables = mutableMapOf<String, JsonElement>()
         if (widgets != null) variables["widgets"] = jsonValue(widgets)
-        DBlayer.run("WidgetsSend", JsonObject(variables), WidgetsSendResult.serializer())
+        return DBlayer.run("WidgetsSend", JsonObject(variables), WidgetsSendResult.serializer(), account)
     }
-    suspend fun containerMediaLoad(containerId: String, upToSequence: Long? = null): ContainerMediaLoadResult = offCaller {
+    suspend fun containerMediaLoad(containerId: String, upToSequence: Long? = null, account: AccountScope? = null): ContainerMediaLoadResult {
         val variables = mutableMapOf<String, JsonElement>()
         variables["containerId"] = jsonValue(containerId)
         if (upToSequence != null) variables["upToSequence"] = jsonValue(upToSequence)
-        DBlayer.run("containerMedia", JsonObject(variables), ContainerMediaLoadResult.serializer())
+        return DBlayer.run("containerMedia", JsonObject(variables), ContainerMediaLoadResult.serializer(), account)
     }
 }
 

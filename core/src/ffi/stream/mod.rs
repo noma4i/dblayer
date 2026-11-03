@@ -224,7 +224,7 @@ impl Database {
         id
     }
 
-    /// The reader stopped. The stream ends in the core and nothing is delivered after this call returns.
+    /// The reader stopped. The stream ends in the core and no new delivery is admitted after this call returns. A delivery already admitted may finish, and the call does not wait for the reader.
     pub fn cancel_stream(&self, stream: u64) {
         if let Some(open) = self.stream_table.find(stream) { open.cancelled(); }
     }
@@ -282,14 +282,12 @@ impl Database {
     }
 
     /// The rows of a query the core already holds, without a stream and without reading SQLite on the calling thread.
-    pub async fn peek_query(&self, query_json: String) -> Result<Option<CachedQuery>, DbError> {
-        let this = self.clone();
-        super::database::blocking(move || {
+    pub async fn peek_query(&self, epoch: u64, query_json: String) -> Result<Option<CachedQuery>, DbError> {
+        self.read_in_epoch(epoch, "peek query", move |this| {
             let (query, _) = this.parsed_query(&query_json)?;
             let wire = this.wire(query.model.as_str())?;
             Ok(this.db.peek_query(&query).map(|peeked| CachedQuery { revision: peeked.revision, rows: peeked.rows.iter().map(|row| wire.row(row)).collect() }))
-        })
-        .await
+        }).await
     }
 
     /// The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.

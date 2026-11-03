@@ -76,5 +76,8 @@ public struct UploadBatchRequest: Sendable {
 }
 
 extension DBModel {
-  @concurrent public func cancelUpload(action: String) async throws -> Bool { try await DB.database.cancelUpload(model: Self.modelName, rowId: id, action: action) }
+  @concurrent public func cancelUpload(action: String, in scope: AccountScope? = nil) async throws -> Bool {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.cancelUpload(epoch: epoch, model: Self.modelName, rowId: id, action: action)
+  }
 }

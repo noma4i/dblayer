@@ -200,25 +200,25 @@ pub(super) fn id(value: &str) -> Result<RowId, DbError> {
 
 #[uniffi::export]
 impl Database {
-    pub fn peek_row(&self, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
+    pub fn peek_row(&self, epoch: u64, model: String, row_id: String) -> Result<Option<WireRow>, DbError> {
+        self.admit_now(epoch)?;
         let wire = self.wire(&model)?;
-        Ok(self.db.peek_row(&model, &id(&row_id)?).map(|row| wire.row(&row)))
+        let found = self.db.peek_row(&model, &id(&row_id)?).map(|row| wire.row(&row));
+        self.admit_now(epoch)?;
+        Ok(found)
     }
-    pub async fn edge_values(&self, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
+    pub async fn edge_values(&self, epoch: u64, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
-        blocking(move || {
+        self.read_in_epoch(epoch, "edge values", move |_| {
             let params = serde_json::from_str(&params_json)?;
             Ok(serde_json::to_string(&sync.edge_values(&model, &relation, &params, &row_ids)?)?)
-        })
-        .await
+        }).await
     }
-    pub async fn warm(&self, query_json: String) -> Result<(), DbError> {
-        let this = self.clone();
-        blocking(move || {
+    pub async fn warm(&self, epoch: u64, query_json: String) -> Result<(), DbError> {
+        self.read_in_epoch(epoch, "warm", move |this| {
             let (query, _) = this.parsed_query(&query_json)?;
             Ok(this.db.warm(&query)?)
-        })
-        .await
+        }).await
     }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
     pub fn subscription_census(&self) -> SubscriptionCensus {
@@ -276,8 +276,9 @@ impl Database {
             let receiver = id(&receiver)?;
             sync.settled(&call_model, &receiver, Some(&call_action)).await?;
             let answered = match sync.answer_root(operation) {
-                Some(root) => root,
-                None => receiver.clone(),
+                Some(Some(root)) => root,
+                Some(None) => receiver.clone(),
+                None => return Err(DbError::Invalid { detail: format!("the answer to {call_model}.{call_action} was not published") }),
             };
             let row = match db.find(&call_model, &answered)? {
                 Some(row) => row,
@@ -337,73 +338,66 @@ impl Database {
         sync.check_session();
         Ok(())
     }
-    pub async fn run(&self, operation: String, variables_json: String) -> Result<String, DbError> {
+    pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
-        Ok(on_executor(async move {
+        let answer = self.serve_in_epoch(epoch, "run", async move {
             let variables: Value = serde_json::from_str(&variables_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.run(&operation, variables).await?)
-        })
-        .await?
-        .to_string())
+        }).await?;
+        Ok(answer.to_string())
     }
-    pub async fn load(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
+    pub async fn load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        on_executor(async move {
+        self.serve_in_epoch(epoch, "load", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load(&model, &relation, &params, LoadOptions::default()).await?)
-        })
-        .await?;
-        Ok(())
+        }).await.map(drop)
     }
-    pub async fn refresh(&self, model: String, relation: String, params_json: String) -> Result<(), DbError> {
+    pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         self.require_online(&format!("{model}.{relation} refresh"))?;
         let sync = self.sync()?.clone();
-        on_executor(async move {
+        self.serve_in_epoch(epoch, "refresh", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.refresh(&model, &relation, &params).await?)
-        })
-        .await?;
-        Ok(())
+        }).await.map(drop)
     }
-    pub async fn refresh_preloads(&self) -> Result<(), DbError> {
+    pub async fn refresh_preloads(&self, epoch: u64) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        let failures = on_executor(async move { sync.refresh_preloads().await }).await?;
+        let failures = self.serve_in_epoch(epoch, "refresh preloads", async move { Ok::<_, DbError>(sync.refresh_preloads().await?) }).await?;
         if failures.is_empty() { return Ok(()); }
         let scopes: Vec<String> = failures.iter().map(|failure| format!("{}.{} {}: {}", failure.model, failure.relation, serde_json::Value::Object(failure.params.clone()), failure.error)).collect();
         Err(DbError::Sync { detail: format!("{} preload scopes failed to refresh: {}", scopes.len(), scopes.join("; ")) })
     }
-    pub async fn load_all(&self, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
+    pub async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        cancellable(async move {
+        self.serve_in_epoch(epoch, "load all", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load_all(&model, &relation, &params, LoadOptions { force }).await?)
-        })
-        .await?
+        }).await
     }
-    pub async fn load_more(&self, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
+    pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.require_online(&format!("{model}.{relation} load more"))?;
         let sync = self.sync()?.clone();
-        let outcome = on_executor(async move {
+        let outcome = self.serve_in_epoch(epoch, "load more", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load_more(&model, &relation, &params).await?)
-        })
-        .await?;
+        }).await?;
         Ok(match outcome.status {
             LoadStatus::NoMorePages(LoadMoreVerdict::AlreadyLoading) => LoadMoreResult::AlreadyLoading,
             LoadStatus::NoMorePages(_) => LoadMoreResult::NoMore,
             _ => LoadMoreResult::Loaded { has_more: outcome.has_next },
         })
     }
-    pub async fn node(&self, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
+    pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?;
-        let row = on_executor(async move { sync.node(&model, &relation, &row_id, force).await }).await?;
+        let row = self.serve_in_epoch(epoch, "node", async move { sync.node(&model, &relation, &row_id, force).await }).await?;
         Ok(row.map(|row| wire.row(&row)))
     }
-    pub async fn nodes(&self, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
+    pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?;
-        let rows = on_executor(async move { sync.nodes(&model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
+        let rows = self.serve_in_epoch(epoch, "nodes", async move { sync.nodes(&model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
         Ok(rows.iter().map(|row| wire.row(row)).collect())
     }
     pub async fn flush(&self) -> Result<(), DbError> {
@@ -415,19 +409,21 @@ impl Database {
         let Some(sync) = self.sync.clone() else { return Ok(0) };
         let row = id(&row_id)?;
         let db = self.db.clone();
+        let this = self.clone();
         self.serve_in_epoch(epoch, "retry", async move {
-            let count = db.retry(&model, &row, action.as_deref())?;
+            let count = this.pinned_write(epoch, || Ok(db.retry(&model, &row, action.as_deref())?))?;
             sync.flush().await?;
             Ok::<_, DbError>(count as u64)
         }).await
     }
-    pub async fn retry_all(&self) -> Result<u64, DbError> {
+    pub async fn retry_all(&self, epoch: u64) -> Result<u64, DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(0) };
         let db = self.db.clone();
-        on_executor(async move {
-            let count = db.retry_all()?;
+        let this = self.clone();
+        self.serve_in_epoch(epoch, "retry all", async move {
+            let count = this.pinned_write(epoch, || Ok(db.retry_all()?))?;
             sync.flush().await?;
-            Ok::<_, crate::sync::SyncError>(count as u64)
+            Ok::<_, DbError>(count as u64)
         }).await
     }
     pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
@@ -505,10 +501,10 @@ impl Database {
         let sync = self.sync()?.clone();
         self.serve_in_epoch(epoch, "answer", async move { Ok::<_, DbError>(sync.answer(&model, operation).await?.to_string()) }).await
     }
-    pub async fn cancel_upload(&self, model: String, row_id: String, action: String) -> Result<bool, DbError> {
+    pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        on_executor(async move { sync.cancel_upload(&model, &row, &action).await }).await
+        self.serve_in_epoch(epoch, "cancel upload", async move { sync.cancel_upload(&model, &row, &action).await }).await
     }
     pub async fn maintain(&self) -> Result<(), DbError> {
         let db = self.db.clone();

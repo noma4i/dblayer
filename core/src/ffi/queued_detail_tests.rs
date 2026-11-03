@@ -58,8 +58,8 @@ async fn graphql_extensions_reach_run_refresh_and_settled() {
             let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(GraphqlRefusal(response))), None, None, None, None, None).await.unwrap();
             database.register_operations(OPERATIONS.into()).unwrap();
             let error = match entry {
-                "run" => database.run("MakeMoment".into(), "{}".into()).await.unwrap_err(),
-                "refresh" => database.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+                "run" => database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err(),
+                "refresh" => database.refresh(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
                 _ => {
                     let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
                     database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.unwrap_err()
@@ -90,7 +90,7 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_code_and_detail_th
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code, detail.to_string()))), None, None, None, None, None).await.unwrap();
         database.register_operations(OPERATIONS.into()).unwrap();
 
-        let run = database.run("MakeMoment".into(), "{}".into()).await.unwrap_err();
+        let run = database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
         let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
         let settled = database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.unwrap_err();
 

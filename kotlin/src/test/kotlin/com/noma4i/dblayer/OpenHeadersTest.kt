@@ -31,9 +31,9 @@ class OpenHeadersTest {
             org.robolectric.Shadows.shadowOf(validated).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             org.robolectric.Shadows.shadowOf(manager).networkCallbacks.single().onCapabilitiesChanged(manager.activeNetwork!!, validated)
 
-            runCatching { DBlayer.database.run("HeaderProbe", "{}") }
+            runCatching { DBlayer.database.let { it.run(it.sessionEpoch(), "HeaderProbe", "{}") } }
             token.set("second")
-            runCatching { DBlayer.database.run("HeaderProbe", "{}") }
+            runCatching { DBlayer.database.let { it.run(it.sessionEpoch(), "HeaderProbe", "{}") } }
 
             assertEquals(listOf("first", "second"), List(2) { server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.getHeader("X-Token") })
             DBlayer.close()

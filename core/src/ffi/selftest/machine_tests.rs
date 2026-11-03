@@ -115,7 +115,7 @@ impl Machine {
                 self.quiet().await?;
             }
             Act::Refresh => {
-                bound(self.rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.map_err(|error| format!("refresh with a stored credential failed: {error:?}"))?;
+                bound(self.rig.database.refresh(self.rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.map_err(|error| format!("refresh with a stored credential failed: {error:?}"))?;
                 self.ended = false;
                 self.data_empty = false;
             }
@@ -138,7 +138,7 @@ impl Machine {
     async fn exit(&mut self, revoke: bool) -> Result<(), String> {
         let database = self.rig.database.clone();
         if revoke {
-            bound(database.run("UnregisterDevice".into(), "{}".into())).await.map_err(|error| format!("unregister: {error:?}"))?;
+            bound(database.run(database.session_epoch(), "UnregisterDevice".into(), "{}".into())).await.map_err(|error| format!("unregister: {error:?}"))?;
             bound(database.session_call("logout".into(), "{}".into())).await.map_err(|error| format!("logout call: {error:?}"))?;
         }
         database.session_reset().await.unwrap();
@@ -166,7 +166,8 @@ impl Machine {
         let label = format!("late{}", self.late.len());
         let gate: Arc<Gate> = self.rig.world.hold_next("Users").as_account(&label);
         let database = self.rig.database.clone();
-        let running = tokio::spawn(async move { database.refresh("User".into(), "all".into(), "{}".into()).await });
+        let epoch = database.session_epoch();
+        let running = tokio::spawn(async move { database.refresh(epoch, "User".into(), "all".into(), "{}".into()).await });
         tokio::time::timeout(Duration::from_secs(10), gate.entered_for("the overlapping call")).await.map_err(|_| "the overlapping call never reached the server".to_string())?;
         match transition {
             Transition::SessionReset => {

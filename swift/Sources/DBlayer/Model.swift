@@ -41,7 +41,7 @@ extension DBModel {
   @concurrent public func actAnswering<Answer: Decodable & Sendable>(_ action: String, values: [String: JSONValue], args: [String: JSONValue], in scope: AccountScope? = nil) async throws -> ActionAnswer<Self, Answer> {
     let (database, epoch) = try DB.admitted(scope)
     let queued = try await database.act(epoch: epoch, model: Self.modelName, rowId: id, action: action, patchJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text)
-    return ActionAnswer(model: try Self.decode(queued.row), operation: queued.operation, epoch: epoch)
+    return ActionAnswer(model: try Self.decode(queued.row), operation: queued.operation, epoch: epoch, database: database)
   }
   @concurrent public func set(values: [String: JSONValue], in scope: AccountScope? = nil) async throws {
     let (database, epoch) = try DB.admitted(scope)
@@ -91,11 +91,13 @@ extension DBModel {
     try await database.discard(epoch: epoch, model: Self.modelName, rowId: id, action: action)
   }
 
-  @concurrent public static func readNode(relation: String, id: String, force: Bool) async throws -> Self? {
-    try await DB.database.node(model: modelName, relation: relation, rowId: id, force: force).map(decode)
+  @concurrent public static func readNode(relation: String, id: String, force: Bool, in scope: AccountScope? = nil) async throws -> Self? {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.node(epoch: epoch, model: modelName, relation: relation, rowId: id, force: force).map(decode)
   }
-  @concurrent public static func readNodes(relation: String, ids: [String]) async throws -> [Self] {
-    try await DB.database.nodes(model: modelName, relation: relation, rowIds: ids).map(decode)
+  @concurrent public static func readNodes(relation: String, ids: [String], in scope: AccountScope? = nil) async throws -> [Self] {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.nodes(epoch: epoch, model: modelName, relation: relation, rowIds: ids).map(decode)
   }
 
   static func decode(_ row: WireRow) throws -> Self {
@@ -108,9 +110,10 @@ public struct ActionAnswer<Model: DBModel, Answer: Decodable & Sendable>: Sendab
   public let model: Model
   let operation: Int64
   let epoch: UInt64
+  let database: Database
 
   @concurrent public func answer() async throws -> Answer {
-    try JSONDecoder().decode(Answer.self, from: Data(try await DB.database.answer(epoch: epoch, model: Model.modelName, operation: operation).utf8))
+    try JSONDecoder().decode(Answer.self, from: Data(try await database.answer(epoch: epoch, model: Model.modelName, operation: operation).utf8))
   }
 }
 

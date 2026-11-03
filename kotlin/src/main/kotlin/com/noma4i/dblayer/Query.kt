@@ -93,28 +93,28 @@ class Query<Model : DBModel>(
         relation?.let { put("relation", it); put("params", params) }
     }.jsonText()
 
-    suspend fun cached(): Cached<List<Model>>? =
-        offCaller { DBlayer.database.peekQuery(json)?.let { change -> Cached(change.rows.map(decoder::read), change.revision) } }
+    suspend fun cached(account: AccountScope? = null): Cached<List<Model>>? =
+        onAccount(account) { database, epoch -> database.peekQuery(epoch, json)?.let { change -> Cached(change.rows.map(decoder::read), change.revision) } }
 
     /** The rows of this query read from storage once. It sends no request and keeps no stream. */
-    suspend fun read(account: AccountScope? = null): List<Model> { val epoch = admitted(account); return offCaller { DBlayer.database.readQuery(epoch, json).map(decoder::read) } }
+    suspend fun read(account: AccountScope? = null): List<Model> = onAccount(account) { database, epoch -> database.readQuery(epoch, json).map(decoder::read) }
 
     /** One row read from storage, or null when the row does not exist. */
-    suspend fun readRow(id: String, account: AccountScope? = null): Model? { val epoch = admitted(account); return offCaller { DBlayer.database.readRow(epoch, modelName, id)?.let(decoder::read) } }
+    suspend fun readRow(id: String, account: AccountScope? = null): Model? = onAccount(account) { database, epoch -> database.readRow(epoch, modelName, id)?.let(decoder::read) }
 
-    suspend fun cachedRow(id: String): Model? =
-        offCaller { DBlayer.database.peekRow(modelName, id)?.let(decoder::read) }
+    suspend fun cachedRow(id: String, account: AccountScope? = null): Model? =
+        admit(account).let { admission -> offCaller { admission.database.peekRow(admission.epoch, modelName, id)?.let(decoder::read) } }
 
-    suspend fun warm() = offCaller { DBlayer.database.warm(json) }
+    suspend fun warm(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.warm(epoch, json) }
 
-    suspend fun edgeValues(id: String): JsonObject? =
-        offCaller { (Json.parseToJsonElement(DBlayer.database.edgeValues(modelName, relation.orEmpty(), params.jsonText(), listOf(id))) as JsonObject)[id] as? JsonObject }
+    suspend fun edgeValues(id: String, account: AccountScope? = null): JsonObject? =
+        onAccount(account) { database, epoch -> (Json.parseToJsonElement(database.edgeValues(epoch, modelName, relation.orEmpty(), params.jsonText(), listOf(id))) as JsonObject)[id] as? JsonObject }
 
-    suspend fun load() = offCaller { DBlayer.database.load(modelName, relation.orEmpty(), params.jsonText()) }
-    suspend fun refresh() = offCaller { DBlayer.database.refresh(modelName, relation.orEmpty(), params.jsonText()) }
-    /** Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation shares its page requests. It throws when a page fails, when `max_pages` stops it before the end, or when the query has no remote relation. It does not make the pages atomic: rows of earlier pages stay after a failure. */
-    suspend fun loadAll(force: Boolean = false) = offCaller { DBlayer.database.loadAll(modelName, relation.orEmpty(), params.jsonText(), force) }
-    suspend fun loadMore(): LoadMoreResult = offCaller { DBlayer.database.loadMore(modelName, relation.orEmpty(), params.jsonText()) }
+    suspend fun load(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.load(epoch, modelName, relation.orEmpty(), params.jsonText()) }
+    suspend fun refresh(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.refresh(epoch, modelName, relation.orEmpty(), params.jsonText()) }
+    /** Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation joins it. */
+    suspend fun loadAll(force: Boolean = false, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.loadAll(epoch, modelName, relation.orEmpty(), params.jsonText(), force) }
+    suspend fun loadMore(account: AccountScope? = null): LoadMoreResult = onAccount(account) { database, epoch -> database.loadMore(epoch, modelName, relation.orEmpty(), params.jsonText()) }
 }
 
 data class Cached<Value>(val value: Value, val revision: Long)

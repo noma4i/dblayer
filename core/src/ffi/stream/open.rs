@@ -114,15 +114,18 @@ impl Database {
         Ok(handles)
     }
 
-    /// Runs `reload` once each time the network returns after it went away. A stream that opened while the network was away loads again through the failed-load retry of the sync, not through this task.
-    fn reload_on_reconnect(&self, reload: Arc<dyn Fn() + Send + std::marker::Sync>) -> Result<tokio::task::AbortHandle, DbError> {
+    /// Loads the relation again once each time the network returns after it went away. The load runs inside the task of the stream, in the epoch of the stream: ending the stream or the session stops it. A stream that opened while the network was away loads again through the failed-load retry of the sync, not through this task.
+    fn reload_on_reconnect(&self, epoch: u64, sync: Sync, model: String, relation: String, params: Map<String, Value>) -> Result<tokio::task::AbortHandle, DbError> {
         let connectivity = self.db.connectivity();
         let mut skip = !connectivity.is_online();
         let mut returns = connectivity.returns();
+        let this = self.clone();
         let task = executor()?.spawn(async move {
             while returns.changed().await.is_ok() {
                 if std::mem::take(&mut skip) { continue; }
-                reload();
+                let refreshing = sync.clone();
+                let (model, relation, params) = (model.clone(), relation.clone(), params.clone());
+                let _ = this.in_epoch(epoch, "reconnect refresh", async move { Ok::<_, DbError>(refreshing.refresh(&model, &relation, &params).await?) }).await;
             }
         });
         Ok(task.abort_handle())
@@ -238,11 +241,7 @@ impl Database {
         stream.on_rejoin(Arc::new(observer.rejoiner()));
         let mut handles = Handles::default();
         if let (true, Some((sync, relation, params))) = (options.force, tracked.clone()) {
-            let model = model.clone();
-            handles.tasks.push(self.reload_on_reconnect(Arc::new(move || {
-                let (sync, model, relation, params) = (sync.clone(), model.clone(), relation.clone(), params.clone());
-                drop(tokio::spawn(async move { let _ = sync.refresh(&model, &relation, &params).await; }));
-            }))?);
+            handles.tasks.push(self.reload_on_reconnect(stream.epoch, sync, model.clone(), relation, params)?);
         }
         let (load, state) = self.follow_load(tracked, model, options, stream, observer.control())?;
         handles.loading = load.is_some();

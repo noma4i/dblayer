@@ -63,7 +63,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
     for load_more_first in [true, false] {
         let case = format!("load_more_first={load_more_first}");
         let (database, pages) = open_pages().await;
-        bound(database.load("Moment".into(), "feed".into(), "{}".into())).await.unwrap();
+        bound(database.load(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
         let rows = Arc::new(Rows::default());
         let live = database.watch_query(FEED, rows.clone());
         bound(live.wait_for_initial_load()).await.unwrap();
@@ -71,8 +71,8 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         pages.gates.lock().unwrap().insert(1, first.clone());
         pages.gates.lock().unwrap().insert(2, second.clone());
         let (more, refresh) = (database.clone(), database.clone());
-        let load_more = move || tokio::spawn(async move { more.load_more("Moment".into(), "feed".into(), "{}".into()).await });
-        let reload = move || tokio::spawn(async move { refresh.refresh("Moment".into(), "feed".into(), "{}".into()).await });
+        let load_more = move || tokio::spawn(async move { more.load_more(more.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await });
+        let reload = move || tokio::spawn(async move { refresh.refresh(refresh.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await });
         let (a, b) = if load_more_first {
             let a = load_more();
             first.entered_for(&case).await;
@@ -99,7 +99,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         bound(fresh.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("{case}: the window after the reset inherited {error:?}"));
         assert!(fresh_rows.1.lock().unwrap().iter().all(|change| change.error.is_none()), "{case}: the window after the reset delivered an error");
         assert!(pages.queries.load(Ordering::SeqCst) - before <= 1, "{case}: the window after the reset read more than once");
-        let result = bound(database.load_more("Moment".into(), "feed".into(), "{}".into())).await.unwrap();
+        let result = bound(database.load_more(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
         assert!(matches!(result, LoadMoreResult::Loaded { .. } | LoadMoreResult::NoMore | LoadMoreResult::AlreadyLoading), "{case}: {result:?}");
         live.cancel();
         fresh.cancel();
@@ -157,10 +157,10 @@ async fn memory_expiry_follows_the_last_write() {
     bound(database.update(database.session_epoch(), "presence".into(), "p1".into(), r#"{"room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_000);
     bound(database.maintain()).await.unwrap();
-    assert!(database.peek_row("presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");
+    assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");
     clock.advance(2_000);
     let expired = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while database.peek_row("presence".into(), "p1".into()).unwrap().is_some() {
+        while database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some() {
             database.maintain().await.unwrap();
             tokio::task::yield_now().await;
         }
@@ -182,14 +182,14 @@ async fn a_refused_foreground_refresh_keeps_the_views_and_the_credential() {
     rig.settle().await;
     rig.world.fail_next("MyProfile", super::rig_tests::Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false });
 
-    let refused = bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap_err();
+    let refused = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap_err();
 
     assert!(matches!(refused, DbError::Session { code: crate::ffi::SessionCode::Unauthenticated, .. }), "{refused:?}");
     rig.settle().await;
     assert!(rig.database.session.as_ref().unwrap().signed_in().unwrap().is_some(), "the refusal cleared the credential");
     assert!(held.single.0.lock().unwrap().iter().all(|row| crate::ffi::lifecycle_tests::named(row, "A")) && held.entity.0.lock().unwrap().iter().all(|row| crate::ffi::lifecycle_tests::named(row, "A")) && !held.entities_empty(), "the refusal removed the value of a held entity");
     held.lists_show("A").await;
-    bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
+    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     held.shows("A").await;
     rig.database.close_now();
 }

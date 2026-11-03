@@ -45,6 +45,7 @@ A delta whose `base` is not the held revision asks for one new snapshot.
 The first delivery of a stream is a snapshot. It carries no list of edits: `takeEdits()` returns `nil` and the screen reads `rows` again.
 Edits come only with deltas, as the steps from the rows before to the rows after.
 One missed revision gives one new snapshot per stream, also when a screen follows several streams.
+A reader that fell behind reads a jump in the sequence numbers of the deliveries. A jump means that deliveries were dropped, also a snapshot that was asked for, so the projection asks again.
 
 On iOS 17 a SwiftUI view reads `Projected` through `@Observable`: it tracks the properties it reads, and `withObservationTracking` reports the next change.
 `Observations { }` needs iOS 26. Code that targets iOS 17 does not use it.

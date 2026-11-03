@@ -72,10 +72,10 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                 rig.server.refuse_next(wire, confirmed);
 
                 let error = match entry {
-                    "load" => database.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
-                    "refresh" => database.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
-                    "run query" => database.run("Feed".into(), "{}".into()).await.unwrap_err(),
-                    _ => database.run("MakeMoment".into(), "{}".into()).await.unwrap_err(),
+                    "load" => database.load(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+                    "refresh" => database.refresh(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+                    "run query" => database.run(database.session_epoch(), "Feed".into(), "{}".into()).await.unwrap_err(),
+                    _ => database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err(),
                 };
 
                 let case = format!("{wire} {entry} confirmed={confirmed}");
@@ -126,8 +126,8 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_l
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code))), None, None, None, None, None).await.unwrap();
         database.register_operations(OPERATIONS.into()).unwrap();
 
-        let load = database.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
-        let run = database.run("MakeMoment".into(), "{}".into()).await.unwrap_err();
+        let load = database.load(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
+        let run = database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
         let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
         let settled = database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.unwrap_err();
 
@@ -159,7 +159,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         database.session_resume().await.unwrap();
         let before = graphql_posts(&rig);
 
-        let retried = if wire == "UNAUTHENTICATED" { database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap() } else { database.retry_all().await.unwrap() };
+        let retried = if wire == "UNAUTHENTICATED" { database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap() } else { database.retry_all(database.session_epoch()).await.unwrap() };
         assert_eq!(retried, 1);
         let _ = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await;
 

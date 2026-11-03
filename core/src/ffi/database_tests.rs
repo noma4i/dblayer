@@ -42,7 +42,7 @@ fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 }
 async fn unified_open_without_encryption_sends_plain_graphql_through_the_transport() {
     let database = Database::open(config(), "[]".into(), Some(Arc::new(Plain)), None, None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).unwrap();
-    assert_eq!(database.run("Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
+    assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
     database.session_reset().await.unwrap();
 }
 

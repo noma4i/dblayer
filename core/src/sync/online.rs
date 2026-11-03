@@ -17,9 +17,16 @@ impl Sync {
             let wake = locked(&self.inner.wake).take();
             if let Some(wake) = wake { crate::db::lock::effect(|| wake.abort()); }
             self.inner.owner.submit(Event::Offline);
+            let newest = self.inner.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
+            if let Some(newest) = newest {
+                let mut lost = locked(&self.inner.network_lost);
+                *lost = (*lost).max(newest);
+            }
+            self.inner.spawn_flush(Duration::ZERO);
         }
         if online && !was_online {
-            *locked(&self.inner.network_returned) = Some(self.inner.clock.now());
+            let retrying: std::collections::BTreeSet<i64> = self.inner.operation_queue().map(|queue| locked(queue).retrying.iter().copied().collect()).unwrap_or_default();
+            *locked(&self.inner.backoff_released) = retrying;
             self.inner.spawn_upload_housekeeping(true);
             self.inner.spawn_flush(Duration::ZERO);
             for (target, kind) in self.inner.owner.online() {

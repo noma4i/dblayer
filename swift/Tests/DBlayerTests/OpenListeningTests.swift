@@ -14,15 +14,20 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func inv_api_05_openTestingHoldsSubscriptionsUntilRegistrationCompletes() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
-    let transport = MockTransport()
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [RecordEvents.self], listening: false)
-    try await DB.resume()
-    #expect(transport.calls.isEmpty)
-    try DB.setListening(true)
-    await eventually("registration complete starts the subscription") { transport.calls.count == 1 }
-    try DB.setListening(true)
-    try await DB.resume()
-    #expect(transport.calls.map(\.operationName) == ["RecordEvents"])
+    do {
+      let transport = MockTransport()
+      try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [RecordEvents.self], listening: false)
+      try await DB.resume()
+      #expect(transport.calls.isEmpty)
+      try DB.setListening(true)
+      await eventually("registration complete starts the subscription") { transport.calls.count == 1 }
+      try DB.setListening(true)
+      try await DB.resume()
+      #expect(transport.calls.map(\.operationName) == ["RecordEvents"])
+    } catch {
+      try await DB.close()
+      throw error
+    }
+    try await DB.close()
   }
 }

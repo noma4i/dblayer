@@ -22,13 +22,13 @@ async fn the_app_lifecycle_calls_do_nothing_without_a_transport() {
     let database = local().await;
     database.resume().await.unwrap();
     database.flush().await.unwrap();
-    assert_eq!(format!("{:?}", database.retry_all().await.unwrap()), "0", "retry_all must return the queued operation count");
+    assert_eq!(format!("{:?}", database.retry_all(database.session_epoch()).await.unwrap()), "0", "retry_all must return the queued operation count");
     assert_eq!(format!("{:?}", database.retry(database.session_epoch(), "Note".into(), "1".into(), None).await.unwrap()), "0", "retry must return the queued operation count");
 }
 
 #[tokio::test]
 async fn a_call_that_needs_the_server_still_fails_without_a_transport() {
     let database = local().await;
-    let refused = database.refresh("Note".into(), String::new(), "{}".into()).await;
+    let refused = database.refresh(database.session_epoch(), "Note".into(), String::new(), "{}".into()).await;
     assert!(matches!(refused, Err(super::DbError::Invalid { .. })));
 }

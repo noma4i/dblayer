@@ -37,7 +37,7 @@ class ValueStream internal constructor(val id: ULong, val epoch: ULong, private 
     /** Returns when the first load of the stream settled. */
     suspend fun loaded() = offCaller { database.streamLoaded(id) }
 
-    /** Stops reading: the stream ends in the core. */
+    /** Stops reading: the stream ends in the core and no new delivery is admitted after this returns. A delivery already admitted may still finish. */
     fun close() {
         channel.close()
         database.cancelStream(id)
@@ -82,8 +82,10 @@ class ListProjection<Model : DBModel> private constructor(
     /** Server id to the temporary id the row had when the screen first showed it. */
     val temporaryIds: Map<String, String>,
     private val awaitingSnapshot: Boolean,
+    /** The sequence number of the last delivery read. A jump means that deliveries were dropped before the reader. */
+    private val lastSeq: ULong?,
 ) {
-    constructor() : this(emptyList(), null, null, null, null, null, 0, 0, emptyList(), emptyMap(), false)
+    constructor() : this(emptyList(), null, null, null, null, null, 0, 0, emptyList(), emptyMap(), false, null)
 
     val phase: LivePhase? get() = state?.phase
 
@@ -94,12 +96,15 @@ class ListProjection<Model : DBModel> private constructor(
 
     private fun copy(
         rows: List<Model> = this.rows, state: StreamState? = this.state, revision: Long? = this.revision, epoch: ULong? = this.epoch, ended: StreamEnd? = this.ended, failure: String? = this.failure,
-        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds, awaitingSnapshot: Boolean = this.awaitingSnapshot,
-    ) = ListProjection(rows, state, revision, epoch, ended, failure, decoded, deltas, lastEdits, temporaryIds, awaitingSnapshot)
+        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds, awaitingSnapshot: Boolean = this.awaitingSnapshot, lastSeq: ULong? = this.lastSeq,
+    ) = ListProjection(rows, state, revision, epoch, ended, failure, decoded, deltas, lastEdits, temporaryIds, awaitingSnapshot, lastSeq)
 
     fun apply(delivery: StreamDelivery, decoder: ModelDecoder<Model>): Step<Model> {
         if (epoch != null && delivery.epoch != epoch) return Step(this, Applied.Ignored)
+        if (delivery.value is StreamValue.Missed) return Step(this, Applied.Ignored)
         val held = delivery.epoch
+        val last = lastSeq
+        val jumped = last != null && delivery.seq > last + 1uL
         var decoded = this.decoded
         var failure = this.failure
         fun decode(wire: List<WireRow>): List<Model?> = wire.map { row ->
@@ -114,20 +119,20 @@ class ListProjection<Model : DBModel> private constructor(
             is StreamValue.Snapshot -> {
                 failure = null
                 val whole = decode(value.rows).filterNotNull()
-                Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false), Applied.Changed)
+                Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false, lastSeq = delivery.seq), Applied.Changed)
             }
-            is StreamValue.State -> Step(copy(state = value.state, epoch = held, lastEdits = emptyList()), Applied.Changed)
-            is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList()), Applied.Changed)
+            is StreamValue.State -> if (jumped) Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync) else Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), lastSeq = delivery.seq), Applied.Changed)
+            is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList(), lastSeq = delivery.seq), Applied.Changed)
             is StreamValue.Delta -> {
-                if (awaitingSnapshot) return Step(this, Applied.Ignored)
-                fun gap() = Step(copy(epoch = held, failure = failure, decoded = decoded, awaitingSnapshot = true), Applied.Resync)
-                if (value.base != revision) return gap()
+                if (awaitingSnapshot) return Step(copy(epoch = held, lastSeq = delivery.seq), if (jumped) Applied.Resync else Applied.Ignored)
+                fun gap() = Step(copy(epoch = held, failure = failure, decoded = decoded, awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync)
+                if (jumped || value.base != revision) return gap()
                 val carried = decode(value.rows)
                 if (carried.any { it == null }) return gap()
                 val result = rebuild(carried.filterNotNull().zip(value.rowIndexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap()
                 val ids = HashMap(temporaryIds)
                 for (pair in value.renamed) { ids[pair.to] = ids[pair.from] ?: pair.from; ids.remove(pair.from) }
-                Step(copy(rows = result.first, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
+                Step(copy(rows = result.first, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, deltas = deltas + 1, lastSeq = delivery.seq, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
             }
             else -> Step(this, Applied.Ignored)
         }
@@ -280,7 +285,7 @@ class Sent<Model : DBModel> internal constructor(val row: Model, private val rec
 }
 
 /** The streams and commands of one signed-in account. The root of the app makes one after the sign-in and recreates its screens when the account changes: a scope whose session ended opens streams that end at once. */
-class AccountScope private constructor(val epoch: ULong, private val database: Database) {
+class AccountScope private constructor(val epoch: ULong, internal val database: Database) {
     /** [refreshOnConnect] loads the relation again when the stream opens, also when it is fresh. The first rows stay visible. */
     fun <Model : DBModel> stream(query: Query<Model>, refreshOnConnect: Boolean = false): ValueStream = database.openValueStream(epoch, StreamRequest.Query(query.json(refreshOnConnect)))
 
@@ -304,7 +309,7 @@ class AccountScope private constructor(val epoch: ULong, private val database: D
     /** Sends the file of an existing record through its declared upload action. */
     suspend fun <Model : DBModel, Answer> upload(row: Model, action: String, request: UploadRequest, answerSerializer: kotlinx.serialization.KSerializer<Answer>): ActionAnswer<Model, Answer> {
         val operation = offCaller { database.upload(epoch, row.modelName, row.id, action, request.wire()) }
-        return ActionAnswer(row, operation, answerSerializer, epoch)
+        return ActionAnswer(row, operation, answerSerializer, epoch, database)
     }
 
     suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): List<Model> =

@@ -59,7 +59,7 @@ fn consistent(changes: &[Seen]) {
 #[tokio::test]
 async fn inv_loadm_16_the_first_value_of_a_loaded_window_holds_its_rows_and_the_loaded_phase() {
     let (db, _) = open(&[ONE_ROW]).await;
-    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let listener = tape();
     let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
@@ -91,7 +91,7 @@ async fn inv_loadm_16_a_cold_window_never_shows_loaded_or_empty_before_its_rows_
 #[tokio::test]
 async fn inv_loadm_16_a_background_failure_is_loaded_with_the_error_when_rows_exist_and_failed_without() {
     let (db, clock) = open(&[ONE_ROW, REFUSED]).await;
-    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     clock.advance(6 * 60_000);
     let listener = tape();
     let live = db.watch_query(FEED, listener.clone());
@@ -135,13 +135,13 @@ async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_s
 #[tokio::test]
 async fn inv_loadm_16_a_refresh_that_changes_no_row_still_shows_its_state_once_the_group_has_read_through_it() {
     let (db, clock) = open(&[ONE_ROW, ONE_ROW]).await;
-    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let listener = tape();
     let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let first_loaded_at = heard(&listener).last().and_then(|change| change.loaded_at).expect("the first frame is loaded");
     clock.advance(60_000);
-    db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let shown = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let current = listener.last().expect("the first value arrived");
@@ -175,13 +175,13 @@ async fn inv_loadm_16_a_refresh_that_only_changes_a_related_row_still_shows_its_
     const ANN: &str = r#"{"data":{"moments":[{"id":"m1","text":"a","author":{"id":"u1","name":"Ann"}}]}}"#;
     const BOB: &str = r#"{"data":{"moments":[{"id":"m1","text":"a","author":{"id":"u1","name":"Bob"}}]}}"#;
     let (db, clock) = open_with_authors(&[ANN, BOB]).await;
-    db.load("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let listener = tape();
     let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let first_loaded_at = heard(&listener).last().and_then(|change| change.loaded_at).expect("the first frame is loaded");
     clock.advance(60_000);
-    db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let shown = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let current = listener.last().expect("the first value arrived");

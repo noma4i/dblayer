@@ -395,7 +395,7 @@ impl Inner {
 }
 
 /// Runs a write that belongs to a session epoch, when the caller names one.
-fn pinned<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch: Option<u64>, write: impl FnOnce() -> R) -> R {
+pub(super) fn pinned<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch: Option<u64>, write: impl FnOnce() -> R) -> R {
     match epoch {
         Some(epoch) => crate::store::pinned_to_epoch(life, epoch, write),
         None => write(),

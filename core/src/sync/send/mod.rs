@@ -77,8 +77,8 @@ impl Sync {
         Ok(())
     }
 
-    /// The row at the root of the answer to an operation, once, after the answer landed.
-    pub fn answer_root(&self, operation: i64) -> Option<RowId> {
+    /// The row at the root of the answer to an operation, once: `None` when no answer was published, `Some(None)` when the answer named no row.
+    pub fn answer_root(&self, operation: i64) -> Option<Option<RowId>> {
         locked(&self.inner.answer_roots).remove(&operation)
     }
 

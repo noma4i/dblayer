@@ -23,7 +23,7 @@ data class UploadRequest(
     internal fun wire() = WireUploadRequest(path, name, mime, variables.jsonText())
 }
 
-suspend fun DBModel.cancelUpload(action: String): Boolean = offCaller { DBlayer.database.cancelUpload(modelName, id, action) }
+suspend fun DBModel.cancelUpload(action: String, account: AccountScope? = null): Boolean = onAccount(account) { database, epoch -> database.cancelUpload(epoch, modelName, id, action) }
 
 data class UploadItem(
     val values: JsonObject,

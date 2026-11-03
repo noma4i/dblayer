@@ -171,7 +171,7 @@ pub(super) async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tok
     (db, transport, clock)
 }
 
-async fn load(db: &Database, relation: &str) -> Result<(), DbError> { db.load("Moment".into(), relation.into(), "{}".into()).await }
+async fn load(db: &Database, relation: &str) -> Result<(), DbError> { db.load(db.session_epoch(), "Moment".into(), relation.into(), "{}".into()).await }
 fn stored(db: &Database) -> bool { db.db.find("Moment", &RowId::new("m1").unwrap()).unwrap().is_some() }
 fn queries(transport: &Counting) -> usize { transport.queries.load(Ordering::SeqCst) }
 
@@ -265,7 +265,7 @@ async fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() {
     let second = db.watch_query(query, Arc::new(Rows::default()));
     second.wait_for_initial_load().await.unwrap();
     assert_eq!(queries(&transport), 1);
-    db.refresh("Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     assert_eq!(queries(&transport), 2);
     first.cancel();
     second.cancel();

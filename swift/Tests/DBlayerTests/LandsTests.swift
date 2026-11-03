@@ -12,8 +12,8 @@ extension BridgeProbeTests {
     try database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]"#)
     let row = try await database.send(request: CommandRequest(epoch: database.sessionEpoch(), model: "Record", valuesJson: "{}", argsJson: "{}", upload: nil)).row
     try await database.settled(epoch: database.sessionEpoch(), model: "Record", rowId: row.id, action: nil)
-    try await database.warm(queryJson: #"{"model":"Record"}"#)
-    #expect(try database.peekRow(model: "Record", rowId: "r2")?.id == "r2")
+    try await database.warm(epoch: database.sessionEpoch(), queryJson: #"{"model":"Record"}"#)
+    #expect(try database.peekRow(epoch: database.sessionEpoch(), model: "Record", rowId: "r2")?.id == "r2")
   }
 
 }

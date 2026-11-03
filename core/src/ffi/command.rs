@@ -114,6 +114,17 @@ impl Database {
 
     /// Whether the epoch is still the one the receipt belongs to.
     pub(super) fn admits(&self, epoch: u64) -> bool { self.streams.admits_epoch(epoch) }
+
+    /// A call that holds no future: refused when the epoch of the caller is not current.
+    pub(super) fn admit_now(&self, epoch: u64) -> Result<(), DbError> {
+        if self.admits(epoch) { Ok(()) } else { Err(ended()) }
+    }
+
+    /// A write on the calling thread that belongs to the epoch of the caller: the SQL commit is refused when the epoch moved before it.
+    pub(super) fn pinned_write<T>(&self, epoch: u64, write: impl FnOnce() -> Result<T, DbError>) -> Result<T, DbError> {
+        let life = self.db.shared.store.lifecycle.clone();
+        crate::store::pinned_to_epoch(&life, epoch, write).map_err(|error| if self.admits(epoch) { error } else { ended() })
+    }
 }
 
 #[uniffi::export]

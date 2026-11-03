@@ -123,7 +123,7 @@ async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscription
     let mut kept = Vec::new();
     for (index, leftover) in leftovers.iter().enumerate() {
         let world = &worlds[index];
-        bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
+        bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
         let (live, rows) = window(&rig).await;
         bound(live.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("test {index} after {:?}: {error:?}", index.checked_sub(1).map(|before| leftovers[before])));
         shows(&rows, &format!("T{index}")).await;

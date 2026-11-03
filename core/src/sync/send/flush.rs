@@ -147,6 +147,7 @@ impl Inner {
         while let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? {
             if !self.admitted(crate::lifecycle::Origin::Session) { break; }
             locked(self.operation_queue()?).attempted(entry.operation.id.0);
+            locked(&self.backoff_released).remove(&entry.operation.id.0);
             let result = self.send(&entry, None).await?; // lock-ok: queue guard ended at statement
             self.keep_discarded(&entry, &result);
             report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
@@ -168,21 +169,36 @@ impl Inner {
     fn refuse_non_durable(&self) -> Result<(), SyncError> {
         let online = self.connectivity.is_online();
         let left = locked(&self.account).1;
+        let lost = *locked(&self.network_lost);
         let pending: Vec<i64> = locked(self.operation_queue()?).pending.iter().copied().collect();
         for seq in pending {
             let of_left_account = seq <= left;
-            if !of_left_account && online && seq > self.reopened_through { continue; }
+            if !of_left_account && seq > lost && online && seq > self.reopened_through { continue; }
             let Some(entry) = self.outbox_operation(seq)? else { continue };
             let Some((model, action)) = Operation::split_action_key(&entry.operation.action_key) else { continue };
-            let spec = self.db.spec(&model)?;
-            let durable_or_free = spec.actions.iter().find(|declared| declared.name == action).is_none_or(|declared| declared.mutation.is_none() || declared.durable || declared.upload);
-            if durable_or_free && !of_left_account { continue; }
-            let failure = OperationFailure::new(FailureKind::Rejected, if of_left_account { format!("{model}.{action} belongs to the account that signed out") } else { format!("{model}.{action} needs the network") });
+            if self.survives_offline(&model, &action) && !of_left_account { continue; }
+            let failure = OperationFailure::new(if of_left_account { FailureKind::Rejected } else { FailureKind::Network }, if of_left_account { format!("{model}.{action} belongs to the account that signed out") } else { format!("{model}.{action} needs the network") });
             let mut kept = self.keep_refusal(&entry, &SendResult::Rejected(failure));
             crate::blocking::blocking_unit(|| self.db.roll_back_at(seq, self.db.generation()))?;
             kept.landed();
         }
         Ok(())
+    }
+
+    /// Only a durable command, an upload and an action that sends nothing wait for the network. Any other action ends with the network error and rolls back.
+    pub(crate) fn survives_offline(&self, model: &str, action: &str) -> bool {
+        let Ok(spec) = self.db.spec(model) else { return true };
+        spec.actions.iter().find(|declared| declared.name == action).is_none_or(|declared| declared.mutation.is_none() || declared.durable || declared.upload)
+    }
+
+    /// The row at the root of an answer is published before the commit that closes the operation, so a waiter that sees the operation closed finds it. At most 256 unread results stay.
+    fn publish_answer_root(&self, operation: i64, root: Option<RowId>) {
+        let mut roots = locked(&self.answer_roots);
+        roots.insert(operation, root);
+        while roots.len() > 256 {
+            let Some(oldest) = roots.keys().min().copied() else { break };
+            roots.remove(&oldest);
+        }
     }
 
     fn keep_outcome(&self, entry: &OutboxOperation, result: &SendResult) {
@@ -418,10 +434,12 @@ impl Inner {
             Delivery::Rejected(failure, _) | Delivery::Unreached(failure) | Delivery::Unknown(failure) => failure.clone(),
         };
         let unreached = matches!(delivery, Delivery::Unreached(_));
-        let deferred = unreached && self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1);
-        let exhausted = unreached && !deferred;
-        let keep = keep || exhausted || matches!(&delivery, Delivery::Rejected(_, true)) || matches!(&delivery, Delivery::Rejected(OperationFailure { kind: FailureKind::Session(code), .. }, _) if code.keeps_queue());
-        let rejected = exhausted || matches!(delivery, Delivery::Rejected(..));
+        let survives = self.survives_offline(&sending.model, &sending.action);
+        let ended_by_network = unreached && !survives;
+        let deferred = unreached && survives && self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1);
+        let exhausted = unreached && survives && !deferred;
+        let keep = !ended_by_network && (keep || exhausted || matches!(&delivery, Delivery::Rejected(_, true)) || matches!(&delivery, Delivery::Rejected(OperationFailure { kind: FailureKind::Session(code), .. }, _) if code.keeps_queue()));
+        let rejected = exhausted || ended_by_network || matches!(delivery, Delivery::Rejected(..));
         let result = match delivery {
             Delivery::Response(response) => self.settle_response(sending, operation, response).await?,
             Delivery::Rejected(failure, _) if sending.action == "destroy" && failure.extensions.as_ref().and_then(|fields| fields.code.as_deref()) == Some("NOT_FOUND") => self.land_response(sending, operation, Value::Null).await?,
@@ -429,7 +447,7 @@ impl Inner {
             Delivery::Unreached(failure) if deferred => {
                 self.postpone(sending, failure)?
             }
-            Delivery::Unreached(failure) => self.refuse(sending, failure, true).await?,
+            Delivery::Unreached(failure) => self.refuse(sending, failure, survives).await?,
             Delivery::Unknown(failure) => self.fail(sending, OperationStatus::DeliveryUnknown, failure, SendResult::DeliveryUnknown)?,
         };
         if result == SendResult::Discarded {
@@ -597,6 +615,8 @@ impl Inner {
         self.keep_answer(spec, sending, operation, &data);
         self.keep_outcome(entry, &SendResult::Committed);
         let mut kept = super::outcomes::KeptAnswer::new(&self.outcomes, entry.operation.id.0);
+        let publishes_root = spec.actions.iter().any(|action| action.name == sending.action && action.returns_answer());
+        if publishes_root { self.publish_answer_root(entry.operation.id.0, real.clone()); }
         let held = Prior::of(entry)?.map(|prior| prior.held_files()).unwrap_or_default();
         let owned: Vec<RowId> = entry.operation.row_ids.iter().chain(&temp).cloned().collect();
         let created = Prior::of(entry)?.map(|prior| prior.created_beyond(&owned)).unwrap_or_default();
@@ -651,12 +671,10 @@ impl Inner {
             generation = self.db.generation();
         }
         if committed.is_none() {
+            if publishes_root { locked(&self.answer_roots).remove(&entry.operation.id.0); }
             return Ok(SendResult::Discarded);
         }
         kept.committed();
-        if spec.actions.iter().any(|action| action.name == sending.action && action.returns_answer()) {
-            if let Some(real) = &real { locked(&self.answer_roots).insert(entry.operation.id.0, real.clone()); }
-        }
         #[cfg(test)]
         if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
         self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;

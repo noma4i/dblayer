@@ -75,13 +75,15 @@ public struct Query<Model: DBModel>: Sendable {
     return try JSONValue.object(object).text
   }
 
-  @concurrent public func cached() async throws -> Cached<[Model]>? {
-    guard let peeked = try await DB.database.peekQuery(queryJson: json) else { return nil }
+  @concurrent public func cached(in scope: AccountScope? = nil) async throws -> Cached<[Model]>? {
+    let (database, epoch) = try DB.admitted(scope)
+    guard let peeked = try await database.peekQuery(epoch: epoch, queryJson: json) else { return nil }
     return Cached(value: try peeked.rows.map { try Model.decode($0) }, revision: peeked.revision)
   }
 
-  @concurrent public func cachedRow(_ id: String) async throws -> Model? {
-    guard let row = try DB.database.peekRow(model: Model.modelName, rowId: id) else { return nil }
+  @concurrent public func cachedRow(_ id: String, in scope: AccountScope? = nil) async throws -> Model? {
+    let (database, epoch) = try DB.admitted(scope)
+    guard let row = try database.peekRow(epoch: epoch, model: Model.modelName, rowId: id) else { return nil }
     return try Model.decode(row)
   }
 
@@ -98,17 +100,33 @@ public struct Query<Model: DBModel>: Sendable {
     return try Model.decode(row)
   }
 
-  @concurrent public func warm() async throws { try await DB.database.warm(queryJson: json) }
-
-  @concurrent public func edgeValues(of id: String) async throws -> [String: JSONValue]? {
-    try JSONValue.read(try await DB.database.edgeValues(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
+  @concurrent public func warm(in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.warm(epoch: epoch, queryJson: json)
   }
 
-  @concurrent public func load() async throws { try await DB.database.load(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
-  @concurrent public func refresh() async throws { try await DB.database.refresh(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
+  @concurrent public func edgeValues(of id: String, in scope: AccountScope? = nil) async throws -> [String: JSONValue]? {
+    let (database, epoch) = try DB.admitted(scope)
+    return try JSONValue.read(try await database.edgeValues(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
+  }
+
+  @concurrent public func load(in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.load(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text)
+  }
+  @concurrent public func refresh(in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.refresh(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text)
+  }
   /// Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force: false` uses the current freshness and the pages that are stored, `force: true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation shares its page requests. It throws when a page fails, when `max_pages` stops it before the end, or when the query has no remote relation. It does not make the pages atomic: rows of earlier pages stay after a failure.
-  @concurrent public func loadAll(force: Bool = false) async throws { try await DB.database.loadAll(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, force: force) }
-  @discardableResult @concurrent public func loadMore() async throws -> LoadMoreResult { try await DB.database.loadMore(model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text) }
+  @concurrent public func loadAll(force: Bool = false, in scope: AccountScope? = nil) async throws {
+    let (database, epoch) = try DB.admitted(scope)
+    try await database.loadAll(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, force: force)
+  }
+  @discardableResult @concurrent public func loadMore(in scope: AccountScope? = nil) async throws -> LoadMoreResult {
+    let (database, epoch) = try DB.admitted(scope)
+    return try await database.loadMore(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text)
+  }
 }
 
 public struct Association<Owner: DBModel, Target: DBModel>: Sendable {

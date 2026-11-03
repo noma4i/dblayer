@@ -29,7 +29,7 @@ public struct ValueStream: AsyncSequence, Sendable {
   /// Returns when the first load of the stream settled.
   public func loaded() async throws { try await database.streamLoaded(stream: id) }
 
-  /// Stops reading: the stream ends in the core and nothing is delivered after this returns.
+  /// Stops reading: the stream ends in the core and no new delivery is admitted after this returns. A delivery already admitted may still finish, and the call does not wait for it.
   public func cancel() { database.cancelStream(stream: id) }
 }
 
@@ -77,6 +77,8 @@ public struct ListProjection<Model: DBModel>: Sendable {
   /// Server id to the temporary id the row had when the screen first showed it, so a screen keeps the identity of a row that the server confirmed.
   public private(set) var temporaryIds: [String: String] = [:]
   private var awaitingSnapshot = false
+  /// The sequence number of the last delivery read. A jump means that deliveries were dropped before the reader.
+  private var lastSeq: UInt64?
 
   public init() {}
 
@@ -87,7 +89,10 @@ public struct ListProjection<Model: DBModel>: Sendable {
 
   public mutating func apply(_ delivery: StreamDelivery) -> Applied {
     if let epoch, delivery.epoch != epoch { return .ignored }
+    if case .missed = delivery.value { return .ignored }
     epoch = delivery.epoch
+    let jumped = lastSeq.map { delivery.seq > $0 + 1 } ?? false
+    lastSeq = delivery.seq
     switch delivery.value {
     case let .snapshot(revision, wire, state):
       failure = nil
@@ -100,14 +105,14 @@ public struct ListProjection<Model: DBModel>: Sendable {
     case let .state(state):
       self.state = state
       lastEdits = []
-      return .changed
+      return jumped ? gap() : .changed
     case let .ended(reason):
       ended = reason
       lastEdits = []
       return .changed
     case let .delta(base, revision, size, wire, indexes, removed, placed, replaced, renamed, state):
-      if awaitingSnapshot { return .ignored }
-      guard base == self.revision else { return gap() }
+      if awaitingSnapshot { return jumped ? .resync : .ignored }
+      guard !jumped, base == self.revision else { return gap() }
       let carried = decode(wire)
       guard carried.allSatisfy({ $0 != nil }) else { return gap() }
       guard let edits = rebuild(carried: zip(carried.compactMap { $0 }, indexes).map { ($0, Int($1)) }, removed: removed, placed: placed, replaced: replaced, size: Int(size)) else { return gap() }
@@ -348,7 +353,7 @@ public struct UploadCommand: Sendable {
 /// The streams and commands of one signed-in account. The root of the app makes one after the sign-in and recreates its screens when the account changes: a scope whose session ended opens streams that end at once.
 public struct AccountScope: Sendable {
   public let epoch: UInt64
-  private let database: Database
+  let database: Database
 
   public init() throws {
     let database = try DB.database
@@ -393,7 +398,7 @@ public struct AccountScope: Sendable {
   /// Sends the file of an existing record through its declared upload action.
   @concurrent public func upload<Model: DBModel, Answer: Decodable & Sendable>(_ row: Model, action: String, _ request: UploadRequest) async throws -> ActionAnswer<Model, Answer> {
     let operation = try await database.upload(epoch: epoch, model: Model.modelName, rowId: row.id, action: action, request: request.wire)
-    return ActionAnswer(model: row, operation: operation, epoch: epoch)
+    return ActionAnswer(model: row, operation: operation, epoch: epoch, database: database)
   }
 
   @concurrent public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> [Model] {

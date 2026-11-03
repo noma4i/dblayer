@@ -30,9 +30,9 @@ object DBlayer {
     fun setListening(allowed: Boolean) = database.setListening(allowed)
 
     /** Reloads every `preload` scope now, fresh or not, and returns when all have settled. Offline it throws without a request. When some scopes fail the error names them. Call it for pull to refresh instead of refreshing each reference list. */
-    suspend fun refreshPreloads() = offCaller { database.refreshPreloads() }
+    suspend fun refreshPreloads(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.refreshPreloads(epoch) }
 
-    suspend fun retryAll(): ULong = offCaller { database.retryAll() }
+    suspend fun retryAll(account: AccountScope? = null): ULong = onAccount(account) { database, epoch -> database.retryAll(epoch) }
 
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
         offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
@@ -64,11 +64,11 @@ object DBlayer {
 
     fun openReport(): OpenReport = database.openReport()
 
-    suspend fun <Answer> run(operation: String, variables: JsonObject, serializer: KSerializer<Answer>): Answer =
-        offCaller { dbJson.decodeFromString(serializer, database.run(operation, variables.jsonText())) }
+    suspend fun <Answer> run(operation: String, variables: JsonObject, serializer: KSerializer<Answer>, account: AccountScope? = null): Answer =
+        onAccount(account) { database, epoch -> dbJson.decodeFromString(serializer, database.run(epoch, operation, variables.jsonText())) }
 
-    suspend fun run(operation: String, variables: JsonObject) {
-        offCaller { database.run(operation, variables.jsonText()) }
+    suspend fun run(operation: String, variables: JsonObject, account: AccountScope? = null) {
+        onAccount(account) { database, epoch -> database.run(epoch, operation, variables.jsonText()) }
     }
 
     var database: Database

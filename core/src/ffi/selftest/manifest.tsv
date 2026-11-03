@@ -119,3 +119,13 @@ K13	B6	swift	BridgeProbeTests.aClubActionShowsAsUnsentBeforeTheAnswerAndSyncedAf
 K13	B6	kotlin	com.noma4i.dblayer.ClubTest.aClubActionShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
 K12	forward	swift	BridgeProbeTests.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
 K12	forward	kotlin	com.noma4i.dblayer.ClubTest.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
+RC09	C09	swift	ProjectionRecoveryTests.aLostRecoverySnapshotAsksAgainAndTheNextSnapshotClosesTheGap	green	-	arch-r3d review C09
+RC09	C09	swift	ProjectionRecoveryTests.aJumpAtTheFirstDeliveryReadAsksForASnapshotAlthoughTheBaseMatches	green	-	arch-r3d review C09
+RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aLostRecoverySnapshotAsksAgainAndTheNextSnapshotClosesTheGap	green	-	arch-r3d review C09
+RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aJumpAtTheFirstDeliveryReadAsksForASnapshotAlthoughTheBaseMatches	green	-	arch-r3d review C09
+K17	C01	core	every_entry_of_a_left_account_is_refused_and_reaches_nothing	green	-	arch-r3d review C01
+K18	C04	core	a_plain_action_that_never_reached_the_server_ends_with_the_network_error_and_is_not_replayed	green	-	arch-r3d review C04
+K19	C04	core	a_plain_action_unsent_when_the_network_drops_never_goes_out_after_it_returns	green	-	arch-r3d review C04
+K20	C08	core	a_second_failure_after_a_network_return_waits_by_the_backoff_and_the_clock_delivers	green	-	arch-r3d review C08
+K21	C02	swift	BridgeProbeTests.aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced	green	-	arch-r3d review C02
+K21	C02	kotlin	com.noma4i.dblayer.ValueBridgeTest.aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced	green	-	arch-r3d review C02

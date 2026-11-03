@@ -25,7 +25,7 @@ impl Database {
     pub async fn upload_blob(self: Arc<Self>, epoch: u64, name: String, create: String, request: super::upload_wire::WireUploadRequest) -> Result<WireBlobSnapshot, DbError> {
         let sync = self.sync()?.clone();
         self.serve_in_epoch(epoch, "upload blob", async move {
-            let id = sync.upload_blob(&name, &create, request.into_file()?).await.map_err(DbError::from)?;
+            let id = sync.upload_blob_in(&name, &create, request.into_file()?, Some(epoch)).await.map_err(DbError::from)?;
             Ok::<_, DbError>(sync.blob_snapshot(&id)?.into())
         }).await
     }
@@ -38,10 +38,10 @@ impl Database {
     }
     pub async fn retry_blob(self: Arc<Self>, epoch: u64, id: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "retry blob", async move { sync.retry_blob(&id).await }).await
+        self.serve_in_epoch(epoch, "retry blob", async move { sync.retry_blob_in(&id, Some(epoch)).await }).await
     }
     pub async fn discard_blob(self: Arc<Self>, epoch: u64, id: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "discard blob", async move { sync.discard_blob(&id).await }).await
+        self.serve_in_epoch(epoch, "discard blob", async move { sync.discard_blob_in(&id, Some(epoch)).await }).await
     }
 }

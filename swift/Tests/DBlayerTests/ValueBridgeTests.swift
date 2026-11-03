@@ -362,9 +362,27 @@ private final class LossyReader: ValueSink, @unchecked Sendable {
 
 
 extension BridgeProbeTests {
+  /// K21 (C02): a scope keeps the database it was made for. After that database closed and another one opened with the same epoch number, a command and a read of the old scope are refused and the new database does not change.
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced() async throws {
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+    let oldScope = try DB.account()
+    let row = try #require(try await User.profile.read(in: oldScope).first)
+    try await DB.close()
+    _ = try await Self.openBridgeSession()
+    try await Self.signIn("A")
+
+    await #expect(throws: DbError.self) { _ = try await row.update(values: ["name": .string("hijacked")], in: oldScope) }
+    await #expect(throws: DbError.self) { _ = try await User.profile.read(in: oldScope) }
+    let current = try await User.profile.read().first
+    #expect(current?.name == "A", "a command of the old scope changed the new database")
+  }
+
   /// K15 (iOS findings b and c): the first delivery of a projection is a snapshot with no list of edits, edits come with a delta, and one missed revision gives exactly one new snapshot to each of two streams.
   @MainActor
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func theFirstDeliveryHasNoEditsAndAMissedRevisionGivesEachStreamOneSnapshot() async throws {
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
@@ -399,7 +417,7 @@ extension BridgeProbeTests {
 
   /// K16 (B8): a reader that falls behind keeps at most 256 deliveries, learns that it missed some, and ends with the whole list after one new snapshot.
   @MainActor
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList() async throws {
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
@@ -416,7 +434,7 @@ extension BridgeProbeTests {
       seen.apply(delivery, stream: stream)
     }
     #expect(seen.rows == 300, "the reader did not end with the whole list")
-    #expect(seen.received <= 270, "the reader received \(seen.received) deliveries of a burst of 300: the buffer bounded nothing")
+    #expect(seen.received <= 260, "the reader received \(seen.received) deliveries of a burst of 300: the buffer bounded nothing")
     #expect(seen.missed > 0, "the reader was not told that it missed deliveries")
     stream.cancel()
   }

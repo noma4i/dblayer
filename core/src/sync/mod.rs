@@ -154,10 +154,12 @@ pub(crate) struct Inner {
     pub(crate) reopened_through: i64,
     /// The identity of the session now and the newest pending operation when another identity took its place: an operation of that age belongs to the account that left and never goes out.
     pub(crate) account: Mutex<(Option<String>, i64)>,
-    /// When the network last came back. An operation whose last attempt is older than this does not wait for its backoff: the return of the network is the event that retries it.
-    pub(crate) network_returned: Mutex<Option<Duration>>,
+    /// The newest pending operation when the network was last lost: an action that is not a durable command and is not newer than it never goes out.
+    pub(crate) network_lost: Mutex<i64>,
+    /// The operations that waited for a retry when the network came back. They do not wait for their backoff once: the first attempt after the return takes them out, and a second failure waits by the normal backoff.
+    pub(crate) backoff_released: Mutex<std::collections::BTreeSet<i64>>,
     /// The row the answer of an operation carried at its root, by operation: the call that waits for the answer returns it.
-    pub(crate) answer_roots: Mutex<HashMap<i64, crate::identity::RowId>>,
+    pub(crate) answer_roots: Mutex<HashMap<i64, Option<crate::identity::RowId>>>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub(crate) upload_effects: crate::db::dispatch::OrderedEffects,
     pub(crate) file_tasks: Arc<tokio::sync::watch::Sender<usize>>,
@@ -293,7 +295,8 @@ impl Sync {
             queue,
             reopened_through,
             account: Mutex::new((None, i64::MIN)),
-            network_returned: Mutex::new(None),
+            network_lost: Mutex::new(i64::MIN),
+            backoff_released: Mutex::new(std::collections::BTreeSet::new()),
             answer_roots: Mutex::new(HashMap::new()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             upload_effects: crate::db::dispatch::OrderedEffects::default(),

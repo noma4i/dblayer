@@ -26,7 +26,7 @@ extension BridgeProbeTests {
           let receipt = try await database.send(request: CommandRequest(epoch: database.sessionEpoch(), model: "Moment", valuesJson: #"{"text":"hello","media":null}"#, argsJson: "{}", upload: nil))
           try await database.settled(epoch: database.sessionEpoch(), model: "Moment", rowId: receipt.row.id, action: nil)
         } else {
-          _ = try await database.run(operation: operation, variablesJson: "{}")
+          _ = try await database.run(epoch: database.sessionEpoch(), operation: operation, variablesJson: "{}")
         }
         Issue.record("the refused purchase did not throw")
       } catch let DbError.Graphql(_, extensions) {

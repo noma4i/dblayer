@@ -490,7 +490,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
                 format!("{}: {}{}", identifier(&field.name, false), kind, if optional { " = null" } else { "" })
             }).chain(create_args.iter().map(|(name, kind)| format!("{}: {}{}", identifier(name, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" }))).collect::<Vec<_>>().join(", ");
             let params = kotlin_scope(&params);
-            writeln!(out, "        suspend fun create({params}): {class} = offCaller {{\n            val {values} = buildJsonObject {{").unwrap();
+            writeln!(out, "        suspend fun create({params}): {class} = onAccount(account) {{ database, epoch ->\n            val {values} = buildJsonObject {{").unwrap();
             for field in &create_fields {
                 if create_optional(model, field) { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
                 else { writeln!(out, "                put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
@@ -504,13 +504,13 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
                 }
                 out.push_str("            }\n");
             }
-            writeln!(out, "            read(DBlayer.database.create(admitted(account), \"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
+            writeln!(out, "            read(database.create(epoch, \"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         }
         out.push_str("    }\n");
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| kotlin_patch_param(field)).chain(update_args.iter().map(|(name, kind)| format!("{}: {}? = null", identifier(name, false), arg_type(kind, false)))).collect::<Vec<_>>().join(", ");
         let params = kotlin_scope(&params);
-        writeln!(out, "    suspend fun update({params}): {class} = offCaller {{\n        val {values} = buildJsonObject {{").unwrap();
+        writeln!(out, "    suspend fun update({params}): {class} = onAccount(account) {{ database, epoch ->\n        val {values} = buildJsonObject {{").unwrap();
         for field in &fields { writeln!(out, "{}", kotlin_patch_put(field)).unwrap(); }
         out.push_str("        }\n");
         if !update_args.is_empty() {
@@ -518,11 +518,11 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             for (name, _) in &update_args { writeln!(out, "            {printed}?.let {{ put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
             out.push_str("        }\n");
         }
-        writeln!(out, "        {class}.read(DBlayer.database.update(admitted(account), modelName, id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
+        writeln!(out, "        {class}.read(database.update(epoch, modelName, id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| kotlin_patch_param(&field.field)).collect::<Vec<_>>().join(", ");
             let params = kotlin_scope(&params);
-            writeln!(out, "    suspend fun set({params}) {{\n        offCaller {{ DBlayer.database.setEphemeral(admitted(account), modelName, id, buildJsonObject {{").unwrap();
+            writeln!(out, "    suspend fun set({params}) {{\n        onAccount(account) {{ database, epoch -> database.setEphemeral(epoch, modelName, id, buildJsonObject {{").unwrap();
             for field in &model.ephemeral { writeln!(out, "{}", kotlin_patch_put(&field.field)).unwrap(); }
             out.push_str("        }.jsonText()) }\n    }\n");
         }

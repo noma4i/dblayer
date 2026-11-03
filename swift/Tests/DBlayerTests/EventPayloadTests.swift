@@ -20,8 +20,8 @@ extension BridgeProbeTests {
     defer { chats.stream.cancel(); messages.stream.cancel() }
     let chatEvents = Cursor(chats)
     let messageEvents = Cursor(messages)
-    try await chats.loaded()
-    try await messages.loaded()
+    try await chats.stream.loaded()
+    try await messages.stream.loaded()
     try transport.emit("RecordEvents", json: #"{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":"9007199254740994","lists":["PRIMARY"]},"message":{"id":"m1","text":"received","chatId":"c1"}}]}}}"#)
     guard case .event(let changed)? = await chatEvents.next("chat payload event"),
           case .event(let received)? = await messageEvents.next("message payload event") else {

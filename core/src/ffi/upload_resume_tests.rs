@@ -136,7 +136,7 @@ async fn resume_returns_a_direct_mutation_without_creating_an_upload_owner() {
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     rig.server.reply_with(json!({"makeMoment": {"id": "42"}}));
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
-    database.run("MakeMoment".into(), "{}".into()).await.unwrap_err();
+    database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
     let answer = database.session_resume().await.unwrap().unwrap();
     assert_eq!(serde_json::from_str::<serde_json::Value>(&answer).unwrap()["data"]["makeMoment"]["id"], "42");
     assert!(database.db.outbox().unwrap().is_empty());
@@ -159,7 +159,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     let row = crate::identity::RowId::new("42").unwrap();
     database.sync.as_ref().unwrap().inner.begin_upload(database.sync.as_ref().unwrap().inner.db.generation(), "Moment", &row, "upload", &input, state).unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
-    database.cancel_upload("Moment".into(), "42".into(), "upload".into()).await.unwrap();
+    database.cancel_upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into()).await.unwrap();
     drop(database);
     let database = open(&rig, &path).await;
     database.session_resume().await.unwrap();

@@ -32,11 +32,11 @@ impl Call {
     fn start(self, database: Arc<Database>) -> JoinHandle<Result<(), DbError>> {
         tokio::spawn(async move {
             match self {
-                Call::Run => database.run("MyProfile".into(), "{}".into()).await.map(|_| ()),
-                Call::RefreshList => database.refresh("User".into(), "all".into(), "{}".into()).await,
-                Call::RefreshProfile => database.refresh("User".into(), "profile".into(), "{}".into()).await,
-                Call::LoadAll => database.load_all("User".into(), "all".into(), "{}".into(), true).await,
-                Call::Node => database.node("User".into(), "node".into(), "user".into(), true).await.map(|_| ()),
+                Call::Run => database.run(database.session_epoch(), "MyProfile".into(), "{}".into()).await.map(|_| ()),
+                Call::RefreshList => database.refresh(database.session_epoch(), "User".into(), "all".into(), "{}".into()).await,
+                Call::RefreshProfile => database.refresh(database.session_epoch(), "User".into(), "profile".into(), "{}".into()).await,
+                Call::LoadAll => database.load_all(database.session_epoch(), "User".into(), "all".into(), "{}".into(), true).await,
+                Call::Node => database.node(database.session_epoch(), "User".into(), "node".into(), "user".into(), true).await.map(|_| ()),
                 Call::SignIn => database.session_call("login_link".into(), json!({"account":"B"}).to_string()).await.map(|_| ()),
             }
         })
@@ -88,7 +88,7 @@ async fn every_explicit_call_survives_every_transition_with_a_late_answer() {
                     continue;
                 }
                 rig.login_ios("B").await;
-                let result = bound(rig.database.refresh("User".into(), "all".into(), "{}".into())).await;
+                let result = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
                 assert!(result.is_ok(), "{case}: the next read of the same key failed with {result:?}");
                 gate.release();
                 let late = bound(running).await.unwrap();
@@ -96,7 +96,7 @@ async fn every_explicit_call_survives_every_transition_with_a_late_answer() {
                 held.follow(&rig.database);
                 held.shows("B").await;
                 assert!(held.never_showed("late"), "{case}: the late answer ({late:?}) reached a held handle");
-                bound(rig.database.refresh("User".into(), "all".into(), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
+                bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
                 held.lists_show("B").await;
                 rig.database.close_now();
             }
