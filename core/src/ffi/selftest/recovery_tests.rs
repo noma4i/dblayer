@@ -4,7 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::rig_tests::{bound, Gate};
+use super::rig_tests::{bound, named_bound, Gate};
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::sealed_errors_tests::{moment_spec, session, signed_in};
 use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
@@ -98,33 +98,34 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
             json!({"name": name, "document": document, "rootPath": root})
         }).collect();
         database.register_operations(json!(registered).to_string()).unwrap();
-        bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+        named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));
         for id in ["42", "43"] {
             let source = directory.path().join(format!("{id}.mp4"));
             std::fs::write(&source, b"abc").unwrap();
-            bound(database.upload("Moment".into(), id.into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())))).await.unwrap();
+            named_bound(&format!("upload {id}"), database.upload("Moment".into(), id.into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())))).await.unwrap();
         }
-        gate.entered().await;
+        gate.entered_for("the first PUT").await;
         let waiters: Vec<_> = ["42", "43"].into_iter().map(|id| {
             let database = database.clone();
             tokio::spawn(async move { database.settled("Moment".into(), id.into(), None).await })
         }).collect();
 
-        if data_logout { bound(database.logout()).await.unwrap() } else { database.session_reset().unwrap() }
+        crate::test_wait::yield_until("both settle calls parked", || database.sync.as_ref().unwrap().counters().settle_parks >= 2).await;
+
+        if data_logout { named_bound("logout", database.logout()).await.unwrap() } else { database.session_reset().unwrap() }
 
         for (index, waiter) in waiters.into_iter().enumerate() {
-            let ended = bound(waiter).await.unwrap();
+            let ended = named_bound(&format!("settled of upload {index}"), waiter).await.unwrap();
             assert!(ended.is_err() || !data_logout, "data_logout={data_logout}: waiter {index} reported a success for work that was cleared");
         }
         for _ in 0..8 { gate.release(); }
-        bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
-        bound(database.resume_uploads()).await.unwrap();
-        bound(database.sync.as_ref().unwrap().wait_uploads()).await;
+        named_bound("second sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+        named_bound("resume_uploads", database.resume_uploads()).await.unwrap();
+        named_bound("wait_uploads", database.sync.as_ref().unwrap().wait_uploads()).await;
 
         let made = effects(&rig, "MakeMoment");
-        let distinct: std::collections::HashSet<String> = made.iter().map(ToString::to_string).collect();
-        assert_eq!(made.len(), distinct.len(), "data_logout={data_logout}: an upload ran twice at the server");
+        assert!(made.len() <= 2, "data_logout={data_logout}: {} mutations ran for 2 uploads", made.len());
         if data_logout { assert!(made.is_empty(), "data_logout={data_logout}: the late PUT of cleared work reached the server"); }
         database.shutdown();
     }

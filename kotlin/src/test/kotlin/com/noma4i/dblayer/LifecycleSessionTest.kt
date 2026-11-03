@@ -31,6 +31,22 @@ private class LifecycleCredential : CredentialStore {
     }
 }
 
+private class RowHistory : QueryListener {
+    val states = CopyOnWriteArrayList<List<String>>()
+    private val rows = ArrayList<WireRow>()
+
+    override fun changed(change: LiveChange) {
+        synchronized(rows) {
+            if (change.full) rows.clear() else rows.removeAll { it.id in change.removed }
+            for (row in change.rows) {
+                rows.removeAll { it.id == row.id }
+                rows.add(row)
+            }
+            states.add(rows.flatMap { row -> row.cells.mapNotNull { (it as? Cell.Text)?.value } })
+        }
+    }
+}
+
 @OptIn(DBlayerTestingApi::class)
 class LifecycleSessionTest {
     private val account = AtomicReference<String?>(null)
@@ -198,6 +214,101 @@ class LifecycleSessionTest {
             } finally {
                 live.cancel()
             }
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** C08, R-9: the Android exit with a wait for the first load that the reset left pending at the server. Every call of the exit returns, the wait ends, the held entity is empty at once and the late answer of account A shows nowhere. */
+    @Test
+    fun theAppExitOrderEndsAPendingInitialWaitAndEveryCallOfTheExit() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            val entity = User.entity()
+            eventually("the held entity shows A") { entity.value.value?.name == "A" }
+            val history = RowHistory()
+            val live = DBlayer.database.liveQuery("""{"model":"User"}""", history)
+            try {
+                eventually("the held list shows A") { history.states.lastOrNull()?.contains("A") == true }
+                server.hold("UserProfile")
+                DBlayer.resetForTesting()
+                eventually("the reread waits at the server") { server.parkedCount > 0 }
+                val pending = async(start = CoroutineStart.UNDISPATCHED) { runCatching { entity.waitForInitialLoad() } }
+                awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
+                DBlayer.sessionReset()
+                live.cancel()
+                awaitWithin("the data logout") { DBlayer.logout() }
+                awaitWithin("the wait that was pending at the exit") { pending.await() }
+                assertNull(entity.value.value)
+                server.hold(null)
+                DBlayer.settleForTesting()
+                assertNull("the late answer of account A reached the held entity", entity.value.value)
+                startSession("B")
+                eventually("the held entity shows B") { entity.value.value?.name == "B" }
+            } finally {
+                live.cancel()
+                server.hold(null)
+            }
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** C12: A, B, A with a held entity and a held list. After each exit the late answer of the previous account arrives and neither shows it. */
+    @Test
+    fun anAccountSwitchABAKeepsAHeldListAndEntityFreeOfThePreviousAccount() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            val entity = User.entity()
+            eventually("the held entity shows A") { entity.value.value?.name == "A" }
+            val history = RowHistory()
+            val live = DBlayer.database.liveQuery("""{"model":"User"}""", history)
+            try {
+                eventually("the held list shows A") { history.states.lastOrNull()?.contains("A") == true }
+                for ((next, previous) in listOf("B" to "A", "A" to "B")) {
+                    server.hold("UserProfile")
+                    DBlayer.resetForTesting()
+                    eventually("the reread waits at the server") { server.parkedCount > 0 }
+                    awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
+                    DBlayer.sessionReset()
+                    awaitWithin("the data logout") { DBlayer.logout() }
+                    assertNull(entity.value.value)
+                    val seen = history.states.size
+                    server.hold(null)
+                    startSession(next)
+                    eventually("the held entity shows $next") { entity.value.value?.name == next }
+                    DBlayer.settleForTesting()
+                    eventually("the held list shows $next") { history.states.lastOrNull()?.contains(next) == true }
+                    val after = history.states.drop(seen)
+                    assertTrue("$previous came back after its exit: $after", after.none { previous in it })
+                }
+            } finally {
+                live.cancel()
+                server.hold(null)
+            }
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** Exit and login of the same account: the held entity empties and shows the account again, and the server sees a new read. */
+    @Test
+    fun aLogoutThenALoginOfTheSameAccountReadsItAgain() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            val entity = User.entity()
+            eventually("the held entity shows A") { entity.value.value?.name == "A" }
+            val reads = server.operationRequests("UserProfile")
+            DBlayer.database.sessionCall("logout", "{}")
+            DBlayer.sessionReset()
+            DBlayer.logout()
+            assertNull(entity.value.value)
+            startSession("A")
+            eventually("the held entity shows A again") { entity.value.value?.name == "A" }
+            assertTrue(server.operationRequests("UserProfile") > reads)
         } finally {
             DBlayer.close()
         }

@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- A window opened after a failed load of the same query no longer starts with the error of that earlier load.
 - `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
 
 ## 6.16.1 - 2026-11-03

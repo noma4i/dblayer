@@ -9,6 +9,8 @@ const ALL: &str = r#"{"model":"User","relation":"all","params":{}}"#;
 
 fn first_error(rows: &Rows) -> Option<DbError> { rows.1.lock().unwrap().iter().find_map(|change| change.error.clone()) }
 
+fn trace(rows: &Rows) -> Vec<String> { rows.1.lock().unwrap().iter().map(|change| format!("rev={} size={} phase={:?} kind={:?} error={:?}", change.revision, change.size, change.phase, change.error_kind, change.error)).collect() }
+
 fn never_listed(rows: &Rows, account: &str) -> bool { rows.1.lock().unwrap().iter().all(|change| change.rows.iter().all(|row| !named(row, account))) }
 
 async fn window(rig: &Rig) -> (Arc<LiveSubscription>, Arc<Rows>) {
@@ -44,9 +46,14 @@ async fn harness_reset_with_the_target_unset_sends_nothing_and_leaves_new_window
         let (live, rows) = window(&rig).await;
         bound(live.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("invalid={invalid}: a new window inherited {error:?}"));
         shows(&rows, "B").await;
-        assert!(first_error(&rows).is_none(), "invalid={invalid}: the new window delivered {:?}", first_error(&rows));
+        assert!(first_error(&rows).is_none(), "invalid={invalid}: the new window delivered {:?}; deliveries {:?}", first_error(&rows), trace(&rows));
         assert_eq!(b.count("Users"), 1, "invalid={invalid}: the window of the next test was read more than once");
         assert!(never_listed(&rows, "A"));
+        for (id, lease) in [("", 1_u64), ("user", 2_u64)] {
+            bound(held.entities.load_initial(id.into(), lease)).await.unwrap_or_else(|error| panic!("invalid={invalid}: the first-load wait of entity {id:?} inherited {error:?}"));
+        }
+        let singleton = held.log.latest(1).unwrap();
+        assert!(!matches!(singleton.read, crate::ffi::EntityRead::Failed { .. }), "invalid={invalid}: the held singleton kept {:?} of the reset after the target came back", singleton.read);
         held.cancel_all();
         live.cancel();
         rig.database.shutdown();
@@ -167,9 +174,9 @@ async fn the_harness_cycle_releases_the_token_of_a_held_server_subscription_exac
     }
 }
 
-/// G-01, S1: the held server subscription lives on after the harness cycle. A call of the app that resumes (`resume`) reopens it exactly once on the next target.
+/// G-01, S1: the held server subscription meets the unset target, waits for its retry on the test clock, and reopens exactly once on the next target when the harness moves the clock.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_held_server_subscription_reopens_on_the_next_target_after_the_harness_cycle_and_resume() {
+async fn a_held_server_subscription_reopens_once_on_the_next_target_when_the_clock_moves() {
     for invalid in [false, true] {
         let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
         let rig = Rig::plain(a.clone(), invalid).await;
@@ -179,10 +186,22 @@ async fn a_held_server_subscription_reopens_on_the_next_target_after_the_harness
         yield_until("the subscription opened on A", || rig.switch.opened() == 1).await;
 
         rig.harness_cycle(Some(b.clone())).await;
-        bound(rig.database.resume()).await.unwrap();
 
-        let reopened = tokio::time::timeout(std::time::Duration::from_secs(5), async { while rig.switch.opened() < 2 { tokio::task::yield_now().await; } }).await.is_ok();
-        assert!(reopened, "invalid={invalid}: the subscription did not reopen on the next target after resume (subscribe attempts: {}, opened: {})", rig.switch.attempts(), rig.switch.opened());
+        let reopened = tokio::time::timeout(std::time::Duration::from_secs(5), async { while rig.switch.opened() < 2 { rig.clock.advance(60_000); tokio::task::yield_now().await; } }).await.is_ok();
+        let mut probes = Vec::new();
+        if !reopened {
+            bound(rig.database.resume()).await.unwrap();
+            probes.push(format!("resume -> opened {}", rig.switch.opened()));
+            rig.database.set_online(false).unwrap();
+            rig.database.set_online(true).unwrap();
+            rig.settle().await;
+            probes.push(format!("offline/online -> opened {}", rig.switch.opened()));
+            rig.database.set_listening(false).unwrap();
+            rig.database.set_listening(true).unwrap();
+            rig.settle().await;
+            probes.push(format!("listening toggle -> opened {}", rig.switch.opened()));
+        }
+        assert!(reopened, "invalid={invalid}: probes {probes:?}: the subscription did not reopen on the next target (subscribe attempts: {}, opened: {}, failures: {:?})", rig.switch.attempts(), rig.switch.opened(), rig.switch.failures());
         rig.settle().await;
         assert_eq!(rig.switch.opened(), 2, "invalid={invalid}: the subscription opened more than once on the next target");
         live.cancel();

@@ -156,6 +156,21 @@ Test conventions:
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.
 
+## Lifecycle sequences
+
+`core/src/ffi/selftest/` runs the orders of the apps through the public `Database`. The session path is the real encrypted client and only the HTTP exchange is fake. Every call of a sequence runs inside a bound and fails instead of hanging.
+
+| Group | What it covers |
+| ----- | -------------- |
+| `app_tests` | Login in the iOS and Android order, the exit with a held singleton and a pending wait, local-only exit, refused unregister, account switch A, B, A, the same account again, `ALREADY_AUTHENTICATED` then sign-out and a second login |
+| `harness_tests` | One `openTesting`, target unset (Interrupted or Invalid), `resetForTesting`, `settleForTesting`, next target, new windows. A late answer of the old target. Reopen through the same opener. Tests that leave offline, logout and subscriptions behind |
+| `calls_tests` | Each explicit call in flight at the server when reset, logout, session reset or close arrives, with a late success or a late sealed refusal. A call the server never answers ends at close |
+| `recovery_tests` | A refused pending request kept across a data reset, close and reopen with a new data version, an active and a queued upload ended by the exit |
+| `windows_tests` | Overlapping load-more and refresh in both answer orders, repeated online, listening and power-saving signals, memory expiry on the last write, a cloud reply after a reset |
+| `machine_tests` | 16 seeds of 32 steps over login, exit, session reset, data logout, reset, refresh, held views, clock ticks, offline and overlapping calls. A model decides what every view must show and what may reach the server. A failure prints the seed, the shortest failing prefix and the action tape |
+
+Swift and Kotlin run the login, exit, account switch and harness orders once through the wrappers: `LifecycleSessionTests.swift`, `SwitchableHarnessTests.swift`, `LifecycleSessionTest.kt`, `SwitchableHarnessTest.kt`.
+
 ## Stress stand
 
 A separate program runs random operations from several threads against one database. A fake server delays, refuses and repeats answers, goes offline and sends late events. The `cargo-test-workspace` step in `scripts/check_dblayer.sh` tests the workspace with all features, including stress checks and injected read failures. Run these tests separately with `cargo test -p dblayer --features stress sync::stress`. Race runs and Clippy remain manual checks.

@@ -143,7 +143,7 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     let (query, window) = (held.query.clone(), held.window.clone());
     let waits = [tokio::spawn(async move { query.wait_for_initial_load().await }), tokio::spawn(async move { window.wait_for_initial_load().await })];
     let changes = held.changes.clone();
-    let next = tokio::spawn(async move { changes.next().await });
+    let next = tokio::spawn(async move { within_secs(BOUND, changes.next()).await });
 
     rig.database.shutdown();
 

@@ -31,6 +31,8 @@ class SealedServer(private val answer: (path: String, body: JsonObject) -> JsonO
     private val privateKey: PrivateKey
     val requests = CopyOnWriteArrayList<Pair<String, JsonObject>>()
     private val refusing = AtomicBoolean(false)
+    private val holding = java.util.concurrent.atomic.AtomicReference<String?>(null)
+    private val parked = CopyOnWriteArrayList<kotlinx.coroutines.CompletableDeferred<Unit>>()
 
     init {
         val fixture = Json.parseToJsonElement(File("../fixtures/encrypted-http/kat.json").readText()).jsonObject
@@ -48,12 +50,32 @@ class SealedServer(private val answer: (path: String, body: JsonObject) -> JsonO
     /** While true every request is recorded and refused with HTTP 500, so a test that forbids background reads finds them in `requests`. */
     fun refuseEverything(refusing: Boolean) = this.refusing.set(refusing)
 
+    /** While set, a request for this operation reaches the server and waits there, so a test ends a call while its request is in flight. `null` lets every waiting request answer. */
+    fun hold(operation: String?) {
+        holding.set(operation)
+        if (operation == null) {
+            parked.forEach { it.complete(Unit) }
+            parked.clear()
+        }
+    }
+
+    /** How many requests wait in the hold. */
+    val parkedCount: Int get() = parked.size
+
     override suspend fun post(path: String, body: String, upload: Boolean): EncryptedReply {
         val request = open(body)
         val sent = request.getValue("body").jsonObject
         requests.add(path to sent)
         if (refusing.get()) return EncryptedReply(500u, "")
-        return EncryptedReply(200u, seal(request, answer(path, sent)))
+        val reply = answer(path, sent)
+        val operation = sent["operationName"]?.jsonPrimitive?.content
+        if (operation != null && holding.get() == operation) {
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            parked.add(gate)
+            if (holding.get() != operation) gate.complete(Unit)
+            gate.await()
+        }
+        return EncryptedReply(200u, seal(request, reply))
     }
 
     private fun open(token: String): JsonObject {

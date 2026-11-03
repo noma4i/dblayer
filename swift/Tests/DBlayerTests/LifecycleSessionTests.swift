@@ -44,6 +44,13 @@ private final class RowHistory: QueryListener, @unchecked Sendable {
   }
 }
 
+private final class Outcome: @unchecked Sendable {
+  private let lock = NSLock()
+  private var finished = false
+  var isDone: Bool { lock.withLock { finished } }
+  func finish() { lock.withLock { finished = true } }
+}
+
 private struct LoginLink: Encodable, Sendable { let account: String }
 private struct NoBody: Encodable, Sendable {}
 
@@ -182,5 +189,89 @@ extension BridgeProbeTests {
     try await DB.settleForTesting()
     let after = history.states.dropFirst(seen)
     #expect(after.allSatisfy { !$0.contains("A") }, "account A came back after the logout: \(after)")
+  }
+
+  /// C06, R-6: the iOS exit with a wait for the first load that the reset left pending at the server. Every call of the exit returns, the wait ends, the held entity is empty at once, and the late answer of account A shows nowhere.
+  @MainActor
+  @Test
+  func theAppExitOrderEndsAPendingInitialWaitAndEveryCallOfTheExit() async throws {
+    let server = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    let entity = User.entity()
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+    let history = RowHistory()
+    let live = try DB.database.liveQuery(queryJson: #"{"model":"User"}"#, listener: history)
+    defer { live.cancel() }
+    await eventually("the held list shows A") { history.states.last?.contains("A") == true }
+    server.hold(operation: "UserProfile")
+    try await DB.resetForTesting()
+    await eventually("the reread waits at the server") { server.parkedCount > 0 }
+    let pending = Outcome()
+    Task { @MainActor in
+      _ = try? await entity.waitForInitialLoad()
+      pending.finish()
+    }
+
+    await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
+    try DB.sessionReset()
+    live.cancel()
+    await finishes("the data logout") { try? await DB.logout() }
+
+    await eventually("the wait that was pending at the exit ended") { pending.isDone }
+    #expect(entity.value == nil)
+    server.hold(operation: nil)
+    try await DB.settleForTesting()
+    #expect(entity.value == nil, "the late answer of account A reached the held entity")
+    try await Self.startSealedSession("B")
+    await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
+  }
+
+  /// C12: A, B, A with a held entity and a held list. After each exit the late answer of the previous account arrives and neither shows it.
+  @MainActor
+  @Test
+  func anAccountSwitchABAKeepsAHeldListAndEntityFreeOfThePreviousAccount() async throws {
+    let server = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    let entity = User.entity()
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+    let history = RowHistory()
+    let live = try DB.database.liveQuery(queryJson: #"{"model":"User"}"#, listener: history)
+    defer { live.cancel() }
+    await eventually("the held list shows A") { history.states.last?.contains("A") == true }
+    for (next, previous) in [("B", "A"), ("A", "B")] {
+      server.hold(operation: "UserProfile")
+      try await DB.resetForTesting()
+      await eventually("the reread waits at the server") { server.parkedCount > 0 }
+      await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
+      try DB.sessionReset()
+      await finishes("the data logout") { try? await DB.logout() }
+      #expect(entity.value == nil)
+      let seen = history.states.count
+      server.hold(operation: nil)
+      try await Self.startSealedSession(next)
+      await eventually("the held entity shows \(next)") { entity.value?.name == next }
+      try await DB.settleForTesting()
+      await eventually("the held list shows \(next)") { history.states.last?.contains(next) == true }
+      let after = history.states.dropFirst(seen)
+      #expect(after.allSatisfy { !$0.contains(previous) }, "\(previous) came back after its exit: \(after)")
+    }
+  }
+
+  /// Exit and login of the same account: the held entity empties and shows the account again, and the server sees a new read.
+  @MainActor
+  @Test
+  func aLogoutThenALoginOfTheSameAccountReadsItAgain() async throws {
+    let server = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    let entity = User.entity()
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+    let reads = server.operationRequests("UserProfile")
+    try await DB.sessionCall("logout", body: NoBody())
+    try DB.sessionReset()
+    try await DB.logout()
+    #expect(entity.value == nil)
+    try await Self.startSealedSession("A")
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+    #expect(server.operationRequests("UserProfile") > reads)
   }
 }

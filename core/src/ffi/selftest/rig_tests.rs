@@ -18,6 +18,11 @@ use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_respo
 /// Every call of a sequence returns within this many seconds or the test fails instead of hanging.
 pub(super) const BOUND: u64 = 20;
 
+/// Like `bound`, and the panic names the step that did not return.
+pub(super) async fn named_bound<T>(step: &str, work: impl std::future::Future<Output = T>) -> T {
+    tokio::time::timeout(std::time::Duration::from_secs(BOUND), work).await.unwrap_or_else(|_| panic!("{step}: did not return within {BOUND} seconds"))
+}
+
 pub(super) async fn bound<T>(work: impl std::future::Future<Output = T>) -> T { within_secs(BOUND, work).await }
 
 pub(super) struct Gate {
@@ -216,16 +221,18 @@ pub(super) struct Switchable {
     invalid: bool,
     tokens: AtomicUsize,
     attempts: AtomicUsize,
+    failures: Mutex<Vec<String>>,
     sinks: Mutex<Vec<(String, Arc<SubscriptionSink>)>>,
     unsubscribed: Mutex<Vec<String>>,
 }
 
 impl Switchable {
     pub(super) fn new(target: Option<Arc<World>>, invalid: bool) -> Arc<Self> {
-        Arc::new(Self { target: Mutex::new(target), invalid, tokens: AtomicUsize::new(0), attempts: AtomicUsize::new(0), sinks: Mutex::new(Vec::new()), unsubscribed: Mutex::new(Vec::new()) })
+        Arc::new(Self { target: Mutex::new(target), invalid, tokens: AtomicUsize::new(0), attempts: AtomicUsize::new(0), failures: Mutex::new(Vec::new()), sinks: Mutex::new(Vec::new()), unsubscribed: Mutex::new(Vec::new()) })
     }
     pub(super) fn set(&self, target: Option<Arc<World>>) { *self.target.lock().unwrap() = target; }
     pub(super) fn unsubscribed(&self) -> Vec<String> { self.unsubscribed.lock().unwrap().clone() }
+    pub(super) fn failures(&self) -> Vec<String> { self.failures.lock().unwrap().clone() }
     pub(super) fn attempts(&self) -> usize { self.attempts.load(Ordering::SeqCst) }
     pub(super) fn opened(&self) -> usize { self.tokens.load(Ordering::SeqCst) }
     fn current(&self) -> Result<Arc<World>, DbError> {
@@ -246,13 +253,18 @@ impl Transport for Switchable {
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name).await }
     async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
-        let world = self.current()?;
-        world.plain(&format!("subscribe:{}", request.operation_name)).await?;
-        let token = format!("{}-{}", world.label, self.tokens.fetch_add(1, Ordering::SeqCst));
-        sink.opened(token.clone())?;
-        sink.ready();
-        self.sinks.lock().unwrap().push((token, sink));
-        Ok(())
+        let opened = async {
+            let world = self.current()?;
+            world.plain(&format!("subscribe:{}", request.operation_name)).await?;
+            let token = format!("{}-{}", world.label, self.tokens.fetch_add(1, Ordering::SeqCst));
+            sink.opened(token.clone())?;
+            sink.ready();
+            self.sinks.lock().unwrap().push((token, sink));
+            Ok(())
+        };
+        let result: Result<(), DbError> = opened.await;
+        if let Err(error) = &result { self.failures.lock().unwrap().push(format!("{error:?}")); }
+        result
     }
     fn unsubscribe(&self, token: String) { self.unsubscribed.lock().unwrap().push(token); }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
@@ -309,10 +321,10 @@ impl Rig {
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
         let database = opener
-            .open_with_clock(config(), models(), Some(switch.clone()), None, clock.clone(), false, false, Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
+            .open_with_clock(config(), plain_models(), Some(switch.clone()), None, clock.clone(), false, false, Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
             .await
             .unwrap();
-        database.register_operations(OPERATIONS.into()).unwrap();
+        database.register_operations(plain_operations()).unwrap();
         Rig { opener, database, world, switch, clock }
     }
 
@@ -437,6 +449,29 @@ impl Held {
             })
             .await;
         }
+    }
+
+    /// Every kept view shows the account: both entities and both lists.
+    pub(super) fn displays(&self, account: &str) -> bool {
+        let listed = |rows: &Rows| { let rows = rows.0.lock().unwrap(); !rows.is_empty() && rows.iter().all(|row| named(row, account)) };
+        self.log.shows(account) && listed(&self.rows) && listed(&self.window_rows)
+    }
+
+    /// No kept view shows a row.
+    pub(super) fn is_clear(&self) -> bool {
+        let none = |rows: &Rows| rows.0.lock().unwrap().is_empty();
+        (1..=2).all(|lease| self.log.latest(lease).is_none_or(|snapshot| snapshot.value.is_none())) && none(&self.rows) && none(&self.window_rows)
+    }
+
+    pub(super) fn deliveries(&self) -> (usize, usize, usize) {
+        (self.rows.1.lock().unwrap().len(), self.window_rows.1.lock().unwrap().len(), self.log.len())
+    }
+
+    /// No delivery after `mark` shows the account.
+    pub(super) fn quiet_since(&self, mark: (usize, usize, usize), account: &str) -> bool {
+        let rows = |rows: &Rows, from: usize| rows.1.lock().unwrap().iter().skip(from).all(|change| change.rows.iter().all(|row| !named(row, account)));
+        let log = self.log.0.lock().unwrap();
+        rows(&self.rows, mark.0) && rows(&self.window_rows, mark.1) && log.iter().skip(mark.2).all(|snapshot| snapshot.value.as_ref().is_none_or(|row| !named(row, account)))
     }
 
     /// The account never appears in a list delivery, an entity delivery or a change.

@@ -173,6 +173,14 @@ impl LiveFeed {
         self.compose(state, None);
     }
 
+    /// The state the key held before this window opened. A failure of an earlier load is not the failure of a load that has not begun, so a window that will load itself does not show it.
+    pub(super) fn seed(&self, mut relation: RelationState) {
+        if held(&self.state).load_pending && relation.error.take().is_some() && relation.phase == LoadPhase::Failed {
+            relation.phase = LoadPhase::NotLoaded;
+        }
+        self.state(relation);
+    }
+
     pub(super) fn state(&self, relation: RelationState) {
         let mut state = held(&self.state);
         if !state.load_pending && relation.error.is_none() && matches!(relation.phase, LoadPhase::Loaded | LoadPhase::Empty) {

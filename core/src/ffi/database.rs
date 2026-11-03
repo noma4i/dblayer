@@ -791,7 +791,7 @@ impl Database {
                         }
                     };
                     let seed = changes.borrow_and_update().clone();
-                    follower.state(seed);
+                    follower.seed(seed);
                     control.resume();
                     crate::db::lock::effect(|| { let _ = ready.send((sync, model, relation, params, changes.clone())); });
                     while changes.changed().await.is_ok() {

@@ -182,3 +182,27 @@ async fn memory_expiry_follows_the_last_write_and_a_cloud_reply_after_a_reset_re
     link.remote_changed();
     assert_eq!(fake.calls(), calls, "the cloud ran after the close");
 }
+
+/// R-11: the app returns to the foreground and refreshes the profile while its views are held. The refusal is typed, the credential and the views stay, and the next refresh succeeds. The server subscription of an encrypted session runs on the cable socket, which this rig does not speak, so it is not part of this sequence.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_foreground_refresh_keeps_the_views_and_the_credential() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let held = Held::open(&rig.database);
+    held.shows("A").await;
+    held.lists_show("A").await;
+    rig.settle().await;
+    rig.world.fail_next("MyProfile", super::rig_tests::Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false });
+
+    rig.database.enter_foreground_for_testing().unwrap();
+    let refused = bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap_err();
+
+    assert!(matches!(refused, DbError::Session { code: crate::ffi::SessionCode::Unauthenticated, .. }), "{refused:?}");
+    rig.settle().await;
+    assert!(rig.database.session.as_ref().unwrap().signed_in().unwrap().is_some(), "the refusal cleared the credential");
+    held.shows("A").await;
+    held.lists_show("A").await;
+    bound(rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.unwrap();
+    held.shows("A").await;
+    rig.database.shutdown();
+}

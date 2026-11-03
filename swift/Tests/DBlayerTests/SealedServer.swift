@@ -13,6 +13,8 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   private let privateKey: SecKey
   private var received: [(path: String, body: [String: Any])] = []
   private var refusing = false
+  private var holding: String?
+  private var parked: [CheckedContinuation<Void, Never>] = []
   private let answer: @Sendable (String, [String: Any]) -> [String: Any]
 
   /// `answer` maps the path and the request body of a signed-in request to the answer body.
@@ -35,12 +37,36 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   /// While true every request is recorded and refused with HTTP 500, so a test that forbids background reads finds them in `requests`.
   func refuseEverything(_ refusing: Bool) { lock.withLock { self.refusing = refusing } }
 
+  /// While set, a request for this operation reaches the server and waits there, so a test ends a call while its request is in flight. `nil` lets every waiting request answer.
+  func hold(operation: String?) {
+    let released = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+      holding = operation
+      guard operation == nil else { return [] }
+      defer { parked = [] }
+      return parked
+    }
+    released.forEach { $0.resume() }
+  }
+
+  /// How many requests wait in the hold.
+  var parkedCount: Int { lock.withLock { parked.count } }
+
   func post(path: String, body: String, upload: Bool) async throws -> EncryptedReply {
     let request = try open(body)
     let sent = request["body"] as! [String: Any]
     lock.withLock { received.append((path, sent)) }
     if lock.withLock({ refusing }) { return EncryptedReply(status: 500, body: "") }
     let reply = answer(path, sent)
+    if let operation = sent["operationName"] as? String, lock.withLock({ holding == operation }) {
+      await withCheckedContinuation { continuation in
+        let wait = lock.withLock { () -> Bool in
+          guard holding == operation else { return false }
+          parked.append(continuation)
+          return true
+        }
+        if !wait { continuation.resume() }
+      }
+    }
     return EncryptedReply(status: 200, body: try seal(request, reply))
   }
 
