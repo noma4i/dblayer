@@ -21,15 +21,41 @@ private final class SignedAccount: @unchecked Sendable {
   func signOut() { lock.withLock { name = nil } }
 }
 
+private final class RowHistory: QueryListener, @unchecked Sendable {
+  private let lock = NSLock()
+  private var rows: [WireRow] = []
+  private var delivered: [[String]] = []
+
+  var states: [[String]] { lock.withLock { delivered } }
+
+  func changed(change: LiveChange) {
+    lock.withLock {
+      if change.full {
+        rows = change.rows
+      } else {
+        rows.removeAll { change.removed.contains($0.id) }
+        for row in change.rows {
+          rows.removeAll { $0.id == row.id }
+          rows.append(row)
+        }
+      }
+      delivered.append(rows.flatMap { row in row.cells.compactMap { if case let .text(value) = $0 { value } else { nil } } })
+    }
+  }
+}
+
 private struct LoginLink: Encodable, Sendable { let account: String }
 private struct NoBody: Encodable, Sendable {}
 
 /// The tests share `DB.database` with the rest of `BridgeProbeTests`, so they run in its serialized suite.
 extension BridgeProbeTests {
+  private static let account = SignedAccount()
+
   @MainActor
   static func openSealedSession() async throws -> SealedServer {
     DB.close()
-    let account = SignedAccount()
+    let account = Self.account
+    account.signOut()
     let server = try SealedServer { path, body in
       if path == "/api/auth/login_link" {
         let name = body["account"] as? String ?? ""
@@ -101,5 +127,42 @@ extension BridgeProbeTests {
     server.refuseEverything(false)
     try await Self.startSealedSession("B")
     await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
+  }
+
+  /// The session stays, only the held reads start over: the reset rereads at once, no login follows, and the held entity shows the data the server holds now.
+  @MainActor
+  @Test
+  func resetForTestingWithTheSessionKeptRereadsAtOnceAndTheHeldEntityGetsFreshValues() async throws {
+    let server = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    let entity = User.entity()
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+    let logins = server.pathRequests("/api/auth/login_link")
+    let reads = server.operationRequests("UserProfile")
+    Self.account.signIn("A2")
+    try await DB.resetForTesting()
+    try await DB.settleForTesting()
+    #expect(server.operationRequests("UserProfile") > reads)
+    await eventually(#"entity.value?.name == "A2""#) { entity.value?.name == "A2" }
+    #expect(server.pathRequests("/api/auth/login_link") == logins)
+  }
+
+  /// Every value delivered to a list held across a logout and the next login: none shows account A after the logout and the last one shows B.
+  @MainActor
+  @Test
+  func aLoginAfterALogoutNeverDeliversTheLastAccountToAHeldList() async throws {
+    _ = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    let history = RowHistory()
+    let live = try DB.database.liveQuery(queryJson: #"{"model":"User"}"#, listener: history)
+    defer { live.cancel() }
+    await eventually("the held list shows A") { history.states.last?.contains("A") == true }
+    let seen = history.states.count
+    try await DB.logout()
+    try await Self.startSealedSession("B")
+    await eventually("the held list shows B") { history.states.last?.contains("B") == true }
+    try await DB.settleForTesting()
+    let after = history.states.dropFirst(seen)
+    #expect(after.allSatisfy { !$0.contains("A") }, "account A came back after the logout: \(after)")
   }
 }

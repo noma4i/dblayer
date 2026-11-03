@@ -8,7 +8,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
 private class LifecycleCredential : CredentialStore {
@@ -106,6 +108,68 @@ class LifecycleSessionTest {
             server.refuseEverything(false)
             startSession("B")
             eventually("the held entity shows B") { entity.value.value?.name == "B" }
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** The session stays, only the held reads start over: the reset rereads at once, no login follows, and the held entity shows the data the server holds now. */
+    @Test
+    fun resetForTestingWithTheSessionKeptRereadsAtOnceAndTheHeldEntityGetsFreshValues() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            val entity = User.entity()
+            eventually("the held entity shows A") { entity.value.value?.name == "A" }
+            val logins = server.pathRequests("/api/auth/login_link")
+            val reads = server.operationRequests("UserProfile")
+            account.set("A2")
+            DBlayer.resetForTesting()
+            DBlayer.settleForTesting()
+            assertTrue(server.operationRequests("UserProfile") > reads)
+            eventually("the held entity shows A2") { entity.value.value?.name == "A2" }
+            assertEquals(logins, server.pathRequests("/api/auth/login_link"))
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** Every value delivered to a list held across a logout and the next login: none shows account A after the logout and the last one shows B. */
+    @Test
+    fun aLoginAfterALogoutNeverDeliversTheLastAccountToAHeldList() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            val states = CopyOnWriteArrayList<List<String>>()
+            val rows = ArrayList<WireRow>()
+            val live = DBlayer.database.liveQuery("""{"model":"User"}""", object : QueryListener {
+                override fun changed(change: LiveChange) {
+                    synchronized(rows) {
+                        if (change.full) {
+                            rows.clear()
+                        } else {
+                            rows.removeAll { it.id in change.removed }
+                        }
+                        for (row in change.rows) {
+                            rows.removeAll { it.id == row.id }
+                            rows.add(row)
+                        }
+                        states.add(rows.flatMap { row -> row.cells.mapNotNull { (it as? Cell.Text)?.value } })
+                    }
+                }
+            })
+            try {
+                eventually("the held list shows A") { states.lastOrNull()?.contains("A") == true }
+                val seen = states.size
+                DBlayer.logout()
+                startSession("B")
+                eventually("the held list shows B") { states.lastOrNull()?.contains("B") == true }
+                DBlayer.settleForTesting()
+                val after = states.drop(seen)
+                assertTrue("account A came back after the logout: $after", after.none { "A" in it })
+            } finally {
+                live.cancel()
+            }
         } finally {
             DBlayer.close()
         }

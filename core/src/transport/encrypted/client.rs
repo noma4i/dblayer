@@ -95,6 +95,28 @@ struct CredentialState {
 struct CredentialCell {
     state: Mutex<CredentialState>,
     settled: Condvar,
+    #[cfg(test)]
+    parked: Mutex<Option<Arc<ResetPark>>>,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct ResetPark {
+    pub(crate) entered: std::sync::atomic::AtomicBool,
+    pub(crate) release: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(test)]
+impl CredentialCell {
+    fn park(&self) {
+        use std::sync::atomic::Ordering::SeqCst;
+        let Some(park) = crate::db::locked(&self.parked).take() else { return };
+        park.entered.store(true, SeqCst);
+        for _ in 0..10_000 {
+            if park.release.load(SeqCst) { break; }
+            thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
 }
 
 struct Loading<'a>(&'a CredentialCell);
@@ -323,8 +345,11 @@ impl EncryptedClient {
         let mut state = crate::db::locked(&self.credential.state);
         state.cached = None;
         state.generation += 1;
+        #[cfg(test)]
+        self.credential.park();
+        let cleared = self.with_connection(state::clear);
         drop(state);
-        self.with_connection(state::clear)
+        cleared
     }
 
     fn pending_token(&self, credential: &str, pending: &Pending) -> Result<String, TransportError> {
@@ -475,6 +500,13 @@ impl EncryptedClient {
         }
         state.cached = Some(credential.clone());
         Ok(credential)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn park_next_reset_for_test(&self) -> Arc<ResetPark> {
+        let park = Arc::new(ResetPark::default());
+        *crate::db::locked(&self.credential.parked) = Some(park.clone());
+        park
     }
 
     #[cfg(test)]

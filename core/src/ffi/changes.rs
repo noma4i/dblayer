@@ -8,6 +8,7 @@ const CHANGE_QUEUE_LIMIT: usize = 64;
 struct State {
     pending: VecDeque<LiveChange>,
     rows: Vec<super::WireRow>,
+    hidden: std::collections::HashSet<String>,
     closed: bool,
     min_revision: i64,
 }
@@ -17,6 +18,7 @@ impl State {
         if change.full { self.rows.clone_from(&change.rows); return; }
         for replacement in &change.replaced {
             if let Some(row) = self.rows.iter_mut().find(|row| row.id == replacement.from) { row.id.clone_from(&replacement.to); }
+            if self.hidden.remove(&replacement.from) { self.hidden.insert(replacement.to.clone()); }
         }
         self.rows.retain(|row| !change.removed.contains(&row.id));
         let mut placed = change.placed.clone();
@@ -32,6 +34,18 @@ impl State {
         for row in &change.rows {
             if let Some(current) = self.rows.iter_mut().find(|current| current.id == row.id) { current.clone_from(row); }
         }
+    }
+
+    fn shown(&self) -> Vec<super::WireRow> {
+        self.rows.iter().filter(|row| !self.hidden.contains(&row.id)).cloned().collect()
+    }
+
+    fn whole_of(&self, change: &LiveChange) -> LiveChange {
+        let mut whole = LiveChange::whole(change.revision, self.shown());
+        whole.error = change.error.clone();
+        whole.window = change.window.clone();
+        whole.carry_state(change);
+        whole
     }
 }
 
@@ -64,12 +78,12 @@ impl LiveChanges {
     fn push(&self, change: LiveChange) {
         self.with_state(|state| {
             if state.closed || change.revision < state.min_revision { return; }
+            let consumer_lacks_rows = !state.hidden.is_empty();
             state.apply(&change);
-            if state.pending.len() >= CHANGE_QUEUE_LIMIT {
-                let mut replacement = LiveChange::whole(change.revision, state.rows.clone());
-                replacement.error = change.error.clone();
-                replacement.window = change.window.clone();
-                replacement.carry_state(&change);
+            let rows = &state.rows;
+            state.hidden.retain(|id| rows.iter().any(|row| &row.id == id));
+            if consumer_lacks_rows || state.pending.len() >= CHANGE_QUEUE_LIMIT {
+                let replacement = state.whole_of(&change);
                 state.pending.clear();
                 state.pending.push_back(replacement);
             } else {
@@ -102,7 +116,7 @@ impl crate::lifecycle::Member for LiveChanges {
         let Ok(revision) = db.revision_seq() else { return };
         self.with_state(|state| {
             state.pending.clear();
-            state.rows.clear();
+            if ended { state.hidden = state.rows.iter().map(|row| row.id.clone()).collect(); } else { state.rows.clear(); state.hidden.clear(); }
             state.min_revision = if ended { revision + 1 } else { revision };
             state.pending.push_back(LiveChange::whole(revision, Vec::new()));
         });
@@ -136,6 +150,7 @@ impl LiveChanges {
             state.closed = true;
             state.pending.clear();
             state.rows.clear();
+            state.hidden.clear();
         });
         crate::db::lock::effect(|| self.ready.notify_waiters());
     }

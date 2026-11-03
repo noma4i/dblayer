@@ -399,6 +399,42 @@ async fn the_changes_of_an_ended_session_never_return_its_rows() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_next_change_after_an_ended_session_arrives_without_its_rows() {
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    let changes = database.changes(r#"{"model":"User","order":[{"field":"name","direction":"asc"}]}"#.into()).unwrap();
+    within(database.settle_for_testing()).await.unwrap();
+    crate::test_wait::yield_until("the rows of account A are queued", || changes.queued() > 0).await;
+    database.session_reset().unwrap();
+    database.create("User".into(), json!({"id":"z","name":"C"}).to_string(), "{}".into()).await.unwrap();
+    database.db.await_revision(database.db.revision_seq().unwrap());
+    let states = delivered(&changes).await;
+    assert!(states.iter().all(|rows| rows.iter().all(|row| !named(row, "A"))), "the rows of the ended session came back: {states:?}");
+    assert!(states.last().is_some_and(|last| last.len() == 1 && named(&last[0], "C")), "the new row did not arrive alone: {states:?}");
+    database.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_created_while_a_reset_clears_keeps_its_session_state() {
+    let server = Arc::new(Server::default());
+    let database = open(server.clone()).await;
+    start_session(&database, "A").await;
+    let park = database.session.as_ref().unwrap().park_next_reset_for_test();
+    let resetting = database.clone();
+    let reset = std::thread::spawn(move || resetting.session_reset());
+    crate::test_wait::yield_until("the reset is parked after the generation moved", || park.entered.load(std::sync::atomic::Ordering::SeqCst)).await;
+    let reading = database.clone();
+    let mut read = tokio::spawn(async move { reading.refresh("User".into(), "all".into(), "{}".into()).await });
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(300), &mut read).await.is_err(), "an explicit read created a credential while the reset was clearing");
+    park.release.store(true, std::sync::atomic::Ordering::SeqCst);
+    crate::test_wait::join_within(reset).unwrap();
+    within(read).await.unwrap().unwrap();
+    within(database.refresh("User".into(), "all".into(), "{}".into())).await.unwrap();
+    database.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation() {
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;
