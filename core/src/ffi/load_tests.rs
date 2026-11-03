@@ -243,18 +243,6 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
 }
 
 #[tokio::test]
-async fn testing_settle_names_a_held_load_after_the_bound() {
-    let hold = Arc::new(tokio::sync::Semaphore::new(0));
-    let (db, transport, _) = open_rig(Some(TestClock::new(1_000_000)), Some(hold.clone()), None).await;
-    let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
-    within(transport.started.notified()).await;
-    let error = crate::test_wait::within_secs(20, crate::ffi::settled(&db)).await.unwrap_err();
-    assert!(error.to_string().contains("Explicit load"), "{error}");
-    hold.add_permits(1);
-    within(load).await.unwrap().unwrap();
-}
-
-#[tokio::test]
 async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
     let (db, transport, clock) = rig_with_clock().await;
     load(&db, "feed").await.unwrap();

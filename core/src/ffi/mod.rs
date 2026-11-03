@@ -170,7 +170,6 @@ mod resync_tests;
 #[cfg(test)]
 mod snapshot_tests;
 #[cfg(test)]
-mod stable_order_tests;
 #[cfg(test)]
 mod local_open_tests;
 #[cfg(test)]

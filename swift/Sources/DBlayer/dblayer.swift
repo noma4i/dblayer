@@ -1018,733 +1018,6 @@ public func FfiConverterTypeCableLease_lower(_ value: CableLease) -> UInt64 {
 
 
 
-public protocol CloudIo: AnyObject, Sendable {
-    
-    func account() async throws  -> CloudAccount
-    
-    func pull(cursor: Data?, limit: UInt32) async throws  -> CloudPage
-    
-    func push(blobs: [CloudBlob]) async throws 
-    
-}
-open class CloudIoImpl: CloudIo, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_dblayer_fn_clone_cloudio(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_dblayer_fn_free_cloudio(handle, $0) }
-    }
-
-    
-
-    
-open func account()async throws  -> CloudAccount  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_cloudio_account(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
-            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
-            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeCloudAccount_lift,
-            errorHandler: FfiConverterTypeCloudError_lift
-        )
-}
-    
-open func pull(cursor: Data?, limit: UInt32)async throws  -> CloudPage  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_cloudio_pull(
-                        self.uniffiCloneHandle(),FfiConverterOptionData.lower(cursor),FfiConverterUInt32.lower(limit)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
-            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
-            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeCloudPage_lift,
-            errorHandler: FfiConverterTypeCloudError_lift
-        )
-}
-    
-open func push(blobs: [CloudBlob])async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_cloudio_push(
-                        self.uniffiCloneHandle(),FfiConverterSequenceTypeCloudBlob.lower(blobs)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCloudError_lift
-        )
-}
-    
-
-    
-}
-
-
-
-// Put the implementation in a struct so we don't pollute the top-level namespace
-fileprivate struct UniffiCallbackInterfaceCloudIo {
-
-    // Create the VTable using a series of closures.
-    // Swift automatically converts these into C callback functions.
-    //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceCloudIo = UniffiVTableCallbackInterfaceCloudIo(
-        uniffiFree: { (uniffiHandle: UInt64) -> () in
-            do {
-                try FfiConverterTypeCloudIo.handleMap.remove(handle: uniffiHandle)
-            } catch {
-                print("Uniffi callback interface CloudIo: handle missing in uniffiFree")
-            }
-        },
-        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
-            do {
-                return try FfiConverterTypeCloudIo.handleMap.clone(handle: uniffiHandle)
-            } catch {
-                fatalError("Uniffi callback interface CloudIo: handle missing in uniffiClone")
-            }
-        },
-        account: { (
-            uniffiHandle: UInt64,
-            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
-            uniffiCallbackData: UInt64,
-            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
-        ) in
-            let makeCall = {
-                () async throws -> CloudAccount in
-                guard let uniffiObj = try? FfiConverterTypeCloudIo.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return try await uniffiObj.account(
-                )
-            }
-
-            let uniffiHandleSuccess = { (returnValue: CloudAccount) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureResultRustBuffer(
-                        returnValue: FfiConverterTypeCloudAccount_lower(returnValue),
-                        callStatus: RustCallStatus()
-                    )
-                )
-            }
-            let uniffiHandleError = { (statusCode, errorBuf) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureResultRustBuffer(
-                        returnValue: RustBuffer.empty(),
-                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
-                    )
-                )
-            }
-            uniffiTraitInterfaceCallAsyncWithError(
-                makeCall: makeCall,
-                handleSuccess: uniffiHandleSuccess,
-                handleError: uniffiHandleError,
-                lowerError: FfiConverterTypeCloudError_lower,
-                droppedCallback: uniffiOutDroppedCallback
-            )
-        },
-        pull: { (
-            uniffiHandle: UInt64,
-            cursor: RustBuffer,
-            limit: UInt32,
-            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
-            uniffiCallbackData: UInt64,
-            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
-        ) in
-            let makeCall = {
-                () async throws -> CloudPage in
-                guard let uniffiObj = try? FfiConverterTypeCloudIo.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return try await uniffiObj.pull(
-                     cursor: try FfiConverterOptionData.lift(cursor),
-                     limit: try FfiConverterUInt32.lift(limit)
-                )
-            }
-
-            let uniffiHandleSuccess = { (returnValue: CloudPage) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureResultRustBuffer(
-                        returnValue: FfiConverterTypeCloudPage_lower(returnValue),
-                        callStatus: RustCallStatus()
-                    )
-                )
-            }
-            let uniffiHandleError = { (statusCode, errorBuf) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureResultRustBuffer(
-                        returnValue: RustBuffer.empty(),
-                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
-                    )
-                )
-            }
-            uniffiTraitInterfaceCallAsyncWithError(
-                makeCall: makeCall,
-                handleSuccess: uniffiHandleSuccess,
-                handleError: uniffiHandleError,
-                lowerError: FfiConverterTypeCloudError_lower,
-                droppedCallback: uniffiOutDroppedCallback
-            )
-        },
-        push: { (
-            uniffiHandle: UInt64,
-            blobs: RustBuffer,
-            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
-            uniffiCallbackData: UInt64,
-            uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
-        ) in
-            let makeCall = {
-                () async throws -> () in
-                guard let uniffiObj = try? FfiConverterTypeCloudIo.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return try await uniffiObj.push(
-                     blobs: try FfiConverterSequenceTypeCloudBlob.lift(blobs)
-                )
-            }
-
-            let uniffiHandleSuccess = { (returnValue: ()) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureResultVoid(
-                        callStatus: RustCallStatus()
-                    )
-                )
-            }
-            let uniffiHandleError = { (statusCode, errorBuf) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureResultVoid(
-                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
-                    )
-                )
-            }
-            uniffiTraitInterfaceCallAsyncWithError(
-                makeCall: makeCall,
-                handleSuccess: uniffiHandleSuccess,
-                handleError: uniffiHandleError,
-                lowerError: FfiConverterTypeCloudError_lower,
-                droppedCallback: uniffiOutDroppedCallback
-            )
-        }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    //
-    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
-    // This is safe because the pointee is initialized once during static init
-    // and never mutated by either side of the FFI.  Its fields are C function pointers.
-    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceCloudIo> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceCloudIo>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
-}
-
-private func uniffiCallbackInitCloudIo() {
-    uniffi_dblayer_fn_init_callback_vtable_cloudio(UniffiCallbackInterfaceCloudIo.vtablePtr)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudIo: FfiConverter {
-    fileprivate static let handleMap = UniffiHandleMap<CloudIo>()
-
-    typealias FfiType = UInt64
-    typealias SwiftType = CloudIo
-
-    public static func lift(_ handle: UInt64) throws -> CloudIo {
-        if ((handle & 1) == 0) {
-            // Rust-generated handle, construct a new class that uses the handle to implement the
-            // interface
-            return CloudIoImpl(unsafeFromHandle: handle)
-        } else {
-            // Swift-generated handle, get the object from the handle map
-            return try handleMap.remove(handle: handle)
-        }
-    }
-
-    public static func lower(_ value: CloudIo) -> UInt64 {
-         if let rustImpl = value as? CloudIoImpl {
-             // Rust-implemented object.  Clone the handle and return it
-            return rustImpl.uniffiCloneHandle()
-         } else {
-            // Swift object, generate a new vtable handle and return that.
-            return handleMap.insert(obj: value)
-         }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudIo {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: CloudIo, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudIo_lift(_ handle: UInt64) throws -> CloudIo {
-    return try FfiConverterTypeCloudIo.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudIo_lower(_ value: CloudIo) -> UInt64 {
-    return FfiConverterTypeCloudIo.lower(value)
-}
-
-
-
-
-
-
-public protocol CloudLinkProtocol: AnyObject, Sendable {
-    
-    func listen(listener: CloudStateListener) throws  -> StateSubscription
-    
-    func remoteChanged() 
-    
-    func resolveInitialMerge(source: MergeSource) async throws 
-    
-    func state()  -> CloudState
-    
-    func stop() 
-    
-    func syncNow() async throws 
-    
-}
-open class CloudLink: CloudLinkProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_dblayer_fn_clone_cloudlink(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_dblayer_fn_free_cloudlink(handle, $0) }
-    }
-
-    
-
-    
-open func listen(listener: CloudStateListener)throws  -> StateSubscription  {
-    return try  FfiConverterTypeStateSubscription_lift(try rustCallWithError(FfiConverterTypeDbError_lift) {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_cloudlink_listen(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeCloudStateListener_lower(listener),uniffiCallStatus
-    )
-})
-}
-    
-open func remoteChanged()  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_cloudlink_remote_changed(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
-}
-    
-open func resolveInitialMerge(source: MergeSource)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_cloudlink_resolve_initial_merge(
-                        self.uniffiCloneHandle(),FfiConverterTypeMergeSource_lower(source)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCloudError_lift
-        )
-}
-    
-open func state() -> CloudState  {
-    return try!  FfiConverterTypeCloudState_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_cloudlink_state(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
-}
-    
-open func stop()  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_cloudlink_stop(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
-}
-    
-open func syncNow()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_cloudlink_sync_now(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeCloudError_lift
-        )
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudLink: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = CloudLink
-
-    public static func lift(_ handle: UInt64) throws -> CloudLink {
-        return CloudLink(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: CloudLink) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudLink {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: CloudLink, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudLink_lift(_ handle: UInt64) throws -> CloudLink {
-    return try FfiConverterTypeCloudLink.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudLink_lower(_ value: CloudLink) -> UInt64 {
-    return FfiConverterTypeCloudLink.lower(value)
-}
-
-
-
-
-
-
-public protocol CloudStateListener: AnyObject, Sendable {
-    
-    func changed(state: CloudState) 
-    
-}
-open class CloudStateListenerImpl: CloudStateListener, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_dblayer_fn_clone_cloudstatelistener(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_dblayer_fn_free_cloudstatelistener(handle, $0) }
-    }
-
-    
-
-    
-open func changed(state: CloudState)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_cloudstatelistener_changed(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeCloudState_lower(state),uniffiCallStatus
-    )
-}
-}
-    
-
-    
-}
-
-
-
-// Put the implementation in a struct so we don't pollute the top-level namespace
-fileprivate struct UniffiCallbackInterfaceCloudStateListener {
-
-    // Create the VTable using a series of closures.
-    // Swift automatically converts these into C callback functions.
-    //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceCloudStateListener = UniffiVTableCallbackInterfaceCloudStateListener(
-        uniffiFree: { (uniffiHandle: UInt64) -> () in
-            do {
-                try FfiConverterTypeCloudStateListener.handleMap.remove(handle: uniffiHandle)
-            } catch {
-                print("Uniffi callback interface CloudStateListener: handle missing in uniffiFree")
-            }
-        },
-        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
-            do {
-                return try FfiConverterTypeCloudStateListener.handleMap.clone(handle: uniffiHandle)
-            } catch {
-                fatalError("Uniffi callback interface CloudStateListener: handle missing in uniffiClone")
-            }
-        },
-        changed: { (
-            uniffiHandle: UInt64,
-            state: RustBuffer,
-            uniffiOutReturn: UnsafeMutableRawPointer,
-            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
-        ) in
-            let makeCall = {
-                () throws -> () in
-                guard let uniffiObj = try? FfiConverterTypeCloudStateListener.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return uniffiObj.changed(
-                     state: try FfiConverterTypeCloudState_lift(state)
-                )
-            }
-
-            
-            let writeReturn = { () }
-            uniffiTraitInterfaceCall(
-                callStatus: uniffiCallStatus,
-                makeCall: makeCall,
-                writeReturn: writeReturn
-            )
-        }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    //
-    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
-    // This is safe because the pointee is initialized once during static init
-    // and never mutated by either side of the FFI.  Its fields are C function pointers.
-    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceCloudStateListener> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceCloudStateListener>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
-}
-
-private func uniffiCallbackInitCloudStateListener() {
-    uniffi_dblayer_fn_init_callback_vtable_cloudstatelistener(UniffiCallbackInterfaceCloudStateListener.vtablePtr)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudStateListener: FfiConverter {
-    fileprivate static let handleMap = UniffiHandleMap<CloudStateListener>()
-
-    typealias FfiType = UInt64
-    typealias SwiftType = CloudStateListener
-
-    public static func lift(_ handle: UInt64) throws -> CloudStateListener {
-        if ((handle & 1) == 0) {
-            // Rust-generated handle, construct a new class that uses the handle to implement the
-            // interface
-            return CloudStateListenerImpl(unsafeFromHandle: handle)
-        } else {
-            // Swift-generated handle, get the object from the handle map
-            return try handleMap.remove(handle: handle)
-        }
-    }
-
-    public static func lower(_ value: CloudStateListener) -> UInt64 {
-         if let rustImpl = value as? CloudStateListenerImpl {
-             // Rust-implemented object.  Clone the handle and return it
-            return rustImpl.uniffiCloneHandle()
-         } else {
-            // Swift object, generate a new vtable handle and return that.
-            return handleMap.insert(obj: value)
-         }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudStateListener {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: CloudStateListener, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudStateListener_lift(_ handle: UInt64) throws -> CloudStateListener {
-    return try FfiConverterTypeCloudStateListener.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudStateListener_lower(_ value: CloudStateListener) -> UInt64 {
-    return FfiConverterTypeCloudStateListener.lower(value)
-}
-
-
-
-
-
-
 public protocol ConnectivityProtocol: AnyObject, Sendable {
     
     func setOnline(online: Bool) 
@@ -2153,8 +1426,6 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func changes(queryJson: String) throws  -> LiveChanges
     
-    func connectCloud(io: CloudIo) throws  -> CloudLink
-    
     func act(model: String, rowId: String, action: String, patchJson: String, argsJson: String) async throws  -> QueuedAction
     
     func answer(model: String, operation: Int64) async throws  -> String
@@ -2198,10 +1469,6 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func liveRelated(queryJson: String, name: String, listener: QueryListener)  -> LiveSubscription
     
-    func liveWindow(queryJson: String, tail: UInt32, max: UInt32?, listener: QueryListener)  -> LiveSubscription
-    
-    func liveWindowRelated(queryJson: String, tail: UInt32, max: UInt32?, name: String, listener: QueryListener)  -> LiveSubscription
-    
     func load(model: String, relation: String, paramsJson: String) async throws 
     
     func loadAll(model: String, relation: String, paramsJson: String, force: Bool) async throws 
@@ -2222,8 +1489,6 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func peekRow(model: String, rowId: String) throws  -> WireRow?
     
-    func putTasks(tasks: [PutTask]) 
-    
     func read(model: String, rowId: String, field: String) async throws  -> Data?
     
     func refresh(model: String, relation: String, paramsJson: String) async throws 
@@ -2232,16 +1497,9 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func registerOperations(defsJson: String) throws 
     
-    /**
-     * Ends the session of the test and starts the next one: the old work ends, the data goes, the credential and the pending request stay. Online, listening and power saving keep the values the test gave them.
-     */
-    func resetForTesting() async throws 
-    
     func resume() async throws 
     
     func resumeUploads() async throws 
-    
-    func resumeUploadsFor(tags: [String]) async throws 
     
     func retry(model: String, rowId: String, action: String?) async throws  -> UInt64
     
@@ -2256,11 +1514,6 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func setLocal(model: String, rowId: String, path: String, valueJson: String) async throws 
     
     func setOnline(online: Bool) throws 
-    
-    /**
-     * Returns when no lease is held: no load, request, subscription opening, delivery or upload is running. It does not change listening, preload or the session.
-     */
-    func settleForTesting() async throws 
     
     func settled(model: String, rowId: String, action: String?) async throws 
     
@@ -2459,16 +1712,6 @@ open func changes(queryJson: String)throws  -> LiveChanges  {
     uniffi_dblayer_fn_method_database_changes(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(queryJson),uniffiCallStatus
-    )
-})
-}
-    
-open func connectCloud(io: CloudIo)throws  -> CloudLink  {
-    return try  FfiConverterTypeCloudLink_lift(try rustCallWithError(FfiConverterTypeDbError_lift) {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_connect_cloud(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeCloudIo_lower(io),uniffiCallStatus
     )
 })
 }
@@ -2758,33 +2001,6 @@ open func liveRelated(queryJson: String, name: String, listener: QueryListener) 
 })
 }
     
-open func liveWindow(queryJson: String, tail: UInt32, max: UInt32?, listener: QueryListener) -> LiveSubscription  {
-    return try!  FfiConverterTypeLiveSubscription_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_live_window(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(queryJson),
-        FfiConverterUInt32.lower(tail),
-        FfiConverterOptionUInt32.lower(max),
-        FfiConverterTypeQueryListener_lower(listener),uniffiCallStatus
-    )
-})
-}
-    
-open func liveWindowRelated(queryJson: String, tail: UInt32, max: UInt32?, name: String, listener: QueryListener) -> LiveSubscription  {
-    return try!  FfiConverterTypeLiveSubscription_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_live_window_related(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(queryJson),
-        FfiConverterUInt32.lower(tail),
-        FfiConverterOptionUInt32.lower(max),
-        FfiConverterString.lower(name),
-        FfiConverterTypeQueryListener_lower(listener),uniffiCallStatus
-    )
-})
-}
-    
 open func load(model: String, relation: String, paramsJson: String)async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -2926,15 +2142,6 @@ open func peekRow(model: String, rowId: String)throws  -> WireRow?  {
 })
 }
     
-open func putTasks(tasks: [PutTask])  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_put_tasks(
-            self.uniffiCloneHandle(),
-        FfiConverterSequenceTypePutTask.lower(tasks),uniffiCallStatus
-    )
-}
-}
-    
 open func read(model: String, rowId: String, field: String)async throws  -> Data?  {
     return
         try  await uniffiRustCallAsync(
@@ -2992,25 +2199,6 @@ open func registerOperations(defsJson: String)throws   {try rustCallWithError(Ff
 }
 }
     
-    /**
-     * Ends the session of the test and starts the next one: the old work ends, the data goes, the credential and the pending request stay. Online, listening and power saving keep the values the test gave them.
-     */
-open func resetForTesting()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_reset_for_testing(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
 open func resume()async throws   {
     return
         try  await uniffiRustCallAsync(
@@ -3033,22 +2221,6 @@ open func resumeUploads()async throws   {
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_resume_uploads(
                         self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-open func resumeUploadsFor(tags: [String])async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_resume_uploads_for(
-                        self.uniffiCloneHandle(),FfiConverterSequenceString.lower(tags)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -3155,25 +2327,6 @@ open func setOnline(online: Bool)throws   {try rustCallWithError(FfiConverterTyp
         FfiConverterBool.lower(online),uniffiCallStatus
     )
 }
-}
-    
-    /**
-     * Returns when no lease is held: no load, request, subscription opening, delivery or upload is running. It does not change listening, preload or the session.
-     */
-open func settleForTesting()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_settle_for_testing(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
 }
     
 open func settled(model: String, rowId: String, action: String?)async throws   {
@@ -4176,9 +3329,9 @@ public protocol LiveEntitiesProtocol: AnyObject, Sendable {
     func loadInitial(id: String, lease: UInt64) async throws 
     
     /**
-     * The read of this entry failed: a first-load wait then asks for the load again instead of returning the old failure.
+     * A read that a reset restarted failed because the transport was gone. The first-load wait asks for it again, once per reset.
      */
-    func readFailed(id: String, lease: UInt64)  -> Bool
+    func redoFailedReadAfterReset(id: String, lease: UInt64) 
     
     func release(leases: [EntityLease]) throws 
     
@@ -4274,17 +3427,16 @@ open func loadInitial(id: String, lease: UInt64)async throws   {
 }
     
     /**
-     * The read of this entry failed: a first-load wait then asks for the load again instead of returning the old failure.
+     * A read that a reset restarted failed because the transport was gone. The first-load wait asks for it again, once per reset.
      */
-open func readFailed(id: String, lease: UInt64) -> Bool  {
-    return try!  FfiConverterBool.lift(try! rustCall() {
+open func redoFailedReadAfterReset(id: String, lease: UInt64)  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_dblayer_fn_method_liveentities_read_failed(
+    uniffi_dblayer_fn_method_liveentities_redo_failed_read_after_reset(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(id),
         FfiConverterUInt64.lower(lease),uniffiCallStatus
     )
-})
+}
 }
     
 open func release(leases: [EntityLease])throws   {try rustCallWithError(FfiConverterTypeDbError_lift) {
@@ -4395,10 +3547,6 @@ public protocol LiveSubscriptionProtocol: AnyObject, Sendable {
     
     func current() async  -> LiveChange
     
-    func expandAfter(rows: UInt32) 
-    
-    func expandBefore(rows: UInt32) 
-    
     /**
      * The wrapper could not apply the last delivery to its list. The core sends the whole list again, and a failure once that did not help twice in a row.
      */
@@ -4483,24 +3631,6 @@ open func current()async  -> LiveChange  {
             errorHandler: nil
             
         )
-}
-    
-open func expandAfter(rows: UInt32)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_livesubscription_expand_after(
-            self.uniffiCloneHandle(),
-        FfiConverterUInt32.lower(rows),uniffiCallStatus
-    )
-}
-}
-    
-open func expandBefore(rows: UInt32)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_livesubscription_expand_before(
-            self.uniffiCloneHandle(),
-        FfiConverterUInt32.lower(rows),uniffiCallStatus
-    )
-}
 }
     
     /**
@@ -5650,122 +4780,6 @@ public func FfiConverterTypeRetrySubscription_lift(_ handle: UInt64) throws -> R
 #endif
 public func FfiConverterTypeRetrySubscription_lower(_ value: RetrySubscription) -> UInt64 {
     return FfiConverterTypeRetrySubscription.lower(value)
-}
-
-
-
-
-
-
-public protocol StateSubscriptionProtocol: AnyObject, Sendable {
-    
-    func cancel() 
-    
-}
-open class StateSubscription: StateSubscriptionProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_dblayer_fn_clone_statesubscription(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_dblayer_fn_free_statesubscription(handle, $0) }
-    }
-
-    
-
-    
-open func cancel()  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_statesubscription_cancel(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeStateSubscription: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = StateSubscription
-
-    public static func lift(_ handle: UInt64) throws -> StateSubscription {
-        return StateSubscription(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: StateSubscription) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StateSubscription {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: StateSubscription, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeStateSubscription_lift(_ handle: UInt64) throws -> StateSubscription {
-    return try FfiConverterTypeStateSubscription.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeStateSubscription_lower(_ value: StateSubscription) -> UInt64 {
-    return FfiConverterTypeStateSubscription.lower(value)
 }
 
 
@@ -6998,118 +6012,6 @@ public func FfiConverterTypeCellEntry_lower(_ value: CellEntry) -> RustBuffer {
 }
 
 
-public struct CloudBlob: Equatable, Hashable {
-    public var key: String
-    public var bytes: Data
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(key: String, bytes: Data) {
-        self.key = key
-        self.bytes = bytes
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CloudBlob: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudBlob: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudBlob {
-        return
-            try CloudBlob(
-                key: FfiConverterString.read(from: &buf), 
-                bytes: FfiConverterData.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CloudBlob, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.key, into: &buf)
-        FfiConverterData.write(value.bytes, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudBlob_lift(_ buf: RustBuffer) throws -> CloudBlob {
-    return try FfiConverterTypeCloudBlob.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudBlob_lower(_ value: CloudBlob) -> RustBuffer {
-    return FfiConverterTypeCloudBlob.lower(value)
-}
-
-
-public struct CloudPage: Equatable, Hashable {
-    public var blobs: [CloudBlob]
-    public var cursor: Data
-    public var more: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(blobs: [CloudBlob], cursor: Data, more: Bool) {
-        self.blobs = blobs
-        self.cursor = cursor
-        self.more = more
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CloudPage: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudPage: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudPage {
-        return
-            try CloudPage(
-                blobs: FfiConverterSequenceTypeCloudBlob.read(from: &buf), 
-                cursor: FfiConverterData.read(from: &buf), 
-                more: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CloudPage, into buf: inout [UInt8]) {
-        FfiConverterSequenceTypeCloudBlob.write(value.blobs, into: &buf)
-        FfiConverterData.write(value.cursor, into: &buf)
-        FfiConverterBool.write(value.more, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudPage_lift(_ buf: RustBuffer) throws -> CloudPage {
-    return try FfiConverterTypeCloudPage.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudPage_lower(_ value: CloudPage) -> RustBuffer {
-    return FfiConverterTypeCloudPage.lower(value)
-}
-
-
 public struct Config: Equatable, Hashable {
     public var path: String?
     public var dataVersion: String?
@@ -7788,7 +6690,6 @@ public struct LiveChange: Equatable, Hashable {
     public var renamed: [Replacement]
     public var count: Int64?
     public var error: DbError?
-    public var window: LiveWindowEdge?
     public var inserted: [UInt32]
     public var updated: [UInt32]
     public var moved: [Placement]
@@ -7805,7 +6706,7 @@ public struct LiveChange: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(revision: Int64, full: Bool, size: UInt32, rows: [WireRow], rowIndexes: [UInt32], removed: [String], placed: [Placement], replaced: [Replacement], renamed: [Replacement], count: Int64?, error: DbError?, window: LiveWindowEdge? = nil, inserted: [UInt32] = [], updated: [UInt32] = [], moved: [Placement] = [], seq: UInt64 = UInt64(0), phase: LivePhase? = nil, initial: Bool = false, refreshing: Bool = false, fetchingMore: Bool = false, hasMore: Bool = false, complete: Bool = false, total: Int64? = nil, loadedAt: Int64? = nil, errorKind: String? = nil) {
+    public init(revision: Int64, full: Bool, size: UInt32, rows: [WireRow], rowIndexes: [UInt32], removed: [String], placed: [Placement], replaced: [Replacement], renamed: [Replacement], count: Int64?, error: DbError?, inserted: [UInt32] = [], updated: [UInt32] = [], moved: [Placement] = [], seq: UInt64 = UInt64(0), phase: LivePhase? = nil, initial: Bool = false, refreshing: Bool = false, fetchingMore: Bool = false, hasMore: Bool = false, complete: Bool = false, total: Int64? = nil, loadedAt: Int64? = nil, errorKind: String? = nil) {
         self.revision = revision
         self.full = full
         self.size = size
@@ -7817,7 +6718,6 @@ public struct LiveChange: Equatable, Hashable {
         self.renamed = renamed
         self.count = count
         self.error = error
-        self.window = window
         self.inserted = inserted
         self.updated = updated
         self.moved = moved
@@ -7860,7 +6760,6 @@ public struct FfiConverterTypeLiveChange: FfiConverterRustBuffer {
                 renamed: FfiConverterSequenceTypeReplacement.read(from: &buf), 
                 count: FfiConverterOptionInt64.read(from: &buf), 
                 error: FfiConverterOptionTypeDbError.read(from: &buf), 
-                window: FfiConverterOptionTypeLiveWindowEdge.read(from: &buf), 
                 inserted: FfiConverterSequenceUInt32.read(from: &buf), 
                 updated: FfiConverterSequenceUInt32.read(from: &buf), 
                 moved: FfiConverterSequenceTypePlacement.read(from: &buf), 
@@ -7889,7 +6788,6 @@ public struct FfiConverterTypeLiveChange: FfiConverterRustBuffer {
         FfiConverterSequenceTypeReplacement.write(value.renamed, into: &buf)
         FfiConverterOptionInt64.write(value.count, into: &buf)
         FfiConverterOptionTypeDbError.write(value.error, into: &buf)
-        FfiConverterOptionTypeLiveWindowEdge.write(value.window, into: &buf)
         FfiConverterSequenceUInt32.write(value.inserted, into: &buf)
         FfiConverterSequenceUInt32.write(value.updated, into: &buf)
         FfiConverterSequenceTypePlacement.write(value.moved, into: &buf)
@@ -7919,64 +6817,6 @@ public func FfiConverterTypeLiveChange_lift(_ buf: RustBuffer) throws -> LiveCha
 #endif
 public func FfiConverterTypeLiveChange_lower(_ value: LiveChange) -> RustBuffer {
     return FfiConverterTypeLiveChange.lower(value)
-}
-
-
-public struct LiveWindowEdge: Equatable, Hashable {
-    public var hasBefore: Bool
-    public var hasAfter: Bool
-    public var total: UInt32?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(hasBefore: Bool, hasAfter: Bool, total: UInt32?) {
-        self.hasBefore = hasBefore
-        self.hasAfter = hasAfter
-        self.total = total
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension LiveWindowEdge: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeLiveWindowEdge: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LiveWindowEdge {
-        return
-            try LiveWindowEdge(
-                hasBefore: FfiConverterBool.read(from: &buf), 
-                hasAfter: FfiConverterBool.read(from: &buf), 
-                total: FfiConverterOptionUInt32.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: LiveWindowEdge, into buf: inout [UInt8]) {
-        FfiConverterBool.write(value.hasBefore, into: &buf)
-        FfiConverterBool.write(value.hasAfter, into: &buf)
-        FfiConverterOptionUInt32.write(value.total, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeLiveWindowEdge_lift(_ buf: RustBuffer) throws -> LiveWindowEdge {
-    return try FfiConverterTypeLiveWindowEdge.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeLiveWindowEdge_lower(_ value: LiveWindowEdge) -> RustBuffer {
-    return FfiConverterTypeLiveWindowEdge.lower(value)
 }
 
 
@@ -8271,60 +7111,6 @@ public func FfiConverterTypePutReply_lift(_ buf: RustBuffer) throws -> PutReply 
 #endif
 public func FfiConverterTypePutReply_lower(_ value: PutReply) -> RustBuffer {
     return FfiConverterTypePutReply.lower(value)
-}
-
-
-public struct PutTask: Equatable, Hashable {
-    public var tag: String
-    public var state: PutTaskState
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(tag: String, state: PutTaskState) {
-        self.tag = tag
-        self.state = state
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension PutTask: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypePutTask: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PutTask {
-        return
-            try PutTask(
-                tag: FfiConverterString.read(from: &buf), 
-                state: FfiConverterTypePutTaskState.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: PutTask, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.tag, into: &buf)
-        FfiConverterTypePutTaskState.write(value.state, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePutTask_lift(_ buf: RustBuffer) throws -> PutTask {
-    return try FfiConverterTypePutTask.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePutTask_lower(_ value: PutTask) -> RustBuffer {
-    return FfiConverterTypePutTask.lower(value)
 }
 
 
@@ -10046,338 +8832,6 @@ public func FfiConverterTypeCell_lower(_ value: Cell) -> RustBuffer {
 
 
 
-public enum CloudAccount: Equatable, Hashable {
-    
-    case available
-    case signedOut
-    case needsConsent
-    case restricted
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CloudAccount: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudAccount: FfiConverterRustBuffer {
-    typealias SwiftType = CloudAccount
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudAccount {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .available
-        
-        case 2: return .signedOut
-        
-        case 3: return .needsConsent
-        
-        case 4: return .restricted
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: CloudAccount, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .available:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .signedOut:
-            writeInt(&buf, Int32(2))
-        
-        
-        case .needsConsent:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .restricted:
-            writeInt(&buf, Int32(4))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudAccount_lift(_ buf: RustBuffer) throws -> CloudAccount {
-    return try FfiConverterTypeCloudAccount.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudAccount_lower(_ value: CloudAccount) -> RustBuffer {
-    return FfiConverterTypeCloudAccount.lower(value)
-}
-
-
-
-public 
-enum CloudError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
-
-    
-    
-    case Offline(detail: String
-    )
-    case Throttled(retryAfterMs: UInt64
-    )
-    case Unavailable(detail: String
-    )
-    case NeedsAuthorization(detail: String
-    )
-    case QuotaExceeded(detail: String
-    )
-    case Rejected(detail: String
-    )
-    case Interrupted(detail: String
-    )
-
-    
-
-    
-
-    
-    public var errorDescription: String? {
-        String(reflecting: self)
-    }
-    
-}
-
-#if compiler(>=6)
-extension CloudError: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudError: FfiConverterRustBuffer {
-    typealias SwiftType = CloudError
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudError {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-
-        
-
-        
-        case 1: return .Offline(
-            detail: try FfiConverterString.read(from: &buf)
-            )
-        case 2: return .Throttled(
-            retryAfterMs: try FfiConverterUInt64.read(from: &buf)
-            )
-        case 3: return .Unavailable(
-            detail: try FfiConverterString.read(from: &buf)
-            )
-        case 4: return .NeedsAuthorization(
-            detail: try FfiConverterString.read(from: &buf)
-            )
-        case 5: return .QuotaExceeded(
-            detail: try FfiConverterString.read(from: &buf)
-            )
-        case 6: return .Rejected(
-            detail: try FfiConverterString.read(from: &buf)
-            )
-        case 7: return .Interrupted(
-            detail: try FfiConverterString.read(from: &buf)
-            )
-
-         default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: CloudError, into buf: inout [UInt8]) {
-        switch value {
-
-        
-
-        
-        
-        case let .Offline(detail):
-            writeInt(&buf, Int32(1))
-            FfiConverterString.write(detail, into: &buf)
-            
-        
-        case let .Throttled(retryAfterMs):
-            writeInt(&buf, Int32(2))
-            FfiConverterUInt64.write(retryAfterMs, into: &buf)
-            
-        
-        case let .Unavailable(detail):
-            writeInt(&buf, Int32(3))
-            FfiConverterString.write(detail, into: &buf)
-            
-        
-        case let .NeedsAuthorization(detail):
-            writeInt(&buf, Int32(4))
-            FfiConverterString.write(detail, into: &buf)
-            
-        
-        case let .QuotaExceeded(detail):
-            writeInt(&buf, Int32(5))
-            FfiConverterString.write(detail, into: &buf)
-            
-        
-        case let .Rejected(detail):
-            writeInt(&buf, Int32(6))
-            FfiConverterString.write(detail, into: &buf)
-            
-        
-        case let .Interrupted(detail):
-            writeInt(&buf, Int32(7))
-            FfiConverterString.write(detail, into: &buf)
-            
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudError_lift(_ buf: RustBuffer) throws -> CloudError {
-    return try FfiConverterTypeCloudError.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudError_lower(_ value: CloudError) -> RustBuffer {
-    return FfiConverterTypeCloudError.lower(value)
-}
-
-
-
-public enum CloudState: Equatable, Hashable {
-    
-    case idle
-    case pending(changes: UInt64
-    )
-    case syncing
-    case offline
-    case needsAuthorization
-    case quotaExceeded
-    case needsInitialMerge(rows: UInt64
-    )
-    case failed(detail: String
-    )
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension CloudState: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCloudState: FfiConverterRustBuffer {
-    typealias SwiftType = CloudState
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CloudState {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .idle
-        
-        case 2: return .pending(changes: try FfiConverterUInt64.read(from: &buf)
-        )
-        
-        case 3: return .syncing
-        
-        case 4: return .offline
-        
-        case 5: return .needsAuthorization
-        
-        case 6: return .quotaExceeded
-        
-        case 7: return .needsInitialMerge(rows: try FfiConverterUInt64.read(from: &buf)
-        )
-        
-        case 8: return .failed(detail: try FfiConverterString.read(from: &buf)
-        )
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: CloudState, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .idle:
-            writeInt(&buf, Int32(1))
-        
-        
-        case let .pending(changes):
-            writeInt(&buf, Int32(2))
-            FfiConverterUInt64.write(changes, into: &buf)
-            
-        
-        case .syncing:
-            writeInt(&buf, Int32(3))
-        
-        
-        case .offline:
-            writeInt(&buf, Int32(4))
-        
-        
-        case .needsAuthorization:
-            writeInt(&buf, Int32(5))
-        
-        
-        case .quotaExceeded:
-            writeInt(&buf, Int32(6))
-        
-        
-        case let .needsInitialMerge(rows):
-            writeInt(&buf, Int32(7))
-            FfiConverterUInt64.write(rows, into: &buf)
-            
-        
-        case let .failed(detail):
-            writeInt(&buf, Int32(8))
-            FfiConverterString.write(detail, into: &buf)
-            
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudState_lift(_ buf: RustBuffer) throws -> CloudState {
-    return try FfiConverterTypeCloudState.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCloudState_lower(_ value: CloudState) -> RustBuffer {
-    return FfiConverterTypeCloudState.lower(value)
-}
-
-
-
-
 public enum ConfigCode: Equatable, Hashable {
     
     case invalidFormat
@@ -11194,152 +9648,6 @@ public func FfiConverterTypeLoadMoreResult_lift(_ buf: RustBuffer) throws -> Loa
 #endif
 public func FfiConverterTypeLoadMoreResult_lower(_ value: LoadMoreResult) -> RustBuffer {
     return FfiConverterTypeLoadMoreResult.lower(value)
-}
-
-
-
-
-public enum MergeSource: Equatable, Hashable {
-    
-    case useLocal
-    case useCloud
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension MergeSource: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeMergeSource: FfiConverterRustBuffer {
-    typealias SwiftType = MergeSource
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MergeSource {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .useLocal
-        
-        case 2: return .useCloud
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: MergeSource, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .useLocal:
-            writeInt(&buf, Int32(1))
-        
-        
-        case .useCloud:
-            writeInt(&buf, Int32(2))
-        
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMergeSource_lift(_ buf: RustBuffer) throws -> MergeSource {
-    return try FfiConverterTypeMergeSource.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeMergeSource_lower(_ value: MergeSource) -> RustBuffer {
-    return FfiConverterTypeMergeSource.lower(value)
-}
-
-
-
-
-public enum PutTaskState: Equatable, Hashable {
-    
-    case running
-    case finished(status: UInt16, etag: String?
-    )
-    case failed(detail: String
-    )
-
-
-
-
-
-}
-
-#if compiler(>=6)
-extension PutTaskState: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypePutTaskState: FfiConverterRustBuffer {
-    typealias SwiftType = PutTaskState
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PutTaskState {
-        let variant: Int32 = try readInt(&buf)
-        switch variant {
-        
-        case 1: return .running
-        
-        case 2: return .finished(status: try FfiConverterUInt16.read(from: &buf), etag: try FfiConverterOptionString.read(from: &buf)
-        )
-        
-        case 3: return .failed(detail: try FfiConverterString.read(from: &buf)
-        )
-        
-        default: throw UniffiInternalError.unexpectedEnumCase
-        }
-    }
-
-    public static func write(_ value: PutTaskState, into buf: inout [UInt8]) {
-        switch value {
-        
-        
-        case .running:
-            writeInt(&buf, Int32(1))
-        
-        
-        case let .finished(status,etag):
-            writeInt(&buf, Int32(2))
-            FfiConverterUInt16.write(status, into: &buf)
-            FfiConverterOptionString.write(etag, into: &buf)
-            
-        
-        case let .failed(detail):
-            writeInt(&buf, Int32(3))
-            FfiConverterString.write(detail, into: &buf)
-            
-        }
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePutTaskState_lift(_ buf: RustBuffer) throws -> PutTaskState {
-    return try FfiConverterTypePutTaskState.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypePutTaskState_lower(_ value: PutTaskState) -> RustBuffer {
-    return FfiConverterTypePutTaskState.lower(value)
 }
 
 
@@ -12329,30 +10637,6 @@ fileprivate struct FfiConverterOptionTypeLiveChange: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeLiveWindowEdge: FfiConverterRustBuffer {
-    typealias SwiftType = LiveWindowEdge?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeLiveWindowEdge.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeLiveWindowEdge.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeRetryAttempt: FfiConverterRustBuffer {
     typealias SwiftType = RetryAttempt?
 
@@ -12764,31 +11048,6 @@ fileprivate struct FfiConverterSequenceTypeCellEntry: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeCloudBlob: FfiConverterRustBuffer {
-    typealias SwiftType = [CloudBlob]
-
-    public static func write(_ value: [CloudBlob], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeCloudBlob.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [CloudBlob] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [CloudBlob]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeCloudBlob.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeCountry: FfiConverterRustBuffer {
     typealias SwiftType = [Country]
 
@@ -12881,31 +11140,6 @@ fileprivate struct FfiConverterSequenceTypePlacement: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePlacement.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterSequenceTypePutTask: FfiConverterRustBuffer {
-    typealias SwiftType = [PutTask]
-
-    public static func write(_ value: [PutTask], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypePutTask.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PutTask] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [PutTask]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypePutTask.read(from: &buf))
         }
         return seq
     }
@@ -13375,15 +11609,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_func_transaction_disposition_text() != 48845) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_cloudio_account() != 13807) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudio_pull() != 39633) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudio_push() != 43951) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_blobchanges_cancel() != 10519) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13394,27 +11619,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_livechanges_next() != 47022) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudlink_listen() != 6317) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudlink_remote_changed() != 24507) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudlink_resolve_initial_merge() != 28118) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudlink_state() != 65178) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudlink_stop() != 25506) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudlink_sync_now() != 27319) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_cloudstatelistener_changed() != 14087) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_blob() != 56697) {
@@ -13436,9 +11640,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_changes() != 56337) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_connect_cloud() != 15715) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_act() != 59548) {
@@ -13501,12 +11702,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_live_related() != 26962) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_live_window() != 28224) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_live_window_related() != 18125) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_load() != 38526) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13537,9 +11732,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_peek_row() != 50904) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_put_tasks() != 12854) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_read() != 17421) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13552,16 +11744,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_register_operations() != 47241) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_reset_for_testing() != 32009) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_resume() != 54438) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_resume_uploads() != 45844) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_resume_uploads_for() != 20696) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_retry() != 27059) {
@@ -13583,9 +11769,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_set_online() != 62209) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_settle_for_testing() != 31431) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_settled() != 19732) {
@@ -13681,7 +11864,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_liveentities_load_initial() != 33937) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_liveentities_read_failed() != 11609) {
+    if (uniffi_dblayer_checksum_method_liveentities_redo_failed_read_after_reset() != 53438) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_liveentities_release() != 27114) {
@@ -13711,12 +11894,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_livesubscription_current() != 49208) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_livesubscription_expand_after() != 25720) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_livesubscription_expand_before() != 56400) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_livesubscription_report_desync() != 28242) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13736,9 +11913,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 15298) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_statesubscription_cancel() != 54578) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_byteprogress_is_cancelled() != 6714) {
@@ -13823,8 +11997,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
 
-    uniffiCallbackInitCloudIo()
-    uniffiCallbackInitCloudStateListener()
     uniffiCallbackInitCredentialStore()
     uniffiCallbackInitEncryptedHttp()
     uniffiCallbackInitEntityListener()

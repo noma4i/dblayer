@@ -321,7 +321,7 @@ fn nb1_cancelling_and_growing_an_observer_do_not_wait_for_the_registry() {
     let (_log, callback) = recorder();
     let window = db.observe_window(query, WindowSpec::Tail { size: 1, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    assert!(returns_while_the_registry_is_held(move || window.grow_before(1), &db), "expand waited for the observers lock");
+    assert!(returns_while_the_registry_is_held(move || window.grow_before(1), &db), "grow waited for the observers lock");
     let (_log, callback) = recorder();
     let observer = db.observe(Query::new("users"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());

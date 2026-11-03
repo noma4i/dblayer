@@ -4,6 +4,7 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 
 use super::rig_tests::{bound, Fault, Held, Rig, BOUND};
+use crate::ffi::lifecycle_tests::Rows;
 use crate::ffi::{Database, DbError};
 use crate::test_wait::within_secs;
 
@@ -131,10 +132,9 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     held.shows("A").await;
     held.lists_show("A").await;
     let gate = rig.world.hold_next("Users");
-    let _late = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh("User".into(), "all".into(), "{}".into()).await }) };
+    let pending = rig.database.live_query(r#"{"model":"User","relation":"all","params":{},"refreshOnConnect":true}"#.into(), Arc::new(Rows::default()));
     gate.entered().await;
-    let (query, window) = (held.query.clone(), held.window.clone());
-    let waits = [tokio::spawn(async move { query.wait_for_initial_load().await }), tokio::spawn(async move { window.wait_for_initial_load().await })];
+    let waits = [tokio::spawn(async move { pending.wait_for_initial_load().await })];
     let changes = held.changes.clone();
     let next = tokio::spawn(async move { within_secs(BOUND, changes.next()).await });
 

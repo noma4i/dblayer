@@ -115,7 +115,7 @@ fn a_change_before_the_window_delivers_no_rows_and_only_moves_the_total() {
 }
 
 #[test]
-fn expanding_before_adds_local_rows_and_stops_at_the_first_row() {
+fn growing_before_adds_local_rows_and_stops_at_the_first_row() {
     let db = seeded(8);
     let (log, callback) = recorder();
     let window = db.observe_window(query(), WindowSpec::Tail { size: 3, max: None, paged: false }, callback).unwrap();
@@ -138,7 +138,7 @@ fn expanding_before_adds_local_rows_and_stops_at_the_first_row() {
 }
 
 #[test]
-fn a_window_around_a_row_expands_after_and_follows_the_row() {
+fn a_window_around_a_row_grows_after_and_follows_the_row() {
     let db = seeded(20);
     let (log, callback) = recorder();
     let spec = WindowSpec::Around { id: rid("u000010"), before: 2, after: 1 };
@@ -231,15 +231,15 @@ fn nothing(_db: &Db, _size: usize) -> Vec<String> {
 #[test]
 fn the_work_of_one_change_in_the_window_does_not_depend_on_the_list_size() {
     let table: Vec<_> = SIZES.iter().map(|size| (cost(*size, inside, (0, 0)), cost(*size, outside, (0, 0)), cost(*size, nothing, (5, 0)))).collect();
-    println!("size | inside (touches, rows) | outside | expand\n{}", SIZES.iter().zip(&table).map(|(size, (a, b, c))| format!("{size} | {a:?} | {b:?} | {c:?}")).collect::<Vec<_>>().join("\n"));
+    println!("size | inside (touches, rows) | outside | grow\n{}", SIZES.iter().zip(&table).map(|(size, (a, b, c))| format!("{size} | {a:?} | {b:?} | {c:?}")).collect::<Vec<_>>().join("\n"));
     type Cell = (usize, usize);
     let spread = |pick: fn(&(Cell, Cell, Cell)) -> usize| table.iter().map(pick).max().unwrap() - table.iter().map(pick).min().unwrap();
     assert_eq!(spread(|row| row.0 .0) + spread(|row| row.1 .0), 0, "touches of a change inside and outside, per size 20, 200, 2000: {table:?}");
-    assert!(spread(|row| row.2 .0) <= 16, "touches of an expand differ only by hash collisions: {table:?}");
+    assert!(spread(|row| row.2 .0) <= 16, "touches of an grow differ only by hash collisions: {table:?}");
     assert!(table.iter().all(|row| (row.0 .1, row.1, row.2 .1) == (table[0].0 .1, table[0].1, table[0].2 .1)), "rows loaded per size: {table:?}");
     assert_eq!(table[0].1, (0, 0), "a change outside the window touches and loads nothing");
     assert_eq!(table[0].0 .1, 1, "one row loaded for one change inside");
-    assert_eq!(table[0].2 .1, 5, "an expand loads the rows it adds");
+    assert_eq!(table[0].2 .1, 5, "an grow loads the rows it adds");
 }
 
 #[test]

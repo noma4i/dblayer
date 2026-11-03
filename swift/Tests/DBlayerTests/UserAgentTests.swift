@@ -3,11 +3,6 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class AgentProgress: ByteProgress, @unchecked Sendable {
-  override func sent(bytes: UInt64) {}
-  override func isCancelled() -> Bool { false }
-}
-
 private final class AgentSink: SubscriptionSink, @unchecked Sendable {
   private let lock = NSLock()
   private var opened: String?
