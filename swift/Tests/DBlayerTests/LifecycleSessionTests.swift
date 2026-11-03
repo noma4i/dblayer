@@ -162,8 +162,8 @@ extension BridgeProbeTests {
     let live = try Self.holdList(history)
     defer { _ = try? DB.database.cancelStream(stream: live) }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
-    let seen = history.states.count
     try await DB.sessionReset()
+    let seen = history.states.count
     try await Self.startSealedSession("B")
     _ = try Self.holdList(history)
     await eventually("the held list shows B") { history.states.last?.contains("B") == true }

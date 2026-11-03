@@ -107,6 +107,11 @@ final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Senda
   }
 }
 
+func isState(_ delivery: StreamDelivery) -> Bool {
+  if case .state = delivery.value { return true }
+  return false
+}
+
 extension Query {
   func current() async throws -> [Model] { try await read() }
 }
@@ -134,13 +139,18 @@ struct TestLive<Model: DBModel>: Sendable {
   func current() async throws -> [Model] { try await query.current() }
 
   func stream() async throws -> AsyncStream<[Model]> {
-    let snapshots = try await TestSnapshots(query: query).stream()
+    let value = try AccountScope().stream(query)
     return AsyncStream { continuation in
       let task = Task {
-        for await snapshot in snapshots { continuation.yield(snapshot.rows) }
+        var projection = ListProjection<Model>()
+        for await delivery in value {
+          let applied = projection.apply(delivery)
+          if applied == .resync { value.resync() }
+          if applied == .changed, !isState(delivery) { continuation.yield(projection.rows) }
+        }
         continuation.finish()
       }
-      continuation.onTermination = { _ in task.cancel() }
+      continuation.onTermination = { _ in task.cancel(); value.cancel() }
     }
   }
 }

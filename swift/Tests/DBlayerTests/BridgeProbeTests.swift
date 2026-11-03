@@ -31,7 +31,7 @@ struct BridgeProbeTests {
     #expect(await changes.next()?.isEmpty == true)
   }
 
-  @Test
+  @Test @MainActor
   func aWarmQueryAnswersFromMemoryAndALiveReadLeavesItWarm() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     #expect(try await Moment.recent.cached() == nil)
@@ -44,7 +44,10 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     #expect(try await Moment.recent.cached() == nil)
     _ = try await Moment.send(in: DB.account(), text: "n").row
-    #expect(try await Moment.recent.current().count == 1)
+    do {
+      let list = Projected<Moment>(try AccountScope().stream(Moment.recent))
+      await eventually("the stream shows the row") { list.rows.count == 1 }
+    }
     #expect(try await Moment.recent.cached()?.value.first?.text == "n")
   }
 
@@ -121,7 +124,7 @@ struct BridgeProbeTests {
       } else {
         transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false}}}}"#)
       }
-      let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
+      let list = Projected<Moment>(try AccountScope().stream(Moment.feed, refreshOnConnect: true))
       do {
         try await list.loaded()
         #expect(index < 2)

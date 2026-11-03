@@ -23,8 +23,8 @@ extension BridgeProbeTests {
       transport.enqueue(operation, reply: response)
       do {
         if queued {
-          let row = try await DB.account().send(Moment.self, values: ["text": .string("hello"), "media": .null]).row
-          try await database.settled(model: "Moment", rowId: row.id, action: nil)
+          let receipt = try await database.send(request: CommandRequest(epoch: database.sessionEpoch(), model: "Moment", valuesJson: #"{"text":"hello","media":null}"#, argsJson: "{}", upload: nil))
+          try await database.settled(model: "Moment", rowId: receipt.row.id, action: nil)
         } else {
           _ = try await database.run(operation: operation, variablesJson: "{}")
         }
