@@ -100,7 +100,10 @@ impl Database {
 
     /// Server work of the epoch of the caller: the task is aborted when the epoch ends.
     pub(super) async fn serve_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-        self.in_epoch(epoch, target, async move { super::database::cancellable(async move { work.await.map_err(Into::into) }).await? }).await
+        let life = self.db.shared.store.lifecycle.clone();
+        self.in_epoch(epoch, target, async move {
+            super::database::cancellable(crate::store::ORIGIN.scope((life, epoch), async move { work.await.map_err(Into::into) })).await?
+        }).await
     }
 
     fn admit_command(&self, request: &CommandRequest) -> Result<(), DbError> {

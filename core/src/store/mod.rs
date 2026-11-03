@@ -87,16 +87,35 @@ pub(crate) fn pinned_to_epoch<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch:
     result
 }
 
-/// The lifecycle and epoch of the pinned write on this thread, if there is one.
+tokio::task_local! {
+    /// The epoch of the caller that started the work of this task. Every lease and every SQL commit of the task belongs to that epoch.
+    pub(crate) static ORIGIN: (Arc<crate::lifecycle::Lifecycle>, u64);
+}
+
+/// The lifecycle and epoch of the caller that started the work of this task, if the task has one.
+pub(crate) fn origin_epoch() -> Option<(Arc<crate::lifecycle::Lifecycle>, u64)> {
+    ORIGIN.try_with(Clone::clone).ok()
+}
+
+/// Wraps a blocking job so that it commits under the epoch of the task that ordered it.
+pub(crate) fn carry_origin<R>(work: impl FnOnce() -> R) -> impl FnOnce() -> R {
+    let origin = origin_epoch();
+    move || match origin {
+        Some((life, epoch)) => pinned_to_epoch(&life, epoch, work),
+        None => work(),
+    }
+}
+
+/// The lifecycle and epoch that the SQL commit on this thread belongs to: a pinned write, else the origin of the running task.
 fn pinned_epoch() -> Option<(Arc<crate::lifecycle::Lifecycle>, u64)> {
-    PINNED.with(|pinned| pinned.borrow().clone())
+    PINNED.with(|pinned| pinned.borrow().clone()).or_else(origin_epoch)
 }
 
 fn ensure_pinned_epoch() -> Result<(), StoreError> {
-    PINNED.with(|pinned| match &*pinned.borrow() {
-        Some((life, epoch)) if !life.admits_epoch(*epoch) => Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)),
+    match pinned_epoch() {
+        Some((life, epoch)) if !life.admits_epoch(epoch) => Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)),
         _ => Ok(()),
-    })
+    }
 }
 
 impl Inner {

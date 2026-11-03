@@ -18,11 +18,6 @@ private func membersReply(_ ids: [String]) -> String {
 
 private let forbidden = DbError.Http(status: 403, detail: "forbidden")
 
-private extension MockTransport {
-  func enqueueOutcome(_ operation: String, reply: String, refusal: Bool, delay: TimeInterval) {
-    if refusal { enqueue(operation, failure: forbidden, delay: delay) } else { enqueue(operation, reply: reply, delay: delay) }
-  }
-}
 
 private func forwardAnswer(_ id: String, chat: String) -> String {
   #"{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"\#(id)","chatId":"\#(chat)","text":"hello","at":99}}}}"#
@@ -56,51 +51,66 @@ extension BridgeProbeTests {
     #expect(creates() == 1)
   }
 
-  /// K13 (B6, C05): leave and the member actions change the real lists before the answer. The answer keeps the change, a refusal restores the ids and the order of the lists.
+  /// Opens a session with a club whose two member lists hold u1 u2 u3 u4 (JOINED) and u2 u1 u3 u4 (OWNER_FIRST).
   @MainActor
-  @Test(.timeLimit(.minutes(2)))
-  func aClubActionChangesItsListsBeforeTheAnswerAndARefusalRestoresThem() async throws {
-    for refusal in [false, true] {
-      let case_ = refusal ? "refused" : "answered"
-      let transport = MockTransport()
-      transport.enqueue("CreateClub", reply: clubCreated)
-      transport.enqueue("ClubMembers", reply: membersReply(["u1", "u2", "u3"]))
-      transport.enqueue("ClubMembers", reply: membersReply(["u2", "u1", "u3"]))
-      try await Self.openClubSession(transport)
-      let club = try await Club.create(name: "friends")
-      let joined = try Person.clubMembers(club.id, "JOINED")
-      let owners = try Person.clubMembers(club.id, "OWNER_FIRST")
-      try await joined.load()
-      try await owners.load()
-      func lists() async throws -> [[String]] { [try await joined.read().map(\.id), try await owners.read().map(\.id)] }
-      #expect(try await lists() == [["u1", "u2", "u3"], ["u2", "u1", "u3"]], "\(case_): the lists before the action")
+  static func openClubWithMembers(_ transport: MockTransport) async throws -> (Club, Query<Person>, Query<Person>) {
+    transport.enqueue("CreateClub", reply: clubCreated)
+    transport.enqueue("ClubMembers", reply: membersReply(["u1", "u2", "u3", "u4"]))
+    transport.enqueue("ClubMembers", reply: membersReply(["u2", "u1", "u3", "u4"]))
+    try await openClubSession(transport)
+    let club = try await Club.create(name: "friends")
+    let joined = try Person.clubMembers(club.id, "JOINED")
+    let owners = try Person.clubMembers(club.id, "OWNER_FIRST")
+    try await joined.load()
+    try await owners.load()
+    return (club, joined, owners)
+  }
 
-      transport.enqueueOutcome("RemoveClubMember", reply: clubAnswer("removeClubMember"), refusal: refusal, delay: 2)
-      let started = Date()
-      let removing = Task { try await club.removeMember(userIds: ["u2"]) }
-      await eventually("remove member changed both lists") { ((try? await lists()) ?? []) == [["u1", "u3"], ["u1", "u3"]] }
-      #expect(Date().timeIntervalSince(started) < 1.5, "\(case_): the lists changed only after the answer")
-      let removed = await removing.result
-      #expect(removed.isFailure == refusal, "\(case_): the outcome of remove member")
-      let afterRemove = refusal ? [["u1", "u2", "u3"], ["u2", "u1", "u3"]] : [["u1", "u3"], ["u1", "u3"]]
-      await eventually("the lists after remove member") { ((try? await lists()) ?? []) == afterRemove }
-
-      if !refusal {
-        transport.enqueue("AddClubMember", reply: clubAnswer("addClubMember"), delay: 2)
-        let adding = Task { try await club.addMember(userIds: ["u2"]) }
-        await eventually("add member changed both lists") { ((try? await lists()) ?? []) == [["u1", "u3", "u2"], ["u1", "u3", "u2"]] }
-        _ = await adding.result
-        #expect(try await lists() == [["u1", "u3", "u2"], ["u1", "u3", "u2"]], "\(case_): the lists after add member")
-      }
-
-      transport.enqueueOutcome("LeaveClub", reply: clubAnswer("leaveClub"), refusal: refusal, delay: 2)
-      let leaving = Task { try await club.leave() }
-      await eventually("leave removed the club from its list") { ((try? await Club.ids([club.id]).read().map(\.id)) ?? ["?"]).isEmpty }
-      let left = await leaving.result
-      #expect(left.isFailure == refusal, "\(case_): the outcome of leave")
-      let remaining = try await Club.ids([club.id]).read().map(\.id)
-      #expect(remaining == (refusal ? [club.id] : []), "\(case_): the club list after leave")
+  /// K13 (B6, C05): remove member and add member change both lists before the answer. The answer keeps the change, a refusal restores the ids and the order of both lists.
+  @MainActor
+  @Test(.timeLimit(.minutes(2)), arguments: [(true, false), (true, true), (false, false), (false, true)])
+  func aMemberActionChangesBothListsBeforeTheAnswerAndARefusalRestoresThem(removing: Bool, refusal: Bool) async throws {
+    let case_ = "\(removing ? "remove" : "add") \(refusal ? "refused" : "answered")"
+    let transport = MockTransport()
+    let (club, joined, owners) = try await Self.openClubWithMembers(transport)
+    func lists() async throws -> [[String]] { [try await joined.read().map(\.id), try await owners.read().map(\.id)] }
+    let original = [["u1", "u2", "u3", "u4"], ["u2", "u1", "u3", "u4"]]
+    if !removing {
+      transport.enqueue("RemoveClubMember", reply: clubAnswer("removeClubMember"))
+      _ = try await club.removeMember(userIds: ["u4"])
+      #expect(try await lists() == [["u1", "u2", "u3"], ["u2", "u1", "u3"]], "\(case_): the setup")
     }
+    let user = removing ? "u2" : "u4"
+    let operation = removing ? "RemoveClubMember" : "AddClubMember"
+    let answer = clubAnswer(removing ? "removeClubMember" : "addClubMember")
+    let hold = transport.hold(operation, reply: answer, failure: refusal ? forbidden : nil)
+    let acting = Task { removing ? try await club.removeMember(userIds: [user]) : try await club.addMember(userIds: [user]) }
+    await hold.entered()
+    let during = removing ? [["u1", "u3", "u4"], ["u1", "u3", "u4"]] : original
+    #expect(try await lists() == during, "\(case_): the lists before the answer")
+    hold.release()
+    let outcome = await acting.result
+    #expect(outcome.isFailure == refusal, "\(case_): the outcome")
+    let after = refusal ? (removing ? original : [["u1", "u2", "u3"], ["u2", "u1", "u3"]]) : during
+    await eventually("the lists after the outcome") { ((try? await lists()) ?? []) == after }
+  }
+
+  /// K13 (B6, C05): leave removes the club from its list before the answer. The answer keeps it away, a refusal puts it back.
+  @MainActor
+  @Test(.timeLimit(.minutes(2)), arguments: [false, true])
+  func leaveRemovesTheClubFromItsListBeforeTheAnswerAndARefusalRestoresIt(refusal: Bool) async throws {
+    let transport = MockTransport()
+    transport.enqueue("CreateClub", reply: clubCreated)
+    try await Self.openClubSession(transport)
+    let club = try await Club.create(name: "friends")
+    let hold = transport.hold("LeaveClub", reply: clubAnswer("leaveClub"), failure: refusal ? forbidden : nil)
+    let leaving = Task { try await club.leave() }
+    await hold.entered()
+    #expect(try await Club.ids([club.id]).read().isEmpty, "the club stayed in its list before the answer")
+    hold.release()
+    let outcome = await leaving.result
+    #expect(outcome.isFailure == refusal, "the outcome of leave")
+    await eventually("the club list after the outcome") { ((try? await Club.ids([club.id]).read().map(\.id)) ?? ["?"]) == (refusal ? [club.id] : []) }
   }
 
   /// K12: a forward into the same chat and into another chat leaves the source row unchanged, upserts the answer row in its own chat, and the call returns the answer row.
@@ -130,31 +140,27 @@ extension BridgeProbeTests {
 
   /// K22 (B6, C05): a forward shows a local copy in the thread of the target chat before the answer. The answer replaces the copy, a refusal removes it.
   @MainActor
-  @Test(.timeLimit(.minutes(2)))
-  func aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt() async throws {
-    for refusal in [false, true] {
-      let case_ = refusal ? "refused" : "answered"
-      let transport = MockTransport()
-      transport.enqueue("SendLetter", reply: letterSent)
-      try await Self.openClubSession(transport)
-      let local = try await Letter.send(in: DB.account(), chatId: "c1", text: "hello", at: 1).row
-      try await local.settled(action: nil)
-      let sourceId = try await local.confirmedId()
-      let source = try #require(try await Letter.ids([sourceId]).read().first)
-      let thread = try Letter.thread(chatId: "c2")
-      #expect(try await thread.read().isEmpty)
+  @Test(.timeLimit(.minutes(2)), arguments: [false, true])
+  func aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt(refusal: Bool) async throws {
+    let transport = MockTransport()
+    transport.enqueue("SendLetter", reply: letterSent)
+    try await Self.openClubSession(transport)
+    let local = try await Letter.send(in: DB.account(), chatId: "c1", text: "hello", at: 1).row
+    try await local.settled(action: nil)
+    let sourceId = try await local.confirmedId()
+    let source = try #require(try await Letter.ids([sourceId]).read().first)
+    let thread = try Letter.thread(chatId: "c2")
+    #expect(try await thread.read().isEmpty)
 
-      transport.enqueueOutcome("ForwardLetter", reply: forwardAnswer("fwd-1", chat: "c2"), refusal: refusal, delay: 2)
-      let started = Date()
-      let forwarding = Task { try await source.forward(targetChatId: "c2") }
-      await eventually("the target thread shows the copy") { ((try? await thread.read().count) ?? 0) == 1 }
-      #expect(Date().timeIntervalSince(started) < 1.5, "\(case_): the copy appeared only after the answer")
-      let copy = try #require(try await thread.read().first)
-      #expect(copy.id != "fwd-1" && copy.text == "hello" && copy.chatId == "c2", "\(case_): the copy is \(copy.id)")
-      let result = await forwarding.result
-      #expect(result.isFailure == refusal, "\(case_): the outcome of forward")
-      await eventually("the target thread shows the outcome") { ((try? await thread.read().map(\.id)) ?? ["?"]) == (refusal ? [] : ["fwd-1"]) }
-    }
+    let hold = transport.hold("ForwardLetter", reply: forwardAnswer("fwd-1", chat: "c2"), failure: refusal ? forbidden : nil)
+    let forwarding = Task { try await source.forward(targetChatId: "c2") }
+    await hold.entered()
+    let copy = try #require(try await thread.read().first, "the target thread has no copy before the answer")
+    #expect(copy.id != "fwd-1" && copy.text == "hello" && copy.chatId == "c2", "the copy is \(copy.id)")
+    hold.release()
+    let result = await forwarding.result
+    #expect(result.isFailure == refusal, "the outcome of forward")
+    await eventually("the target thread shows the outcome") { ((try? await thread.read().map(\.id)) ?? ["?"]) == (refusal ? [] : ["fwd-1"]) }
   }
 }
 

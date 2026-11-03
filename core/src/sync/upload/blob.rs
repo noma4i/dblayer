@@ -9,10 +9,10 @@ impl Inner {
     pub(crate) async fn expire_blobs(self: &Arc<Self>) -> Result<(), SyncError> {
         let failed_due = self.now_ms().saturating_sub(self.config.upload.failed_ttl.as_millis().try_into().unwrap_or(i64::MAX));
         let inner = self.clone();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(crate::store::carry_origin(move || {
             inner.db.expire_blob_cache(failed_due)?;
             Ok::<_, SyncError>(())
-        }).await.map_err(|error| SyncError::Store(error.to_string()))?
+        })).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
     pub(super) fn blob_id(&self, seq: i64) -> Result<Option<String>, SyncError> {

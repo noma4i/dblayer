@@ -117,9 +117,11 @@ K15	iOS b c	kotlin	com.noma4i.dblayer.ValueBridgeTest.theFirstDeliveryHasNoEdits
 K16	B8	kotlin	com.noma4i.dblayer.ValueBridgeTest.aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList	green	-	arch-r3c
 K04	B4	swift	BridgeProbeTests.aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork	green	-	arch-r3c
 K04	B4	kotlin	com.noma4i.dblayer.ClubTest.aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork	green	-	arch-r3c
-K13	B6	swift	BridgeProbeTests.aClubActionChangesItsListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
+K13	B6	swift	BridgeProbeTests.aMemberActionChangesBothListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
+K13	B6	swift	BridgeProbeTests.leaveRemovesTheClubFromItsListBeforeTheAnswerAndARefusalRestoresIt	green	-	arch-r3c
 K22	B6	swift	BridgeProbeTests.aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt	green	-	arch-r3c
-K13	B6	kotlin	com.noma4i.dblayer.ClubTest.aClubActionChangesItsListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
+K13	B6	kotlin	com.noma4i.dblayer.ClubTest.aMemberActionChangesBothListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
+K13	B6	kotlin	com.noma4i.dblayer.ClubTest.leaveRemovesTheClubFromItsListBeforeTheAnswerAndARefusalRestoresIt	green	-	arch-r3c
 K22	B6	kotlin	com.noma4i.dblayer.ClubTest.aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt	green	-	arch-r3c
 K12	forward	swift	BridgeProbeTests.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
 K12	forward	kotlin	com.noma4i.dblayer.ClubTest.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
@@ -127,9 +129,13 @@ RC09	C09	swift	ProjectionRecoveryTests.aLostRecoverySnapshotAsksAgainAndTheNextS
 RC09	C09	swift	ProjectionRecoveryTests.aJumpAtTheFirstDeliveryReadAsksForASnapshotAlthoughTheBaseMatches	green	-	arch-r3d review C09
 RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aLostRecoverySnapshotAsksAgainAndTheNextSnapshotClosesTheGap	green	-	arch-r3d review C09
 RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aJumpAtTheFirstDeliveryReadAsksForASnapshotAlthoughTheBaseMatches	green	-	arch-r3d review C09
-K17	C01	core	every_entry_of_a_left_account_is_refused_and_reaches_nothing	green	-	arch-r3d review C01
-K18	C04	core	a_plain_action_that_never_reached_the_server_ends_with_the_network_error_and_is_not_replayed	green	-	arch-r3d review C04
-K19	C04	core	a_plain_action_unsent_when_the_network_drops_never_goes_out_after_it_returns	green	-	arch-r3d review C04
-K20	C08	core	a_second_failure_after_a_network_return_waits_by_the_backoff_and_the_clock_delivers	green	-	arch-r3d review C08
+K17	C01	core	every_entry_of_a_left_account_is_refused_and_reaches_nothing	green	core-only: the proof counts the requests that reached the fake world	arch-r3d review C01
+K18	C04	core	a_plain_action_that_never_reached_the_server_ends_with_the_network_error_and_is_not_replayed	green	core-only: the proof counts the requests that reached the fake world	arch-r3d review C04
+K19	C04	core	a_plain_action_unsent_when_the_network_drops_never_goes_out_after_it_returns	green	core-only: the proof holds the outbox gate of the sender	arch-r3d review C04
+K20	C08	core	a_second_failure_after_a_network_return_waits_by_the_backoff_and_the_clock_delivers	green	core-only: the proof moves the test clock and reads the outbox	arch-r3d review C08
 K21	C02	swift	BridgeProbeTests.aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced	green	-	arch-r3d review C02
 K21	C02	kotlin	com.noma4i.dblayer.ValueBridgeTest.aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced	green	-	arch-r3d review C02
+K23	D01	core	an_accepted_request_whose_answer_lands_after_the_next_account_started_writes_nothing	green	core-only: the proof holds a server request through the fake world gate and moves the epoch in the core	arch-r3d review D01
+K24	D03	core	a_running_flush_does_not_send_a_plain_action_after_the_network_dropped_between_two_sends	green	core-only: the proof holds a server request through the fake world gate	arch-r3d review D03
+K25	D04	core	two_refused_changes_of_one_member_restore_the_original_lists_in_both_orders	green	core-only: the proof holds server requests through the fake world gate and reads the member lists in the store	arch-r3d review D04
+D05	D05	core	the_answer_a_call_waits_for_survives_256_results_nobody_waits_for	green	core-only: the proof publishes results straight into the sender	arch-r3d review D05

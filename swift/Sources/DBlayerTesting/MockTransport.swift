@@ -11,6 +11,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
     let body: String?
     let failure: DbError?
     let delay: TimeInterval
+    var hold: Hold? = nil
   }
 
   private let lock = NSLock()
@@ -61,6 +62,13 @@ public final class MockTransport: Transport, @unchecked Sendable {
     lock.withLock { replies[operation, default: []].append(Reply(body: nil, failure: failure, delay: delay)) }
   }
 
+  /// Queues an answer that waits at the server: `entered()` returns when the request arrived, and the answer goes out when the test calls `release()`.
+  public func hold(_ operation: String, reply: String = "{}", failure: DbError? = nil) -> Hold {
+    let hold = Hold()
+    lock.withLock { replies[operation, default: []].append(Reply(body: failure == nil ? reply : nil, failure: failure, delay: 0, hold: hold)) }
+    return hold
+  }
+
   public func emit(_ operation: String, json: String) throws {
     try lock.withLock { sinks[operation] }?.event(json: json)
   }
@@ -100,6 +108,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
     }
     guard let reply else { throw await refuse(request) }
     if reply.delay > 0 { try await Task.sleep(for: .seconds(reply.delay)) }
+    if let hold = reply.hold { await hold.pass() }
     if let failure = reply.failure { throw failure }
     return reply.body ?? "{}"
   }
@@ -116,5 +125,25 @@ public final class MockTransport: Transport, @unchecked Sendable {
       }
       return .Invalid(detail: detail)
     }
+  }
+}
+
+/// A request held at the server by `MockTransport.hold`.
+public final class Hold: @unchecked Sendable {
+  private let arrived = AsyncStream<Void>.makeStream()
+  private let freed = AsyncStream<Void>.makeStream()
+
+  /// Returns when the request reached the transport.
+  public func entered() async {
+    var arrivals = arrived.stream.makeAsyncIterator()
+    _ = await arrivals.next()
+  }
+
+  public func release() { freed.continuation.yield(()) }
+
+  fileprivate func pass() async {
+    arrived.continuation.yield(())
+    var releases = freed.stream.makeAsyncIterator()
+    _ = await releases.next()
   }
 }

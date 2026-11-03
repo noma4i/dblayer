@@ -142,10 +142,21 @@ impl Inner {
         let mut report = FlushReport::default();
         if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(report); }
         self.refuse_non_durable()?;
+        let mut checked = self.refusal_state();
         locked(self.operation_queue()?).begin_pass();
         let mut cursor = i64::MIN;
-        while let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? {
+        loop {
+            if self.refusal_state() != checked {
+                self.refuse_non_durable()?;
+                checked = self.refusal_state();
+            }
+            let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? else { break };
             if !self.admitted(crate::lifecycle::Origin::Session) { break; }
+            if self.refusal_state() != checked {
+                self.refuse_non_durable()?;
+                checked = self.refusal_state();
+                if !locked(self.operation_queue()?).pending.contains(&entry.operation.id.0) { continue; }
+            }
             locked(self.operation_queue()?).attempted(entry.operation.id.0);
             locked(&self.backoff_released).remove(&entry.operation.id.0);
             let result = self.send(&entry, None).await?; // lock-ok: queue guard ended at statement
@@ -163,6 +174,11 @@ impl Inner {
         let leaving = account.0.is_some() && session.is_some() && account.0.as_deref() != session;
         if session.is_some() { account.0 = session.map(str::to_string); }
         if leaving { if let Some(newest) = newest { account.1 = account.1.max(newest); } }
+    }
+
+    /// What decides whether a pending operation may still go out: the drop of the network, the account that left and the connection itself. A change of it during a flush means that an operation picked earlier may no longer be sent.
+    fn refusal_state(&self) -> (i64, i64, bool) {
+        (*locked(&self.network_lost), locked(&self.account).1, self.connectivity.is_online())
     }
 
     /// Only sending a message and a media upload wait for the network (`specs/architecture.md` D). Any other action that needs the server is refused and rolled back when the network is away or when it was left over from before this open.
@@ -191,12 +207,13 @@ impl Inner {
         spec.actions.iter().find(|declared| declared.name == action).is_none_or(|declared| declared.mutation.is_none() || declared.durable || declared.upload)
     }
 
-    /// The row at the root of an answer is published before the commit that closes the operation, so a waiter that sees the operation closed finds it. At most 256 unread results stay.
-    fn publish_answer_root(&self, operation: i64, root: Option<RowId>) {
+    /// The row at the root of an answer is published before the commit that closes the operation, so a waiter that sees the operation closed finds it. A call that waits keeps its result until it reads it or goes away. At most 256 results that nobody waits for stay.
+    pub(in crate::sync) fn publish_answer_root(&self, operation: i64, root: Option<RowId>) {
+        let wanted = locked(&self.answer_wanted).clone();
         let mut roots = locked(&self.answer_roots);
         roots.insert(operation, root);
-        while roots.len() > 256 {
-            let Some(oldest) = roots.keys().min().copied() else { break };
+        while roots.keys().filter(|key| !wanted.contains(key)).count() > 256 {
+            let Some(oldest) = roots.keys().filter(|key| !wanted.contains(key)).min().copied() else { break };
             roots.remove(&oldest);
         }
     }

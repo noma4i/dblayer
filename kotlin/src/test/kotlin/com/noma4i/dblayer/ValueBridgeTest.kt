@@ -488,7 +488,7 @@ class ValueBridgeTest {
             try {
                 eventually("the reader holds the 300 rows") { rowCount.get() == 300 }
                 assertTrue("the reader received ${received.get()} deliveries of a burst of 300: the buffer bounded nothing", received.get() <= 260)
-                assertTrue("the reader was not told that it missed deliveries", missed.get() > 0)
+                assertTrue("the reader was told about ${missed.get()} missed deliveries: a burst of 300 into a buffer of 256 loses at least 44", missed.get() >= 44)
             } finally {
                 reading.cancel()
                 stream.close()

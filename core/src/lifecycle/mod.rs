@@ -425,6 +425,7 @@ impl Lifecycle {
         let (lease, activity) = {
             let mut state = crate::db::locked(&self.state);
             if !state.snapshot().admits(origin) { return Err(Ended); }
+            if crate::store::ORIGIN.try_with(|(_, held)| *held != state.snapshot().session_epoch).unwrap_or(false) { return Err(Ended); }
             let (id, epoch) = (state.next_lease, state.snapshot().session_epoch);
             state.next_lease += 1;
             state.leases.insert(id, LeaseInfo { target, passive });

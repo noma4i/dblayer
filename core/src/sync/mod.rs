@@ -160,6 +160,7 @@ pub(crate) struct Inner {
     pub(crate) backoff_released: Mutex<std::collections::BTreeSet<i64>>,
     /// The row the answer of an operation carried at its root, by operation: the call that waits for the answer returns it.
     pub(crate) answer_roots: Mutex<HashMap<i64, Option<crate::identity::RowId>>>,
+    pub(crate) answer_wanted: Mutex<std::collections::BTreeSet<i64>>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub(crate) upload_effects: crate::db::dispatch::OrderedEffects,
     pub(crate) file_tasks: Arc<tokio::sync::watch::Sender<usize>>,
@@ -298,6 +299,7 @@ impl Sync {
             network_lost: Mutex::new(i64::MIN),
             backoff_released: Mutex::new(std::collections::BTreeSet::new()),
             answer_roots: Mutex::new(HashMap::new()),
+            answer_wanted: Mutex::new(std::collections::BTreeSet::new()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             upload_effects: crate::db::dispatch::OrderedEffects::default(),
             file_tasks: Arc::new(tokio::sync::watch::channel(0).0),

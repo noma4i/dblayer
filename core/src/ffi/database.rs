@@ -91,7 +91,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
             work()
         }
     };
-    executor()?.spawn_blocking(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
+    executor()?.spawn_blocking(crate::store::carry_origin(work)).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
@@ -263,16 +263,21 @@ impl Database {
     /// Queues the action. An action with no optimistic change and no declared result returns after the server answered, with the row at the root of the answer: the receiver row when the answer names the receiver, else the row the answer carried. The receiver row is never overwritten by an answer with another id.
     pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
         self.refuse_offline(&model, &action)?;
-        let waits = self.db.spec(&model)?.actions.iter().find(|declared| declared.name == action).is_some_and(|declared| declared.returns_answer());
+        let declared = self.db.spec(&model)?.actions.iter().find(|declared| declared.name == action).cloned();
+        let waits = declared.as_ref().is_some_and(|declared| declared.returns_answer());
+        let removes_receiver = declared.as_ref().is_some_and(|declared| declared.removes_receiver);
         let (call_model, call_action, receiver) = (model.clone(), action.clone(), row_id.clone());
-        let queued = self.write_in_epoch(epoch, "act", move |database| {
+        let sync_for_wish = if waits { Some(self.sync()?.clone()) } else { None };
+        let (queued, wish) = self.write_in_epoch(epoch, "act", move |database| {
             let acted = database.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
+            let wish = sync_for_wish.map(|sync| sync.expect_answer(acted.operation));
             database.send_writes();
-            Ok(QueuedAction { row: database.wire(&model)?.row(&acted.row), operation: acted.operation })
+            Ok((QueuedAction { row: database.wire(&model)?.row(&acted.row), operation: acted.operation }, wish))
         }).await?;
         if !waits { return Ok(queued); }
-        let (sync, db, wire, operation) = (self.sync()?.clone(), self.db.clone(), self.wire(&call_model)?.clone(), queued.operation);
+        let (sync, db, wire, operation, left) = (self.sync()?.clone(), self.db.clone(), self.wire(&call_model)?.clone(), queued.operation, queued.row.clone());
         self.serve_in_epoch(epoch, "act answer", async move {
+            let _wish = wish;
             let receiver = id(&receiver)?;
             sync.settled(&call_model, &receiver, Some(&call_action)).await?;
             let answered = match sync.answer_root(operation) {
@@ -281,10 +286,14 @@ impl Database {
                 None => return Err(DbError::Invalid { detail: format!("the answer to {call_model}.{call_action} was not published") }),
             };
             let row = match db.find(&call_model, &answered)? {
-                Some(row) => row,
-                None => db.find(&call_model, &receiver)?.ok_or_else(|| DbError::Invalid { detail: format!("{call_model} {receiver} is gone after the answer") })?,
+                Some(row) => Some(row),
+                None => db.find(&call_model, &receiver)?,
             };
-            Ok::<_, DbError>(QueuedAction { row: wire.row(&row), operation })
+            match row {
+                Some(row) => Ok::<_, DbError>(QueuedAction { row: wire.row(&row), operation }),
+                None if removes_receiver => Ok(QueuedAction { row: left, operation }),
+                None => Err(DbError::Invalid { detail: format!("{call_model} {receiver} is gone after the answer") }),
+            }
         }).await
     }
     pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<(), DbError> {

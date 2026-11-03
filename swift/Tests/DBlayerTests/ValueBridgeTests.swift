@@ -338,9 +338,12 @@ private final class LossyReader: ValueSink, @unchecked Sendable {
   private var projection = ListProjection<Moment>()
   private var dropping = false
   private var endings: [StreamEnd] = []
-  private(set) var snapshots = 0
-  private(set) var resyncs = 0
+  private var snapshotCount = 0
+  private var resyncCount = 0
   var stream: UInt64 = 0
+
+  var snapshots: Int { lock.withLock { snapshotCount } }
+  var resyncs: Int { lock.withLock { resyncCount } }
 
   var rows: Int { lock.withLock { projection.rows.count } }
   var ended: [StreamEnd] { lock.withLock { endings } }
@@ -350,10 +353,10 @@ private final class LossyReader: ValueSink, @unchecked Sendable {
   func delivered(delivery: StreamDelivery) {
     let ask = lock.withLock { () -> Bool in
       if dropping { dropping = false; return false }
-      if case .snapshot = delivery.value { snapshots += 1 }
+      if case .snapshot = delivery.value { snapshotCount += 1 }
       if case let .ended(reason) = delivery.value { endings.append(reason) }
       let applied = projection.apply(delivery)
-      if applied == .resync { resyncs += 1 }
+      if applied == .resync { resyncCount += 1 }
       return applied == .resync
     }
     if ask { try? DB.database.resyncStream(stream: stream) }
@@ -435,7 +438,7 @@ extension BridgeProbeTests {
     }
     #expect(seen.rows == 300, "the reader did not end with the whole list")
     #expect(seen.received <= 260, "the reader received \(seen.received) deliveries of a burst of 300: the buffer bounded nothing")
-    #expect(seen.missed > 0, "the reader was not told that it missed deliveries")
+    #expect(seen.missed >= 44, "the reader was told about \(seen.missed) missed deliveries: a burst of 300 into a buffer of 256 loses at least 44")
     stream.cancel()
   }
 }

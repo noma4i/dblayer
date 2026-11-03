@@ -1,5 +1,6 @@
 mod flush;
 mod outcomes;
+#[cfg(test)] mod answer_wait_tests;
 mod pause;
 #[cfg(test)] mod pause_tests;
 mod report;
@@ -78,6 +79,12 @@ impl Sync {
     }
 
     /// The row at the root of the answer to an operation, once: `None` when no answer was published, `Some(None)` when the answer named no row.
+    /// The call that queued `operation` waits for its answer: the result stays until the guard is dropped.
+    pub fn expect_answer(&self, operation: i64) -> AnswerWish {
+        locked(&self.inner.answer_wanted).insert(operation);
+        AnswerWish { inner: self.inner.clone(), operation }
+    }
+
     pub fn answer_root(&self, operation: i64) -> Option<Option<RowId>> {
         locked(&self.inner.answer_roots).remove(&operation)
     }
@@ -180,3 +187,16 @@ mod variables_tests;
 mod idempotency_tests;
 #[cfg(test)]
 mod created_rows_tests;
+
+/// The interest of a waiting call in the answer of one operation. Dropping it, after a read or a cancel, frees the result.
+pub struct AnswerWish {
+    inner: std::sync::Arc<Inner>,
+    operation: i64,
+}
+
+impl Drop for AnswerWish {
+    fn drop(&mut self) {
+        locked(&self.inner.answer_wanted).remove(&self.operation);
+        locked(&self.inner.answer_roots).remove(&self.operation);
+    }
+}

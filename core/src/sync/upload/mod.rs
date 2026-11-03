@@ -297,7 +297,9 @@ impl Inner {
                 inner.finish_run(seq, position, run);
                 return;
             };
-            if let Ok(false) = lease.run(survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed))).await {
+            let life = inner.db.shared.store.lifecycle.clone();
+            let epoch = lease.epoch();
+            if let Ok(false) = lease.run(crate::store::ORIGIN.scope((life, epoch), survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed)))).await {
                 inner.fail_upload(seq, SyncError::Store("the upload task panicked".into()));
             }
             inner.finish_run(seq, position, run);

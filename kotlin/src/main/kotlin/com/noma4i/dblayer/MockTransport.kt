@@ -69,7 +69,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
         if (!events.trySend(event).isSuccess) throw DbException.Network("cable socket is closed")
         if (event is EncryptedSocketEvent.Closed) events.close()
     }
-    private class Reply(val body: String?, val failure: DbException?, val delayMillis: Long)
+    private class Reply(val body: String?, val failure: DbException?, val delayMillis: Long, val hold: Hold? = null)
 
     private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()
     private val sinks = ConcurrentHashMap<String, SubscriptionSink>()
@@ -82,6 +82,13 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
     fun enqueue(operation: String, reply: String, delayMillis: Long = 0) = push(operation, Reply(reply, null, delayMillis))
 
     fun enqueue(operation: String, failure: DbException, delayMillis: Long = 0) = push(operation, Reply(null, failure, delayMillis))
+
+    /** Queues an answer that waits at the server: `entered()` returns when the request arrived, and the answer goes out when the test calls `release()`. */
+    fun hold(operation: String, reply: String = "{}", failure: DbException? = null): Hold {
+        val hold = Hold()
+        push(operation, Reply(if (failure == null) reply else null, failure, 0, hold))
+        return hold
+    }
 
     private fun push(operation: String, reply: Reply) {
         failTestThread()
@@ -119,6 +126,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
         recorded.add(request)
         val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
         if (reply.delayMillis > 0) delay(reply.delayMillis)
+        reply.hold?.pass()
         reply.failure?.let { throw it }
         return reply.body ?: "{}"
     }
@@ -131,5 +139,21 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
             unscripted.add(request)
             throw DbException.Invalid(detail)
         }
+    }
+}
+
+/** A request held at the server by `MockTransport.hold`. */
+class Hold {
+    private val arrived = kotlinx.coroutines.CompletableDeferred<Unit>()
+    private val freed = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /** Returns when the request reached the transport. */
+    suspend fun entered() = arrived.await()
+
+    fun release() { freed.complete(Unit) }
+
+    internal suspend fun pass() {
+        arrived.complete(Unit)
+        freed.await()
     }
 }

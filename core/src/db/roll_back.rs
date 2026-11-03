@@ -83,6 +83,23 @@ impl<'a> Chain<'a> {
         }
     }
 
+    /// The next open operation that changes the same member of the same list. It inherits the state before this operation.
+    fn later_member_writer(&self, own: i64, model: &str, id: &str, scope_key: &str) -> Option<i64> {
+        self.open.range(own + 1..).find(|(_, open)| open.prior.rows.iter().any(|row| matches!(row, PriorRow::Member { model: m, id: i, scope_key: s, .. } if m == model && i == id && s == scope_key))).map(|(seq, _)| *seq)
+    }
+
+    fn hand_down_member(&mut self, seq: i64, (model, id, scope_key): (&str, &str, &str), before: &Option<String>) {
+        let Some(open) = self.open.get_mut(&seq) else { return };
+        for row in &mut open.prior.rows {
+            if let PriorRow::Member { model: m, id: i, scope_key: s, before: held } = row {
+                if m == model && i == id && s == scope_key {
+                    *held = before.clone();
+                    self.changed.insert(seq);
+                }
+            }
+        }
+    }
+
     fn drop_op(&mut self, seq: i64) {
         self.open.remove(&seq);
         self.changed.remove(&seq);
@@ -101,7 +118,7 @@ fn writes(row: &PriorRow, hidden: bool, model: &str, id: &str, field: &str) -> b
     match row {
         PriorRow::Edited { model: owner, id: row_id, owned, .. } => owner == model && row_id == id && owned.contains_key(field),
         PriorRow::Destroyed { model: owner, id: row_id, .. } => hidden && owner == model && row_id == id,
-        PriorRow::Created { .. } | PriorRow::Joined { .. } | PriorRow::Left { .. } => false,
+        PriorRow::Created { .. } | PriorRow::Member { .. } => false,
     }
 }
 
@@ -128,9 +145,8 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
                 plan.entity_ops.extend(entity_ops);
                 plan.scope_ops.extend(scope_ops);
             }
-            PriorRow::Joined { .. } | PriorRow::Left { .. } => {
-                let (_, scope_ops) = row.reappearing();
-                plan.scope_ops.extend(scope_ops);
+            PriorRow::Member { model, id, scope_key, before } => {
+                restore_member(reader, &mut chain, own, (model, id, scope_key), before, &mut plan)?;
             }
             PriorRow::Edited { model, id, before, owned } => {
                 restore_edit(reader, &mut chain, own, (model, id), (before, owned), revision, &mut plan)?;
@@ -139,6 +155,24 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
     }
     plan.transitions.extend(chain.rewrites());
     Ok(plan)
+}
+
+/// A refused change of a list member puts the member back the way it was before the operation, unless a later operation changed it again: that one inherits the state and decides.
+fn restore_member(reader: &Reader<'_>, chain: &mut Chain<'_>, own: i64, (model, id, scope_key): (&str, &str, &str), before: &Option<String>, plan: &mut Restore) -> Result<(), StoreError> {
+    if let Some(later) = chain.later_member_writer(own, model, id, scope_key) {
+        chain.hand_down_member(later, (model, id, scope_key), before);
+        return Ok(());
+    }
+    let (Ok(row), key) = (RowId::new(id), crate::identity::ListKey::from_raw(scope_key)) else { return Ok(()) };
+    let scope = crate::commit::ScopeRef::new(ModelKey::new(model), key);
+    let present = reader.scope_has_member(model, scope_key, id)?;
+    match (before, present) {
+        (Some(order_key), true) => plan.scope_ops.push(ScopeOp::Move { scope, row, order_key: order_key.clone() }),
+        (Some(order_key), false) => plan.scope_ops.push(ScopeOp::Append { scope, row, order_key: order_key.clone() }),
+        (None, true) => plan.scope_ops.push(ScopeOp::Detach { scope, row }),
+        (None, false) => {}
+    }
+    Ok(())
 }
 
 fn restore_edit(

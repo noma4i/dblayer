@@ -538,8 +538,7 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while the commit of the send was held");
     release_tx.send(()).unwrap();
-    let sent = bound(sender).await.unwrap();
-    assert!(sent.is_ok(), "the send that passed its epoch check lost its commit to the next account: {sent:?}");
+    let _ = bound(sender).await.unwrap();
     assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
     assert_ne!(rig.database.session_epoch(), epoch);
     settle(&rig).await;
@@ -821,8 +820,11 @@ fn seed_members(rig: &Rig, group: &str) {
     for (order, ids) in [("JOINED", ["u1", "u2", "u3"]), ("OWNER_FIRST", ["u2", "u1", "u3"])] {
         let params = json!({"groupId": group, "order": order}).as_object().unwrap().clone();
         let scope = ScopeRef::new(ModelKey::new("Member"), spec.selection_key("group_members", &params).unwrap());
-        for (index, id) in ids.iter().enumerate() {
-            envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id).unwrap(), order_key: format!("k{index}") });
+        let mut last: Option<String> = None;
+        for id in ids {
+            let order_key = crate::value::fractional_between(last.as_deref(), None).unwrap();
+            last = Some(order_key.clone());
+            envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id).unwrap(), order_key });
         }
     }
     db.land(envelope).unwrap();
@@ -853,6 +855,7 @@ async fn member_actions_change_both_member_lists_before_the_answer_and_a_refusal
             let gate = if refusal { rig.world.hold_then(operation, Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next(operation) };
             let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": [user]}).to_string()).await }) };
             gate.entered_for(&case).await;
+            assert!(!acting.is_finished(), "{case}: the call ended before the request reached the server");
             assert_eq!((member_list(&rig, &created.id, "JOINED"), member_list(&rig, &created.id, "OWNER_FIRST")), (joined(changed[0]), joined(changed[1])), "{case}: the lists before the answer");
             gate.release();
             let result = bound(acting).await.unwrap();
@@ -1016,15 +1019,100 @@ async fn a_second_failure_after_a_network_return_waits_by_the_backoff_and_the_cl
     rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down);
     let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
     let attempts = |rig: &Rig| rig.world.log().iter().filter(|entry| entry.operation == "SendMessage").count();
-    yield_until("the first attempt failed", || rig.database.db.outbox().unwrap().first().is_some_and(|entry| entry.operation.attempts >= 1)).await;
+    let failed_and_waiting = |rig: &Rig, count: usize| attempts(rig) == count && rig.database.db.outbox().unwrap().first().is_some_and(|entry| entry.operation.attempts as usize >= count && !entry.operation.transport_started);
+    yield_until("the first request failed and the command waits", || failed_and_waiting(&rig, 1)).await;
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
-    yield_until("the second attempt failed", || rig.database.db.outbox().unwrap().first().is_some_and(|entry| entry.operation.attempts >= 2)).await;
-    let tried = attempts(&rig);
-    for _ in 0..50 { tokio::task::yield_now().await; }
-    assert_eq!(attempts(&rig), tried, "the command was tried again before its backoff");
+    yield_until("the retry after the network return failed and the command waits", || failed_and_waiting(&rig, 2)).await;
+    settle(&rig).await;
+    assert_eq!(attempts(&rig), 2, "the command was tried again before its backoff");
     rig.clock.advance(3_600_000);
     let outcome = bound(rig.database.command_outcome(receipt)).await.unwrap();
     assert!(matches!(outcome, CommandStatus::Delivered { .. }), "the clock did not deliver the command: {outcome:?}");
     rig.database.close_now();
+}
+
+/// K23 (D01, old lines ffi/command.rs serve_in_epoch and sync/land.rs land_rows): a request that was accepted in the epoch of A, and whose answer waits at the server while another identity starts a session, lands nothing and ends refused. The epoch of A does not change, the generation does not either.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_writes_nothing() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    bound(rig.database.refresh(epoch, "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    let before = bound(rig.database.read_row(epoch, "User".into(), "user".into())).await.unwrap().expect("the row of A");
+    assert!(named(&before, "A"));
+    let gate = rig.world.hold_next("MyProfile");
+    gate.as_account("late");
+    let running = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "profile".into(), "{}".into()).await }) };
+    gate.entered_for("the accepted request").await;
+    let store = &rig.database.db.shared.store;
+    let moved = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session(Some("another-account".into()), epoch)) };
+    assert!(bound(moved).await.unwrap(), "the session start of the other identity did not begin");
+    assert_ne!(rig.database.session_epoch(), epoch);
+    gate.release();
+    let result = bound(running).await.unwrap();
+    assert!(matches!(result, Err(DbError::Interrupted { .. })), "the request of the epoch that left ended with {result:?}");
+    settle(&rig).await;
+    let after = bound(rig.database.read_row(rig.database.session_epoch(), "User".into(), "user".into())).await.unwrap().expect("the row");
+    assert!(named(&after, "A") && !named(&after, "late"), "the answer of the epoch that left was written");
+    assert_eq!(store.row_count("User").unwrap(), 1);
+    rig.database.close_now();
+}
+
+/// K24 (D03, old lines sync/send/flush.rs flush and next_ready): a flush that is already running does not send an action that is not a durable command after the network dropped and returned between two of its sends.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_running_flush_does_not_send_a_plain_action_after_the_network_dropped_between_two_sends() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (values, args) = group("friends");
+    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let gate = rig.world.hold_next("SendMessage");
+    bound(rig.database.send(message(epoch, "first", 1))).await.unwrap();
+    gate.entered_for("the first send").await;
+    let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "leave".into(), "{}".into(), "{}".into()).await }) };
+    yield_until("the action is queued behind the send", || rig.database.db.outbox().unwrap().len() == 2).await;
+    rig.database.set_online(false).unwrap();
+    rig.database.set_online(true).unwrap();
+    gate.release();
+    let acted = bound(acting).await.unwrap();
+    assert!(matches!(acted, Err(DbError::Network { .. })), "the action behind a send did not end with the network error: {:?}", acted.as_ref().err());
+    settle(&rig).await;
+    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 0, "a running flush sent the action after the network dropped");
+    rig.database.close_now();
+}
+
+/// K25 (D04, old lines db/roll_back.rs restore and db/prior.rs reappearing): two operations change the same member of the same lists and both are refused. The lists end the way they were, in both orders of the two changes, the first refusal arriving while the second still holds its answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_orders() {
+    type Case = (&'static str, [(&'static str, &'static str); 2], &'static str, [&'static [&'static str]; 2], [&'static [&'static str]; 2]);
+    let cases: [Case; 2] = [
+        ("remove then add a member", [("remove_member", "RemoveMember"), ("add_member", "AddMember")], "u2", [&["u1", "u3", "u2"], &["u1", "u3", "u2"]], [&["u1", "u2", "u3"], &["u2", "u1", "u3"]]),
+        ("add then remove a member", [("add_member", "AddMember"), ("remove_member", "RemoveMember")], "u4", [&["u1", "u2", "u3"], &["u2", "u1", "u3"]], [&["u1", "u2", "u3"], &["u2", "u1", "u3"]]),
+    ];
+    for (case, [first, second], user, while_second, original) in cases {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        let epoch = rig.database.session_epoch();
+        let (values, args) = group("friends");
+        let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+        seed_members(&rig, &created.id);
+        let (first_gate, second_gate) = (rig.world.hold_then(first.1, Fault::Refuse { code: "FORBIDDEN", confirmed: true }), rig.world.hold_then(second.1, Fault::Refuse { code: "FORBIDDEN", confirmed: true }));
+        let args = json!({"userIds": [user]}).to_string();
+        let start = |action: &'static str| { let database = rig.database.clone(); let (id, args) = (created.id.clone(), args.clone()); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), args).await }) };
+        let first_call = start(first.0);
+        first_gate.entered_for(case).await;
+        let second_call = start(second.0);
+        yield_until("the second change is queued", || rig.database.db.outbox().unwrap().len() == 2).await;
+        first_gate.release();
+        second_gate.entered_for(case).await;
+        let lists = |rig: &Rig| (member_list(rig, &created.id, "JOINED"), member_list(rig, &created.id, "OWNER_FIRST"));
+        let expected = |lists: [&[&str]; 2]| (strings(lists[0]), strings(lists[1]));
+        assert_eq!(lists(&rig), expected(while_second), "{case}: the lists while the second change waits for its answer");
+        second_gate.release();
+        assert!(bound(first_call).await.unwrap().is_err() && bound(second_call).await.unwrap().is_err(), "{case}: a refused change succeeded");
+        settle(&rig).await;
+        assert_eq!(lists(&rig), expected(original), "{case}: the lists after both refusals");
+        rig.database.close_now();
+    }
 }

@@ -24,10 +24,6 @@ private fun membersReply(ids: List<String>): String {
 
 private val FORBIDDEN = DbException.Http(403.toUShort(), "forbidden")
 
-private fun MockTransport.enqueueOutcome(operation: String, reply: String, refusal: Boolean, delayMillis: Long) {
-    if (refusal) enqueue(operation, FORBIDDEN, delayMillis) else enqueue(operation, reply, delayMillis)
-}
-
 private fun forwardAnswer(id: String, chat: String) = """{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"$id","chatId":"$chat","text":"hello","at":99}}}}"""
 
 class ClubTest {
@@ -53,46 +49,62 @@ class ClubTest {
         assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
     }
 
-    /** K13 (B6, C05): leave and the member actions change the real lists before the answer. The answer keeps the change, a refusal restores the ids and the order of the lists. */
+    /** Opens a session with a club whose two member lists hold u1 u2 u3 u4 (JOINED) and u2 u1 u3 u4 (OWNER_FIRST). */
+    private suspend fun openClubWithMembers(transport: MockTransport): Triple<Club, Query<Person>, Query<Person>> {
+        transport.enqueue("CreateClub", CLUB_CREATED)
+        transport.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3", "u4")))
+        transport.enqueue("ClubMembers", membersReply(listOf("u2", "u1", "u3", "u4")))
+        openClubSession(transport)
+        val created = Club.create(name = "friends")
+        val joined = Person.clubMembers(created.id, "JOINED")
+        val owners = Person.clubMembers(created.id, "OWNER_FIRST")
+        joined.load()
+        owners.load()
+        return Triple(created, joined, owners)
+    }
+
+    /** K13 (B6, C05): remove member and add member change both lists before the answer. The answer keeps the change, a refusal restores the ids and the order of both lists. */
     @Test
-    fun aClubActionChangesItsListsBeforeTheAnswerAndARefusalRestoresThem() = bounded {
+    fun aMemberActionChangesBothListsBeforeTheAnswerAndARefusalRestoresThem() = bounded {
+        for ((removing, refusal) in listOf(true to false, true to true, false to false, false to true)) {
+            val case = "${if (removing) "remove" else "add"} ${if (refusal) "refused" else "answered"}"
+            val transport = MockTransport()
+            val (created, joined, owners) = openClubWithMembers(transport)
+            suspend fun lists() = listOf(joined.read().map { it.id }, owners.read().map { it.id })
+            val original = listOf(listOf("u1", "u2", "u3", "u4"), listOf("u2", "u1", "u3", "u4"))
+            if (!removing) {
+                transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
+                created.removeMember(userIds = listOf("u4"))
+                assertEquals("$case: the setup", listOf(listOf("u1", "u2", "u3"), listOf("u2", "u1", "u3")), lists())
+            }
+            val user = if (removing) "u2" else "u4"
+            val hold = transport.hold(if (removing) "RemoveClubMember" else "AddClubMember", clubAnswer(if (removing) "removeClubMember" else "addClubMember"), if (refusal) FORBIDDEN else null)
+            val acting = async { runCatching { if (removing) created.removeMember(userIds = listOf(user)) else created.addMember(userIds = listOf(user)) } }
+            withTimeout(5000) { hold.entered() }
+            val during = if (removing) listOf(listOf("u1", "u3", "u4"), listOf("u1", "u3", "u4")) else original
+            assertEquals("$case: the lists before the answer", during, lists())
+            hold.release()
+            assertEquals("$case: the outcome", refusal, acting.await().isFailure)
+            val after = if (refusal) (if (removing) original else listOf(listOf("u1", "u2", "u3"), listOf("u2", "u1", "u3"))) else during
+            eventually("the lists after the outcome") { lists() == after }
+        }
+    }
+
+    /** K13 (B6, C05): leave removes the club from its list before the answer. The answer keeps it away, a refusal puts it back. */
+    @Test
+    fun leaveRemovesTheClubFromItsListBeforeTheAnswerAndARefusalRestoresIt() = bounded {
         for (refusal in listOf(false, true)) {
-            val case = if (refusal) "refused" else "answered"
             val transport = MockTransport()
             transport.enqueue("CreateClub", CLUB_CREATED)
-            transport.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3")))
-            transport.enqueue("ClubMembers", membersReply(listOf("u2", "u1", "u3")))
             openClubSession(transport)
             val created = Club.create(name = "friends")
-            val joined = Person.clubMembers(created.id, "JOINED")
-            val owners = Person.clubMembers(created.id, "OWNER_FIRST")
-            joined.load()
-            owners.load()
-            suspend fun lists() = listOf(joined.read().map { it.id }, owners.read().map { it.id })
-            assertEquals("$case: the lists before the action", listOf(listOf("u1", "u2", "u3"), listOf("u2", "u1", "u3")), lists())
-
-            transport.enqueueOutcome("RemoveClubMember", clubAnswer("removeClubMember"), refusal, 2000)
-            val started = System.nanoTime()
-            val removing = async { runCatching { created.removeMember(userIds = listOf("u2")) } }
-            eventually("remove member changed both lists") { lists() == listOf(listOf("u1", "u3"), listOf("u1", "u3")) }
-            assertTrue("$case: the lists changed only after the answer", (System.nanoTime() - started) < 1_500_000_000L)
-            assertEquals("$case: the outcome of remove member", refusal, removing.await().isFailure)
-            val afterRemove = if (refusal) listOf(listOf("u1", "u2", "u3"), listOf("u2", "u1", "u3")) else listOf(listOf("u1", "u3"), listOf("u1", "u3"))
-            eventually("the lists after remove member") { lists() == afterRemove }
-
-            if (!refusal) {
-                transport.enqueueOutcome("AddClubMember", clubAnswer("addClubMember"), false, 2000)
-                val adding = async { runCatching { created.addMember(userIds = listOf("u2")) } }
-                eventually("add member changed both lists") { lists() == listOf(listOf("u1", "u3", "u2"), listOf("u1", "u3", "u2")) }
-                adding.await()
-                assertEquals("$case: the lists after add member", listOf(listOf("u1", "u3", "u2"), listOf("u1", "u3", "u2")), lists())
-            }
-
-            transport.enqueueOutcome("LeaveClub", clubAnswer("leaveClub"), refusal, 2000)
+            val hold = transport.hold("LeaveClub", clubAnswer("leaveClub"), if (refusal) FORBIDDEN else null)
             val leaving = async { runCatching { created.leave() } }
-            eventually("leave removed the club from its list") { Query("Club", Club).readRow(created.id) == null }
-            assertEquals("$case: the outcome of leave", refusal, leaving.await().isFailure)
-            eventually("the club list after leave") { (Query("Club", Club).readRow(created.id) != null) == refusal }
+            withTimeout(5000) { hold.entered() }
+            assertTrue("the club stayed in its list before the answer", Query("Club", Club).readRow(created.id) == null)
+            hold.release()
+            assertEquals("the outcome of leave", refusal, leaving.await().isFailure)
+            eventually("the club list after the outcome") { (Query("Club", Club).readRow(created.id) != null) == refusal }
         }
     }
 
@@ -132,13 +144,13 @@ class ClubTest {
             val thread = Letter.thread("c2")
             assertTrue(thread.read().isEmpty())
 
-            transport.enqueueOutcome("ForwardLetter", forwardAnswer("fwd-1", "c2"), refusal, 2000)
-            val started = System.nanoTime()
+            val hold = transport.hold("ForwardLetter", forwardAnswer("fwd-1", "c2"), if (refusal) FORBIDDEN else null)
             val forwarding = async { runCatching { source.forward(targetChatId = "c2") } }
-            eventually("the target thread shows the copy") { thread.read().size == 1 }
-            assertTrue("$case: the copy appeared only after the answer", (System.nanoTime() - started) < 1_500_000_000L)
-            val copy = thread.read().first()
-            assertTrue("$case: the copy is ${copy.id}", copy.id != "fwd-1" && copy.text == "hello" && copy.chatId == "c2")
+            withTimeout(5000) { hold.entered() }
+            val copy = thread.read().firstOrNull()
+            assertTrue("$case: the target thread has no copy before the answer", copy != null)
+            assertTrue("$case: the copy is ${copy!!.id}", copy.id != "fwd-1" && copy.text == "hello" && copy.chatId == "c2")
+            hold.release()
             assertEquals("$case: the outcome of forward", refusal, forwarding.await().isFailure)
             eventually("the target thread shows the outcome") { thread.read().map { it.id } == (if (refusal) emptyList() else listOf("fwd-1")) }
         }

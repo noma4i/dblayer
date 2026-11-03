@@ -103,6 +103,9 @@ impl Action {
     }
 }
 
+/// The lists a scope effect changes (scope and key text) and the ids of the rows it moves.
+type EffectLists = (Vec<(ScopeRef, String)>, Vec<String>);
+
 struct Queued {
     action: Action,
     row_id: RowId,
@@ -392,7 +395,10 @@ impl Db {
             self.copy_receiver(reader, spec, copy, (own, args), now_ms, plan, rows, queued)?;
         }
         for effect in &declared.scope_effects {
-            self.move_scope_rows(reader, effect, (own, args), rows, queued)?;
+            match effect.kind {
+                crate::schema::ScopeEffectKind::Join => self.join_scope_rows(reader, effect, (own, args), rows, queued)?,
+                crate::schema::ScopeEffectKind::Leave => self.leave_scope_rows(reader, effect, (own, args), rows, queued)?,
+            }
         }
         Ok(())
     }
@@ -430,22 +436,15 @@ impl Db {
         Ok(())
     }
 
-    fn move_scope_rows(
-        &self,
-        reader: &Reader<'_>,
-        effect: &crate::schema::ScopeEffect,
-        (own, args): (&RowRef, &Map<String, Value>),
-        rows: &mut Vec<PriorRow>,
-        queued: &mut Queued,
-    ) -> Result<(), DbError> {
-        use crate::schema::ScopeEffectKind;
+    /// The lists that a scope effect changes, one per value of the order parameter, and the ids of the rows it moves.
+    fn effect_lists(&self, effect: &crate::schema::ScopeEffect, (own, args): (&RowRef, &Map<String, Value>)) -> Result<EffectLists, DbError> {
         let ids: Vec<String> = match args.get(&effect.rows) {
             Some(Value::Array(items)) => items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect(),
             Some(Value::String(one)) => vec![one.clone()],
             _ => return Err(DbError::Internal(format!("the argument {} of the scope effect is missing", effect.rows))),
         };
         let target = self.shared.spec(&effect.model)?;
-        let model = ModelKey::new(&effect.model);
+        let mut lists = Vec::new();
         for order in &effect.orders {
             let mut params = Map::new();
             for (name, source) in &effect.with {
@@ -454,26 +453,35 @@ impl Db {
             }
             params.insert(effect.order_param.clone(), Value::String(order.clone()));
             let key = target.selection_key(&effect.scope, &params)?;
-            let scope = ScopeRef::new(model.clone(), key.clone());
+            lists.push((ScopeRef::new(ModelKey::new(&effect.model), key.clone()), key.to_string()));
+        }
+        Ok((lists, ids))
+    }
+
+    fn join_scope_rows(&self, reader: &Reader<'_>, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, queued: &mut Queued) -> Result<(), DbError> {
+        let (lists, ids) = self.effect_lists(effect, call)?;
+        for (scope, key) in lists {
             for id in &ids {
-                let row = RowId::new(id)?;
-                match effect.kind {
-                    ScopeEffectKind::Join => {
-                        if reader.point(&effect.model, id)?.is_none() {
-                            return Err(DbError::NotFound { model: effect.model.clone(), id: id.clone() });
-                        }
-                        if reader.scope_has_member(&effect.model, key.as_str(), id)? { continue; }
-                        let last = reader.scope_last_key(&effect.model, key.as_str())?;
-                        let order_key = fractional_between(last.as_deref(), None).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
-                        queued.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row, order_key });
-                        rows.push(PriorRow::Joined { model: effect.model.clone(), id: id.clone(), scope_key: key.to_string() });
-                    }
-                    ScopeEffectKind::Leave => {
-                        let Some(order_key) = reader.scope_member_key(&effect.model, key.as_str(), id)? else { continue };
-                        queued.scope_ops.push(ScopeOp::Detach { scope: scope.clone(), row });
-                        rows.push(PriorRow::Left { model: effect.model.clone(), id: id.clone(), scope_key: key.to_string(), order_key });
-                    }
+                if reader.point(&effect.model, id)?.is_none() {
+                    return Err(DbError::NotFound { model: effect.model.clone(), id: id.clone() });
                 }
+                if reader.scope_has_member(&effect.model, &key, id)? { continue; }
+                let last = reader.scope_last_key(&effect.model, &key)?;
+                let order_key = fractional_between(last.as_deref(), None).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
+                queued.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id)?, order_key });
+                rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None });
+            }
+        }
+        Ok(())
+    }
+
+    fn leave_scope_rows(&self, reader: &Reader<'_>, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, queued: &mut Queued) -> Result<(), DbError> {
+        let (lists, ids) = self.effect_lists(effect, call)?;
+        for (scope, key) in lists {
+            for id in &ids {
+                let Some(order_key) = reader.scope_member_key(&effect.model, &key, id)? else { continue };
+                queued.scope_ops.push(ScopeOp::Detach { scope: scope.clone(), row: RowId::new(id)? });
+                rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(order_key) });
             }
         }
         Ok(())
