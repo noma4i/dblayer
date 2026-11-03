@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Lifecycle sequence tests in the core, Swift and Kotlin with a manifest of the sequences C01 to C19.
+
 ### Fixed
 - A window opened after a failed load of the same query no longer starts with the error of that earlier load.
 - `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.

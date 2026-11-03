@@ -51,12 +51,20 @@ private final class Outcome: @unchecked Sendable {
   func finish() { lock.withLock { finished = true } }
 }
 
+private final class OneShot: @unchecked Sendable {
+  private let lock = NSLock()
+  private var armed = false
+  func arm() { lock.withLock { armed = true } }
+  func take() -> Bool { lock.withLock { defer { armed = false }; return armed } }
+}
+
 private struct LoginLink: Encodable, Sendable { let account: String }
 private struct NoBody: Encodable, Sendable {}
 
 /// The tests share `DB.database` with the rest of `BridgeProbeTests`, so they run in its serialized suite.
 extension BridgeProbeTests {
   private static let account = SignedAccount()
+  private static let alreadyAuthenticated = OneShot()
 
   @MainActor
   static func openSealedSession() async throws -> SealedServer {
@@ -65,6 +73,7 @@ extension BridgeProbeTests {
     account.signOut()
     let server = try SealedServer { path, body in
       if path == "/api/auth/login_link" {
+        if Self.alreadyAuthenticated.take() { return ["error": "ALREADY_AUTHENTICATED"] }
         let name = body["account"] as? String ?? ""
         account.signIn(name)
         return ["sessionId": name]
@@ -273,5 +282,61 @@ extension BridgeProbeTests {
     try await Self.startSealedSession("A")
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     #expect(server.operationRequests("UserProfile") > reads)
+  }
+
+  /// C09, R-7: the local-only exit sends no unregister and no logout. The held entity empties and no read follows.
+  @MainActor
+  @Test
+  func aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead() async throws {
+    let server = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    let entity = User.entity()
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+    try DB.sessionReset()
+    try await DB.logout()
+    #expect(entity.value == nil)
+    let before = server.requests.count
+    server.refuseEverything(true)
+    try await DB.settleForTesting()
+    #expect(server.requests.count == before)
+    #expect(server.pathRequests("/api/logout") == 0)
+    server.refuseEverything(false)
+  }
+
+  /// C11: a call that the server never answers ends when the database closes.
+  @MainActor
+  @Test
+  func closeEndsACallThatTheServerNeverAnswers() async throws {
+    let server = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    server.hold(operation: "UserProfile")
+    let ended = Outcome()
+    Task { @MainActor in
+      _ = try? await User.profile.refresh()
+      ended.finish()
+    }
+    await eventually("the request waits at the server") { server.parkedCount > 0 }
+    DB.close()
+    await eventually("the call ended without its answer") { ended.isDone }
+    server.hold(operation: nil)
+  }
+
+  /// C19, R-5: the login is refused as already authenticated, the confirmed sign-out follows, the login repeats once and starts the session.
+  @MainActor
+  @Test
+  func anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain() async throws {
+    let server = try await Self.openSealedSession()
+    Self.alreadyAuthenticated.arm()
+    var code: SessionCode?
+    do { try await DB.sessionCall("login_link", body: LoginLink(account: "A")) } catch let error as DbError {
+      if case let .Session(refused, _) = error { code = refused }
+    }
+    #expect(code == .alreadyAuthenticated)
+    let logins = server.pathRequests("/api/auth/login_link")
+    try await DB.sessionCall("logout", body: NoBody())
+    try await Self.startSealedSession("A")
+    #expect(server.pathRequests("/api/auth/login_link") == logins + 1)
+    let entity = User.entity()
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
   }
 }

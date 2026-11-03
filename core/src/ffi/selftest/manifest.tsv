@@ -1,0 +1,52 @@
+version	1
+id	aliases	lane	test	state	s1	provenance
+C01	R-3	core	harness_reset_with_the_target_unset_sends_nothing_and_leaves_new_windows_clean	red: a held singleton keeps Failed(Interrupted) after the target returns (ffi/entities.rs load_initial returns Ok while admitted, sync/entity_fetch.rs refresh_entity does not queue Interrupted)	S1: no fresh-open promise; the harness sets online/listening/power/preload itself, target=nil ends Interrupted, a new explicit load makes B visible	I android/app/src/test/java/com/yupi/SharedTestDatabase.kt:22-35 and SwitchableTransport.kt:7
+C01	R-3	kotlin	com.noma4i.dblayer.SwitchableHarnessTest.aHarnessResetWithTheTargetUnsetLeavesTheNextWindowClean	red: waitForInitialLoad throws EntityReadException(Interrupted) of the reset reread	S1: as core	I android/app/src/test/java/com/yupi/SharedTestDatabase.kt:22-35
+C02	R-1	core	harness_reset_with_the_target_unset_sends_nothing_and_leaves_new_windows_clean	red: as C01 (invalid=true variant, the iOS error)	S1: as C01	I ios/YupiTests/Shared/TestDatabaseClock.swift:28-55 and TestTransport.swift:95-96
+C02	R-1	swift	BridgeProbeTests.aHarnessResetWithTheTargetUnsetLeavesTheNextWindowClean	red: waitForInitialLoad throws Failed(interrupted)	S1: as core	I ios/YupiTests/Shared/TestDatabaseClock.swift:28-55
+C03		core	a_late_answer_of_the_previous_transport_reaches_no_window_of_the_next_test	green	-	I TestTransport.swift:95-96 and SwitchableTransport.kt:7 (both route a token to the target of its open)
+C04	R-2,R-4	core	reopening_through_the_same_opener_after_a_close_gives_a_clean_database	green	S1: close is awaited (async)	I TestDatabaseClock.swift:58-70, A android/app/src/test/java/com/yupi/RegisteredReplies.kt:21-27
+C04	R-2,R-4	swift	BridgeProbeTests.reopeningAfterACloseGivesACleanDatabaseWithAndWithoutATransport	green	S1: close is awaited	I TestDatabaseClock.swift:58-70
+C04	R-2,R-4	kotlin	com.noma4i.dblayer.SwitchableHarnessTest.reopeningAfterACloseGivesACleanDatabaseWithAndWithoutATransport	green	S1: close is suspend	A RegisteredReplies.kt:21-27
+C05	R-5	core	app_login_in_the_ios_and_android_order_fills_the_handles_held_since_launch	green	S1: the login has no data logout: iOS 5 library steps, Android 4	I ios/Yupi/Session/LoginLinkSignIn.swift:53-78, AuthSession.swift:76-90, MyProfileLoad.swift:17-21
+C05	R-5	swift	BridgeProbeTests.anAppLoginAfterALogoutRefreshesTheHeldEntityAndNoReadFollowsTheLogout	green	S1: startSealedSession loses DB.logout; the test is renamed to the exit it checks	I AuthSession.swift:76-90
+C07	R-8	core	app_login_in_the_ios_and_android_order_fills_the_handles_held_since_launch	green	S1: Android login drops cancelAndJoin liveEvents and DB.logout	A android/app/src/main/java/com/yupi/YupiApplication.kt:201-214 and SessionStore.kt:34-36
+C07	R-8	kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLoginAfterALogoutNeverDeliversTheLastAccountToAHeldList	green	S1: startSession loses DBlayer.logout	A SessionStore.kt:34-36
+C06	R-6	core	app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_from_the_next_login	green	S1: exit is unregister, revoke, closeCable, await sessionReset, clearStoredSession, clearUserState; sessionReset clears the data, no data logout	I ios/Yupi/Session/AccountSignOut.swift:41-61, AuthSession.swift:125-144, Navigation/RootScreen.swift:33-36
+C06	R-6	swift	BridgeProbeTests.theAppExitOrderEndsAPendingInitialWaitAndEveryCallOfTheExit	green	S1: as core	I AccountSignOut.swift:41-61
+C06	R-6	swift	BridgeProbeTests.theAppExitOrderEndsEveryHeldWaitWhenTheCredentialIsGone	green	S1: DB.logout leaves the exit	I AccountSignOut.swift:41-61
+C08	R-9	core	app_logout_android_order_cancels_the_streams_and_the_next_login_reads_again	green	S1: exit is unregister, revoke, closeCable, sessionReset, app cleanup, clearUserState; the collectors are the UI's own	A android/app/src/main/java/com/yupi/AccountSignOut.kt:37-46 and YupiApplication.kt:217-250
+C08	R-9	core	app_logout_stops_when_the_unregister_is_refused	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	A AccountSignOut.kt:37-46 (a refused revoke returns false and stops the chain)
+C08	R-9	kotlin	com.noma4i.dblayer.LifecycleSessionTest.theAppExitOrderEndsAPendingInitialWaitAndEveryCallOfTheExit	green	S1: DBlayer.logout leaves the exit	A YupiApplication.kt:217-250
+C08	R-9	kotlin	com.noma4i.dblayer.LifecycleSessionTest.theAppExitOrderEndsEveryHeldWaitWhenTheCredentialIsGone	green	S1: DBlayer.logout leaves the exit	A YupiApplication.kt:217-250
+C09	R-7	core	app_logout_local_only_skips_the_revoke_and_stops_every_read	flaky: a read of old work (UserNode or Users) reaches the server after the exit under CPU load, EncryptedClient::read_in	S1: one library step, sessionReset	I AuthSession.swift:141-145, A AccountSignOut.kt:37-46
+C09	R-7	swift	BridgeProbeTests.aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead	green	S1: DB.logout leaves the exit	I AuthSession.swift:141-145
+C09	R-7	kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead	green	S1: DBlayer.logout leaves the exit	A AccountSignOut.kt:37-46
+C10	G-09	core	every_explicit_call_survives_every_transition_with_a_late_answer	green	S1: the Logout transition cell merges into SessionReset	library
+C11	R-4	core	a_call_that_is_never_answered_ends_when_the_database_closes	green	S1: close is awaited	library
+C11		core	close_ends_every_pending_stream_wait_of_a_held_handle	green	S1: close is awaited	library
+C11		swift	BridgeProbeTests.closeEndsACallThatTheServerNeverAnswers	green	S1: close is awaited	library
+C11		kotlin	com.noma4i.dblayer.LifecycleSessionTest.closeEndsACallThatTheServerNeverAnswers	green	S1: close is suspend	library
+C12		core	account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_late_answer	green	S1: exit loses the data logout	library
+C12		swift	BridgeProbeTests.anAccountSwitchABAKeepsAHeldListAndEntityFreeOfThePreviousAccount	green	S1: exit loses DB.logout	library
+C12		kotlin	com.noma4i.dblayer.LifecycleSessionTest.anAccountSwitchABAKeepsAHeldListAndEntityFreeOfThePreviousAccount	green	S1: exit loses DBlayer.logout	library
+C12		core	logout_then_login_of_the_same_account_reads_it_again	green	S1: exit loses the data logout	library
+C12		swift	BridgeProbeTests.aLogoutThenALoginOfTheSameAccountReadsItAgain	green	S1: exit loses DB.logout	library
+C12		kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLogoutThenALoginOfTheSameAccountReadsItAgain	green	S1: exit loses DBlayer.logout	library
+C12		core	a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_ends	green	S1: the wait after the exit gets Interrupted (design section 5, C12)	library
+C13		core	overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consistent_chain_and_a_clean_reset	green	-	library
+C14		core	a_data_reset_between_a_refused_pending_request_and_the_session_reset_keeps_the_pending	green	S1: the data reset without a session end is resetForTesting, not logout	library
+C14		core	a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_sign_in_then_retry_and_runs_once	green	-	library
+C15		core	an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs_each_once	green	S1: the data logout variant becomes the session reset (it clears the data)	library
+C16		core	repeated_online_listening_and_power_saving_signals_add_no_request	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	library
+C17		core	a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once	green	S1: close is awaited	library
+C17		core	resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it_once	green	-	library
+C18		core	memory_expiry_follows_the_last_write_and_a_cloud_reply_after_a_reset_restores_nothing	green	-	library
+C19	R-5	core	login_link_already_authenticated_signs_out_then_repeats_once	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LoginLinkSignIn.swift:53-78, A android/app/src/main/java/com/yupi/LoginLinkSignIn.kt:36-47
+C19	R-5	swift	BridgeProbeTests.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSealedSession loses DB.logout	I LoginLinkSignIn.swift:53-78
+C19	R-5	kotlin	com.noma4i.dblayer.LifecycleSessionTest.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSession loses DBlayer.logout	A LoginLinkSignIn.kt:36-47
+G01	R-3	core	the_harness_cycle_releases_the_token_of_a_held_server_subscription_exactly_once	green	-	library
+G01	R-3	core	a_held_server_subscription_reopens_once_on_the_next_target_when_the_clock_moves	red: the subscription never attempts again after the unset target, no event restarts it (sync/subscribe.rs Feed::run)	S1: new declaration or explicit load makes the lease; the test then asserts the declaration path	library
+G01		core	harness_cycles_survive_tests_that_leave_offline_logout_and_subscriptions_behind	green	S1: the leftover logout becomes a session reset	library
+R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent	flaky: same request-after-exit as C09 under CPU load	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
+R11		core	a_refused_foreground_refresh_keeps_the_views_and_the_credential	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LiveEventLifecycle.swift:24

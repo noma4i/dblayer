@@ -50,11 +50,13 @@ private class RowHistory : QueryListener {
 @OptIn(DBlayerTestingApi::class)
 class LifecycleSessionTest {
     private val account = AtomicReference<String?>(null)
+    private val alreadyAuthenticated = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private fun json(text: String): JsonObject = Json.parseToJsonElement(text).jsonObject
 
     private val server = SealedServer { path, body ->
         if (path == "/api/auth/login_link") {
+            if (alreadyAuthenticated.getAndSet(false)) return@SealedServer json("""{"error":"ALREADY_AUTHENTICATED"}""")
             val name = body.getValue("account").jsonPrimitive.content
             account.set(name)
             return@SealedServer json("""{"sessionId":"$name"}""")
@@ -309,6 +311,64 @@ class LifecycleSessionTest {
             startSession("A")
             eventually("the held entity shows A again") { entity.value.value?.name == "A" }
             assertTrue(server.operationRequests("UserProfile") > reads)
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** C09, R-8: the local-only exit sends no unregister and no logout. The held entity empties and no read follows. */
+    @Test
+    fun aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            val entity = User.entity()
+            eventually("the held entity shows A") { entity.value.value?.name == "A" }
+            DBlayer.sessionReset()
+            DBlayer.logout()
+            assertNull(entity.value.value)
+            val before = server.requests.size
+            server.refuseEverything(true)
+            DBlayer.settleForTesting()
+            assertEquals(before, server.requests.size)
+            assertEquals(0, server.pathRequests("/api/logout"))
+            server.refuseEverything(false)
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** C11: a call that the server never answers ends when the database closes. */
+    @Test
+    fun closeEndsACallThatTheServerNeverAnswers() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            server.hold("UserProfile")
+            val ended = async(start = CoroutineStart.UNDISPATCHED) { runCatching { User.profile.refresh() } }
+            eventually("the request waits at the server") { server.parkedCount > 0 }
+            DBlayer.close()
+            awaitWithin("the call that the server never answered") { ended.await() }
+        } finally {
+            server.hold(null)
+            DBlayer.close()
+        }
+    }
+
+    /** C19, R-5: the login is refused as already authenticated, the confirmed sign-out follows, the login repeats once and starts the session. */
+    @Test
+    fun anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain() = bounded {
+        try {
+            openSession()
+            alreadyAuthenticated.set(true)
+            val refused = runCatching { DBlayer.database.sessionCall("login_link", """{"account":"A"}""") }.exceptionOrNull()
+            assertTrue("expected ALREADY_AUTHENTICATED, got $refused", refused is DbException.Session && refused.code == SessionCode.ALREADY_AUTHENTICATED)
+            val logins = server.pathRequests("/api/auth/login_link")
+            DBlayer.database.sessionCall("logout", "{}")
+            startSession("A")
+            assertEquals(logins + 1, server.pathRequests("/api/auth/login_link"))
+            val entity = User.entity()
+            eventually("the held entity shows A") { entity.value.value?.name == "A" }
         } finally {
             DBlayer.close()
         }
