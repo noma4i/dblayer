@@ -126,6 +126,7 @@ impl Default for JoinedLoads {
 
 pub(crate) struct Inner {
     stopped: watch::Receiver<bool>,
+    subscription_reset: watch::Sender<u64>,
     pub db: Db,
     pub transport: Arc<dyn Transport>,
     pub clock: Arc<dyn Clock>,
@@ -251,6 +252,7 @@ impl Sync {
         }
         let inner = Inner {
             stopped,
+            subscription_reset: watch::channel(0).0,
             db,
             transport,
             clock,
@@ -291,6 +293,8 @@ impl Sync {
         this.inner.preload.attach(preloads.clone());
         this.inner.db.on_reset(Arc::new(move |_| {
             if let Some(inner) = preloads.upgrade() {
+                inner.reset_live_ready();
+                crate::db::lock::effect(|| inner.subscription_reset.send_modify(|generation| *generation = generation.wrapping_add(1)));
                 inner.preload_on_event();
             }
         }));

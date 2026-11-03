@@ -43,6 +43,18 @@ fn title(row: &Option<crate::db::Row>) -> Option<&str> {
     row.as_ref().and_then(|row| row.text("title"))
 }
 
+#[tokio::test]
+async fn model_events_open_again_after_a_data_reset() {
+    let rig = chat_rig();
+    let _old = crate::test_wait::within_secs(5, rig.sync.open_model_events("chats")).await.unwrap();
+    rig.db.reset_all().unwrap();
+    let events = crate::test_wait::within_secs(5, rig.sync.open_model_events("chats")).await.unwrap();
+    crate::test_wait::within_secs(5, rig.transport.await_calls("Changes", 2)).await;
+    emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
+    let seen = expect_event(crate::test_wait::within_secs(5, events.next()).await);
+    assert_eq!((seen.area.as_str(), seen.kind.as_str(), seen.id.as_str()), ("CHAT", "DELETED", "c1"));
+}
+
 #[tokio::test(start_paused = true)]
 async fn inv_api_06_opening_events_establishes_the_subscription_or_returns_its_failure() {
     let rig = chat_rig();

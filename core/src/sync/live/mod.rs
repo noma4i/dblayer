@@ -48,6 +48,12 @@ impl Drop for Live {
 }
 
 impl Inner {
+    pub(crate) fn reset_live_ready(&self) {
+        self.live_effects.under(&self.lives, |lives, effects| {
+            for live in lives.values() { live.publish_ready(None, effects); }
+        });
+    }
+
     pub(crate) fn restart_live(self: &std::sync::Arc<Self>, cause: super::resume_machine::Cause) {
         let explicit = cause == super::resume_machine::Cause::Explicit;
         if explicit { crate::db::lock::effect(|| { let _ = self.subscription_failures.send(None); }); }

@@ -582,8 +582,7 @@ impl Feed {
         status.stopped = lifecycle.stopped();
     }
 
-    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle) -> SubscriptionFailureKind {
-        let generation = self.inner.db.generation();
+    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation) -> SubscriptionFailureKind {
         let mut pending: Vec<(Arc<SubscriptionDef>, Duration, Vec<Pending>)> = Vec::new();
         loop {
             let deadline = pending.iter().map(|(_, deadline, _)| *deadline).min();
@@ -596,6 +595,7 @@ impl Feed {
                         return SubscriptionFailureKind::Transport;
                     }
                     Some(SubscriptionEvent::Ready) => {
+                        if generation != self.inner.db.generation() { continue; }
                         self.opening(Ok(()));
                         lifecycle.handle(Event::Ready);
                         if lifecycle.take_reload() {
@@ -609,6 +609,7 @@ impl Feed {
                         }
                     }
                     Some(SubscriptionEvent::Next(response)) => {
+                        if generation != self.inner.db.generation() { continue; }
                         lifecycle.handle(Event::Next);
                         self.publish(lifecycle);
                         let invalidation = self.invalidation(&response, generation).await;
@@ -652,17 +653,23 @@ impl Feed {
         }
     }
 
-    async fn run(self, request: GraphQLRequest, first: Option<Result<ServerSubscription, TransportError>>) {
+    async fn run(self, request: GraphQLRequest, first: Option<(Generation, Result<ServerSubscription, TransportError>)>, mut resets: tokio::sync::watch::Receiver<u64>) {
         let mut lifecycle = Lifecycle::new(self.backoff);
         let mut opened = first;
         loop {
             lifecycle.handle(Event::Resumed);
-            let attempt = match opened.take() {
-                Some(attempt) => attempt,
-                None => match self.inner.open_subscription(request.clone()).await {
-                    Some(attempt) => attempt,
-                    None => return,
-                },
+            let (generation, attempt) = tokio::select! {
+                biased;
+                _ = resets.changed() => { opened = None; lifecycle = Lifecycle::new(self.backoff); continue; }
+                attempt = async {
+                    match opened.take() {
+                        Some(attempt) => Some(attempt),
+                        None => {
+                            let generation = self.inner.db.generation();
+                            self.inner.open_subscription(request.clone()).await.map(|attempt| (generation, attempt))
+                        }
+                    }
+                } => match attempt { Some(attempt) => attempt, None => return },
             };
             let kind = match attempt {
                 Ok(mut connection) => {
@@ -681,7 +688,11 @@ impl Feed {
                         }
                     }
                     lifecycle.handle(Event::Connected);
-                    self.pump(&mut connection, &mut lifecycle).await
+                    tokio::select! {
+                        biased;
+                        _ = resets.changed() => { lifecycle = Lifecycle::new(self.backoff); continue; },
+                        kind = self.pump(&mut connection, &mut lifecycle, generation) => kind,
+                    }
                 }
                 Err(error) => {
                     let failure = SubscriptionFailure::from_error(error);
@@ -695,7 +706,10 @@ impl Feed {
             self.publish(&lifecycle);
             match lifecycle.step() {
                 Step::Stop => return,
-                Step::Wait(delay) => self.inner.connectivity.wait(self.inner.clock.as_ref(), delay).await,
+                Step::Wait(delay) => tokio::select! {
+                    _ = resets.changed() => { lifecycle = Lifecycle::new(self.backoff); },
+                    _ = self.inner.connectivity.wait(self.inner.clock.as_ref(), delay) => {},
+                },
                 Step::Open => {}
             }
         }
@@ -732,14 +746,22 @@ impl Inner {
             .cloned()
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
-        let first = if self.connectivity.is_online() { self.open_subscription(request.clone()).await } else { None };
+        let mut resets = self.subscription_reset.subscribe();
+        let generation = self.db.generation();
+        let first = if self.connectivity.is_online() {
+            tokio::select! {
+                biased;
+                _ = resets.changed() => None,
+                attempt = self.open_subscription(request.clone()) => attempt.map(|attempt| (generation, attempt)),
+            }
+        } else { None };
         let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
         let definition = def.clone();
         let def_root = def.root.clone();
         let backoff = RetryPolicy::Subscription.backoff().randomized();
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
         let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready };
-        let task = tokio::spawn(self.until_closed(feed.run(request, first)));
+        let task = tokio::spawn(self.until_closed(feed.run(request, first, resets)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }
 }

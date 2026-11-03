@@ -333,6 +333,23 @@ fn vibe_sub_variables(rig: &Rig) -> Vec<serde_json::Value> {
     rig.transport.calls().into_iter().filter(|call| call.operation_name == "VibeEvents").map(|call| call.variables).collect()
 }
 
+#[tokio::test]
+async fn subscriptions_reopen_and_deliver_after_a_data_reset() {
+    for (next, keep_old) in [("a", false), ("b", false), ("a", true)] {
+        let rig = rig();
+        let mut old = Some(rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap());
+        crate::test_wait::within_secs(5, rig.transport.await_calls("VibeEvents", 1)).await;
+        if !keep_old { drop(old.take()); }
+        rig.db.reset_all().unwrap();
+        let _new = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": next}))).unwrap();
+        crate::test_wait::within_secs(5, rig.transport.await_calls("VibeEvents", if next == "a" { 2 } else { 3 })).await;
+        assert!(vibe_sub_variables(&rig).contains(&json!({"vibeId": next})), "{next}, {keep_old}");
+        rig.transport.emit("VibeEvents", SubscriptionEvent::Next(Response::data(json!({"momentEvent": moment("m9", "after reset")}))));
+        crate::test_wait::within_secs(5, rig.transport.await_consumed("VibeEvents")).await;
+        assert_eq!(text_of(&rig, "moments", "m9"), Some("after reset".to_string()), "{next}, {keep_old}");
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn readers_with_different_params_open_separate_subscriptions_with_those_variables() {
     let rig = rig();

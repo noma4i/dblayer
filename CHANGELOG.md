@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Server subscriptions reopen after a data reset.
+
 ## 6.15.1 - 2026-11-03
 
 ### Fixed
