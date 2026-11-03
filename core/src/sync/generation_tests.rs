@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde_json::{json, Map};
 
-use super::load::{DiscardReason, LoadOptions, LoadStatus};
+use super::load::LoadOptions;
 use super::node_tests::{data, node_rig, stored};
 use super::rig::*;
 
@@ -37,7 +37,8 @@ async fn node_answered_after(wipe: fn(&Rig)) {
     let task = tokio::spawn(async move { sync.node("chats", "node", "c1", false).await });
     rig.transport.await_calls("ChatNode", 1).await;
     wipe(&rig);
-    assert_eq!(task.await.unwrap().unwrap(), None);
+    let ended = task.await.unwrap();
+    assert!(matches!(&ended, Err(super::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))), "the explicit call straddling the reset must end with its outcome: {ended:?}");
     assert_eq!(stored(&rig, "chats", "c1"), None);
 }
 
@@ -82,8 +83,8 @@ async fn inv_fresh_03_next_page_answer_after_reset_all_lands_nothing() {
     let task = tokio::spawn(async move { sync.load_more("moments", "feed", &none()).await });
     rig.transport.await_calls("MomentsFeed", 2).await;
     reset_everything(&rig);
-    let outcome = task.await.unwrap().unwrap();
-    assert_eq!(outcome.status, LoadStatus::Discarded(DiscardReason::StaleGeneration));
+    let outcome = task.await.unwrap();
+    assert!(matches!(&outcome, Err(super::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))), "the explicit call straddling the reset must end with its outcome: {outcome:?}");
     assert_eq!((text_of(&rig, "moments", "c"), text_of(&rig, "moments", "d")), (None, None));
 }
 

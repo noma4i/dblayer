@@ -1,5 +1,5 @@
 use super::error::SyncError;
-use super::load::{DiscardReason, LoadOptions, LoadStatus};
+use super::load::{LoadOptions, LoadStatus};
 use super::rig::*;
 use crate::store::WindowRecord;
 use crate::transport::{Reply, TransportError};
@@ -262,8 +262,8 @@ async fn inv_fresh_03_response_after_a_reset_is_discarded() {
     let task = tokio::spawn(async move { sync.load("moments", "feed", &Map::new(), LoadOptions::default()).await });
     rig.transport.await_calls("MomentsFeed", 1).await;
     rig.db.shared.store.reset_cache_only(&["moments"]).unwrap();
-    let outcome = task.await.unwrap().unwrap();
-    assert_eq!(outcome.status, LoadStatus::Discarded(DiscardReason::StaleGeneration));
+    let outcome = task.await.unwrap();
+    assert!(matches!(&outcome, Err(SyncError::Transport(TransportError::Interrupted(_)))), "the explicit call straddling the reset must end with its outcome: {outcome:?}");
     assert_eq!(text_of(&rig, "moments", "m1"), None);
 }
 

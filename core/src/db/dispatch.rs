@@ -108,6 +108,11 @@ impl OrderedEffects {
         ordered.pushed
     }
 
+    /// The place of the last queued batch: waiting for it waits for everything queued so far.
+    pub(crate) fn last_ticket(&self) -> u64 {
+        held(&self.ordered).pushed
+    }
+
     pub(crate) fn under<S, R>(&self, state: &Mutex<S>, apply: impl FnOnce(&mut S, &mut Effects) -> R) -> R {
         let mut effects = Effects::default();
         let result = {
@@ -148,12 +153,12 @@ impl OrderedEffects {
         }
     }
 
-    /// Returns once the batch with this ticket ran. A call from inside a running batch returns at once, since that batch must finish first.
-    pub(crate) fn run_until(&self, ticket: u64) {
+    /// Returns once the batch with this ticket ran. A call from inside a running batch returns false at once, since that batch must finish first.
+    pub(crate) fn run_until(&self, ticket: u64) -> bool {
         self.run();
         let mut ordered = held(&self.ordered);
         while ordered.done < ticket {
-            if ordered.runner == Some(std::thread::current().id()) { return; }
+            if ordered.runner == Some(std::thread::current().id()) { return false; }
             if !ordered.running && !ordered.batches.is_empty() {
                 drop(ordered);
                 self.run();
@@ -162,6 +167,7 @@ impl OrderedEffects {
             }
             ordered = wait(&self.settled, ordered);
         }
+        true
     }
 
     pub(crate) fn is_idle(&self) -> bool {

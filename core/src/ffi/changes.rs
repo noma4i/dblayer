@@ -102,17 +102,16 @@ impl crate::lifecycle::Member for LiveChanges {
         let Ok(revision) = db.revision_seq() else { return };
         self.with_state(|state| {
             state.pending.clear();
-            if ended {
-                state.min_revision = revision + 1;
-                let rows = state.rows.clone();
-                state.pending.push_back(LiveChange::whole(revision, rows));
-            } else {
-                state.min_revision = revision;
-                state.rows.clear();
-                state.pending.push_back(LiveChange::whole(revision, Vec::new()));
-            }
+            state.rows.clear();
+            state.min_revision = if ended { revision + 1 } else { revision };
+            state.pending.push_back(LiveChange::whole(revision, Vec::new()));
         });
     }
+}
+
+#[cfg(test)]
+impl LiveChanges {
+    pub(super) fn queued(&self) -> usize { crate::db::locked(&self.state).pending.len() }
 }
 
 #[uniffi::export]

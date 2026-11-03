@@ -194,6 +194,8 @@ pub struct Store {
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
     #[cfg(test)]
     pub(crate) before_freshness: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
+    pub(crate) writes_waiting: std::sync::atomic::AtomicUsize,
 }
 
 impl Store {
@@ -227,6 +229,8 @@ impl Store {
             after_commit: Mutex::new(None),
             #[cfg(test)]
             before_freshness: Mutex::new(None),
+            #[cfg(test)]
+            writes_waiting: std::sync::atomic::AtomicUsize::new(0),
             recreated: None,
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
@@ -297,19 +301,35 @@ impl Store {
 
     /// Ends the session and moves the generation under the writer lock, so a response write that checked the stamp under the same lock lands before the end or is refused.
     pub(crate) fn end_session(&self) {
+        let _ = self.end_session_in::<()>(None, || ());
+    }
+
+    /// Ends the session. A caller that carries the epoch it was admitted in is refused when the database closed or the epoch moved: the check and the end are one step under the writer lock.
+    pub(crate) fn end_session_in<E>(&self, admitted: Option<u64>, refused: impl FnOnce() -> E) -> Result<(), E> {
         let ticket = {
+            #[cfg(test)]
+            if admitted.is_some() { self.writes_waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
             let mut inner = self.lock();
+            if admitted.is_some_and(|epoch| !self.holds(epoch)) { return Err(refused()); }
             let (generation, ticket) = self.lifecycle.transition_ticketed(crate::lifecycle::Change::EndSession);
             inner.generation = generation;
             ticket
         };
         self.lifecycle.delivered(ticket);
+        Ok(())
     }
 
-    /// Runs a write only while the session epoch is the one the caller was admitted in. The check and the write share the writer lock that `end_session` takes.
+    fn holds(&self, epoch: u64) -> bool {
+        let now = self.lifecycle.snapshot();
+        !now.closed && now.session_epoch == epoch
+    }
+
+    /// Runs a write only while the database is open and the session epoch is the one the caller was admitted in. The check and the write share the writer lock that `end_session_in` takes.
     pub(crate) fn in_epoch<T, E>(&self, epoch: u64, refused: impl FnOnce() -> E, write: impl FnOnce(&rusqlite::Connection) -> Result<T, E>) -> Result<T, E> {
+        #[cfg(test)]
+        self.writes_waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let inner = self.lock();
-        if self.lifecycle.snapshot().session_epoch != epoch { return Err(refused()); }
+        if !self.holds(epoch) { return Err(refused()); }
         write(&inner.connection)
     }
 

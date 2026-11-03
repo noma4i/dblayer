@@ -213,12 +213,10 @@ async fn testing_settle_waits_for_a_load_that_outlives_reset() {
     let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
     db.reset_for_testing().await.unwrap();
-    let settling = tokio::spawn({ let db = db.clone(); async move { db.settle_for_testing().await } });
-    crate::test_wait::yield_until("settle sees the active flight", || db.testing_busy().unwrap() == Some("load flights")).await;
-    assert!(!settling.is_finished());
+    assert!(within(load).await.unwrap().is_err(), "the explicit load waited for its request after the reset");
+    within(db.settle_for_testing()).await.unwrap();
+    assert_eq!(db.testing_busy().unwrap(), None, "the ended load left a flight");
     hold.add_permits(1);
-    within(load).await.unwrap().unwrap();
-    within(settling).await.unwrap().unwrap();
     assert!(!stored(&db));
 
     let hold = Arc::new(tokio::sync::Semaphore::new(0));

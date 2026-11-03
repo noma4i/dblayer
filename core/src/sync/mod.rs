@@ -311,8 +311,8 @@ impl Sync {
         this
     }
 
-    pub fn close(&self) {
-        self._lifetime.lifecycle.close();
+    pub fn close(&self) -> bool {
+        self._lifetime.lifecycle.close()
     }
 
     pub(crate) fn is_closed(&self) -> bool {

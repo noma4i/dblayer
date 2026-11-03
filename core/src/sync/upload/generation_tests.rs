@@ -62,3 +62,38 @@ async fn ending_the_session_cancels_the_put_in_flight_and_frees_the_upload_slot(
     assert_eq!(rig.transport.call_count("CreateMoment"), 0, "the answer of the ended session sent the mutation");
     assert_eq!(rig.db.outbox().unwrap().len(), 1, "the pending upload operation was dropped instead of kept for the next session");
 }
+
+#[tokio::test(start_paused = true)]
+async fn ending_the_session_keeps_the_queued_upload_for_the_next_session() {
+    let rig = upload_rig(crate::upload::UploadConfig { max_files: 1, ..small() });
+    for id in ["m9", "m10"] {
+        rig.transport.enqueue("CreateBlob", blob());
+        rig.transport.enqueue("CreateMoment", created(id));
+    }
+    rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(4)));
+    rig.transport.enqueue_put("https://s3/single", PutReply::etag("e"));
+    rig.transport.enqueue_put("https://s3/single", PutReply::etag("e"));
+    let (first, second) = (file(b"abcdef"), file(b"ghijkl"));
+    rig.sync.upload("moments", &rid("m1"), "upload", input(&first)).await.unwrap();
+    rig.sync.upload("moments", &rid("m2"), "upload", input(&second)).await.unwrap();
+    rig.transport.await_put_calls(1).await;
+    assert_eq!(crate::sync::locked(&rig.sync.inner.uploads).ready.len(), 1, "the second file waits behind the file limit");
+    rig.sync.session_ended();
+    crate::test_wait::yield_until("the run left its slot", || crate::sync::locked(&rig.sync.inner.uploads).active.is_empty()).await;
+    assert_eq!(rig.db.outbox().unwrap().len(), 2, "an operation was dropped with the session");
+    rig.transport.set_session(Some("second"));
+    rig.sync.session_committed();
+    tokio::time::sleep(Duration::from_secs(30)).await;
+    assert_eq!(rig.transport.call_count("CreateMoment"), 2, "an upload queued at the end of the session never started again");
+    assert!(rig.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn ending_the_session_walks_only_the_uploads_running_now() {
+    let rig = upload_rig(small());
+    let mut runs = crate::sync::locked(&rig.sync.inner.uploads);
+    for seq in 0..2000 { runs.register(seq, 0, false); }
+    runs.active.retain(|key, _| key.0 == 7);
+    let (tokens, restart) = runs.end_all();
+    assert_eq!((tokens.len(), restart.len(), runs.walked()), (1, 1, 1), "the walk visited more than the uploads running now");
+}

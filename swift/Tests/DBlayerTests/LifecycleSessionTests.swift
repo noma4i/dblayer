@@ -18,9 +18,11 @@ private final class SignedAccount: @unchecked Sendable {
 
   var current: String? { lock.withLock { name } }
   func signIn(_ account: String) { lock.withLock { name = account } }
+  func signOut() { lock.withLock { name = nil } }
 }
 
 private struct LoginLink: Encodable, Sendable { let account: String }
+private struct NoBody: Encodable, Sendable {}
 
 /// The tests share `DB.database` with the rest of `BridgeProbeTests`, so they run in its serialized suite.
 extension BridgeProbeTests {
@@ -33,6 +35,10 @@ extension BridgeProbeTests {
         let name = body["account"] as? String ?? ""
         account.signIn(name)
         return ["sessionId": name]
+      }
+      if path == "/api/logout" {
+        account.signOut()
+        return ["revoked": true]
       }
       guard let name = account.current else { return ["error": "UNAUTHENTICATED"] }
       switch body["operationName"] as? String {
@@ -69,6 +75,27 @@ extension BridgeProbeTests {
     #expect(entity.value == nil)
     server.refuseEverything(true)
     try await DB.resetForTesting()
+    try await DB.settleForTesting()
+    #expect(server.requests.count == before)
+    server.refuseEverything(false)
+    try await Self.startSealedSession("B")
+    await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
+  }
+
+  /// The real exit of the app: the confirmed logout call, the session reset, the data clear, then the next login. No read follows the exit and account A never shows after it.
+  @MainActor
+  @Test
+  func aConfirmedLogoutThenASessionResetAndAClearNeverShowsTheAccountToTheNextLogin() async throws {
+    let server = try await Self.openSealedSession()
+    try await Self.startSealedSession("A")
+    let entity = User.entity()
+    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
+    try await DB.sessionCall("logout", body: NoBody())
+    try DB.sessionReset()
+    try await DB.logout()
+    #expect(entity.value == nil)
+    let before = server.requests.count
+    server.refuseEverything(true)
     try await DB.settleForTesting()
     #expect(server.requests.count == before)
     server.refuseEverything(false)

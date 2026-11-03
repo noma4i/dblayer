@@ -233,10 +233,10 @@ async fn a_failed_read_leaves_a_gap_in_the_queue_at_the_place_of_the_event() {
     let events = rig.sync.open_model_events("chats").await.unwrap();
     let failure = || crate::db::DbError::InvalidUpload("read failed".into());
     let inner = &rig.sync.inner;
-    assert!(inner.publish_rows("chats", "CHAT", "UPDATED", "c1", Ok(None), Ok(None)));
-    assert!(!inner.publish_rows("chats", "CHAT", "UPDATED", "c2", Err(failure()), Ok(None)));
-    assert!(!inner.publish_rows("chats", "CHAT", "UPDATED", "c3", Ok(None), Err(failure())));
-    assert!(inner.publish_rows("chats", "CHAT", "UPDATED", "c4", Ok(None), Ok(None)));
+    assert!(inner.publish_rows(super::model_event::Heard { stamp: inner.db.shared.store.lifecycle.snapshot().stamp(), area: "CHAT", kind: "UPDATED" }, "chats", "c1", Ok(None), Ok(None)));
+    assert!(!inner.publish_rows(super::model_event::Heard { stamp: inner.db.shared.store.lifecycle.snapshot().stamp(), area: "CHAT", kind: "UPDATED" }, "chats", "c2", Err(failure()), Ok(None)));
+    assert!(!inner.publish_rows(super::model_event::Heard { stamp: inner.db.shared.store.lifecycle.snapshot().stamp(), area: "CHAT", kind: "UPDATED" }, "chats", "c3", Ok(None), Err(failure())));
+    assert!(inner.publish_rows(super::model_event::Heard { stamp: inner.db.shared.store.lifecycle.snapshot().stamp(), area: "CHAT", kind: "UPDATED" }, "chats", "c4", Ok(None), Ok(None)));
     assert_eq!(expect_event(within(&events).await).id, "c1");
     assert!(matches!(within(&events).await, Some(ModelEventItem::Missed(2))));
     assert_eq!(expect_event(within(&events).await).id, "c4");
@@ -385,11 +385,11 @@ async fn queued_events_of_an_ended_session_never_reach_the_next_account() {
     let rig = chat_rig();
     let events = rig.sync.open_model_events("chats").await.unwrap();
     let queued = |id: &str| super::ModelEvent { model: "chats".into(), area: "CHAT".into(), kind: "UPDATED".into(), id: id.into(), before: None, after: None };
-    rig.sync.inner.publish_model_event(queued("account-a"));
+    rig.sync.inner.publish_model_event(rig.db.shared.store.lifecycle.snapshot().stamp(), queued("account-a"));
     rig.sync.session_ended();
     rig.transport.set_session(Some("second"));
     rig.sync.session_committed();
-    rig.sync.inner.publish_model_event(queued("account-b"));
+    rig.sync.inner.publish_model_event(rig.db.shared.store.lifecycle.snapshot().stamp(), queued("account-b"));
     assert_eq!(expect_event(within(&events).await).id, "account-b");
 }
 
@@ -428,7 +428,7 @@ async fn every_model_event_wake_runs_unlocked() {
         let mut waiting = Box::pin(queue.ready().notified());
         assert!(waiting.as_mut().poll(&mut Context::from_waker(&Waker::from(waker.clone()))).is_pending());
         match trigger {
-            Trigger::Value => rig.sync.inner.publish_model_event(super::ModelEvent { model: "chats".into(), area: "CHAT".into(), kind: "UPDATED".into(), id: "c1".into(), before: None, after: None }),
+            Trigger::Value => rig.sync.inner.publish_model_event(rig.db.shared.store.lifecycle.snapshot().stamp(), super::ModelEvent { model: "chats".into(), area: "CHAT".into(), kind: "UPDATED".into(), id: "c1".into(), before: None, after: None }),
             Trigger::Close => events.close(),
             Trigger::Drop => drop(events),
         }
@@ -437,16 +437,31 @@ async fn every_model_event_wake_runs_unlocked() {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_stamped_before_the_session_ended_never_enters_a_queue_after_it() {
+#[tokio::test(flavor = "multi_thread")]
+async fn an_event_received_before_the_session_ended_is_not_published_after_it() {
     let rig = chat_rig();
-    let events = rig.sync.open_model_events("chats").await.unwrap();
-    let queued = |id: &str| super::ModelEvent { model: "chats".into(), area: "CHAT".into(), kind: "UPDATED".into(), id: id.into(), before: None, after: None };
-    let stamp = rig.db.shared.store.lifecycle.snapshot().stamp();
+    put(&rig, "chats", json!({"id": "c1", "title": "account A"}));
+    put(&rig, "chats", json!({"id": "c2", "title": "account B"}));
+    let events = crate::test_wait::within_secs(5, rig.sync.open_model_events("chats")).await.unwrap();
+    crate::test_wait::within_secs(5, rig.transport.await_calls("Changes", 1)).await;
+    let (entered, entered_receiver) = std::sync::mpsc::channel();
+    let (release, release_receiver) = std::sync::mpsc::channel::<()>();
+    let held = std::sync::Mutex::new(Some(release_receiver));
+    *rig.db.shared.store.after_commit.lock().unwrap() = Some(Box::new(move |_| {
+        if let Some(release) = held.lock().unwrap().take() {
+            entered.send(()).unwrap();
+            crate::test_wait::recv_within(&release);
+        }
+    }));
+    emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
+    crate::test_wait::recv_within(&entered_receiver);
     rig.sync.session_ended();
     rig.transport.set_session(Some("second"));
     rig.sync.session_committed();
-    rig.sync.inner.publish_model_event_at(stamp, queued("account-a"));
-    rig.sync.inner.publish_model_event(queued("account-b"));
-    assert_eq!(expect_event(within(&events).await).id, "account-b");
+    release.send(()).unwrap();
+    *rig.db.shared.store.after_commit.lock().unwrap() = None;
+    crate::test_wait::within_secs(5, rig.transport.await_calls("Changes", 2)).await;
+    emit(&rig, vec![event("CHAT", "DELETED", "c2")]);
+    let seen = expect_event(crate::test_wait::within_secs(5, events.next()).await);
+    assert_eq!(seen.id, "c2", "an event of the ended session reached the queue of the next one");
 }

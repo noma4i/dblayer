@@ -37,6 +37,10 @@ class LifecycleSessionTest {
             account.set(name)
             return@SealedServer json("""{"sessionId":"$name"}""")
         }
+        if (path == "/api/logout") {
+            account.set(null)
+            return@SealedServer json("""{"revoked":true}""")
+        }
         val name = account.get() ?: return@SealedServer json("""{"error":"UNAUTHENTICATED"}""")
         when (body["operationName"]?.jsonPrimitive?.content) {
             "SessionProfile" -> json("""{"data":{"sessionProfile":{"id":"$name"}}}""")
@@ -53,14 +57,18 @@ class LifecycleSessionTest {
         User.profile.refresh()
     }
 
+    private suspend fun openSession() {
+        DBlayer.close()
+        val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", false))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
+        DBlayer.openTesting(MockTransport(), modelsJSON, encrypted = encrypted, credentials = LifecycleCredential(), http = server)
+        DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}]""")
+    }
+
     /** REL-24 and the login hang: a login after a logout refreshes the held entity, no read reaches the server after the logout, and the next account never shows the last one. */
     @Test
     fun anAppLoginAfterALogoutRefreshesTheHeldEntityAndNoReadFollowsTheLogout() = bounded {
-        DBlayer.close()
         try {
-            val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", false))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
-            DBlayer.openTesting(MockTransport(), modelsJSON, encrypted = encrypted, credentials = LifecycleCredential(), http = server)
-            DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}]""")
+            openSession()
             startSession("A")
             val entity = User.entity()
             eventually("the held entity shows A") { entity.value.value?.name == "A" }
@@ -69,6 +77,30 @@ class LifecycleSessionTest {
             assertNull(entity.value.value)
             server.refuseEverything(true)
             DBlayer.resetForTesting()
+            DBlayer.settleForTesting()
+            assertEquals(before, server.requests.size)
+            server.refuseEverything(false)
+            startSession("B")
+            eventually("the held entity shows B") { entity.value.value?.name == "B" }
+        } finally {
+            DBlayer.close()
+        }
+    }
+
+    /** The real exit of the app: the confirmed logout call, the session reset, the data clear, then the next login. No read follows the exit and account A never shows after it. */
+    @Test
+    fun aConfirmedLogoutThenASessionResetAndAClearNeverShowsTheAccountToTheNextLogin() = bounded {
+        try {
+            openSession()
+            startSession("A")
+            val entity = User.entity()
+            eventually("the held entity shows A") { entity.value.value?.name == "A" }
+            DBlayer.database.sessionCall("logout", "{}")
+            DBlayer.sessionReset()
+            DBlayer.logout()
+            assertNull(entity.value.value)
+            val before = server.requests.size
+            server.refuseEverything(true)
             DBlayer.settleForTesting()
             assertEquals(before, server.requests.size)
             server.refuseEverything(false)

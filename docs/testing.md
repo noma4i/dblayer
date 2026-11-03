@@ -45,6 +45,8 @@ Held entities and live queries reconnect and load again after `resetForTesting`.
 
 After `logout()` a test database reads again when its next explicit call succeeds while a credential is stored, the same rule as in production. `settleForTesting` returns without a sign-in.
 
+A second `close` from another thread returns after the first one finished every close callback, and the open slot frees only then. A close callback that calls `close` again returns at once without waiting for itself, and the outer `close` frees the slot. A callback must not wait for a `close` made on another thread.
+
 `openTesting` also takes the encrypted session parameters of `open`: `encrypted`, `credentials`, `http` and `retries`, all optional. With them the test runs the real encrypted session path and replaces only the HTTP exchange. Without them the database has no session client, as before.
 
 ```swift

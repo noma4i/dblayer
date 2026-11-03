@@ -223,8 +223,9 @@ impl Inner {
 
     pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
         let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
-        let result = self.fetch_in(resolved, cursor, force).await;
-        if resolved.origin == crate::lifecycle::Origin::Explicit && result.as_ref().is_ok_and(|outcome| outcome.kept_error.is_none()) {
+        if resolved.origin != crate::lifecycle::Origin::Explicit { return self.fetch_in(resolved, cursor, force).await; }
+        let result = self.db.shared.store.lifecycle.bound(self.fetch_in(resolved, cursor, force)).await.map_err(SyncError::from).and_then(|result| result);
+        if result.as_ref().is_ok_and(|outcome| outcome.kept_error.is_none()) {
             self.explicit_succeeded(epoch);
         }
         result

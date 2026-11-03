@@ -312,12 +312,18 @@ impl EncryptedClient {
     }
 
     pub fn reset(&self) -> Result<(), TransportError> {
-        self.db.shared.store.end_session();
+        self.reset_in(None)
+    }
+
+    /// Ends the session, then clears the credential and its tables. A confirmed logout carries its epoch and the check shares the writer lock with the end, so an answer that outlived a close or a newer session ends nothing.
+    fn reset_in(&self, admitted: Option<u64>) -> Result<(), TransportError> {
+        self.db.shared.store.end_session_in(admitted, || TransportError::Interrupted("the session ended while its answer was pending".into()))?;
         crate::db::lock::assert_no_library_lock("CredentialSlot::clear");
         self.credentials.clear()?;
         let mut state = crate::db::locked(&self.credential.state);
         state.cached = None;
         state.generation += 1;
+        drop(state);
         self.with_connection(state::clear)
     }
 
@@ -366,10 +372,7 @@ impl EncryptedClient {
             });
         }
         match pending.path == self.config.endpoints.logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
-            true => {
-                self.write_in(epoch, |_| Ok(()))?;
-                self.reset()?
-            }
+            true => self.reset_in(Some(epoch))?,
             false => {
                 self.write_in(epoch, |connection| state::commit(connection, pending.sequence))?;
                 if confirmed_error(&answer.body).is_none() { self.confirm_session(epoch)?; }

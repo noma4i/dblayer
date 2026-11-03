@@ -49,7 +49,7 @@ pub(crate) struct Stamp {
 pub(crate) struct Ended;
 
 impl From<Ended> for crate::transport::TransportError {
-    fn from(_: Ended) -> Self { crate::transport::TransportError::Interrupted("database session ended or database closed".into()) }
+    fn from(_: Ended) -> Self { crate::transport::TransportError::Interrupted("the database closed, reset or ended its session".into()) }
 }
 
 impl From<Ended> for crate::sync::SyncError {
@@ -219,12 +219,21 @@ impl Lifecycle {
 
     /// Runs the call inside the scope of the database state it was admitted in. The scope ends the call when the database closes or its session ends, whatever the call waits for: a queue, a retry, a request or an answer.
     pub(crate) async fn scoped<T>(&self, work: impl std::future::Future<Output = T>) -> Result<T, Ended> {
+        self.scoped_until(false, work).await
+    }
+
+    /// Like `scoped`, and a reset of the data ends the call too: an explicit call that was waiting for the old data gets its outcome at the reset.
+    pub(crate) async fn bound<T>(&self, work: impl std::future::Future<Output = T>) -> Result<T, Ended> {
+        self.scoped_until(true, work).await
+    }
+
+    async fn scoped_until<T>(&self, reset: bool, work: impl std::future::Future<Output = T>) -> Result<T, Ended> {
         let mut changes = self.changed.subscribe();
         let before = self.snapshot();
         if before.closed { return Err(Ended); }
         tokio::select! {
             biased;
-            _ = changes.wait_for(|published| published.closed || published.session_epoch > before.session_epoch) => Err(Ended),
+            _ = changes.wait_for(|published| published.closed || published.session_epoch > before.session_epoch || reset && published.generation > before.generation) => Err(Ended),
             result = work => Ok(result),
         }
     }
@@ -234,9 +243,9 @@ impl Lifecycle {
     }
 
     /// Returns after every member ran its callback for this change, unless a callback of this lifecycle made the call.
-    pub(crate) fn transition(&self, change: Change) {
+    pub(crate) fn transition(&self, change: Change) -> bool {
         let (_, ticket) = self.transition_ticketed(change);
-        self.effects.run_until(ticket);
+        self.effects.run_until(ticket)
     }
 
     pub(crate) fn transition_deferred(&self, change: Change) -> Generation {
@@ -244,15 +253,17 @@ impl Lifecycle {
     }
 
     /// Returns when the change with this ticket reached its members.
-    pub(crate) fn delivered(&self, ticket: u64) {
-        self.effects.run_until(ticket);
+    pub(crate) fn delivered(&self, ticket: u64) -> bool {
+        self.effects.run_until(ticket)
     }
 
     pub(crate) fn transition_ticketed(&self, change: Change) -> (Generation, u64) {
         let mut state = crate::db::locked(&self.state);
         let previous = &state.machine.inner().snapshot;
         if previous.closed || matches!(&change, Change::Session(session, epoch) if *epoch != previous.session_epoch || previous.session == *session && !previous.ended) {
-            return (previous.generation, 0);
+            let generation = previous.generation;
+            drop(state);
+            return (generation, self.effects.last_ticket());
         }
         state.machine.handle(&change);
         let snapshot = state.machine.inner().snapshot.clone();
@@ -297,8 +308,9 @@ impl Lifecycle {
         snapshot
     }
 
-    pub(crate) fn close(&self) {
-        self.transition(Change::Close);
+    /// Returns after every member closed, also when another thread made the first close. False when a member's own close called it again: that call cannot wait for itself, and the outer close finishes the work.
+    pub(crate) fn close(&self) -> bool {
+        self.transition(Change::Close)
     }
 
     #[cfg(test)]

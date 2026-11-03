@@ -14,6 +14,11 @@
 - A session reset or logout stops sends and uploads in flight.
 - `waitForInitialLoad` after a reset waits for the new load.
 - A load after a reset starts its own request instead of joining the earlier one.
+- A reset ends the explicit calls that wait for a load of the old data.
+- Uploads queued when a session ends start again with the next session.
+- A close stops the answer of a session call or logout from changing the stored session.
+- Closing the database twice waits until the first close finished.
+- A session end leaves no rows of the ended session in a changes queue.
 
 ## 6.15.3 - 2026-11-03
 

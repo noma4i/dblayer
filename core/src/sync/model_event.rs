@@ -8,6 +8,14 @@ use super::{locked, Inner, Sync};
 
 pub(crate) const EVENT_QUEUE_LIMIT: usize = 256;
 
+/// A source event as it was received: the database state at that moment, its area and its kind.
+#[derive(Clone, Copy)]
+pub(crate) struct Heard<'a> {
+    pub stamp: crate::lifecycle::Stamp,
+    pub area: &'a str,
+    pub kind: &'a str,
+}
+
 #[derive(Debug, Clone)]
 pub struct ModelEvent {
     pub model: String,
@@ -114,12 +122,8 @@ impl Inner {
         !self.readers_of(model).is_empty()
     }
 
-    pub(crate) fn publish_model_event(&self, event: ModelEvent) {
-        let stamp = self.db.shared.store.lifecycle.snapshot().stamp();
-        self.publish_model_event_at(stamp, event);
-    }
-
-    pub(crate) fn publish_model_event_at(&self, stamp: crate::lifecycle::Stamp, event: ModelEvent) {
+    /// `stamp` is the database state at the moment the source event was received, never the one at publication.
+    pub(crate) fn publish_model_event(&self, stamp: crate::lifecycle::Stamp, event: ModelEvent) {
         for queue in self.readers_of(&event.model) { queue.push(&event, stamp); }
     }
 
@@ -128,12 +132,12 @@ impl Inner {
     }
 
     /// A failed read is published as a gap in the queue, never as a row that was not there.
-    pub(crate) fn publish_rows(&self, model: &str, area: &str, kind: &str, id: &str, before: Result<Option<Row>, crate::db::DbError>, after: Result<Option<Row>, crate::db::DbError>) -> bool {
+    pub(crate) fn publish_rows(&self, heard: Heard<'_>, model: &str, id: &str, before: Result<Option<Row>, crate::db::DbError>, after: Result<Option<Row>, crate::db::DbError>) -> bool {
         let (Ok(before), Ok(after)) = (before, after) else {
             self.publish_model_gap(model);
             return false;
         };
-        self.publish_model_event(ModelEvent { model: model.to_string(), area: area.to_string(), kind: kind.to_string(), id: id.to_string(), before, after });
+        self.publish_model_event(heard.stamp, ModelEvent { model: model.to_string(), area: heard.area.to_string(), kind: heard.kind.to_string(), id: id.to_string(), before, after });
         true
     }
 }

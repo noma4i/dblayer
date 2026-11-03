@@ -20,6 +20,7 @@ use crate::value::read_id;
 use super::error::SyncError;
 use super::extract::root_value;
 use super::normalize::normalize_nodes;
+use super::model_event::Heard;
 use super::{locked, Inner, Sync};
 
 mod machine;
@@ -143,6 +144,7 @@ struct Pending {
     id: RowId,
     node: Map<String, Value>,
     generation: Generation,
+    stamp: crate::lifecycle::Stamp,
 }
 
 struct Feed {
@@ -154,15 +156,16 @@ struct Feed {
     status: SharedStatus,
     backoff: Backoff,
     ready: Option<tokio::sync::watch::Sender<Option<Result<(), SyncError>>>>,
+    received: crate::lifecycle::Stamp,
 }
 
 impl Feed {
-    fn recipients(&self) -> Vec<Feed> {
+    fn recipients(&self, received: crate::lifecycle::Stamp) -> Vec<Feed> {
         let definitions = if self.shared { self.inner.live_definitions(&self.def.operation, &self.def.variables) } else { vec![(*self.def).clone()] };
         definitions.into_iter().map(|def| Feed {
             inner: self.inner.clone(), root_path: def.root.clone().unwrap_or_else(|| self.operation_root.clone()),
             def: Arc::new(def), shared: false, operation_root: self.operation_root.clone(),
-            status: self.status.clone(), backoff: self.backoff, ready: None,
+            status: self.status.clone(), backoff: self.backoff, ready: None, received,
         }).collect()
     }
 
@@ -178,7 +181,7 @@ impl Feed {
         }
     }
 
-    async fn invalidation(&self, response: &Response, generation: Generation) -> bool {
+    async fn invalidation(&self, response: &Response, generation: Generation, received: crate::lifecycle::Stamp) -> bool {
         let Some(data) = response.data.as_ref() else { return false };
         let Some((_, feed)) = self.inner.change_feed().filter(|(_, feed)| feed.subscription == self.def.operation) else { return false };
         if generation != self.inner.db.generation() { return true; }
@@ -211,7 +214,7 @@ impl Feed {
             let mut settled: BTreeMap<String, bool> = BTreeMap::new();
             for (model, reads) in targets {
                 for read in reads.iter().filter(|read| read.payload.is_some()) {
-                    let result = self.payload_target(model, read, PayloadEvent { change, area, kind }, &row_id, generation).await;
+                    let result = self.payload_target(model, read, PayloadEvent { change, area, kind }, &row_id, generation, received).await;
                     match result {
                         Ok(()) => { settled.insert(model.clone(), true); }
                         Err(_) => {
@@ -226,7 +229,7 @@ impl Feed {
                 if generation != self.inner.db.generation() { return true; }
                 let direct: Vec<_> = reads.iter().filter(|read| read.id_of.is_none() && read.payload.is_none()).cloned().collect();
                 if direct.is_empty() { continue; }
-                let ok = self.reread_target(model, &direct, area, kind, id, &row_id).await;
+                let ok = self.reread_target(model, &direct, Heard { stamp: received, area, kind }, id, &row_id).await;
                 settled.insert(model.clone(), ok);
             }
             for ((model, read), before) in derived.iter().zip(sources_before) {
@@ -250,14 +253,14 @@ impl Feed {
                     continue;
                 }
                 for target_id in ids {
-                    self.reread_target(model, std::slice::from_ref(&crate::schema::ChangeRead { id_of: None, ..read.clone() }), area, kind, target_id.as_str(), &target_id).await;
+                    self.reread_target(model, std::slice::from_ref(&crate::schema::ChangeRead { id_of: None, ..read.clone() }), Heard { stamp: received, area, kind }, target_id.as_str(), &target_id).await;
                 }
             }
         }
         true
     }
 
-    async fn payload_target(&self, model: &str, read: &crate::schema::ChangeRead, event: PayloadEvent<'_>, event_id: &RowId, generation: Generation) -> Result<(), SyncError> {
+    async fn payload_target(&self, model: &str, read: &crate::schema::ChangeRead, event: PayloadEvent<'_>, event_id: &RowId, generation: Generation, received: crate::lifecycle::Stamp) -> Result<(), SyncError> {
         let PayloadEvent { change, area, kind } = event;
         let terminal = read.removes_on.iter().any(|removal| removal == kind);
         let node = if terminal { Map::new() } else {
@@ -275,10 +278,10 @@ impl Feed {
             validate_payload(&spec.fields, &input)?;
         }
         let definition = Arc::new(SubscriptionDef { model: model.to_string(), effect: if terminal { EventEffect::Destroy } else { EventEffect::Upsert }, ..(*self.def).clone() });
-        let (_, held_files) = self.try_apply(vec![Pending { definition, bucket: String::new(), id: id.clone(), node, generation }], generation)?;
+        let (_, held_files) = self.try_apply(vec![Pending { definition, bucket: String::new(), id: id.clone(), node, generation, stamp: received }], generation)?;
         self.inner.discard_files(held_files).await?;
         if let Some(before) = before {
-            if !self.inner.publish_rows(model, area, kind, id.as_str(), before, self.inner.db.find(model, &id)) {
+            if !self.inner.publish_rows(Heard { stamp: received, area, kind }, model, id.as_str(), before, self.inner.db.find(model, &id)) {
                 return Err(SyncError::Event("payload event could not be published".into()));
             }
         }
@@ -290,16 +293,17 @@ impl Feed {
         Ok(self.inner.db.find(&source.model, event_id)?.and_then(|row| row.get(&source.field).and_then(read_id)))
     }
 
-    async fn reread_target(&self, model: &str, reads: &[crate::schema::ChangeRead], area: &str, kind: &str, id: &str, row_id: &RowId) -> bool {
+    async fn reread_target(&self, model: &str, reads: &[crate::schema::ChangeRead], heard: Heard<'_>, id: &str, row_id: &RowId) -> bool {
+        let Heard { stamp: received, area, kind } = heard;
         let watched = self.inner.has_event_readers(model);
         let before = watched.then(|| self.inner.db.find(model, row_id));
         if reads.iter().any(|read| read.removes_on.iter().any(|removal| removal == kind)) {
             let definition = Arc::new(SubscriptionDef { model: model.to_string(), effect: EventEffect::Destroy, ..(*self.def).clone() });
-            let removed = self.apply(vec![Pending { definition, bucket: String::new(), id: row_id.clone(), node: Map::new(), generation: self.inner.db.generation() }]).await;
+            let removed = self.apply(vec![Pending { definition, bucket: String::new(), id: row_id.clone(), node: Map::new(), generation: self.inner.db.generation(), stamp: received }]).await;
             if let Some(before) = before {
                 if !removed {
                     self.inner.publish_model_gap(model);
-                } else if !self.inner.publish_rows(model, area, kind, id, before, Ok(None)) {
+                } else if !self.inner.publish_rows(Heard { stamp: received, area, kind }, model, id, before, Ok(None)) {
                     locked(&self.status).rejected += 1;
                 }
             }
@@ -315,7 +319,7 @@ impl Feed {
                 locked(&self.status).applied += 1;
                 if let Some(before) = before {
                     let after = self.inner.db.find(model, row_id);
-                    if !self.inner.publish_rows(model, area, kind, id, before, after) { locked(&self.status).rejected += 1; }
+                    if !self.inner.publish_rows(Heard { stamp: received, area, kind }, model, id, before, after) { locked(&self.status).rejected += 1; }
                 }
                 true
             }
@@ -385,7 +389,7 @@ impl Feed {
                 locked(&self.status).applied += 1;
                 if let (Some(id), Some(before)) = (id.as_ref(), before) {
                     let kind = node.get("kind").and_then(Value::as_str).unwrap_or("UPDATED");
-                    self.inner.publish_rows(&self.def.model, &self.def.operation, kind, id.as_str(), before, self.inner.db.find(&self.def.model, id));
+                    self.inner.publish_rows(Heard { stamp: self.received, area: &self.def.operation, kind }, &self.def.model, id.as_str(), before, self.inner.db.find(&self.def.model, id));
                 }
             }
             Err(_) => {
@@ -421,7 +425,7 @@ impl Feed {
         };
         let mut node = node.as_object()?.clone();
         node.insert("id".to_string(), Value::String(id.to_string()));
-        Some(Pending { definition: self.def.clone(), bucket: format!("{}|{}", self.def.model, self.def.event.bucket_key(id.as_str())), id, node, generation: self.inner.db.generation() })
+        Some(Pending { definition: self.def.clone(), bucket: format!("{}|{}", self.def.model, self.def.event.bucket_key(id.as_str())), id, node, generation: self.inner.db.generation(), stamp: self.received })
     }
 
     async fn apply_active(&self, mut items: Vec<Pending>) -> bool {
@@ -487,7 +491,7 @@ impl Feed {
         let change_feed = self.inner.change_feed().is_some_and(|(_, feed)| feed.subscription == self.def.operation);
         let before = items.iter().filter(|(item, _)| !change_feed && self.inner.has_event_readers(&item.definition.model)).map(|(item, _)| {
             let def = &item.definition;
-            (def.model.clone(), item.id.clone(), item.node.get("kind").and_then(Value::as_str).unwrap_or(if def.effect == EventEffect::Destroy { "DELETED" } else { "UPDATED" }).to_string(), db.find(&def.model, &item.id))
+            (item.stamp, def.model.clone(), item.id.clone(), item.node.get("kind").and_then(Value::as_str).unwrap_or(if def.effect == EventEffect::Destroy { "DELETED" } else { "UPDATED" }).to_string(), db.find(&def.model, &item.id))
         }).collect::<Vec<_>>();
         let mut count = 0;
         let mut announced: Vec<(String, RowId, Map<String, Value>)> = Vec::new();
@@ -568,8 +572,8 @@ impl Feed {
         for (model, id, values) in &announced {
             db.set_ephemeral(model, id, values.clone())?;
         }
-        for (model, id, kind, before) in before {
-            self.inner.publish_rows(&model, &self.def.operation, &kind, id.as_str(), before, db.find(&model, &id));
+        for (stamp, model, id, kind, before) in before {
+            self.inner.publish_rows(Heard { stamp, area: &self.def.operation, kind: &kind }, &model, id.as_str(), before, db.find(&model, &id));
         }
         locked(&self.status).applied += count;
         let stale: Vec<String> = followed.absent.iter().map(ToString::to_string).collect();
@@ -612,9 +616,10 @@ impl Feed {
                         if generation != self.inner.db.generation() { continue; }
                         lifecycle.handle(Event::Next);
                         self.publish(lifecycle);
-                        let invalidation = self.invalidation(&response, generation).await;
+                        let received = self.inner.db.shared.store.lifecycle.snapshot().stamp();
+                        let invalidation = self.invalidation(&response, generation, received).await;
                         let mut items = Vec::new();
-                        for feed in self.recipients() {
+                        for feed in self.recipients(received) {
                             if !feed.apply_event(&response).await && !invalidation {
                                 if let Some(item) = feed.parse(&response) {
                                     match feed.def.event.debounce_interval {
@@ -681,7 +686,7 @@ impl Feed {
                         status.connects > 1
                     };
                     if reconnected {
-                        let models: BTreeSet<_> = self.recipients().iter().map(|feed| feed.def.model.clone()).collect();
+                        let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
                         for model in models {
                             if self.inner.reload_watched(&model, None, false).await.is_err() {
                                 self.inner.publish_model_gap(&model);
@@ -770,7 +775,7 @@ impl Inner {
         let def_root = def.root.clone();
         let backoff = RetryPolicy::Subscription.backoff().randomized();
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
-        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready };
+        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp() };
         let task = tokio::spawn(self.until_closed(feed.run(request, first, resets)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }

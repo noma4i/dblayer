@@ -21,7 +21,7 @@ mod source_tests;
 #[cfg(test)]
 mod background_tests;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use tokio::sync::watch;
@@ -58,8 +58,10 @@ pub(crate) struct UploadRuns {
     max_files: usize,
     active_files: usize,
     ready: BTreeMap<(i64, i64), ReadyRun>,
-    active: HashMap<(i64, i64), ActiveRun>,
+    active: BTreeMap<(i64, i64), ActiveRun>,
     next_run: u64,
+    #[cfg(test)]
+    walked: usize,
     tasks: JoinSet<()>,
     adopted: HashMap<String, Arc<watch::Sender<PutTaskState>>>,
 }
@@ -102,7 +104,7 @@ impl UploadRuns {
     }
 
     pub(crate) fn new(max_files: usize) -> Self {
-        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: HashMap::new(), next_run: 0, tasks: JoinSet::new(), adopted: HashMap::new() }
+        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: BTreeMap::new(), next_run: 0, #[cfg(test)] walked: 0, tasks: JoinSet::new(), adopted: HashMap::new() }
     }
 }
 
@@ -147,6 +149,11 @@ impl Inner {
             }
         }
         let mut runs = locked(&self.uploads);
+        if !self.admitted(crate::lifecycle::Origin::Background) {
+            drop(runs);
+            self.restart_uploads([seq]);
+            return Ok(());
+        }
         let keys: Vec<_> = runs.ready.range((seq, i64::MIN)..=(seq, i64::MAX)).map(|(key, _)| *key).collect();
         let mut previous: BTreeMap<_, _> = keys.into_iter().filter_map(|key| runs.ready.remove(&key).map(|run| (key, run))).collect();
         for (position, mode) in ready {
@@ -233,14 +240,15 @@ impl Inner {
         self.upload_effects.under(&self.uploads, apply)
     }
 
-    /// Ends every running upload, including the platform PUT, and drops the queued ones. The operations stay pending for the next session.
+    /// Ends every running upload, including the platform PUT, and drops the queued ones. Their operations stay pending and return to the restart set, so the next session starts them.
     pub(super) fn cancel_uploads(&self) {
-        let tokens: Vec<CancelToken> = {
-            let mut runs = locked(&self.uploads);
-            runs.ready.clear();
-            runs.active.values_mut().map(|active| { active.ended = true; active.token.clone() }).collect()
-        };
+        let (tokens, restart) = locked(&self.uploads).end_all();
+        self.restart_uploads(restart);
         for token in tokens { token.cancel(); }
+    }
+
+    fn restart_uploads(&self, sequences: impl IntoIterator<Item = i64>) {
+        if let Ok(queue) = self.operation_queue() { locked(queue).dirty_uploads.extend(sequences); }
     }
 
     pub(super) fn run_ended(&self, seq: i64, position: i64, run: u64) -> bool {
@@ -248,7 +256,7 @@ impl Inner {
     }
 
     pub(super) fn running_uploads(&self, seq: i64, position: Option<i64>) -> Vec<(CancelToken, watch::Receiver<bool>)> {
-        locked(&self.uploads).active.iter().filter(|(key, _)| key.0 == seq && position.is_none_or(|position| key.1 == position)).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect()
+        locked(&self.uploads).active.range((seq, i64::MIN)..=(seq, i64::MAX)).filter(|(key, _)| position.is_none_or(|position| key.1 == position)).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect()
     }
 
     fn finish_run(self: &Arc<Self>, seq: i64, position: i64, run: u64) {
@@ -284,8 +292,8 @@ impl Inner {
     }
 
     fn drain_uploads(self: &Arc<Self>) {
-        if !self.admitted(crate::lifecycle::Origin::Background) { return; }
         let mut runs = locked(&self.uploads);
+        if !self.admitted(crate::lifecycle::Origin::Background) { return; }
         while runs.active_files < runs.max_files {
             let Some(((seq, position), pending)) = runs.ready.pop_first() else { break };
             if runs.active.contains_key(&(seq, position)) { continue; }
@@ -374,9 +382,14 @@ impl Inner {
         };
         let Some(state) = state else { return };
         let mode = state.resume_mode();
+        let mut parked = false;
         let resumed = self.with_uploads(|runs, effects| {
             if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) { return false; }
             if let Some(active) = runs.active.remove(&(seq, owner.position)) { effects.push(move || { crate::db::lock::effect(|| active.done.send_replace(true)); }); }
+            if !self.admitted(crate::lifecycle::Origin::Background) {
+                parked = true;
+                return false;
+            }
             if matches!(mode, RunMode::Transfer) {
                 runs.ready.insert((seq, owner.position), ReadyRun { resumed: Some(result) });
             } else {
@@ -384,6 +397,7 @@ impl Inner {
             }
             true
         });
+        if parked { self.restart_uploads([seq]); }
         if resumed { self.drain_uploads(); }
     }
 }
@@ -523,6 +537,24 @@ impl Sync {
 }
 
 impl UploadRuns {
+    /// Marks every running upload ended and empties the queue. Returns the tokens to cancel and the operations to start again. The walk costs the number of running uploads.
+    fn end_all(&mut self) -> (Vec<CancelToken>, BTreeSet<i64>) {
+        let mut restart: BTreeSet<i64> = self.ready.keys().map(|(seq, _)| *seq).collect();
+        self.ready.clear();
+        let mut tokens = Vec::new();
+        for ((seq, _), active) in self.active.range_mut::<(i64, i64), _>(..) {
+            active.ended = true;
+            tokens.push(active.token.clone());
+            restart.insert(*seq);
+            #[cfg(test)]
+            { self.walked += 1; }
+        }
+        (tokens, restart)
+    }
+
+    #[cfg(test)]
+    pub(super) fn walked(&self) -> usize { self.walked }
+
     fn finish(&mut self, seq: i64, position: i64, run: u64, effects: &mut Effects) -> bool {
         let prefix = format!("{seq}.{position}.");
         let tags: Vec<String> = self.adopted.keys().filter(|tag| tag.starts_with(&prefix)).cloned().collect();

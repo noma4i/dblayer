@@ -579,9 +579,9 @@ impl Database {
         blocking(move || Ok(db.maintain(&[]).map(|_| ())?)).await
     }
     pub fn shutdown(&self) {
-        self.streams.close();
-        if let Some(sync) = &self.sync { sync.close(); }
-        if let Some(lease) = self.lease.get() { lease.release(); }
+        let mut finished = self.streams.close();
+        if let Some(sync) = &self.sync { finished &= sync.close(); }
+        if finished { if let Some(lease) = self.lease.get() { lease.release(); } }
     }
     pub async fn logout(&self) -> Result<(), DbError> {
         if let Some(sync) = &self.sync {
