@@ -118,7 +118,7 @@ lane_ios() {
   [ -x "$sim_run" ] || { echo "sim-run not found: $sim_run (set SIM_RUN)" > "$log"; return 1; }
   tree="$(new_tree ios-tree "$ios_ref" 2> "$log")" || { echo "cannot make the iOS worktree from $ios_ref" >> "$log"; return 1; }
   {
-    [ -f "$tree/ios/scripts/dblayer_path.sh" ] || { echo 'the app ref $ios_ref lacks YUPI_DBLAYER_PATH support (ios/scripts/dblayer_path.sh)'; return 1; }
+    [ -f "$tree/ios/scripts/dblayer_path.sh" ] || { echo "the app ref $ios_ref lacks YUPI_DBLAYER_PATH support (ios/scripts/dblayer_path.sh)"; return 1; }
     [ ! -f "$YUPI_V3_REPO/ios/Configs/Secrets.xcconfig" ] || cp "$YUPI_V3_REPO/ios/Configs/Secrets.xcconfig" "$tree/ios/Configs/"
     (cd "$tree" && YUPI_DBLAYER_PATH="$package" bash ios/scripts/bootstrap.sh) || return 1
     grep -Fq "$package" "$tree/ios/Yupi.xcodeproj/project.pbxproj" || { echo "the generated project does not name the local package $package"; return 1; }
@@ -134,7 +134,7 @@ lane_android() {
   mirror="dblayer-check-$$"
   remote_log="$mirror.log"
   {
-    grep -q BRICK_LIBRARIES_CACHE "$tree/android/scripts/brick.sh" || { echo 'the app ref $android_ref lacks BRICK_LIBRARIES_CACHE support in android/scripts/brick.sh'; return 1; }
+    grep -q BRICK_LIBRARIES_CACHE "$tree/android/scripts/brick.sh" || { echo "the app ref $android_ref lacks BRICK_LIBRARIES_CACHE support in android/scripts/brick.sh"; return 1; }
     mkdir -p "$cache/dblayer-maven/com/noma4i/dblayer" "$cache/dblayer-gen"
     mkdir -p "$cache/dblayer" && cp -R "$package/." "$cache/dblayer/"
     cp -R "$maven" "$cache/dblayer-maven/com/noma4i/dblayer/$version"
