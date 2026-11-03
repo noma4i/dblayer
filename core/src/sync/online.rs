@@ -62,11 +62,11 @@ impl Inner {
         let deadline = clock.now().saturating_add(wait);
         let inner = Arc::downgrade(self);
         let reserved = if wait.is_zero() { Some(self.lease(crate::lifecycle::Origin::Session, "outbox flush").ok()?) } else { None };
-        let task = runtime.spawn(self.until_closed(async move {
+        let task = crate::task::spawn_on_unpinned(&runtime, self.until_closed(async move {
             clock.sleep(deadline.saturating_sub(clock.now())).await;
             if let Some(inner) = inner.upgrade() {
-                let Some(_lease) = reserved.or_else(|| inner.lease(crate::lifecycle::Origin::Session, "outbox flush").ok()) else { return };
-                let _ = inner.flush_pending().await;
+                let Some(lease) = reserved.or_else(|| inner.lease(crate::lifecycle::Origin::Session, "outbox flush").ok()) else { return };
+                let _ = lease.pinned(inner.flush_pending()).await;
             }
         }));
         Some(task.abort_handle())
@@ -77,7 +77,7 @@ impl Inner {
     fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind) {
         let Ok(runtime) = Handle::try_current() else { return };
         let inner = Arc::downgrade(self);
-        runtime.spawn(self.until_closed(async move {
+        crate::task::spawn_on_unpinned(&runtime, self.until_closed(async move {
             let Some(inner) = inner.upgrade() else { return };
             let Ok(resolved) = inner.resolve(crate::lifecycle::Origin::Session, &target.model, &target.relation, &target.params) else { return };
             if resolved.members_complete || resolved.media.is_some() {

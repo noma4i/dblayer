@@ -377,3 +377,27 @@ async fn refreshing_preloads_names_the_scopes_that_failed() {
     assert_eq!(failures.len(), 1);
     assert_eq!((failures[0].model.as_str(), failures[0].relation.as_str(), failures[0].params["vibeId"].as_str()), ("moments", "vibe_feed", Some("b")));
 }
+
+/// E01: a refresh that was admitted in one epoch sends nothing and writes nothing once a session started in another epoch, also for the load that still waits for a lane.
+#[tokio::test(start_paused = true)]
+async fn a_refresh_of_an_epoch_that_left_sends_nothing_from_the_load_waiting_for_a_lane() {
+    let mut moments = moments_spec();
+    for relation in &mut moments.relations {
+        if relation.name == "vibe_feed" {
+            relation.preload = Some(BTreeMap::from([("vibeId".to_string(), PreloadChoice::Listed(["a", "b", "c", "d"].map(|vibe| json!(vibe)).to_vec()))]));
+        }
+    }
+    let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments, vibes_spec()], None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.transport.respond_with(|_| Some(feed_reply(&["m1"], false, "c1").after(Duration::from_secs(10))));
+    let life = rig.db.shared.store.lifecycle.clone();
+    let epoch = life.snapshot().session_epoch;
+    let refreshing = { let sync = rig.sync.clone(); crate::store::ORIGIN.scope((life.clone(), epoch), async move { sync.refresh_preloads().await }) };
+    let running = tokio::spawn(refreshing);
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(requests(&rig), 3, "three loads hold the lanes and the fourth waits");
+    assert!(life.start_session(Some("another".into()), epoch), "the session of the other epoch did not start");
+    tokio::time::sleep(Duration::from_secs(60)).await;
+    let _ = running.await;
+    assert_eq!(requests(&rig), 3, "the load that waited for a lane sent its request in the new epoch");
+    assert_eq!(rig.db.shared.store.row_count("moments").unwrap(), 0, "an answer of the epoch that left was written");
+}

@@ -71,13 +71,13 @@ pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Ru
 }
 
 pub(super) async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'static>(work: impl std::future::Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-    executor()?.spawn(work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
+    crate::task::spawn_on(executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
 }
 
 pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
     struct Cancel(tokio::task::AbortHandle);
     impl Drop for Cancel { fn drop(&mut self) { crate::db::lock::effect(|| self.0.abort()); } }
-    let task = executor()?.spawn(work);
+    let task = crate::task::spawn_on(executor()?.handle(), work);
     let _cancel = Cancel(task.abort_handle());
     task.await.map_err(|error| DbError::Invalid { detail: error.to_string() })
 }
@@ -91,7 +91,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
             work()
         }
     };
-    executor()?.spawn_blocking(crate::store::carry_origin(work)).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
+    crate::task::spawn_blocking_on(executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
@@ -269,8 +269,7 @@ impl Database {
         let (call_model, call_action, receiver) = (model.clone(), action.clone(), row_id.clone());
         let sync_for_wish = if waits { Some(self.sync()?.clone()) } else { None };
         let (queued, wish) = self.write_in_epoch(epoch, "act", move |database| {
-            let acted = database.db.act(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
-            let wish = sync_for_wish.map(|sync| sync.expect_answer(acted.operation));
+            let (acted, wish) = database.db.act_claiming(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?, |operation| sync_for_wish.map(|sync| sync.expect_answer(operation)))?;
             database.send_writes();
             Ok((QueuedAction { row: database.wire(&model)?.row(&acted.row), operation: acted.operation }, wish))
         }).await?;
@@ -279,7 +278,7 @@ impl Database {
         self.serve_in_epoch(epoch, "act answer", async move {
             let _wish = wish;
             let receiver = id(&receiver)?;
-            sync.settled(&call_model, &receiver, Some(&call_action)).await?;
+            sync.settled_operation(&call_model, operation).await?;
             let answered = match sync.answer_root(operation) {
                 Some(Some(root)) => root,
                 Some(None) => receiver.clone(),

@@ -15,9 +15,7 @@ pub(crate) fn spawn_named(name: &'static str, body: impl FnOnce() + Send + 'stat
     if REFUSED.with(|refused| *refused.borrow() == Some(name)) {
         return Err(DbError::ThreadSpawn { name, detail: "refused by the test".into() });
     }
-    std::thread::Builder::new()
-        .name(name.to_string())
-        .spawn(body)
+    crate::task::spawn_thread(name.to_string(), body)
         .map(drop)
         .map_err(|error| DbError::ThreadSpawn { name, detail: error.to_string() })
 }

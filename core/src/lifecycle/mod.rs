@@ -305,6 +305,12 @@ impl Lease {
         !snapshot.closed && snapshot.session_epoch == self.epoch && self.generation.is_none_or(|issued| issued == snapshot.generation)
     }
 
+    pub(crate) fn pinned<F: std::future::Future>(&self, work: F) -> impl std::future::Future<Output = F::Output> {
+        crate::store::ORIGIN.scope(self.scope(), work)
+    }
+
+    pub(crate) fn scope(&self) -> crate::task::Epoch { (self.life.clone(), self.epoch) }
+
     /// Runs the work inside the lease. A transition or the close of the database ends the work with `Ended`, and work that has not started when that happens never starts.
     pub(crate) async fn run<T>(&self, work: impl std::future::Future<Output = T>) -> Result<T, Ended> {
         if !self.is_current() { return Err(Ended); }

@@ -97,17 +97,8 @@ pub(crate) fn origin_epoch() -> Option<(Arc<crate::lifecycle::Lifecycle>, u64)> 
     ORIGIN.try_with(Clone::clone).ok()
 }
 
-/// Wraps a blocking job so that it commits under the epoch of the task that ordered it.
-pub(crate) fn carry_origin<R>(work: impl FnOnce() -> R) -> impl FnOnce() -> R {
-    let origin = origin_epoch();
-    move || match origin {
-        Some((life, epoch)) => pinned_to_epoch(&life, epoch, work),
-        None => work(),
-    }
-}
-
 /// The lifecycle and epoch that the SQL commit on this thread belongs to: a pinned write, else the origin of the running task.
-fn pinned_epoch() -> Option<(Arc<crate::lifecycle::Lifecycle>, u64)> {
+pub(crate) fn pinned_epoch() -> Option<(Arc<crate::lifecycle::Lifecycle>, u64)> {
     PINNED.with(|pinned| pinned.borrow().clone()).or_else(origin_epoch)
 }
 

@@ -1,3 +1,14 @@
+disallowed-methods = [
+    { path = "tokio::spawn", reason = "a task boundary goes through crate::task, which carries the session epoch" },
+    { path = "tokio::task::spawn_blocking", reason = "a task boundary goes through crate::task, which carries the session epoch" },
+    { path = "tokio::runtime::Handle::spawn", reason = "a task boundary goes through crate::task, which carries the session epoch" },
+    { path = "tokio::runtime::Handle::spawn_blocking", reason = "a task boundary goes through crate::task, which carries the session epoch" },
+    { path = "tokio::runtime::Runtime::spawn", reason = "a task boundary goes through crate::task, which carries the session epoch" },
+    { path = "tokio::runtime::Runtime::spawn_blocking", reason = "a task boundary goes through crate::task, which carries the session epoch" },
+    { path = "tokio::task::JoinSet::spawn", reason = "a task boundary goes through crate::task, which carries the session epoch" },
+    { path = "tokio::task::JoinSet::spawn_on", reason = "a task boundary goes through crate::task, which carries the session epoch" },
+    { path = "std::thread::Builder::spawn", reason = "a thread of the library goes through crate::task" },
+]
 await-holding-invalid-types = [
     { path = "rusqlite::Transaction", reason = "a SQLite transaction is one synchronous unit and never crosses an await" },
     { path = "std::sync::RwLockReadGuard", reason = "a std guard never crosses an await" },

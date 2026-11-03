@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::task::JoinSet;
+use crate::task::Children;
 
 use crate::syncstate::{FailureKind, OperationFailure};
 use crate::upload::{md5_base64, parse_headers, part_count, part_range, UploadEvent, UploadPart, UploadStage};
@@ -44,7 +44,7 @@ impl Runner {
         let mut queue: VecDeque<u32> = (1..=part_count(total, config.part_size)).filter(|number| !finished.contains_key(number)).collect();
         let mut targets: HashMap<u32, PartTarget> = HashMap::new();
         let mut presigned_at = Duration::ZERO;
-        let mut flight: JoinSet<PartOutcome> = JoinSet::new();
+        let mut flight: Children<PartOutcome> = Children::new();
         let limit = config.parallel_parts.max(1);
         loop {
             let aged = self.inner.clock.now().saturating_sub(presigned_at) > config.presign_ttl;
@@ -116,7 +116,7 @@ impl Runner {
         Ok(targets)
     }
 
-    async fn stop_flight(&self, mut flight: JoinSet<PartOutcome>, stop: Stop) -> Result<(), Stop> {
+    async fn stop_flight(&self, mut flight: Children<PartOutcome>, stop: Stop) -> Result<(), Stop> {
         flight.abort_all();
         while flight.join_next().await.is_some() {}
         Err(stop)

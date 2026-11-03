@@ -39,7 +39,10 @@ pub(crate) struct Sending<'a> {
     pub action: String,
     pub generation: Generation,
     pub base_revision: i64,
+    pub checked: Option<RefusalState>,
 }
+
+pub(crate) type RefusalState = (i64, i64, bool);
 
 #[derive(Default)]
 pub(crate) struct FinalAttempts {
@@ -146,25 +149,26 @@ impl Inner {
         let _serial = self.outbox_gate.lock().await;
         let mut report = FlushReport::default();
         if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(report); }
-        self.refuse_non_durable()?;
-        let mut checked = self.refusal_state();
+        let mut checked = self.refuse_non_durable()?;
         locked(self.operation_queue()?).begin_pass();
         let mut cursor = i64::MIN;
         loop {
             if self.refusal_state() != checked {
-                self.refuse_non_durable()?;
-                checked = self.refusal_state();
+                checked = self.refuse_non_durable()?;
             }
             let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? else { break };
             if !self.admitted(crate::lifecycle::Origin::Session) { break; }
             if self.refusal_state() != checked {
-                self.refuse_non_durable()?;
-                checked = self.refusal_state();
+                checked = self.refuse_non_durable()?;
                 if !locked(self.operation_queue()?).pending.contains(&entry.operation.id.0) { continue; }
             }
             locked(self.operation_queue()?).attempted(entry.operation.id.0);
             locked(&self.backoff_released).remove(&entry.operation.id.0);
-            let result = self.send(&entry, None).await?; // lock-ok: queue guard ended at statement
+            let result = self.send(&entry, None, Some(checked)).await?; // lock-ok: queue guard ended at statement
+            if result == SendResult::Discarded && self.refusal_state() != checked {
+                cursor = entry.operation.id.0 - 1;
+                continue;
+            }
             self.keep_discarded(&entry, &result);
             report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
         }
@@ -182,15 +186,14 @@ impl Inner {
     }
 
     /// What decides whether a pending operation may still go out: the drop of the network, the account that left and the connection itself. A change of it during a flush means that an operation picked earlier may no longer be sent.
-    fn refusal_state(&self) -> (i64, i64, bool) {
+    fn refusal_state(&self) -> RefusalState {
         (*locked(&self.network_lost), locked(&self.account).1, self.connectivity.is_online())
     }
 
     /// Only sending a message and a media upload wait for the network (`specs/architecture.md` D). Any other action that needs the server is refused and rolled back when the network is away or when it was left over from before this open.
-    fn refuse_non_durable(&self) -> Result<(), SyncError> {
-        let online = self.connectivity.is_online();
-        let left = locked(&self.account).1;
-        let lost = *locked(&self.network_lost);
+    fn refuse_non_durable(&self) -> Result<RefusalState, SyncError> {
+        let state = self.refusal_state();
+        let (lost, left, online) = state;
         let pending: Vec<i64> = locked(self.operation_queue()?).pending.iter().copied().collect();
         for seq in pending {
             let of_left_account = seq <= left;
@@ -203,7 +206,9 @@ impl Inner {
             crate::blocking::blocking_unit(|| self.db.roll_back_at(seq, self.db.generation()))?;
             kept.landed();
         }
-        Ok(())
+        #[cfg(test)]
+        if let Some(probe) = locked(&self.refusal_probe).as_ref() { probe(); }
+        Ok(state)
     }
 
     /// Only a durable command, an upload and an action that sends nothing wait for the network. Any other action ends with the network error and rolls back.
@@ -214,13 +219,7 @@ impl Inner {
 
     /// The row at the root of an answer is published before the commit that closes the operation, so a waiter that sees the operation closed finds it. A call that waits keeps its result until it reads it or goes away. At most 256 results that nobody waits for stay.
     pub(in crate::sync) fn publish_answer_root(&self, operation: i64, root: Option<RowId>) {
-        let wanted = locked(&self.answer_wanted).clone();
-        let mut roots = locked(&self.answer_roots);
-        roots.insert(operation, root);
-        while roots.keys().filter(|key| !wanted.contains(key)).count() > 256 {
-            let Some(oldest) = roots.keys().filter(|key| !wanted.contains(key)).min().copied() else { break };
-            roots.remove(&oldest);
-        }
+        locked(&self.answers).publish(operation, root);
     }
 
     fn keep_outcome(&self, entry: &OutboxOperation, result: &SendResult) {
@@ -310,12 +309,12 @@ impl Inner {
         Ok(Some(Bound { model, action, declaration, mutation, variables }))
     }
 
-    async fn send(&self, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>) -> Result<SendResult, SyncError> {
+    async fn send(&self, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>, checked: Option<RefusalState>) -> Result<SendResult, SyncError> {
         let Some((Bound { model, action, declaration, mutation, .. }, generation, base_revision)) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
             let Some(bound) = self.bind(entry)? else { return Ok(None) };
             Ok(Some((bound, self.db.generation(), self.db.revision_seq()?)))
         })? else { return Ok(SendResult::Skipped(SkipReason::NotBound)) };
-        let sending = Sending { entry, model, action, generation, base_revision };
+        let sending = Sending { entry, model, action, generation, base_revision, checked };
         let Some(operation) = locked(&self.operations).get(&mutation).cloned() else {
             let failure = OperationFailure::new(FailureKind::Rejected, format!("operation {mutation} is not registered"));
             return self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure));
@@ -338,7 +337,7 @@ impl Inner {
         };
         let mut in_flight = InFlight { inner: self, seq, generation: sending.generation, attempt, settled: true };
         let Some((entry, base_revision)) = self.start(sending)? else { return Ok(SendResult::Discarded) };
-        let sending = Sending { entry: &entry, model: sending.model.clone(), action: sending.action.clone(), generation: sending.generation, base_revision };
+        let sending = Sending { entry: &entry, model: sending.model.clone(), action: sending.action.clone(), generation: sending.generation, base_revision, checked: sending.checked };
         in_flight.settled = false;
         let mut request = match self.owned_request(&sending, operation) {
             Ok(request) => request,
@@ -445,7 +444,7 @@ impl Inner {
             if let Some(upload) = upload { self.resume_upload(upload, result).await; }
             return Ok(());
         }
-        let sent = self.send(&entry, Some(result)).await?;
+        let sent = self.send(&entry, Some(result), None).await?;
         self.keep_discarded(&entry, &sent);
         Ok(())
     }
@@ -532,6 +531,7 @@ impl Inner {
             frozen = None;
             let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
             if entry.operation.status != OperationStatus::Pending || entry.operation.transport_started || entry.operation.client_mutation_id != sending.entry.operation.client_mutation_id { return Ok(None); }
+            if sending.checked.is_some_and(|checked| checked != self.refusal_state()) { return Ok(None); }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             if let Some(batch) = batch {
                 let items = crate::operation::read_operation_uploads(reader.connection(), seq).map_err(StoreError::from)?;
@@ -693,7 +693,7 @@ impl Inner {
             generation = self.db.generation();
         }
         if committed.is_none() {
-            if publishes_root { locked(&self.answer_roots).remove(&entry.operation.id.0); }
+            if publishes_root { locked(&self.answers).forget(entry.operation.id.0); }
             return Ok(SendResult::Discarded);
         }
         kept.committed();

@@ -67,6 +67,22 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun updateAndDestroyReachTypedLiveRows() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
+        transport.enqueue("UpdateMoment", """{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        transport.enqueue("DeleteMoment", """{"data":{"deleteMoment":{"id":"1"}}}""")
+        reopen(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
+        Moment.feed.load()
+        val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.map { row -> row.text } == listOf("m") } }.first()
+        moment.update(text = GraphQLNullable.Value("edited"))
+        withTimeout(5000) { Moment.recent.live.flow.first { it.map { row -> row.text } == listOf("edited") } }
+        moment.destroy()
+        assertEquals(emptyList<Moment>(), withTimeout(5000) { Moment.recent.live.flow.first { it.isEmpty() } })
+    }
+
+    @Test
     fun writesReachTypedLiveRows() = bounded {
         reopenSigned(Config(null, null, 32u), modelsJSON)
         val live = Moment.recent.live.flow

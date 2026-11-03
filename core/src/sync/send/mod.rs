@@ -12,6 +12,8 @@ pub(crate) use flush::{Sending, FinalAttempts};
 pub(crate) use outcomes::Outcomes;
 pub use report::{FlushReport, SendResult, SentOperation, SkipReason};
 
+use std::collections::HashMap;
+
 use crate::operation::OperationStatus;
 use crate::identity::RowId;
 
@@ -81,12 +83,12 @@ impl Sync {
     /// The row at the root of the answer to an operation, once: `None` when no answer was published, `Some(None)` when the answer named no row.
     /// The call that queued `operation` waits for its answer: the result stays until the guard is dropped.
     pub fn expect_answer(&self, operation: i64) -> AnswerWish {
-        locked(&self.inner.answer_wanted).insert(operation);
+        locked(&self.inner.answers).want(operation);
         AnswerWish { inner: self.inner.clone(), operation }
     }
 
     pub fn answer_root(&self, operation: i64) -> Option<Option<RowId>> {
-        locked(&self.inner.answer_roots).remove(&operation)
+        locked(&self.inner.answers).take(operation)
     }
 
     /// Waits until the queued action is answered and returns the declared `result` fields of its payload. Fails with the refusal. An answer is read once.
@@ -95,7 +97,23 @@ impl Sync {
         lease.run(Box::pin(self.answer_in(model, operation))).await?
     }
 
+    pub async fn settled_operation(&self, model: &str, operation: i64) -> Result<(), SyncError> {
+        let lease = self.inner.lease(crate::lifecycle::Origin::Explicit, "settled")?;
+        lease.run(Box::pin(async move {
+            self.until_answered(operation).await?;
+            match locked(&self.inner.outcomes).refusal_of(model, operation) {
+                Some(refusal) => Err(refusal),
+                None => Ok(()),
+            }
+        })).await?
+    }
+
     async fn answer_in(&self, model: &str, operation: i64) -> Result<serde_json::Value, SyncError> {
+        self.until_answered(operation).await?;
+        locked(&self.inner.outcomes).take(model, operation)
+    }
+
+    async fn until_answered(&self, operation: i64) -> Result<(), SyncError> {
         let waiting = || -> Result<bool, SyncError> { Ok(locked(self.inner.operation_queue()?).entries.get(&operation).is_some_and(|entry| entry.operation.status == OperationStatus::Pending)) };
         let mut changes = self.inner.db.outbox_changes();
         while waiting()? {
@@ -108,7 +126,7 @@ impl Sync {
                 self.park(&mut changes).await;
             }
         }
-        locked(&self.inner.outcomes).take(model, operation)
+        Ok(())
     }
 
     async fn park(&self, changes: &mut tokio::sync::watch::Receiver<u64>) {
@@ -123,7 +141,11 @@ impl Sync {
         if !id.is_temp() {
             return Ok(id.clone());
         }
-        self.settled(model, id, None).await?;
+        let create = locked(self.inner.operation_queue()?).entries.values().find(|entry| entry.operation.temp_id.as_ref() == Some(id)).map(|entry| entry.operation.id.0);
+        match create {
+            Some(operation) => self.settled_operation(model, operation).await?,
+            None => self.settled(model, id, None).await?,
+        }
         let key = format!("{model}\0{id}");
         let real = locked(&self.inner.db.shared.replaced_ids).get(&key).cloned();
         match real {
@@ -196,7 +218,38 @@ pub struct AnswerWish {
 
 impl Drop for AnswerWish {
     fn drop(&mut self) {
-        locked(&self.inner.answer_wanted).remove(&self.operation);
-        locked(&self.inner.answer_roots).remove(&self.operation);
+        locked(&self.inner.answers).release(self.operation);
     }
+}
+
+#[derive(Default)]
+pub(crate) struct Answers {
+    wanted: std::collections::BTreeSet<i64>,
+    roots: HashMap<i64, Option<RowId>>,
+}
+
+impl Answers {
+    const UNWANTED_LIMIT: usize = 256;
+
+    pub(crate) fn want(&mut self, operation: i64) { self.wanted.insert(operation); }
+
+    pub(crate) fn publish(&mut self, operation: i64, root: Option<RowId>) {
+        self.roots.insert(operation, root);
+        while self.roots.keys().filter(|key| !self.wanted.contains(key)).count() > Self::UNWANTED_LIMIT {
+            let Some(oldest) = self.roots.keys().filter(|key| !self.wanted.contains(key)).min().copied() else { break };
+            self.roots.remove(&oldest);
+        }
+    }
+
+    pub(crate) fn take(&mut self, operation: i64) -> Option<Option<RowId>> { self.roots.remove(&operation) }
+
+    pub(crate) fn forget(&mut self, operation: i64) { self.roots.remove(&operation); }
+
+    pub(crate) fn release(&mut self, operation: i64) {
+        self.wanted.remove(&operation);
+        self.roots.remove(&operation);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn held(&self) -> usize { self.roots.len() }
 }

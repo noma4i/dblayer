@@ -136,6 +136,18 @@ for path in files:
         if seen and re.search(r"\.wake\(|\blistener\.changed\(", line) and not re.search(r"lock-ok:\s*\S", line):
             findings.append(f"Z17 review callback after guard: {path.relative_to(root)}:{number}: {line.strip()}")
 
+bare_task = re.compile(r"\btokio::(?:task::)?(?:spawn|spawn_blocking)\b|\bJoinSet\b|\b(?:runtime|handle|executor)(?:\(\))?\??\.spawn(?:_blocking|_on)?\(|\bstd::thread::(?:Builder|spawn)\b")
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative == "task.rs" or not relative.startswith(("sync/", "ffi/", "store/", "db/")):
+        continue
+    if relative.startswith("sync/stress/") or relative.endswith(("/fixtures.rs", "/rig.rs", "/spec_fixtures.rs")) or "/invariants/" in relative:
+        continue
+    text = contents[path]
+    for match in bare_task.finditer(code_only(text)):
+        number = text.count("\n", 0, match.start()) + 1
+        findings.append(f"Z19 a task boundary goes through crate::task, which carries the session epoch: {path.relative_to(root)}:{number}: {match.group()}")
+
 test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")
 panic_allowed = [entry[len("panic:"):] for entry in allowed if entry.startswith("panic:")]

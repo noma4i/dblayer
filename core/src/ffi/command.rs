@@ -68,7 +68,7 @@ impl Database {
     pub(super) async fn in_epoch_as<T>(&self, origin: Origin, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
         let lease = self.streams.lease(origin, target).map_err(|_| ended())?;
         if lease.epoch() != epoch { return Err(ended()); }
-        lease.run(work).await.map_err(|_| ended())?
+        lease.run(lease.pinned(work)).await.map_err(|_| ended())?
     }
 
     pub(super) async fn in_epoch<T>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
@@ -100,16 +100,14 @@ impl Database {
 
     /// Server work of the epoch of the caller: the task is aborted when the epoch ends.
     pub(super) async fn serve_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-        let life = self.db.shared.store.lifecycle.clone();
         self.in_epoch(epoch, target, async move {
-            super::database::cancellable(crate::store::ORIGIN.scope((life, epoch), async move { work.await.map_err(Into::into) })).await?
+            super::database::cancellable(async move { work.await.map_err(Into::into) }).await?
         }).await
     }
 
     /// Work whose flight other callers may join: a caller that goes away does not stop it. The epoch still bounds the lease, the origin and the SQL commit.
     pub(super) async fn serve_shared_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-        let life = self.db.shared.store.lifecycle.clone();
-        self.in_epoch(epoch, target, super::database::on_executor(crate::store::ORIGIN.scope((life, epoch), work))).await
+        self.in_epoch(epoch, target, super::database::on_executor(work)).await
     }
 
     fn admit_command(&self, request: &CommandRequest) -> Result<(), DbError> {

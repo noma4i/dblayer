@@ -159,8 +159,7 @@ pub(crate) struct Inner {
     /// The operations that waited for a retry when the network came back. They do not wait for their backoff once: the first attempt after the return takes them out, and a second failure waits by the normal backoff.
     pub(crate) backoff_released: Mutex<std::collections::BTreeSet<i64>>,
     /// The row the answer of an operation carried at its root, by operation: the call that waits for the answer returns it.
-    pub(crate) answer_roots: Mutex<HashMap<i64, Option<crate::identity::RowId>>>,
-    pub(crate) answer_wanted: Mutex<std::collections::BTreeSet<i64>>,
+    pub(crate) answers: Mutex<send::Answers>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub(crate) upload_effects: crate::db::dispatch::OrderedEffects,
     pub(crate) file_tasks: Arc<tokio::sync::watch::Sender<usize>>,
@@ -174,6 +173,8 @@ pub(crate) struct Inner {
     pub(crate) landed_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     #[cfg(test)]
     pub(crate) refused_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
+    #[cfg(test)]
+    pub(crate) refusal_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     pub final_attempts: Mutex<send::FinalAttempts>,
 }
 
@@ -298,8 +299,7 @@ impl Sync {
             account: Mutex::new((None, i64::MIN)),
             network_lost: Mutex::new(i64::MIN),
             backoff_released: Mutex::new(std::collections::BTreeSet::new()),
-            answer_roots: Mutex::new(HashMap::new()),
-            answer_wanted: Mutex::new(std::collections::BTreeSet::new()),
+            answers: Mutex::new(send::Answers::default()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             upload_effects: crate::db::dispatch::OrderedEffects::default(),
             file_tasks: Arc::new(tokio::sync::watch::channel(0).0),
@@ -313,6 +313,8 @@ impl Sync {
             landed_probe: Mutex::new(None),
             #[cfg(test)]
             refused_probe: Mutex::new(None),
+            #[cfg(test)]
+            refusal_probe: Mutex::new(None),
             final_attempts: Mutex::new(send::FinalAttempts::default()),
         };
         let this = Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) };

@@ -797,7 +797,7 @@ impl Inner {
         let backoff = RetryPolicy::Subscription.backoff().randomized();
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
         let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp() };
-        let task = tokio::spawn(self.until_closed(feed.run(request, first, resets)));
+        let task = crate::task::spawn(self.until_closed(feed.run(request, first, resets)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }
 }

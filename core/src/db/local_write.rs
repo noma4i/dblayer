@@ -316,6 +316,10 @@ impl Db {
     }
 
     pub fn act(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
+        self.act_claiming(model, action, id, patch, args, |_| ()).map(|(acted, ())| acted)
+    }
+
+    pub fn act_claiming<T>(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(i64) -> T) -> Result<(Acted, T), DbError> {
         self.expire_blobs_before_use()?;
         let spec = self.shared.spec(model)?;
         let mut patch = patch;
@@ -335,7 +339,8 @@ impl Db {
         let now_ms = self.shared.store.lock().now_ms();
         let receiver_row = self.find(model, id)?;
         let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
-        let committed = self.commit_local_optional(spec, &mut queued, None, None, |reader, plan, queued| {
+        let mut unannounced = None;
+        let committed = self.commit_local_optional(spec, &mut queued, None, Some(&mut unannounced), |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
@@ -369,12 +374,14 @@ impl Db {
             Ok(Some(touches))
         })?;
         let operation = committed.operations.first().copied().ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+        let claimed = claim(operation);
+        if let Some(unannounced) = unannounced { unannounced.publish(); }
         let row = match self.find(model, id)? {
             Some(row) => row,
             None if declared.as_ref().is_some_and(|declared| declared.removes_receiver) => receiver_row.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?,
             None => return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() }),
         };
-        Ok(Acted { row, operation })
+        Ok((Acted { row, operation }, claimed))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -467,7 +474,10 @@ impl Db {
                 if reader.point(&effect.model, id)?.is_none() {
                     return Err(DbError::NotFound { model: effect.model.clone(), id: id.clone() });
                 }
-                if reader.scope_has_member(&effect.model, &key, id)? { continue; }
+                if let Some(held) = reader.scope_member_key(&effect.model, &key, id)? {
+                    rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(held) });
+                    continue;
+                }
                 let last = reader.scope_last_key(&effect.model, &key)?;
                 let order_key = fractional_between(last.as_deref(), None).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
                 queued.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id)?, order_key });
@@ -481,7 +491,10 @@ impl Db {
         let (lists, ids) = self.effect_lists(effect, call)?;
         for (scope, key) in lists {
             for id in &ids {
-                let Some(order_key) = reader.scope_member_key(&effect.model, &key, id)? else { continue };
+                let Some(order_key) = reader.scope_member_key(&effect.model, &key, id)? else {
+                    rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None });
+                    continue;
+                };
                 queued.scope_ops.push(ScopeOp::Detach { scope: scope.clone(), row: RowId::new(id)? });
                 rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(order_key) });
             }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
-use tokio::task::JoinSet;
+use crate::task::Children;
 
 use crate::db::dispatch::OrderedEffects;
 
@@ -91,6 +91,11 @@ pub(crate) struct Runner {
 }
 
 impl Runner {
+    pub(crate) async fn run_in_epoch(self) {
+        let epoch = self._lease.scope();
+        crate::store::ORIGIN.scope(epoch, self.run()).await
+    }
+
     pub(crate) async fn run(self) {
         let mut cause = Some(self.first);
         while let Some(current) = cause {
@@ -184,7 +189,7 @@ impl Inner {
     pub(crate) fn request_resume(self: &Arc<Self>, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Result<(), SyncError> {
         let runtime = Handle::try_current().map_err(|_| SyncError::Store("no async runtime to run the resume".into()))?;
         if let Some(runner) = self.begin_resume(cause, waiter) {
-            runtime.spawn(self.until_closed(runner.run()));
+            crate::task::spawn_on_unpinned(&runtime, self.until_closed(runner.run_in_epoch()));
         }
         Ok(())
     }
@@ -215,7 +220,7 @@ impl Inner {
         let chunks = drain.chunks(&stale).map_err(|error| SyncError::Params(error.to_string()))?;
         let mut report = ResumeReport { chunks: chunks.len(), ..ResumeReport::default() };
         for chunk in chunks {
-            let mut loads = JoinSet::new();
+            let mut loads = Children::new();
             for key in chunk {
                 let Some((model, relation, params)) = watched.get(&key).cloned() else { continue };
                 let inner = self.clone();

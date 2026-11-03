@@ -23,7 +23,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use tokio::sync::watch;
-use tokio::task::JoinSet;
+use crate::task::Children;
 
 use crate::commit::{CommitEnvelope, OperationRecord, OperationTransition, WriteOrigin};
 use crate::operation::OperationStatus;
@@ -58,7 +58,7 @@ pub(crate) struct UploadRuns {
     next_run: u64,
     #[cfg(test)]
     walked: usize,
-    tasks: JoinSet<()>,
+    tasks: Children<()>,
 }
 
 async fn survives_panic(work: impl std::future::Future<Output = ()>) -> bool {
@@ -96,7 +96,7 @@ impl Drop for UploadResume {
 
 impl UploadRuns {
     pub(crate) fn new(max_files: usize) -> Self {
-        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: BTreeMap::new(), next_run: 0, #[cfg(test)] walked: 0, tasks: JoinSet::new() }
+        Self { max_files: max_files.max(1), active_files: 0, ready: BTreeMap::new(), active: BTreeMap::new(), next_run: 0, #[cfg(test)] walked: 0, tasks: Children::new() }
     }
 }
 
@@ -292,14 +292,12 @@ impl Inner {
         while runs.tasks.try_join_next().is_some() {}
         let (run, token) = runs.register(seq, position, matches!(mode, RunMode::Transfer));
         let inner = self.clone();
-        runs.tasks.spawn(self.until_closed(async move {
+        runs.tasks.spawn_unpinned(self.until_closed(async move {
             let Ok(lease) = inner.lease(crate::lifecycle::Origin::Session, "upload") else {
                 inner.finish_run(seq, position, run);
                 return;
             };
-            let life = inner.db.shared.store.lifecycle.clone();
-            let epoch = lease.epoch();
-            if let Ok(false) = lease.run(crate::store::ORIGIN.scope((life, epoch), survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed)))).await {
+            if let Ok(false) = lease.run(lease.pinned(survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed)))).await {
                 inner.fail_upload(seq, SyncError::Store("the upload task panicked".into()));
             }
             inner.finish_run(seq, position, run);
@@ -310,7 +308,7 @@ impl Inner {
     fn spawn_file_task(&self, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
         crate::db::lock::effect(|| self.file_tasks.send_modify(|pending| *pending += 1));
         let finished = FileTask { pending: self.file_tasks.clone(), _lease: self.lease(crate::lifecycle::Origin::Session, "file task").ok() };
-        drop(runtime.spawn_blocking(move || { task(); drop(finished); }));
+        drop(crate::task::spawn_blocking_on(runtime, move || { task(); drop(finished); }));
     }
 
     pub(crate) async fn discard_files(&self, ids: Vec<String>) -> Result<(), SyncError> {
@@ -426,7 +424,7 @@ impl Sync {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let model = model.to_string();
-        tokio::task::spawn_blocking(move || {
+        crate::task::spawn_blocking(move || {
             let life = inner.db.shared.store.lifecycle.clone();
             let ids = pinned(&life, epoch, || inner.db.create_upload_batch(generation, &model, items, input, inner.upload_operations()?))?;
             let rows = ids.iter().map(|id| inner.db.find(&model, id)?.ok_or_else(|| crate::db::DbError::NotFound { model: model.clone(), id: id.to_string() })).collect::<Result<Vec<_>, _>>()?;
@@ -440,7 +438,7 @@ impl Sync {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let (model, id, action) = (model.to_string(), id.clone(), action.to_string());
-        tokio::task::spawn_blocking(move || {
+        crate::task::spawn_blocking(move || {
             let life = inner.db.shared.store.lifecycle.clone();
             let seq = pinned(&life, epoch, || inner.begin_upload(generation, &model, &id, &action, &file, UploadState::queued()))?;
             inner.start_uploads()?;
@@ -453,7 +451,7 @@ impl Sync {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let (model, action) = (model.to_string(), action.to_string());
-        tokio::task::spawn_blocking(move || {
+        crate::task::spawn_blocking(move || {
             let input = inner.upload_input(&model, &action, file)?;
             let life = inner.db.shared.store.lifecycle.clone();
             let id = pinned(&life, epoch, || inner.db.create_held(generation, &model, &action, values, input, UploadState::queued()))?;

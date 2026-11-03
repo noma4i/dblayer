@@ -9,10 +9,10 @@ impl Inner {
     pub(crate) async fn expire_blobs(self: &Arc<Self>) -> Result<(), SyncError> {
         let failed_due = self.now_ms().saturating_sub(self.config.upload.failed_ttl.as_millis().try_into().unwrap_or(i64::MAX));
         let inner = self.clone();
-        tokio::task::spawn_blocking(crate::store::carry_origin(move || {
+        crate::task::spawn_blocking(move || {
             inner.db.expire_blob_cache(failed_due)?;
             Ok::<_, SyncError>(())
-        })).await.map_err(|error| SyncError::Store(error.to_string()))?
+        }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
     pub(super) fn blob_id(&self, seq: i64) -> Result<Option<String>, SyncError> {
@@ -28,7 +28,7 @@ impl Sync {
         let inner = self.inner.clone();
         let generation = inner.db.generation();
         let (name, create) = (name.to_owned(), create.to_owned());
-        tokio::task::spawn_blocking(move || {
+        crate::task::spawn_blocking(move || {
             let uploads = UploadOperations { create_blob: Some(UploadOperation::new(&create)), multipart: inner.config.uploads.as_ref().and_then(|uploads| uploads.multipart.clone()) };
             uploads.check(|name| locked(&inner.operations).contains_key(name)).map_err(SyncError::Params)?;
             let input = file.with_steps(uploads.steps(""));

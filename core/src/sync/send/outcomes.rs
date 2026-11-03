@@ -80,6 +80,13 @@ impl Outcomes {
         Some(error_of(model, &outcome.result, &row.to_string()))
     }
 
+    pub(crate) fn refusal_of(&mut self, model: &str, sequence: i64) -> Option<SyncError> {
+        if !self.unread.get(&sequence).is_some_and(|outcome| outcome.answer.is_none() && outcome.model == model) { return None; }
+        let outcome = self.unread.remove(&sequence)?;
+        let subject = outcome.rows.first().map_or_else(|| sequence.to_string(), ToString::to_string);
+        Some(error_of(model, &outcome.result, &subject))
+    }
+
     pub(crate) fn take(&mut self, model: &str, sequence: i64) -> Result<Value, SyncError> {
         let outcome = match self.unread.get(&sequence) {
             Some(outcome) if outcome.model == model => self.unread.remove(&sequence),

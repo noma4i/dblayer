@@ -93,7 +93,7 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
         }
         for attempt in 1..=attempts {
             let entry = db.outbox().unwrap().remove(0);
-            let sending = super::send::Sending { entry: &entry, model: "Record".into(), action: action.into(), generation: db.generation(), base_revision: db.revision_seq().unwrap() };
+            let sending = super::send::Sending { entry: &entry, model: "Record".into(), action: action.into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
             let reset = async {
                 if attempt == attempts {
                     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -211,7 +211,7 @@ async fn network_writes_preserve_pending_fields() {
             }
             "response" | "lands" => {
                 let entry = closing.as_ref().unwrap();
-                let sending = super::send::Sending { entry, model: "Record".into(), action: "update".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap() };
+                let sending = super::send::Sending { entry, model: "Record".into(), action: "update".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
                 let node = json!({"id":"r1","body":"server","size":7});
                 let payload = if source == "response" { json!({"updateRecord":{"record":node}}) } else { json!({"updateRecord":{"record":{"id":"r0","body":"confirmed"},"related":node}}) };
                 transport.enqueue("UpdateRecord", Reply::data(payload));
@@ -292,7 +292,7 @@ async fn removing_upload_item_rewrites_mapped_values() {
     db.land(transferred).unwrap();
     db.remove_upload_item("Record", &ids[1], seq, true).unwrap();
     let entry = db.outbox().unwrap().remove(0);
-    let sending = super::send::Sending { entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap() };
+    let sending = super::send::Sending { entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
     transport.enqueue("CreateRecords", Reply::data(json!({"records":[{"id":"r0","clientKey":"key-0"},{"id":"r2","clientKey":"key-2"}]})));
     sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true).await.unwrap();
     let call = transport.calls().into_iter().find(|call| call.operation_name == "CreateRecords").unwrap();
@@ -316,7 +316,7 @@ async fn waiters_woken_by_the_commit_of_a_batch_get_the_real_ids() {
     }
     db.land(transferred).unwrap();
     let entry = db.outbox().unwrap().remove(0);
-    let sending = super::send::Sending { entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap() };
+    let sending = super::send::Sending { entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
     let received = super::send::confirmed_tests::confirm_while_landing(&sync, ids.iter().map(|id| ("Record".to_string(), id.clone())).collect());
     transport.enqueue("CreateRecords", Reply::data(json!({"records":[{"id":"r0","clientKey":"key-0"},{"id":"r1","clientKey":"key-1"},{"id":"r2","clientKey":"key-2"}]})));
     sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true).await.unwrap();

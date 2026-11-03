@@ -13,12 +13,12 @@ impl Inner {
         let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "upload housekeeping") else { return };
         let inner = self.clone();
         let task = self.until_closed(async move {
-            let _lease = lease;
-            if inner.run_housekeeping(expire).await.is_err() {
+            if lease.pinned(inner.run_housekeeping(expire)).await.is_err() {
                 inner.upload_housekeeping_due.store(true, Ordering::SeqCst);
             }
+            drop(lease);
         });
-        locked(&self.uploads).tasks.spawn_on(task, &runtime);
+        locked(&self.uploads).tasks.spawn_unpinned_on(task, &runtime);
     }
 
     #[cfg(test)]
@@ -37,7 +37,7 @@ impl Inner {
         let due = self.now_ms().saturating_sub(limit);
         let running: Vec<i64> = locked(&self.uploads).active.keys().map(|key| key.0).collect();
         let db = self.db.clone();
-        tokio::task::spawn_blocking(move || {
+        crate::task::spawn_blocking(move || {
             let candidates = db.failed_upload_candidates(due)?;
             db.expire_candidates(candidates, due, &running)
         }).await.map_err(|error| SyncError::Store(error.to_string()))??;
@@ -48,7 +48,7 @@ impl Inner {
         let _draining = self.upload_orphan_gate.lock().await;
         if !self.connectivity.is_online() { return Ok(()); }
         let shared = self.db.shared.clone();
-        let orphans = tokio::task::spawn_blocking(move || shared.store.upload_orphans()).await.map_err(|error| SyncError::Store(error.to_string()))??;
+        let orphans = crate::task::spawn_blocking(move || shared.store.upload_orphans()).await.map_err(|error| SyncError::Store(error.to_string()))??;
         for (id, key, upload_id, name) in orphans {
             let Some(operation) = locked(&self.operations).get(&name).cloned() else {
                 return Err(SyncError::Store(format!("operation {name} is not registered")));
@@ -66,7 +66,7 @@ impl Inner {
             };
             if !settled { continue; }
             let shared = self.db.shared.clone();
-            tokio::task::spawn_blocking(move || shared.store.settle_upload_orphan(id)).await.map_err(|error| SyncError::Store(error.to_string()))??;
+            crate::task::spawn_blocking(move || shared.store.settle_upload_orphan(id)).await.map_err(|error| SyncError::Store(error.to_string()))??;
         }
         Ok(())
     }

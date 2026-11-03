@@ -69,7 +69,7 @@ fn check_cancelled(cancel: &CancelToken) -> io::Result<()> {
 
 async fn read_source<T: Send + 'static>(path: &Path, cancel: &CancelToken, read: impl FnOnce(&Path, &CancelToken) -> io::Result<T> + Send + 'static) -> io::Result<T> {
     let (path, cancel) = (path.to_path_buf(), cancel.clone());
-    tokio::task::spawn_blocking(move || {
+    crate::task::spawn_blocking_unpinned(move || {
         check_cancelled(&cancel)?;
         let value = read(&path, &cancel)?;
         check_cancelled(&cancel)?;

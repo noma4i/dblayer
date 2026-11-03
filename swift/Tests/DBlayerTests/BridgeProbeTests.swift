@@ -28,6 +28,24 @@ struct BridgeProbeTests {
   }
 
   @Test @MainActor
+  func updateAndDestroyReachTypedLiveRows() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
+    transport.enqueue("UpdateMoment", reply: #"{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    transport.enqueue("DeleteMoment", reply: #"{"data":{"deleteMoment":{"id":"1"}}}"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment($id: ID!, $text: String) { updateMoment(id: $id, text: $text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#)
+    let changes = Cursor(try await Moment.recent.live.stream())
+    try await Moment.feed.load()
+    let loaded = await changes.first("the loaded row") { $0.map(\.text) == ["m"] }
+    let moment = try #require(loaded?.first)
+    _ = try await moment.update(text: "edited")
+    #expect(await changes.first("the edited row") { $0.map(\.text) == ["edited"] } != nil)
+    try await moment.destroy()
+    #expect(await changes.first("the empty list") { $0.isEmpty } != nil)
+  }
+
+  @Test @MainActor
   func aWarmQueryAnswersFromMemoryAndAFinishedLiveReadLeavesNothingWarm() async throws {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     #expect(try await Moment.recent.cached() == nil)

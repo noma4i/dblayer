@@ -342,6 +342,7 @@ impl Runner {
             action,
             generation: self.inner.db.generation(),
             base_revision: self.inner.db.revision_seq().map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?,
+            checked: None,
         };
         let resumed = locked(&self.resumed).take();
         if let Err(error) = self.inner.send_owned(&sending, &operation, resumed, true).await {

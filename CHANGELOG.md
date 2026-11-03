@@ -28,6 +28,7 @@
 - An action that is not a durable command is refused and rolled back while the network is away, after a reopen and when another account signs in.
 - A pinned write checks its epoch and commits while the lifecycle holds its commit line.
 - `cancel` of a stream does not wait for the reader; no delivery is admitted after it.
+- A task started by a call of one session epoch commits and sends in that epoch only.
 - A stream reader keeps the newest 256 deliveries; the dropped ones arrive as `missed` and a list asks for a new snapshot.
 - A blob reads its status stream while the scope of its reader lives (Kotlin).
 - A list stream no longer keeps a warm observer after its reader left; `retainedObservers` counts the observers of `warm`.

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use serde_json::{Map, Value};
 use tokio::runtime::Handle;
 use tokio::sync::{watch, Semaphore};
-use tokio::task::JoinSet;
+use crate::task::Children;
 
 use crate::db::dispatch::{Effects, OrderedEffects};
 use crate::schema::{PreloadChoice, PreloadSource};
@@ -206,7 +206,7 @@ impl Inner {
         let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "preload") else { return };
         state.running = true;
         let inner = Arc::downgrade(self);
-        runtime.spawn(self.until_closed(async move {
+        crate::task::spawn_on_unpinned(&runtime, self.until_closed(async move {
             let _lease = lease;
             while let Some(inner) = inner.upgrade() {
                 if !inner.preload_take() { return; }
@@ -235,9 +235,14 @@ impl Inner {
     }
 
     async fn preload_windows(self: &Arc<Self>) {
+        let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "preload") else { return };
+        lease.pinned(self.preload_windows_in_epoch()).await
+    }
+
+    async fn preload_windows_in_epoch(self: &Arc<Self>) {
         let lanes = Arc::new(Semaphore::new(PRELOAD_PARALLEL));
         let mut changed = self.preload.changed.subscribe();
-        let mut loads = JoinSet::new();
+        let mut loads = Children::new();
         let mut started = HashSet::new();
         let mut running: HashMap<String, (tokio::task::AbortHandle, String)> = HashMap::new();
         let mut reselect = true;
@@ -342,7 +347,7 @@ impl Sync {
         loop {
             let windows: Vec<Window> = self.inner.preloaded_windows()?.into_iter().filter(|(model, relation, params)| refreshed.insert(format!("{model}|{relation}|{params:?}"))).collect();
             if windows.is_empty() { return Ok(failures); }
-            let mut loads = JoinSet::new();
+            let mut loads = Children::new();
             for window in windows {
                 let (inner, lanes) = (self.inner.clone(), lanes.clone());
                 loads.spawn(async move {

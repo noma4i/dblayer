@@ -89,7 +89,7 @@ impl Inner {
     fn start_after(self: &std::sync::Arc<Self>, runtime: &Handle, effects: &mut Effects, work: impl std::future::Future<Output = ()> + Send + 'static) -> AbortHandle {
         let (open, gate) = tokio::sync::oneshot::channel::<()>();
         effects.push(move || { crate::db::lock::effect(|| { let _ = open.send(()); }); });
-        runtime.spawn(self.until_closed(async move {
+        crate::task::spawn_on(runtime, self.until_closed(async move {
             let _ = gate.await;
             work.await;
         })).abort_handle()
@@ -219,7 +219,7 @@ impl Inner {
             let inner = self.clone();
             let slot = live_source(key).to_string();
             let linger: Duration = self.config.live_linger;
-            let task = runtime.spawn(self.until_closed(async move {
+            let task = crate::task::spawn_on(&runtime, self.until_closed(async move {
                 tokio::time::sleep(linger).await;
                 inner.live_effects.under(&inner.lives, |lives, effects| {
                     if lives.get(&slot).is_some_and(|live| live.readers == 0) {

@@ -48,7 +48,7 @@ impl CableSubscriptions {
     pub fn new(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, clock: Arc<dyn Clock>) -> Self {
         let (commands, receiver) = mpsc::unbounded_channel();
         let wakes = Arc::new(AtomicUsize::new(0));
-        tokio::spawn(run(config, credential, connect, online.clone(), receiver, wakes.clone(), clock));
+        crate::task::spawn_unpinned(run(config, credential, connect, online.clone(), receiver, wakes.clone(), clock));
         Self { commands, wakes, online }
     }
 

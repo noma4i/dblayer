@@ -130,13 +130,13 @@ impl RetryProgress {
         let mut changes = self.inner.watch();
         let runtime = super::database::executor()?;
         let calls = Arc::new(crate::db::CallState::new());
-        let task = runtime.spawn({
+        let task = crate::task::spawn_on_unpinned(runtime.handle(), {
             let calls = calls.clone();
             async move {
                 loop {
                     let snapshot = changes.borrow_and_update().clone();
                     let (listener, calls) = (listener.clone(), calls.clone());
-                    let _ = tokio::task::spawn_blocking(move || {
+                    let _ = crate::task::spawn_blocking_unpinned(move || {
                         crate::db::lock::assert_no_library_lock("RetryProgressListener::changed");
                         calls.call(|| listener.changed(snapshot))
                     }).await;

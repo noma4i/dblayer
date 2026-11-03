@@ -323,7 +323,7 @@ impl Database {
     fn fail_open(&self, stream: &Arc<Stream>, error: DbError) {
         let failed = stream.clone();
         match super::database::executor() {
-            Ok(executor) => { executor.spawn(async move { failed.invalid(error) }); }
+            Ok(executor) => { crate::task::spawn_on_unpinned(executor.handle(), async move { failed.invalid(error) }); }
             Err(_) => failed.invalid(error),
         }
     }

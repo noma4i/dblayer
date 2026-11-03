@@ -527,6 +527,8 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     let epoch = rig.database.session_epoch();
     rig.database.set_online(false).unwrap();
     let store = &rig.database.db.shared.store;
+    let operations_begun = |rig: &Rig| rig.database.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'op'), 0)", [], |row| row.get::<_, i64>(0))?)).unwrap();
+    let begun_before = operations_begun(&rig);
     let (entered, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release) = std::sync::mpsc::channel::<()>();
     *store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { entered.send(()).unwrap(); let _ = release.recv_timeout(std::time::Duration::from_secs(20)); }));
@@ -538,9 +540,11 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while the commit of the send was held");
     release_tx.send(()).unwrap();
-    let _ = bound(sender).await.unwrap();
+    let sent = bound(sender).await.unwrap();
+    assert!(sent.is_ok() || matches!(sent, Err(DbError::Interrupted { .. })), "the send ended with {:?}", sent.as_ref().err());
     assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
     assert_ne!(rig.database.session_epoch(), epoch);
+    assert!(operations_begun(&rig) > begun_before, "the send did not commit before the epoch changed");
     settle(&rig).await;
     rig.database.set_online(true).unwrap();
     bound(rig.database.flush()).await.unwrap();
@@ -792,7 +796,7 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
         if target == "c1" {
             yield_until("the thread shows the source and the answer", || reader.rows().len() == 2).await;
         }
-        assert!(rig.database.sync.as_ref().unwrap().inner.answer_roots.lock().unwrap().is_empty(), "{case}: a read answer stayed in the map");
+        assert!(rig.database.sync.as_ref().unwrap().inner.answers.lock().unwrap().held() == 0, "{case}: a read answer stayed in the map");
         rig.database.close_now();
     }
 }
@@ -1117,6 +1121,79 @@ async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_or
         assert!(bound(first_call).await.unwrap().is_err() && bound(second_call).await.unwrap().is_err(), "{case}: a refused change succeeded");
         settle(&rig).await;
         assert_eq!(lists(&rig), expected(original), "{case}: the lists after both refusals");
+        rig.database.close_now();
+    }
+}
+
+/// K26 (E04 and the outcome of an accepted call, old lines db/local_write.rs join_scope_rows and leave_scope_rows, sync/send/mod.rs settled): the same change of a member made twice, once the first and once the second refused, leaves the member the way the accepted change wants, also while the second still holds its answer. The accepted call returns its success and the refused call its refusal.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and_each_call_gets_its_own_outcome() {
+    type Case = (&'static str, (&'static str, &'static str), &'static str, [&'static [&'static str]; 2], bool);
+    let cases: [Case; 4] = [
+        ("add twice, first refused", ("add_member", "AddMember"), "u4", [&["u1", "u2", "u3", "u4"], &["u2", "u1", "u3", "u4"]], true),
+        ("remove twice, first refused", ("remove_member", "RemoveMember"), "u2", [&["u1", "u3"], &["u1", "u3"]], true),
+        ("add twice, second refused", ("add_member", "AddMember"), "u4", [&["u1", "u2", "u3", "u4"], &["u2", "u1", "u3", "u4"]], false),
+        ("remove twice, second refused", ("remove_member", "RemoveMember"), "u2", [&["u1", "u3"], &["u1", "u3"]], false),
+    ];
+    for (case, (action, operation), user, expected, first_refused) in cases {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        let epoch = rig.database.session_epoch();
+        let (values, args) = group("friends");
+        let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+        seed_members(&rig, &created.id);
+        let held = |refused: bool| if refused { rig.world.hold_then(operation, Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next(operation) };
+        let first_gate = held(first_refused);
+        let second_gate = held(!first_refused);
+        let args = json!({"userIds": [user]}).to_string();
+        let start = || { let database = rig.database.clone(); let (id, args) = (created.id.clone(), args.clone()); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), args).await }) };
+        let first_call = start();
+        first_gate.entered_for(case).await;
+        let second_call = start();
+        yield_until("the second change is queued", || rig.database.db.outbox().unwrap().len() == 2).await;
+        first_gate.release();
+        second_gate.entered_for(case).await;
+        let lists = |rig: &Rig| (member_list(rig, &created.id, "JOINED"), member_list(rig, &created.id, "OWNER_FIRST"));
+        let wanted = (strings(expected[0]), strings(expected[1]));
+        assert_eq!(lists(&rig), wanted, "{case}: the lists while the second change waits for its answer");
+        second_gate.release();
+        let (first, second) = (bound(first_call).await.unwrap(), bound(second_call).await.unwrap());
+        assert_eq!((first.is_err(), second.is_err()), (first_refused, !first_refused), "{case}: the calls ended with {:?} and {:?}", first.as_ref().err(), second.as_ref().err());
+        settle(&rig).await;
+        assert_eq!(lists(&rig), wanted, "{case}: the lists after both answers");
+        rig.database.close_now();
+    }
+}
+
+/// K27 (E02, old lines sync/send/flush.rs flush_pass and refuse_non_durable): a network that dropped and returned right after a flush decided which actions to refuse refuses a plain create and a plain action, and nothing of them goes out.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_network_that_dropped_and_returned_right_after_the_refusal_decision_refuses_every_plain_action() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for case in ["create", "leave", "add_member"] {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        let epoch = rig.database.session_epoch();
+        let (values, args) = group("friends");
+        let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+        seed_members(&rig, &created.id);
+        settle(&rig).await;
+        let operation = match case { "create" => "CreateGroup", "leave" => "LeaveGroup", _ => "AddMember" };
+        let sent_before = rig.world.count(operation);
+        let (database, once) = (rig.database.clone(), AtomicBool::new(false));
+        *rig.database.sync.as_ref().unwrap().inner.refusal_probe.lock().unwrap() = Some(Box::new(move || {
+            if !once.swap(true, Ordering::SeqCst) {
+                database.set_online(false).unwrap();
+                database.set_online(true).unwrap();
+            }
+        }));
+        let result = match case {
+            "create" => { let (values, args) = group("second"); bound(rig.database.create(epoch, "Group".into(), values, args)).await.map(|_| ()) }
+            "leave" => bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await.map(|_| ()),
+            _ => bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "add_member".into(), "{}".into(), json!({"userIds": ["u4"]}).to_string())).await.map(|_| ()),
+        };
+        assert!(result.is_err(), "{case}: the action succeeded although the network dropped and returned after the refusal decision");
+        settle(&rig).await;
+        assert_eq!(rig.world.count(operation), sent_before, "{case}: the action went out after the network dropped and returned");
         rig.database.close_now();
     }
 }
