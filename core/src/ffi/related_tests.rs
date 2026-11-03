@@ -189,34 +189,6 @@ async fn related_05_one_edit_reads_sends_and_visits_by_the_touched_rows_for_ever
     println!("{}", table.join("\n"));
 }
 
-#[tokio::test]
-async fn related_window_01_reads_only_the_targets_of_window_rows_and_follows_a_target_update() {
-    let db = open().await;
-    for (id, name) in [("u1", "Ann"), ("u2", "Bob"), ("u3", "Cy")] { make(&db, "User", &format!(r#"{{"id":"{id}","name":"{name}"}}"#)).await; }
-    for (id, user) in [("m1", "u2"), ("m2", "u2"), ("m3", "u1"), ("m4", "u3")] {
-        make(&db, "Moment", &format!(r#"{{"id":"{id}","text":"{id}","userId":"{user}"}}"#)).await;
-    }
-    let tape = Arc::new(Tape(Mutex::default()));
-    let live = db.live_window_related(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 2, None, "author".into(), tape.clone());
-    settle(&db);
-    assert_eq!(ids(&tape), ["u1", "u3"], "the senders of the 2 window rows, none of the older rows");
-
-    let deliveries = tape.0.lock().unwrap().len();
-    patch(&db, "User", "u2", r#"{"name":"Bobby"}"#).await;
-    settle(&db);
-    assert_eq!(tape.0.lock().unwrap().iter().skip(deliveries).filter(|change| !change.rows.is_empty()).count(), 0, "a user outside the window delivers nothing");
-
-    patch(&db, "User", "u1", r#"{"name":"Anna"}"#).await;
-    settle(&db);
-    let update = last(&tape);
-    assert_eq!(update.rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["u1"], "a user of the window is one updated row");
-
-    live.expand_before(1);
-    settle(&db);
-    assert_eq!(ids(&tape), ["u2", "u1", "u3"], "growing the window adds the sender of the older row");
-    drop(live);
-}
-
 struct Canceller {
     live: Mutex<Option<Arc<super::LiveSubscription>>>,
     targets_free: Mutex<Vec<bool>>,
@@ -236,24 +208,22 @@ impl QueryListener for Canceller {
 #[tokio::test(flavor = "multi_thread")]
 async fn related_cancel_inside_callback() {
     let census = |db: &Database| { let census = db.subscription_census(); (census.observed_queries, census.subscriptions) };
-    for window in [false, true] {
-        for link_change in [true, false] {
-            let db = open().await;
-            for (id, name) in [("u1", "Ann"), ("u2", "Bob")] { make(&db, "User", &format!(r#"{{"id":"{id}","name":"{name}"}}"#)).await; }
-            for (id, user) in [("m1", "u1"), ("m2", "u2")] { make(&db, "Moment", &format!(r#"{{"id":"{id}","text":"{id}","userId":"{user}"}}"#)).await; }
-            let base = census(&db);
-            let (cancelled, done) = std::sync::mpsc::channel();
-            let listener = Arc::new(Canceller { live: Mutex::new(None), targets_free: Mutex::new(Vec::new()), cancelled });
-            let query = r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#;
-            let live = if window { db.live_window_related(query.into(), 2, None, "author".into(), listener.clone()) } else { db.live_related(query.into(), "author".into(), listener.clone()) };
-            settle(&db);
-            *listener.live.lock().unwrap() = Some(live.clone());
-            if link_change { patch(&db, "Moment", "m1", r#"{"userId":"u2"}"#).await; } else { patch(&db, "User", "u1", r#"{"name":"Anna"}"#).await; }
-            crate::test_wait::recv_within(&done);
-            drop(live);
-            crate::test_wait::yield_until("the census did not return to its base", || census(&db) == base).await;
-            let probes = listener.targets_free.lock().unwrap().clone();
-            assert_eq!(probes, if window { vec![true] } else { Vec::new() }, "window={window} link_change={link_change}");
-        }
+    for link_change in [true, false] {
+        let db = open().await;
+        for (id, name) in [("u1", "Ann"), ("u2", "Bob")] { make(&db, "User", &format!(r#"{{"id":"{id}","name":"{name}"}}"#)).await; }
+        for (id, user) in [("m1", "u1"), ("m2", "u2")] { make(&db, "Moment", &format!(r#"{{"id":"{id}","text":"{id}","userId":"{user}"}}"#)).await; }
+        let base = census(&db);
+        let (cancelled, done) = std::sync::mpsc::channel();
+        let listener = Arc::new(Canceller { live: Mutex::new(None), targets_free: Mutex::new(Vec::new()), cancelled });
+        let query = r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#;
+        let live = db.live_related(query.into(), "author".into(), listener.clone());
+        settle(&db);
+        *listener.live.lock().unwrap() = Some(live.clone());
+        if link_change { patch(&db, "Moment", "m1", r#"{"userId":"u2"}"#).await; } else { patch(&db, "User", "u1", r#"{"name":"Anna"}"#).await; }
+        crate::test_wait::recv_within(&done);
+        drop(live);
+        crate::test_wait::yield_until("the census did not return to its base", || census(&db) == base).await;
+        let probes = listener.targets_free.lock().unwrap().clone();
+        assert_eq!(probes, Vec::<bool>::new(), "link_change={link_change}");
     }
 }

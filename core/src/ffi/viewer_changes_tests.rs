@@ -108,7 +108,7 @@ async fn held_subscriptions_and_model_events_keep_working_through_a_reset_of_the
     let events = within(database.open_model_events("Moment".into())).await.unwrap();
     yield_until("the viewer changes subscription is open", || transport.subscriptions("DblayerViewerChanges") == 1).await;
     let queries = transport.queries.load(Ordering::SeqCst);
-    within(database.reset_for_testing()).await.unwrap();
+    database.db.reset_all().unwrap();
     let one_open = || { let opened = transport.subscriptions("DblayerViewerChanges"); opened >= 2 && opened == transport.released.load(Ordering::SeqCst) + 1 };
     yield_until("the subscription opened again and every older one was released", one_open).await;
     within(feed.wait_for_initial_load()).await.unwrap();

@@ -48,17 +48,4 @@ struct UserAgentTests {
     let supportsHeaders = ["graphql", "graphqlSocket", "encryptedSocket"].contains(path)
     #expect(agents == [userAgent(application: supportsHeaders ? application : nil)])
   }
-
-  @Test(arguments: [nil, "Example/3"] as [String?])
-  func aBackgroundUploadRequestIdentifiesTheLibrary(application: String?) async throws {
-    let scripted = ScriptedUploadTasks()
-    let headers = application.map { ["uSeR-aGeNt": $0] } ?? [:]
-    let transport = UrlSessionTransport(endpoint: URL(fileURLWithPath: "/unused"), headers: { headers }, uploads: scripted)
-    let upload = Task { try await transport.put(url: "https://storage.test/part", headers: headers, file: PutFile(path: "/tmp/part", offset: 0, length: 2), tag: "1.0.1", progress: AgentProgress(noHandle: .init())) }
-    await eventually("the task starts") { !scripted.startedTasks.isEmpty }
-    scripted.finish(tag: "1.0.1", etag: nil)
-    _ = try await upload.value
-    let sent = try #require(scripted.startedTasks.first).request.value(forHTTPHeaderField: "User-Agent")
-    #expect(sent == userAgent(application: application))
-  }
 }

@@ -38,7 +38,6 @@ enum Act {
     Login,
     Exit { revoke: bool },
     SessionReset,
-    Reset,
     Refresh,
     OpenHeld,
     CancelHeld,
@@ -49,7 +48,6 @@ enum Act {
 
 #[derive(Clone, Copy, Debug)]
 enum Transition {
-    Reset,
     SessionReset,
     Exit,
 }
@@ -84,7 +82,7 @@ impl Machine {
     fn live(&self) -> bool { self.credential.is_some() && !self.ended }
 
     fn allowed(&self) -> Vec<Act> {
-        let mut acts = vec![Act::Tick, Act::Reset];
+        let mut acts = vec![Act::Tick];
         if self.views.len() < 3 && (self.data_empty || self.live()) { acts.push(Act::OpenHeld); }
         if !self.views.is_empty() { acts.push(Act::CancelHeld); }
         if self.credential.is_none() {
@@ -93,7 +91,7 @@ impl Machine {
             acts.extend([Act::Exit { revoke: true }, Act::Exit { revoke: false }, Act::SessionReset, Act::Refresh]);
         }
         if self.live() {
-            acts.extend([Act::Offline, Act::Overlap(Transition::Reset), Act::Overlap(Transition::SessionReset), Act::Overlap(Transition::Exit)]);
+            acts.extend([Act::Offline, Act::Overlap(Transition::SessionReset), Act::Overlap(Transition::Exit)]);
         }
         acts
     }
@@ -116,10 +114,6 @@ impl Machine {
                 self.ended = true;
                 self.quiet().await?;
             }
-            Act::Reset => {
-                bound(self.rig.database.reset_for_testing()).await.unwrap();
-                self.data_empty = self.ended || self.views.is_empty();
-            }
             Act::Refresh => {
                 bound(self.rig.database.refresh("User".into(), "profile".into(), "{}".into())).await.map_err(|error| format!("refresh with a stored credential failed: {error:?}"))?;
                 self.ended = false;
@@ -133,7 +127,7 @@ impl Machine {
             Act::Tick => self.rig.clock.advance(60_000),
             Act::Offline => {
                 self.rig.database.set_online(false).unwrap();
-                bound(self.rig.database.settle_for_testing()).await.map_err(|error| format!("settle offline: {error:?}"))?;
+                bound(crate::ffi::settled(&self.rig.database)).await.map_err(|error| format!("settle offline: {error:?}"))?;
                 self.rig.database.set_online(true).unwrap();
             }
             Act::Overlap(transition) => self.overlap(transition).await?,
@@ -160,7 +154,7 @@ impl Machine {
     /// After a transition that closes the session, nothing reaches the server while the session stays closed.
     async fn quiet(&self) -> Result<(), String> {
         self.rig.world.forbid(true);
-        let settled = bound(self.rig.database.settle_for_testing()).await;
+        let settled = bound(crate::ffi::settled(&self.rig.database)).await;
         self.rig.world.forbid(false);
         settled.map_err(|error| format!("settle after the session closed: {error:?}"))?;
         let violations = self.rig.world.violations();
@@ -168,14 +162,13 @@ impl Machine {
     }
 
     async fn overlap(&mut self, transition: Transition) -> Result<(), String> {
-        bound(self.rig.database.settle_for_testing()).await.map_err(|error| format!("settle before the overlap: {error:?}"))?;
+        bound(crate::ffi::settled(&self.rig.database)).await.map_err(|error| format!("settle before the overlap: {error:?}"))?;
         let label = format!("late{}", self.late.len());
         let gate: Arc<Gate> = self.rig.world.hold_next("Users").as_account(&label);
         let database = self.rig.database.clone();
         let running = tokio::spawn(async move { database.refresh("User".into(), "all".into(), "{}".into()).await });
         tokio::time::timeout(Duration::from_secs(10), gate.entered_for("the overlapping call")).await.map_err(|_| "the overlapping call never reached the server".to_string())?;
         match transition {
-            Transition::Reset => bound(self.rig.database.reset_for_testing()).await.unwrap(),
             Transition::SessionReset => {
                 self.rig.database.session_reset().await.unwrap();
                 self.credential = None;
@@ -198,9 +191,9 @@ impl Machine {
     }
 
     async fn settle_and_check(&mut self) -> Result<(), String> {
-        bound(self.rig.database.settle_for_testing()).await.map_err(|error| format!("settle: {error:?}"))?;
+        bound(crate::ffi::settled(&self.rig.database)).await.map_err(|error| format!("settle: {error:?}"))?;
         let hits = self.rig.world.hits();
-        bound(self.rig.database.settle_for_testing()).await.map_err(|error| format!("second settle: {error:?}"))?;
+        bound(crate::ffi::settled(&self.rig.database)).await.map_err(|error| format!("second settle: {error:?}"))?;
         if self.rig.world.hits() != hits {
             return Err(format!("an idle database sent {:?}", self.rig.world.log().iter().skip(hits).collect::<Vec<_>>()));
         }

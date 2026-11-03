@@ -213,7 +213,7 @@ let thread = LiveList(try Note.thread(groupId))   // thread.rows, thread.replace
 val thread = LiveList(Note.thread(groupId), viewModelScope)   // thread.rows, thread.replaced, thread.ids are StateFlow
 ```
 
-In a Compose screen without a view model, `rememberLiveList(query)` and `rememberLiveWindow(window)` own the scope: the subscription ends when the screen leaves the composition or the query changes. Swift needs no extra call, `@Live` owns its subscription.
+In a Compose screen without a view model, `rememberLiveList(query)` owns the scope: the subscription ends when the screen leaves the composition or the query changes. Swift needs no extra call, `@Live` owns its subscription.
 
 ```swift
 @Live var thread: [Note]   // ends with the view
@@ -279,51 +279,7 @@ val thread = LiveList(Note.thread(groupId), viewModelScope, refreshOnConnect = t
 thread.waitForInitialLoad()
 ```
 
-**Windows.** A group shows its last rows, not its whole history. `query.window(tail: n)` keeps the last `n` rows of an ordered query in memory (the query has no limit, include or search). A relation that lists by a param column, such as `scope :thread, insert_on: [:event, :response]` with `where groupId: :groupId` and an `order`, is a valid query: its members are the rows the relation loaded or received. A relation without an `order` has no local sort and is refused with `NotWindowable`. A scope declared with `stable_order: true` (see [models](models.md#scopes)) lists its rows in the order they were shown: a confirmed message, an event that changes a `sequenceNumber` and a reloaded page do not move a row that is on screen. A row outside the window is not decoded and not held, and a change outside the window delivers nothing. `LiveWindow` is to `Window` what `LiveList` is to `Query`: it keeps the rows, `hasBefore`, `hasAfter`, `total` and the typed `failure` of its snapshot, and it has `takeUpdate()` with the steps of [Edits](#in-your-ui) in window positions. `hasBefore` and `hasAfter` tell whether the database holds rows beyond each edge, and `total` is the number of rows of the query. The window follows the tail: a new last row enters and the oldest row of the window leaves. `expand(before:)` adds up to that many older rows from the database, `expand(after:)` adds newer rows, and neither adds a row that does not exist. The window ends with its owner. The library keeps the ids and sort keys of the whole query, not its rows. Windows over the same query share one set of sort keys when they open, so the second window reads no keys from the database. A window over a scope with a `query` connects that scope like `LiveList`: it loads the scope when it is stale and keeps the server subscription while the window lives. `expand(before:)` that asks for more rows than the database holds loads one shared page of the scope and then adds the rows that arrived, and a scope without a next page adds nothing. `window(tail: 50, max: 200)` sets an upper size: an `expand` that would take the window past `max` returns it to `tail` rows. A window over a plain query reads the local database only.
-
-```swift
-let thread = LiveWindow(try Note.thread(groupId).window(tail: 50))   // rows keep their place when the server confirms a message
-let history = LiveWindow(try Note.thread(groupId).window(tail: 60, max: 240))   // expand(before: 40) loads an older page when the database has none
-```
-
-```kotlin
-val thread = LiveWindow(Note.thread(groupId).window(tail = 50), viewModelScope)
-val history = LiveWindow(Note.thread(groupId).window(tail = 60, max = 240), viewModelScope)   // expand(before = 40) loads an older page when the database has none
-```
-
-```swift
-let group = LiveWindow(try Note.where(Note.groupId == groupId).order(Note.createdAt.asc).window(tail: 50))
-if group.hasBefore { group.expand(before: 50) }                 // group.rows, group.total are observable
-let update = group.takeUpdate()
-if let edits = update.edits { mirror.replay(edits) } else { mirror = update.rows }
-```
-
-```kotlin
-val group = LiveWindow(Note.where(Note.groupId eq groupId).order(Note.createdAt.asc).window(tail = 50), viewModelScope)
-if (group.edges.value.hasBefore) group.expand(before = 50)      // group.rows, group.edges are StateFlow
-val update = group.takeUpdate()
-val edits = update.edits
-if (edits != null) mirror.replay(edits) else mirror = update.rows.toMutableList()
-```
-
-For `members_complete: true`, the core automatically follows pages until `hasNextPage == false`, including short and empty intermediate pages.
-`LiveWindow.snapshot` carries rows, phase, error and complete together. `rows`, edges and failure read the same snapshot.
-Member profile: `window(tail: 50, max: 200)` / `window(tail = 50, max = 200)`.
-SQLite stores the full membership. The window reads count and a bounded SQL slice, without Ranked of all keys.
-A size above 200 is rejected. `Loaded` with an error keeps rows and `complete = false`. Without rows, an error gives `Failed`.
-The last reader cancels the chain, and the next continues from the saved cursor. Readers share one request.
-
-`window.related(Association)` reads the targets of one association for the rows of the window only, such as the senders of the shown messages. It has `live` and `snapshots` like `RelatedQuery`. The targets follow the window: a row that enters adds its target, a row that leaves releases it, and `expand` of the window grows this read too. A change of a target reaches the subscriber as one updated row, and a change of a user outside the window delivers nothing.
-
-```swift
-let senders = Note.thread(groupId).window(tail: 50).related(Note.Relations.user)
-for await users in try await senders.live.stream() { show(users) }
-```
-
-```kotlin
-val senders = Note.thread(groupId).window(tail = 50).related(Note.Relations.user)
-senders.live.flow.collect { users -> show(users) }
-```
+For `members_complete: true`, the core automatically follows pages until `hasNextPage == false`, including short and empty intermediate pages. A `LiveList` of the members scope carries rows, phase, error and complete in one snapshot. A `Loaded` snapshot with an error keeps rows and `complete = false`; without rows the phase is `Failed`. The last reader cancels the chain and the next continues from the saved cursor. Readers share one request.
 
 **UIKit and Android views.** Read `changes` and apply each `ListChange` to a diffable data source, a collection view or a `ListAdapter` (`dataSource` and `adapter` are app code). The change already tells which rows were inserted, removed, updated, moved or replaced, so animations are correct and a refresh does not flicker:
 

@@ -108,7 +108,7 @@ async fn inv_observe_17_a_live_change_of_one_changed_row_carries_one_row_at_ever
 }
 
 #[test]
-fn inv_panic_01_live_and_state_subscriptions_cancel_after_a_poisoned_lock() {
+fn inv_panic_01_live_subscriptions_cancel_after_a_poisoned_lock() {
     struct Quiet;
     impl super::QueryListener for Quiet {
         fn changed(&self, _: LiveChange) {}
@@ -116,9 +116,6 @@ fn inv_panic_01_live_and_state_subscriptions_cancel_after_a_poisoned_lock() {
     let live = super::LiveSubscription { feed: super::live_feed::LiveFeed::new(Arc::new(Quiet)), handles: Mutex::new(None), registration: Default::default() };
     crate::db::fixtures::poison(&live.handles);
     live.cancel();
-    let state = super::StateSubscription { task: Mutex::new(None), calls: Arc::new(crate::db::CallState::new()) };
-    crate::db::fixtures::poison(&state.task);
-    state.cancel();
 }
 
 #[tokio::test]
@@ -154,66 +151,3 @@ async fn cached_rows_carry_the_revision_of_the_value_after_an_edit() {
     assert_eq!(after.cells, vec![Cell::Text { value: "edited".into() }]);
 }
 
-#[tokio::test]
-async fn a_live_window_puts_only_its_rows_on_the_wire_at_every_list_size() {
-    let mut costs = Vec::new();
-    for count in [20, 200, 2000] {
-        let (db, ids) = with_rows(count).await;
-        let tape = Arc::new(Tape(Mutex::default()));
-        let live = db.live_window(r#"{"model":"Moment","order":[{"field":"text","direction":"asc"}]}"#.into(), 10, None, tape.clone());
-        db.db.await_revision(db.db.revision_seq().unwrap());
-        let first = tape.0.lock().unwrap()[0].clone();
-        let edge = first.window.clone().unwrap();
-        assert_eq!((first.rows.len(), first.full, edge.has_before, edge.has_after, edge.total), (10, true, true, false, Some(count as u32)));
-        let update = |at: usize| {
-            let db = db.clone();
-            let id = ids[at].clone();
-            async move {
-                db.update("Moment".into(), id, format!(r#"{{"text":"t{at:05}x"}}"#), "{}".into()).await.unwrap();
-                db.db.await_revision(db.db.revision_seq().unwrap());
-            }
-        };
-        let calls = tape.0.lock().unwrap().len();
-        update(0).await;
-        assert_eq!(tape.0.lock().unwrap().len(), calls, "a row before the window is not on the wire");
-        update(count - 1).await;
-        let inside = tape.0.lock().unwrap().last().unwrap().clone();
-        live.expand_before(5);
-        db.db.await_revision(db.db.revision_seq().unwrap());
-        let wider = tape.0.lock().unwrap().last().unwrap().clone();
-        costs.push((inside.rows.len(), inside.full, wider.rows.len(), wider.window.unwrap().has_before));
-    }
-    assert_eq!(costs, vec![(1, false, 5, true); 3], "(rows of an update inside, full, rows of an expand, has_before) at 20, 200, 2000 rows");
-}
-
-const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
-
-fn hold_before_the_call(call_state: &crate::db::CallState) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
-    let (reached, at_the_call) = std::sync::mpsc::channel();
-    let (release, released) = std::sync::mpsc::channel::<()>();
-    *call_state.before_enter.lock().unwrap() = Some(Box::new(move || {
-        reached.send(()).unwrap();
-        released.recv_timeout(WAIT).unwrap();
-    }));
-    (at_the_call, release)
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn inv_observe_08_a_state_call_that_passed_the_cancel_check_does_not_start_after_the_cancel_returns() {
-    let (sender, receiver) = tokio::sync::watch::channel(0u32);
-    let (heard, deliveries) = std::sync::mpsc::channel();
-    let subscription = super::StateSubscription::follow(receiver, move |state| heard.send(state).unwrap()).unwrap();
-    assert_eq!(deliveries.recv_timeout(WAIT).unwrap(), 0);
-    let (at_the_call, release) = hold_before_the_call(&subscription.calls);
-    sender.send(1).unwrap();
-    at_the_call.recv_timeout(WAIT).unwrap();
-    let task = crate::db::locked(&subscription.task).as_ref().unwrap().clone();
-    subscription.cancel();
-    release.send(()).unwrap();
-    let deadline = std::time::Instant::now() + WAIT;
-    while !task.is_finished() {
-        assert!(std::time::Instant::now() < deadline, "the delivery task did not end");
-        tokio::task::yield_now().await;
-    }
-    assert!(deliveries.try_recv().is_err());
-}

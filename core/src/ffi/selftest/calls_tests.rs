@@ -45,17 +45,15 @@ impl Call {
 
 #[derive(Clone, Copy, Debug)]
 enum Transition {
-    Reset,
     SessionReset,
     Close,
 }
 
-const TRANSITIONS: [Transition; 3] = [Transition::Reset, Transition::SessionReset, Transition::Close];
+const TRANSITIONS: [Transition; 2] = [Transition::SessionReset, Transition::Close];
 
 impl Transition {
     async fn apply(self, database: &Database) {
         match self {
-            Transition::Reset => bound(database.reset_for_testing()).await.unwrap(),
             Transition::SessionReset => database.session_reset().await.unwrap(),
             Transition::Close => database.close_now(),
         }
@@ -89,10 +87,7 @@ async fn every_explicit_call_survives_every_transition_with_a_late_answer() {
                     assert!(result.is_err(), "{case}: the call ended the close with {result:?}");
                     continue;
                 }
-                match transition {
-                    Transition::Reset => {}
-                    _ => rig.login_ios("B").await,
-                }
+                rig.login_ios("B").await;
                 let result = bound(rig.database.refresh("User".into(), "all".into(), "{}".into())).await;
                 assert!(result.is_ok(), "{case}: the next read of the same key failed with {result:?}");
                 gate.release();
@@ -136,7 +131,7 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     held.shows("A").await;
     held.lists_show("A").await;
     let gate = rig.world.hold_next("Users");
-    bound(rig.database.reset_for_testing()).await.unwrap();
+    let _late = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh("User".into(), "all".into(), "{}".into()).await }) };
     gate.entered().await;
     let (query, window) = (held.query.clone(), held.window.clone());
     let waits = [tokio::spawn(async move { query.wait_for_initial_load().await }), tokio::spawn(async move { window.wait_for_initial_load().await })];

@@ -98,7 +98,7 @@ struct MainThreadTests {
     #expect(reads.main == 0)
   }
 
-  @Test(arguments: ["list", "window"])
+  @Test(arguments: ["list"])
   func aLiveCollectionHasItsUpdateReadyWhileTheMainActorIsBusy(kind: String) async {
     let prepared = DispatchSemaphore(value: 0)
     let box = SnapshotBox()
@@ -110,15 +110,9 @@ struct MainThreadTests {
     let shown: () -> Int
     let secondRevision = DispatchSemaphore(value: 0)
     let observer: @Sendable (UInt64) -> Void = { if $0 >= 2 { secondRevision.signal() } }
-    if kind == "list" {
-      let list = LiveList<PreparedRow>(Query<PreparedRow>(), snapshots: source)
-      list.updates.observePublications(observer)
-      (take, shown) = ({ list.takeUpdate() }, { list.rows.count })
-    } else {
-      let window = LiveWindow<PreparedRow>(Window<PreparedRow>(query: Query<PreparedRow>(), tail: 3), snapshots: source)
-      window.updates.observePublications(observer)
-      (take, shown) = ({ window.takeUpdate() }, { window.rows.count })
-    }
+    let list = LiveList<PreparedRow>(Query<PreparedRow>(), snapshots: source)
+    list.updates.observePublications(observer)
+    (take, shown) = ({ list.takeUpdate() }, { list.rows.count })
     await eventually("the subscription") { box.get() != nil }
     let rows = (0 ..< 3).map { PreparedRow(key: "r\($0)", prepared: prepared) }
     box.get()?(Snapshot(rows: rows, replaced: [:], reordered: true, seq: 1))

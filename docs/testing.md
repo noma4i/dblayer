@@ -22,8 +22,6 @@ DBlayer.open(context, transport = transport, modelsJson = modelsJSON, uploadNoti
 
 A call with no queued reply fails at once with `Invalid` that names the operation and its variables, and the request is listed in `transport.unscripted`. The test that caused the call fails too, without any check in the test. Swift records a Swift Testing issue on the test that created the mock, so create the mock inside the test (or its suite initializer). Kotlin cannot throw on the core thread, so the next touch of any mock on a test thread throws `AssertionError` with the operation, the variables and the place that created the mock: `MockTransport()`, `enqueue`, `emit`, `breakSubscription`, `calls`, `cableFrames` and `unsubscribe`. A call that is still unreported when the JVM exits stops it with exit code 1. A test that expects such a call wraps it in `withKnownIssue` (Swift) or reads `transport.claimUnscripted()` (Kotlin). Pass `Unanswered.NetworkError` (Kotlin) or `unanswered: .networkError` (Swift) to the constructor when a test needs a missing reply to be a network error, which the core retries. `unsubscribe` with a token the mock never issued is recorded in `unknownTokens` and does not throw.
 
-Background uploads on iOS go through an `UploadTaskSource`. `ScriptedUploadTasks` in `DBlayerTesting` is a source that a test drives: `startedTasks` and `cancelledTags` list what the library asked for, and `sendProgress`, `finish`, `fail` and `finishSessionEvents` report back through `UploadTaskEvents`. Each task is an `UploadTaskRequest` with its request, file and tag. Pass the source as `uploads` to `UrlSessionTransport`.
-
 `transport.calls` lists the requests it received. `emit` pushes a subscription event and `breakSubscription` drops the subscription.
 
 For model events, open the reader before calling `emit`: `let events = try await Message.events()` in Swift, `val events = Message.events()` in Kotlin. The call returns after the transport has registered the subscription sink, or throws if opening fails. Emit immediately after it returns, then read or collect the returned stream. No sleep, retry or request-count check is needed. Events sent before opening are not replayed.
@@ -39,11 +37,9 @@ Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlay
 
 `DB.enterForegroundForTesting()` in Swift (`DBlayerTesting`) and `DBlayer.enterForegroundForTesting()` in Kotlin (`@DBlayerTestingApi`) require a database opened with `openTesting`. They send the same core event as a system foreground notice, without posting notifications or changing the process lifecycle. A scope with `refresh_on_foreground: true` reloads when it has a reader, even while fresh. No reader means no request. The call schedules the event. Await the window's result to check its effect.
 
-`resetForTesting` ends the session of the test and starts the next one in one transition. Every request, load, upload and subscription opening of the old test ends with `Interrupted`, the data goes, and the credential and the pending request stay. The database is not a fresh open: online, listening, power saving and preload keep the values the test gave them, so a test sets what it needs after the reset. Call `sessionReset` when a test needs no session. `settleForTesting` returns when no lease is held, which means no load, request, upload, delivery or subscription opening is running. If a lease is still held after 10 seconds it names each one: mode, target and epoch. A load of a held entity starts again with an explicit call after the target is set.
+A test opens its database and closes it. There is no reset between tests: close the database, set the next transport and open again. `close` waits until every lease ended.
 
-Held entities and live queries load again after `resetForTesting`, with the transport that is set at that moment. When a test unsets its transport during the reset, so that every call throws `Interrupted`, that outcome of the old work is final. No work started before or during the reset calls the transport that the next test sets after `settleForTesting`. A subscription opens when a reader attaches to it, or when `setListening(true)` follows the reset or a held reader asks again, on the transport of that moment.
-
-After `sessionReset()` a test database reads again when its next explicit call succeeds while a credential is stored, the same rule as in production. `waitForInitialLoad` of a held entity is such a call. `settleForTesting` returns without a sign-in.
+After `sessionReset()` a test database reads again when its next explicit call succeeds while a credential is stored, the same rule as in production. `waitForInitialLoad` of a held entity is such a call.
 
 A second `close` from another thread returns after the first one finished every close callback, and the open slot frees only then. A close callback that calls `close` again returns at once without waiting for itself, and the outer `close` frees the slot. A callback must not wait for a `close` made on another thread.
 
@@ -60,13 +56,13 @@ DBlayer.sessionSend("login_link", LoginLink(account = "A"))
 ```
 
 ```swift
-try await DB.resetForTesting()
-try await DB.settleForTesting()
+try await DB.close()
+try await DB.openTesting(transport: next, modelsJSON: modelsJSON)
 ```
 
 ```kotlin
-DBlayer.resetForTesting()
-DBlayer.settleForTesting()
+DBlayer.close()
+DBlayer.openTesting(next, modelsJSON)
 ```
 
 ```swift
@@ -152,7 +148,7 @@ Test conventions:
 - Core member tests own window isolation, page accumulation, freshness and retained totals. Platform member tests check arguments and typed snapshots.
 - Core node tests own freshness, partial merges, response order and missing entries. Platform node tests check IDs, force, declared variables and typed results.
 - Core upload tests check source ownership, failed admission cleanup and progress delivery. Tests await an observed state, never a revision change after a call returns.
-- Core observation tests own read limits, pending entity ids and combined window expansions. Platform tests check typed delivery and cancellation through the bridge.
+- Core observation tests own read limits and pending entity ids. Platform tests check typed delivery and cancellation through the bridge.
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.
 
@@ -163,11 +159,11 @@ Test conventions:
 | Group | What it covers |
 | ----- | -------------- |
 | `app_tests` | Login in the iOS and Android order, the exit with a held singleton and a pending wait, local-only exit, refused unregister, account switch A, B, A, the same account again, `ALREADY_AUTHENTICATED` then sign-out and a second login |
-| `harness_tests` | One `openTesting`, target unset (Interrupted or Invalid), `resetForTesting`, `settleForTesting`, next target, new windows. A late answer of the old target. Reopen through the same opener. Tests that leave offline, a session reset and subscriptions behind |
-| `calls_tests` | Each explicit call in flight at the server when reset, session reset or close arrives, with a late success or a late sealed refusal. A call the server never answers ends at close |
+| `harness_tests` | Target unset (Interrupted or Invalid), close, next target, a new database. A late answer of the old target. Reopen through the same opener. Tests that leave offline, a session reset and subscriptions behind |
+| `calls_tests` | Each explicit call in flight at the server when session reset or close arrives, with a late success or a late sealed refusal. A call the server never answers ends at close |
 | `recovery_tests` | A refused pending request kept across a data reset, close and reopen with a new data version, an active and a queued upload ended by the exit |
-| `windows_tests` | Overlapping load-more and refresh in both answer orders, repeated online, listening and power-saving signals, memory expiry on the last write, a cloud reply after a reset |
-| `machine_tests` | 16 seeds of 32 steps over login, exit, session reset, reset, refresh, held views, clock ticks, offline and overlapping calls. A model decides what every view must show and what may reach the server. A failure prints the seed, the shortest failing prefix and the action tape |
+| `windows_tests` | Overlapping load-more and refresh in both answer orders, repeated online, listening and power-saving signals, memory expiry on the last write |
+| `machine_tests` | 16 seeds of 32 steps over login, exit, session reset, refresh, held views, clock ticks, offline and overlapping calls. A model decides what every view must show and what may reach the server. A failure prints the seed, the shortest failing prefix and the action tape |
 
 `core/src/ffi/selftest/manifest.tsv` is the fixed list of the sequences C01 to C19 for the three lanes (core, Swift, Kotlin). A row names the test of one lane, the state it had when written (green, red with its cause, flaky), what changes when the lifecycle rules change, and the app source line the order comes from. A core test checks that every row names an existing test, that every sequence test is listed, and that a test using the data logout or the old exit is marked as changing.
 

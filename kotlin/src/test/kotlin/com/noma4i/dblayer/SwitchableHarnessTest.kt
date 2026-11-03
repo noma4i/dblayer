@@ -27,9 +27,9 @@ class SwitchableHarnessTest {
 
     private val operations = """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"""
 
-    /** C01, C02, R-1, R-3: one openTesting, the target unset (Android throws Interrupted, iOS Invalid), reset, settle, the next target. The reset sends nothing to either transport and the first load of the next test succeeds with its own account. */
+    /** C01, C02, R-1, R-3: the target unset (Android throws Interrupted, iOS Invalid), the database closes, the next test opens a new one on the next target. The close sends nothing to either transport and the first load of the next test succeeds with its own account. */
     @Test
-    fun aHarnessResetWithTheTargetUnsetLeavesTheNextWindowClean() = bounded {
+    fun aCloseWithTheTargetUnsetLeavesTheNextDatabaseClean() = bounded {
         for (unset in listOf<() -> DbException>({ DbException.Interrupted("transport unavailable during reset") }, { DbException.Invalid("No test transport") })) {
             DBlayer.close()
             try {
@@ -43,19 +43,21 @@ class SwitchableHarnessTest {
                 val before = first.calls.size
 
                 switchable.target = null
-                DBlayer.resetForTesting()
-                DBlayer.settleForTesting()
+                DBlayer.close()
                 val second = MockTransport(Unanswered.NetworkError)
                 second.enqueue("UserProfile", profile("B"))
-                assertEquals("work of the reset reached the old transport", before, first.calls.size)
-                assertTrue("work of the reset reached the next transport", second.calls.isEmpty())
+                assertEquals("work of the close reached the old transport", before, first.calls.size)
+                assertTrue("work of the close reached the next transport", second.calls.isEmpty())
                 switchable.target = second
+                DBlayer.openTesting(switchable, modelsJSON)
+                DBlayer.database.registerOperations(operations)
                 DBlayer.setListening(true)
 
-                entity.waitForInitialLoad()
-                assertEquals("B", entity.value.value?.name)
+                val next = User.entity()
+                next.waitForInitialLoad()
+                assertEquals("B", next.value.value?.name)
                 assertEquals(1, second.calls.size)
-                assertTrue("the next window inherited ${entity.read.value}", entity.read.value !is EntityRead.Failed)
+                assertTrue("the next database inherited ${next.read.value}", next.read.value !is EntityRead.Failed)
             } finally {
                 DBlayer.close()
             }

@@ -25,7 +25,7 @@ fn land(db: &Database, scope: Option<&ScopeRef>, id: &str, sequence: serde_json:
 }
 
 #[tokio::test]
-async fn a_live_window_over_a_relation_that_keeps_its_order_follows_the_member_order() {
+async fn a_live_query_over_a_relation_that_keeps_its_order_follows_the_member_order() {
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 64 }, serde_json::to_string(&vec![messages_spec(true)]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None, None).await.unwrap();
     let query = db.db.remote_relation_query("messages", "thread", json!({"chatId": "c1"}).as_object().unwrap()).unwrap().unwrap();
     let scope = ScopeRef::new(ModelKey::new("messages"), query.scope.unwrap());
@@ -34,7 +34,7 @@ async fn a_live_window_over_a_relation_that_keeps_its_order_follows_the_member_o
     }
     land(&db, None, "m9", json!(3));
     let tape = Arc::new(Tape(Mutex::default()));
-    let _live = db.live_window(r#"{"model":"messages","relation":"thread","params":{"chatId":"c1"}}"#.into(), 10, None, tape.clone());
+    let _live = db.live_query(r#"{"model":"messages","relation":"thread","params":{"chatId":"c1"}}"#.into(), tape.clone());
     db.db.await_revision(db.db.revision_seq().unwrap());
     let shown: Vec<String> = tape.0.lock().unwrap().last().unwrap().rows.iter().map(|row| row.id.clone()).collect();
     assert_eq!(shown, ["m1", "m2", "m5", "m9"]);

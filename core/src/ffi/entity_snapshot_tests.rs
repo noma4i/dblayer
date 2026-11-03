@@ -100,9 +100,9 @@ async fn testing_reset_empties_rows_and_resets_a_retained_entity() {
     let (log, callback) = crate::db::fixtures::recorder();
     let _subscription = db.db.observe(crate::query::Query::new("Moment"), callback).unwrap();
     db.db.await_revision(db.db.revision_seq().unwrap());
-    db.reset_for_testing().await.unwrap();
+    db.db.reset_all().unwrap();
     let empty = next(&mut receiver, EntityStage::Absent).await;
-    db.settle_for_testing().await.unwrap();
+    crate::ffi::settled(&db).await.unwrap();
     assert!(empty.value.is_none());
     assert!(db.db.find("Moment", &RowId::new("m1").unwrap()).unwrap().is_none());
     assert!(db.db.outbox().unwrap().is_empty());

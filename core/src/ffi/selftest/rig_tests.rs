@@ -326,12 +326,14 @@ impl Rig {
         Rig { opener, database, world: first, switch, clock }
     }
 
-    /// The harness of the apps ends a test: unset the target, reset, settle, then set the next target.
-    pub(super) async fn harness_cycle(&self, next: Option<Arc<World>>) {
+    /// A test ends and the next one starts: unset the target, close the database, set the next target, open a new database.
+    pub(super) async fn harness_cycle(&mut self, next: Option<Arc<World>>) {
         self.switch.set(None);
-        bound(self.database.reset_for_testing()).await.unwrap();
-        bound(self.database.settle_for_testing()).await.unwrap();
+        bound(self.database.close_database()).await.unwrap();
         self.switch.set(next);
+        let database = self.opener.open_with_clock(config(), plain_models(), Some(self.switch.clone()), None, self.clock.clone(), false, false, None, None, None, None).await.unwrap();
+        database.register_operations(plain_operations()).unwrap();
+        self.database = database;
     }
 
     pub(super) async fn login_ios(&self, account: &str) {
@@ -364,7 +366,8 @@ impl Rig {
         self.opener.open_with_clock(config(), plain_models(), transport, None, TestClock::new(1_000_000), false, false, None, None, None, None).await
     }
 
-    pub(super) async fn settle(&self) { bound(self.database.settle_for_testing()).await.unwrap(); }
+    pub(super) async fn settle(&self) { bound(crate::ffi::settled(&self.database)).await.unwrap(); }
+
 }
 
 /// Every delivery of the held entities, in order.
@@ -405,7 +408,7 @@ impl Held {
         let rows = Arc::new(Rows::default());
         let window_rows = Arc::new(Rows::default());
         let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
-        let window = database.live_window(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#.into(), 10, None, window_rows.clone());
+        let window = database.live_query(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#.into(), window_rows.clone());
         let changes = database.changes(r#"{"model":"User","relation":"all","params":{}}"#.into()).unwrap();
         Held { entities, log, query, rows, window, window_rows, changes }
     }

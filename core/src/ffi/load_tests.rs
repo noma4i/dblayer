@@ -61,24 +61,22 @@ impl super::EntityListener for RecordingEntity {
 }
 
 #[tokio::test]
-async fn held_queries_and_windows_reload_after_a_data_reset() {
-    for window in [false, true] {
-        let (db, transport) = rig().await;
-        let listener = Arc::new(Recording::default());
-        let query = r#"{"model":"Moment","relation":"feed","params":{},"order":[{"field":"text","direction":"asc"}]}"#.into();
-        let live = if window { db.live_window(query, 10, None, listener.clone()) } else { db.live_query(query, listener.clone()) };
-        within(live.wait_for_initial_load()).await.unwrap();
-        crate::test_wait::yield_until("the first row", || listener.0.lock().unwrap().contains(&1)).await;
-        listener.0.lock().unwrap().clear();
-        db.db.reset_all().unwrap();
-        crate::test_wait::yield_until("the reset and reloaded row", || {
-            let seen = listener.0.lock().unwrap();
-            seen.iter().position(|size| *size == 0).is_some_and(|empty| seen[empty + 1..].contains(&1))
-        }).await;
-        within(live.wait_for_initial_load()).await.unwrap();
-        assert_eq!(transport.queries.load(Ordering::SeqCst), 2, "window={window}");
-        live.cancel();
-    }
+async fn held_queries_reload_after_a_data_reset() {
+    let (db, transport) = rig().await;
+    let listener = Arc::new(Recording::default());
+    let query = r#"{"model":"Moment","relation":"feed","params":{},"order":[{"field":"text","direction":"asc"}]}"#.into();
+    let live = db.live_query(query, listener.clone());
+    within(live.wait_for_initial_load()).await.unwrap();
+    crate::test_wait::yield_until("the first row", || listener.0.lock().unwrap().contains(&1)).await;
+    listener.0.lock().unwrap().clear();
+    db.db.reset_all().unwrap();
+    crate::test_wait::yield_until("the reset and reloaded row", || {
+        let seen = listener.0.lock().unwrap();
+        seen.iter().position(|size| *size == 0).is_some_and(|empty| seen[empty + 1..].contains(&1))
+    }).await;
+    within(live.wait_for_initial_load()).await.unwrap();
+    assert_eq!(transport.queries.load(Ordering::SeqCst), 2);
+    live.cancel();
 }
 
 #[tokio::test]
@@ -136,13 +134,11 @@ async fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_lo
     let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), hold: None, gate: None, subscriptions: None });
     let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body } }","rootPath":"bulletinAdded"}]"#.into()).unwrap();
-    for window in [false, true] {
-        let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#.into();
-        let live = if window { db.live_window(query, 10, None, Arc::new(Silent)) } else { db.live_query(query, Arc::new(Silent)) };
-        let handles = live.handles.lock().unwrap();
-        assert!(handles.as_ref().unwrap()._watch.is_some(), "window={window}");
-        assert!(handles.as_ref().unwrap().load.is_none());
-    }
+    let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#.into();
+    let live = db.live_query(query, Arc::new(Silent));
+    let handles = live.handles.lock().unwrap();
+    assert!(handles.as_ref().unwrap()._watch.is_some());
+    assert!(handles.as_ref().unwrap().load.is_none());
 }
 
 pub(super) fn relation(name: &str, stale: &str) -> RelationSpec {
@@ -199,22 +195,15 @@ fn stored(db: &Database) -> bool { db.db.find("Moment", &RowId::new("m1").unwrap
 fn queries(transport: &Counting) -> usize { transport.queries.load(Ordering::SeqCst) }
 
 #[tokio::test]
-async fn testing_calls_reject_a_production_database() {
-    let (db, _) = rig().await;
-    assert!(db.reset_for_testing().await.unwrap_err().to_string().contains("resetForTesting requires openTesting"));
-    assert!(db.settle_for_testing().await.unwrap_err().to_string().contains("settleForTesting requires openTesting"));
-}
-
-#[tokio::test]
-async fn testing_settle_waits_for_a_load_that_outlives_reset() {
+async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let clock = TestClock::new(1_000_000);
     let (db, transport, _) = open_rig(Some(clock), Some(hold.clone()), None).await;
     let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
-    db.reset_for_testing().await.unwrap();
+    db.db.reset_all().unwrap();
     assert!(within(load).await.unwrap().is_err(), "the explicit load waited for its request after the reset");
-    within(db.settle_for_testing()).await.unwrap();
+    within(crate::ffi::settled(&db)).await.unwrap();
     assert!(db.streams.quiet(), "the ended load left a lease: {:?}", db.streams.held());
     hold.add_permits(1);
     assert!(!stored(&db));
@@ -225,7 +214,7 @@ async fn testing_settle_waits_for_a_load_that_outlives_reset() {
     let _live = db.live_query(r#"{"model":"Moment","relation":"feed","params":{}}"#.into(), listener.clone());
     within(transport.started.notified()).await;
     hold.add_permits(1);
-    db.settle_for_testing().await.unwrap();
+    crate::ffi::settled(&db).await.unwrap();
     assert!(listener.0.lock().unwrap().contains(&1), "the loaded row reached the listener");
 
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
@@ -245,7 +234,7 @@ async fn testing_settle_waits_for_a_load_that_outlives_reset() {
     let listener = Arc::new(RecordingEntity::default());
     let entity = db.live_entities("Moment".into(), listener.clone()).unwrap();
     entity.retain(vec![super::EntityRequest { id: "m1".into(), lease: 1, fetch: super::EntityFetch::Force }]).unwrap();
-    let settling = tokio::spawn({ let db = db.clone(); async move { db.settle_for_testing().await } });
+    let settling = tokio::spawn({ let db = db.clone(); async move { crate::ffi::settled(&db).await } });
     within(transport.started.notified()).await;
     assert!(!settling.is_finished());
     hold.add_permits(1);
@@ -259,7 +248,7 @@ async fn testing_settle_names_a_held_load_after_the_bound() {
     let (db, transport, _) = open_rig(Some(TestClock::new(1_000_000)), Some(hold.clone()), None).await;
     let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
-    let error = crate::test_wait::within_secs(20, db.settle_for_testing()).await.unwrap_err();
+    let error = crate::test_wait::within_secs(20, crate::ffi::settled(&db)).await.unwrap_err();
     assert!(error.to_string().contains("Explicit load"), "{error}");
     hold.add_permits(1);
     within(load).await.unwrap().unwrap();

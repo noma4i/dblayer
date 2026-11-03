@@ -58,7 +58,9 @@ private final class OrderedSubscribe: Transport, @unchecked Sendable {
     let token = "token-\(request.operationName)"
     lock.withLock { issuedTokens.append(token) }
     if order == .openedBeforeTheDrop { try sink.opened(token: token) }
+    let closing = box.current
     box.release()
+    Task { try? await closing?.closeDatabase() }
     let dropped = CancellationEvent()
     await withTaskCancellationHandler {
       await withCheckedContinuation { dropped.wait($0) }

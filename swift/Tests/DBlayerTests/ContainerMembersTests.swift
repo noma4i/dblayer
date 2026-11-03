@@ -64,12 +64,11 @@ extension BridgeProbeTests {
     transport.enqueue("ContainerMembers", reply: membersPage("a0", hasNext: true))
     transport.enqueue("ContainerMembers", reply: membersPage("a1", hasNext: false))
     let query = try User.completeMembers("c1")
-    let members = LiveWindow(query.window(tail: 50, max: 200))
+    let members = LiveList(query)
     await eventually("complete members") { members.snapshot.complete }
     #expect(members.snapshot.phase == .loaded)
     #expect(members.snapshot.rows.map(\.id) == ["a0", "a1"])
-    #expect(members.failure == nil)
-    members.expand(before: 40)
+    #expect(members.snapshot.error == nil)
     #expect(members.snapshot.rows.map(\.id) == members.rows.map(\.id))
     transport.enqueue("ContainerMembers", reply: #"{"errors":[{"message":"refused"}]}"#)
     do { try await query.refresh(); Issue.record("a refused refresh must throw") } catch {}
@@ -77,6 +76,6 @@ extension BridgeProbeTests {
     #expect(members.snapshot.phase == .loaded)
     #expect(!members.snapshot.complete)
     #expect(members.snapshot.rows.map(\.id) == ["a0", "a1"])
-    #expect(members.failure != nil)
+    #expect(members.snapshot.error != nil)
   }
 }

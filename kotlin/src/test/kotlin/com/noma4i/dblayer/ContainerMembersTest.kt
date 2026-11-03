@@ -74,12 +74,11 @@ class ContainerMembersTest {
         val query = User.completeMembers("c1")
         val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)
         try {
-            val members = LiveWindow(query.window(tail = 50, max = 200), scope)
+            val members = LiveList(query, scope)
             eventually("complete members") { members.snapshot.value.complete }
             assertEquals(LoadPhase.Loaded, members.snapshot.value.phase)
             assertEquals(listOf("a0", "a1"), members.snapshot.value.rows.map { it.id })
-            assertEquals(null, members.failure.value)
-            members.expand(before = 40)
+            assertEquals(null, members.snapshot.value.error)
             assertEquals(members.rows.value.map { it.id }, members.snapshot.value.rows.map { it.id })
             transport.enqueue("ContainerMembers", """{"errors":[{"message":"refused"}]}""")
             try { query.refresh(); org.junit.Assert.fail("a refused refresh must throw") } catch (_: DbException) {}
@@ -87,7 +86,7 @@ class ContainerMembersTest {
             assertEquals(LoadPhase.Loaded, members.snapshot.value.phase)
             assertEquals(false, members.snapshot.value.complete)
             assertEquals(listOf("a0", "a1"), members.snapshot.value.rows.map { it.id })
-            assertTrue(members.failure.value != null)
+            assertTrue(members.snapshot.value.error != null)
         } finally { scope.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
     }
 }

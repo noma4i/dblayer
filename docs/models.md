@@ -326,37 +326,6 @@ try await user.set(typing: true)
 user.set(typing = true)
 ```
 
-## Cloud models
-
-`cloud` marks the attributes a model sends to the user's own cloud copy. The generator expands the word into a list of attribute names and writes it to the model spec as `"cloud"`. A model without the word has no `"cloud"` key.
-
-```ruby
-model Draft, storage: :local do
-  attribute :title, :string
-  attribute :pinned, :bool, default: false
-  cloud
-end
-
-model ReadCursor, storage: :local do
-  attribute :chatId, :id
-  attribute :readUntil, :int, null: true
-  attribute :scroll, :int, default: 0
-  cloud :chatId, :readUntil
-end
-
-model Note do
-  attribute :title, :string
-  attribute :tone, :string, optional: true, local: true
-  cloud :tone
-end
-```
-
-- `cloud` with no names selects every attribute of a `storage: :local` model.
-- `cloud :a, :b` selects the named attributes.
-- On a `storage: :disk` model the names are required, and each attribute needs `local: true`. A server attribute is an error.
-- `storage: :memory`, `ephemeral` attributes, unknown names, repeated names and a second `cloud` are errors.
-- A `storage: :local` model with a partial selection needs every other attribute to have `null: true`, `optional: true` or a `default`. Otherwise another device cannot create the row.
-
 ## Memory models
 
 `model Session, storage: :local` persists rows without an outbox. It rejects server declarations. Local and synced models share a database. See [storage rules](storage-models.md).

@@ -2,19 +2,22 @@
 
 ## Unreleased
 
+### Added
+- Lifecycle sequence tests for the core, Swift and Kotlin, listed in a manifest.
+
 ### Changed
 - Requests, loads, uploads and subscriptions hold a lease that a session end, reset or close ends.
 - `sessionReset` and `close` are async and return after clearing; `sessionReset` clears the data.
-- `resetForTesting` ends the test session and starts the next, without a fresh open.
-- `settleForTesting` returns when no lease is held.
 - A session end replays after a crash between the credential and the data clear.
+- A test opens its database and closes it; there is no reset between tests.
+- iOS uploads use a plain `URLSession` PUT.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.
-- `testing_busy` polling and the fresh-open baseline of `resetForTesting`.
-
-### Added
-- Lifecycle sequence tests for the core, Swift and Kotlin, listed in a manifest.
+- `resetForTesting`, `settleForTesting` and `testing_busy`.
+- iCloud and Google Drive sync, the `cloud` model attribute and `CloudLink`.
+- `LiveWindow`, `Window`, `expand` and `Query.window`.
+- The iOS background upload session: `handleBackgroundSession`, `BackgroundPuts`, `BackgroundUploadSession`.
 
 ### Fixed
 - A window opened after a failed load of its query no longer shows that error.

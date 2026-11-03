@@ -3,10 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use serde_json::json;
+
 
 use super::rig_tests::{bound, Gate, Held, Rig};
-use crate::cloud::fixtures::{device, note, specs, FakeCloud};
 use crate::ffi::lifecycle_tests::Rows;
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, LoadMoreResult, OpenDatabase, PutReply, SubscriptionSink, TestClock, Transport, TransportRequest};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec, Storage};
@@ -92,8 +91,8 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         let mut unique = listed.clone();
         unique.dedup();
         assert_eq!(listed, unique, "{case}: a row is listed twice: {listed:?}");
-        bound(database.reset_for_testing()).await.unwrap();
-        bound(database.settle_for_testing()).await.unwrap();
+        database.db.reset_all().unwrap();
+        bound(crate::ffi::settled(&database)).await.unwrap();
         let before = pages.queries.load(Ordering::SeqCst);
         let fresh_rows = Arc::new(Rows::default());
         let fresh = database.live_query(FEED.into(), fresh_rows.clone());
@@ -146,15 +145,10 @@ fn presence() -> ModelSpec {
     }
 }
 
-/// C18, I31, I33: a memory row renews its expiry with an equal write and expires on the new boundary. A cloud pull answered after a reset restores no row, and nothing runs after the close.
+/// C18, I31: a memory row renews its expiry with an equal write and expires on the new boundary.
 #[tokio::test(flavor = "multi_thread")]
-async fn memory_expiry_follows_the_last_write_and_a_cloud_reply_after_a_reset_restores_nothing() {
-    let fake = FakeCloud::new();
-    let remote = device(&fake, 1_000);
-    let id = note(&remote, json!({"title": "old account"}));
-    remote.cloud.sync_now().await.unwrap();
-    let mut models = specs();
-    models.push(presence());
+async fn memory_expiry_follows_the_last_write() {
+    let models = vec![presence()];
     let clock = TestClock::new(1_000_000);
     let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), None, None, clock.clone(), false, false, None, None, None, None).await.unwrap();
 
@@ -174,19 +168,6 @@ async fn memory_expiry_follows_the_last_write_and_a_cloud_reply_after_a_reset_re
     .await;
     assert!(expired.is_ok(), "the row outlived its new boundary");
 
-    let db = database.db.clone();
-    fake.before_pull_reply(move || db.reset_all().unwrap());
-    let link = database.connect_cloud(fake.clone()).unwrap();
-    yield_until("the cloud pass ran", || fake.calls() > 0).await;
-    bound(database.settle_for_testing()).await.unwrap();
-    assert!(database.peek_row("notes".into(), id.clone()).unwrap().is_none(), "the cloud reply after the reset restored a row");
-
-    link.stop();
-    database.close_now();
-    let calls = fake.calls();
-    clock.advance(3_600_000);
-    link.remote_changed();
-    assert_eq!(fake.calls(), calls, "the cloud ran after the close");
 }
 
 /// R-11: the app returns to the foreground and refreshes the profile while its views are held. The refusal is typed, the credential and the views stay, and the next refresh succeeds. The server subscription of an encrypted session runs on the cable socket, which this rig does not speak, so it is not part of this sequence.

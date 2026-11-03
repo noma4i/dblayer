@@ -97,7 +97,7 @@ Expired Blobs fail before the consumer mutation is sent. Local bytes are removed
 Before every multipart part is confirmed, failure can abort the multipart.
 After confirmation, retry repeats complete and startup cleanup preserves the confirmed parts.
 Explicit discard and failed expiry still abort an unfinished multipart, including confirmed parts awaiting complete.
-The existing iOS and Android background transfer paths apply without additional app steps.
+On Android the foreground service and the user-initiated job carry the transfer. iOS uploads run while the app runs.
 An unused uploaded Blob without readers sends no periodic requests and schedules no wakeups.
 
 An upload sends a local file to storage and then runs one content mutation with the stored blob. It is an operation of the library: it lives in the same queue as other pending operations, survives restarts, and shows its state on the record.
@@ -149,19 +149,9 @@ moment.uploads["upload_clip"]?.percent      // 42.0
 moment.cancelUpload("upload_clip")
 ```
 
-### Background transfer
+### Android background transfer
 
-Uploads keep running while the app is not visible. The library does this, the app adds one line.
-
-On iOS the files go through a background `URLSession`. Pass the system call to the library in the `AppDelegate`:
-
-```swift
-func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
-    DB.handleBackgroundSession(identifier: identifier, completion: completionHandler)
-}
-```
-
-The identifier of that session is `uploadSessionIdentifier` of `UrlSessionTransport`. The completion waits only for the uploads whose tasks reported in this launch. Other unfinished uploads do not hold it.
+On iOS uploads go through the outbox of the core while the app runs.
 
 On Android the app gives the text and the small icon of the notification to `open`:
 

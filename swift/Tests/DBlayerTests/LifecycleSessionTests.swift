@@ -115,8 +115,6 @@ extension BridgeProbeTests {
     try await DB.sessionReset()
     #expect(entity.value == nil)
     server.refuseEverything(true)
-    try await DB.resetForTesting()
-    try await DB.settleForTesting()
     #expect(server.requests.count == before)
     server.refuseEverything(false)
     try await Self.startSealedSession("B")
@@ -136,7 +134,6 @@ extension BridgeProbeTests {
     #expect(entity.value == nil)
     let before = server.requests.count
     server.refuseEverything(true)
-    try await DB.settleForTesting()
     #expect(server.requests.count == before)
     server.refuseEverything(false)
     try await Self.startSealedSession("B")
@@ -161,24 +158,6 @@ extension BridgeProbeTests {
     await #expect(throws: DbError.self) { try await entity.waitForInitialLoad() }
   }
 
-  /// The session stays, only the held reads start over: the reset rereads at once, no login follows, and the held entity shows the data the server holds now.
-  @MainActor
-  @Test
-  func resetForTestingWithTheSessionKeptRereadsAtOnceAndTheHeldEntityGetsFreshValues() async throws {
-    let server = try await Self.openSealedSession()
-    try await Self.startSealedSession("A")
-    let entity = User.entity()
-    await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    let logins = server.pathRequests("/api/auth/login_link")
-    let reads = server.operationRequests("UserProfile")
-    Self.account.signIn("A2")
-    try await DB.resetForTesting()
-    try await DB.settleForTesting()
-    #expect(server.operationRequests("UserProfile") > reads)
-    await eventually(#"entity.value?.name == "A2""#) { entity.value?.name == "A2" }
-    #expect(server.pathRequests("/api/auth/login_link") == logins)
-  }
-
   /// Every value delivered to a list held across a logout and the next login: none shows account A after the logout and the last one shows B.
   @MainActor
   @Test
@@ -193,7 +172,6 @@ extension BridgeProbeTests {
     try await DB.sessionReset()
     try await Self.startSealedSession("B")
     await eventually("the held list shows B") { history.states.last?.contains("B") == true }
-    try await DB.settleForTesting()
     let after = history.states.dropFirst(seen)
     #expect(after.allSatisfy { !$0.contains("A") }, "account A came back after the logout: \(after)")
   }
@@ -211,7 +189,7 @@ extension BridgeProbeTests {
     defer { live.cancel() }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     server.hold(operation: "UserProfile")
-    try await DB.resetForTesting()
+    Task { @MainActor in _ = try? await User.profile.refresh() }
     await eventually("the reread waits at the server") { server.parkedCount > 0 }
     let pending = Outcome()
     Task { @MainActor in
@@ -226,7 +204,6 @@ extension BridgeProbeTests {
     await eventually("the wait that was pending at the exit ended") { pending.isDone }
     #expect(entity.value == nil)
     server.hold(operation: nil)
-    try await DB.settleForTesting()
     #expect(entity.value == nil, "the late answer of account A reached the held entity")
     try await Self.startSealedSession("B")
     await eventually(#"entity.value?.name == "B""#) { entity.value?.name == "B" }
@@ -246,7 +223,7 @@ extension BridgeProbeTests {
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     for (next, previous) in [("B", "A"), ("A", "B")] {
       server.hold(operation: "UserProfile")
-      try await DB.resetForTesting()
+      Task { @MainActor in _ = try? await User.profile.refresh() }
       await eventually("the reread waits at the server") { server.parkedCount > 0 }
       await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
       try await DB.sessionReset()
@@ -255,8 +232,7 @@ extension BridgeProbeTests {
       server.hold(operation: nil)
       try await Self.startSealedSession(next)
       await eventually("the held entity shows \(next)") { entity.value?.name == next }
-      try await DB.settleForTesting()
-      await eventually("the held list shows \(next)") { history.states.last?.contains(next) == true }
+        await eventually("the held list shows \(next)") { history.states.last?.contains(next) == true }
       let after = history.states.dropFirst(seen)
       #expect(after.allSatisfy { !$0.contains(previous) }, "\(previous) came back after its exit: \(after)")
     }
@@ -291,7 +267,6 @@ extension BridgeProbeTests {
     #expect(entity.value == nil)
     let before = server.requests.count
     server.refuseEverything(true)
-    try await DB.settleForTesting()
     #expect(server.requests.count == before)
     #expect(server.pathRequests("/api/logout") == 0)
     server.refuseEverything(false)

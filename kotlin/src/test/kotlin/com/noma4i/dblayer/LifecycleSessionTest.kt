@@ -99,8 +99,6 @@ class LifecycleSessionTest {
             DBlayer.sessionReset()
             assertNull(entity.value.value)
             server.refuseEverything(true)
-            DBlayer.resetForTesting()
-            DBlayer.settleForTesting()
             assertEquals(before, server.requests.size)
             server.refuseEverything(false)
             startSession("B")
@@ -123,7 +121,6 @@ class LifecycleSessionTest {
             assertNull(entity.value.value)
             val before = server.requests.size
             server.refuseEverything(true)
-            DBlayer.settleForTesting()
             assertEquals(before, server.requests.size)
             server.refuseEverything(false)
             startSession("B")
@@ -151,27 +148,6 @@ class LifecycleSessionTest {
             awaitWithin("the wait that was pending at the exit") { pending.await() }
             val late = runCatching { awaitWithin("the first-load wait after the exit") { entity.waitForInitialLoad() } }.exceptionOrNull()
             assertTrue("the wait after the exit must end Interrupted: $late", late is DbException.Interrupted)
-        } finally {
-            DBlayer.close()
-        }
-    }
-
-    /** The session stays, only the held reads start over: the reset rereads at once, no login follows, and the held entity shows the data the server holds now. */
-    @Test
-    fun resetForTestingWithTheSessionKeptRereadsAtOnceAndTheHeldEntityGetsFreshValues() = bounded {
-        try {
-            openSession()
-            startSession("A")
-            val entity = User.entity()
-            eventually("the held entity shows A") { entity.value.value?.name == "A" }
-            val logins = server.pathRequests("/api/auth/login_link")
-            val reads = server.operationRequests("UserProfile")
-            account.set("A2")
-            DBlayer.resetForTesting()
-            DBlayer.settleForTesting()
-            assertTrue(server.operationRequests("UserProfile") > reads)
-            eventually("the held entity shows A2") { entity.value.value?.name == "A2" }
-            assertEquals(logins, server.pathRequests("/api/auth/login_link"))
         } finally {
             DBlayer.close()
         }
@@ -207,7 +183,6 @@ class LifecycleSessionTest {
                 DBlayer.sessionReset()
                 startSession("B")
                 eventually("the held list shows B") { states.lastOrNull()?.contains("B") == true }
-                DBlayer.settleForTesting()
                 val after = states.drop(seen)
                 assertTrue("account A came back after the logout: $after", after.none { "A" in it })
             } finally {
@@ -231,7 +206,7 @@ class LifecycleSessionTest {
             try {
                 eventually("the held list shows A") { history.states.lastOrNull()?.contains("A") == true }
                 server.hold("UserProfile")
-                DBlayer.resetForTesting()
+                launch { runCatching { User.profile.refresh() } }
                 eventually("the reread waits at the server") { server.parkedCount > 0 }
                 val pending = async(start = CoroutineStart.UNDISPATCHED) { runCatching { entity.waitForInitialLoad() } }
                 awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
@@ -240,7 +215,6 @@ class LifecycleSessionTest {
                 awaitWithin("the wait that was pending at the exit") { pending.await() }
                 assertNull(entity.value.value)
                 server.hold(null)
-                DBlayer.settleForTesting()
                 assertNull("the late answer of account A reached the held entity", entity.value.value)
                 startSession("B")
                 eventually("the held entity shows B") { entity.value.value?.name == "B" }
@@ -267,7 +241,7 @@ class LifecycleSessionTest {
                 eventually("the held list shows A") { history.states.lastOrNull()?.contains("A") == true }
                 for ((next, previous) in listOf("B" to "A", "A" to "B")) {
                     server.hold("UserProfile")
-                    DBlayer.resetForTesting()
+                    launch { runCatching { User.profile.refresh() } }
                     eventually("the reread waits at the server") { server.parkedCount > 0 }
                     awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
                     DBlayer.sessionReset()
@@ -276,7 +250,6 @@ class LifecycleSessionTest {
                     server.hold(null)
                     startSession(next)
                     eventually("the held entity shows $next") { entity.value.value?.name == next }
-                    DBlayer.settleForTesting()
                     eventually("the held list shows $next") { history.states.lastOrNull()?.contains(next) == true }
                     val after = history.states.drop(seen)
                     assertTrue("$previous came back after its exit: $after", after.none { previous in it })
@@ -322,7 +295,6 @@ class LifecycleSessionTest {
             assertNull(entity.value.value)
             val before = server.requests.size
             server.refuseEverything(true)
-            DBlayer.settleForTesting()
             assertEquals(before, server.requests.size)
             assertEquals(0, server.pathRequests("/api/logout"))
             server.refuseEverything(false)

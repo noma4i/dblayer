@@ -42,10 +42,10 @@ extension BridgeProbeTests {
 
   private static let operations = #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#
 
-  /// C01, C02, R-1, R-3: one openTesting, the target unset (Android throws Interrupted, iOS Invalid), reset, settle, the next target. The reset sends nothing to either transport and the first load of the next test succeeds with its own account.
+  /// C01, C02, R-1, R-3: the target unset (Android throws Interrupted, iOS Invalid), the database closes, the next test opens a new one on the next target. The close sends nothing to either transport and the first load of the next test succeeds with its own account.
   @MainActor
   @Test
-  func aHarnessResetWithTheTargetUnsetLeavesTheNextWindowClean() async throws {
+  func aCloseWithTheTargetUnsetLeavesTheNextDatabaseClean() async throws {
     for unset in [DbError.Interrupted(detail: "transport unavailable during reset"), DbError.Invalid(detail: "No test transport")] {
       try await DB.close()
       let first = MockTransport(unanswered: .networkError)
@@ -58,19 +58,21 @@ extension BridgeProbeTests {
       let before = first.calls.count
 
       switchable.target = nil
-      try await DB.resetForTesting()
-      try await DB.settleForTesting()
+      try await DB.close()
       let second = MockTransport(unanswered: .networkError)
       second.enqueue("UserProfile", reply: Self.profile("B"))
-      #expect(first.calls.count == before, "work of the reset reached the old transport")
-      #expect(second.calls.isEmpty, "work of the reset reached the next transport")
+      #expect(first.calls.count == before, "work of the close reached the old transport")
+      #expect(second.calls.isEmpty, "work of the close reached the next transport")
       switchable.target = second
+      try await DB.openTesting(transport: switchable, modelsJSON: modelsJSON)
+      try DB.database.registerOperations(defsJson: Self.operations)
       try DB.setListening(true)
 
-      try await entity.waitForInitialLoad()
-      #expect(entity.value?.name == "B")
+      let next = User.entity()
+      try await next.waitForInitialLoad()
+      #expect(next.value?.name == "B")
       #expect(second.calls.count == 1)
-      if case let .failed(error) = entity.read { Issue.record("the next window inherited \(error)") }
+      if case let .failed(error) = next.read { Issue.record("the next database inherited \(error)") }
       try await DB.close()
     }
   }

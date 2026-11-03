@@ -18,7 +18,7 @@ fn session_code(error: DbError) -> SessionCode {
     code
 }
 
-async fn ends(database: &Database) { bound(database.settle_for_testing()).await.unwrap(); }
+async fn ends(database: &Database) { bound(crate::ffi::settled(&database)).await.unwrap(); }
 
 /// C05, C07, R-5, R-8: the app opens its handles signed out, then logs in. Both login orders end with every handle showing the account.
 #[tokio::test(flavor = "multi_thread")]
@@ -46,7 +46,7 @@ async fn app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_
     held.lists_show("A").await;
     bound(held.query.wait_for_initial_load()).await.unwrap();
     let gate = rig.world.hold_next("Users");
-    bound(rig.database.reset_for_testing()).await.unwrap();
+    let _late = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh("User".into(), "all".into(), "{}".into()).await }) };
     gate.entered().await;
     let waiting = held.query.clone();
     let pending = tokio::spawn(async move { waiting.wait_for_initial_load().await });
@@ -149,7 +149,7 @@ async fn account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_
     let mut previous = "A";
     for account in ["B", "A"] {
         let gate = rig.world.hold_next("Users");
-        bound(rig.database.reset_for_testing()).await.unwrap();
+        let _late = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh("User".into(), "all".into(), "{}".into()).await }) };
         gate.entered().await;
 
         rig.exit(&held, true, false).await;

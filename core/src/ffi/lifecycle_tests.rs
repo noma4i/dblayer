@@ -185,7 +185,7 @@ async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_cur
     let rows = Arc::new(Rows::default());
     let window_rows = Arc::new(Rows::default());
     let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
-    let window = database.live_window(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#.into(), 10, None, window_rows.clone());
+    let window = database.live_query(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#.into(), window_rows.clone());
     within(query.wait_for_initial_load()).await.unwrap();
     within(window.wait_for_initial_load()).await.unwrap();
     crate::test_wait::yield_until("both held entities loaded", || {
@@ -193,15 +193,14 @@ async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_cur
         snapshots.len() == 2 && snapshots.values().all(|row| row.settled && row.read == EntityRead::Loaded && row.value.is_some())
     }).await;
     let changes = database.changes(r#"{"model":"User","relation":"all","params":{}}"#.into()).unwrap();
-    within(database.settle_for_testing()).await.unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     for account in ["A", "B"] {
         for listener in [&rows, &window_rows] { listener.1.lock().unwrap().clear(); }
         let emptied_generation = database.db.generation().value();
         within(database.session_reset()).await.unwrap();
         server.forbid(true);
         let before = server.calls();
-        within(database.reset_for_testing()).await.unwrap();
-        within(database.settle_for_testing()).await.unwrap();
+        within(crate::ffi::settled(&database)).await.unwrap();
         assert!(server.violations().is_empty(), "REL-24: held request after logout: {:?}", server.violations());
         assert_eq!(server.calls(), before, "REL-24: no held request after logout");
         {
@@ -215,7 +214,7 @@ async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_cur
         }
         server.forbid(false);
         start_session(&database, account).await;
-        within(database.settle_for_testing()).await.unwrap();
+        within(crate::ffi::settled(&database)).await.unwrap();
         crate::test_wait::yield_until("both held entities show the new account", || {
             let snapshots = snapshots.0.lock().unwrap();
             snapshots.len() == 2 && snapshots.values().all(|row| row.settled && row.read == EntityRead::Loaded && row.generation > emptied_generation && row.value.as_ref().is_some_and(|row| named(row, account)))
@@ -228,15 +227,9 @@ async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_cur
         let states = delivered(&changes).await;
         assert!(states.first().is_some_and(|first| first.iter().all(|row| !named(row, previous))), "D7: the first change after the logout shows the previous account: {states:?}");
         assert!(states.last().is_some_and(|last| !last.is_empty() && last.iter().all(|row| named(row, account))));
-        let before = server.calls();
-        within(database.reset_for_testing()).await.unwrap();
-        within(database.settle_for_testing()).await.unwrap();
-        for operation in ["MyProfile", "UserNode", "Users"] {
-            assert_eq!(server.calls()[operation], before[operation] + 1, "reset keeps session: {operation}");
-        }
         let after_reset = server.calls();
         within(database.session_call("login_link".into(), json!({"account":account}).to_string())).await.unwrap();
-        within(database.settle_for_testing()).await.unwrap();
+        within(crate::ffi::settled(&database)).await.unwrap();
         assert_eq!(server.calls(), after_reset, "repeating the same session commit rereads nothing");
     }
     database.session_reset().await.unwrap();
@@ -244,8 +237,7 @@ async fn encrypted_app_login_logout_reset_and_account_switch_keep_held_reads_cur
     let refused = within(database.run("SessionProfile".into(), "{}".into())).await.unwrap_err();
     assert!(matches!(refused, DbError::Session { code: SessionCode::Unauthenticated, .. }));
     server.forbid(true);
-    within(database.reset_for_testing()).await.unwrap();
-    within(database.settle_for_testing()).await.unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     assert!(server.violations().is_empty(), "a held read reached the server after sessionReset: {:?}", server.violations());
     database.close_now();
 }
@@ -278,8 +270,7 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
         if !close {
             if end == "session_reset" { assert!(database.session.as_ref().unwrap().signed_in().unwrap().is_none()); }
             server.forbid(true);
-            within(database.reset_for_testing()).await.unwrap();
-            within(database.settle_for_testing()).await.unwrap();
+            within(crate::ffi::settled(&database)).await.unwrap();
             assert!(server.violations().is_empty(), "{end}: {:?}", server.violations());
             database.close_now();
         }
@@ -384,7 +375,7 @@ async fn the_changes_of_an_ended_session_never_return_its_rows() {
     let database = open(server.clone()).await;
     start_session(&database, "A").await;
     let changes = database.changes(r#"{"model":"User","relation":"all","params":{}}"#.into()).unwrap();
-    within(database.settle_for_testing()).await.unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     crate::test_wait::yield_until("the rows of account A are queued", || changes.queued() > 0).await;
     database.session_reset().await.unwrap();
     let states = delivered(&changes).await;
@@ -398,7 +389,7 @@ async fn the_next_change_after_an_ended_session_arrives_without_its_rows() {
     let database = open(server.clone()).await;
     start_session(&database, "A").await;
     let changes = database.changes(r#"{"model":"User","order":[{"field":"name","direction":"asc"}]}"#.into()).unwrap();
-    within(database.settle_for_testing()).await.unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     crate::test_wait::yield_until("the rows of account A are queued", || changes.queued() > 0).await;
     database.session_reset().await.unwrap();
     database.create("User".into(), json!({"id":"z","name":"C"}).to_string(), "{}".into()).await.unwrap();
@@ -437,7 +428,8 @@ async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation(
     let old = tokio::spawn(async move { first.refresh("User".into(), "all".into(), "{}".into()).await });
     within(pause.entered.notified()).await;
     let before = server.calls()["Users"];
-    within(database.reset_for_testing()).await.unwrap();
+    within(database.session_reset()).await.unwrap();
+    start_session(&database, "B").await;
     within(database.refresh("User".into(), "all".into(), "{}".into())).await.unwrap();
     assert_eq!(server.calls()["Users"], before + 1, "the refresh after the reset waited for the old request");
     assert!(within(old).await.unwrap().is_err(), "the refresh of the old data waited for its request after the reset");
@@ -457,28 +449,10 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     let second = database.clone();
     let joined = tokio::spawn(async move { second.load("User".into(), "all".into(), "{}".into()).await });
     crate::test_wait::yield_until("the load joined the flight", || database.sync.as_ref().unwrap().joined_loads() > 0).await;
-    within(database.reset_for_testing()).await.unwrap();
+    within(database.session_reset()).await.unwrap();
     assert!(within(owner).await.unwrap().is_err(), "the owner of the old flight waited for its request");
     assert!(within(joined).await.unwrap().is_err(), "a call joined to the old flight waited for its request");
     pause.release.add_permits(1);
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn an_initial_load_wait_after_a_reset_does_not_return_the_old_ready() {
-    let server = Arc::new(Server::default());
-    let database = open(server.clone()).await;
-    start_session(&database, "A").await;
-    let rows = Arc::new(Rows::default());
-    let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
-    within(query.wait_for_initial_load()).await.unwrap();
-    let pause = server.pause_next();
-    within(database.reset_for_testing()).await.unwrap();
-    let waiting = tokio::time::timeout(std::time::Duration::from_millis(300), query.wait_for_initial_load()).await;
-    assert!(waiting.is_err(), "wait_for_initial_load returned while the new load was still running");
-    within(pause.entered.notified()).await;
-    pause.release.add_permits(1);
-    within(query.wait_for_initial_load()).await.unwrap();
     database.close_now();
 }
 
@@ -494,16 +468,16 @@ async fn a_confirmed_logout_then_a_session_reset_and_a_clear_never_shows_the_acc
     let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
     within(query.wait_for_initial_load()).await.unwrap();
     let changes = database.changes(r#"{"model":"User","relation":"all","params":{}}"#.into()).unwrap();
-    within(database.settle_for_testing()).await.unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     within(database.session_call("logout".into(), "{}".into())).await.unwrap();
     assert!(database.session.as_ref().unwrap().signed_in().unwrap().is_none(), "the confirmed logout kept the session");
     database.session_reset().await.unwrap();
     server.forbid(true);
-    within(database.settle_for_testing()).await.unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     assert!(server.violations().is_empty(), "a held read reached the server between the logout and the next login: {:?}", server.violations());
     server.forbid(false);
     start_session(&database, "B").await;
-    within(database.settle_for_testing()).await.unwrap();
+    within(crate::ffi::settled(&database)).await.unwrap();
     crate::test_wait::yield_until("the held entity and list show account B", || {
         let shown = snapshots.0.lock().unwrap();
         let listed = rows.0.lock().unwrap();
@@ -531,7 +505,7 @@ async fn held_waits_end_after_the_app_logout_order_with_a_held_singleton_and_str
     let query = database.live_query(r#"{"model":"User","relation":"all","params":{}}"#.into(), rows.clone());
     within_secs(20, query.wait_for_initial_load()).await.unwrap();
     let changes = database.changes(r#"{"model":"User","relation":"all","params":{}}"#.into()).unwrap();
-    within_secs(20, database.settle_for_testing()).await.unwrap();
+    within_secs(20, crate::ffi::settled(&database)).await.unwrap();
     crate::test_wait::yield_until("the held singleton loaded", || singleton_settled(&snapshots)).await;
     within_secs(20, entities.load_initial(String::new(), 1)).await.unwrap();
     let reading = { let changes = changes.clone(); tokio::spawn(async move { loop { if within_secs(20, changes.next()).await.is_none() { break; } } }) };

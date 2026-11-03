@@ -7,7 +7,6 @@ use crate::lifecycle::{Holder, Lifecycle};
 use super::live_feed::LiveFeed;
 use super::open_slot::OpenSlot;
 use super::{Config, Database, DbError, LiveChange, LiveSubscription, LivePhase, QueryListener};
-use crate::cloud::fixtures::FakeCloud;
 use crate::pacing::{Clock, ManualClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::{join_within, within, yield_until};
@@ -141,15 +140,10 @@ async fn close_releases_old_engine() {
     let (database, transport) = with_transport(clock.clone());
     let slot = OpenSlot::new();
     database.hold(slot.acquire().unwrap());
-    let cloud = FakeCloud::new();
-    let link = database.connect_cloud(cloud.clone()).unwrap();
-    yield_until("the cloud pass ran", || cloud.calls() > 0).await;
-    assert!(link.cloud.is_running());
     let sink = database.online_sink().unwrap();
     let owner = Arc::downgrade(&database.sync.as_ref().unwrap().inner);
     let connectivity = database.db.connectivity();
     database.close_now();
-    assert!(!link.cloud.is_running(), "the cloud task stops with the database");
     sink.set_online(false);
     assert!(connectivity.is_online(), "a late call through the retained sink is refused");
     let reopened = slot.acquire();
@@ -157,23 +151,11 @@ async fn close_releases_old_engine() {
     assert!(slot.acquire().is_err(), "and has exactly one owner after the reopen");
     drop(database);
     yield_until("the old database has no owner while the platform still holds the sink", || owner.upgrade().is_none()).await;
-    let (calls, requests) = (cloud.calls(), transport.call_count("Signal"));
+    let requests = transport.call_count("Signal");
     clock.advance(std::time::Duration::from_secs(3600));
-    link.remote_changed();
     for _ in 0..16 { tokio::task::yield_now().await; }
-    assert_eq!((cloud.calls(), transport.call_count("Signal")), (calls, requests), "advancing the clock starts no old work");
+    assert_eq!(transport.call_count("Signal"), requests, "advancing the clock starts no old work");
     drop(sink);
-}
-
-#[tokio::test]
-async fn dropping_the_last_cloud_handle_stops_its_task() {
-    let (database, _transport) = with_transport(Arc::new(crate::pacing::SystemClock));
-    let cloud = FakeCloud::new();
-    let link = database.connect_cloud(cloud.clone()).unwrap();
-    yield_until("the cloud pass ran", || cloud.calls() > 0).await;
-    assert!(Arc::strong_count(&cloud) > 1);
-    drop(link);
-    yield_until("the cloud task released its io", || Arc::strong_count(&cloud) == 1).await;
 }
 
 struct Journal {

@@ -155,13 +155,12 @@ class MainThreadTest {
         try {
             val ordered = { stage: String -> Query("Moment", decoder(stage)).order(Order("text", "asc")) }
             val list = LiveList(ordered("list"), scope)
-            val window = LiveWindow(ordered("window").window(tail = 40), scope)
-            eventually("the first delivery") { list.rows.value.size == 40 && window.rows.value.size == 40 }
+            eventually("the first delivery") { list.rows.value.size == 40 }
 
             created[39].update(text = GraphQLNullable.Value("t00039x"))
-            eventually("the second delivery") { list.rows.value.last().moment.text == "t00039x" && window.rows.value.last().moment.text == "t00039x" }
+            eventually("the second delivery") { list.rows.value.last().moment.text == "t00039x" }
 
-            for (stage in listOf("list", "window")) {
+            for (stage in listOf("list")) {
                 assertTrue("$stage: the delivery compared the changed row", touched.any { it.first == stage })
                 assertEquals("$stage: comparisons on the owner thread", 0, onMain(stage))
             }
@@ -171,7 +170,7 @@ class MainThreadTest {
     }
 
     @Test
-    fun the_owner_thread_consumes_a_list_and_a_window_while_their_publication_is_held_up() = bounded {
+    fun the_owner_thread_consumes_a_list_while_its_publication_is_held_up() = bounded {
         reopen(Config(null, null, 128u), modelsJSON, null)
         val created = List(40) { Moment.create(text = "t%05d".format(it)) }
         val armed = java.util.concurrent.atomic.AtomicReference<Pair<java.util.concurrent.CountDownLatch, java.util.concurrent.CountDownLatch>?>(null)
@@ -187,14 +186,12 @@ class MainThreadTest {
         try {
             val query = Query("Moment", decoder).order(Order("text", "asc"))
             val list = LiveList(query, scope)
-            val window = LiveWindow(query.window(tail = 40), scope)
-            eventually("the first delivery") { list.rows.value.size == 40 && window.rows.value.size == 40 }
+            eventually("the first delivery") { list.rows.value.size == 40 }
 
             list.takeUpdate()
-            window.takeUpdate()
             var edit = 0
             suspend fun waitedForPublication(consume: () -> ListUpdate<Probe>): Boolean {
-                val entered = java.util.concurrent.CountDownLatch(2)
+                val entered = java.util.concurrent.CountDownLatch(1)
                 val gate = java.util.concurrent.CountDownLatch(1)
                 armed.set(entered to gate)
                 val text = "t00039-${edit++}"
@@ -216,8 +213,7 @@ class MainThreadTest {
             }
 
             assertEquals("the owner thread waited for the list publication", false, waitedForPublication { list.takeUpdate() })
-            eventually("the list publication ended") { list.rows.value.last().moment.text == "t00039-0" && window.rows.value.last().moment.text == "t00039-0" }
-            assertEquals("the owner thread waited for the window publication", false, waitedForPublication { window.takeUpdate() })
+            eventually("the list publication ended") { list.rows.value.last().moment.text == "t00039-0" }
         } finally {
             scope.cancel()
         }

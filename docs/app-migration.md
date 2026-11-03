@@ -55,15 +55,15 @@ Derived preload: `preload vibeId: { from: "Compass.rows" }, limit: 40`.
 Remove `preload ... { from: ... }` declarations without `limit`. `limit` is now a reserved key of the `preload` line.
 Full membership scope: `scope :chat_members, members_complete: true do`, existing `query`, `response`, `paginate size: 100, direction: :forward`.
 `max_pages` is incompatible with `members_complete`. The server limit for a members page is 100.
-Swift: `LiveWindow(try User.chatMembers(chatId).window(tail: 50, max: 200))`.
-Kotlin: `LiveWindow(User.chatMembers(chatId).window(tail = 50, max = 200), scope)`.
+Swift: `LiveList(try User.chatMembers(chatId))`.
+Kotlin: `LiveList(User.chatMembers(chatId), scope)`.
 Read `snapshot.phase`, `snapshot.error`, `snapshot.complete`, through `snapshot.value` in Kotlin.
 Completeness occurs only after `hasNextPage == false`. A short or empty intermediate page does not end the chain.
 On error, partial rows remain: `Loaded` with `error`, `complete = false`. Without rows, the phase is `Failed`.
 The last reader cancels the request. The next reader continues from the saved cursor. Network return continues a failed chain with readers.
 Remove `CompassRowLoads`, manual `loadAll`, the completeness flag of `ChatGroupDetails`, the second list and app-side row slicing.
-Keep `expand(before: 40)` / `expand(before = 40)`. SQLite stores the full membership, and the UI receives at most 200 rows.
-`rows`, `failure` and edges of `LiveWindow` read the same snapshot. Regenerate models for both platforms.
+SQLite stores the full membership.
+`rows` and `snapshot.error` of `LiveList` read the same snapshot. Regenerate models for both platforms.
 
 ## Create sources
 

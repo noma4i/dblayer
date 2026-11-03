@@ -444,7 +444,7 @@ async fn reading_the_stored_window_for_a_load_reads_the_same_members_at_every_li
     let mut costs = Vec::new();
     for size in [100, 10_000] {
         let (rig, params) = rig_with_user_list(size).await;
-        let resolved = rig.sync.inner.resolve(crate::lifecycle::Origin::Observed, "moments", "by_user", &params).unwrap();
+        let resolved = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "by_user", &params).unwrap();
         costs.push(reads_during(|| assert!(rig.sync.inner.stored(&resolved).unwrap().unwrap().has_rows)));
     }
     assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");
@@ -464,8 +464,8 @@ async fn creating_a_row_in_a_loaded_list_reads_the_same_members_at_every_list_si
 #[test]
 fn resolving_twice_shares_the_operation_and_the_relation_spec() {
     let rig = rig();
-    let first = rig.sync.inner.resolve(crate::lifecycle::Origin::Observed, "moments", "feed", &Map::new()).unwrap();
-    let second = rig.sync.inner.resolve(crate::lifecycle::Origin::Observed, "moments", "feed", &Map::new()).unwrap();
+    let first = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "feed", &Map::new()).unwrap();
+    let second = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "feed", &Map::new()).unwrap();
     let operations: [&super::registry::OperationDef; 2] = [&first.operation, &second.operation];
     let remotes: [&crate::schema::RemoteSpec; 2] = [first.remote, second.remote];
     assert!(std::ptr::eq(operations[0], operations[1]), "the operation document is cloned for each resolve");

@@ -33,7 +33,7 @@ fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() 
     }
     let (joined, joined_callback) = recorder();
     let _joined_observer = db.observe(Query::new("users"), joined_callback).unwrap();
-    window.expand_before(1);
+    window.grow_before(1);
     entities.retain(&[rid("u1")]).unwrap();
     let cancelled = logs.pop().unwrap();
     drop(observers.pop());
@@ -90,7 +90,7 @@ fn inv_observe_29_repeated_window_growth_keeps_one_pending_read() {
     db.shared.reads.inline.store(true, std::sync::atomic::Ordering::SeqCst);
     let before = db.counters().observation_reads;
     for _ in 0..64 {
-        window.expand_before(1);
+        window.grow_before(1);
     }
     drop(paused);
     db.await_revision(db.revision_seq().unwrap());
@@ -139,7 +139,7 @@ fn inv_observe_21_a_window_grows_by_a_read_outside_the_owner() {
     let (log, callback) = recorder();
     let window = db.observe_window(Query::new("users").ordered(vec![crate::query::Order::new("name", crate::value::SortDirection::Asc)]), WindowSpec::Tail { size: 2, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    window.expand_before(2);
+    window.grow_before(2);
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(log.lock().unwrap().last().map(|change| change.size), Some(4));
     assert_eq!(db.counters().sql_under_owner, 0);
@@ -321,7 +321,7 @@ fn nb1_cancelling_and_growing_an_observer_do_not_wait_for_the_registry() {
     let (_log, callback) = recorder();
     let window = db.observe_window(query, WindowSpec::Tail { size: 1, max: None, paged: false }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    assert!(returns_while_the_registry_is_held(move || window.expand_before(1), &db), "expand waited for the observers lock");
+    assert!(returns_while_the_registry_is_held(move || window.grow_before(1), &db), "expand waited for the observers lock");
     let (_log, callback) = recorder();
     let observer = db.observe(Query::new("users"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
