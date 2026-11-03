@@ -1,5 +1,10 @@
 # Changelog
 
+## 6.15.1 - 2026-11-03
+
+### Fixed
+- The tagged Swift package includes the generated bindings of its release.
+
 ## 6.15.0 - 2026-11-03
 
 ### Added
