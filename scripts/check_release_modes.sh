@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 python3 - "$root" <<'PY'
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -29,12 +30,25 @@ def run(command, cwd, env, expected=0, contains=None):
     return result
 
 
-def fixture(base):
+def fixture(base, touch=None, manifest=True):
     repo = base / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy2(release_script, repo / "scripts/release.sh")
     for name in ("check_docs.sh", "check_invariants.sh", "check_zoo.sh"):
         (repo / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
+    (repo / "scripts/check_sequences.sh").write_text("""#!/bin/sh
+echo "check_sequences $*" >> "$TEST_EVENTS"
+printf 'core\\t3\\t3\\t0\\tlog\\n' > "$1/sequences.tsv"
+[ "${STUB_SEQUENCES:-green}" = green ] || { echo "sequences: lane core red" >&2; exit 1; }
+""")
+    (repo / "scripts/check_consumers.sh").write_text("""#!/bin/sh
+echo "check_consumers $*" >> "$TEST_EVENTS"
+printf 'ios\\t0\\tlog\\n' > "$1/consumers.tsv"
+[ "${STUB_CONSUMERS:-green}" = green ] || { echo "consumers: lane ios red" >&2; exit 1; }
+""")
+    if manifest:
+        (repo / "core/src/ffi/selftest").mkdir(parents=True)
+        (repo / "core/src/ffi/selftest/manifest.tsv").write_text("version\t1\nid\taliases\tlane\ttest\tstate\ts1\tprovenance\n")
     (repo / "scripts/build_ios.sh").write_text("""#!/bin/bash
 mkdir -p swift/DBlayerFFI.xcframework/{macos-arm64_x86_64,ios-arm64_x86_64-simulator,ios-arm64} swift/Sources/DBlayer
 printf bindings > swift/Sources/DBlayer/dblayer.swift
@@ -54,7 +68,7 @@ printf bindings > kotlin/src/main/kotlin/com/noma4i/dblayer/dblayer.kt
     (repo / "swift/Sources/DBlayerTesting").mkdir(parents=True)
     (repo / "swift/Sources/DBlayerTesting/Test.swift").write_text("public struct Test {}\n")
     (repo / "swift/Sources/DBlayer/dblayer.swift").write_text("bindings")
-    (repo / "core").mkdir()
+    (repo / "core").mkdir(exist_ok=True)
     (repo / "core/Cargo.toml").write_text('[package]\nname = "dblayer"\nversion = "1.2.2"\n')
     (repo / "Cargo.toml").write_text('[workspace]\nmembers = ["core"]\n')
     (repo / ".gitignore").write_text("target/\nkotlin/src/main/\nswift/DBlayerFFI.xcframework/\n")
@@ -69,6 +83,10 @@ printf bindings > kotlin/src/main/kotlin/com/noma4i/dblayer/dblayer.kt
     subprocess.run([real_git, "-C", str(repo), "tag", "1.2.2"], check=True)
     (repo / "core/Cargo.toml").write_text(f'[package]\nname = "dblayer"\nversion = "{version}"\n')
     (repo / "CHANGELOG.md").write_text(f"## {version} - 2026-10-29\n\n### Fixed\n- Release selftest.\n\n## Unreleased\n")
+    if touch:
+        (repo / touch).parent.mkdir(parents=True, exist_ok=True)
+        (repo / touch).write_text("changed\n")
+        subprocess.run([real_git, "-C", str(repo), "add", touch], check=True)
     subprocess.run([real_git, "-C", str(repo), "add", "core/Cargo.toml", "CHANGELOG.md"], check=True)
     subprocess.run([real_git, "-C", str(repo), "commit", "-m", f"Release {version}"], check=True, capture_output=True)
     bin_dir = base / "bin"
@@ -145,7 +163,13 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     repo, env = fixture(base)
     run(["bash", "scripts/release.sh", version], repo, env, contains="Package.swift to be written:")
     stage = repo / "target/release-1.2.3"
-    assert sorted(path.name for path in stage.iterdir()) == sorted(attachments + ["SHA256SUMS", "NOTES.md"])
+    assert sorted(path.name for path in stage.iterdir()) == sorted(attachments + ["SHA256SUMS", "NOTES.md", "RECEIPT.json", "sequences.tsv"])
+    receipt = json.loads((stage / "RECEIPT.json").read_text())
+    assert receipt["sequences"] == {"core": {"listed": 3, "passed": 3, "rc": "0"}}, receipt
+    assert receipt["consumers"] == "not-required" and receipt["consumer_lanes"] == {}, receipt
+    assert sorted(receipt["artifacts_sha256"]) == sorted(attachments), receipt
+    assert len(receipt["manifest_sha256"]) == 64
+    assert not any(line.startswith("check_consumers ") for line in (base / "events").read_text().splitlines()), "consumers ran without a boundary change"
     assert subprocess.check_output([real_git, "-C", str(repo), "log", "-1", "--format=%s"], text=True).strip() == f"Release {version}"
     dry_events = (base / "events").read_text().splitlines()
     assert not any(line.startswith("gh ") or line.startswith("git push ") for line in dry_events), dry_events
@@ -191,4 +215,42 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     (stage / "SHA256SUMS").write_text("partial")
     run(["bash", "scripts/release.sh", version], incomplete, incomplete_env, expected=1, contains="incomplete existing output")
     print("ok incomplete stage is rejected")
+
+    def assert_no_release(repo, env, events_file):
+        events = events_file.read_text().splitlines() if events_file.exists() else []
+        assert not any(line.startswith("gh ") or line.startswith("git push ") for line in events), events
+        tags = subprocess.check_output([real_git, "-C", str(repo), "tag", "--list", version], text=True).strip()
+        assert tags == "", f"tag {version} exists after a refusal"
+        subjects = subprocess.check_output([real_git, "-C", str(repo), "log", "--format=%s"], text=True).splitlines()
+        assert f"Package release {version}" not in subjects, subjects
+
+    red, red_env = fixture(base / "red")
+    run(["bash", "scripts/release.sh", version, "--publish"], red, dict(red_env, STUB_SEQUENCES="red"), expected=1, contains="sequence suites are red")
+    assert_no_release(red, red_env, base / "red/events")
+    assert not (red / "target/release-1.2.3/RECEIPT.json").exists()
+    print("ok a red sequence lane refuses the tag without a receipt")
+    absent, absent_env = fixture(base / "absent", manifest=False)
+    run(["bash", "scripts/release.sh", version, "--publish"], absent, absent_env, expected=1, contains="sequence manifest missing")
+    assert_no_release(absent, absent_env, base / "absent/events")
+    assert not (absent / "target/release-1.2.3").exists(), "the stage was built before the manifest check"
+    print("ok a missing manifest refuses the release before any build")
+    boundary = "core/src/lifecycle/state.rs"
+    app_red, app_red_env = fixture(base / "app-red", touch=boundary)
+    run(["bash", "scripts/release.sh", version, "--publish"], app_red, dict(app_red_env, STUB_CONSUMERS="red"), expected=1, contains="app suites are red")
+    assert_no_release(app_red, app_red_env, base / "app-red/events")
+    assert any(line.startswith("check_consumers ") for line in (base / "app-red/events").read_text().splitlines())
+    assert not (app_red / "target/release-1.2.3/RECEIPT.json").exists()
+    print("ok a red app suite refuses the tag after a lifecycle change")
+    forced, forced_env = fixture(base / "forced")
+    run(["bash", "scripts/release.sh", version, "--publish"], forced, dict(forced_env, RELEASE_CONSUMERS="always", STUB_CONSUMERS="red"), expected=1, contains="app suites are red")
+    assert_no_release(forced, forced_env, base / "forced/events")
+    print("ok RELEASE_CONSUMERS=always runs the app suites without a boundary change")
+    green, green_env = fixture(base / "green", touch=boundary)
+    run(["bash", "scripts/release.sh", version, "--publish"], green, green_env)
+    receipt = json.loads((green / "target/release-1.2.3/RECEIPT.json").read_text())
+    assert receipt["consumers"] == "required" and receipt["consumer_lanes"] == {"ios": {"rc": "0"}}, receipt
+    green_events = (base / "green/events").read_text().splitlines()
+    assert any(line.startswith("check_consumers ") and "--maven " in line and "--package-swift " in line for line in green_events), green_events
+    assert subprocess.check_output([real_git, "-C", str(green), "cat-file", "-t", version], text=True).strip() == "commit"
+    print("ok green sequences and app suites tag the release and record the receipt")
 PY

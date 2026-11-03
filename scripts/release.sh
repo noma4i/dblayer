@@ -17,7 +17,16 @@ subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read com
 [ "$(printf '%s\n' "$subjects" | grep -Fxc "Release $version" || true)" = 1 ] || fail "expected exactly one Release $version commit since $previous_tag"
 [ "$(sed -n '/^\[package\]/,/^\[/s/^version = "\([^"]*\)"$/\1/p' core/Cargo.toml)" = "$version" ] || fail 'core version does not match'
 grep -Fq "## $version - " CHANGELOG.md || fail 'changelog heading missing'
+manifest=core/src/ffi/selftest/manifest.tsv
+[ -s "$manifest" ] || fail "sequence manifest missing: $manifest (the lifecycle sequences must be on master before a release)"
 for check in check_docs check_invariants check_zoo; do bash "scripts/$check.sh" || fail "$check failed"; done
+# The app suites run when the release touches the library boundary or its build and test inputs. RELEASE_CONSUMERS=always forces them. No setting skips them.
+consumer_boundary='^(core/src/(lifecycle|ffi|session|sync|store)/|gen/|swift/|kotlin/|Cargo\.toml$|scripts/(build_|generate_|release\.sh|check_sequences|check_consumers))'
+consumers=required
+if [ "${RELEASE_CONSUMERS:-}" != always ]; then
+  changed="$(git diff --name-only "$previous_tag"..HEAD)" || fail 'cannot list files changed since the previous tag'
+  grep -Eq "$consumer_boundary" <<< "$changed" || consumers=not-required
+fi
 bash scripts/build_ios.sh
 bash scripts/build_kotlin.sh --abis
 cargo build --release --manifest-path Cargo.toml -p dblayer-gen --target aarch64-apple-darwin --target x86_64-apple-darwin
@@ -108,6 +117,34 @@ let package = Package(
 EOF
 }
 write_package > "$tmp/Package.swift"
+
+/bin/rm -f "$stage/sequences.tsv" "$stage/consumers.tsv" "$stage/RECEIPT.json"
+bash scripts/check_sequences.sh "$stage" --manifest "$manifest" || fail 'sequence suites are red or incomplete: no tag'
+if [ "$consumers" = required ]; then
+  bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" || fail 'app suites are red or incomplete: no tag'
+fi
+python3 -I - "$stage" "$version" "$manifest" "$consumers" "$(git rev-parse HEAD)" <<'RECEIPT'
+import hashlib, json, sys
+from pathlib import Path
+
+stage, version, manifest, consumers, commit = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+def lanes(name):
+    path = stage / name
+    rows = [line.split("\t") for line in path.read_text().splitlines()] if path.exists() else []
+    if name == "sequences.tsv":
+        return {row[0]: {"listed": int(row[1]), "passed": int(row[2]), "rc": row[3]} for row in rows}
+    return {row[0]: {"rc": row[1]} for row in rows}
+receipt = {
+    "version": version,
+    "source_commit": commit,
+    "manifest_sha256": hashlib.sha256(Path(manifest).read_bytes()).hexdigest(),
+    "artifacts_sha256": {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in (stage / "SHA256SUMS").read_text().splitlines()},
+    "sequences": lanes("sequences.tsv"),
+    "consumers": consumers,
+    "consumer_lanes": lanes("consumers.tsv"),
+}
+(stage / "RECEIPT.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+RECEIPT
 if [ "$publish" = --publish ]; then
   package_commits="$(git log --format=%s "$previous_tag"..HEAD | grep -Fxc "Package release $version" || true)"
   if [ "$package_commits" = 0 ]; then
