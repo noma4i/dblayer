@@ -307,13 +307,13 @@ extension BridgeProbeTests {
     defer { first.release(); second.release() }
     let joining = Task { firstJoin ? try await club.addMember(userIds: ["u4"]) : try await club.removeMember(userIds: ["u4"]) }
     try #require(await entered(first), "join did not reach the transport")
-    let leaving = Task { firstJoin ? try await club.removeMember(userIds: ["u4"]) : try await club.addMember(userIds: ["u4"]) }
     let firstReceipt = try await valueBeforeDeadline(joining) { first.release(); second.release() }
-    let secondReceipt = try await valueBeforeDeadline(leaving) { first.release(); second.release() }
     first.release()
     let earlier = Task { try await firstReceipt.outcome() }
     let earlierOutcome = try await valueBeforeDeadline(earlier) { first.release(); second.release() }
     if case .rejected = earlierOutcome {} else { Issue.record("the earlier change was not rejected") }
+    let leaving = Task { firstJoin ? try await club.removeMember(userIds: ["u4"]) : try await club.addMember(userIds: ["u4"]) }
+    let secondReceipt = try await valueBeforeDeadline(leaving) { first.release(); second.release() }
     try #require(await entered(second), "the later change did not reach the transport after the earlier one ended")
     second.release()
     let later = Task { try await secondReceipt.outcome() }

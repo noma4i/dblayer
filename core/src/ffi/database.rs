@@ -504,7 +504,10 @@ impl Database {
             let id = id(&row_id)?;
             let (operation, revision, row, ticket) = database.db.retry_claiming(admitted, &model, &id, action.as_deref(), |operation| sync.claim_outcome(operation))?;
             let row = row.map(|row| database.wire(&model).map(|wire| wire.row(&row))).transpose()?;
-            if operation.is_some() { database.send_writes(); }
+            if operation.is_some() {
+                sync.inner.start_uploads().map_err(DbError::from)?;
+                database.send_writes();
+            }
             Ok(receipt(epoch, model, operation, revision, row, ticket, database.streams.clone()))
         }).await
     }

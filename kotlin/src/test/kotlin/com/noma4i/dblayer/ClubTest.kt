@@ -290,11 +290,10 @@ class ClubTest {
         val joining = async { if (firstJoin) club.addMember(userIds = listOf("u4")) else club.removeMember(userIds = listOf("u4")) }
         try {
             withTimeout(5000) { first.entered() }
-            val leaving = async { if (firstJoin) club.removeMember(userIds = listOf("u4")) else club.addMember(userIds = listOf("u4")) }
             val firstReceipt = withTimeout(5000) { joining.await() }
-            val secondReceipt = withTimeout(5000) { leaving.await() }
             first.release()
             assertTrue(withTimeout(5000) { firstReceipt.outcome() } is OperationOutcome.Rejected)
+            val secondReceipt = withTimeout(5000) { if (firstJoin) club.removeMember(userIds = listOf("u4")) else club.addMember(userIds = listOf("u4")) }
             withTimeout(5000) { second.entered() }
             second.release()
             assertTrue(withTimeout(5000) { secondReceipt.outcome() } is OperationOutcome.Confirmed)

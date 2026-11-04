@@ -76,9 +76,9 @@ class UploadWorkTest {
             val rows = AccountScope.current().uploadBatch(Asset, batch(0..1), UploadBatchRequest(operation = "create_files"))
             val other = AccountScope.current().uploadBatch(Asset, batch(8..9), UploadBatchRequest(operation = "create_files"))
             eventually("every member of the refused batch shows the reason") {
-                rows.all { Asset.find(it.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("the app was not visible") == true }
+                rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("the app was not visible") == true }
             }
-            assertNull(Asset.find(other.first().id).current()!!.uploads.values.single().error)
+            assertNull(Asset.find(other.items.first().optimisticValue.id).current()!!.uploads.values.single().error)
         } finally {
             DBlayer.close()
             directory.deleteRecursively()

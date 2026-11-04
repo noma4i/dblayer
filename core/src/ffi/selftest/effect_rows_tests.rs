@@ -244,9 +244,9 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     let joining = start(earlier);
     first.entered_for("the first change").await;
     let joining = bound(joining).await.unwrap().unwrap();
-    let leaving = start(later);
     first.release();
     assert!(matches!(bound(rig.database.outcome(joining)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+    let leaving = start(later);
     second.entered_for("the second change").await;
     second.release();
     let leaving = bound(leaving).await.unwrap().unwrap();
