@@ -52,8 +52,8 @@ pub trait Transport: Send + Sync {
 }
 
 #[cfg(test)]
-pub(crate) fn test_admission() -> crate::lifecycle::Admitted {
-    std::sync::Arc::new(crate::lifecycle::Lifecycle::default()).admit(crate::lifecycle::Origin::Explicit, "test transport").unwrap()
+pub(crate) fn test_admission() -> Result<crate::lifecycle::Admitted, crate::lifecycle::Ended> {
+    std::sync::Arc::new(crate::lifecycle::Lifecycle::default()).admit(crate::lifecycle::Origin::Explicit, "test transport")
 }
 
 #[cfg(test)]

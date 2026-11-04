@@ -32,7 +32,7 @@ impl EncryptedTransport {
     }
 
     #[cfg(test)]
-    pub(super) fn test_admission(&self) -> crate::lifecycle::Admitted { self.client.admit("test transport").unwrap() }
+    pub(super) fn test_admission(&self) -> Result<crate::lifecycle::Admitted, TransportError> { self.client.admit("test transport") }
 }
 
 pub fn graphql_body(request: &GraphQLRequest, with_document: bool) -> Value {

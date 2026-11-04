@@ -11,6 +11,10 @@ use rsa::{pkcs1::DecodeRsaPrivateKey, Oaep, RsaPrivateKey};
 use sha2::{Digest, Sha256};
 use crate::test_wait::{serving, within};
 
+fn test_admission() -> crate::lifecycle::Admitted {
+    crate::db::Db::open_in_memory(Vec::new(), None).unwrap().admit().unwrap()
+}
+
 struct ReceiveCancellation<'a>(&'a AtomicUsize, bool);
 
 impl Drop for ReceiveCancellation<'_> {

@@ -29,9 +29,9 @@ async fn a_confirmed_refusal_spends_its_sequence_and_the_next_mutation_is_accept
     let request = GraphQLRequest::new(WRITE, "", json!({}));
     server.refuse_next("RATE_LIMITED", true);
 
-    let refused = transport.mutate(&transport.test_admission(), request.clone()).await.unwrap_err();
+    let refused = transport.mutate(&transport.test_admission().unwrap(), request.clone()).await.unwrap_err();
     let executed_before = server.executed().len();
-    let accepted = transport.mutate(&transport.test_admission(), request).await;
+    let accepted = transport.mutate(&transport.test_admission().unwrap(), request).await;
 
     assert!(matches!(refused, TransportError::Session { code: SessionCode::RateLimited, .. }), "{refused:?}");
     assert!(accepted.is_ok(), "{accepted:?}");

@@ -5,6 +5,10 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
+fn test_admission() -> crate::lifecycle::Admitted {
+    crate::db::Db::open_in_memory(Vec::new(), None).unwrap().admit().unwrap()
+}
+
 fn new_session() -> CableSession {
     CableSession::new(Arc::new(crate::pacing::TestClock::default()), Connectivity::new(true))
 }

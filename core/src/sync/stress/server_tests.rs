@@ -14,7 +14,7 @@ fn calm_server() -> (MockTransport, FakeServer, Findings) {
 }
 
 async fn mutate(transport: &MockTransport, name: &str, variables: Value) {
-    transport.mutate(&crate::transport::test_admission(), GraphQLRequest::new("mutation", name, variables)).await.unwrap();
+    transport.mutate(&crate::transport::test_admission().unwrap(), GraphQLRequest::new("mutation", name, variables)).await.unwrap();
 }
 
 #[tokio::test]
