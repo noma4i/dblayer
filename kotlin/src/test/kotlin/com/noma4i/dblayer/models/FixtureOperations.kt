@@ -539,6 +539,12 @@ object Operations {
         if (size != null) variables["size"] = jsonValue(size)
         return DBlayer.run("QrCodeCreate", JsonObject(mapOf("input" to JsonObject(variables))), QrCodeCreateResult.serializer(), account)
     }
+    suspend fun accountNames(scope: String, account: String, account_: AccountScope? = null) {
+        val variables = mutableMapOf<String, JsonElement>()
+        variables["scope"] = jsonValue(scope)
+        variables["account"] = jsonValue(account)
+        DBlayer.run("AccountNames", JsonObject(variables), account_)
+    }
     suspend fun signOut(account: AccountScope? = null) {
         val variables = mutableMapOf<String, JsonElement>()
         DBlayer.run("SignOut", JsonObject(variables), account)

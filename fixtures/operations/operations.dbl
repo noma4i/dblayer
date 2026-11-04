@@ -21,6 +21,12 @@ operation :qr_code_create do
   end
 end
 
+operation :account_names do
+  query "AccountNames"
+  parameter :scope, :string
+  parameter :account, :string
+end
+
 operation :sign_out do
   mutation "SignOut"
 end

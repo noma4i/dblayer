@@ -23,15 +23,19 @@ class ModelEventsTest {
         return transport
     }
 
-    /** Collects the chat ids of the events of one stream, in the order they arrive. The end of the stream arrives as `null`. */
-    private fun CoroutineScope.hear(stream: ValueStream): Channel<String?> {
-        val heard = Channel<String?>(Channel.UNLIMITED)
+    private object Ended
+
+    /** Collects every item of one stream in the order it arrives. The end of the stream arrives as [Ended], never as an item. */
+    private fun CoroutineScope.hear(stream: ValueStream): Channel<Any> {
+        val heard = Channel<Any>(Channel.UNLIMITED)
         launch {
-            stream.events(ChatActivityNotice).collect { item -> heard.trySend((item as? ModelEventItem.Event)?.event?.after?.chatId) }
-            heard.trySend(null)
+            stream.events(ChatActivityNotice).collect { item -> heard.trySend(item) }
+            heard.trySend(Ended)
         }
         return heard
     }
+
+    private fun chat(item: Any): String? = ((item as? ModelEventItem.Event<*>)?.event?.after as? ChatActivityNotice)?.chatId
 
     /** Requirement: a collector hears every event after it started, in the order the server sent them, and none from before. Observable: the chat ids the collector received. */
     @Test
@@ -42,16 +46,18 @@ class ModelEventsTest {
             val early = screen.hear(AccountScope.current().events(ChatActivityNotice))
             eventually("the signal subscription opens") { transport.calls.size == 1 }
             transport.emit("ChatActionSignal", screenshot("c1"))
-            assertEquals("c1", awaitWithin("the first event") { early.receive() })
+            assertEquals("c1", chat(awaitWithin("the first event") { early.receive() }))
 
-            val late = screen.hear(AccountScope.current().events(ChatActivityNotice))
+            val lateStream = AccountScope.current().events(ChatActivityNotice)
+            lateStream.loaded()
+            val late = screen.hear(lateStream)
             transport.emit("ChatActionSignal", screenshot("c2"))
             transport.emit("ChatActionSignal", screenshot("c3"))
 
-            assertEquals("the late collector got the past event or lost the next one", "c2", awaitWithin("the first event of the late collector") { late.receive() })
-            assertEquals("c3", awaitWithin("the second event of the late collector") { late.receive() })
-            assertEquals("c2", awaitWithin("the second event of the early collector") { early.receive() })
-            assertEquals("c3", awaitWithin("the third event of the early collector") { early.receive() })
+            assertEquals("the late collector got the past event or lost the next one", "c2", chat(awaitWithin("the first event of the late collector") { late.receive() }))
+            assertEquals("c3", chat(awaitWithin("the second event of the late collector") { late.receive() }))
+            assertEquals("c2", chat(awaitWithin("the second event of the early collector") { early.receive() }))
+            assertEquals("c3", chat(awaitWithin("the third event of the early collector") { early.receive() }))
         } finally {
             screen.cancel()
             DBlayer.close()
@@ -67,10 +73,10 @@ class ModelEventsTest {
             val first = screen.hear(AccountScope.current().events(ChatActivityNotice))
             eventually("the signal subscription opens") { transport.calls.size == 1 }
             transport.emit("ChatActionSignal", screenshot("a1"))
-            assertEquals("a1", awaitWithin("the event of the first session") { first.receive() })
+            assertEquals("a1", chat(awaitWithin("the event of the first session") { first.receive() }))
 
             DBlayer.sessionReset()
-            assertEquals("the old stream delivered after the session reset", null, awaitWithin("the end of the old stream") { first.receive() })
+            assertEquals("the old stream delivered an item instead of ending after the session reset", Ended, awaitWithin("the end of the old stream") { first.receive() })
         } finally {
             screen.cancel()
             DBlayer.close()

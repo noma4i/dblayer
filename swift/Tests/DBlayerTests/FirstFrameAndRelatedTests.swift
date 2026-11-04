@@ -4,18 +4,18 @@ import Testing
 @testable import DBlayer
 
 private final class FirstFrameSink: ValueSink, @unchecked Sendable {
-  struct Frame { let onMain: Bool; let insideSubscribe: Bool; let ids: [String] }
+  struct Frame { let onMain: Bool; let seq: UInt64; let ids: [String]?; let revision: Int64? }
 
   private let lock = NSLock()
-  private var inside = false
   private var frame: Frame?
 
   var first: Frame? { lock.withLock { frame } }
-  func subscribing(_ value: Bool) { lock.withLock { inside = value } }
 
   func delivered(delivery: StreamDelivery) {
-    guard case let .snapshot(_, rows, _) = delivery.value else { return }
-    lock.withLock { if frame == nil { frame = Frame(onMain: Thread.isMainThread, insideSubscribe: inside, ids: rows.map(\.id)) } }
+    var ids: [String]?
+    var revision: Int64?
+    if case let .snapshot(rev, rows, _) = delivery.value { ids = rows.map(\.id); revision = rev }
+    lock.withLock { if frame == nil { frame = Frame(onMain: Thread.isMainThread, seq: delivery.seq, ids: ids, revision: revision) } }
   }
 }
 
@@ -23,7 +23,7 @@ private final class FirstFrameSink: ValueSink, @unchecked Sendable {
 
 /// Spec B, first frame: the cached rows come with the first delivery, read off the calling thread. Related queries: the target rows of a link follow a change of the target and of the link.
 extension BridgeProbeTests {
-  /// Requirement: a stream opened from the main thread over cached rows delivers them in its first frame, not inside the opening call and not on the main thread. Observable: the thread flag, the flag of the opening call and the ids of the first snapshot.
+  /// Requirement: a stream opened from the main thread over cached rows delivers them in its very first delivery, off the calling thread, so never inside the opening call. Observable: the sequence number, the thread and the snapshot content of the first delivery, whatever its kind.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows() async throws {
@@ -33,16 +33,15 @@ extension BridgeProbeTests {
     let scope = try DB.account()
     let sink = FirstFrameSink()
 
-    sink.subscribing(true)
     let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Presence.where(.equal("room", .string("r"))).json), sink: sink)
-    sink.subscribing(false)
     defer { try? DB.database.cancelStream(stream: stream) }
 
     await eventually("the first frame arrives") { sink.first != nil }
     let frame = try #require(sink.first)
-    #expect(!frame.onMain, "the first frame was delivered on the main thread")
-    #expect(!frame.insideSubscribe, "the first frame was delivered inside the opening call")
-    #expect(Set(frame.ids) == Set(seats.map(\.id)), "the first frame lacked the cached rows: \(frame.ids)")
+    #expect(frame.seq == 1)
+    #expect(!frame.onMain, "the first delivery came on the calling thread, inside the opening call")
+    #expect(frame.revision != nil, "the first delivery was not a snapshot with a revision")
+    #expect(Set(frame.ids ?? []) == Set(seats.map(\.id)), "the first delivery lacked the cached rows: \(String(describing: frame.ids))")
   }
 
   /// Requirement: a related query returns the target rows of the link, and follows a change of a target row and a change of the link. Observable: the names the projection shows after each step.

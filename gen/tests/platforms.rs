@@ -339,3 +339,13 @@ end
     assert!(kotlin.lines().any(|line| line.contains("suspend fun setAvatar(photo: Blob, account: AccountScope? = null)") && line.contains("profile.read(account)") && line.contains(".setAvatar(photo, account)")), "{kotlin}");
     assert!(swift.contains("like(in scope: AccountScope? = nil)") && kotlin.contains("fun like(account: AccountScope? = null)"));
 }
+
+#[test]
+fn the_account_parameter_never_takes_the_name_of_a_dbl_parameter() {
+    let models = parse_models(include_str!("../../fixtures/account_names.dbl")).unwrap();
+    let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
+    assert!(swift.contains("entriesEdge(_ scope: String, _ account: String, of id: String, in scope_: AccountScope? = nil)") && swift.contains("edgeValues(of: id, in: scope_)"), "{swift}");
+    assert!(swift.contains("func move(account: String, scope: String, in scope_: AccountScope? = nil)") && swift.contains("func update(scope: String? = nil, account: String?? = nil, in scope_: AccountScope? = nil)"), "{swift}");
+    assert!(kotlin.contains("suspend fun entriesEdge(scope: String, account: String, id: String, account_: AccountScope? = null)") && kotlin.contains("edgeValues(id, account_)"), "{kotlin}");
+    assert!(kotlin.contains("suspend fun move(account: String, scope: String, account_: AccountScope? = null)") && kotlin.contains("onAccount(account_)"), "{kotlin}");
+}

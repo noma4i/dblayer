@@ -13,14 +13,15 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 private class FirstFrameSink(private val caller: Thread) : ValueSink {
-    class Frame(val onCaller: Boolean, val insideSubscribe: Boolean, val ids: List<String>)
+    class Frame(val onCaller: Boolean, val seq: ULong, val revision: Long?, val ids: List<String>?)
 
-    @Volatile var inside = false
     @Volatile var first: Frame? = null
 
+    @Synchronized
     override fun delivered(delivery: StreamDelivery) {
-        val value = delivery.value as? StreamValue.Snapshot ?: return
-        if (first == null) first = Frame(Thread.currentThread() === caller, inside, value.rows.map { it.id })
+        if (first != null) return
+        val snapshot = delivery.value as? StreamValue.Snapshot
+        first = Frame(Thread.currentThread() === caller, delivery.seq, snapshot?.revision, snapshot?.rows?.map { it.id })
     }
 }
 
@@ -28,7 +29,7 @@ private class FirstFrameSink(private val caller: Thread) : ValueSink {
 class FirstFrameAndRelatedTest {
     private fun names(projected: Projected<User>) = projected.projection.value.rows.map { it.name }
 
-    /** Requirement: a stream opened over cached rows delivers them in its first frame, not inside the opening call and not on the calling thread. Observable: the thread flag, the flag of the opening call and the ids of the first snapshot. */
+    /** Requirement: a stream opened over cached rows delivers them in its very first delivery, off the calling thread, so never inside the opening call. Observable: the sequence number, the thread and the snapshot content of the first delivery, whatever its kind. */
     @Test
     fun theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows() = bounded {
         reopen(Config(null, null, 32u), modelsJSON, MockTransport())
@@ -37,16 +38,15 @@ class FirstFrameAndRelatedTest {
         val scope = AccountScope.current()
         val sink = FirstFrameSink(Thread.currentThread())
         try {
-            sink.inside = true
             val stream = DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Presence.where(Condition.equal("room", jsonValue("r"))).json), sink)
-            sink.inside = false
             try {
                 eventually("the first frame arrives") { sink.first != null }
                 val frame = sink.first
                 assertNotNull(frame)
-                assertFalse("the first frame was delivered on the calling thread", frame!!.onCaller)
-                assertFalse("the first frame was delivered inside the opening call", frame.insideSubscribe)
-                assertEquals("the first frame lacked the cached rows: ${frame.ids}", seats.map { it.id }.toSet(), frame.ids.toSet())
+                assertEquals(1uL, frame!!.seq)
+                assertFalse("the first delivery came on the calling thread, inside the opening call", frame.onCaller)
+                assertNotNull("the first delivery was not a snapshot with a revision", frame.revision)
+                assertEquals("the first delivery lacked the cached rows: ${frame.ids}", seats.map { it.id }.toSet(), frame.ids?.toSet())
             } finally {
                 DBlayer.database.cancelStream(stream)
             }

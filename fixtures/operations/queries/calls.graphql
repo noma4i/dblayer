@@ -4,3 +4,4 @@ query Giphy($type: String!, $limit: Int) { giphy(type: $type, limit: $limit) { i
 query inbox($list: ContainerShelfKind, $first: Int, $after: String) { inbox(list: $list, first: $first, after: $after) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }
 query containerMembers($containerId: ID!, $order: ContainerMemberOrder = JOINED, $first: Int, $after: String) { containerMembers(containerId: $containerId, order: $order, first: $first, after: $after) { edges { cursor node { id title } } pageInfo { hasNextPage endCursor } } }
 query containerMedia($containerId: ID!, $upToSequence: Int) { containerMedia(containerId: $containerId, upToSequence: $upToSequence) { visualCount audioCount rewardCount latestSequence } }
+query AccountNames($scope: String!, $account: String!) { accountNames(scope: $scope, account: $account) }

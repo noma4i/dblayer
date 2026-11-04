@@ -31,7 +31,9 @@ extension BridgeProbeTests {
     try transport.emit("ChatActionSignal", json: Self.screenshot("c1"))
     #expect(Self.chat(await early.next("the first event")) == "c1")
 
-    let late = Cursor(try DB.account().events(ChatActivityNotice.self))
+    let lateStream = try DB.account().events(ChatActivityNotice.self)
+    try await lateStream.stream.loaded()
+    let late = Cursor(lateStream)
     try transport.emit("ChatActionSignal", json: Self.screenshot("c2"))
     try transport.emit("ChatActionSignal", json: Self.screenshot("c3"))
 
