@@ -367,7 +367,8 @@ impl Inner {
                 Ok((sender, token, generation)) => {
                     let receiver = sender.subscribe();
                     let flight = Flight { key: flight_key.clone(), token, origin: resolved.origin, model: resolved.model.clone(), relation: resolved.relation.clone(), params: resolved.params.clone(), node_reread: resolved.node_reread, cursor: cursor.clone(), force, generation };
-                    let task = crate::task::spawn(lease.clone().into(), this.clone().fly(flight, sender, lease.clone()));
+                    let own = lease.life().admit_session_at(resolved.origin, "flight", lease.value()).unwrap_or_else(|_| lease.clone());
+                    let task = crate::task::spawn(own.clone().into(), this.clone().fly(flight, sender, own));
                     locked(&self.flights).tasks.insert(flight_key.clone(), (token, task.abort_handle()));
                     receiver
                 }

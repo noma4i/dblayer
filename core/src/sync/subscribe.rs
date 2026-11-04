@@ -704,6 +704,7 @@ impl Feed {
                     }
                     Some(SubscriptionEvent::Next(response)) => {
                         if generation != self.inner.db.generation() { continue; }
+                        let _frame = self.epoch.life().admit_session_at(crate::lifecycle::Origin::Session, "subscription frame", self.epoch.value()).ok();
                         self.hold(true);
                         lifecycle.handle(Event::Next);
                         self.publish(lifecycle);

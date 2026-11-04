@@ -57,13 +57,14 @@ fn mentions_in_ops(rig: &Rig, needle: &str) -> Vec<String> {
 
 #[tokio::test(start_paused = true)]
 async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_all_or_nothing() {
-    let total = {
+    let (flushed, total) = {
         let root = tempfile::tempdir().unwrap();
         let rig = prepare(&root.path().join("1.sqlite"));
         let steps = interrupt_at(&rig, usize::MAX);
         crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
+        let flushed = steps.load(Ordering::SeqCst);
         rig.sync.wait_uploads().await;
-        steps.load(Ordering::SeqCst)
+        (flushed, steps.load(Ordering::SeqCst))
     };
     assert!(total > 100, "{total} steps counted");
     let (mut faulted, mut confirmed, mut unconfirmed) = (0, 0, 0);
@@ -81,5 +82,5 @@ async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_
         }
     }
     assert!(faulted > 20, "only {faulted} runs hit a failure");
-    assert!(confirmed > 0 && unconfirmed > 0, "{confirmed} confirmed, {unconfirmed} unconfirmed");
+    assert!(confirmed > 0 && unconfirmed > 0, "{confirmed} confirmed, {unconfirmed} unconfirmed, {faulted} faulted, flush ended at step {flushed} of {total}");
 }
