@@ -396,6 +396,7 @@ async fn a_refresh_of_an_epoch_that_left_sends_nothing_from_the_load_waiting_for
     let running = tokio::spawn(refreshing);
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(requests(&rig), 3, "three loads hold the lanes and the fourth waits");
+    rig.sync.set_preload(false);
     assert!(life.session_from(Some("another".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok(), "the session of the other epoch did not start");
     tokio::time::sleep(Duration::from_secs(60)).await;
     let _ = running.await;

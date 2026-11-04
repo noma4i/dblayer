@@ -112,6 +112,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
         let key = db.outbox().unwrap()[0].operation.client_mutation_id.clone();
         let (sync, client) = encrypted(&db, exchange.clone(), credentials.clone());
         client.mutate(&db.admit().unwrap(), "/api/auth/social", json!({"provider": "test"})).await.unwrap();
+        sync.commit_session_for_test();
         crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await.unwrap();
         assert_eq!(db.outbox().unwrap()[0].operation.status, OperationStatus::DeliveryUnknown);
         (row.id.clone(), key)
@@ -121,6 +122,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     let (sync, client) = encrypted(&db, exchange.clone(), credentials);
     client.clear_credential_for_test().unwrap();
     client.mutate(&db.admit().unwrap(), "/api/auth/social", json!({"provider": "test"})).await.unwrap();
+    sync.commit_session_for_test();
     crate::sync::rig::app(&sync, sync.retry(&sync.inner.db.admit().unwrap(), "moments", &id, None)).await.unwrap();
     assert!(db.outbox().unwrap().is_empty());
     assert!(db.find("moments", &id).unwrap().is_none());

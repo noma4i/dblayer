@@ -30,5 +30,5 @@ async fn the_app_lifecycle_calls_do_nothing_without_a_transport() {
 async fn a_call_that_needs_the_server_still_fails_without_a_transport() {
     let database = local().await;
     let refused = database.refresh(database.session_epoch(), "Note".into(), String::new(), "{}".into()).await;
-    assert!(matches!(refused, Err(super::DbError::Invalid { .. })));
+    assert!(matches!(refused, Err(super::DbError::NoSession { .. })));
 }

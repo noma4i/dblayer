@@ -109,8 +109,7 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
 
   func cableNext(token: String) async -> EncryptedSocketEvent? {
     guard let connection = try? connection(token) else { return nil }
-    var iterator = connection.events.stream.makeAsyncIterator()
-    return await iterator.next()
+    return await Cursor(connection.events.stream).next("the cable event")
   }
   func cableClose(token: String) async { closed.continuation.yield(token) }
   func query(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain query") }

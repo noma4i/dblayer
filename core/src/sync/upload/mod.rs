@@ -313,6 +313,12 @@ impl Inner {
         drop(crate::task::spawn_blocking_on(crate::task::Carry::from(admitted.clone()), runtime, move || { if admitted.is_current() { task(); } drop(finished); }));
     }
 
+    fn spawn_file_cleanup(&self, admitted: &crate::lifecycle::Admitted, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
+        crate::db::lock::effect(|| self.file_tasks.send_modify(|pending| *pending += 1));
+        let finished = FileTask { pending: self.file_tasks.clone(), _admitted: admitted.clone() };
+        drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, runtime, move || { task(); drop(finished); }));
+    }
+
     pub(crate) async fn discard_files(&self, admitted: &crate::lifecycle::Admitted, ids: Vec<String>) -> Result<(), SyncError> {
         if ids.is_empty() { return Ok(()); }
         let (sent, received) = tokio::sync::oneshot::channel();

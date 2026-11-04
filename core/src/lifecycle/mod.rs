@@ -237,7 +237,6 @@ struct LeaseInfo {
     passive: bool,
 }
 
-/// What is running now: the number of leases and whether a transition is waiting for them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(crate) struct Activity {
     pub held: usize,
@@ -259,7 +258,7 @@ impl State {
 
     fn activity(&mut self) -> Activity {
         self.activity += 1;
-        Activity { held: self.leases.len(), transition: self.snapshot().transition.is_some(), seq: self.activity }
+        Activity { held: self.leases.values().filter(|lease| !lease.passive).count(), transition: self.snapshot().transition.is_some(), seq: self.activity }
     }
 }
 
@@ -310,7 +309,6 @@ struct Admission {
     life: Arc<Lifecycle>,
     id: u64,
     epoch: u64,
-    generation: Option<Generation>,
     origin: Origin,
     target: &'static str,
     passive: bool,
@@ -330,16 +328,16 @@ impl Admitted {
     pub(crate) fn is_current(&self) -> bool {
         let state = crate::db::locked(&self.inner.life.state);
         let current = state.snapshot();
-        !current.closed && current.session_epoch == self.inner.epoch && self.inner.generation.is_none_or(|generation| generation == current.generation)
+        !current.closed && current.session_epoch == self.inner.epoch
     }
 
     pub(crate) async fn run<T>(&self, work: impl std::future::Future<Output = T>) -> Result<T, Ended> {
         if !self.is_current() { return Err(Ended); }
         let mut changes = self.inner.life.changed.subscribe();
-        let (epoch, generation) = (self.inner.epoch, self.inner.generation);
+        let epoch = self.inner.epoch;
         tokio::select! {
             biased;
-            _ = changes.wait_for(|published| published.closed || published.session_epoch != epoch || generation.is_some_and(|issued| issued != published.generation)) => Err(Ended),
+            _ = changes.wait_for(|published| published.closed || published.session_epoch != epoch) => Err(Ended),
             result = self.scope(work) => Ok(result),
         }
     }
@@ -365,12 +363,6 @@ impl Permit {
     /// Marks the calling thread as the one that runs this transition. A session end that this thread asks for meanwhile joins it at once, since it cannot wait for itself.
     pub(crate) fn run_on_this_thread(&self) {
         crate::db::locked(&self.life.state).runner = Some(std::thread::current().id());
-    }
-
-    /// Waits until every lease of the old epoch has ended. They were all told to stop when the transition began.
-    pub(crate) async fn drained(&self) {
-        let mut activity = self.life.activity.subscribe();
-        let _ = activity.wait_for(|activity| activity.held == 0).await;
     }
 
     /// Moves the generation of the data. The caller holds the writer lock of the store, so a write that checked the old generation lands before this or is refused.
@@ -412,30 +404,30 @@ impl Drop for Permit {
 
 impl Lifecycle {
     pub(crate) fn admit(self: &Arc<Self>, origin: Origin, target: &'static str) -> Result<Admitted, Ended> {
-        self.admit_as(origin, target, false, true, None)
+        self.admit_as(origin, target, false, None)
     }
 
     pub(crate) fn admit_passive(self: &Arc<Self>, origin: Origin, target: &'static str, expected: Option<u64>) -> Result<Admitted, Ended> {
-        self.admit_as(origin, target, true, false, expected)
+        self.admit_as(origin, target, true, expected)
     }
 
     pub(crate) fn admit_for_session(self: &Arc<Self>, origin: Origin, target: &'static str) -> Result<Admitted, Ended> {
-        self.admit_as(origin, target, false, false, None)
+        self.admit_as(origin, target, false, None)
     }
 
     pub(crate) fn admit_session_at(self: &Arc<Self>, origin: Origin, target: &'static str, expected: u64) -> Result<Admitted, Ended> {
-        self.admit_as(origin, target, false, false, Some(expected))
+        self.admit_as(origin, target, false, Some(expected))
     }
 
-    fn admit_as(self: &Arc<Self>, origin: Origin, target: &'static str, passive: bool, data_bound: bool, expected: Option<u64>) -> Result<Admitted, Ended> {
+    fn admit_as(self: &Arc<Self>, origin: Origin, target: &'static str, passive: bool, expected: Option<u64>) -> Result<Admitted, Ended> {
         let (admitted, activity) = {
             let mut state = crate::db::locked(&self.state);
             if !state.snapshot().admits(origin) { return Err(Ended); }
             if expected.is_some_and(|epoch| epoch != state.snapshot().session_epoch) { return Err(Ended); }
-            let (id, epoch, generation) = (state.next_lease, state.snapshot().session_epoch, state.snapshot().generation);
+            let (id, epoch) = (state.next_lease, state.snapshot().session_epoch);
             state.next_lease += 1;
             state.leases.insert(id, LeaseInfo { target, passive });
-            (Admitted { inner: Arc::new(Admission { life: self.clone(), id, epoch, generation: data_bound.then_some(generation), origin, target, passive }) }, state.activity())
+            (Admitted { inner: Arc::new(Admission { life: self.clone(), id, epoch, origin, target, passive }) }, state.activity())
         };
         self.publish_activity(activity);
         Ok(admitted)
@@ -484,11 +476,10 @@ impl Lifecycle {
         }));
     }
 
-    /// True when no lease is held and no transition runs.
     #[cfg(test)]
     pub(crate) fn quiet(&self) -> bool {
         let state = crate::db::locked(&self.state);
-        state.leases.is_empty() && state.snapshot().transition.is_none()
+        state.leases.values().all(|lease| lease.passive) && state.snapshot().transition.is_none()
     }
 
     /// Waits until work of this kind may start. False when the database closed first.
@@ -505,7 +496,6 @@ impl Lifecycle {
         held
     }
 
-    /// Returns when no lease is held and no transition runs. The check is the current quiet, not a promise about later events.
     pub(crate) async fn settled(&self) {
         let mut activity = self.activity.subscribe();
         let _ = activity.wait_for(|activity| activity.held == 0 && !activity.transition).await;
@@ -526,7 +516,7 @@ impl Lifecycle {
             if let Some(running) = current.transition { return Ok(Err(running)); }
             if expected.is_some_and(|epoch| epoch != current.session_epoch) { return Err(Refused::Stale); }
             state.machine.handle(&Event::Begin(boundary));
-            state.leases.retain(|_, info| !info.passive);
+            if !matches!(boundary, Boundary::Models) { state.leases.clear(); }
             let snapshot = state.snapshot().clone();
             let activity = state.activity();
             (Permit { life: self.clone(), boundary, deferred: Mutex::new(Vec::new()), finished: false }, snapshot, activity)
@@ -586,13 +576,13 @@ impl Lifecycle {
             if current.session == session && (!current.ended || session.is_none()) { return Ok(admitted); }
             if session.is_none() && current.ended { return Err(Ended); }
         }
-        let (origin, target, passive, data_bound) = (admitted.inner.origin, admitted.inner.target, admitted.inner.passive, admitted.inner.generation.is_some());
+        let (origin, target, passive) = (admitted.inner.origin, admitted.inner.target, admitted.inner.passive);
         drop(admitted);
         match self.try_begin(Boundary::SessionStart, Some(expected)) {
             Ok(Ok(permit)) => {
                 permit.defer(Change::SessionStarted(session));
                 permit.finish();
-                self.admit_as(origin, target, passive, data_bound, Some(expected + 1))
+                self.admit_as(origin, target, passive, Some(expected + 1))
             }
             _ => Err(Ended),
         }

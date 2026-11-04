@@ -618,6 +618,7 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     let (values, args) = group("g");
     let admitted = rig.database.db.admit().unwrap();
     rig.database.db.create_with(&admitted, "Group", serde_json::from_str(&values).unwrap(), serde_json::from_str(&args).unwrap()).unwrap();
+    drop(admitted);
     assert_eq!(rig.database.db.outbox().unwrap().len(), 1, "the plain action was queued once");
     rig.database.set_online(false).unwrap();
     bound(rig.database.flush()).await.unwrap();

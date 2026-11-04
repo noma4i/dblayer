@@ -220,7 +220,7 @@ async fn a_pending_refresh_does_not_keep_the_database_alive() {
     assert!(Arc::strong_count(&rig.sync.inner) >= 2, "the task holds the inner state");
     rig.sync.close();
     yield_until("the task ended with the close", || Arc::strong_count(&rig.sync.inner) == 1).await;
-    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c2"), super::EntityFetch::Force, sink.clone()).unwrap();
+    assert!(matches!(rig.sync.inner.db.admit(), Err(crate::db::DbError::NoSession { .. })));
     for _ in 0..8 { tokio::task::yield_now().await; }
     assert_eq!(rig.transport.call_count("ChatNode"), 1, "a closed database sends nothing");
 }

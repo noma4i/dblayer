@@ -19,8 +19,7 @@ private final class HeldProfileTransport: Transport, @unchecked Sendable {
     if !held { return try await base.query(request: request) }
     defer { ended.continuation.yield(()) }
     arrived.continuation.yield(())
-    var iterator = released.stream.makeAsyncIterator()
-    _ = await iterator.next()
+    _ = await Cursor(released.stream).next("the held request is released")
     return #"{"data":{"me":{"__typename":"User","id":"1","name":"A"}}}"#
   }
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }

@@ -157,7 +157,7 @@ impl Stream {
             let mut changed = gone.is_some();
             drop(gone);
             if make {
-                let made = self.life.admit_passive(Origin::Session, "stream", Some(self.epoch)).ok();
+                let made = self.life.admit_session_at(Origin::Session, "stream", self.epoch).ok();
                 changed |= made.is_some();
                 let extra = { let mut slot = locked(&self.lease); if slot.is_none() { *slot = made; None } else { made } };
                 drop(extra);

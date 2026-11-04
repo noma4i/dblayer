@@ -20,8 +20,7 @@ private final class HeldUploadTransport: Transport, @unchecked Sendable {
   func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
     defer { finished.continuation.yield(()) }
     arrived.continuation.yield(())
-    var iterator = released.stream.makeAsyncIterator()
-    _ = await iterator.next()
+    _ = await Cursor(released.stream).next("the held upload is released")
     return PutReply(status: 200, etag: nil)
   }
 }

@@ -332,13 +332,11 @@ impl EncryptedClient {
         }
     }
 
-    pub(crate) async fn resume_pending(&self, admitted: &Admitted) -> Result<Option<Answer>, TransportError> {
+    pub(crate) async fn resume_pending(&self, admitted: &Admitted) -> Result<(Option<Answer>, After), TransportError> {
         self.validate(admitted)?;
-        let epoch = admitted.value();
         let resumed = admitted.run(self.resume_in(admitted)).await??;
-        let Some((answer, after)) = resumed else { return Ok(None) };
-        if matches!(after, After::Revoked) { self.conclude(epoch, after).await?; }
-        Ok(Some(answer))
+        let Some((answer, after)) = resumed else { return Ok((None, After::Nothing)) };
+        Ok((Some(answer), after))
     }
 
     async fn resume_in(&self, admitted: &Admitted) -> Result<Option<(Answer, After)>, TransportError> {
@@ -388,7 +386,7 @@ impl EncryptedClient {
             drop(state);
             cleared
         };
-        self.db.end_session(end, expected, end != End::Server, clear).await
+        self.db.end_session(end, expected, clear).await
     }
 
     pub async fn reset(&self) -> Result<(), TransportError> {

@@ -47,7 +47,7 @@ impl Drop for Runner {
             });
             if missing.is_ok_and(|missing| missing) { let _ = shared.files.discard(std::slice::from_ref(&id)); }
         };
-        self.inner.spawn_file_task(&self.admitted, &self.runtime, cleanup);
+        self.inner.spawn_file_cleanup(&self.admitted, &self.runtime, cleanup);
     }
 }
 

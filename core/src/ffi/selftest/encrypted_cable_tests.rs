@@ -114,7 +114,7 @@ impl Transport for Peer {
 
     async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent> {
         let connection = self.connection(&token);
-        let event = connection.output.lock().await.recv().await;
+        let event = crate::test_wait::within(async { connection.output.lock().await.recv().await }).await;
         event
     }
     async fn cable_close(&self, token: String) { let _ = self.closed.send(token); }
@@ -140,12 +140,12 @@ async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let query = r#"{"model":"Notice","relation":"recent","params":{}}"#;
     let first = database.subscribe(database.session_epoch(), StreamRequest::Query { query_json: query.into() }, Arc::new(Rows));
-    let old = bound(subscriptions.recv()).await.unwrap();
+    let old = crate::test_wait::within(subscriptions.recv()).await.unwrap();
     bound(database.session_reset()).await.unwrap();
-    assert_eq!(bound(closes.recv()).await.as_deref(), Some(old.as_str()));
+    assert_eq!(crate::test_wait::within(closes.recv()).await.as_deref(), Some(old.as_str()));
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let second = database.subscribe(database.session_epoch(), StreamRequest::Query { query_json: query.into() }, Arc::new(Rows));
-    let current = bound(subscriptions.recv()).await.unwrap();
+    let current = crate::test_wait::within(subscriptions.recv()).await.unwrap();
     assert_ne!(current, old);
     peer.emit_old(&old);
     assert!(bound(database.read_query(database.session_epoch(), query.into())).await.unwrap().is_empty());

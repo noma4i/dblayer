@@ -199,7 +199,7 @@ S107		kotlin	com.noma4i.dblayer.OldSinkTest.oldSubscriptionSinkIsClosedBeforeThe
 S108		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the cable	arch-audit Astra A1
 S108		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
 S108		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
-S109		core	ending_an_upload_round_keeps_the_epoch_of_each_accepted_group	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
+S109		core	ending_an_upload_round_keeps_the_epoch_of_each_accepted_group	red-by-reading	S1: session reset; S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
 S109		swift	BridgeProbeTests.uploadRoundKeepsEachGroupsOriginalEpoch	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
 S109		kotlin	com.noma4i.dblayer.UploadSessionTest.uploadRoundKeepsEachGroupsOriginalEpoch	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
 S110		core	upload_without_a_session_refuses_before_accepting_a_file	red-by-reading	core admission	arch-audit Fable K8

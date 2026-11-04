@@ -4,19 +4,18 @@ use super::error::DbError;
 use super::open::Db;
 
 impl Db {
-    /// Ends the session of this database in one exclusive transition: the work of the old epoch ends, the credential clears, and the data of the account goes. A repeat that finds the same end running waits for it and returns. A caller that carries the epoch it was admitted in is refused once that epoch has gone. `drain` waits for the leases of the old epoch before anything is cleared: a caller that holds a lease itself passes false.
-    pub(crate) async fn end_session<E>(&self, end: End, expected: Option<u64>, drain: bool, clear: impl FnOnce(&Authority) -> Result<(), E> + Send + 'static) -> Result<(), E>
+    pub(crate) async fn end_session<E>(&self, end: End, expected: Option<u64>, clear: impl FnOnce(&Authority) -> Result<(), E> + Send + 'static) -> Result<(), E>
     where
         E: From<DbError> + From<Refused> + Send + 'static,
     {
         let db = self.clone();
-        crate::task::spawn(crate::task::Carry::Detached, async move { db.end_session_owned(end, expected, drain, clear).await })
+        crate::task::spawn(crate::task::Carry::Detached, async move { db.end_session_owned(end, expected, clear).await })
             .await
             .map_err(|error| DbError::Internal(error.to_string()))?
     }
 
     /// The transition runs on its own task: a caller whose lease the transition ended is dropped at its next poll, and the transition must still finish.
-    async fn end_session_owned<E>(&self, end: End, expected: Option<u64>, drain: bool, clear: impl FnOnce(&Authority) -> Result<(), E> + Send + 'static) -> Result<(), E>
+    async fn end_session_owned<E>(&self, end: End, expected: Option<u64>, clear: impl FnOnce(&Authority) -> Result<(), E> + Send + 'static) -> Result<(), E>
     where
         E: From<DbError> + From<Refused> + Send + 'static,
     {
@@ -34,7 +33,6 @@ impl Db {
         })
         .await
         .map_err(|error| DbError::Internal(error.to_string()))??;
-        if drain { permit.drained().await; }
         let db = self.clone();
         crate::task::spawn_blocking(crate::task::Carry::Detached, move || -> Result<(), E> {
             permit.run_on_this_thread();

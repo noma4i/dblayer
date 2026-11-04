@@ -71,10 +71,19 @@ impl Inner {
         let clock = self.clock.clone();
         let deadline = clock.now().saturating_add(wait);
         let inner = Arc::downgrade(self);
-        let reserved = self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "outbox flush").ok()?;
+        let lifecycle = self.db.shared.store.lifecycle.clone();
+        let reserved = if wait.is_zero() {
+            lifecycle.admit(crate::lifecycle::Origin::Session, "outbox flush")
+        } else {
+            lifecycle.admit_passive(crate::lifecycle::Origin::Session, "outbox wake", None)
+        }.ok()?;
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
             clock.sleep(deadline.saturating_sub(clock.now())).await;
             if let Some(inner) = inner.upgrade() {
+                let reserved = if wait.is_zero() { reserved } else {
+                    let Ok(active) = lifecycle.admit_session_at(crate::lifecycle::Origin::Session, "outbox flush", reserved.value()) else { return };
+                    active
+                };
                 let _ = reserved.run(inner.flush_pending(&reserved)).await;
             }
         }));

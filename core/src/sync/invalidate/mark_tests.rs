@@ -368,7 +368,7 @@ async fn a_reread_queued_before_a_session_change_writes_nothing_in_the_next_sess
     rig.transport.await_calls("LikeMoment", 2).await;
     assert!(!super::super::locked(&rig.sync.inner.pending_reloads).is_empty(), "the first commit queued no reread");
     rig.sync.end_session_for_test();
-    assert!(crate::test_wait::within(flushing).await.unwrap().is_ok());
+    assert!(matches!(crate::test_wait::within(flushing).await.unwrap(), Err(crate::sync::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))));
     rig.sync.commit_session_for_test();
     let _watch = rig.sync.watch("moments", "history", &none()).unwrap();
     rig.transport.enqueue("MomentsHistory", history_reply(&["m1"]));

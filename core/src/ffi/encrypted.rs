@@ -65,7 +65,7 @@ fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
     }
 }
 
-pub(super) async fn resume(admitted: &crate::lifecycle::Admitted, client: Arc<EncryptedClient>, sync: Option<crate::sync::Sync>) -> Result<Option<String>, DbError> {
+pub(super) async fn resume(admitted: &crate::lifecycle::Admitted, client: Arc<EncryptedClient>, sync: Option<crate::sync::Sync>) -> Result<(Option<String>, core::encrypted::After), DbError> {
     let serial = match &sync {
         Some(sync) => Some(sync.inner.outbox_gate.lock().await),
         None => None,
@@ -76,11 +76,11 @@ pub(super) async fn resume(admitted: &crate::lifecycle::Admitted, client: Arc<En
         (Some(sync), Some(owner)) => sync.inner.claim_upload_resume(admitted, owner).await?,
         _ => None,
     };
-    if client.pending_call().map_err(typed)? != stored { return Ok(None); }
-    let (answer, result) = match client.resume_pending(admitted).await {
-        Ok(Some(answer)) => (Some(answer.clone()), core::response_of(answer)),
-        Ok(None) => (None, Err(core::TransportError::Graphql { messages: vec!["the stored request belongs to a sessionless operation".into()], extensions: None })),
-        Err(error) if core::encrypted::permanently_refused(&error) => (None, Err(error)),
+    if client.pending_call().map_err(typed)? != stored { return Ok((None, core::encrypted::After::Nothing)); }
+    let (answer, result, after) = match client.resume_pending(admitted).await {
+        Ok((Some(answer), after)) => (Some(answer.clone()), core::response_of(answer), after),
+        Ok((None, after)) => (None, Err(core::TransportError::Graphql { messages: vec!["the stored request belongs to a sessionless operation".into()], extensions: None }), after),
+        Err(error) if core::encrypted::permanently_refused(&error) => (None, Err(error), core::encrypted::After::Nothing),
         Err(error) => return Err(typed(error)),
     };
     if let (Some(sync), Some(serial), Some(owner)) = (&sync, &serial, owner) {
@@ -90,7 +90,7 @@ pub(super) async fn resume(admitted: &crate::lifecycle::Admitted, client: Arc<En
     }
     drop(serial);
     if let Some(sync) = &sync { sync.inner.reload_marked(); }
-    answer.map(refused).transpose().map(|answer| answer.map(|answer| answer.body.to_string()))
+    Ok((answer.map(refused).transpose()?.map(|answer| answer.body.to_string()), after))
 }
 
 pub(super) fn wire(
@@ -185,9 +185,12 @@ impl Database {
         let client = self.session()?.clone();
         let sync = self.sync.clone();
         let epoch = self.streams.snapshot().session_epoch;
-        self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "session resume", true, |admitted| async move {
-            cancellable(async move { resume(&admitted, client, sync).await }).await?
-        }).await
+        let resume_client = client.clone();
+        let (answer, after) = self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "session resume", true, |admitted| async move {
+            cancellable(async move { resume(&admitted, resume_client, sync).await }).await?
+        }).await?;
+        client.conclude(epoch, after).await.map_err(typed)?;
+        Ok(answer)
     }
 
     /// Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
@@ -196,7 +199,7 @@ impl Database {
             Some(client) => cancellable(async move { client.reset().await }).await?.map_err(typed),
             None => {
                 let db = self.db.clone();
-                cancellable(async move { db.end_session::<DbError>(crate::lifecycle::End::Local, None, true, |_| Ok(())).await }).await?
+                cancellable(async move { db.end_session::<DbError>(crate::lifecycle::End::Local, None, |_| Ok(())).await }).await?
             }
         }
     }
