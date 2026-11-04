@@ -1,11 +1,11 @@
-use crate::lifecycle::{Boundary, End, Refused};
+use crate::lifecycle::{Authority, Boundary, End, Refused};
 
 use super::error::DbError;
 use super::open::Db;
 
 impl Db {
     /// Ends the session of this database in one exclusive transition: the work of the old epoch ends, the credential clears, and the data of the account goes. A repeat that finds the same end running waits for it and returns. A caller that carries the epoch it was admitted in is refused once that epoch has gone. `drain` waits for the leases of the old epoch before anything is cleared: a caller that holds a lease itself passes false.
-    pub(crate) async fn end_session<E>(&self, end: End, expected: Option<u64>, drain: bool, clear: impl FnOnce() -> Result<(), E> + Send + 'static) -> Result<(), E>
+    pub(crate) async fn end_session<E>(&self, end: End, expected: Option<u64>, drain: bool, clear: impl FnOnce(&Authority) -> Result<(), E> + Send + 'static) -> Result<(), E>
     where
         E: From<DbError> + From<Refused> + Send + 'static,
     {
@@ -16,7 +16,7 @@ impl Db {
     }
 
     /// The transition runs on its own task: a caller whose lease the transition ended is dropped at its next poll, and the transition must still finish.
-    async fn end_session_owned<E>(&self, end: End, expected: Option<u64>, drain: bool, clear: impl FnOnce() -> Result<(), E> + Send + 'static) -> Result<(), E>
+    async fn end_session_owned<E>(&self, end: End, expected: Option<u64>, drain: bool, clear: impl FnOnce(&Authority) -> Result<(), E> + Send + 'static) -> Result<(), E>
     where
         E: From<DbError> + From<Refused> + Send + 'static,
     {
@@ -28,7 +28,7 @@ impl Db {
         let db = self.clone();
         let permit = crate::task::spawn_blocking(crate::task::Carry::Detached, move || -> Result<_, E> {
             permit.run_on_this_thread();
-            db.shared.store.write_session_end_intent().map_err(DbError::from)?;
+            db.shared.store.write_session_end_intent(&permit).map_err(DbError::from)?;
             db.shared.store.end_session(&permit);
             Ok(permit)
         })
@@ -38,7 +38,7 @@ impl Db {
         let db = self.clone();
         crate::task::spawn_blocking(crate::task::Carry::Detached, move || -> Result<(), E> {
             permit.run_on_this_thread();
-            clear()?;
+            clear(&permit.authority())?;
             db.reset_all_in(&permit)?;
             db.await_revision(db.revision_seq()?);
             permit.finish();

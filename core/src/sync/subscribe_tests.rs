@@ -983,3 +983,66 @@ async fn join_cost(size: usize) -> usize {
 async fn an_event_row_joining_a_loaded_list_reads_the_same_members_at_every_list_size() {
     assert_eq!(join_cost(100).await, join_cost(10_000).await, "member reads at 100 and 10000 rows");
 }
+
+#[tokio::test(start_paused = true)]
+async fn an_event_that_waits_for_its_debounce_never_commits_in_the_epoch_a_session_start_opened() {
+    let rig = rig_with_subscription();
+    let debounced = SubscriptionDef::new(EventSpec::new("moment_changed").debounced(Duration::from_secs(1)).merged_by_row(), "MomentChanged", "moments", EventEffect::Upsert);
+    let _subscription = rig.sync.subscribe(debounced).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
+    rig.transport.await_consumed("MomentChanged").await;
+    let life = rig.db.shared.store.lifecycle.clone();
+    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+    rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
+    rig.transport.await_consumed("MomentChanged").await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
+    assert_eq!(rig.transport.call_count("MomentChanged"), 1, "the connection stayed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_subscription_that_was_opened_but_not_polled_is_opening_for_a_second_reader() {
+    let rig = rig_with_subscription();
+    let updates = rig.sync.subscribe(upsert_def()).await.unwrap();
+    let status = updates.status();
+    assert!(status.opening && !status.connected, "{status:?}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_terminal_failure_is_published_as_stopped_before_its_listener_hears_it() {
+    let rig = rig_with_subscription();
+    let stopped_when_heard = Arc::new(Mutex::new(None));
+    let heard = stopped_when_heard.clone();
+    *super::locked(&rig.sync.inner.failure_probe) = Some(Box::new(move |stopped| *heard.lock().unwrap() = Some(stopped)));
+    let updates = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(SubscriptionFailure::new(SubscriptionFailureKind::Graphql, "refused")));
+    crate::test_wait::yield_until("the failure reached the status", || updates.status().failure.is_some()).await;
+    assert_eq!(*stopped_when_heard.lock().unwrap(), Some(true));
+    assert!(updates.status().stopped);
+}
+
+#[tokio::test(start_paused = true)]
+async fn every_terminal_subscription_failure_reaches_the_listener_once() {
+    let session = crate::transport::TransportError::Session { code: crate::transport::SessionCode::StateLost, detail: "lost".into() };
+    for (case, failure, expected) in [
+        ("graphql", SubscriptionFailure::new(SubscriptionFailureKind::Graphql, "refused"), 1),
+        ("internal", SubscriptionFailure::new(SubscriptionFailureKind::Internal, "undecodable"), 1),
+        ("session", SubscriptionFailure::from_error(session), 1),
+        ("network", SubscriptionFailure::new(SubscriptionFailureKind::Transport, "offline"), 0),
+    ] {
+        let rig = rig_with_subscription();
+        let mut failures = rig.sync.inner.subscription_failures.subscribe();
+        let updates = rig.sync.subscribe(upsert_def()).await.unwrap();
+        rig.transport.await_calls("MomentChanged", 1).await;
+        rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(failure));
+        crate::test_wait::yield_until("the failure reached the status", || updates.status().failure.is_some()).await;
+        let mut heard = 0;
+        while let Ok(notice) = failures.try_recv() { heard += usize::from(notice.is_some()); }
+        assert_eq!(heard, expected, "{case}");
+    }
+}

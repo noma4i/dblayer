@@ -190,7 +190,7 @@ impl Database {
             Some(client) => cancellable(async move { client.reset().await }).await?.map_err(typed),
             None => {
                 let db = self.db.clone();
-                cancellable(async move { db.end_session::<DbError>(crate::lifecycle::End::Local, None, true, || Ok(())).await }).await?
+                cancellable(async move { db.end_session::<DbError>(crate::lifecycle::End::Local, None, true, |_| Ok(())).await }).await?
             }
         }
     }

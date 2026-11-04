@@ -383,7 +383,7 @@ impl Dispatch {
     }
 
     pub(crate) fn start(dispatch: Arc<Dispatch>, shared: Weak<Shared>) -> Result<(), DbError> {
-        super::threads::spawn_named("dblayer-dispatch", move || {
+        super::threads::spawn_named(crate::task::Carry::Detached, "dblayer-dispatch", move || {
                 mark_core_thread();
                 OWNER_THREAD.with(|flag| flag.set(true));
                 while let Some(work) = dispatch.next_work() {

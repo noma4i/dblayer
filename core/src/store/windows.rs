@@ -99,9 +99,7 @@ impl Store {
 
     #[cfg(test)]
     pub fn save_window(&self, record: &WindowRecord) -> Result<(), StoreError> {
-        let inner = self.lock();
-        inner.ensure_healthy()?;
-        upsert_window(&inner.connection, record, inner.now_ms())
+        self.write_store(&crate::lifecycle::Authority::Internal(crate::lifecycle::Internal::for_tests()), |inner| upsert_window(&inner.connection, record, inner.now_ms()))
     }
 
     pub fn window(&self, key: &str) -> Result<Option<WindowRecord>, StoreError> {
@@ -141,13 +139,14 @@ impl Store {
             .optional()?)
     }
 
-    pub fn invalidate_family(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
-        let inner = self.lock();
-        inner.ensure_healthy()?;
+    pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::Authority, model: &str, relation: &str) -> Result<usize, StoreError> {
         let pattern = like_prefix(&family_prefix(model, relation));
-        Ok(inner
-            .connection
-            .execute("UPDATE query_window SET invalidated = 1 WHERE key LIKE ?1 ESCAPE '\\'", params![pattern])?)
+        self.write_store(authority, |inner| Ok(inner.connection.execute("UPDATE query_window SET invalidated = 1 WHERE key LIKE ?1 ESCAPE '\\'", params![pattern])?))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
+        self.invalidate_family(&crate::lifecycle::Authority::Epoch(self.lifecycle.epoch_now()), model, relation)
     }
 
     #[cfg(test)]

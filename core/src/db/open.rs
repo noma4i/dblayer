@@ -233,6 +233,9 @@ impl Db {
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let replaced_ids = Arc::new(Mutex::new(HashMap::new()));
         let creates = Arc::new(Mutex::new(HashMap::new()));
+        for entry in store.read(&[], |reader| Ok(crate::operation::read_queue(reader.connection())?))? {
+            for key in entry.created_keys() { locked(&creates).insert(key, entry.operation.id.0); }
+        }
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
         let replaced_log = dispatch.clone();
         store.set_commit_log(Box::new(move |event| {
@@ -343,6 +346,9 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
         StoreEvent::Committed(result) => {
             locked(&replaced_ids).extend(result.replaced.iter().map(|(from, to)| (format!("{}\0{}", from.model.as_str(), from.id.as_str()), to.to_string())));
             for (from, _) in &result.replaced { locked(&creates).remove(&format!("{}\0{}", from.model.as_str(), from.id.as_str())); }
+            for entry in result.queue_operations.values().flatten() {
+                for key in entry.created_keys() { locked(&creates).insert(key, entry.operation.id.0); }
+            }
             operation_queues.changed(&result.queue_operations);
             {
                 let mut cache = locked(&cache);
@@ -445,7 +451,8 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
     }
     let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, store.generation());
     envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
-    store.commit_as(&crate::lifecycle::Authority::Internal(store.lifecycle.opening()), envelope)?;
+    let opening = store.lifecycle.opening().ok_or_else(|| StoreError::Constraint("the database was opened twice".into()))?;
+    store.commit_as(&crate::lifecycle::Authority::Internal(opening), envelope)?;
     Ok(())
 }
 

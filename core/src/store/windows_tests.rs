@@ -80,7 +80,7 @@ fn save_keeps_landed_at_and_invalidation_of_existing_window() {
     let thread = key("messages", "thread", "1");
     let landed = clock.now().as_millis() as i64;
     store.save_window(&window(&thread)).unwrap();
-    store.invalidate_family("messages", "thread").unwrap();
+    store.invalidate_family_now("messages", "thread").unwrap();
     clock.advance(std::time::Duration::from_millis(5_000));
     store.save_window(&WindowRecord { issued: 2, ..window(&thread) }).unwrap();
     assert_eq!(store.window_freshness(&thread).unwrap(), Some(WindowFreshness { landed_at: landed, invalidated: true }));
@@ -103,7 +103,7 @@ fn mark_family_marks_only_thread_keys() {
     let media = key("messages", "media", "1");
     store.save_window(&window(&thread)).unwrap();
     store.save_window(&window(&media)).unwrap();
-    assert_eq!(store.invalidate_family("messages", "thread").unwrap(), 1);
+    assert_eq!(store.invalidate_family_now("messages", "thread").unwrap(), 1);
     assert_eq!(store.stale_window_keys().unwrap(), vec![thread]);
 }
 

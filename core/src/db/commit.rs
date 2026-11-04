@@ -11,10 +11,13 @@ use super::open::Db;
 use super::parent_pointer::Followed;
 
 impl Db {
+    #[doc(hidden)]
+    pub fn in_current_epoch<R>(&self, work: impl FnOnce(&Db) -> R) -> R { self.shared.store.lifecycle.epoch_now().pinned(|| work(self)) }
+
     pub(crate) fn authority(&self) -> Result<Authority, DbError> {
         match Epoch::ambient() {
             Some(epoch) => Ok(Authority::Epoch(epoch)),
-            #[cfg(any(test, feature = "test-support"))]
+            #[cfg(test)]
             None if !self.shared.store.lifecycle.strict_epoch() => Ok(Authority::Internal(crate::lifecycle::Internal::for_tests())),
             None => Err(DbError::Internal("a write of the database needs the session epoch of its caller".into())),
         }

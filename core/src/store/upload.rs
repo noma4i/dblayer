@@ -65,8 +65,10 @@ impl super::Store {
         Ok(rows)
     }
 
-    pub(crate) fn settle_upload_orphan(&self, id: i64) -> Result<(), StoreError> {
-        self.lock().connection.execute("DELETE FROM upload_orphan WHERE id = ?1", [id])?;
-        Ok(())
+    pub(crate) fn settle_upload_orphan(&self, authority: &crate::lifecycle::Authority, id: i64) -> Result<(), StoreError> {
+        self.write_store(authority, |inner| {
+            inner.connection.execute("DELETE FROM upload_orphan WHERE id = ?1", [id])?;
+            Ok(())
+        })
     }
 }

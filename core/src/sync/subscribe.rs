@@ -111,6 +111,8 @@ pub struct SubscriptionStatus {
 
 type SharedStatus = Arc<Mutex<SubscriptionStatus>>;
 
+type Opened = (Generation, crate::lifecycle::Epoch, Result<ServerSubscription, TransportError>);
+
 pub struct Updates {
     abort: AbortHandle,
     status: SharedStatus,
@@ -164,6 +166,7 @@ struct Feed {
     backoff: Backoff,
     ready: Option<tokio::sync::watch::Sender<Option<Result<(), SyncError>>>>,
     received: crate::lifecycle::Stamp,
+    epoch: crate::lifecycle::Epoch,
 }
 
 impl Feed {
@@ -172,7 +175,7 @@ impl Feed {
         definitions.into_iter().map(|def| Feed {
             inner: self.inner.clone(), root_path: def.root.clone().unwrap_or_else(|| self.operation_root.clone()),
             def: Arc::new(def), shared: false, operation_root: self.operation_root.clone(),
-            status: self.status.clone(), backoff: self.backoff, ready: None, received,
+            status: self.status.clone(), backoff: self.backoff, ready: None, received, epoch: self.epoch.clone(),
         }).collect()
     }
 
@@ -187,7 +190,9 @@ impl Feed {
     fn notify_failure(&self, failure: &SubscriptionFailure) {
         self.opening(Err(SyncError::Transport(failure.error.clone())));
         locked(&self.status).failure = Some(failure.clone());
-        if matches!(failure.error, TransportError::Session { .. }) {
+        if failure.is_terminal() {
+            #[cfg(test)]
+            if let Some(probe) = locked(&self.inner.failure_probe).as_ref() { probe(locked(&self.status).stopped); }
             crate::db::lock::effect(|| { let _ = self.inner.subscription_failures.send(Some((super::live::live_key(&self.def.operation, &self.def.variables), failure.clone()))); });
         }
     }
@@ -373,7 +378,7 @@ impl Feed {
         self.inner.load_scope(&resolved, true).await.map(|_| ())
     }
 
-    fn now(&self) -> crate::lifecycle::Epoch { self.inner.db.shared.store.lifecycle.epoch_now() }
+    fn now(&self) -> crate::lifecycle::Epoch { self.epoch.clone() }
 
     async fn apply_event(&self, response: &Response) -> bool { self.now().scope(self.apply_event_in(response)).await }
 
@@ -517,7 +522,7 @@ impl Feed {
         let mut count = 0;
         let mut announced: Vec<(String, RowId, Map<String, Value>)> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
-        let committed = db.commit_following_report(&crate::lifecycle::Authority::Epoch(db.shared.store.lifecycle.epoch_now()), generation, |reader| {
+        let committed = db.commit_following_report(&crate::lifecycle::Authority::Epoch(self.now()), generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();
@@ -607,7 +612,7 @@ impl Feed {
         status.stopped = lifecycle.stopped();
     }
 
-    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation) -> SubscriptionFailureKind {
+    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation) -> (SubscriptionFailureKind, Option<SubscriptionFailure>) {
         let mut pending: Vec<(Arc<SubscriptionDef>, Duration, Vec<Pending>)> = Vec::new();
         loop {
             let deadline = pending.iter().map(|(_, deadline, _)| *deadline).min();
@@ -617,7 +622,7 @@ impl Feed {
                     None => {
                         self.opening(Err(SyncError::Event("subscription closed".into())));
                         self.apply_active(std::mem::take(&mut pending).into_iter().flat_map(|(_, _, items)| items).collect()).await;
-                        return SubscriptionFailureKind::Transport;
+                        return (SubscriptionFailureKind::Transport, None);
                     }
                     Some(SubscriptionEvent::Ready) => {
                         if generation != self.inner.db.generation() { continue; }
@@ -660,9 +665,8 @@ impl Feed {
                         self.apply_active(items).await;
                     }
                     Some(SubscriptionEvent::Failed(failure)) => {
-                        self.notify_failure(&failure);
                         self.apply_active(std::mem::take(&mut pending).into_iter().flat_map(|(_, _, items)| items).collect()).await;
-                        return failure.kind;
+                        return (failure.kind, Some(failure));
                     }
                 },
                 _ = self.inner.clock.sleep(wait), if deadline.is_some() => {
@@ -679,10 +683,10 @@ impl Feed {
         }
     }
 
-    async fn run(self, request: GraphQLRequest, first: Option<(Generation, Result<ServerSubscription, TransportError>)>, mut resets: crate::lifecycle::Watch) {
+    async fn run(mut self, request: GraphQLRequest, first: Option<Opened>, mut resets: crate::lifecycle::Watch) {
         let mut lifecycle = Lifecycle::new(self.backoff);
         let mut opened = first;
-        loop {
+        'open: loop {
             if !self.inner.admitted(crate::lifecycle::Origin::Session) {
                 opened = None;
                 self.mark(|status| status.opening = false);
@@ -691,7 +695,7 @@ impl Feed {
             }
             lifecycle.handle(Event::Resumed);
             self.mark(|status| status.opening = true);
-            let (generation, attempt) = tokio::select! {
+            let (generation, epoch, attempt) = tokio::select! {
                 biased;
                 _ = invalidated(&mut resets) => { opened = None; lifecycle = Lifecycle::new(self.backoff); continue; }
                 attempt = async {
@@ -701,11 +705,12 @@ impl Feed {
                     }
                 } => match attempt { Some(attempt) => attempt, None => { self.mark(|status| status.opening = false); return } },
             };
-            self.mark(|status| status.opening = false);
-            let kind = match attempt {
+            self.epoch = epoch;
+            let (kind, failed) = match attempt {
                 Ok(mut connection) => {
                     let reconnected = {
                         let mut status = locked(&self.status);
+                        status.opening = false;
                         status.connects += 1;
                         status.connected = true;
                         status.connects > 1
@@ -720,23 +725,28 @@ impl Feed {
                         }
                     }
                     lifecycle.handle(Event::Connected);
-                    tokio::select! {
-                        biased;
-                        _ = invalidated(&mut resets) => { self.mark(|status| status.connected = false); lifecycle = Lifecycle::new(self.backoff); continue; },
-                        kind = self.pump(&mut connection, &mut lifecycle, generation) => kind,
+                    loop {
+                        tokio::select! {
+                            biased;
+                            change = invalidated(&mut resets) => match change {
+                                Some(crate::lifecycle::Invalidated::Rebound(snapshot)) => self.epoch = crate::lifecycle::Epoch::new(&self.inner.db.shared.store.lifecycle, snapshot.session_epoch),
+                                _ => { self.mark(|status| status.connected = false); lifecycle = Lifecycle::new(self.backoff); continue 'open; }
+                            },
+                            ended = self.pump(&mut connection, &mut lifecycle, generation) => break ended,
+                        }
                     }
                 }
                 Err(error) => {
+                    self.mark(|status| status.opening = false);
                     let failure = SubscriptionFailure::from_error(error);
-                    if failure.kind != SubscriptionFailureKind::Transport || self.inner.connectivity.is_online() {
-                        self.notify_failure(&failure);
-                    }
-                    failure.kind
+                    let announced = (failure.kind != SubscriptionFailureKind::Transport || self.inner.connectivity.is_online()).then(|| failure.clone());
+                    (failure.kind, announced)
                 }
             };
             self.mark(|status| status.connected = false);
             lifecycle.handle(Event::Lost { kind, online: self.inner.connectivity.is_online() });
             self.publish(&lifecycle);
+            if let Some(failure) = failed { self.notify_failure(&failure); }
             match lifecycle.step() {
                 Step::Stop => return,
                 Step::Wait(delay) => tokio::select! {
@@ -749,7 +759,7 @@ impl Feed {
     }
 }
 
-async fn invalidated(resets: &mut crate::lifecycle::Watch) -> Option<crate::lifecycle::Snapshot> {
+async fn invalidated(resets: &mut crate::lifecycle::Watch) -> Option<crate::lifecycle::Invalidated> {
     resets.invalidated().await
 }
 
@@ -760,7 +770,7 @@ impl Sync {
 }
 
 impl Inner {
-    async fn open_subscription(&self, request: GraphQLRequest) -> Option<(Generation, Result<ServerSubscription, TransportError>)> {
+    async fn open_subscription(&self, request: GraphQLRequest) -> Option<Opened> {
         let mut stopped = self.stopped.clone();
         tokio::select! {
             biased;
@@ -776,9 +786,10 @@ impl Inner {
                     }
                 };
                 let generation = self.db.generation();
+                let epoch = lease.epoch_value();
                 crate::db::lock::assert_no_library_lock("Transport::subscribe");
                 let opened = lease.run(self.transport.subscribe(request)).await;
-                Some((generation, opened.unwrap_or_else(|ended| Err(ended.into()))))
+                Some((generation, epoch, opened.unwrap_or_else(|ended| Err(ended.into()))))
             } => result,
         }
     }
@@ -801,12 +812,12 @@ impl Inner {
                 attempt = self.open_subscription(request.clone()) => attempt,
             }
         } else { None };
-        let status = Arc::new(Mutex::new(SubscriptionStatus::default()));
+        let status = Arc::new(Mutex::new(SubscriptionStatus { opening: true, ..SubscriptionStatus::default() }));
         let definition = def.clone();
         let def_root = def.root.clone();
         let backoff = RetryPolicy::Subscription.backoff().randomized();
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
-        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp() };
+        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp(), epoch: first.as_ref().map_or_else(|| self.db.shared.store.lifecycle.epoch_now(), |(_, epoch, _)| epoch.clone()) };
         let task = crate::task::spawn(crate::task::Carry::Detached, self.until_closed(feed.run(request, first, resets)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }

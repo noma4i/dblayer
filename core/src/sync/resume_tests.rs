@@ -43,7 +43,7 @@ async fn inv_fresh_07_resume_reloads_a_watched_window_that_is_stale_invalidated_
                 drop(watch);
             }
             if case.invalidated {
-                rig.db.shared.store.invalidate_family("moments", "feed").unwrap();
+                rig.db.shared.store.invalidate_family_now("moments", "feed").unwrap();
             }
             rig.clock.advance(Duration::from_secs(case.idle_secs));
             if by_event {

@@ -44,7 +44,7 @@ impl Inner {
 
     async fn mark_and_reload(&self, model: &str, names: &BTreeSet<String>) -> Result<(), SyncError> {
         for name in names {
-            self.db.shared.store.invalidate_family(model, name)?;
+            self.db.shared.store.invalidate_family(&self.db.authority()?, model, name)?;
         }
         self.reload_watched(model, Some(names), true).await?;
         Ok(())

@@ -29,6 +29,7 @@ mod shape;
 mod stable;
 mod tombstones;
 mod windows;
+mod write;
 
 pub use admission::{admit_upsert, UpsertAdmission};
 pub use apply::PlanCommitError;
@@ -132,9 +133,15 @@ impl AnnounceLine {
                 self.0.turn.notify_all();
             }
         }
-        let mut next = self.next.lock().unwrap_or_else(|error| error.into_inner());
-        while *next != ticket {
-            next = self.turn.wait(next).unwrap_or_else(|error| error.into_inner());
+        let mut next = crate::db::lock::acquire(&self.next);
+        if *next != ticket {
+            next = crate::blocking::blocking_unit(|| {
+                let mut next = next;
+                while *next != ticket {
+                    next = self.turn.wait(next).unwrap_or_else(|error| error.into_inner());
+                }
+                next
+            });
         }
         drop(next);
         let _done = Done(self);
@@ -201,6 +208,8 @@ pub struct Store {
     #[cfg(test)]
     pub(crate) after_epoch_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
+    pub(crate) after_network_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    #[cfg(test)]
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
     #[cfg(test)]
     pub(crate) before_freshness: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -238,6 +247,8 @@ impl Store {
             #[cfg(test)]
             after_epoch_check: Mutex::new(None),
             #[cfg(test)]
+            after_network_check: Mutex::new(None),
+            #[cfg(test)]
             after_commit: Mutex::new(None),
             #[cfg(test)]
             before_freshness: Mutex::new(None),
@@ -265,7 +276,7 @@ impl Store {
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        crate::db::lock::acquire(&self.inner)
     }
 
     pub(crate) fn set_hook(&self, hook: StoreHook) {
@@ -312,20 +323,6 @@ impl Store {
             ticket
         };
         self.lifecycle.delivered(ticket);
-    }
-
-    fn holds(&self, epoch: u64) -> bool {
-        let now = self.lifecycle.snapshot();
-        !now.closed && now.session_epoch == epoch
-    }
-
-    /// Runs a write only while the database is open and the session epoch is the one the caller was admitted in. The check and the write share the writer lock that `end_session_in` takes.
-    pub(crate) fn in_epoch<T, E>(&self, epoch: u64, refused: impl FnOnce() -> E, write: impl FnOnce(&rusqlite::Connection) -> Result<T, E>) -> Result<T, E> {
-        #[cfg(test)]
-        self.writes_waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let inner = self.lock();
-        if !self.holds(epoch) { return Err(refused()); }
-        write(&inner.connection)
     }
 
     #[cfg(test)]
@@ -406,6 +403,8 @@ mod batch_tests;
 mod members_among_tests;
 #[cfg(test)]
 mod boot_tests;
+#[cfg(test)]
+mod write_tests;
 #[cfg(test)]
 mod file_ops_tests;
 #[cfg(test)]

@@ -11,7 +11,7 @@ use super::key::ServerKey;
 use super::state::{self, Pending};
 use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
-use crate::lifecycle::{End, Origin};
+use crate::lifecycle::{Authority, End, Epoch, Origin};
 use crate::pacing::{Clock, RetryPolicy};
 use crate::transport::{SessionCode, TransportError};
 use crate::transport::retry::{RetryClass, RetryCalls, Retrying};
@@ -179,7 +179,16 @@ impl EncryptedClient {
     }
 
     fn write_in<T>(&self, epoch: u64, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {
-        self.db.shared.store.in_epoch(epoch, || TransportError::Interrupted("the session ended while its answer was pending".into()), |connection| run(connection).map_err(storage))
+        let life = &self.db.shared.store.lifecycle;
+        self.write_as(&Authority::Epoch(Epoch::new(life, epoch)), run)
+    }
+
+    fn write_as<T>(&self, authority: &Authority, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {
+        self.db.shared.store.write(authority, || TransportError::Interrupted("the session ended while its answer was pending".into()), |inner| run(&inner.connection).map_err(storage))
+    }
+
+    fn write_now<T>(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {
+        self.write_as(&Authority::Epoch(self.db.shared.store.lifecycle.epoch_now()), run)
     }
 
     fn confirm_session(&self, epoch: u64) -> Result<(), TransportError> {
@@ -257,7 +266,7 @@ impl EncryptedClient {
         let client = Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Arc::default(), mutations: Gate::new(()), progress: Arc::default() };
         if client.db.shared.store.take_session_end_replay() {
             client.credentials.clear()?;
-            client.with_connection(state::clear)?;
+            client.write_now(state::clear)?;
         }
         Ok(client)
     }
@@ -279,14 +288,14 @@ impl EncryptedClient {
         check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential()?;
-        let pending = match self.with_connection(state::pending)? {
+        let pending = match self.read_connection(state::pending)? {
             Some(pending) if pending.owner == owner && pending.path == path && serde_json::from_str::<Value>(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))? == body => {
                 self.pending_token(&credential, &pending)?;
                 pending
             }
             Some(_) => return Err(TransportError::Network("another encrypted request is pending, resolve it first".into())),
             None => {
-                let sequence = self.with_connection(state::session)?.map_or(1, |session| session.sequence + 1);
+                let sequence = self.read_connection(state::session)?.map_or(1, |session| session.sequence + 1);
                 let pending = Pending {
                     credential_digest: digest_of(&credential),
                     request_id: uuid::Uuid::new_v4().to_string(),
@@ -306,14 +315,14 @@ impl EncryptedClient {
     }
 
     pub fn pending_call(&self) -> Result<Option<(String, Value)>, TransportError> {
-        self.with_connection(state::pending)?.map(|pending| {
+        self.read_connection(state::pending)?.map(|pending| {
             let body = serde_json::from_str(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))?;
             Ok((pending.path, body))
         }).transpose()
     }
 
     pub(crate) fn pending_owner(&self) -> Result<Option<crate::transport::RequestOwner>, TransportError> {
-        Ok(self.with_connection(state::pending)?.and_then(|pending| pending.owner))
+        Ok(self.read_connection(state::pending)?.and_then(|pending| pending.owner))
     }
 
     pub async fn resume(&self) -> Result<Option<Answer>, TransportError> {
@@ -335,13 +344,13 @@ impl EncryptedClient {
 
     async fn resume_in(&self, epoch: u64) -> Result<Option<(Answer, After)>, TransportError> {
         let _turn = self.mutations.lock().await;
-        let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
+        let Some(pending) = self.read_connection(state::pending)? else { return Ok(None) };
         if self.config.endpoints.session_operations.values().any(|operation| operation.sessionless && operation.path == pending.path) {
             self.write_in(epoch, state::drop_pending)?;
             return Ok(None);
         }
         let credential = self.credential()?;
-        let Some(pending) = self.with_connection(state::pending)? else { return Ok(None) };
+        let Some(pending) = self.read_connection(state::pending)? else { return Ok(None) };
         self.pending_token(&credential, &pending)?;
         self.await_answer(epoch, pending).await.map(Some)
     }
@@ -362,13 +371,13 @@ impl EncryptedClient {
     }
 
     pub fn signed_in(&self) -> Result<Option<String>, TransportError> {
-        Ok(self.with_connection(state::session)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
+        Ok(self.read_connection(state::session)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
     }
 
     /// Ends the session: the old epoch's work ends, the credential and its tables clear, and the data of the account goes. A caller that carries the epoch it was admitted in is refused once that epoch has gone.
     pub(crate) async fn end_session(&self, end: End, expected: Option<u64>) -> Result<(), TransportError> {
         let (credentials, cell, db) = (self.credentials.clone(), self.credential.clone(), self.db.clone());
-        let clear = move || -> Result<(), TransportError> {
+        let clear = move |authority: &Authority| -> Result<(), TransportError> {
             crate::db::lock::assert_no_library_lock("CredentialSlot::clear");
             credentials.clear()?;
             let mut state = crate::db::locked(&cell.state);
@@ -376,7 +385,7 @@ impl EncryptedClient {
             state.generation += 1;
             #[cfg(test)]
             cell.park();
-            let cleared = { let inner = db.shared.store.lock(); state::clear(&inner.connection).map_err(storage) };
+            let cleared = db.shared.store.write(authority, || TransportError::Interrupted("the session ended while its credential cleared".into()), |inner| state::clear(&inner.connection).map_err(storage));
             drop(state);
             cleared
         };
@@ -506,7 +515,7 @@ impl EncryptedClient {
     }
 
     fn verified(&self, credential: String) -> Result<String, TransportError> {
-        match self.with_connection(state::session)? {
+        match self.read_connection(state::session)? {
             Some(session) if session.credential_digest == digest_of(&credential) => Ok(credential),
             _ => Err(TransportError::Session { code: SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }),
         }
@@ -514,24 +523,24 @@ impl EncryptedClient {
 
     fn load_credential(&self, generation: u64) -> Result<String, TransportError> {
         crate::db::lock::assert_no_library_lock("CredentialSlot::get");
-        let (credential, minted) = match self.credentials.get()? {
+        let (credential, minted) = match crate::blocking::blocking_unit(|| self.credentials.get())? {
             Some(stored) => (self.verified(stored), false),
             None => {
                 let credential = random_token();
                 crate::db::lock::assert_no_library_lock("CredentialSlot::set");
-                self.credentials.set(&credential)?;
+                crate::blocking::blocking_unit(|| self.credentials.set(&credential))?;
                 (Ok(credential), true)
             }
         };
         let mut state = crate::db::locked(&self.credential.state);
         if state.generation != generation {
             drop(state);
-            if minted { crate::db::lock::assert_no_library_lock("CredentialSlot::clear"); self.credentials.clear()?; }
+            if minted { crate::db::lock::assert_no_library_lock("CredentialSlot::clear"); crate::blocking::blocking_unit(|| self.credentials.clear())?; }
             return Err(TransportError::Network("the session was reset while its credential was loading".into()));
         }
         let credential = credential?;
         if minted {
-            self.with_connection(|connection| state::start(connection, &digest_of(&credential)))?;
+            self.write_now(|connection| state::start(connection, &digest_of(&credential)))?;
         }
         state.cached = Some(credential.clone());
         Ok(credential)
@@ -549,22 +558,21 @@ impl EncryptedClient {
     pub(crate) fn clear_credential_for_test(&self) -> Result<(), TransportError> {
         self.credentials.clear()?;
         crate::db::locked(&self.credential.state).cached = None;
-        self.with_connection(state::clear)
+        self.write_as(&Authority::Internal(crate::lifecycle::Internal::for_tests()), state::clear)
     }
 
     #[cfg(test)]
     pub(crate) fn sequence_for_test(&self) -> i64 {
-        self.with_connection(state::session).ok().flatten().map_or(0, |session| session.sequence)
+        self.read_connection(state::session).ok().flatten().map_or(0, |session| session.sequence)
     }
 
     #[cfg(test)]
     pub(crate) fn sign_in_for_test(&self) -> Result<(), TransportError> {
         self.credential()?;
-        self.with_connection(|connection| state::commit(connection, 1))
+        self.write_as(&Authority::Internal(crate::lifecycle::Internal::for_tests()), |connection| state::commit(connection, 1))
     }
 
-    fn with_connection<T>(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {
-        let inner = self.db.shared.store.lock();
-        run(&inner.connection).map_err(storage)
+    fn read_connection<T>(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {
+        self.db.shared.store.read_locked(run).map_err(storage)
     }
 }

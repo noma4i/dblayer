@@ -58,6 +58,9 @@
 ### Fixed
 - A window opened after a failed load of its query no longer shows that error.
 - `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
+- Every terminal subscription failure reaches the query listener once.
+- A `create` with an id given by the caller returns the confirmed row.
+- A network change waits for the start of an action that already passed its check.
 
 ## 6.16.1 - 2026-11-03
 

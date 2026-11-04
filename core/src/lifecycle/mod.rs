@@ -11,7 +11,7 @@ mod authority;
 mod machine;
 
 pub(crate) use authority::{Authority, Epoch};
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 pub(crate) use authority::Internal;
 
 use machine::Event;
@@ -144,22 +144,29 @@ impl Snapshot {
     }
 }
 
+pub(crate) enum Invalidated {
+    Ended,
+    Rebound(Snapshot),
+}
+
 /// Follows the latest settled change. A receiver that falls behind sees the newest change only, and compares the epoch and generation it holds.
 pub(crate) struct Watch {
     state: watch::Receiver<Snapshot>,
     seen: u64,
     generation: Generation,
+    session_epoch: u64,
 }
 
 impl Watch {
     pub(crate) fn current(&self) -> Snapshot { self.state.borrow().clone() }
 
-    /// Waits for a change that ends what was open: a session end, a clear, the close, or a session start that follows an end the watch did not see on its own.
-    pub(crate) async fn invalidated(&mut self) -> Option<Snapshot> {
+    pub(crate) async fn invalidated(&mut self) -> Option<Invalidated> {
         loop {
             let next = self.changed().await?;
             let moved = std::mem::replace(&mut self.generation, next.generation) != next.generation;
-            if moved || !matches!(next.change, Change::SessionStarted(_)) { return Some(next); }
+            let epoch_moved = std::mem::replace(&mut self.session_epoch, next.session_epoch) != next.session_epoch;
+            if moved || !matches!(next.change, Change::SessionStarted(_)) { return Some(Invalidated::Ended); }
+            if epoch_moved { return Some(Invalidated::Rebound(next)); }
         }
     }
 
@@ -260,6 +267,7 @@ pub(crate) struct Lifecycle {
     state: Mutex<State>,
     /// Orders a pinned SQL commit against the transitions: a transition changes the epoch while it holds this line, and a pinned write checks the epoch and commits while it holds it.
     commit_line: Mutex<()>,
+    opening_issued: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     pub(crate) begin_waits: (Mutex<usize>, Condvar),
     idle: Condvar,
@@ -279,6 +287,7 @@ impl Default for Lifecycle {
         Self {
             state: Mutex::new(State { machine: machine::new(), holders: Holders::default(), leases: HashMap::new(), next_lease: 0, activity: 0, runner: None }),
             commit_line: Mutex::new(()),
+            opening_issued: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             begin_waits: (Mutex::new(0), Condvar::new()),
             idle: Condvar::new(),
@@ -348,6 +357,8 @@ pub(crate) struct Permit {
 impl Permit {
     pub(crate) fn boundary(&self) -> Boundary { self.boundary }
 
+    pub(crate) fn authority(&self) -> Authority { Authority::Internal(authority::Internal::new()) }
+
     /// Marks the calling thread as the one that runs this transition. A session end that this thread asks for meanwhile joins it at once, since it cannot wait for itself.
     pub(crate) fn run_on_this_thread(&self) {
         crate::db::locked(&self.life.state).runner = Some(std::thread::current().id());
@@ -397,9 +408,6 @@ impl Drop for Permit {
 }
 
 impl Lifecycle {
-    #[cfg(all(feature = "test-support", not(test)))]
-    pub(crate) fn strict_epoch(&self) -> bool { false }
-
     #[cfg(test)]
     pub(crate) fn strict_epoch(&self) -> bool { self.strict.load(std::sync::atomic::Ordering::SeqCst) }
 
@@ -426,8 +434,8 @@ impl Lifecycle {
 
     pub(crate) fn watch(&self) -> Watch {
         let state = self.changed.subscribe();
-        let (seen, generation) = { let published = state.borrow(); (published.notice, published.generation) };
-        Watch { state, seen, generation }
+        let (seen, generation, session_epoch) = { let published = state.borrow(); (published.notice, published.generation, published.session_epoch) };
+        Watch { state, seen, generation, session_epoch }
     }
 
     /// Takes a lease for work of this kind, or refuses it when the database is closed, a transition runs, or the work needs a session that is not there.

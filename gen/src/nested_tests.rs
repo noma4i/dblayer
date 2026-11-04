@@ -25,9 +25,9 @@ end"#;
     let id = dblayer::identity::RowId::new("m1").unwrap();
     let scope = dblayer::commit::ScopeRef::new(dblayer::identity::ModelKey::new("Message"), dblayer::identity::ListKey::from_raw("all"));
     let request = dblayer::db::ReplaceRequest::new(scope, dblayer::schema::Coverage::Complete);
-    db.replace(&request, vec![json!({"id": "m1", "reactions": [{"user": {"id": "u1"}, "body": "A"}, {"user": {"id": "u2"}, "body": "B"}]}).as_object().unwrap().clone()]).unwrap();
+    db.in_current_epoch(|db| db.replace(&request, vec![json!({"id": "m1", "reactions": [{"user": {"id": "u1"}, "body": "A"}, {"user": {"id": "u2"}, "body": "B"}]}).as_object().unwrap().clone()])).unwrap();
     for (body, expected) in [("C", vec!["C", "B"]), ("", vec!["B"])] {
-        db.act("Message", "react", &id, patch.clone(), json!({"userId": "u1", "reactionBody": body}).as_object().unwrap().clone()).unwrap();
+        db.in_current_epoch(|db| db.act("Message", "react", &id, patch.clone(), json!({"userId": "u1", "reactionBody": body}).as_object().unwrap().clone())).unwrap();
         let found = db.find("Message", &id).unwrap().unwrap();
         let reactions = found.data["reactions"].as_array().unwrap();
         assert_eq!(reactions.iter().map(|reaction| reaction["body"].as_str().unwrap()).collect::<Vec<_>>(), expected);
@@ -42,7 +42,7 @@ fn nested_types_keep_optional_fields_and_work_in_local_models() {
     }
     let db = Db::open_in_memory(models, None).unwrap();
     let value = json!({"title": "local", "note": "kept", "child": {"body": "nested"}});
-    let row = db.create("NestedSample", json!({"value": value, "values": []}).as_object().unwrap().clone()).unwrap();
+    let row = db.in_current_epoch(|db| db.create("NestedSample", json!({"value": value, "values": []}).as_object().unwrap().clone())).unwrap();
     assert_eq!(db.find("NestedSample", &row.id).unwrap().unwrap().data["value"], value);
 }
 

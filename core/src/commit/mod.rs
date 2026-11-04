@@ -176,16 +176,38 @@ pub struct WindowSave {
     pub cleared_at: Option<i64>,
 }
 
+/// The one point of order between a change of the network and the commit of a start. A change of the network, the account or the connection happens while it holds this line, and a start checks its admission and commits while it holds it.
+#[derive(Clone, Default)]
+pub struct NetworkLine {
+    line: std::sync::Arc<std::sync::Mutex<()>>,
+    #[cfg(test)]
+    pub(crate) waiting: std::sync::Arc<(std::sync::Mutex<usize>, std::sync::Condvar)>,
+}
+
+impl NetworkLine {
+    pub(crate) fn enter(&self) -> std::sync::MutexGuard<'_, ()> {
+        #[cfg(test)]
+        {
+            *self.waiting.0.lock().unwrap_or_else(|error| error.into_inner()) += 1;
+            self.waiting.1.notify_all();
+        }
+        crate::db::lock::acquire(&self.line)
+    }
+}
+
 #[derive(Clone)]
 pub struct NetworkAdmission {
     expected: (i64, i64, bool),
     current: std::sync::Arc<dyn Fn() -> (i64, i64, bool) + Send + Sync>,
+    line: NetworkLine,
 }
 
 impl NetworkAdmission {
-    pub fn new(expected: (i64, i64, bool), current: std::sync::Arc<dyn Fn() -> (i64, i64, bool) + Send + Sync>) -> Self { Self { expected, current } }
+    pub fn new(expected: (i64, i64, bool), current: std::sync::Arc<dyn Fn() -> (i64, i64, bool) + Send + Sync>, line: NetworkLine) -> Self { Self { expected, current, line } }
 
     pub fn holds(&self) -> bool { (self.current)() == self.expected }
+
+    pub(crate) fn enter(&self) -> std::sync::MutexGuard<'_, ()> { self.line.enter() }
 }
 
 impl std::fmt::Debug for NetworkAdmission {

@@ -91,7 +91,7 @@ impl ReadPool {
     pub(crate) fn start(pool: &Arc<ReadPool>, shared: std::sync::Weak<Shared>) -> Result<(), DbError> {
         for _ in 0..READERS {
             let (pool, shared) = (pool.clone(), shared.clone());
-            super::threads::spawn_named("dblayer-read", move || pool.work(&shared))?;
+            super::threads::spawn_named(crate::task::Carry::Detached, "dblayer-read", move || pool.work(&shared))?;
         }
         Ok(())
     }

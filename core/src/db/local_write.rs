@@ -279,7 +279,6 @@ impl Db {
             Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
         })?;
         let operation = committed.operations.first().copied();
-        if let (Some(operation), true) = (operation, id.is_temp()) { crate::db::locked(&self.shared.creates).insert(format!("{model}\0{id}"), operation); }
         Ok((id, operation))
     }
 

@@ -192,3 +192,32 @@ async fn retry_all_sends_every_failed_and_unknown_record_again() {
     assert_eq!(report.committed(), 2);
     assert_eq!(rig.transport.call_count("UpdateMoment"), 4);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_change_of_the_network_waits_for_the_commit_of_a_start_that_passed_its_admission() {
+    use crate::commit::{CommitEnvelope, EntityOp, NetworkAdmission, WriteOrigin};
+    use crate::identity::ModelKey;
+    use crate::lifecycle::Authority;
+    let rig = rig();
+    let (inner, shared) = (rig.sync.inner.clone(), rig.db.shared.clone());
+    let store = &shared.store;
+    let (lost, account, connectivity) = (inner.network_lost.clone(), inner.account.clone(), inner.connectivity.clone());
+    let state = { let (lost, account, connectivity) = (lost.clone(), account.clone(), connectivity.clone()); move || (*super::super::locked(&lost), super::super::locked(&account).1, connectivity.is_online()) };
+    let expected = state();
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Response, rig.db.generation());
+    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m1"), row: moment("m1", "start").as_object().unwrap().clone() });
+    envelope.network = Some(NetworkAdmission::new(expected, std::sync::Arc::new(state), inner.network_line.clone()));
+    let waiting_before = *inner.network_line.waiting.0.lock().unwrap();
+    let changing = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let (sync, line, slot, online, handle) = (rig.sync.clone(), inner.network_line.clone(), changing.clone(), connectivity.clone(), tokio::runtime::Handle::current());
+    *store.after_network_check.lock().unwrap() = Some(Box::new(move || {
+        *slot.lock().unwrap() = Some(std::thread::spawn(move || { let _runtime = handle.enter(); sync.set_online(false) }));
+        crate::test_wait::spin_until("the change reached the network line", || *line.waiting.0.lock().unwrap() >= waiting_before + 2);
+        assert!(!slot.lock().unwrap().as_ref().unwrap().is_finished(), "the change of the network did not wait for the commit");
+        assert!(online.is_online(), "the network moved while the start held the line");
+    }));
+    let committed = store.commit_as(&Authority::Epoch(store.lifecycle.epoch_now()), envelope);
+    assert!(committed.is_ok(), "{:?}", committed.err());
+    crate::test_wait::join_within(changing.lock().unwrap().take().unwrap());
+    assert!(!connectivity.is_online());
+}

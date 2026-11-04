@@ -82,7 +82,7 @@ async fn invalidated_window_loads_again() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
-    rig.db.shared.store.invalidate_family("moments", "feed").unwrap();
+    rig.db.shared.store.invalidate_family_now("moments", "feed").unwrap();
     let again = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(again.status, LoadStatus::Loaded);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);

@@ -71,3 +71,28 @@ async fn a_wait_for_a_create_never_takes_the_operation_of_another_model_with_the
     let confirmed = crate::test_wait::within(rig.sync.confirmed("vibes", &temp)).await;
     assert_eq!(confirmed.unwrap().to_string(), "v1");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_create_with_an_id_of_the_caller_is_confirmed_with_that_id() {
+    let rig = rig();
+    let (row, operation) = rig.db.create_queued(None, "moments", params(json!({"id": "known-id", "text": "hello"})), params(json!({}))).unwrap();
+    rig.transport.enqueue("CreateMoment", temp_create_reply("known-id"));
+    let confirmed = crate::test_wait::within(rig.sync.confirmed_by("moments", &row.id, operation.unwrap())).await;
+    assert_eq!(confirmed.unwrap().to_string(), "known-id");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_create_restored_after_open_is_waited_for_by_its_own_operation() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("restored.sqlite");
+    let temp = {
+        let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig::default());
+        rig.db.create("moments", params(json!({"text": "hello"}))).unwrap().id.clone()
+    };
+    let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig::default());
+    let refusal = super::super::SendResult::Rejected(crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "update refusal"));
+    locked(&rig.sync.inner.outcomes).keep(9_999, "moments", "moments:update", vec![temp.clone()], &refusal);
+    rig.transport.enqueue("CreateMoment", temp_create_reply("m91"));
+    let confirmed = crate::test_wait::within(rig.sync.confirmed("moments", &temp)).await;
+    assert_eq!(confirmed.unwrap().to_string(), "m91");
+}

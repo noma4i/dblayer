@@ -62,8 +62,8 @@ pub(crate) fn spawn_blocking_on<R: Send + 'static>(carry: Carry, runtime: &Handl
 }
 
 #[allow(clippy::disallowed_methods)]
-pub(crate) fn spawn_thread(name: String, body: impl FnOnce() + Send + 'static) -> std::io::Result<std::thread::JoinHandle<()>> {
-    std::thread::Builder::new().name(name).spawn(body)
+pub(crate) fn spawn_thread(carry: Carry, name: String, body: impl FnOnce() + Send + 'static) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new().name(name).spawn(bind_once(carry, body))
 }
 
 fn bind_once<R>(carry: Carry, work: impl FnOnce() -> R) -> impl FnOnce() -> R {

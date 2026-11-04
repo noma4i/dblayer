@@ -140,6 +140,7 @@ task_support = ("sync/stress/", "test_wait.rs", "transport/mock.rs", "/fixtures.
 spawn_forms = [
     re.compile(r"(?<![\w:.])(?:tokio::(?:task::)?)?spawn(?:_blocking|_local)?\s*\("),
     re.compile(r"\.\s*(?:spawn|spawn_blocking|spawn_local|spawn_on|spawn_blocking_on)\s*\((?!\s*(?:crate::task::)?Carry\b|\s*carry\b|\s*stream\.carry\(\))"),
+    re.compile(r"(?<![\w])spawn_named\s*\((?!\s*(?:crate::task::)?Carry\b|\s*carry\b)"),
     re.compile(r"\bJoinSet\b|\bstd::thread::(?:Builder|spawn)\b|(?<![\w:])thread::(?:Builder|spawn)\b"),
 ]
 for path in files:
@@ -152,6 +153,43 @@ for path in files:
         for match in form.finditer(code):
             number = text.count("\n", 0, match.start()) + 1
             findings.append(f"Z19 a task boundary goes through crate::task, which carries the epoch: {path.relative_to(root)}:{number}: {match.group().strip()}")
+
+writer_files = ("store/write.rs", "store/apply.rs", "store/reset.rs", "store/boot.rs", "store/open.rs")
+write_verb = re.compile(r"\.connection\s*\.\s*(?:execute|execute_batch|unchecked_transaction|transaction)\b|\.connection\s*\.\s*prepare(?:_cached)?\([^;]*?\)\??\s*\.\s*execute\b")
+through_authority = re.compile(r"\bwrite_store\(|\bstore\s*\.\s*write\(|\bself\s*\.\s*write\(|\bcommit_as\(")
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative in writer_files:
+        continue
+    code = code_only(contents[path])
+    chunks = re.split(r"(?=\bfn\s+\w+)", code)
+    offset = 0
+    for chunk in chunks:
+        if write_verb.search(chunk) and not through_authority.search(chunk) and not any(marker in "/" + relative for marker in ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs")):
+            number = code.count("\n", 0, offset + write_verb.search(chunk).start()) + 1
+            findings.append(f"Z20 a SQL write goes through the Authority commit (Store::write or a commit envelope): {path.relative_to(root)}:{number}")
+        offset += len(chunk)
+
+for path in [root / "core" / "Cargo.toml", root / "gen" / "Cargo.toml"]:
+    if re.search(r"test-support", path.read_text()):
+        findings.append(f"Z22 a Cargo feature that changes who may write is not allowed, tests use a real session or an Epoch: {path.relative_to(root)}")
+for path in files:
+    for match in re.finditer(r'feature\s*=\s*"test-support"', contents[path]):
+        findings.append(f"Z22 a Cargo feature that changes who may write is not allowed: {path.relative_to(root)}:{contents[path].count(chr(10), 0, match.start()) + 1}")
+
+dedicated_threads = ("db/lock.rs", "db/reads.rs", "db/listeners.rs", "db/ephemeral.rs", "db/dispatch.rs")
+blocking_call = re.compile(r"\.(?:wait|wait_timeout|wait_while|wait_timeout_while|recv_timeout|blocking_recv)\(|\.recv\(\)(?!\s*\.await)|\bthread::sleep\(")
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative in dedicated_threads or any(marker in "/" + relative for marker in task_support):
+        continue
+    lines = code_only(contents[path]).splitlines()
+    for number, line in enumerate(lines, 1):
+        if not blocking_call.search(line) or ".await" in line or re.search(r"\)\s*=>", line):
+            continue
+        if any("blocking_unit" in near for near in lines[max(0, number - 6):number]) or any("cfg(test)" in near for near in lines[max(0, number - 14):number]):
+            continue
+        findings.append(f"Z21 a blocking wait runs inside blocking_unit, so it never parks a worker of the shared executor: {path.relative_to(root)}:{number}: {line.strip()}")
 
 test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")

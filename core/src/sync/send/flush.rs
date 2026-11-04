@@ -181,6 +181,7 @@ impl Inner {
 
     /// Marks every pending operation as belonging to the account that left when another identity takes the session. They are all committed before the session start: the commit line orders them.
     pub(crate) fn account_changed(&self, session: Option<&str>) {
+        let _line = self.network_line.enter();
         let newest = self.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
         let mut account = locked(&self.account);
         let leaving = account.0.is_some() && session.is_some() && account.0.as_deref() != session;
@@ -537,7 +538,7 @@ impl Inner {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
             if let Some(checked) = sending.checked {
                 let (lost, account, connectivity) = (self.network_lost.clone(), self.account.clone(), self.connectivity.clone());
-                envelope.network = Some(crate::commit::NetworkAdmission::new(checked, std::sync::Arc::new(move || (*locked(&lost), locked(&account).1, connectivity.is_online()))));
+                envelope.network = Some(crate::commit::NetworkAdmission::new(checked, std::sync::Arc::new(move || (*locked(&lost), locked(&account).1, connectivity.is_online())), self.network_line.clone()));
             }
             if let Some(batch) = batch {
                 let items = crate::operation::read_operation_uploads(reader.connection(), seq).map_err(StoreError::from)?;
@@ -761,7 +762,7 @@ impl Inner {
     }
 
     fn quarantine(&self, sending: &Sending<'_>, data: &Value) -> Result<SendResult, SyncError> {
-        self.on_connection(|connection| quarantine_add(connection, Some(&sending.model), data, QuarantineReason::ReplaceNormalizeRejected).map(|_| ()))?;
+        self.write_connection(|connection| quarantine_add(connection, Some(&sending.model), data, QuarantineReason::ReplaceNormalizeRejected).map(|_| ()))?;
         let failure = OperationFailure::new(FailureKind::Unrecognized, "the response could not be matched to the record");
         self.fail(sending, OperationStatus::DeliveryUnknown, failure, SendResult::Quarantined)
     }
@@ -824,10 +825,8 @@ impl Inner {
         })
     }
 
-    fn on_connection(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<()>) -> Result<(), SyncError> {
-        crate::blocking::blocking_unit(|| {
-            let inner = self.db.shared.store.lock();
-            run(&inner.connection).map_err(|error| SyncError::Store(error.to_string()))
-        })
+    fn write_connection(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<()>) -> Result<(), SyncError> {
+        let authority = self.db.authority()?;
+        self.db.shared.store.write(&authority, || SyncError::Store("the session ended while its answer was pending".into()), |inner| run(&inner.connection).map_err(|error| SyncError::Store(error.to_string())))
     }
 }

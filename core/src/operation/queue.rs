@@ -11,6 +11,19 @@ pub(crate) struct QueueOperation {
     pub uploading: bool,
 }
 
+impl QueueOperation {
+    pub(crate) fn created_keys(&self) -> Vec<String> {
+        let operation = &self.operation;
+        let Some((model, _)) = Operation::split_action_key(&operation.action_key) else { return Vec::new() };
+        let ids: Vec<&crate::identity::RowId> = match &operation.temp_id {
+            Some(temp) => vec![temp],
+            None if self.uploading && Operation::upload_action(&operation.action_key).is_some() => operation.row_ids.iter().filter(|id| id.is_temp()).collect(),
+            None => Vec::new(),
+        };
+        ids.into_iter().map(|id| format!("{model}\0{id}")).collect()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct OperationQueue {
     pub entries: BTreeMap<i64, QueueOperation>,

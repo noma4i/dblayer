@@ -66,7 +66,8 @@ impl Inner {
             };
             if !settled { continue; }
             let shared = self.db.shared.clone();
-            crate::task::spawn_blocking(crate::task::Carry::here(), move || shared.store.settle_upload_orphan(id)).await.map_err(|error| SyncError::Store(error.to_string()))??;
+            let authority = self.db.authority()?;
+            crate::task::spawn_blocking(crate::task::Carry::here(), move || shared.store.settle_upload_orphan(&authority, id)).await.map_err(|error| SyncError::Store(error.to_string()))??;
         }
         Ok(())
     }

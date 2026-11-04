@@ -53,8 +53,7 @@ pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: 
 }
 
 pub(crate) fn pending_matches(db: &crate::db::Db, seq: i64, position: i64, stage: &str) -> Result<bool, crate::store::StoreError> {
-    let stored = db.shared.store.lock();
-    Ok(super::state::pending(&stored.connection)?.is_some_and(|pending| {
+    Ok(db.shared.store.read_locked(super::state::pending)?.is_some_and(|pending| {
         pending.owner.is_some_and(|owner| owner.seq == seq && owner.stage == stage && (owner.item_position == position || owner.item_position == -1 && stage == "mutation"))
     }))
 }

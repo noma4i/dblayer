@@ -1,5 +1,8 @@
 mod entity_fetch;
 #[cfg(test)]
+pub(crate) type FailureProbe = Box<dyn Fn(bool) + Send>;
+
+#[cfg(test)]
 mod dsl_tests;
 mod error;
 mod extract;
@@ -156,6 +159,7 @@ pub(crate) struct Inner {
     pub(crate) account: Arc<Mutex<(Option<String>, i64)>>,
     /// The newest pending operation when the network was last lost: an action that is not a durable command and is not newer than it never goes out.
     pub(crate) network_lost: Arc<Mutex<i64>>,
+    pub(crate) network_line: crate::commit::NetworkLine,
     /// The operations that waited for a retry when the network came back. They do not wait for their backoff once: the first attempt after the return takes them out, and a second failure waits by the normal backoff.
     pub(crate) backoff_released: Mutex<std::collections::BTreeSet<i64>>,
     /// The row the answer of an operation carried at its root, by operation: the call that waits for the answer returns it.
@@ -171,6 +175,8 @@ pub(crate) struct Inner {
     pub outcomes: Mutex<send::Outcomes>,
     #[cfg(test)]
     pub(crate) landed_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
+    #[cfg(test)]
+    pub(crate) failure_probe: Mutex<Option<FailureProbe>>,
     #[cfg(test)]
     pub(crate) refused_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     #[cfg(test)]
@@ -298,6 +304,7 @@ impl Sync {
             reopened_through,
             account: Arc::new(Mutex::new((None, i64::MIN))),
             network_lost: Arc::new(Mutex::new(i64::MIN)),
+            network_line: crate::commit::NetworkLine::default(),
             backoff_released: Mutex::new(std::collections::BTreeSet::new()),
             answers: Mutex::new(send::Answers::default()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
@@ -311,6 +318,8 @@ impl Sync {
             outcomes: Mutex::new(send::Outcomes::default()),
             #[cfg(test)]
             landed_probe: Mutex::new(None),
+            #[cfg(test)]
+            failure_probe: Mutex::new(None),
             #[cfg(test)]
             refused_probe: Mutex::new(None),
             #[cfg(test)]

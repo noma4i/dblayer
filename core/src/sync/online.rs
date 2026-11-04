@@ -9,19 +9,25 @@ use super::{locked, Inner, Sync};
 
 impl Sync {
     pub fn set_online(&self, online: bool) {
-        let was_online = self.inner.connectivity.is_online();
-        self.inner.connectivity.set_online(online);
+        let was_online = {
+            let _line = self.inner.network_line.enter();
+            let was_online = self.inner.connectivity.set_state(online);
+            if !online {
+                let newest = self.inner.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
+                if let Some(newest) = newest {
+                    let mut lost = locked(&self.inner.network_lost);
+                    *lost = (*lost).max(newest);
+                }
+            }
+            was_online
+        };
+        self.inner.connectivity.publish(online, was_online);
         crate::db::lock::assert_no_library_lock("Transport::set_online");
         self.inner.transport.set_online(online);
         if !online {
             let wake = locked(&self.inner.wake).take();
             if let Some(wake) = wake { crate::db::lock::effect(|| wake.abort()); }
             self.inner.owner.submit(Event::Offline);
-            let newest = self.inner.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
-            if let Some(newest) = newest {
-                let mut lost = locked(&self.inner.network_lost);
-                *lost = (*lost).max(newest);
-            }
             self.inner.spawn_flush(Duration::ZERO);
         }
         if online && !was_online {

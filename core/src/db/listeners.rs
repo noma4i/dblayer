@@ -461,7 +461,7 @@ impl Executor {
         if self.refuse_spawn.load(Ordering::SeqCst) {
             return Err("refused by the test".into());
         }
-        super::threads::spawn_named("dblayer-listener", move || executor.work()).map_err(|error| match error {
+        super::threads::spawn_named(crate::task::Carry::Detached, "dblayer-listener", move || executor.work()).map_err(|error| match error {
             DbError::ThreadSpawn { detail, .. } => detail,
             other => other.to_string(),
         })

@@ -34,9 +34,8 @@ fn iso_millis(milliseconds: i64) -> Option<String> {
 
 impl Store {
     pub fn maintain(&self, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, StoreError> {
-        let (tombstone_drops, ids, generation) = {
-            let inner = self.lock();
-            inner.ensure_healthy()?;
+        let authority = crate::lifecycle::Authority::Epoch(self.lifecycle.epoch_now());
+        let (tombstone_drops, ids, generation) = self.write_store(&authority, |inner| {
             let now = inner.now_ms();
             let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT)?;
             let mut ids: Vec<(ModelKey, RowId)> = Vec::new();
@@ -60,8 +59,8 @@ impl Store {
                     }
                 }
             }
-            (tombstone_drops, ids, inner.generation)
-        };
+            Ok((tombstone_drops, ids, inner.generation))
+        })?;
         if ids.is_empty() {
             return Ok(MaintenanceReport { tombstone_drops, temp_rows_dropped: 0, commit: None });
         }
@@ -70,7 +69,7 @@ impl Store {
             .iter()
             .map(|(model, id)| EntityOp::Destroy { model: model.clone(), id: id.clone(), reason: DestroyReason::Expired })
             .collect();
-        let result = self.commit_as(&crate::lifecycle::Authority::Epoch(self.lifecycle.epoch_now()), envelope)?;
+        let result = self.commit_as(&authority, envelope)?;
         Ok(MaintenanceReport { tombstone_drops, temp_rows_dropped: ids.len(), commit: Some(result) })
     }
 }

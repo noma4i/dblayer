@@ -10,12 +10,12 @@ pub(crate) fn refuse_spawn_here(name: &'static str) {
     REFUSED.with(|refused| *refused.borrow_mut() = Some(name));
 }
 
-pub(crate) fn spawn_named(name: &'static str, body: impl FnOnce() + Send + 'static) -> Result<(), DbError> {
+pub(crate) fn spawn_named(carry: crate::task::Carry, name: &'static str, body: impl FnOnce() + Send + 'static) -> Result<(), DbError> {
     #[cfg(test)]
     if REFUSED.with(|refused| *refused.borrow() == Some(name)) {
         return Err(DbError::ThreadSpawn { name, detail: "refused by the test".into() });
     }
-    crate::task::spawn_thread(name.to_string(), body)
+    crate::task::spawn_thread(carry, name.to_string(), body)
         .map(drop)
         .map_err(|error| DbError::ThreadSpawn { name, detail: error.to_string() })
 }

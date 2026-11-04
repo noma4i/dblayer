@@ -150,7 +150,13 @@ impl Store {
             let hook = self.after_epoch_check.lock().unwrap_or_else(|error| error.into_inner()).take();
             if let Some(hook) = hook { hook(); }
         }
+        let _network = envelope.network.as_ref().map(|network| network.enter());
         if envelope.network.as_ref().is_some_and(|network| !network.holds()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::NetworkMoved)); }
+        #[cfg(test)]
+        if envelope.network.is_some() {
+            let hook = self.after_network_check.lock().unwrap_or_else(|error| error.into_inner()).take();
+            if let Some(hook) = hook { hook(); }
+        }
         attempt(inner, envelope, now_ms)
     }
 

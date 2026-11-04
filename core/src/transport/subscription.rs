@@ -49,6 +49,10 @@ pub struct SubscriptionClose {
 }
 
 impl SubscriptionFailure {
+    pub fn is_terminal(&self) -> bool {
+        self.kind != SubscriptionFailureKind::Transport || matches!(self.error, super::TransportError::Session { .. })
+    }
+
     pub fn session_refused(&self) -> bool {
         matches!(self.error, super::TransportError::Session { .. }) || self.close.as_ref().is_some_and(|close| close.terminal)
     }

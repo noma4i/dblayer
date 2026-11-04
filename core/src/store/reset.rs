@@ -276,7 +276,7 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
 
 impl Store {
     /// Records that a session end began, before anything is cleared. A crash before the clearing ends is replayed at the next open: the data is wiped and the credential cleared.
-    pub(crate) fn write_session_end_intent(&self) -> Result<(), StoreError> {
+    pub(crate) fn write_session_end_intent(&self, _permit: &Permit) -> Result<(), StoreError> {
         let inner = self.lock();
         let now = inner.now_ms();
         write_intent(&inner.connection, "session_end", &[], now)

@@ -45,7 +45,7 @@ pub(crate) struct Internal(());
 impl Internal {
     pub(in crate::lifecycle) fn new() -> Self { Self(()) }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     pub(crate) fn for_tests() -> Self { Self(()) }
 }
 
@@ -64,8 +64,14 @@ impl From<Internal> for Authority {
     fn from(token: Internal) -> Self { Self::Internal(token) }
 }
 
+#[cfg(test)]
+#[path = "authority_tests.rs"]
+mod authority_tests;
+
 impl Lifecycle {
-    pub(crate) fn opening(&self) -> Internal { Internal::new() }
+    pub(crate) fn opening(&self) -> Option<Internal> {
+        (!self.opening_issued.swap(true, std::sync::atomic::Ordering::SeqCst)).then(Internal::new)
+    }
 
     pub(crate) fn epoch_now(self: &Arc<Self>) -> Epoch { Epoch::new(self, self.snapshot().session_epoch) }
 }
