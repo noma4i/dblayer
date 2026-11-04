@@ -11,6 +11,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -86,6 +87,16 @@ class ProjectedLoadedTest {
             assertEquals("applied after $value", applied, result.applied)
             assertEquals("shown after $value", shown[index], projection.shownSeq)
         }
+    }
+
+    /** Requirement: a first delivery that carries a failed load is shown, so `loaded()` ends and the error is visible; no recovery snapshot is asked. */
+    @Test
+    fun aFirstStateWithAFailedLoadIsShownAndAsksNoResync() {
+        val failed = StreamState(LivePhase.FAILED, false, false, false, false, true, null, null, DbException.Invalid("read"), null)
+        val result = ListProjection<Moment>().apply(StreamDelivery(1uL, 1uL, 1uL, StreamValue.State(failed)), Moment)
+        assertEquals(Applied.Changed, result.applied)
+        assertEquals(1uL, result.projection.shownSeq)
+        assertNotNull(result.projection.state?.error)
     }
 
     /** Requirement: `loaded()` throws `Interrupted` when the reader ends before the projection showed the rows of the loaded revision. The reader cannot run until the stream is closed. */

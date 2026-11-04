@@ -138,7 +138,7 @@ class ListProjection<Model : DBModel> private constructor(
                 val whole = decode(value.rows).filterNotNull()
                 Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false, shownSeq = delivery.seq, lastSeq = delivery.seq), Applied.Changed)
             }
-            is StreamValue.State -> if (jumped || (revision == null && !awaitingSnapshot)) Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync) else Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), shownSeq = if (awaitingSnapshot) shownSeq else delivery.seq, lastSeq = delivery.seq), Applied.Changed)
+            is StreamValue.State -> if (jumped || (revision == null && !awaitingSnapshot && value.state.error == null)) Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync) else Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), shownSeq = if (awaitingSnapshot) shownSeq else delivery.seq, lastSeq = delivery.seq), Applied.Changed)
             is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList(), lastSeq = delivery.seq), Applied.Changed)
             is StreamValue.Delta -> {
                 if (awaitingSnapshot) return Step(copy(epoch = held, lastSeq = delivery.seq), if (jumped) Applied.Resync else Applied.Ignored)

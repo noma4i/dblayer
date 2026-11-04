@@ -66,6 +66,17 @@ extension BridgeProbeTests {
     }
   }
 
+  /// Requirement: a first delivery that carries a failed load is shown, so `loaded()` ends and the error is visible; no recovery snapshot is asked.
+  @Test
+  func aFirstStateWithAFailedLoadIsShownAndAsksNoResync() {
+    let failed = StreamState(phase: .failed, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: DbError.Invalid(detail: "read"), errorKind: nil)
+    var projection = ListProjection<Moment>()
+    let applied = projection.apply(StreamDelivery(stream: 1, epoch: 1, seq: 1, value: .state(state: failed)))
+    #expect(applied == .changed)
+    #expect(projection.shownSeq == 1)
+    #expect(projection.state?.error != nil)
+  }
+
   /// Requirement: `loaded()` returns normally only when the projection shows the rows of the loaded revision, and throws when the reading ends first.
   @MainActor
   @Test(.timeLimit(.minutes(1)))

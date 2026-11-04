@@ -136,7 +136,7 @@ public struct ListProjection<Model: DBModel>: Sendable {
     case let .state(state):
       self.state = state
       lastEdits = []
-      if jumped || (revision == nil && !awaitingSnapshot) { return gap() }
+      if jumped || (revision == nil && !awaitingSnapshot && state.error == nil) { return gap() }
       if !awaitingSnapshot { shownSeq = delivery.seq }
       return .changed
     case let .ended(reason):
