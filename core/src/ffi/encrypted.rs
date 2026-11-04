@@ -88,6 +88,8 @@ pub(super) async fn resume(client: Arc<EncryptedClient>, sync: Option<crate::syn
             sync.inner.settle_resumed(serial, upload, owner, result).await?;
         }
     }
+    drop(serial);
+    if let Some(sync) = &sync { sync.inner.reload_marked().await?; }
     answer.map(refused).transpose().map(|answer| answer.map(|answer| answer.body.to_string()))
 }
 

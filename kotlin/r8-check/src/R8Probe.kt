@@ -18,17 +18,18 @@ fun main() = runBlocking {
                 }
             }
         }
-        val created = db.create("Item", """{"title":"kept"}""", "{}")
+        val epoch = db.sessionEpoch()
+        val created = db.create(epoch, "Item", """{"title":"kept"}""", "{}")
         check(created.id.isNotEmpty())
         check(created.sync.state == WireSyncState.SYNCED)
         check(created.cells.contains(Cell.Text("kept")))
-        val stream = db.subscribe(db.sessionEpoch(), StreamRequest.Query("""{"model":"Item"}"""), sink)
+        val stream = db.subscribe(epoch, StreamRequest.Query("""{"model":"Item"}"""), sink)
         check(delivered.await(5, TimeUnit.SECONDS)) { "JNA callback was not delivered" }
         check((received.get().value as StreamValue.Snapshot).rows.single().cells == created.cells)
-        check(db.peekRow("Item", created.id)?.cells == created.cells)
+        check(db.peekRow(epoch, "Item", created.id)?.cells == created.cells)
         db.cancelStream(stream)
         try {
-            db.read("Missing", "x", "title")
+            db.read(epoch, "Missing", "x", "title")
             error("Missing model must fail")
         } catch (_: DbException) {
         }

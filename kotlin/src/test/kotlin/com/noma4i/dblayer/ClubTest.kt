@@ -90,6 +90,18 @@ class ClubTest {
         }
     }
 
+    /** A member whose row is not cached is skipped by the optimistic join: the call ends with the answer and the lists keep their ids. */
+    @Test
+    fun addingAMemberWhoseRowIsNotCachedEndsWithTheAnswer() = bounded {
+        val transport = MockTransport()
+        val (created, joined, owners) = openClubWithMembers(transport)
+        transport.enqueue("AddClubMember", clubAnswer("addClubMember"))
+        created.addMember(userIds = listOf("u9"))
+        assertEquals(1, transport.calls.count { it.operationName == "AddClubMember" })
+        assertEquals(listOf("u1", "u2", "u3", "u4"), joined.read().map { it.id })
+        assertEquals(listOf("u2", "u1", "u3", "u4"), owners.read().map { it.id })
+    }
+
     /** K13 (B6, C05): leave removes the club from its list before the answer. The answer keeps it away, a refusal puts it back. */
     @Test
     fun leaveRemovesTheClubFromItsListBeforeTheAnswerAndARefusalRestoresIt() = bounded {

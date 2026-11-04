@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
 
 use super::super::error::SyncError;
-use super::super::Inner;
+use super::super::{locked, Inner};
+use std::sync::Arc;
 
 impl Inner {
-    pub(crate) async fn invalidate_after(&self, model: &str, action: &str) -> Result<(), SyncError> {
+    pub(crate) fn invalidate_after(&self, model: &str, action: &str) -> Result<(), SyncError> {
         let spec = self.db.spec(model)?;
         let mut names: BTreeSet<String> = spec
             .actions
@@ -20,33 +21,45 @@ impl Inner {
         for name in &foreign {
             names.remove(name);
         }
-        let mut errors = Vec::new();
         for (target, relation) in foreign.iter().filter_map(|name| name.split_once('.')) {
-            if let Err(error) = self.mark_and_reload(target, &BTreeSet::from([relation.to_string()])).await { errors.push(error.to_string()); }
+            self.mark_stale(target, BTreeSet::from([relation.to_string()]))?;
         }
-        if let Err(error) = self.mark_and_reload(model, &names).await { errors.push(error.to_string()); }
+        self.mark_stale(model, names)
+    }
+
+    fn mark_stale(&self, model: &str, names: BTreeSet<String>) -> Result<(), SyncError> {
+        for name in &names {
+            self.db.shared.store.invalidate_family(&self.db.authority()?, model, name)?;
+        }
+        locked(&self.pending_reloads).push((model.to_string(), names));
+        Ok(())
+    }
+
+    pub(crate) async fn reload_marked(self: &Arc<Self>) -> Result<(), SyncError> {
+        let marked = std::mem::take(&mut *locked(&self.pending_reloads));
+        let mut errors = Vec::new();
+        for (model, names) in marked {
+            if let Err(error) = self.reload_stale(&model, &names).await { errors.push(error.to_string()); }
+        }
         if errors.is_empty() { Ok(()) } else { Err(SyncError::Event(errors.join("\n"))) }
     }
 
-    pub(crate) async fn reload_lists_of_absent_parent(&self, model: &str) -> Result<(), SyncError> {
+    pub(crate) async fn reload_lists_of_absent_parent(self: &Arc<Self>, model: &str) -> Result<(), SyncError> {
         self.invalidate_model(model).await
     }
 
-    pub(crate) async fn reload_lists_after_refused_destroy(&self, model: &str) -> Result<(), SyncError> {
-        self.invalidate_model(model).await
+    pub(crate) fn mark_lists_after_refused_destroy(&self, model: &str) -> Result<(), SyncError> {
+        self.mark_model_stale(model)
     }
 
-    async fn invalidate_model(&self, model: &str) -> Result<(), SyncError> {
+    async fn invalidate_model(self: &Arc<Self>, model: &str) -> Result<(), SyncError> {
+        self.mark_model_stale(model)?;
+        self.reload_marked().await
+    }
+
+    fn mark_model_stale(&self, model: &str) -> Result<(), SyncError> {
         let spec = self.db.spec(model)?;
-        let names = spec.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
-        self.mark_and_reload(model, &names).await
-    }
-
-    async fn mark_and_reload(&self, model: &str, names: &BTreeSet<String>) -> Result<(), SyncError> {
-        for name in names {
-            self.db.shared.store.invalidate_family(&self.db.authority()?, model, name)?;
-        }
-        self.reload_watched(model, Some(names), true).await?;
-        Ok(())
+        let names: BTreeSet<String> = spec.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
+        self.mark_stale(model, names)
     }
 }

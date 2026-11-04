@@ -216,6 +216,11 @@ impl Inner {
         }
     }
 
+    pub(super) fn flights_pending(&self, resolved: &Resolved<'_>) -> bool {
+        let paged = format!("{}|", resolved.window_key);
+        locked(&self.flights).waiting.keys().any(|key| *key == resolved.window_key || key.starts_with(&paged))
+    }
+
     pub(crate) async fn fetch_after_flights(&self, resolved: &Resolved<'_>) -> FlightResult {
         self.flights_settled(resolved).await;
         self.fetch(resolved, None, true).await

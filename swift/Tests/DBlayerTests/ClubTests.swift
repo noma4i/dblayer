@@ -95,6 +95,19 @@ extension BridgeProbeTests {
     await eventually("the lists after the outcome") { ((try? await lists()) ?? []) == after }
   }
 
+  /// A member whose row is not cached is skipped by the optimistic join: the call ends with the answer and the lists keep their ids.
+  @MainActor
+  @Test(.timeLimit(.minutes(2)))
+  func addingAMemberWhoseRowIsNotCachedEndsWithTheAnswer() async throws {
+    let transport = MockTransport()
+    let (club, joined, owners) = try await Self.openClubWithMembers(transport)
+    transport.enqueue("AddClubMember", reply: clubAnswer("addClubMember"))
+    _ = try await club.addMember(userIds: ["u9"])
+    #expect(transport.calls.filter { $0.operationName == "AddClubMember" }.count == 1)
+    #expect(try await joined.read().map(\.id) == ["u1", "u2", "u3", "u4"])
+    #expect(try await owners.read().map(\.id) == ["u2", "u1", "u3", "u4"])
+  }
+
   /// K13 (B6, C05): leave removes the club from its list before the answer. The answer keeps it away, a refusal puts it back.
   @MainActor
   @Test(.timeLimit(.minutes(2)), arguments: [false, true])

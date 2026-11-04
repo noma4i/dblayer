@@ -478,7 +478,7 @@ impl Db {
         for (scope, key) in lists {
             for id in &ids {
                 if reader.point(&effect.model, id)?.is_none() {
-                    return Err(DbError::NotFound { model: effect.model.clone(), id: id.clone() });
+                    continue;
                 }
                 if let Some(held) = reader.scope_member_key(&effect.model, &key, id)? {
                     rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(held) });

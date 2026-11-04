@@ -517,7 +517,7 @@ async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitt
     rig.database.close_now();
 }
 
-fn group(name: &str) -> (String, String) { (json!({"name": name}).to_string(), "{}".into()) }
+pub(super) fn group(name: &str) -> (String, String) { (json!({"name": name}).to_string(), "{}".into()) }
 
 /// K01 (B1, J02): a send that passed its epoch check and waits before its SQL commit lands before the next sign-in changes the epoch, and its announcement is held until the session start finished: the operation of the account that left is in the cutoff and never goes out for the account that came.
 #[tokio::test(flavor = "multi_thread")]
@@ -818,7 +818,7 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
 
 fn groups() -> StreamRequest { StreamRequest::Query { query_json: r#"{"model":"Group","relation":"all","params":{}}"#.into() } }
 
-fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
+pub(super) fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
     let spec = rig.database.db.spec("Member").unwrap();
     let params = json!({"groupId": group, "order": order}).as_object().unwrap().clone();
     let key = spec.selection_key("group_members", &params).unwrap();
@@ -826,7 +826,7 @@ fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
 }
 
 /// The members u1 u2 u3 of the group in both lists (JOINED: u1 u2 u3, OWNER_FIRST: u2 u1 u3) and the row u4 that is in neither list.
-fn seed_members(rig: &Rig, group: &str) {
+pub(super) fn seed_members(rig: &Rig, group: &str) {
     use crate::commit::{CommitEnvelope, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
     use crate::identity::{ModelKey, RowId};
     let db = &rig.database.db;
@@ -851,7 +851,7 @@ fn seed_members(rig: &Rig, group: &str) {
 
 fn ids_of(rows: Vec<WireRow>) -> Vec<String> { rows.into_iter().map(|row| row.id).collect() }
 
-fn strings(ids: &[&str]) -> Vec<String> { ids.iter().map(|id| id.to_string()).collect() }
+pub(super) fn strings(ids: &[&str]) -> Vec<String> { ids.iter().map(|id| id.to_string()).collect() }
 
 /// K13 (B6, C05; old lines: no rule for these actions): add member and remove member change both member lists (JOINED and OWNER_FIRST) at once, before the server answers. The answer keeps the change, a refusal restores the ids and the order of both lists.
 #[tokio::test(flavor = "multi_thread")]

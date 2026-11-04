@@ -141,10 +141,10 @@ impl Inner {
     }
 
     /// Boxed here once: the future of a pass is large in a debug build and must not sit inside the future of every caller.
-    pub(crate) fn flush(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FlushReport, SyncError>> + Send + '_>> {
+    pub(crate) fn flush(self: &std::sync::Arc<Self>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FlushReport, SyncError>> + Send + '_>> {
         Box::pin(async move {
             let Ok(lease) = self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Session, "flush") else { return Ok(FlushReport::default()) };
-            lease.run(self.flush_pass()).await.unwrap_or_else(|_| Ok(FlushReport::default()))
+            lease.run(async { let pass = self.flush_pass().await; let reread = self.reload_marked().await; pass.and_then(|report| reread.map(|()| report)) }).await.unwrap_or_else(|_| Ok(FlushReport::default()))
         })
     }
 
@@ -515,7 +515,7 @@ impl Inner {
         if keep || sending.action == "destroy" {
             let result = self.fail(sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure))?;
             if sending.action == "destroy" && result != SendResult::Discarded {
-                self.reload_lists_after_refused_destroy(&sending.model).await?;
+                self.mark_lists_after_refused_destroy(&sending.model)?;
             }
             return Ok(result);
         }
@@ -714,7 +714,7 @@ impl Inner {
         if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
         self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;
         self.discard_files(blob_files).await?;
-        self.invalidate_after(&sending.model, &sending.action).await?;
+        self.invalidate_after(&sending.model, &sending.action)?;
         Ok(SendResult::Committed)
     }
 

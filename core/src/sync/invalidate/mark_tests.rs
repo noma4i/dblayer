@@ -189,6 +189,7 @@ async fn reload_after_a_commit_is_issued_after_the_load_that_was_in_flight_at_th
     };
     let (older, ()) = tokio::join!(older, commit);
     older.unwrap();
+    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 3);
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m9", "m1"]);
 }
@@ -204,4 +205,40 @@ async fn a_confirmed_create_does_not_reload_a_watched_list_that_takes_events() {
     rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": message("m9", Some(2), 9)})));
     crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert_eq!(rig.transport.call_count("MessagesThread"), 1);
+}
+
+/// A call that waits for its own answer does not wait for a load of the refetched list that was already in flight, and the next mutation is sent meanwhile.
+#[tokio::test(start_paused = true)]
+async fn a_mutation_does_not_wait_for_a_load_of_its_refetched_list_that_is_in_flight() {
+    let rig = rig();
+    let _watch = rig.sync.watch("moments", "history", &none()).unwrap();
+    put(&rig, "moments", moment("m1", "t"));
+    let history_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = history_calls.clone();
+    rig.transport.respond_with(move |request| {
+        if request.operation_name != "MomentsHistory" {
+            return None;
+        }
+        Some(match counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            1 => history_reply(&["m1"]).after(std::time::Duration::from_secs(3600)),
+            _ => history_reply(&["m1"]),
+        })
+    });
+    load(&rig, "history").await;
+    let no_params = none();
+    let held = rig.sync.refresh("moments", "history", &no_params);
+    let liking = async {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let liked = rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
+        rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
+        let first = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation("moments", liked.operation))).await;
+        let liked_again = rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        let second = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation("moments", liked_again.operation))).await;
+        (first.is_ok(), second.is_ok())
+    };
+    let (held, (first, second)) = tokio::join!(held, liking);
+    held.unwrap();
+    assert!(first, "the answer of the first mutation waited for the load that was in flight");
+    assert!(second, "the second mutation waited behind the refetch of the first");
 }
