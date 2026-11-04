@@ -400,19 +400,35 @@ impl Dispatch {
 }
 
 impl Db {
-    /// Returns when the owner has handled every commit up to `revision`, every group has read it and every subscriber has taken the result. It reads the mark that the bridge reads as `rows_at`.
+    /// The work generation when no commit, read or listener call is queued or running, every group has read the last commit and every subscriber has taken it.
     #[cfg(any(test, feature = "stress"))]
-    pub(crate) fn delivered(&self) -> bool {
+    pub(crate) fn quiet_mark(&self) -> Option<u64> {
+        let seen = self.shared.dispatch.progress.generation();
+        self.quiet().then_some(seen)
+    }
+
+    #[cfg(any(test, feature = "stress"))]
+    pub(crate) fn await_quiet(&self) {
+        if on_core_thread() {
+            return;
+        }
+        loop {
+            let seen = self.shared.dispatch.progress.generation();
+            if self.quiet() {
+                return;
+            }
+            self.shared.dispatch.progress.wait_after(seen);
+        }
+    }
+
+    #[cfg(any(test, feature = "stress"))]
+    fn quiet(&self) -> bool {
         if self.shared.store.lifecycle.snapshot().closed { return true; }
         let revision = self.revision_seq().unwrap_or(0);
-        self.shared.dispatch.quiet_through(revision) && self.shared.reached_through(revision)
+        self.shared.threads.idle() && self.shared.dispatch.quiet_through(revision) && self.shared.reached_through(revision)
     }
 
-    #[cfg(any(test, feature = "stress"))]
-    pub(crate) fn await_delivered(&self) {
-        self.await_revision(self.revision_seq().unwrap_or(0));
-    }
-
+    /// Returns when the owner has handled every commit up to `revision`, every group has read it and every subscriber has taken the result. It reads the mark that the bridge reads as `rows_at`.
     pub fn await_revision(&self, revision: i64) {
         if on_core_thread() {
             return;

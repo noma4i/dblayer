@@ -238,7 +238,8 @@ impl Db {
         let specs = models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect();
         let cache = Arc::new(Mutex::new(RowCache::new(config.cache_rows)));
         let dispatch = Arc::new(Dispatch::new());
-        let reads = ReadPool::new(dispatch.clone());
+        let threads = super::threads::LiveThreads::new(dispatch.progress.clone());
+        let reads = ReadPool::new(dispatch.clone(), threads.clone());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
         let outcomes = Arc::new(Mutex::new(crate::sync::Outcomes::default()));
@@ -262,9 +263,9 @@ impl Db {
             #[cfg(test)]
             row_build_hook: Mutex::new(None),
             counters: Arc::new(Mutex::new(Counters::default())),
-            executor: Executor::new(dispatch.progress.clone()),
+            executor: Executor::new(threads.clone()),
             reads: reads.clone(),
-            threads: Arc::default(),
+            threads,
             dispatch: dispatch.clone(),
             outbox_changes,
             operation_queues,

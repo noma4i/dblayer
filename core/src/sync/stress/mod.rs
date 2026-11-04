@@ -226,7 +226,7 @@ async fn worker_loop(id: usize, config: StressConfig, world: Arc<World>, progres
 }
 
 async fn tick(world: Arc<World>) {
-    world.rig.clock.drive(|| world.rig.db.delivered(), || world.rig.db.await_delivered()).await;
+    world.rig.clock.drive(|| world.rig.db.quiet_mark(), || world.rig.db.await_quiet()).await;
 }
 
 async fn settle_uploads(sync: &Sync) {

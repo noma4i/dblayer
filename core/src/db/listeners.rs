@@ -10,7 +10,8 @@ use crate::pacing::Counters;
 use super::open::locked;
 use super::DbError;
 use super::diff::Diff;
-use super::dispatch::{mark_core_thread, Progress};
+use super::dispatch::mark_core_thread;
+use super::threads::{Busy, LiveThreads};
 use super::watch::{changed_rows, Body, Change, CountChange, Loaded, Related, RowsBody, Step, Version};
 
 const MAX_WORKERS: usize = 64;
@@ -409,7 +410,7 @@ fn whole_rows(body: &RowsBody, loaded: &mut Loaded) -> (Vec<Row>, Related) {
 
 #[derive(Default)]
 struct Queue {
-    ready: VecDeque<Arc<dyn Runnable>>,
+    ready: VecDeque<(Arc<dyn Runnable>, Busy)>,
     idle: usize,
     workers: usize,
     closed: bool,
@@ -418,17 +419,17 @@ struct Queue {
 pub(crate) struct Executor {
     queue: Mutex<Queue>,
     wake: Condvar,
-    progress: Arc<Progress>,
+    threads: Arc<LiveThreads>,
     #[cfg(test)]
     pub(crate) refuse_spawn: std::sync::atomic::AtomicBool,
 }
 
 impl Executor {
-    pub(crate) fn new(progress: Arc<Progress>) -> Arc<Self> {
+    pub(crate) fn new(threads: Arc<LiveThreads>) -> Arc<Self> {
         Arc::new(Self {
             queue: Mutex::new(Queue::default()),
             wake: Condvar::new(),
-            progress,
+            threads,
             #[cfg(test)]
             refuse_spawn: std::sync::atomic::AtomicBool::new(false),
         })
@@ -436,7 +437,7 @@ impl Executor {
 
     pub(crate) fn schedule(self: &Arc<Self>, subscriber: Arc<dyn Runnable>) {
         let mut queue = held(&self.queue);
-        queue.ready.push_back(subscriber);
+        queue.ready.push_back((subscriber, self.threads.busy()));
         if queue.ready.len() <= queue.idle || queue.workers >= MAX_WORKERS {
             self.wake.notify_one(); // lock-ok: condvar schedules an OS thread
             return;
@@ -450,9 +451,9 @@ impl Executor {
         }
         let stranded = queue.ready.pop_back();
         drop(queue);
-        if let Some(subscriber) = stranded {
+        if let Some((subscriber, busy)) = stranded {
             subscriber.stranded(detail);
-            self.progress.advance();
+            drop(busy);
         }
     }
 
@@ -484,9 +485,9 @@ impl Executor {
                     queue.idle -= 1;
                 }
             };
-            let Some(subscriber) = next else { return };
+            let Some((subscriber, busy)) = next else { return };
             subscriber.run();
-            self.progress.advance();
+            drop(busy);
         }
     }
 

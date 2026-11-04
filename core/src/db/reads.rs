@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::dispatch::{mark_core_thread, Dispatch};
 use super::error::DbError;
 use super::open::Shared;
+use super::threads::{Busy, LiveThreads};
 use super::watch::{Evaluated, Loaded, Version};
 
 type ReadRun = Box<dyn FnOnce(&Shared) -> Result<ReadRows, DbError> + Send>;
@@ -44,11 +45,14 @@ pub(crate) struct ReadJob {
     pub run: ReadRun,
 }
 
-pub(crate) struct ReadPermit(Arc<AtomicUsize>);
+pub(crate) struct ReadPermit {
+    outstanding: Arc<AtomicUsize>,
+    _busy: Busy,
+}
 
 impl Drop for ReadPermit {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        self.outstanding.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -67,6 +71,7 @@ pub(crate) struct ReadPool {
     queue: Mutex<Queue>,
     wake: Condvar,
     dispatch: Arc<Dispatch>,
+    threads: Arc<LiveThreads>,
     outstanding: Arc<AtomicUsize>,
     #[cfg(test)]
     pub(crate) inline: std::sync::atomic::AtomicBool,
@@ -77,18 +82,19 @@ fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl ReadPool {
-    pub(crate) fn new(dispatch: Arc<Dispatch>) -> Arc<Self> {
+    pub(crate) fn new(dispatch: Arc<Dispatch>, threads: Arc<LiveThreads>) -> Arc<Self> {
         Arc::new(Self {
             queue: Mutex::new(Queue::default()),
             wake: Condvar::new(),
             dispatch,
+            threads,
             outstanding: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
             inline: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
-    pub(crate) fn start(threads: &Arc<super::threads::LiveThreads>, pool: &Arc<ReadPool>, shared: std::sync::Weak<Shared>) -> Result<(), DbError> {
+    pub(crate) fn start(threads: &Arc<LiveThreads>, pool: &Arc<ReadPool>, shared: std::sync::Weak<Shared>) -> Result<(), DbError> {
         for _ in 0..READERS {
             let (pool, shared) = (pool.clone(), shared.clone());
             threads.start(crate::task::Carry::Detached, "dblayer-read", move || pool.work(&shared))?;
@@ -104,7 +110,7 @@ impl ReadPool {
         if self.outstanding.try_update(Ordering::AcqRel, Ordering::Acquire, |count| (count < READERS).then_some(count + 1)).is_err() {
             return false;
         }
-        let permit = ReadPermit(self.outstanding.clone());
+        let permit = ReadPermit { outstanding: self.outstanding.clone(), _busy: self.threads.busy() };
         #[cfg(test)]
         if self.inline.load(std::sync::atomic::Ordering::SeqCst) {
             let result = Self::run(shared, job);
@@ -142,9 +148,8 @@ impl ReadPool {
                 }
             };
             let Some((job, permit)) = job else { return };
-            match shared.upgrade() {
-                Some(shared) => self.dispatch.push_read(CompletedRead { result: Self::run(&shared, job), permit }),
-                None => self.dispatch.progress.advance(),
+            if let Some(shared) = shared.upgrade() {
+                self.dispatch.push_read(CompletedRead { result: Self::run(&shared, job), permit });
             }
         }
     }
