@@ -38,23 +38,26 @@ def fixture(base, touch=None, manifest=True):
         (repo / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
     (repo / "scripts/check_sequences.sh").write_text("""#!/bin/sh
 echo "check_sequences $*" >> "$TEST_EVENTS"
+S="${STUB_SHA:-$RELEASE_SOURCE_SHA}"; R="${STUB_RUN:-$RELEASE_RUN_ID}"
 case "${STUB_REPORT:-green}" in
   missing-file) ;;
-  missing-lane) printf 'core\\t3\\t3\\t0\\tlog\\nswift\\t2\\t2\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
-  partial) printf 'core\\t3\\t3\\t0\\tlog\\nswift\\t2\\t1\\t0\\tlog\\nkotlin\\t2\\t2\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
-  zero) printf 'core\\t3\\t3\\t0\\tlog\\nswift\\t2\\t2\\t0\\tlog\\nkotlin\\t0\\t0\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
-  rc) printf 'core\\t3\\t3\\t1\\tlog\\nswift\\t2\\t2\\t0\\tlog\\nkotlin\\t2\\t2\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
-  *) printf 'core\\t3\\t3\\t0\\tlog\\nswift\\t2\\t2\\t0\\tlog\\nkotlin\\t2\\t2\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
+  missing-lane) printf 'core\\t3\\t3\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nswift\\t2\\t2\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/sequences.tsv" ;;
+  partial) printf 'core\\t3\\t3\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nswift\\t2\\t1\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nkotlin\\t2\\t2\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/sequences.tsv" ;;
+  zero) printf 'core\\t3\\t3\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nswift\\t2\\t2\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nkotlin\\t0\\t0\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/sequences.tsv" ;;
+  rc) printf 'core\\t3\\t3\\t1\\tlog\\t'"$S"'\\t'"$R"'\\nswift\\t2\\t2\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nkotlin\\t2\\t2\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/sequences.tsv" ;;
+  *) printf 'core\\t3\\t3\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nswift\\t2\\t2\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nkotlin\\t2\\t2\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/sequences.tsv" ;;
 esac
 [ "${STUB_SEQUENCES:-green}" = green ] || { echo "sequences: lane core red" >&2; exit 1; }
 """)
     (repo / "scripts/check_consumers.sh").write_text("""#!/bin/sh
 echo "check_consumers $*" >> "$TEST_EVENTS"
+S="${STUB_SHA:-$RELEASE_SOURCE_SHA}"; R="${STUB_RUN:-$RELEASE_RUN_ID}"
+[ -z "${STUB_MOVE_HEAD:-}" ] || git commit -q --allow-empty -m "Moved during the run"
 case "${STUB_CONSUMER_REPORT:-green}" in
   missing-file) ;;
-  missing-lane) printf 'ios\\t0\\tlog\\n' > "$1/consumers.tsv" ;;
-  rc) printf 'ios\\t0\\tlog\\nandroid\\t1\\tlog\\n' > "$1/consumers.tsv" ;;
-  *) printf 'ios\\t0\\tlog\\nandroid\\t0\\tlog\\n' > "$1/consumers.tsv" ;;
+  missing-lane) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
+  rc) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nandroid\\t1\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
+  *) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nandroid\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
 esac
 [ "${STUB_CONSUMERS:-green}" = green ] || { echo "consumers: lane ios red" >&2; exit 1; }
 """)
@@ -275,6 +278,16 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
             assert_no_release(bad, bad_env, base / f"report-{kind}-{mode}/events")
             assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
             print(f"ok {kind} report {mode} refuses the tag")
+    for mode, variables, text in (
+        ("another-sha", {"STUB_SHA": "0" * 40}, "lane reports are missing or incomplete"),
+        ("another-run", {"STUB_RUN": "another-run"}, "lane reports are missing or incomplete"),
+        ("head-moved", {"STUB_MOVE_HEAD": "1"}, "source commit changed during the run"),
+    ):
+        bad, bad_env = fixture(base / f"identity-{mode}", touch=boundary)
+        run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **variables), expected=1, contains=text)
+        assert_no_release(bad, bad_env, base / f"identity-{mode}/events")
+        assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
+        print(f"ok {mode} refuses the receipt, the package commit and the tag")
     dry, dry_env = fixture(base / "report-dry")
     run(["bash", "scripts/release.sh", version], dry, dict(dry_env, STUB_REPORT="partial"), expected=1, contains="lane reports are missing or incomplete")
     assert not (dry / "target/release-1.2.3/RECEIPT.json").exists()

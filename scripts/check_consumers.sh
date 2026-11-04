@@ -17,12 +17,14 @@
 #   CONSUMER_WORK_ROOT    scratch parent for trees and caches, default $TMPDIR
 #   SIM_RUN, BUILD_SLOT   tool paths, default ~/.claude/bin/sim-run and ~/.claude/bin/build-slot
 #   CONSUMER_IOS_BUILD_LIMIT 1200, CONSUMER_IOS_TEST_LIMIT 600, BRICK_GRADLE_TIMEOUT 1500 (seconds)
-# Writes <stage>/consumers.tsv (lane, rc, log) and exits 0 only when every requested lane is green.
+# Writes <stage>/consumers.tsv (lane, rc, log, source sha, run id) and exits 0 only when every requested lane is green.
 set -uo pipefail
 
 export LC_ALL=C
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 fail() { printf 'consumers: %s\n' "$*" >&2; exit 1; }
+source_sha="${RELEASE_SOURCE_SHA:-$(git -C "$root" rev-parse HEAD 2> /dev/null || echo unknown)}"
+run_id="${RELEASE_RUN_ID:-standalone}"
 [ "$#" -ge 1 ] || fail 'usage: check_consumers.sh <stage> --version <x.y.z> --maven <dir> --package-swift <file> [--lane ios|android]...'
 stage="$1"
 shift
@@ -181,7 +183,7 @@ status=0
 : > "$stage/consumers.tsv" || fail 'cannot write consumers.tsv'
 for lane in "${lanes[@]}"; do
   rc="$(cat "$work/$lane.rc" 2> /dev/null || echo missing)"
-  printf '%s\t%s\t%s\n' "$lane" "$rc" "$logs/$lane.log" >> "$stage/consumers.tsv" || fail 'cannot write consumers.tsv'
+  printf '%s\t%s\t%s\t%s\t%s\n' "$lane" "$rc" "$logs/$lane.log" "$source_sha" "$run_id" >> "$stage/consumers.tsv" || fail 'cannot write consumers.tsv'
   if [ "$rc" = 0 ]; then
     printf 'consumers: lane %s green\n' "$lane"
   else

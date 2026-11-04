@@ -2,7 +2,7 @@
 # check_sequences.sh <stage> [--manifest <file>] [--lane core|swift|kotlin]...
 # Runs the sequence tests listed in the manifest in the core, Swift and Kotlin lanes against the staged release files.
 # Fails on a missing manifest, staged bytes that differ from the built tree, a red lane, or a listed test that did not run and pass.
-# Writes <stage>/sequences.tsv (lane, listed, passed, rc, log) for the release receipt.
+# Writes <stage>/sequences.tsv (lane, listed, passed, rc, log, source sha, run id) for the release receipt.
 set -uo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -65,7 +65,9 @@ verify_stage_bytes() {
 # Manifest rows of one lane: unique test identifiers, one per line.
 lane_tests() { awk -F'\t' -v lane="$1" 'NR > 2 && $3 == lane {print $4}' "$manifest" | LC_ALL=C sort -u; }
 
-record() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$stage/sequences.tsv" || fail 'cannot write sequences.tsv'; }
+source_sha="${RELEASE_SOURCE_SHA:-$(git -C "$root" rev-parse HEAD 2> /dev/null || echo unknown)}"
+run_id="${RELEASE_RUN_ID:-standalone}"
+record() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$source_sha" "$run_id" >> "$stage/sequences.tsv" || fail 'cannot write sequences.tsv'; }
 
 lane_core() {
   local log="$logs/core.log" filters=() name

@@ -12,6 +12,17 @@ publish="${2:-}"
 [ -z "$publish" ] || [ "$publish" = --publish ] || fail 'usage: release.sh <version> [--publish]'
 [ -z "$(git status --porcelain -- . ':(exclude)swift/Sources/DBlayer/dblayer.swift')" ] || fail 'working tree is not clean'
 [ "$(git branch --show-current)" = master ] || fail 'branch must be master'
+source_sha="$(git rev-parse HEAD)"
+run_id="$(date +%s)-$$-$RANDOM"
+export RELEASE_SOURCE_SHA="$source_sha" RELEASE_RUN_ID="$run_id"
+require_source() {
+  local head
+  head="$(git rev-parse HEAD)"
+  if [ "$head" != "$source_sha" ]; then
+    [ "$(git log -1 --format=%s)" = "Package release $version" ] && [ "$(git rev-parse HEAD^)" = "$source_sha" ] || fail "source commit changed during the run: recorded $source_sha, HEAD is $head"
+  fi
+  [ -z "$(git status --porcelain -- . ':(exclude)swift/Sources/DBlayer/dblayer.swift')" ] || fail 'working tree changed during the run'
+}
 previous_tag="$(git describe --tags --abbrev=0 --exclude "$version")" || fail 'previous tag not found'
 subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read commits since previous tag'
 [ "$(printf '%s\n' "$subjects" | grep -Fxc "Release $version" || true)" = 1 ] || fail "expected exactly one Release $version commit since $previous_tag"
@@ -123,11 +134,12 @@ bash scripts/check_sequences.sh "$stage" --manifest "$manifest" || fail 'sequenc
 if [ "$consumers" = required ]; then
   bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" || fail 'app suites are red or incomplete: no tag'
 fi
-python3 -I - "$stage" "$version" "$manifest" "$consumers" "$(git rev-parse HEAD)" <<'RECEIPT' || fail 'lane reports are missing or incomplete: no tag'
+require_source
+python3 -I - "$stage" "$version" "$manifest" "$consumers" "$source_sha" "$run_id" <<'RECEIPT' || fail 'lane reports are missing or incomplete: no tag'
 import hashlib, json, sys
 from pathlib import Path
 
-stage, version, manifest, consumers, commit = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+stage, version, manifest, consumers, commit, run_id = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
 def refuse(message):
     sys.exit(f"release: {message}")
 def rows(name):
@@ -140,6 +152,8 @@ def lanes(name, required, width):
     for row in rows(name):
         if len(row) < width or row[0] in result:
             refuse(f"{name} has a malformed or repeated row: {row}")
+        if row[width - 2] != commit or row[width - 1] != run_id:
+            refuse(f"{name} row {row[0]} belongs to source {row[width - 2]} run {row[width - 1]}, expected source {commit} run {run_id}")
         result[row[0]] = row
     if sorted(result) != sorted(required):
         refuse(f"{name} lanes are {sorted(result)}, expected {sorted(required)}")
@@ -150,7 +164,7 @@ for line in Path(manifest).read_text().splitlines()[2:]:
     if len(cells) > 3:
         listed_by_lane.setdefault(cells[2], set()).add(cells[3])
 sequences = {}
-for lane, row in lanes("sequences.tsv", ["core", "swift", "kotlin"], 4).items():
+for lane, row in lanes("sequences.tsv", ["core", "swift", "kotlin"], 7).items():
     try:
         listed, passed = int(row[1]), int(row[2])
     except ValueError:
@@ -161,7 +175,7 @@ for lane, row in lanes("sequences.tsv", ["core", "swift", "kotlin"], 4).items():
     sequences[lane] = {"listed": listed, "passed": passed, "rc": row[3]}
 consumer_lanes = {}
 if consumers == "required":
-    for lane, row in lanes("consumers.tsv", ["ios", "android"], 2).items():
+    for lane, row in lanes("consumers.tsv", ["ios", "android"], 5).items():
         if row[1] != "0":
             refuse(f"consumers lane {lane} is red: rc={row[1]}")
         consumer_lanes[lane] = {"rc": row[1]}
@@ -177,6 +191,7 @@ receipt = {
 (stage / "RECEIPT.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
 RECEIPT
 if [ "$publish" = --publish ]; then
+  require_source
   package_commits="$(git log --format=%s "$previous_tag"..HEAD | grep -Fxc "Package release $version" || true)"
   if [ "$package_commits" = 0 ]; then
     cp "$tmp/Package.swift" Package.swift
@@ -192,6 +207,7 @@ if [ "$publish" = --publish ]; then
   else
     fail "unexpected Package release $version commit state"
   fi
+  require_source
   git tag "$version" 2>/dev/null || {
     [ "$(git rev-parse "$version^{commit}")" = "$(git rev-parse HEAD)" ] || fail "tag $version already points elsewhere"
   }
