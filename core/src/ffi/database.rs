@@ -114,15 +114,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<Lifecycle>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>>, #[cfg(test)] pub(super) act_pause: Arc<OnceLock<ActPause>> }
-
-#[cfg(test)]
-pub(super) struct ActPause { pub(super) entered: tokio::sync::Notify, pub(super) release: tokio::sync::Semaphore }
-
-#[cfg(test)]
-impl Default for ActPause {
-    fn default() -> Self { Self { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0) } }
-}
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<Lifecycle>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -149,7 +141,7 @@ impl Database {
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, stream_table: Arc::default(), testing: false, wires: Arc::new(wires), #[cfg(test)] act_pause: Arc::default() }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, stream_table: Arc::default(), testing: false, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -286,11 +278,6 @@ impl Database {
             Ok((QueuedAction { row: database.wire(&model)?.row(&acted.row), operation: acted.operation }, wish))
         }).await?;
         if !waits { return Ok(queued); }
-        #[cfg(test)]
-        if let Some(pause) = self.act_pause.get() {
-            crate::db::lock::effect(|| pause.entered.notify_one());
-            if let Ok(permit) = pause.release.acquire().await { permit.forget(); }
-        }
         let (sync, db, wire, operation, left) = (self.sync()?.clone(), self.db.clone(), self.wire(&call_model)?.clone(), queued.operation, queued.row.clone());
         self.serve_in_epoch(epoch, "act answer", async move {
             let _wish = wish;

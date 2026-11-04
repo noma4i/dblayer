@@ -470,6 +470,24 @@ extension BridgeProbeTests {
     for delivery in read { if case let .missed(count) = delivery.value { missed += count } else { received += 1 } }
     #expect(received + missed == sent, "the core sent \(sent) deliveries, the reader received \(received) and was told about \(missed) missed ones")
   }
+
+  /// M1c: a `missed` the core made and the buffer evicted still counts its events: received plus missed equals the events the core sent.
+  @Test(.timeLimit(.minutes(1)))
+  func anEvictedCoreMissedCountsItsEvents() async {
+    let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
+    let (deliveries, continuation) = AsyncStream<StreamDelivery>.makeStream(bufferingPolicy: .bufferingNewest(256))
+    let sink = Forward(continuation)
+    let cursor = Cursor(DeliveryFeed(deliveries: deliveries))
+    for seq in 1...256 { sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: UInt64(seq), value: .state(state: state))) }
+    let first = await cursor.collect(256, "the first events")
+    sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: 300, value: .missed(count: 44)))
+    for seq in 301...556 { sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: UInt64(seq), value: .state(state: state))) }
+    let rest = await cursor.collect(257, "the missed count and the kept events after the evicted marker", timeout: .seconds(5))
+    var received: UInt64 = 0
+    var missed: UInt64 = 0
+    for delivery in first + rest { if case let .missed(count) = delivery.value { missed += count } else { received += 1 } }
+    #expect(received + missed == 556, "the core sent 556 events, the reader received \(received) and was told about \(missed) missed ones")
+  }
 }
 
 private final class BufferedDeliveries: @unchecked Sendable {

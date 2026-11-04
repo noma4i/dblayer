@@ -538,6 +538,35 @@ class ValueBridgeTest {
             assertEquals("the core sent $sent deliveries, the reader received ${received.get()} and was told about ${missed.get()} missed ones", sent, received.get() + missed.get())
         }
     }
+
+    /** M1c: a `Missed` the core made and the buffer evicted still counts its events: received plus missed equals the events the core sent. */
+    @Test
+    fun anEvictedCoreMissedCountsItsEvents() = bounded {
+        val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
+        val channel = streamChannel()
+        val sink = Forward(channel)
+        val received = AtomicInteger(0)
+        val missed = java.util.concurrent.atomic.AtomicLong(0)
+        val paused = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val reading = launch {
+            channel.read().collect { delivery ->
+                (delivery.value as? StreamValue.Missed)?.let { missed.addAndGet(it.count.toLong()) } ?: received.incrementAndGet()
+                if (delivery.seq == 256uL) paused.await()
+            }
+        }
+        fun send(seq: Long, value: StreamValue = StreamValue.State(state)) = sink.delivered(StreamDelivery(1uL, 1uL, seq.toULong(), value))
+        for (seq in 1L..256L) send(seq)
+        eventually("the reader holds the 256th event") { received.get() == 256 }
+        send(300, StreamValue.Missed(44uL))
+        for (seq in 301L..556L) send(seq)
+        paused.complete(Unit)
+        try {
+            eventually("the missed count and the kept events after the evicted marker") { received.get() + missed.get() == 556L }
+        } finally {
+            reading.cancel()
+        }
+        assertEquals("the core sent 556 events, the reader received ${received.get()} and was told about ${missed.get()} missed ones", 556L, received.get() + missed.get())
+    }
 }
 
 private class LossyReader : ValueSink {

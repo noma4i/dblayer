@@ -55,6 +55,7 @@
 
 ### Fixed
 - A stream reader receives the exact count of dropped deliveries, also when the stream ends.
+- A model event count the buffer dropped reaches the reader in full.
 - A window opened after a failed load of its query no longer shows that error.
 - A parameter named like a query no longer captures the generated call.
 - A Kotlin parameter named `read`, `put` or `act` no longer captures a generated call.

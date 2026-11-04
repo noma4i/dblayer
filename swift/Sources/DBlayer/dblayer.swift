@@ -6410,7 +6410,7 @@ public struct StreamDelivery: Equatable, Hashable {
      */
     public var epoch: UInt64
     /**
-     * Counts the deliveries of this stream from 1, with no gap.
+     * Counts the events of this stream from 1, with no gap: a `Missed` advances it by its count, every other value by 1.
      */
     public var seq: UInt64
     public var value: StreamValue
@@ -6422,7 +6422,7 @@ public struct StreamDelivery: Equatable, Hashable {
          * The session epoch the stream was opened in. A delivery whose epoch the reader does not hold belongs to an account that has gone.
          */epoch: UInt64, 
         /**
-         * Counts the deliveries of this stream from 1, with no gap.
+         * Counts the events of this stream from 1, with no gap: a `Missed` advances it by its count, every other value by 1.
          */seq: UInt64, value: StreamValue) {
         self.stream = stream
         self.epoch = epoch

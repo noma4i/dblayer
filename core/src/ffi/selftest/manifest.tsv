@@ -167,4 +167,3 @@ K34		core	adding_a_member_whose_row_is_not_cached_ends_with_the_answer	green	-	i
 K34		swift	BridgeProbeTests.addingAMemberWhoseRowIsNotCachedEndsWithTheAnswer	green	-	ios-reds review R3 R4
 K34		kotlin	com.noma4i.dblayer.ClubTest.addingAMemberWhoseRowIsNotCachedEndsWithTheAnswer	green	-	ios-reds review R3 R4
 K35		core	a_command_read_between_its_confirming_commit_and_the_announcement_is_delivered	green	core-only: the proof pins the interval between the confirming commit and its announcement with a core hook	ios-reds review R3 R4
-K36		core	an_action_closed_by_the_flush_before_its_wait_returns_while_the_load_of_its_refetched_list_is_held	green	core-only: the proof pins the interval between the write and the wait of the call with a core hook	ios-reds review R4 F6b

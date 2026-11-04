@@ -167,7 +167,7 @@ impl Stream {
 
     fn queue(&self, state: &mut State, effects: &mut Effects, value: StreamValue, last: bool) {
         if state.ended { return; }
-        state.seq += 1;
+        state.seq += match &value { StreamValue::Missed { count } => *count, _ => 1 };
         let Some(sink) = state.sink.clone() else { return };
         let delivery = StreamDelivery { stream: self.id, epoch: self.epoch, seq: state.seq, value };
         if last { state.ended = true; state.sink = None; }

@@ -31,7 +31,7 @@ public struct ValueStream: AsyncSequence, Sendable {
         return delivery
       }
       guard let delivery = await inner.next() else { return nil }
-      let lost = delivery.seq > lastSeq + 1 ? delivery.seq - lastSeq - 1 : 0
+      let lost = delivery.seq > lastSeq + delivery.weight ? delivery.seq - lastSeq - delivery.weight : 0
       lastSeq = delivery.seq
       guard lost > 0 else { return delivery }
       held = delivery
@@ -52,6 +52,14 @@ public struct ValueStream: AsyncSequence, Sendable {
 
   /// Stops reading: the stream ends in the core and no new delivery is admitted after this returns. A delivery already admitted may still finish, and the call does not wait for it.
   public func cancel() { database.cancelStream(stream: id) }
+}
+
+extension StreamDelivery {
+  /// How many events the delivery stands for: the count of a `.missed`, else 1. The sequence number counts events.
+  fileprivate var weight: UInt64 {
+    if case let .missed(count) = value { return count }
+    return 1
+  }
 }
 
 /// A reader that falls behind keeps the newest deliveries only. The count of the dropped ones reaches the reader as `.missed`, and a list projection that misses a delta asks the core for a new snapshot. The core calls the sink one delivery at a time.
@@ -108,7 +116,7 @@ public struct ListProjection<Model: DBModel>: Sendable {
     if let epoch, delivery.epoch != epoch { return .ignored }
     if case .missed = delivery.value { return .ignored }
     epoch = delivery.epoch
-    let jumped = lastSeq.map { delivery.seq > $0 + 1 } ?? false
+    let jumped = lastSeq.map { delivery.seq > $0 + delivery.weight } ?? false
     lastSeq = delivery.seq
     switch delivery.value {
     case let .snapshot(revision, wire, state):

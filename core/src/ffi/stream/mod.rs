@@ -11,6 +11,8 @@ mod frame;
 mod open;
 mod owner;
 #[cfg(test)]
+mod owner_tests;
+#[cfg(test)]
 #[path = "tape_tests.rs"]
 pub(crate) mod tape;
 
@@ -132,7 +134,7 @@ pub struct StreamDelivery {
     pub stream: u64,
     /// The session epoch the stream was opened in. A delivery whose epoch the reader does not hold belongs to an account that has gone.
     pub epoch: u64,
-    /// Counts the deliveries of this stream from 1, with no gap.
+    /// Counts the events of this stream from 1, with no gap: a `Missed` advances it by its count, every other value by 1.
     pub seq: u64,
     pub value: StreamValue,
 }

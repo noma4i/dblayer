@@ -35,7 +35,7 @@ val thread = Projected(scope.stream(Message.thread(id)), Message, screenScope)
 | `state` | The load state changed and the rows did not. |
 | `ended` | The stream ended by itself: session ended, database closed, query invalid. |
 
-Every value names its stream, its epoch and a sequence number.
+Every value names its stream, its epoch and a sequence number. The number counts events: a `missed` value advances it by its count, every other value by 1.
 A projection ignores a value of another epoch.
 A delta whose `base` is not the held revision asks for one new snapshot.
 `Projected` does that for you: it calls `resync`.

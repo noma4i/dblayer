@@ -54,10 +54,13 @@ internal class Forward(private val channel: Channel<StreamDelivery>) : ValueSink
     }
 }
 
+/** How many events the delivery stands for: the count of a `Missed`, else 1. The sequence number counts events. */
+private fun StreamDelivery.weight(): ULong = (value as? StreamValue.Missed)?.count ?: 1uL
+
 internal fun Channel<StreamDelivery>.read(): Flow<StreamDelivery> = flow {
     var last = 0uL
     for (delivery in this@read) {
-        if (delivery.seq > last + 1uL) emit(StreamDelivery(delivery.stream, delivery.epoch, delivery.seq, StreamValue.Missed(delivery.seq - last - 1uL)))
+        if (delivery.seq > last + delivery.weight()) emit(StreamDelivery(delivery.stream, delivery.epoch, delivery.seq, StreamValue.Missed(delivery.seq - last - delivery.weight())))
         last = maxOf(last, delivery.seq)
         emit(delivery)
         if (delivery.value is StreamValue.Ended) break
@@ -111,7 +114,7 @@ class ListProjection<Model : DBModel> private constructor(
         if (delivery.value is StreamValue.Missed) return Step(this, Applied.Ignored)
         val held = delivery.epoch
         val last = lastSeq
-        val jumped = last != null && delivery.seq > last + 1uL
+        val jumped = last != null && delivery.seq > last + delivery.weight()
         var decoded = this.decoded
         var failure = this.failure
         fun decode(wire: List<WireRow>): List<Model?> = wire.map { row ->
