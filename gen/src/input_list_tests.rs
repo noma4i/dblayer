@@ -32,11 +32,11 @@ const SEND_MUTATION: &str = "mutation WidgetsSend($widgets: [WidgetInput!]) { wi
 #[test]
 fn an_operation_arg_takes_a_list_of_input_objects_in_every_nullability() {
     let cases = [
-        ("[:WidgetInput]", "widgets: [WidgetInput]", "widgets: List<WidgetInput>", "variables[\"widgets\"] = try JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
-        ("[:WidgetInput]?", "widgets: [WidgetInput]? = nil", "widgets: List<WidgetInput>? = null", "if let value = widgets { variables[\"widgets\"] = try JSONValue.encode(value) }", "if (widgets != null) variables[\"widgets\"] = jsonValue(widgets)"),
-        ("[:WidgetInput?]", "widgets: [WidgetInput?]", "widgets: List<WidgetInput?>", "variables[\"widgets\"] = try JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
-        ("[:WidgetInput?]?", "widgets: [WidgetInput?]? = nil", "widgets: List<WidgetInput?>? = null", "if let value = widgets { variables[\"widgets\"] = try JSONValue.encode(value) }", "if (widgets != null) variables[\"widgets\"] = jsonValue(widgets)"),
-        ("[:WidgetKind]", "widgets: [WidgetKind]", "widgets: List<WidgetKind>", "variables[\"widgets\"] = try JSONValue.encode(widgets)", "variables[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetInput]", "widgets: [WidgetInput]", "widgets: List<WidgetInput>", "variables_[\"widgets\"] = try JSONValue.encode(widgets)", "variables_[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetInput]?", "widgets: [WidgetInput]? = nil", "widgets: List<WidgetInput>? = null", "if let value = widgets { variables_[\"widgets\"] = try JSONValue.encode(value) }", "if (widgets != null) variables_[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetInput?]", "widgets: [WidgetInput?]", "widgets: List<WidgetInput?>", "variables_[\"widgets\"] = try JSONValue.encode(widgets)", "variables_[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetInput?]?", "widgets: [WidgetInput?]? = nil", "widgets: List<WidgetInput?>? = null", "if let value = widgets { variables_[\"widgets\"] = try JSONValue.encode(value) }", "if (widgets != null) variables_[\"widgets\"] = jsonValue(widgets)"),
+        ("[:WidgetKind]", "widgets: [WidgetKind]", "widgets: List<WidgetKind>", "variables_[\"widgets\"] = try JSONValue.encode(widgets)", "variables_[\"widgets\"] = jsonValue(widgets)"),
     ];
     for (arg, swift_param, kotlin_param, swift_put, kotlin_put) in cases {
         let schema = SCHEMA.replace("widgetsSend(widgets: [WidgetInput!]): WidgetsSent", if arg.contains("WidgetKind") { "widgetsSend(widgets: [WidgetKind!]): WidgetsSent" } else { "widgetsSend(widgets: [WidgetInput!]): WidgetsSent" });
@@ -47,9 +47,9 @@ fn an_operation_arg_takes_a_list_of_input_objects_in_every_nullability() {
         };
         let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
         let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
-        assert!(swift.contains(&format!("public static func widgetsSend({swift_param}, in scope: AccountScope? = nil) async throws")), "{arg}\n{swift}");
+        assert!(swift.contains(&format!("public static func widgetsSend({swift_param}, in scope_: AccountScope? = nil) async throws")), "{arg}\n{swift}");
         assert!(swift.contains(swift_put), "{arg}\n{swift}");
-        assert!(kotlin.contains(&format!("suspend fun widgetsSend({kotlin_param}, account: AccountScope? = null)")), "{arg}\n{kotlin}");
+        assert!(kotlin.contains(&format!("suspend fun widgetsSend({kotlin_param}, account_: AccountScope? = null)")), "{arg}\n{kotlin}");
         assert!(kotlin.contains(kotlin_put), "{arg}\n{kotlin}");
     }
 }
@@ -91,7 +91,7 @@ fn the_upload_args_of_a_model_become_a_typed_variables_builder_and_not_an_action
     let declared = compile(&upload("[:WidgetInput]?"), UPLOAD_MUTATION, SCHEMA).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     assert!(swift.contains("public static func createFileVariables(widgets: [WidgetInput]? = nil) throws -> [String: JSONValue] {"), "{swift}");
-    assert!(swift.contains("if let value = widgets { variables[\"widgets\"] = try JSONValue.encode(value) }"), "{swift}");
+    assert!(swift.contains("if let value = widgets { variables_[\"widgets\"] = try JSONValue.encode(value) }"), "{swift}");
     assert!(!swift.contains("func upload(") && !swift.contains("act(\"upload\""), "{swift}");
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     assert!(kotlin.contains("fun createFileVariables(widgets: List<WidgetInput>? = null): JsonObject = buildJsonObject {"), "{kotlin}");
@@ -146,7 +146,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: [WidgetInput]? = nil",
-        "@concurrent public func decorate(widgets: [WidgetInput], in scope: AccountScope? = nil) async throws -> Self {",
+        "@concurrent public func decorate(widgets: [WidgetInput], in scope_: AccountScope? = nil) async throws -> Self {",
         "\"widgets\": try JSONValue.encode(widgets)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
@@ -154,7 +154,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: List<WidgetInput>? = null",
-        "suspend fun decorate(widgets: List<WidgetInput>, account: AccountScope? = null): Moment = act(\"decorate\"",
+        "suspend fun decorate(widgets: List<WidgetInput>, account_: AccountScope? = null): Moment = act(\"decorate\"",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

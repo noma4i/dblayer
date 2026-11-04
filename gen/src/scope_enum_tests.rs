@@ -38,7 +38,7 @@ fn a_scope_param_of_a_schema_enum_is_a_typed_argument_on_both_platforms() {
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "public static func list(list: ChatList) throws -> Query<Self> {",
-        "let built = Query<Self>(relation: \"list\", params: [\"list\": try JSONValue.encode(list)])",
+        "let built_ = Query<Self>(relation: \"list\", params: [\"list\": try JSONValue.encode(list)])",
         "public enum ChatList: Codable, Sendable, Hashable {",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");

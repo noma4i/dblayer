@@ -11,22 +11,22 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "public struct QrCodeCreateResult: Codable, Sendable, Equatable {\n    public let url: String?",
-        "public static func qrCodeCreate(kind: String, size: Int? = nil, in scope: AccountScope? = nil) async throws -> QrCodeCreateResult {",
-        "if let value = size { variables[\"size\"] = try JSONValue.encode(value) }",
-        "return try await DB.run(\"QrCodeCreate\", variables: [\"input\": JSONValue.object(variables)], as: QrCodeCreateResult.self, in: scope)",
-        "public static func signOut(in scope: AccountScope? = nil) async throws {\n        let variables: [String: JSONValue] = [:]",
-        "try await DB.run(\"SignOut\", variables: variables, in: scope)",
+        "public static func qrCodeCreate(kind: String, size: Int? = nil, in scope_: AccountScope? = nil) async throws -> QrCodeCreateResult {",
+        "if let value = size { variables_[\"size\"] = try JSONValue.encode(value) }",
+        "return try await DB.run(\"QrCodeCreate\", variables: [\"input\": JSONValue.object(variables_)], as: QrCodeCreateResult.self, in: scope_)",
+        "public static func signOut(in scope_: AccountScope? = nil) async throws {\n        let variables_: [String: JSONValue] = [:]",
+        "try await DB.run(\"SignOut\", variables: variables_, in: scope_)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "data class QrCodeCreateResult(\n    val url: String? = null,\n)",
-        "suspend fun qrCodeCreate(kind: String, size: Long? = null, account: AccountScope? = null): QrCodeCreateResult {",
-        "if (size != null) variables[\"size\"] = jsonValue(size)",
-        "DBlayer.run(\"QrCodeCreate\", JsonObject(mapOf(\"input\" to JsonObject(variables))), QrCodeCreateResult.serializer(), account)",
-        "suspend fun signOut(account: AccountScope? = null) {",
-        "DBlayer.run(\"SignOut\", JsonObject(variables), account)",
+        "suspend fun qrCodeCreate(kind: String, size: Long? = null, account_: AccountScope? = null): QrCodeCreateResult {",
+        "if (size != null) variables_[\"size\"] = jsonValue(size)",
+        "DBlayer.run(\"QrCodeCreate\", JsonObject(mapOf(\"input\" to JsonObject(variables_))), QrCodeCreateResult.serializer(), account_)",
+        "suspend fun signOut(account_: AccountScope? = null) {",
+        "DBlayer.run(\"SignOut\", JsonObject(variables_), account_)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }
@@ -66,15 +66,15 @@ fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "public struct GiphyLoadResult: Codable, Sendable, Equatable {",
-        "public static func giphyLoad(type: String, limit: Int? = nil, in scope: AccountScope? = nil) async throws -> [GiphyLoadResult] {",
-        "return try await DB.run(\"Giphy\", variables: variables, as: [GiphyLoadResult].self, in: scope)",
+        "public static func giphyLoad(type: String, limit: Int? = nil, in scope_: AccountScope? = nil) async throws -> [GiphyLoadResult] {",
+        "return try await DB.run(\"Giphy\", variables: variables_, as: [GiphyLoadResult].self, in: scope_)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
-        "suspend fun giphyLoad(type: String, limit: Long? = null, account: AccountScope? = null): List<GiphyLoadResult> {",
-        "DBlayer.run(\"Giphy\", JsonObject(variables), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()), account)",
+        "suspend fun giphyLoad(type: String, limit: Long? = null, account_: AccountScope? = null): List<GiphyLoadResult> {",
+        "DBlayer.run(\"Giphy\", JsonObject(variables_), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()), account_)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

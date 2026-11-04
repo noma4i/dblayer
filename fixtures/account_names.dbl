@@ -50,3 +50,17 @@ model Shadow do
     end
   end
 end
+
+model Holder do
+  attribute :label, :string, null: true
+  scope :account do
+    query "AccountProfile"
+    response shape: :one
+  end
+  operation :set_video do
+    mutation "SetVideo"
+    parameter :video, :blob
+    optimistic false
+    variables video: :video
+  end
+end

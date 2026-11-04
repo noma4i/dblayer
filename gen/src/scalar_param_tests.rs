@@ -74,9 +74,9 @@ fn a_typed_param_must_fit_the_variable_of_the_document() {
 fn an_aggregate_query_is_a_fetch_only_call_that_returns_its_fields() {
     let declared = compile(&format!("{MODEL}\n{MEDIA_STATE}"), Some(SCHEMA)).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
-    for line in ["public static func chatMediaState(chatId: String, upToSequence: Int? = nil, in scope: AccountScope? = nil) async throws", "public struct ChatMediaStateResultMediaLibrary"] {
+    for line in ["public static func chatMediaState(chatId: String, upToSequence: Int? = nil, in scope_: AccountScope? = nil) async throws", "public struct ChatMediaStateResultMediaLibrary"] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
-    assert!(kotlin.contains("suspend fun chatMediaState(chatId: String, upToSequence: Long? = null, account: AccountScope? = null)"), "{kotlin}");
+    assert!(kotlin.contains("suspend fun chatMediaState(chatId: String, upToSequence: Long? = null, account_: AccountScope? = null)"), "{kotlin}");
 }

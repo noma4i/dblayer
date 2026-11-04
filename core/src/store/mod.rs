@@ -201,6 +201,8 @@ pub struct Store {
     session_end_replay: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     failing_entity_reads: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(crate) read_threads: Mutex<Vec<std::thread::ThreadId>>,
     recreated: Option<RecreateReason>,
     #[cfg(test)]
     pub(crate) require_unlocked_responses: std::sync::atomic::AtomicBool,
@@ -242,6 +244,8 @@ impl Store {
             commit_log: OnceLock::new(),
             newest_operation: std::sync::atomic::AtomicI64::new(0),
             line: AnnounceLine::default(),
+            #[cfg(test)]
+            read_threads: Mutex::new(Vec::new()),
             #[cfg(test)]
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
@@ -384,12 +388,16 @@ impl Store {
                 return Err(StoreError::Poisoned(reason.clone()));
             }
             let transaction = connection.unchecked_transaction()?;
+            #[cfg(test)]
+            self.read_threads.lock().unwrap_or_else(|error| error.into_inner()).push(std::thread::current().id());
             let result = run(&Reader::new(&transaction, &models))?;
             transaction.commit()?;
             return Ok(result);
         }
         let inner = self.lock();
         inner.ensure_healthy()?;
+        #[cfg(test)]
+        self.read_threads.lock().unwrap_or_else(|error| error.into_inner()).push(std::thread::current().id());
         run(&Reader::new(&inner.connection, &inner.models))
     }
 

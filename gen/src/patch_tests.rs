@@ -7,15 +7,15 @@ const NOTE: &str = "model Note do\n  attribute :title, :string\n  attribute :bod
 fn a_nullable_field_has_three_states_in_update_and_set_on_both_platforms() {
     let declared = parse_all(&[NOTE]).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
-    for line in ["@concurrent public func update(title: String? = nil, body: String?? = nil, in scope: AccountScope? = nil)", "@concurrent public func set(typing: Bool? = nil, mood: String?? = nil, in scope: AccountScope? = nil)"] {
+    for line in ["@concurrent public func update(title: String? = nil, body: String?? = nil, in scope_: AccountScope? = nil)", "@concurrent public func set(typing: Bool? = nil, mood: String?? = nil, in scope_: AccountScope? = nil)"] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
-        "suspend fun update(title: String? = null, body: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null)",
+        "suspend fun update(title: String? = null, body: GraphQLNullable<String> = GraphQLNullable.Omitted, account_: AccountScope? = null)",
         "title?.let { put(\"title\", jsonValue(it)) }",
         "put(\"body\", body)",
-        "suspend fun set(typing: Boolean? = null, mood: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null)",
+        "suspend fun set(typing: Boolean? = null, mood: GraphQLNullable<String> = GraphQLNullable.Omitted, account_: AccountScope? = null)",
         "put(\"mood\", mood)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");

@@ -68,6 +68,13 @@ fn is_name_character(character: char) -> bool {
     character.is_alphanumeric() || character == '_'
 }
 
+fn reject_trailing_underscore(name: &str, line: usize, column: usize) -> Result<(), ParseError> {
+    if name.trim_end_matches('?').ends_with('_') {
+        return Err(ParseError::new(line, column, format!("name `{name}` ends with `_`: the generated code reserves that ending for its own names")));
+    }
+    Ok(())
+}
+
 pub fn lex(source: &str) -> Result<Vec<Token>, ParseError> {
     let mut cursor = Cursor { chars: source.chars().collect(), index: 0, line: 1, column: 1 };
     let mut tokens: Vec<Token> = Vec::new();
@@ -110,6 +117,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, ParseError> {
                     cursor.advance();
                     name.push('?');
                 }
+                reject_trailing_underscore(&name, line, column)?;
                 Kind::Symbol(name)
             }
             ':' => {
@@ -121,6 +129,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, ParseError> {
             digit if digit.is_ascii_digit() => lex_number(&mut cursor, line, column)?,
             letter if letter.is_alphabetic() || letter == '_' => {
                 let text = cursor.take_while(is_name_character);
+                reject_trailing_underscore(&text, line, column)?;
                 match text.as_str() {
                     "true" => Kind::Bool(true),
                     "false" => Kind::Bool(false),

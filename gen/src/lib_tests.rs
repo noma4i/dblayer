@@ -31,7 +31,7 @@ fn kotlin_models_are_immutable() {
         let mut classes = 0;
         for line in kotlin.lines().map(str::trim) {
             assert!(!line.split(|character: char| !character.is_alphanumeric() && character != '_').any(|token| token == "var")
-                || line.starts_with("var built = Query("), "Mutable model field: {line}");
+                || line.starts_with("var built_ = Query("), "Mutable model field: {line}");
             for mutable in ["MutableList<", "MutableMap<", "MutableSet<", ".add(", ".remove(", ".clear("] {
                 assert!(!line.contains(mutable), "Mutable model: {line}");
             }

@@ -223,17 +223,19 @@ fn the_first_delivery_of_a_warm_query_reads_sqlite_off_the_calling_thread() {
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let query = Query::new("users");
     db.warm(&query).unwrap();
-    held_reads(&db).clear();
+    db.shared.cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
+    let revision = db.revision_seq().unwrap();
+    store_reads(&db).clear();
     let caller = std::thread::current().id();
     let (log, callback) = recorder();
     let _observer = db.observe(query, callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
+    db.await_revision(revision);
     assert_eq!(calls(&log), [1], "the first delivery carries the stored row");
-    let ran_on = held_reads(&db).clone();
-    assert!(!ran_on.is_empty(), "the first delivery read nothing from SQLite");
-    assert!(ran_on.iter().all(|thread| *thread != caller), "the first delivery read SQLite on the calling thread");
+    let read_on = store_reads(&db).clone();
+    assert!(!read_on.is_empty(), "the first delivery read nothing from the store");
+    assert!(read_on.iter().all(|thread| *thread != caller), "the first delivery read the store on the calling thread");
 }
 
-fn held_reads(db: &super::Db) -> std::sync::MutexGuard<'_, Vec<std::thread::ThreadId>> {
-    db.shared.reads.ran_on.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+fn store_reads(db: &super::Db) -> std::sync::MutexGuard<'_, Vec<std::thread::ThreadId>> {
+    db.shared.store.read_threads.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }

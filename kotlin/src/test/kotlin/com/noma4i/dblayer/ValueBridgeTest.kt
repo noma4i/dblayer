@@ -354,7 +354,7 @@ class ValueBridgeTest {
             DBlayer.sessionReset()
             signIn("B")
 
-            assertTrue(runCatching { row.update(name = "hijacked", account = scopeA) }.exceptionOrNull() is DbException.Interrupted)
+            assertTrue(runCatching { row.update(name = "hijacked", account_ = scopeA) }.exceptionOrNull() is DbException.Interrupted)
             assertTrue(runCatching { User.profile.read(scopeA) }.exceptionOrNull() is DbException.Interrupted)
             assertTrue(runCatching { User.profile.readRow(row.id, scopeA) }.exceptionOrNull() is DbException.Interrupted)
             assertEquals("a command of A changed the row of B", "B", User.profile.read().first().name)
@@ -419,7 +419,7 @@ class ValueBridgeTest {
             openSession()
             signIn("A")
 
-            assertTrue("a command of the old scope reached the new database", runCatching { row.update(name = "hijacked", account = oldScope) }.isFailure)
+            assertTrue("a command of the old scope reached the new database", runCatching { row.update(name = "hijacked", account_ = oldScope) }.isFailure)
             assertTrue("a read of the old scope reached the new database", runCatching { User.profile.read(oldScope) }.isFailure)
             assertEquals("a command of the old scope changed the new database", "A", User.profile.read().first().name)
         } finally {
