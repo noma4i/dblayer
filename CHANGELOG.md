@@ -72,6 +72,7 @@
 - A mutation committed during the first load of a list still rereads it afterwards.
 - `joins_scope` skips a row that is not cached instead of failing the call.
 - `commandStatus` right after the confirming commit reports delivered, not discarded.
+- An explicit load that restores an ended session returns its result, not `Interrupted`.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

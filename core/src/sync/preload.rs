@@ -141,7 +141,7 @@ impl Inner {
 
     pub(crate) fn explicit_succeeded(&self, epoch: u64) {
         if let Ok(Some(session)) = self.transport.session() {
-            self.db.shared.store.lifecycle.start_session(Some(session), epoch);
+            self.db.shared.store.lifecycle.restore_session(session, epoch);
         }
     }
 

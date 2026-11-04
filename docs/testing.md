@@ -38,7 +38,7 @@ Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlay
 
 A test opens its database and closes it. There is no reset between tests: close the database, set the next transport and open again. `close` waits until every lease ended.
 
-After `sessionReset()` a test database reads again when its next explicit call succeeds while a credential is stored, the same rule as in production. `waitForInitialLoad` of a held entity is such a call.
+After `sessionReset()` a test database reads again when its next explicit call succeeds while a credential is stored, the same rule as in production. `waitForInitialLoad` of a held entity is such a call. The call that restores the session returns its own result. The restoration moves the epoch for every other call, so a call of the epoch before it ends as `Interrupted`.
 
 A second `close` from another thread returns after the first one finished every close callback, and the open slot frees only then. A close callback that calls `close` again returns at once without waiting for itself, and the outer `close` frees the slot. A callback must not wait for a `close` made on another thread.
 

@@ -304,35 +304,35 @@ impl Default for Lifecycle {
 pub(crate) struct Lease {
     life: Arc<Lifecycle>,
     id: u64,
-    epoch: u64,
+    epoch: Epoch,
     /// The data generation the lease was issued in. A lease of work that reads the data (a load, a wait for a row) ends when the data clears. A lease of a send ends only at a session boundary.
     generation: Option<Generation>,
 }
 
 impl Lease {
-    pub(crate) fn epoch(&self) -> u64 { self.epoch }
+    pub(crate) fn epoch(&self) -> u64 { self.epoch.value() }
 
     /// Whether the epoch this lease was issued in is still the current one.
     pub(crate) fn is_current(&self) -> bool {
         let state = crate::db::locked(&self.life.state);
         let snapshot = state.snapshot();
-        !snapshot.closed && snapshot.session_epoch == self.epoch && self.generation.is_none_or(|issued| issued == snapshot.generation)
+        !snapshot.closed && snapshot.session_epoch == self.epoch.value() && self.generation.is_none_or(|issued| issued == snapshot.generation)
     }
 
     pub(crate) fn pinned<F: std::future::Future>(&self, work: F) -> impl std::future::Future<Output = F::Output> {
         self.epoch_value().scope(work)
     }
 
-    pub(crate) fn epoch_value(&self) -> Epoch { Epoch::new(&self.life, self.epoch) }
+    pub(crate) fn epoch_value(&self) -> Epoch { self.epoch.clone() }
 
     /// Runs the work inside the lease. A transition or the close of the database ends the work with `Ended`, and work that has not started when that happens never starts.
     pub(crate) async fn run<T>(&self, work: impl std::future::Future<Output = T>) -> Result<T, Ended> {
         if !self.is_current() { return Err(Ended); }
         let mut changes = self.life.changed.subscribe();
-        let (epoch, generation) = (self.epoch, self.generation);
+        let (epoch, generation) = (self.epoch.clone(), self.generation);
         tokio::select! {
             biased;
-            _ = changes.wait_for(|published| published.closed || published.session_epoch != epoch || generation.is_some_and(|issued| issued != published.generation)) => Err(Ended),
+            _ = changes.wait_for(|published| published.closed || published.session_epoch != epoch.value() || generation.is_some_and(|issued| issued != published.generation)) => Err(Ended),
             result = self.epoch_value().scope(work) => Ok(result),
         }
     }
@@ -452,7 +452,7 @@ impl Lifecycle {
             state.next_lease += 1;
             state.leases.insert(id, LeaseInfo { target, passive });
             let generation = data_bound.then(|| state.snapshot().generation);
-            (Lease { life: self.clone(), id, epoch, generation }, state.activity())
+            (Lease { life: self.clone(), id, epoch: Epoch::new(self, epoch), generation }, state.activity())
         };
         self.publish_activity(activity);
         Ok(lease)
@@ -512,6 +512,10 @@ impl Lifecycle {
 
     /// Starts an exclusive transition. The epoch moves at once and every lease of the old epoch is told to stop. A caller that carries the epoch it was admitted in is refused when that epoch has gone.
     pub(crate) fn try_begin(self: &Arc<Self>, boundary: Boundary, expected: Option<u64>) -> Result<Result<Permit, Boundary>, Refused> {
+        self.try_begin_carrying(boundary, expected, None)
+    }
+
+    fn try_begin_carrying(self: &Arc<Self>, boundary: Boundary, expected: Option<u64>, carry: Option<&Epoch>) -> Result<Result<Permit, Boundary>, Refused> {
         #[cfg(test)]
         {
             *self.begin_waits.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
@@ -524,9 +528,11 @@ impl Lifecycle {
             if current.closed { return Err(Refused::Closed); }
             if let Some(running) = current.transition { return Ok(Err(running)); }
             if expected.is_some_and(|epoch| epoch != current.session_epoch) { return Err(Refused::Stale); }
+            let restoring = matches!(boundary, Boundary::SessionStart) && (current.ended || current.session.is_none());
             state.machine.handle(&Event::Begin(boundary));
             state.leases.retain(|_, info| !info.passive);
             let snapshot = state.snapshot().clone();
+            if let Some(call) = carry.filter(|_| restoring) { call.carry_to(snapshot.session_epoch); }
             let activity = state.activity();
             (Permit { life: self.clone(), boundary, deferred: Mutex::new(Vec::new()), finished: false }, snapshot, activity)
         };
@@ -576,6 +582,16 @@ impl Lifecycle {
 
     /// Starts a session when the identity changed. A caller that carries the epoch it was admitted in changes nothing once that epoch has gone. Returns whether the session now holds.
     pub(crate) fn start_session(self: &Arc<Self>, session: Option<String>, expected: u64) -> bool {
+        self.start_session_carrying(session, expected, None)
+    }
+
+    /// The session start of an explicit call that succeeded: that call restores an ended session under the epoch it was admitted in, and its own result is not interrupted by the restoration. A change of identity, or any other change of the epoch, still ends it.
+    pub(crate) fn restore_session(self: &Arc<Self>, session: String, expected: u64) -> bool {
+        let call = Epoch::ambient().filter(|held| held.value() == expected && Arc::ptr_eq(held.life(), self));
+        self.start_session_carrying(Some(session), expected, call.as_ref())
+    }
+
+    fn start_session_carrying(self: &Arc<Self>, session: Option<String>, expected: u64, carry: Option<&Epoch>) -> bool {
         {
             let state = crate::db::locked(&self.state);
             let current = state.snapshot();
@@ -583,7 +599,7 @@ impl Lifecycle {
             if current.session == session && (!current.ended || session.is_none()) { return current.session.is_some(); }
             if session.is_none() && current.ended { return false; }
         }
-        match self.try_begin(Boundary::SessionStart, Some(expected)) {
+        match self.try_begin_carrying(Boundary::SessionStart, Some(expected), carry) {
             Ok(Ok(permit)) => {
                 permit.defer(Change::SessionStarted(session));
                 permit.finish();

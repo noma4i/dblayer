@@ -151,6 +151,8 @@ mod offload_tests;
 #[cfg(test)]
 mod load_tests;
 #[cfg(test)]
+mod session_restore_tests;
+#[cfg(test)]
 #[cfg(test)]
 mod reject_tests;
 #[cfg(test)]

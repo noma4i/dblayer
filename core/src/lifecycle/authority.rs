@@ -5,13 +5,15 @@ use super::Lifecycle;
 #[derive(Clone)]
 pub(crate) struct Epoch {
     life: Arc<Lifecycle>,
-    value: u64,
+    value: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl Epoch {
-    pub(crate) fn new(life: &Arc<Lifecycle>, value: u64) -> Self { Self { life: life.clone(), value } }
+    pub(crate) fn new(life: &Arc<Lifecycle>, value: u64) -> Self { Self { life: life.clone(), value: Arc::new(std::sync::atomic::AtomicU64::new(value)) } }
 
-    pub(crate) fn value(&self) -> u64 { self.value }
+    pub(crate) fn value(&self) -> u64 { self.value.load(std::sync::atomic::Ordering::SeqCst) }
+
+    pub(super) fn carry_to(&self, value: u64) { self.value.store(value, std::sync::atomic::Ordering::SeqCst); }
 
     pub(crate) fn life(&self) -> &Arc<Lifecycle> { &self.life }
 
