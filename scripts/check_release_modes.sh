@@ -288,6 +288,34 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         assert_no_release(bad, bad_env, base / f"identity-{mode}/events")
         assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
         print(f"ok {mode} refuses the receipt, the package commit and the tag")
+    mixed_files = ("Package.swift", "swift/Sources/DBlayer/dblayer.swift", "core/src/extra.rs")
+    for mode_args, label in (([], "dry run"), (["--publish"], "publish")):
+        mixed, mixed_env = fixture(base / f"mixed-{label.replace(' ', '-')}")
+        for name in mixed_files:
+            (mixed / name).parent.mkdir(parents=True, exist_ok=True)
+            (mixed / name).write_text("mixed\n")
+        subprocess.run([real_git, "-C", str(mixed), "add", "-f", *mixed_files], check=True)
+        subprocess.run([real_git, "-C", str(mixed), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
+        run(["bash", "scripts/release.sh", version, *mode_args], mixed, mixed_env, expected=1, contains="changes files other than Package.swift and dblayer.swift")
+        mixed_events = (base / f"mixed-{label.replace(' ', '-')}/events").read_text().splitlines() if (base / f"mixed-{label.replace(' ', '-')}/events").exists() else []
+        assert not any(line.startswith("gh ") or line.startswith("git push ") for line in mixed_events), mixed_events
+        assert subprocess.check_output([real_git, "-C", str(mixed), "tag", "--list", version], text=True).strip() == ""
+        assert not (mixed / "target/release-1.2.3").exists()
+        print(f"ok a Package release commit with an extra source change is refused in the {label}")
+    locked, locked_env = fixture(base / "locked")
+    holder = subprocess.Popen(["sleep", "60"])
+    try:
+        (locked / "target/release.lock").mkdir(parents=True)
+        (locked / "target/release.lock/holder").write_text(f"{holder.pid} {version}\n")
+        run(["bash", "scripts/release.sh", version], locked, locked_env, expected=1, contains=f"another release run holds")
+        assert (locked / "target/release.lock/holder").read_text().startswith(str(holder.pid)), "the second run removed the lock of a live holder"
+        assert not (locked / "target/release-1.2.3").exists()
+    finally:
+        holder.kill()
+        holder.wait()
+    run(["bash", "scripts/release.sh", version], locked, locked_env, contains="Package.swift to be written:")
+    assert not (locked / "target/release.lock").exists(), "the lock stayed after the run ended"
+    print("ok a held lock refuses the second run and a finished run releases it")
     dry, dry_env = fixture(base / "report-dry")
     run(["bash", "scripts/release.sh", version], dry, dict(dry_env, STUB_REPORT="partial"), expected=1, contains="lane reports are missing or incomplete")
     assert not (dry / "target/release-1.2.3/RECEIPT.json").exists()

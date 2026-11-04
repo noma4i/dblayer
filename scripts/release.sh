@@ -10,17 +10,53 @@ version="$1"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail 'version must be x.y.z'
 publish="${2:-}"
 [ -z "$publish" ] || [ "$publish" = --publish ] || fail 'usage: release.sh <version> [--publish]'
+tmp=""
+lock_owned=0
+lockdir="$root/target/release.lock"
+cleanup() {
+  [ -z "$tmp" ] || /bin/rm -rf "$tmp"
+  [ "$lock_owned" != 1 ] || /bin/rm -rf "$lockdir"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+mkdir -p "$root/target"
+if ! mkdir "$lockdir" 2>/dev/null; then
+  holder="$(cat "$lockdir/holder" 2>/dev/null || true)"
+  holder_pid="${holder%% *}"
+  if [ -n "$holder_pid" ] && ! kill -0 "$holder_pid" 2>/dev/null; then
+    /bin/rm -rf "$lockdir"
+    mkdir "$lockdir" 2>/dev/null || fail "another release run holds $lockdir"
+  else
+    fail "another release run holds $lockdir: ${holder:-unknown holder}"
+  fi
+fi
+lock_owned=1
+printf '%s %s\n' "$$" "$version" > "$lockdir/holder"
 [ -z "$(git status --porcelain -- . ':(exclude)swift/Sources/DBlayer/dblayer.swift')" ] || fail 'working tree is not clean'
 [ "$(git branch --show-current)" = master ] || fail 'branch must be master'
+package_files=$'Package.swift\nswift/Sources/DBlayer/dblayer.swift'
+check_package_commit() {
+  local commit="$1" parent="$2"
+  [ "$(git rev-parse "$commit^" 2>/dev/null)" = "$parent" ] || fail "package commit $commit is not directly on source commit $parent"
+  local changed
+  changed="$(git diff-tree --no-commit-id --name-only -r "$commit")"
+  { [ -n "$changed" ] && [ -z "$(printf '%s\n' "$changed" | grep -vxF "$package_files" || true)" ]; } || fail "package commit $commit changes files other than Package.swift and dblayer.swift"
+}
+package_sha=""
 source_sha="$(git rev-parse HEAD)"
+if [ "$(git log -1 --format=%s)" = "Package release $version" ]; then
+  package_sha="$source_sha"
+  source_sha="$(git rev-parse "$package_sha^")" || fail 'package commit has no parent'
+  check_package_commit "$package_sha" "$source_sha"
+fi
 run_id="$(date +%s)-$$-$RANDOM"
 export RELEASE_SOURCE_SHA="$source_sha" RELEASE_RUN_ID="$run_id"
 require_source() {
-  local head
+  local head expected="${package_sha:-$source_sha}"
   head="$(git rev-parse HEAD)"
-  if [ "$head" != "$source_sha" ]; then
-    [ "$(git log -1 --format=%s)" = "Package release $version" ] && [ "$(git rev-parse HEAD^)" = "$source_sha" ] || fail "source commit changed during the run: recorded $source_sha, HEAD is $head"
-  fi
+  [ "$head" = "$expected" ] || fail "source commit changed during the run: recorded $expected, HEAD is $head"
   [ -z "$(git status --porcelain -- . ':(exclude)swift/Sources/DBlayer/dblayer.swift')" ] || fail 'working tree changed during the run'
 }
 previous_tag="$(git describe --tags --abbrev=0 --exclude "$version")" || fail 'previous tag not found'
@@ -44,7 +80,6 @@ cargo build --release --manifest-path Cargo.toml -p dblayer-gen --target aarch64
 
 stage="$root/target/release-$version"
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
 attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblayer-gen-macos-universal)
 archives=(DBlayerFFI.xcframework.zip dblayer-android.zip)
 if [ -d "$stage" ]; then
@@ -193,13 +228,15 @@ RECEIPT
 if [ "$publish" = --publish ]; then
   require_source
   package_commits="$(git log --format=%s "$previous_tag"..HEAD | grep -Fxc "Package release $version" || true)"
-  if [ "$package_commits" = 0 ]; then
+  if [ -z "$package_sha" ] && [ "$package_commits" = 0 ]; then
     cp "$tmp/Package.swift" Package.swift
     git add Package.swift
     cp "$stage/dblayer.swift" swift/Sources/DBlayer/dblayer.swift
     git add -f swift/Sources/DBlayer/dblayer.swift
     git commit -m "Package release $version"
-  elif [ "$package_commits" = 1 ] && [ "$(git log -1 --format=%s)" = "Package release $version" ]; then
+    package_sha="$(git rev-parse HEAD)"
+    check_package_commit "$package_sha" "$source_sha"
+  elif [ -n "$package_sha" ] && [ "$package_commits" = 1 ]; then
     git show HEAD:Package.swift > "$tmp/committed-Package.swift"
     git show HEAD:swift/Sources/DBlayer/dblayer.swift > "$tmp/committed-dblayer.swift"
     cmp -s "$tmp/Package.swift" "$tmp/committed-Package.swift" || fail 'existing Package.swift differs from the release package'
@@ -208,8 +245,8 @@ if [ "$publish" = --publish ]; then
     fail "unexpected Package release $version commit state"
   fi
   require_source
-  git tag "$version" 2>/dev/null || {
-    [ "$(git rev-parse "$version^{commit}")" = "$(git rev-parse HEAD)" ] || fail "tag $version already points elsewhere"
+  git tag "$version" "$package_sha" 2>/dev/null || {
+    [ "$(git rev-parse "$version^{commit}")" = "$package_sha" ] || fail "tag $version already points elsewhere"
   }
   git show "$version":swift/Sources/DBlayer/dblayer.swift > "$tmp/tagged-dblayer.swift"
   cmp -s "$stage/dblayer.swift" "$tmp/tagged-dblayer.swift" || fail 'tagged dblayer.swift differs from the release package'
