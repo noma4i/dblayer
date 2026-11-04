@@ -302,7 +302,8 @@ impl Inner {
         };
         let item_failed = self.operation_uploads(seq)?.get(&(seq, position)).is_some_and(|state| state.phase == crate::upload::UploadStatus::Failed);
         if status != "failed" && !item_failed { return Err(crate::db::DbError::InvalidUpload(format!("the upload of {model} {id} has not failed")).into()); }
-        let input = self.upload_input(model, &declared, file.clone())?;
+        let mutation = self.db.spec(model)?.upload_action(&declared).and_then(|action| action.mutation.clone()).ok_or_else(|| crate::db::DbError::InvalidUpload(format!("{model} {declared} declares no mutation")))?;
+        let input = file.clone().with_steps(self.upload_operations()?.steps(&mutation));
         let row = RowId::new(&row).map_err(|error| SyncError::Malformed(error.to_string()))?;
         self.db.preparing_uploads(admitted, model, generation, |files, generation, pending| {
             let item = files.prepare(model, row.clone(), client_key.clone(), input.clone(), UploadState::queued())?;
