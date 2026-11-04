@@ -34,25 +34,32 @@ impl Inner {
     }
 }
 
+/// A reread owed after one commit: the lists of `names` of `model`, the epoch of the work that queued it, and the stamp (`next_issued`) taken at the mark. A load that began before the stamp does not settle it.
+pub(crate) struct StaleMark {
+    model: String,
+    names: std::collections::BTreeSet<String>,
+    since: i64,
+    epoch: crate::lifecycle::Epoch,
+}
+
 impl Inner {
-    /// Reads the watched lists of `relations` that are stale. A list with a load in flight is read by a task of its own after that load ends: its caller never waits for a read it did not ask for.
-    pub(crate) async fn reload_stale(self: &std::sync::Arc<Self>, model: &str, relations: &std::collections::BTreeSet<String>) -> Result<usize, SyncError> {
+    pub(crate) async fn reload_stale(self: &std::sync::Arc<Self>, mark: &StaleMark) -> Result<usize, SyncError> {
+        if !self.db.shared.store.lifecycle.admits_epoch(mark.epoch.value()) { return Ok(0); }
+        let model = mark.model.as_str();
         let targets: BTreeMap<String, (String, Map<String, Value>)> = self.db.observed_reads()
             .into_iter()
-            .filter(|entry| entry.model == model && relations.contains(&entry.relation))
+            .filter(|entry| entry.model == model && mark.names.contains(&entry.relation))
             .map(|entry| (entry.key, (entry.relation, entry.params)))
             .collect();
         let mut reloaded = 0;
         let mut errors = Vec::new();
         for (key, (relation, params)) in targets {
             let result = async {
-                if !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.invalidated) { return Ok(false); }
+                let store = &self.db.shared.store;
+                let invalidated = store.window_freshness(&key)?.is_some_and(|freshness| freshness.invalidated);
+                let predates_mark = store.window(&key)?.is_some_and(|window| window.applied < mark.since);
+                if !invalidated && !predates_mark { return Ok(false); }
                 let resolved = self.resolve(crate::lifecycle::Origin::Session, model, &relation, &params)?;
-                if self.flights_pending(&resolved) {
-                    let (inner, model, relation, params) = (self.clone(), model.to_string(), relation.clone(), params.clone());
-                    crate::task::spawn(crate::task::Carry::here(), async move { inner.reload_after_flights(&model, &relation, &params).await });
-                    return Ok(true);
-                }
                 let outcome = self.fetch_after_flights(&resolved).await?;
                 if let Some(error) = outcome.kept_error { return Err(error); }
                 Ok(true)
@@ -63,12 +70,6 @@ impl Inner {
             }
         }
         if errors.is_empty() { Ok(reloaded) } else { Err(SyncError::Event(errors.join("\n"))) }
-    }
-
-    async fn reload_after_flights(&self, model: &str, relation: &str, params: &Map<String, Value>) {
-        let Ok(resolved) = self.resolve(crate::lifecycle::Origin::Session, model, relation, params) else { return };
-        self.flights_settled(&resolved).await;
-        let _ = self.fetch(&resolved, None, true).await;
     }
 }
 

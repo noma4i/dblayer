@@ -181,7 +181,7 @@ impl Inner {
         Ok(FetchAttempt::new(key, self.next_issued(), generation, base_revision))
     }
 
-    fn next_issued(&self) -> i64 {
+    pub(crate) fn next_issued(&self) -> i64 {
         let now = self.now_ms();
         let next = |previous: i64| previous.max(now - 1) + 1;
         let previous = self.issued.try_update(Ordering::SeqCst, Ordering::SeqCst, |previous| Some(next(previous))).unwrap_or_else(|previous| previous);
@@ -214,11 +214,6 @@ impl Inner {
             let Some(mut receiver) = pending else { break };
             let _ = receiver.wait_for(Option::is_some).await;
         }
-    }
-
-    pub(super) fn flights_pending(&self, resolved: &Resolved<'_>) -> bool {
-        let paged = format!("{}|", resolved.window_key);
-        locked(&self.flights).waiting.keys().any(|key| *key == resolved.window_key || key.starts_with(&paged))
     }
 
     pub(crate) async fn fetch_after_flights(&self, resolved: &Resolved<'_>) -> FlightResult {

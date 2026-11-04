@@ -152,7 +152,7 @@ pub(crate) struct Inner {
     pub(crate) model_events: Mutex<Vec<std::sync::Weak<model_event::EventQueue>>>,
     pub owner: Arc<load_owner::LoadOwner>,
     pub outbox_gate: tokio::sync::Mutex<()>,
-    pub(crate) pending_reloads: Mutex<Vec<(String, std::collections::BTreeSet<String>)>>,
+    pub(crate) pending_reloads: Mutex<Vec<invalidate::StaleMark>>,
     pub queue: Result<Arc<Mutex<crate::operation::OperationQueue>>, String>,
     /// The newest operation the outbox held when this database opened. A pending action that is not durable and is this old or older does not survive the open.
     pub(crate) reopened_through: i64,

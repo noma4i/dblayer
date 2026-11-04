@@ -144,7 +144,7 @@ impl Inner {
     pub(crate) fn flush(self: &std::sync::Arc<Self>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FlushReport, SyncError>> + Send + '_>> {
         Box::pin(async move {
             let Ok(lease) = self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Session, "flush") else { return Ok(FlushReport::default()) };
-            lease.run(async { let pass = self.flush_pass().await; let reread = self.reload_marked().await; pass.and_then(|report| reread.map(|()| report)) }).await.unwrap_or_else(|_| Ok(FlushReport::default()))
+            lease.run(async { let pass = self.flush_pass().await; self.reload_marked(); pass }).await.unwrap_or_else(|_| Ok(FlushReport::default()))
         })
     }
 

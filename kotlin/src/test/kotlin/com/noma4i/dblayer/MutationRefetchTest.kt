@@ -15,7 +15,7 @@ private const val FEED_REPLY = """{"data":{"feed":{"edges":[{"impressionUuid":"i
 private const val LIKE_REPLY = """{"data":{"likeMoment":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":true,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"""
 
 class MutationRefetchTest {
-    /** A call that waits for the answer of a mutation does not wait for a load of the list the mutation refetches that was already in flight. The list is read again once that load ends. */
+    /** A call that waits for the answer of a mutation returns with that answer while a load of the list the mutation refetches is held. The list is read again once that load ends. */
     @Test
     fun aMutationSettlesWhileALoadOfItsRefetchedListIsHeld() = bounded {
         val transport = MockTransport()
@@ -29,15 +29,19 @@ class MutationRefetchTest {
         val hold = transport.hold("MomentsFeed", FEED_REPLY)
         val refreshing = async { list.refresh() }
         withTimeout(5000) { hold.entered() }
-        transport.enqueue("LikeMoment", LIKE_REPLY)
-        transport.enqueue("MomentsFeed", FEED_REPLY)
+        val likeHold = transport.hold("LikeMoment", LIKE_REPLY)
+        val rereadHold = transport.hold("MomentsFeed", FEED_REPLY)
 
         moment.like()
-        val settled = runCatching { awaitWithin("the like to settle while the list load is held") { moment.settled("like") } }
+        val settling = async { moment.settled("like") }
+        withTimeout(5000) { likeHold.entered() }
+        likeHold.release()
+        awaitWithin("the like to settle while the list load is held") { settling.await() }
         hold.release()
         refreshing.await()
+        withTimeout(5000) { rereadHold.entered() }
+        rereadHold.release()
 
-        settled.getOrThrow()
         eventually("the list is read again after the held load") { transport.calls.count { it.operationName == "MomentsFeed" } == 3 }
         assertEquals(3, transport.calls.count { it.operationName == "MomentsFeed" })
         scope.cancel()

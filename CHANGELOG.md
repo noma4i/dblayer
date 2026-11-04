@@ -65,8 +65,10 @@
 - `sessionResume` writes in the session epoch of its call.
 - Generated `*Edge` reads and the Kotlin singleton blob actions take the account like every other generated accessor.
 - Generated Kotlin models compile in the module of an app: `onAccount` is public, and a module outside the library compiles the generated fixtures.
-- A mutation no longer waits for a load of the list it refetches that was already in flight: the reread follows that load in a task of its own, and the outbox is free meanwhile.
+- A mutation call returns with its own answer; the reread it owes runs in a task of its own.
+- A load that began before a commit no longer cancels the reread that commit owes.
 - `joins_scope` skips a row that is not cached instead of failing the call with a missing-row error.
+- A command read between its confirming commit and the announcement of that commit reports delivered, not discarded.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

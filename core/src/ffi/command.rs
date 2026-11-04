@@ -199,9 +199,16 @@ impl Database {
 impl Database {
     fn status_of(&self, receipt: &CommandReceipt) -> Result<CommandStatus, DbError> {
         let key = format!("{}\0{}", receipt.model, receipt.row.id);
-        if let Some(real) = crate::db::locked(&self.db.shared.replaced_ids).get(&key) { return Ok(CommandStatus::Delivered { id: real.clone() }); }
+        let replaced = || crate::db::locked(&self.db.shared.replaced_ids).get(&key).cloned();
+        if let Some(real) = replaced() { return Ok(CommandStatus::Delivered { id: real }); }
         let id = RowId::new(&receipt.row.id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-        let Some(row) = self.db.find(&receipt.model, &id)? else { return Ok(CommandStatus::Failed { message: "the command was discarded".into() }) };
+        let Some(row) = self.db.find(&receipt.model, &id)? else {
+            self.db.shared.store.announced();
+            return Ok(match replaced() {
+                Some(real) => CommandStatus::Delivered { id: real },
+                None => CommandStatus::Failed { message: "the command was discarded".into() },
+            });
+        };
         if let Some(info) = receipt.upload_action.as_ref().and_then(|action| row.sync.uploads.get(action)) {
             match info.status {
                 UploadStatus::Failed | UploadStatus::Cancelled => return Ok(CommandStatus::Failed { message: info.error.as_ref().map_or_else(|| "the upload failed".into(), |error| error.message.clone()) }),

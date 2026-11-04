@@ -22,15 +22,21 @@ extension BridgeProbeTests {
     let hold = transport.hold("MomentsFeed", reply: feedReply)
     let refreshing = Task { try await list.refresh() }
     await hold.entered()
-    transport.enqueue("LikeMoment", reply: likeReply)
-    transport.enqueue("MomentsFeed", reply: feedReply)
+    let likeHold = transport.hold("LikeMoment", reply: likeReply)
+    let rereadHold = transport.hold("MomentsFeed", reply: feedReply)
 
     _ = try await moment.like()
-    let settled = await finishes("the like to settle while the list load is held") { try? await moment.settled(action: "like") }
+    let settling = Task { try await moment.settled(action: "like") }
+    await likeHold.entered()
+    likeHold.release()
+    let returned = await finishes("the like to settle while the list load is held") { _ = try? await settling.value }
+    #expect(returned)
+    try await settling.value
     hold.release()
     try await refreshing.value
+    await rereadHold.entered()
+    rereadHold.release()
 
-    #expect(settled)
     await eventually("the list is read again after the held load") { transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3 }
   }
 }

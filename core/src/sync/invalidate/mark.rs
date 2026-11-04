@@ -2,6 +2,9 @@ use std::collections::BTreeSet;
 
 use super::super::error::SyncError;
 use super::super::{locked, Inner};
+use super::StaleMark;
+use crate::lifecycle::Epoch;
+use crate::task::Carry;
 use std::sync::Arc;
 
 impl Inner {
@@ -21,27 +24,31 @@ impl Inner {
         for name in &foreign {
             names.remove(name);
         }
+        let mut marks = Vec::new();
         for (target, relation) in foreign.iter().filter_map(|name| name.split_once('.')) {
-            self.mark_stale(target, BTreeSet::from([relation.to_string()]))?;
+            marks.push(self.mark_stale(target, BTreeSet::from([relation.to_string()]))?);
         }
-        self.mark_stale(model, names)
-    }
-
-    fn mark_stale(&self, model: &str, names: BTreeSet<String>) -> Result<(), SyncError> {
-        for name in &names {
-            self.db.shared.store.invalidate_family(&self.db.authority()?, model, name)?;
-        }
-        locked(&self.pending_reloads).push((model.to_string(), names));
+        marks.push(self.mark_stale(model, names)?);
+        locked(&self.pending_reloads).extend(marks);
         Ok(())
     }
 
-    pub(crate) async fn reload_marked(self: &Arc<Self>) -> Result<(), SyncError> {
-        let marked = std::mem::take(&mut *locked(&self.pending_reloads));
-        let mut errors = Vec::new();
-        for (model, names) in marked {
-            if let Err(error) = self.reload_stale(&model, &names).await { errors.push(error.to_string()); }
+    fn mark_stale(&self, model: &str, names: BTreeSet<String>) -> Result<StaleMark, SyncError> {
+        let since = self.next_issued();
+        for name in &names {
+            self.db.shared.store.invalidate_family(&self.db.authority()?, model, name)?;
         }
-        if errors.is_empty() { Ok(()) } else { Err(SyncError::Event(errors.join("\n"))) }
+        let epoch = Epoch::ambient().unwrap_or_else(|| self.db.shared.store.lifecycle.epoch_now());
+        Ok(StaleMark { model: model.to_string(), names, since, epoch })
+    }
+
+    pub(crate) fn reload_marked(self: &Arc<Self>) {
+        let marked = std::mem::take(&mut *locked(&self.pending_reloads));
+        for mark in marked {
+            let inner = self.clone();
+            let carry = Carry::from(mark.epoch.clone());
+            crate::task::spawn(carry, async move { let _ = inner.reload_stale(&mark).await; });
+        }
     }
 
     pub(crate) async fn reload_lists_of_absent_parent(self: &Arc<Self>, model: &str) -> Result<(), SyncError> {
@@ -49,15 +56,17 @@ impl Inner {
     }
 
     pub(crate) fn mark_lists_after_refused_destroy(&self, model: &str) -> Result<(), SyncError> {
-        self.mark_model_stale(model)
+        let mark = self.mark_model_stale(model)?;
+        locked(&self.pending_reloads).push(mark);
+        Ok(())
     }
 
     async fn invalidate_model(self: &Arc<Self>, model: &str) -> Result<(), SyncError> {
-        self.mark_model_stale(model)?;
-        self.reload_marked().await
+        let mark = self.mark_model_stale(model)?;
+        self.reload_stale(&mark).await.map(|_| ())
     }
 
-    fn mark_model_stale(&self, model: &str) -> Result<(), SyncError> {
+    fn mark_model_stale(&self, model: &str) -> Result<StaleMark, SyncError> {
         let spec = self.db.spec(model)?;
         let names: BTreeSet<String> = spec.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
         self.mark_stale(model, names)

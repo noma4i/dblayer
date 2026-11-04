@@ -428,7 +428,14 @@ extension BridgeProbeTests {
     let stream = try scope.stream(Moment.recent)
     try await stream.loaded()
     try DB.database.setOnline(online: false)
-    for number in 1...300 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
+    let gate = LossyReader()
+    gate.stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: gate)
+    try await DB.database.streamLoaded(stream: gate.stream)
+    for number in 1...300 {
+      _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")])
+      await eventually("the gate reader holds row \(number), so the burst made one delivery per command") { gate.rows == number }
+    }
+    try DB.database.cancelStream(stream: gate.stream)
     let seen = BufferedDeliveries()
     let cursor = Cursor(stream)
     for _ in 0..<400 {

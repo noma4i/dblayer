@@ -99,7 +99,7 @@ fn thread() -> StreamRequest {
     StreamRequest::Query { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"order":[{"field":"at","direction":"asc"}]}"#.into() }
 }
 
-fn message(epoch: u64, text: &str, at: i64) -> CommandRequest {
+pub(super) fn message(epoch: u64, text: &str, at: i64) -> CommandRequest {
     CommandRequest { epoch, model: "Message".into(), values_json: json!({"chatId":"c1","text":text,"at":at}).to_string(), args_json: "{}".into(), upload: None }
 }
 

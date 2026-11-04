@@ -37,6 +37,8 @@ async fn closing_with_the_target_unset_sends_nothing_and_leaves_the_next_databas
         let held = Held::open(&rig.database);
         held.shows("A").await;
         held.lists_show("A").await;
+        yield_until("the forced entity read reached A", || a.count("UserNode") >= 1).await;
+        rig.settle().await;
         let before = a.hits();
         held.cancel_all();
 
