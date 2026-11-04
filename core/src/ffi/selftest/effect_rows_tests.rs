@@ -424,12 +424,12 @@ async fn a_command_read_between_its_confirming_commit_and_the_announcement_is_de
     let receipt = bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
     let shared = rig.database.db.shared.clone();
     let (in_window, read_done) = (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)));
-    let (probe_shared, probe_window, probe_done) = (shared.clone(), in_window.clone(), read_done.clone());
+    let (probe_window, probe_done) = (in_window.clone(), read_done.clone());
     *shared.store.after_commit.lock().unwrap() = Some(Box::new(move |result| {
         if result.replaced.is_empty() { return; }
         probe_window.store(true, Ordering::SeqCst);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while probe_shared.store.announce_waiters.load(Ordering::SeqCst) == 0 && !probe_done.load(Ordering::SeqCst) {
+        while !probe_done.load(Ordering::SeqCst) {
             assert!(std::time::Instant::now() < deadline, "the read of the command never came");
             std::thread::yield_now();
         }

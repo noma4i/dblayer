@@ -5,6 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use crate::db::Db;
+use crate::operation::OperationStatus;
 use crate::pacing::ManualClock;
 use crate::schema::ModelSpec;
 use crate::sync::rig::{keeping_specs, params, register_operations};

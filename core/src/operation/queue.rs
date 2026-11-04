@@ -11,26 +11,12 @@ pub(crate) struct QueueOperation {
     pub uploading: bool,
 }
 
-impl QueueOperation {
-    pub(crate) fn created_keys(&self) -> Vec<String> {
-        let operation = &self.operation;
-        let Some((model, _)) = Operation::split_action_key(&operation.action_key) else { return Vec::new() };
-        let ids: Vec<&crate::identity::RowId> = match &operation.temp_id {
-            Some(temp) => vec![temp],
-            None if self.uploading && Operation::upload_action(&operation.action_key).is_some() => operation.row_ids.iter().filter(|id| id.is_temp()).collect(),
-            None => Vec::new(),
-        };
-        ids.into_iter().map(|id| format!("{model}\0{id}")).collect()
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct OperationQueue {
     pub entries: BTreeMap<i64, QueueOperation>,
     pub pending: BTreeSet<i64>,
     pub dirty_uploads: BTreeSet<i64>,
     pub retrying: BTreeSet<i64>,
-    open: BTreeMap<RowRef, BTreeSet<i64>>,
     blocked: BTreeMap<RowRef, BTreeSet<i64>>,
     held: BTreeMap<RowRef, BTreeSet<i64>>,
     attempted: BTreeSet<i64>,
@@ -41,7 +27,6 @@ impl OperationQueue {
         if let Some(previous) = self.entries.remove(&seq) {
             if previous.uploading { self.dirty_uploads.insert(seq); }
             for row in row_keys(&previous.operation) {
-                remove_sequence(&mut self.open, &row, seq);
                 remove_sequence(&mut self.blocked, &row, seq);
                 remove_sequence(&mut self.held, &row, seq);
             }
@@ -51,7 +36,6 @@ impl OperationQueue {
         let Some(entry) = entry else { return };
         let operation = &entry.operation;
         for row in row_keys(operation) {
-            self.open.entry(row.clone()).or_default().insert(seq);
             if matches!(operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) { self.blocked.entry(row.clone()).or_default().insert(seq); }
             if self.attempted.contains(&seq) { self.held.entry(row).or_default().insert(seq); }
         }
@@ -80,11 +64,6 @@ impl OperationQueue {
         if let Some(entry) = self.entries.get(&seq) {
             for row in row_keys(&entry.operation) { self.held.entry(row).or_default().insert(seq); }
         }
-    }
-
-    pub(crate) fn pending_of(&self, row: &RowRef, action_key: Option<&str>) -> Vec<i64> {
-        let open = self.open.get(row).into_iter().flatten();
-        open.filter(|seq| self.entries.get(seq).is_some_and(|entry| entry.operation.status == OperationStatus::Pending && action_key.is_none_or(|key| entry.operation.action_key == key))).copied().collect()
     }
 
     pub(crate) fn blocked_before(&self, operation: &Operation) -> (bool, bool) {

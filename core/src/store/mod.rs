@@ -33,7 +33,7 @@ mod write;
 
 pub use admission::{admit_upsert, UpsertAdmission};
 pub use apply::PlanCommitError;
-pub(crate) use apply::{apply_envelope, save_pending};
+pub(crate) use apply::save_pending;
 pub use boot::BootReport;
 pub use error::StoreError;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
@@ -118,17 +118,6 @@ struct AnnounceLine {
 impl AnnounceLine {
     fn ticket(&self) -> u64 {
         self.issued.fetch_add(1, Ordering::SeqCst)
-    }
-
-    fn through(&self, upto: u64) {
-        let next = crate::db::lock::acquire(&self.next);
-        if *next >= upto { return; }
-        crate::blocking::blocking_unit(|| {
-            let mut next = next;
-            while *next < upto {
-                next = self.turn.wait(next).unwrap_or_else(|error| error.into_inner());
-            }
-        });
     }
 
     fn run(&self, ticket: u64, announce: impl FnOnce()) {
@@ -219,8 +208,6 @@ pub struct Store {
     #[cfg(test)]
     pub(crate) after_network_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
-    pub(crate) announce_waiters: std::sync::atomic::AtomicUsize,
-    #[cfg(test)]
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
     #[cfg(test)]
     pub(crate) before_freshness: Mutex<Option<Box<dyn FnOnce() + Send>>>,
@@ -263,8 +250,6 @@ impl Store {
             #[cfg(test)]
             after_network_check: Mutex::new(None),
             #[cfg(test)]
-            announce_waiters: std::sync::atomic::AtomicUsize::new(0),
-            #[cfg(test)]
             after_commit: Mutex::new(None),
             #[cfg(test)]
             before_freshness: Mutex::new(None),
@@ -306,18 +291,6 @@ impl Store {
     /// The newest operation any commit of this process wrote. It moves inside the commit, before the commit line is released, so a transition that waited for the line sees every operation committed before it.
     pub(crate) fn newest_committed_operation(&self) -> i64 {
         self.newest_operation.load(Ordering::SeqCst)
-    }
-
-    pub(crate) fn announced(&self) {
-        let upto = {
-            let _writer = self.lock();
-            self.line.issued.load(Ordering::SeqCst)
-        };
-        #[cfg(test)]
-        self.announce_waiters.fetch_add(1, Ordering::SeqCst);
-        self.line.through(upto);
-        #[cfg(test)]
-        self.announce_waiters.fetch_sub(1, Ordering::SeqCst);
     }
 
     pub(crate) fn announce(&self, event: StoreEvent<'_>) {

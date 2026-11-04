@@ -36,7 +36,7 @@ impl OutcomeTicket {
         }
     }
 
-    #[cfg(any(test, feature = "stress"))]
+    #[cfg(test)]
     pub(crate) fn finished(&self) -> Option<FinishedOperation> {
         super::super::locked(&self.result).clone()
     }

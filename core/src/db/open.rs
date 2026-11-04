@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -52,8 +52,6 @@ pub(crate) struct Shared {
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
-    pub replaced_ids: Arc<Mutex<HashMap<String, String>>>,
-    pub creates: Arc<Mutex<HashMap<String, i64>>>,
     pub operation_queues: Arc<crate::operation::OperationQueues>,
     pub outcomes: Arc<Mutex<crate::sync::Outcomes>>,
     pub connectivity: Arc<crate::transport::Connectivity>,
@@ -230,11 +228,6 @@ impl Db {
         let dispatch = Arc::new(Dispatch::new());
         let reads = ReadPool::new(dispatch.clone());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
-        let replaced_ids = Arc::new(Mutex::new(HashMap::new()));
-        let creates = Arc::new(Mutex::new(HashMap::new()));
-        for entry in store.read(&[], |reader| Ok(crate::operation::read_queue(reader.connection())?))? {
-            for key in entry.created_keys() { locked(&creates).insert(key, entry.operation.id.0); }
-        }
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
         let outcomes = Arc::new(Mutex::new(crate::sync::Outcomes::default()));
         let replaced_log = dispatch.clone();
@@ -243,7 +236,7 @@ impl Db {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), replaced_ids: replaced_ids.clone(), creates: creates.clone(), operation_queues: operation_queues.clone(), outcomes: outcomes.clone() }));
+        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), operation_queues: operation_queues.clone(), outcomes: outcomes.clone() }));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -261,8 +254,6 @@ impl Db {
             reads: reads.clone(),
             dispatch: dispatch.clone(),
             outbox_changes,
-            replaced_ids,
-            creates,
             operation_queues,
             outcomes,
             connectivity: crate::transport::Connectivity::new(true),
@@ -336,8 +327,6 @@ struct CommitTargets {
     dispatch: Arc<Dispatch>,
     ephemeral: Arc<Ephemerals>,
     outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
-    replaced_ids: Arc<Mutex<HashMap<String, String>>>,
-    creates: Arc<Mutex<HashMap<String, i64>>>,
     operation_queues: Arc<crate::operation::OperationQueues>,
     outcomes: Arc<Mutex<crate::sync::Outcomes>>,
 }
@@ -349,14 +338,9 @@ fn finish_outcomes(ended: Vec<(Arc<crate::sync::OutcomeTicket>, crate::sync::Sen
 }
 
 fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
-    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, replaced_ids, creates, operation_queues, outcomes } = targets;
+    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, operation_queues, outcomes } = targets;
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
-            locked(&replaced_ids).extend(result.replaced.iter().map(|(from, to)| (format!("{}\0{}", from.model.as_str(), from.id.as_str()), to.to_string())));
-            for (from, _) in &result.replaced { locked(&creates).remove(&format!("{}\0{}", from.model.as_str(), from.id.as_str())); }
-            for entry in result.queue_operations.values().flatten() {
-                for key in entry.created_keys() { locked(&creates).insert(key, entry.operation.id.0); }
-            }
             operation_queues.changed(&result.queue_operations);
             let ended = locked(&outcomes).committed(result);
             finish_outcomes(ended);

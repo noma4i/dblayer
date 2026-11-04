@@ -19,7 +19,7 @@ async fn bridge_file_calls_reach_the_file_store() {
     ]);
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 32 },
         serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None, None).await.unwrap();
-    let id = db.create(db.session_epoch(), "Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap().id;
+    let id = db.create(db.session_epoch(), "Moment".into(), r#"{"text":"hello"}"#.into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
     db.attach(db.session_epoch(), "Moment".into(), id.clone(), "media".into(), b"abc".to_vec(), "a.txt".into(), "text/plain".into()).await.unwrap();
     assert_eq!(db.read(db.session_epoch(), "Moment".into(), id, "media".into()).await.unwrap(), Some(b"abc".to_vec()));
 }

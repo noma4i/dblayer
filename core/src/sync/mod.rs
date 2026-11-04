@@ -259,6 +259,7 @@ impl WeakSync {
 impl Sync {
     pub fn new(db: Db, transport: Arc<dyn Transport>, clock: Arc<dyn Clock>, config: SyncConfig) -> Self {
         db.set_clock(clock.clone());
+        let outcomes = db.shared.outcomes.clone();
         db.shared.blob_failed_ttl_ms.store(config.upload.failed_ttl.as_millis().try_into().unwrap_or(i64::MAX), std::sync::atomic::Ordering::Relaxed);
         let queue = db.operation_queue().map_err(|error| error.to_string());
         let reopened_through = queue.as_ref().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied()).unwrap_or(i64::MIN);
@@ -317,7 +318,7 @@ impl Sync {
             resume: resume::ResumeOwner::new(),
             preload: preload::PreloadOwner::default(),
             entity_due: Mutex::new(Vec::new()),
-            outcomes: db.shared.outcomes.clone(),
+            outcomes,
             #[cfg(test)]
             failure_probe: Mutex::new(None),
             #[cfg(test)]

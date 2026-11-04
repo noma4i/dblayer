@@ -23,9 +23,9 @@ end"#;
     let patch = models[0].actions[0].optimistic.clone();
     let db = Db::open_in_memory(models, None).unwrap();
     let id = dblayer::identity::RowId::new("m1").unwrap();
-    let scope = dblayer::commit::ScopeRef::new(dblayer::identity::ModelKey::new("Message"), dblayer::identity::ListKey::from_raw("all"));
-    let request = dblayer::db::ReplaceRequest::new(scope, dblayer::schema::Coverage::Complete);
-    db.replace(&db.admit().unwrap(), &request, vec![json!({"id": "m1", "reactions": [{"user": {"id": "u1"}, "body": "A"}, {"user": {"id": "u2"}, "body": "B"}]}).as_object().unwrap().clone()]).unwrap();
+    let mut answer = dblayer::commit::CommitEnvelope::new(dblayer::commit::WriteOrigin::Response, db.generation());
+    answer.entity_ops.push(dblayer::commit::EntityOp::Upsert { model: dblayer::identity::ModelKey::new("Message"), id: id.clone(), row: json!({"id": "m1", "reactions": [{"user": {"id": "u1"}, "body": "A"}, {"user": {"id": "u2"}, "body": "B"}]}).as_object().unwrap().clone() });
+    db.land(&db.admit().unwrap(), answer).unwrap();
     for (body, expected) in [("C", vec!["C", "B"]), ("", vec!["B"])] {
         db.act(&db.admit().unwrap(), "Message", "react", &id, patch.clone(), json!({"userId": "u1", "reactionBody": body}).as_object().unwrap().clone()).unwrap();
         let found = db.find("Message", &id).unwrap().unwrap();

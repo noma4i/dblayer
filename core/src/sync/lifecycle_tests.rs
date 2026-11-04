@@ -53,7 +53,7 @@ async fn ending_the_session_cancels_a_send_in_flight_and_frees_the_outbox() {
 }
 
 #[tokio::test]
-async fn closing_the_database_ends_an_answer_wait_for_a_pending_operation() {
+async fn closing_the_database_ends_the_outcome_wait_of_a_pending_operation() {
     let rig = rig();
     rig.sync.end_session_for_test();
     let (_, ticket) = create_claimed(&rig.sync, "moments", params(json!({"text": "unsent"})));
@@ -62,7 +62,7 @@ async fn closing_the_database_ends_an_answer_wait_for_a_pending_operation() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(!waiting.is_finished());
     rig.sync.close();
-    assert!(crate::test_wait::within(waiting).await.unwrap().is_err(), "an answer wait outlived the close");
+    assert!(crate::test_wait::within(waiting).await.unwrap().is_err(), "an outcome wait outlived the close");
 }
 
 #[tokio::test]

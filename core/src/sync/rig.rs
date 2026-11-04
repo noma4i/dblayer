@@ -236,44 +236,53 @@ pub fn rig_without_operations(db: Db, transport: MockTransport, config: SyncConf
     Rig { sync, db, transport, clock }
 }
 
-pub type Ticket = Arc<super::OutcomeTicket>;
+#[cfg(test)]
+pub(crate) type Ticket = Arc<super::OutcomeTicket>;
 
-pub fn create_claimed(sync: &Sync, model: &str, values: Map<String, Value>) -> (crate::db::Row, Ticket) {
+#[cfg(test)]
+pub(crate) fn create_claimed(sync: &Sync, model: &str, values: Map<String, Value>) -> (crate::db::Row, Ticket) {
     let admitted = sync.inner.db.admit().unwrap();
     let (row, _, _, ticket) = sync.inner.db.create_claiming(&admitted, None, model, values, Map::new(), |operation| sync.claim_outcome(operation.expect("the create queues an operation"))).unwrap();
     (row, ticket)
 }
 
-pub fn update_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId, patch: Map<String, Value>) -> Ticket {
+#[cfg(test)]
+pub(crate) fn update_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId, patch: Map<String, Value>) -> Ticket {
     let admitted = sync.inner.db.admit().unwrap();
     sync.inner.db.update_claiming(&admitted, model, id, patch, Map::new(), |operation| sync.claim_outcome(operation.expect("the update queues an operation"))).unwrap().3
 }
 
-pub fn destroy_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId) -> Ticket {
+#[cfg(test)]
+pub(crate) fn destroy_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId) -> Ticket {
     let admitted = sync.inner.db.admit().unwrap();
     sync.inner.db.destroy_claiming(&admitted, model, id, |operation| sync.claim_outcome(operation.expect("the destroy queues an operation"))).unwrap().3
 }
 
-pub fn act_claimed(sync: &Sync, model: &str, action: &str, id: &crate::identity::RowId, patch: Map<String, Value>, args: Map<String, Value>) -> (crate::db::Acted, Ticket) {
+#[cfg(test)]
+pub(crate) fn act_claimed(sync: &Sync, model: &str, action: &str, id: &crate::identity::RowId, patch: Map<String, Value>, args: Map<String, Value>) -> (crate::db::Acted, Ticket) {
     let admitted = sync.inner.db.admit().unwrap();
     sync.inner.db.act_claiming(&admitted, model, action, id, patch, args, |operation| sync.claim_outcome(operation)).unwrap()
 }
 
-pub fn retry_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId, action: Option<&str>) -> Ticket {
+#[cfg(test)]
+pub(crate) fn retry_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId, action: Option<&str>) -> Ticket {
     let admitted = sync.inner.db.admit().unwrap();
     sync.inner.db.retry_claiming(&admitted, model, id, action, |operation| sync.claim_outcome(operation)).unwrap().3
 }
 
-pub async fn flushed(rig: &Rig) -> super::FlushReport {
+#[cfg(test)]
+pub(crate) async fn flushed(rig: &Rig) -> super::FlushReport {
     let admitted = rig.sync.inner.db.admit().unwrap();
     app(&rig.sync, rig.sync.flush(&admitted)).await.unwrap()
 }
 
-pub fn settled(ticket: &Ticket) -> super::SendResult {
+#[cfg(test)]
+pub(crate) fn settled(ticket: &Ticket) -> super::SendResult {
     ticket.finished().expect("the flush settled the operation").result
 }
 
-pub fn refusal(ticket: &Ticket) -> String {
+#[cfg(test)]
+pub(crate) fn refusal(ticket: &Ticket) -> String {
     match settled(ticket) {
         super::SendResult::Rejected(failure) => failure.message,
         other => panic!("expected a refusal, got {other:?}"),
