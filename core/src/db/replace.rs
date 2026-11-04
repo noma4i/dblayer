@@ -32,6 +32,15 @@ struct Member {
 }
 
 impl Db {
+    /// Members that joined (true) or left (false) the scope after `base_revision` or through an operation still open: a list answer read before them does not undo them.
+    pub(crate) fn scope_membership(reader: &Reader<'_>, model: &str, scope_key: &str, base_revision: i64) -> Result<HashMap<String, bool>, DbError> {
+        let mut membership: HashMap<String, bool> = reader.scope_changes_since(model, scope_key, base_revision)?.into_iter().map(|(id, order)| (id, order.is_some())).collect();
+        for (id, joined) in super::op_effect::open_scope_effects(reader.connection(), model, scope_key)? {
+            membership.insert(id, joined);
+        }
+        Ok(membership)
+    }
+
     pub(crate) fn replace_plan(&self, reader: &Reader<'_>, request: &ReplaceRequest, rows: &[Map<String, Value>], base_revision: i64) -> Result<LandingPlan, DbError> {
         let model = &request.scope.model;
         let scope_key = request.scope.key.as_str();
@@ -47,10 +56,7 @@ impl Db {
                 incoming.push((id, row.clone()));
             }
         }
-        let mut membership: HashMap<String, bool> = reader.scope_changes_since(model.as_str(), scope_key, base_revision)?.into_iter().map(|(id, order)| (id, order.is_some())).collect();
-        for (id, joined) in super::op_effect::open_scope_effects(reader.connection(), model.as_str(), scope_key)? {
-            membership.insert(id, joined);
-        }
+        let membership = Self::scope_membership(reader, model.as_str(), scope_key, base_revision)?;
         incoming_ids.retain(|id| membership.get(id) != Some(&false));
         let anchor = (request.coverage == Coverage::Page && !request.replace_all)
             .then(|| incoming_ids.last().and_then(|last| current.iter().position(|member| &member.id == last)))

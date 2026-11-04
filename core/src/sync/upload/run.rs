@@ -348,7 +348,7 @@ impl Runner {
             checked: None,
         };
         let resumed = locked(&self.resumed).take();
-        if let Err(error) = self.inner.send_owned(&sending, &operation, resumed).await {
+        if let Err(error) = self.inner.send_owned(&sending, &operation, resumed, true).await {
             let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
             self.commit(|envelope| {
                 envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() })

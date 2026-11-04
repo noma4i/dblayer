@@ -19,7 +19,7 @@ fn samples(mut spec: ModelSpec) -> crate::sync::rig::Rig {
 }
 
 async fn load_samples(rig: &crate::sync::rig::Rig, row: Value) {
-    rig.transport.enqueue("Samples", crate::transport::Reply::data(json!({"samples":[row]})));
+    rig.transport.respond_with(move |request| (request.operation_name == "Samples").then(|| crate::transport::Reply::data(json!({"samples":[row.clone()]}))));
     crate::test_wait::within(rig.sync.load(&rig.db.admit().unwrap(), "samples", "all", &Default::default(), crate::sync::LoadOptions { force: true })).await.unwrap();
 }
 
@@ -80,7 +80,7 @@ async fn parsed_values_survive_storage_canonical_normalization_and_other_field_p
             assert_eq!(row.get("items").unwrap()[0].get("data").filter(|v| !v.is_null()), expected.as_ref(), "list {input}");
         };
         check();
-        load_samples(&rig, json!({"id":id,"label":"second"})).await;
+        db.update(&db.admit().unwrap(), "samples", &rid(&id), obj(json!({"label":"second"}))).unwrap();
         check();
         let saved = db.shared.store.point("samples", &id).unwrap().unwrap();
         put(&db, "samples", Value::Object(saved));

@@ -267,7 +267,7 @@ pub(crate) fn act_claimed(sync: &Sync, model: &str, action: &str, id: &crate::id
 #[cfg(test)]
 pub(crate) fn retry_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId, action: Option<&str>) -> Ticket {
     let admitted = sync.inner.db.admit().unwrap();
-    sync.inner.db.retry_claiming(&admitted, model, id, action, |operation| sync.claim_outcome(operation)).unwrap().3
+    sync.inner.db.retry_claiming(&admitted, model, id, action, |operation| sync.claim_outcome(operation)).unwrap().3.expect("a failed operation to retry")
 }
 
 #[cfg(test)]
@@ -277,11 +277,13 @@ pub(crate) async fn flushed(rig: &Rig) -> super::FlushReport {
 }
 
 #[cfg(test)]
+#[track_caller]
 pub(crate) fn settled(ticket: &Ticket) -> super::SendResult {
     ticket.finished().expect("the flush settled the operation").result
 }
 
 #[cfg(test)]
+#[track_caller]
 pub(crate) fn refusal(ticket: &Ticket) -> String {
     match settled(ticket) {
         super::SendResult::Rejected(failure) => failure.message,

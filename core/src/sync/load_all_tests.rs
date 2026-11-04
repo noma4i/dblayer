@@ -116,7 +116,7 @@ async fn load_all_reads_the_connection_to_the_confirmed_end() {
             Run::ResetWhileTheFirstPageIsInFlight => tokio::join!(load(false), async { rig.db.reset(&["moments"]).unwrap() }).0,
             Run::NewerWindowStored { cursor, has_next } => {
                 let key = rig.sync.window_key("moments", case.relation, &query_params).unwrap();
-                let newer = i64::MAX / 2;
+                let newer = rig.sync.inner.next_issued().unwrap() + 1_000;
                 let record = WindowRecord { key, cursor: cursor.map(str::to_string), has_next, total: None, pages: 1, issued: newer, applied: newer, generation: i64::try_from(rig.db.generation().value()).unwrap() };
                 rig.db.shared.store.save_window(&record).unwrap();
                 load(true).await

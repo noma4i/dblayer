@@ -388,7 +388,7 @@ fn record(seq: Option<i64>, status: OperationStatus, dedupe: Option<&str>) -> Op
         base_revision: None,
         created_at: 5,
         dedupe_key: dedupe.map(str::to_string),
-        rollback: Some(json!({"v": 1, "kind": "patch"})),
+        rollback: Some(json!({"rows": []})),
         upload: None,
     }
 }

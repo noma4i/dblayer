@@ -69,7 +69,7 @@ pub use model_event::{ModelEvent, ModelEventItem, ModelEvents};
 pub use resume::{ResumeReport, Watch};
 pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
-pub use upload::{ItemId, ItemOutcome, ItemReceipt, OperationOutcome, OperationReceipt};
+pub use upload::{ItemKey, ItemOutcome, ItemReceipt, OperationOutcome, OperationReceipt};
 pub(crate) use send::{DeliveryEffects, FinishedOperation, OutcomeTicket, Outcomes};
 pub use subscribe::{EventEffect, Updates, SubscriptionDef, SubscriptionStatus};
 

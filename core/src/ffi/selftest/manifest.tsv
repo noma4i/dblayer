@@ -6,9 +6,6 @@ S315	batch-receipt	kotlin	com.noma4i.dblayer.UploadBatchTest.batchOwnsSourcesAnd
 S314	multi-join	core	joining_multiple_members_keeps_each_once_in_order	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
 S314	multi-join	swift	BridgeProbeTests.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
 S314	multi-join	kotlin	com.noma4i.dblayer.ClubTest.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
-S312	format	core	a_pending_operation_survives_an_old_format_without_restoring_the_cached_row	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
-S312	format	swift	BridgeProbeTests.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
-S312	format	kotlin	com.noma4i.dblayer.ClubTest.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S313	outcome	core	an_operation_outcome_can_be_read_twice_from_its_receipt	red-by-reading	read the same outcome twice	operation receipt
 S313	outcome	swift	BridgeProbeTests.anOperationOutcomeCanBeReadTwiceFromItsReceipt	red-by-reading	read the same outcome twice	operation receipt
 S313	outcome	kotlin	com.noma4i.dblayer.ClubTest.anOperationOutcomeCanBeReadTwiceFromItsReceipt	red-by-reading	read the same outcome twice	operation receipt

@@ -19,7 +19,7 @@ fun main() = runBlocking {
             }
         }
         val epoch = db.sessionEpoch()
-        val created = db.create(epoch, "Item", """{"title":"kept"}""", "{}")
+        val created = checkNotNull(db.create(epoch, "Item", """{"title":"kept"}""", "{}").optimisticValue)
         check(created.id.isNotEmpty())
         check(created.sync.state == WireSyncState.SYNCED)
         check(created.cells.contains(Cell.Text("kept")))

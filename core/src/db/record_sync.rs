@@ -35,28 +35,37 @@ impl Db {
         Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, Some((model, id, key.as_deref())))?)
     }
 
-    pub(crate) fn retry_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>, claim: impl FnOnce(i64) -> T) -> Result<(i64, i64, Option<super::Row>, T), DbError> {
+    /// Retries the failed operation of a record or its failed upload items in one commit. Nothing failed gives no operation: the record stays as it is.
+    pub(crate) fn retry_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>, claim: impl FnOnce(i64) -> T) -> Result<(Option<i64>, i64, Option<super::Row>, Option<T>), DbError> {
         let key = self.action_operation_key(model, action)?;
         let generation = self.generation();
         let mut sequence = None;
         let (committed, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
+            sequence = None;
             let entries = OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?;
             let stuck: Vec<_> = entries.into_iter().filter(is_stuck).filter(|entry| key.as_ref().is_none_or(|key| entry.operation.action_key == *key)).collect();
-            let [entry] = stuck.as_slice() else { return Err(DbError::Internal("retry requires exactly one failed operation".into())) };
-            let seq = entry.operation.id.0;
-            sequence = Some(seq);
+            if stuck.len() > 1 { return Err(DbError::Internal("retry requires at most one failed operation".into())); }
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             envelope.snapshot = Some(crate::identity::RowRef::new(crate::identity::ModelKey::new(model), id.clone()));
-            if is_failed_destroy(entry) { envelope.entity_ops = Prior::of(entry)?.map(|prior| prior.hiding()).unwrap_or_default(); }
-            envelope.operation_transitions.push(OperationTransition::Retry { seq });
-            Ok(Some(envelope))
+            if let Some(entry) = stuck.first() {
+                sequence = Some(entry.operation.id.0);
+                if is_failed_destroy(entry) { envelope.entity_ops = Prior::of(entry)?.map(|prior| prior.hiding()).unwrap_or_default(); }
+                envelope.operation_transitions.push(OperationTransition::Retry { seq: entry.operation.id.0 });
+            }
+            let items = retried_upload_items(reader, Some((model, id, key.as_deref())))?;
+            sequence = sequence.or_else(|| items.first().map(|transition| transition.0));
+            envelope.operation_transitions.extend(items.into_iter().map(|(seq, item_position, state)| OperationTransition::Progress { seq, item_position, state: Box::new(state) }));
+            Ok(sequence.is_some().then_some(envelope))
         }).map_err(plan_fault)?;
-        let seq = sequence.ok_or_else(|| DbError::Internal("retry has no operation".into()))?;
-        let revision = committed.result().revision.ok_or_else(|| DbError::Internal("retry has no revision".into()))?;
-        let row = committed.result().snapshot.clone().map(|row| self.shared.overlay_snapshot(model, row)).transpose()?;
-        let ticket = claim(seq);
+        let revision = match committed.result().revision { Some(revision) => revision, None => self.revision_seq()? };
+        let row = match committed.result().snapshot.clone() {
+            Some(row) => Some(row),
+            None => self.find(model, id)?,
+        };
+        let row = row.map(|row| self.shared.overlay_snapshot(model, row)).transpose()?;
+        let ticket = sequence.map(claim);
         committed.publish();
-        Ok((seq, revision, row, ticket))
+        Ok((sequence, revision, row, ticket))
     }
 
     pub fn retry_all(&self, admitted: &crate::lifecycle::Admitted) -> Result<usize, DbError> {
@@ -69,26 +78,10 @@ impl Db {
         let mut retried = 0;
         self.commit_following(&admitted.authority(), generation, |reader| {
             retried = 0;
-            let connection = reader.connection();
+            let items = retried_upload_items(reader, target)?;
+            retried = items.len();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-            let uploads = match target {
-                Some((model, id, _)) => {
-                    let keys = [(model.to_string(), id.to_string())].into();
-                    let mut uploads = std::collections::HashMap::new();
-                    for seq in crate::operation::row_operation_sequences(connection, &keys)? {
-                        uploads.extend(crate::operation::read_operation_uploads(connection, seq)?);
-                    }
-                    uploads
-                }
-                None => crate::operation::read_upload_items(connection)?,
-            };
-            for ((seq, position), mut state) in uploads {
-                let (action, status, row): (String, String, String) = connection.query_row("SELECT op.action_key, op.status, op_item.row_id FROM op JOIN op_item USING (seq) WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-                if status != "pending" || target.is_some_and(|(model, id, key)| row != id.as_str() || key.is_some_and(|key| action != key) || crate::operation::Operation::split_action_key(&action).is_none_or(|(owner, _)| owner != model)) { continue; }
-                if state.apply(crate::upload::UploadEvent::Retried).is_err() { continue; }
-                envelope.operation_transitions.push(OperationTransition::Progress { seq, item_position: position, state: Box::new(state) });
-                retried += 1;
-            }
+            envelope.operation_transitions.extend(items.into_iter().map(|(seq, item_position, state)| OperationTransition::Progress { seq, item_position, state: Box::new(state) }));
             Ok::<_, DbError>(Some(envelope))
         }).map_err(super::local_write::plan_fault)?;
         Ok(retried)
@@ -145,7 +138,7 @@ impl Db {
                 if self.remove_upload_item_if(admitted, &model, &id, seq, true, Some(&still))? { removed += 1; }
             } else if rolled_back.insert(seq) {
                 let still = |_: &crate::store::Reader<'_>, entry: &OutboxOperation| Ok(entry.operation.status == OperationStatus::Failed && entry.operation.since <= due);
-                if !self.roll_back_if(admitted, seq, self.generation(), Some(&still), &[])?.is_noop() { removed += 1; }
+                if !self.roll_back_if(admitted, seq, self.generation(), Some(&still))?.is_noop() { removed += 1; }
             }
         }
         Ok(removed)
@@ -186,4 +179,29 @@ impl Db {
         let all = self.shared.read(&[], |reader| Ok(OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?))?;
         Ok(all.into_iter().filter(|entry| key.is_none_or(|key| entry.operation.action_key == key)).collect())
     }
+}
+
+/// The failed upload items of a record (or of every record) moved back to sending.
+fn retried_upload_items(reader: &crate::store::Reader<'_>, target: Option<(&str, &RowId, Option<&str>)>) -> Result<Vec<(i64, i64, crate::upload::UploadState)>, DbError> {
+    let connection = reader.connection();
+    let mut retried = Vec::new();
+    let uploads = match target {
+        Some((model, id, _)) => {
+            let keys = [(model.to_string(), id.to_string())].into();
+            let mut uploads = std::collections::HashMap::new();
+            for seq in crate::operation::row_operation_sequences(connection, &keys)? {
+                uploads.extend(crate::operation::read_operation_uploads(connection, seq)?);
+            }
+            uploads
+        }
+        None => crate::operation::read_upload_items(connection)?,
+    };
+    for ((seq, position), mut state) in uploads {
+        let (action, status, row): (String, String, String) = connection.query_row("SELECT op.action_key, op.status, op_item.row_id FROM op JOIN op_item USING (seq) WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        if status != "pending" || target.is_some_and(|(model, id, key)| row != id.as_str() || key.is_some_and(|key| action != key) || crate::operation::Operation::split_action_key(&action).is_none_or(|(owner, _)| owner != model)) { continue; }
+        if state.apply(crate::upload::UploadEvent::Retried).is_err() { continue; }
+        retried.push((seq, position, state));
+    }
+    retried.sort_by_key(|(seq, position, _)| (*seq, *position));
+    Ok(retried)
 }

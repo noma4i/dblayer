@@ -38,11 +38,11 @@ use super::error::SyncError;
 use super::{locked, Inner, Sync};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ItemId(pub String);
+pub struct ItemKey(pub String);
 
 #[derive(Debug, Clone)]
 pub struct ItemReceipt {
-    pub item: ItemId,
+    pub item: ItemKey,
     pub optimistic_value: crate::db::Row,
 }
 
@@ -58,8 +58,8 @@ pub struct OperationReceipt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ItemOutcome {
-    Confirmed { item: ItemId, value: crate::db::Row },
-    Discarded { item: ItemId },
+    Confirmed { item: ItemKey, value: crate::db::Row },
+    Discarded { item: ItemKey },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -236,7 +236,7 @@ impl Inner {
         Ok(file.with_steps(uploads.steps(&mutation)))
     }
 
-    pub(crate) fn begin_upload(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, file: &UploadFile, state: UploadState) -> Result<(i64, i64, crate::db::Row, Arc<crate::sync::OutcomeTicket>), SyncError> {
+    pub(crate) fn begin_upload(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, file: &UploadFile, state: UploadState) -> Result<(i64, i64, Option<crate::db::Row>, Arc<crate::sync::OutcomeTicket>), SyncError> {
         let input = self.upload_input(model, action, file.clone())?;
         let family = self.db.spec(model)?.upload_family(action);
         let record = OperationRecord {
@@ -264,13 +264,12 @@ impl Inner {
                 envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record.clone()), items: vec![item.clone()] });
                 Ok(Some(envelope))
             })?;
-            let result = committed.as_ref().map(|result| result.result()).ok_or(SyncError::Cancelled)?;
+            *pending = committed;
+            let result = pending.as_ref().map(|result| result.result()).ok_or(SyncError::Cancelled)?;
             let seq = result.operations.iter().next().copied().ok_or(SyncError::Cancelled)?;
             let revision = result.revision.ok_or(SyncError::Cancelled)?;
-            let row = result.snapshot.clone().ok_or(SyncError::Cancelled)?;
             let ticket = locked(&self.outcomes).claim(seq);
-            *pending = committed;
-            Ok((seq, revision, row, ticket))
+            Ok((seq, revision, result.snapshot.clone(), ticket))
         })
     }
 
@@ -503,11 +502,11 @@ impl Sync {
             let ids: Vec<_> = rows.iter().map(|(_, row)| row.id.clone()).collect();
             inner.start_uploads()?;
             inner.db.report_upload_accepted(&admitted, &model, inner.db.accepted_items(&ids)?);
-            Ok(OperationReceipt { epoch: admitted.value(), operation, revision, items: rows.into_iter().map(|(item, optimistic_value)| ItemReceipt { item: ItemId(item), optimistic_value }).collect(), ticket, life: admitted.life().clone() })
+            Ok(OperationReceipt { epoch: admitted.value(), operation, revision, items: rows.into_iter().map(|(item, optimistic_value)| ItemReceipt { item: ItemKey(item), optimistic_value }).collect(), ticket, life: admitted.life().clone() })
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub(crate) async fn upload(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<(i64, i64, crate::db::Row, Arc<crate::sync::OutcomeTicket>), SyncError> {
+    pub(crate) async fn upload(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<(i64, i64, Option<crate::db::Row>, Arc<crate::sync::OutcomeTicket>), SyncError> {
         self.inner.require_session(admitted)?;
         let inner = self.inner.clone();
         let admitted = admitted.clone();
@@ -515,7 +514,7 @@ impl Sync {
         let (model, id, action) = (model.to_string(), id.clone(), action.to_string());
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
             let (seq, revision, row, ticket) = inner.begin_upload(&admitted, generation, &model, &id, &action, &file, UploadState::queued())?;
-            let row = inner.db.shared.overlay_snapshot(&model, row)?;
+            let row = row.map(|row| inner.db.shared.overlay_snapshot(&model, row)).transpose()?;
             inner.start_uploads()?;
             inner.db.report_upload_accepted(&admitted, &model, vec![crate::db::AcceptedUpload { seq, position: 0 }]);
             Ok((seq, revision, row, ticket))

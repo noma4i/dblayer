@@ -484,8 +484,19 @@ impl Lifecycle {
         changes.wait_for(|published| published.closed || published.admits(origin)).await.is_ok_and(|published| !published.closed)
     }
 
-    /// Admits the work a wake starts in the session epoch it was woken in. A transition that keeps that epoch delays the work to its end instead of dropping it.
-    pub(crate) async fn admit_after_transition(self: &Arc<Self>, origin: Origin, target: &'static str, epoch: u64) -> Option<Admitted> {
+    /// Admits the work a wake starts in the session epoch it was woken in. The lease is taken at the call, so a settled wait sees the work. A transition that keeps that epoch delays the work to its end instead of dropping it.
+    pub(crate) fn admit_woken(self: &Arc<Self>, origin: Origin, target: &'static str, epoch: u64) -> impl std::future::Future<Output = Option<Admitted>> + Send + 'static {
+        let now = self.admit_as(origin, target, false, Some(epoch)).ok();
+        let life = self.clone();
+        async move {
+            match now {
+                Some(admitted) => Some(admitted),
+                None => life.admit_after_transition(origin, target, epoch).await,
+            }
+        }
+    }
+
+    async fn admit_after_transition(self: Arc<Self>, origin: Origin, target: &'static str, epoch: u64) -> Option<Admitted> {
         let mut changes = self.changed.subscribe();
         loop {
             if let Ok(admitted) = self.admit_as(origin, target, false, Some(epoch)) { return Some(admitted); }

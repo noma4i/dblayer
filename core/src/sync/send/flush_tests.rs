@@ -29,7 +29,7 @@ async fn sending_uses_the_input_frozen_by_its_owner_instead_of_a_stale_snapshot(
     let operation = rig.sync.inner.operations.lock().unwrap()["UpdateMoment"].clone();
     let sending = super::Sending { effects: std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&rig.sync.inner))), admitted: &rig.db.admit().unwrap(), entry: &stale, model: "moments".into(), action: "update".into(), generation, base_revision: rig.db.revision_seq().unwrap(), checked: None };
     rig.transport.enqueue("UpdateMoment", updated("m1", "after"));
-    crate::sync::rig::app(&rig.sync, rig.sync.inner.send_owned(&sending, &operation, None)).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.inner.send_owned(&sending, &operation, None, false)).await.unwrap();
     assert_eq!(rig.transport.calls()[0].variables["text"], "after");
     assert!(rig.db.outbox().unwrap().is_empty());
 }
@@ -577,24 +577,24 @@ async fn the_outcome_of_a_write_is_the_answer_the_server_gave_to_its_operation()
     let rig = rig();
     let (_, confirmed) = create_claimed(&rig.sync, "moments", params(json!({"text": "hello"})));
     rig.transport.enqueue("CreateMoment", created("m77", "hello"));
+    rig.transport.enqueue("CreateMoment", Reply::graphql_error("nope", "FORBIDDEN"));
     flushed(&rig).await;
     assert_eq!(settled(&confirmed), SendResult::Committed);
     assert_eq!(confirmed.finished().unwrap().value.unwrap().id.as_str(), "m77");
 
     let (_, refused) = create_claimed(&rig.sync, "moments", params(json!({"text": "again"})));
-    rig.transport.enqueue("CreateMoment", Reply::graphql_error("nope", "FORBIDDEN"));
     flushed(&rig).await;
     assert!(refusal(&refused).contains("nope"));
 
     put(&rig, "moments", moment("m1", "t"));
     let updated_ticket = update_claimed(&rig.sync, "moments", &rid("m1"), params(json!({"text": "new"})));
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
+    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
     flushed(&rig).await;
     assert_eq!(settled(&updated_ticket), SendResult::Committed);
     assert!(rig.db.outbox().unwrap().is_empty());
 
     let update_refused = update_claimed(&rig.sync, "moments", &rid("m1"), params(json!({"text": "newer"})));
-    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
     flushed(&rig).await;
     assert!(refusal(&update_refused).contains("not allowed"));
 
@@ -607,10 +607,10 @@ async fn the_outcome_of_a_write_is_the_answer_the_server_gave_to_its_operation()
     put(&keeping, "moments", moment("m2", "t"));
     let kept = update_claimed(&keeping.sync, "moments", &rid("m2"), params(json!({"text": "new"})));
     keeping.transport.enqueue("UpdateMoment", Reply::graphql_error("kept", "FORBIDDEN"));
+    keeping.transport.enqueue("UpdateMoment", updated("m2", "new"));
     flushed(&keeping).await;
     assert!(refusal(&kept).contains("kept"));
     let retried = retry_claimed(&keeping.sync, "moments", &rid("m2"), None);
-    keeping.transport.enqueue("UpdateMoment", updated("m2", "new"));
     flushed(&keeping).await;
     assert_eq!(settled(&retried), SendResult::Committed);
     assert!(refusal(&kept).contains("kept"));

@@ -495,13 +495,17 @@ impl Database {
         Ok(())
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<WireOperationReceipt, DbError> {
+        if self.sync.is_none() {
+            let row = self.db.find(&model, &id(&row_id)?)?.map(|row| self.wire(&model).map(|wire| wire.row(&row))).transpose()?;
+            return Ok(receipt(epoch, model, None, self.db.revision_seq()?, row, None, self.streams.clone()));
+        }
         self.write_in_epoch(crate::lifecycle::Origin::Session, epoch, "retry", move |database, admitted| {
             let sync = database.sync()?.clone();
             let id = id(&row_id)?;
             let (operation, revision, row, ticket) = database.db.retry_claiming(admitted, &model, &id, action.as_deref(), |operation| sync.claim_outcome(operation))?;
             let row = row.map(|row| database.wire(&model).map(|wire| wire.row(&row))).transpose()?;
-            database.send_writes();
-            Ok(receipt(epoch, model, Some(operation), revision, row, Some(ticket), database.streams.clone()))
+            if operation.is_some() { database.send_writes(); }
+            Ok(receipt(epoch, model, operation, revision, row, ticket, database.streams.clone()))
         }).await
     }
     pub async fn retry_all(&self, epoch: u64) -> Result<u64, DbError> {
@@ -559,7 +563,7 @@ impl Database {
         self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "upload", false, |admitted| on_executor(async move {
             let file = request.into_file()?;
             let (operation, revision, row, ticket) = sync.upload(&admitted, &model, &row, &action, file).await?;
-            Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, Some(wire.row(&row)), Some(ticket), life))
+            Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, row.map(|row| wire.row(&row)), Some(ticket), life))
         })).await
     }
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {

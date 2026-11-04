@@ -27,17 +27,17 @@ public struct Ledger: DBModel {
 
     public static let scope = Column<Ledger, String>("scope")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func send(in scope_: AccountScope, scope: String) async throws -> Sent<Self> {
+    @concurrent public static func send(in scope_: AccountScope, scope: String) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["scope"] = try JSONValue.encode(scope)
         return try await scope_.send(Self.self, values: values_)
     }
-    @concurrent public func update(scope: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(scope: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = scope { values_["scope"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    @concurrent public func move(scope: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func move(scope: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{}"#).objectValue
         return try await self.act("move", values: values_, args: ["scope": try JSONValue.encode(scope)], in: scope_)
     }
@@ -74,12 +74,12 @@ public struct LedgerFeed: DBModel {
         return built_
     }
     @concurrent public static func entriesEdge(_ scope: String, of id: String, in scope_: AccountScope? = nil) async throws -> LedgerFeedEntriesEdge? { try await Self.entries(scope).edgeValues(of: id, in: scope_).map(LedgerFeedEntriesEdge.init) }
-    @concurrent public static func create(title: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(title: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["title"] = try JSONValue.encode(title)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(title: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -122,12 +122,12 @@ public struct Shadow: DBModel {
         return built_
     }
     @concurrent public static func accountEdge(of id: String, in scope_: AccountScope? = nil) async throws -> ShadowAccountEdge? { try await Self.account.edgeValues(of: id, in: scope_).map(ShadowAccountEdge.init) }
-    @concurrent public static func send(in scope_: AccountScope, title: String) async throws -> Sent<Self> {
+    @concurrent public static func send(in scope_: AccountScope, title: String) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["title"] = try JSONValue.encode(title)
         return try await scope_.send(Self.self, values: values_)
     }
-    @concurrent public func update(title: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -165,21 +165,21 @@ public struct Holder: DBSingleton {
         return built_
     }
     public static var singleton: Query<Self> { Self.account }
-    @concurrent public static func create(label: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(label: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = label { values_["label"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(label: String?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(label: String?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = label { values_["label"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    @concurrent public func setVideo(video: Blob, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func setVideo(video: Blob, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{}"#).objectValue
         return try await self.act("set_video", values: values_, args: ["video": try JSONValue.encode(video)], in: scope_)
     }
-    @concurrent public static func setVideo(video: Blob, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func setVideo(video: Blob, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         guard let current_ = try await Self.singleton.read(in: scope_).first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
         return try await current_.setVideo(video: video, in: scope_)
     }
@@ -220,19 +220,19 @@ public struct Mailbox: DBModel {
         return built_
     }
     @concurrent public static func entriesEdge(_ act: String, of id: String, in scope_: AccountScope? = nil) async throws -> MailboxEntriesEdge? { try await Self.entries(act).edgeValues(of: id, in: scope_).map(MailboxEntriesEdge.init) }
-    @concurrent public static func create(read: Bool, put: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(read: Bool, put: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["read"] = try JSONValue.encode(read)
         if let value = put { values_["put"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(read: Bool? = nil, put: String?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(read: Bool? = nil, put: String?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = read { values_["read"] = try JSONValue.encode(value) }
         if let value = put { values_["put"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    @concurrent public func mark(put: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func mark(put: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{}"#).objectValue
         return try await self.act("mark", values: values_, args: ["put": try JSONValue.encode(put)], in: scope_)
     }
@@ -272,21 +272,21 @@ public struct Asset: DBModel {
     public static let size = Column<Asset, Int>("size")
     public static let position = Column<Asset, Int>("position")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func create(clientKey: String, size: Int, position: Int? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(clientKey: String, size: Int, position: Int? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["clientKey"] = try JSONValue.encode(clientKey)
         values_["size"] = try JSONValue.encode(size)
         if let value = position { values_["position"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(clientKey: String? = nil, size: Int? = nil, position: Int? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(clientKey: String? = nil, size: Int? = nil, position: Int? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = clientKey { values_["clientKey"] = try JSONValue.encode(value) }
         if let value = size { values_["size"] = try JSONValue.encode(value) }
         if let value = position { values_["position"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    @concurrent public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> ActionAnswer<Self, AssetCreateFileResult> {
+    @concurrent public func createFile(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(self, action: "create_file", request)
     }
 }
@@ -320,25 +320,25 @@ public struct Club: DBModel {
 
     public static let name = Column<Club, String>("name")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func create(name: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(name: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["name"] = try JSONValue.encode(name)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(name: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(name: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = name { values_["name"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    @concurrent public func leave(in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func leave(in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{}"#).objectValue
         return try await self.act("leave", values: values_, args: [:], in: scope_)
     }
-    @concurrent public func addMember(userIds: [String], in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func addMember(userIds: [String], in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{}"#).objectValue
         return try await self.act("add_member", values: values_, args: ["userIds": try JSONValue.encode(userIds)], in: scope_)
     }
-    @concurrent public func removeMember(userIds: [String], in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func removeMember(userIds: [String], in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{}"#).objectValue
         return try await self.act("remove_member", values: values_, args: ["userIds": try JSONValue.encode(userIds)], in: scope_)
     }
@@ -374,12 +374,12 @@ public struct Person: DBModel {
         let built_ = Query<Self>(relation: "club_members", params: ["clubId": try JSONValue.encode(clubId), "order": try JSONValue.encode(order)])
         return built_
     }
-    @concurrent public static func create(name: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(name: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["name"] = try JSONValue.encode(name)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(name: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(name: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = name { values_["name"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -426,21 +426,21 @@ public struct Letter: DBModel {
         built_ = built_.order(Order(field: "at", direction: "asc"))
         return built_
     }
-    @concurrent public static func send(in scope_: AccountScope, chatId: String, text: String, at: Int) async throws -> Sent<Self> {
+    @concurrent public static func send(in scope_: AccountScope, chatId: String, text: String, at: Int) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["chatId"] = try JSONValue.encode(chatId)
         values_["text"] = try JSONValue.encode(text)
         values_["at"] = try JSONValue.encode(at)
         return try await scope_.send(Self.self, values: values_)
     }
-    @concurrent public func update(chatId: String? = nil, text: String? = nil, at: Int? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(chatId: String? = nil, text: String? = nil, at: Int? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = chatId { values_["chatId"] = try JSONValue.encode(value) }
         if let value = text { values_["text"] = try JSONValue.encode(value) }
         if let value = at { values_["at"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
     }
-    @concurrent public func forward(targetChatId: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func forward(targetChatId: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{}"#).objectValue
         return try await self.act("forward", values: values_, args: ["targetChatId": try JSONValue.encode(targetChatId)], in: scope_)
     }
@@ -507,7 +507,7 @@ public struct Container: DBModel {
         let built_ = Query<Self>(relation: "shelf", params: ["shelf": try JSONValue.encode(shelf)])
         return built_
     }
-    @concurrent public static func send(in scope_: AccountScope, title: String, lastRecordAt: String? = nil, lastRecordId: String? = nil, shareUrl: String? = nil, isPublic: Bool? = nil, shelves: [ContainerShelf]? = nil) async throws -> Sent<Self> {
+    @concurrent public static func send(in scope_: AccountScope, title: String, lastRecordAt: String? = nil, lastRecordId: String? = nil, shareUrl: String? = nil, isPublic: Bool? = nil, shelves: [ContainerShelf]? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["title"] = try JSONValue.encode(title)
         if let value = lastRecordAt { values_["lastRecordAt"] = try JSONValue.encode(value) }
@@ -517,7 +517,7 @@ public struct Container: DBModel {
         if let value = shelves { values_["shelves"] = try JSONValue.encode(value) }
         return try await scope_.send(Self.self, values: values_)
     }
-    @concurrent public func update(title: String? = nil, lastRecordAt: String?? = nil, lastRecordId: String?? = nil, shareUrl: String?? = nil, isPublic: Bool?? = nil, shelves: [ContainerShelf]?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil, lastRecordAt: String?? = nil, lastRecordId: String?? = nil, shareUrl: String?? = nil, isPublic: Bool?? = nil, shelves: [ContainerShelf]?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         if let value = lastRecordAt { values_["lastRecordAt"] = try JSONValue.encode(value) }
@@ -531,10 +531,10 @@ public struct Container: DBModel {
         public static let records = Association<Container, Record>("records")
         public static let lastRecord = Association<Container, Record>("lastRecord")
     }
-    @concurrent public func createPhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> ActionAnswer<Self, ContainerCreatePhotoResult> {
+    @concurrent public func createPhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(self, action: "create_photo", request)
     }
-    @concurrent public func updatePhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> ActionAnswer<Self, ContainerUpdatePhotoResult> {
+    @concurrent public func updatePhoto(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(self, action: "update_photo", request)
     }
 }
@@ -575,12 +575,12 @@ public struct Document: DBModel {
         let built_ = Query<Self>(relation: "bySlug", params: ["slug": try JSONValue.encode(slug), "source": try JSONValue.encode(source)])
         return built_
     }
-    @concurrent public static func create(slug: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(slug: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["slug"] = try JSONValue.encode(slug)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(slug: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(slug: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = slug { values_["slug"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -628,14 +628,14 @@ public struct Chat: DBModel {
         let built_ = Query<Self>(relation: "list", params: ["list": try JSONValue.encode(list)])
         return built_
     }
-    @concurrent public static func create(title: String, serverRevision: Int, lists: [String], in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(title: String, serverRevision: Int, lists: [String], in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["title"] = try JSONValue.encode(title)
         values_["serverRevision"] = try JSONValue.encode(serverRevision)
         values_["lists"] = try JSONValue.encode(lists)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(title: String? = nil, serverRevision: Int? = nil, lists: [String]? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(title: String? = nil, serverRevision: Int? = nil, lists: [String]? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = title { values_["title"] = try JSONValue.encode(value) }
         if let value = serverRevision { values_["serverRevision"] = try JSONValue.encode(value) }
@@ -677,13 +677,13 @@ public struct Message: DBModel {
     @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force, in: scope)
     }
-    @concurrent public static func create(text: String, chatId: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(text: String, chatId: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["text"] = try JSONValue.encode(text)
         values_["chatId"] = try JSONValue.encode(chatId)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(text: String? = nil, chatId: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(text: String? = nil, chatId: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = text { values_["text"] = try JSONValue.encode(value) }
         if let value = chatId { values_["chatId"] = try JSONValue.encode(value) }
@@ -724,13 +724,13 @@ public struct InterfaceRecord: DBModel {
     @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force, in: scope)
     }
-    @concurrent public static func create(slug: String, spec: SampleSpec? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(slug: String, spec: SampleSpec? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["slug"] = try JSONValue.encode(slug)
         if let value = spec { values_["spec"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(slug: String? = nil, spec: SampleSpec?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(slug: String? = nil, spec: SampleSpec?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = slug { values_["slug"] = try JSONValue.encode(value) }
         if let value = spec { values_["spec"] = try JSONValue.encode(value) }
@@ -777,14 +777,14 @@ public struct KeywordRecord: DBModel {
         built_ = built_.where(Condition.equal("class", try JSONValue.encode(`class`)))
         return built_
     }
-    @concurrent public static func create(`default`: String, `class`: String, value: KeywordValue? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(`default`: String, `class`: String, value: KeywordValue? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["default"] = try JSONValue.encode(`default`)
         values_["class"] = try JSONValue.encode(`class`)
         if let value = value { values_["value"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(`default`: String? = nil, `class`: String? = nil, value: KeywordValue?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(`default`: String? = nil, `class`: String? = nil, value: KeywordValue?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = `default` { values_["default"] = try JSONValue.encode(value) }
         if let value = `class` { values_["class"] = try JSONValue.encode(value) }
@@ -855,7 +855,7 @@ public struct MediaMessage: DBModel {
         let built_ = Query<Self>(relation: "gifts_since", params: ["chatId": try JSONValue.encode(chatId), "afterSequence": try JSONValue.encode(afterSequence)])
         return built_
     }
-    @concurrent public static func create(chatId: String, kind: MediaMessageKind, mediaKind: MediaKindValue? = nil, sequenceNumber: Int? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(chatId: String, kind: MediaMessageKind, mediaKind: MediaKindValue? = nil, sequenceNumber: Int? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["chatId"] = try JSONValue.encode(chatId)
         values_["kind"] = try JSONValue.encode(kind)
@@ -863,7 +863,7 @@ public struct MediaMessage: DBModel {
         if let value = sequenceNumber { values_["sequenceNumber"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(chatId: String? = nil, kind: MediaMessageKind? = nil, mediaKind: MediaKindValue?? = nil, sequenceNumber: Int?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(chatId: String? = nil, kind: MediaMessageKind? = nil, mediaKind: MediaKindValue?? = nil, sequenceNumber: Int?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = chatId { values_["chatId"] = try JSONValue.encode(value) }
         if let value = kind { values_["kind"] = try JSONValue.encode(value) }
@@ -947,13 +947,13 @@ public struct Moment: DBModel {
         return built_
     }
     @concurrent public static func vibeFeedEdge(_ vibeId: String, of id: String, in scope_: AccountScope? = nil) async throws -> MomentVibeFeedEdge? { try await Self.vibeFeed(vibeId).edgeValues(of: id, in: scope_).map(MomentVibeFeedEdge.init) }
-    @concurrent public static func send(in scope_: AccountScope, text: String? = nil, media: JSONValue? = nil) async throws -> Sent<Self> {
+    @concurrent public static func send(in scope_: AccountScope, text: String? = nil, media: JSONValue? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = text { values_["text"] = try JSONValue.encode(value) }
         if let value = media { values_["media"] = try JSONValue.encode(value) }
         return try await scope_.send(Self.self, values: values_)
     }
-    @concurrent public func update(uuid: String? = nil, userId: String?? = nil, text: String?? = nil, likedByMe: Bool? = nil, media: JSONValue? = nil, createdAt: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(uuid: String? = nil, userId: String?? = nil, text: String?? = nil, likedByMe: Bool? = nil, media: JSONValue? = nil, createdAt: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = uuid { values_["uuid"] = try JSONValue.encode(value) }
         if let value = userId { values_["userId"] = try JSONValue.encode(value) }
@@ -967,15 +967,15 @@ public struct Moment: DBModel {
         public static let author = Association<Moment, User>("author")
         public static let vibes = Association<Moment, Vibe>("vibes")
     }
-    @concurrent public func like(in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func like(in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{"likedByMe":true}"#).objectValue
         return try await self.act("like", values: values_, args: [:], in: scope_)
     }
-    @concurrent public func share(in scope_: AccountScope? = nil) async throws -> ActionAnswer<Self, MomentShareResult> {
+    @concurrent public func share(in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{}"#).objectValue
-        return try await self.actAnswering("share", values: values_, args: [:], in: scope_)
+        return try await self.act("share", values: values_, args: [:], in: scope_)
     }
-    @concurrent public func uploadClip(_ request: UploadRequest, in scope_: AccountScope) async throws -> ActionAnswer<Self, MomentUploadClipResult> {
+    @concurrent public func uploadClip(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
         try await scope_.upload(self, action: "upload_clip", request)
     }
 }
@@ -1031,7 +1031,7 @@ public struct NestedSample: DBModel {
     public static let tree = Column<NestedSample, NestedTree?>("tree")
     public static let replyTo = Column<NestedSample, RecordReplyNode?>("replyTo")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func create(phase: NestedSamplePhase? = nil, value: NestedValue? = nil, values: [NestedValue]? = nil, tree: NestedTree? = nil, replyTo: RecordReplyNode? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(phase: NestedSamplePhase? = nil, value: NestedValue? = nil, values: [NestedValue]? = nil, tree: NestedTree? = nil, replyTo: RecordReplyNode? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = phase { values_["phase"] = try JSONValue.encode(value) }
         if let value = value { values_["value"] = try JSONValue.encode(value) }
@@ -1040,7 +1040,7 @@ public struct NestedSample: DBModel {
         if let value = replyTo { values_["replyTo"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(phase: NestedSamplePhase?? = nil, value: NestedValue?? = nil, values: [NestedValue]? = nil, tree: NestedTree?? = nil, replyTo: RecordReplyNode?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(phase: NestedSamplePhase?? = nil, value: NestedValue?? = nil, values: [NestedValue]? = nil, tree: NestedTree?? = nil, replyTo: RecordReplyNode?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = phase { values_["phase"] = try JSONValue.encode(value) }
         if let value = value { values_["value"] = try JSONValue.encode(value) }
@@ -1077,12 +1077,12 @@ public struct NestedReference: DBModel {
 
     public static let values = Column<NestedReference, [NestedValue]>("values")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func create(values: [NestedValue]? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(values: [NestedValue]? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = values { values_["values"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(values: [NestedValue]? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(values: [NestedValue]? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = values { values_["values"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -1124,13 +1124,13 @@ public struct Notice: DBModel {
         built_ = built_.order(Order(field: "occurredAt", direction: "desc"))
         return built_
     }
-    @concurrent public static func create(body: String, occurredAt: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(body: String, occurredAt: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["body"] = try JSONValue.encode(body)
         values_["occurredAt"] = try JSONValue.encode(occurredAt)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(body: String? = nil, occurredAt: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(body: String? = nil, occurredAt: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = body { values_["body"] = try JSONValue.encode(value) }
         if let value = occurredAt { values_["occurredAt"] = try JSONValue.encode(value) }
@@ -1177,14 +1177,14 @@ public struct InteractionNotice: DBModel {
         built_ = built_.order(Order(field: "occurredAt", direction: "desc"))
         return built_
     }
-    @concurrent public static func create(recordId: String, actorUserId: String, occurredAt: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(recordId: String, actorUserId: String, occurredAt: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["recordId"] = try JSONValue.encode(recordId)
         values_["actorUserId"] = try JSONValue.encode(actorUserId)
         values_["occurredAt"] = try JSONValue.encode(occurredAt)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(recordId: String? = nil, actorUserId: String? = nil, occurredAt: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(recordId: String? = nil, actorUserId: String? = nil, occurredAt: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = recordId { values_["recordId"] = try JSONValue.encode(value) }
         if let value = actorUserId { values_["actorUserId"] = try JSONValue.encode(value) }
@@ -1236,7 +1236,7 @@ public struct ChatAction: DBModel {
         built_ = built_.where(Condition.equal("chatId", try JSONValue.encode(chatId)))
         return built_
     }
-    @concurrent public static func create(chatId: String, userId: String, kind: String, active: Bool, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(chatId: String, userId: String, kind: String, active: Bool, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["chatId"] = try JSONValue.encode(chatId)
         values_["userId"] = try JSONValue.encode(userId)
@@ -1244,7 +1244,7 @@ public struct ChatAction: DBModel {
         values_["active"] = try JSONValue.encode(active)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(chatId: String? = nil, userId: String? = nil, kind: String? = nil, active: Bool? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(chatId: String? = nil, userId: String? = nil, kind: String? = nil, active: Bool? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = chatId { values_["chatId"] = try JSONValue.encode(value) }
         if let value = userId { values_["userId"] = try JSONValue.encode(value) }
@@ -1297,7 +1297,7 @@ public struct ChatActivityNotice: DBModel {
         built_ = built_.order(Order(field: "kind", direction: "asc"))
         return built_
     }
-    @concurrent public static func create(chatId: String, userId: String, kind: String, active: Bool, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(chatId: String, userId: String, kind: String, active: Bool, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["chatId"] = try JSONValue.encode(chatId)
         values_["userId"] = try JSONValue.encode(userId)
@@ -1305,7 +1305,7 @@ public struct ChatActivityNotice: DBModel {
         values_["active"] = try JSONValue.encode(active)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(chatId: String? = nil, userId: String? = nil, kind: String? = nil, active: Bool? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(chatId: String? = nil, userId: String? = nil, kind: String? = nil, active: Bool? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = chatId { values_["chatId"] = try JSONValue.encode(value) }
         if let value = userId { values_["userId"] = try JSONValue.encode(value) }
@@ -1362,13 +1362,13 @@ public struct Presence: DBModel {
         let built_ = Query<Self>(relation: "history", params: ["presenceId": try JSONValue.encode(presenceId)])
         return built_
     }
-    @concurrent public static func create(userId: String, room: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(userId: String, room: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["userId"] = try JSONValue.encode(userId)
         values_["room"] = try JSONValue.encode(room)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(userId: String? = nil, room: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(userId: String? = nil, room: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = userId { values_["userId"] = try JSONValue.encode(value) }
         if let value = room { values_["room"] = try JSONValue.encode(value) }
@@ -1461,7 +1461,7 @@ public struct Record: DBModel {
         let built_ = Query<Self>(relation: "history", params: [:])
         return built_
     }
-    @concurrent public static func send(in scope_: AccountScope, containerId: String, authorId: String? = nil, regionId: String? = nil, text: String, attachedUserId: String? = nil, signedId: String? = nil) async throws -> Sent<Self> {
+    @concurrent public static func send(in scope_: AccountScope, containerId: String, authorId: String? = nil, regionId: String? = nil, text: String, attachedUserId: String? = nil, signedId: String? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         var args_: [String: JSONValue] = [:]
         values_["containerId"] = try JSONValue.encode(containerId)
@@ -1472,7 +1472,7 @@ public struct Record: DBModel {
         if let value = signedId { args_["signedId"] = try JSONValue.encode(value) }
         return try await scope_.send(Self.self, values: values_, args: args_)
     }
-    @concurrent public func update(containerId: String? = nil, authorId: String? = nil, regionId: String?? = nil, text: String? = nil, createdAt: String? = nil, sequenceNumber: Int?? = nil, reactions: [RecordReactionNode]? = nil, attachment: RecordAttachment?? = nil, media: RecordMedia?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(containerId: String? = nil, authorId: String? = nil, regionId: String?? = nil, text: String? = nil, createdAt: String? = nil, sequenceNumber: Int?? = nil, reactions: [RecordReactionNode]? = nil, attachment: RecordAttachment?? = nil, media: RecordMedia?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = containerId { values_["containerId"] = try JSONValue.encode(value) }
         if let value = authorId { values_["authorId"] = try JSONValue.encode(value) }
@@ -1488,7 +1488,7 @@ public struct Record: DBModel {
     public enum Relations {
         public static let container = Association<Record, Container>("container")
     }
-    @concurrent public func react(reactionBody: String, userId: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func react(reactionBody: String, userId: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         let values_ = try JSONValue.read(#"{"reactions":{"$keyed":{"by":"userId","element":{"body":{"$arg":"reactionBody"},"userId":{"$arg":"userId"}}}}}"#).objectValue
         return try await self.act("react", values: values_, args: ["reactionBody": try JSONValue.encode(reactionBody), "userId": try JSONValue.encode(userId)], in: scope_)
     }
@@ -1525,12 +1525,12 @@ public struct CurrentUser: DBSingleton {
         return built_
     }
     public static var singleton: Query<Self> { Self.current }
-    @concurrent public static func create(name: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(name: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["name"] = try JSONValue.encode(name)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(name: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(name: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = name { values_["name"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -1568,12 +1568,12 @@ public struct CurrentRegion: DBSingleton {
         return built_
     }
     public static var singleton: Query<Self> { Self.current }
-    @concurrent public static func create(name: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(name: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["name"] = try JSONValue.encode(name)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(name: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(name: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = name { values_["name"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -1621,7 +1621,7 @@ public struct CustomScreen: DBModel {
     @concurrent public static func node(_ id: String, force: Bool = false, in scope: AccountScope? = nil) async throws -> Self? {
         try await readNode(relation: "node", id: id, force: force, in: scope)
     }
-    @concurrent public static func create(slug: String, version: Int, requires: ScreenRequires, spec: ScreenSpec? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(slug: String, version: Int, requires: ScreenRequires, spec: ScreenSpec? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["slug"] = try JSONValue.encode(slug)
         values_["version"] = try JSONValue.encode(version)
@@ -1629,7 +1629,7 @@ public struct CustomScreen: DBModel {
         if let value = spec { values_["spec"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(slug: String? = nil, version: Int? = nil, requires: ScreenRequires? = nil, spec: ScreenSpec?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(slug: String? = nil, version: Int? = nil, requires: ScreenRequires? = nil, spec: ScreenSpec?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = slug { values_["slug"] = try JSONValue.encode(value) }
         if let value = version { values_["version"] = try JSONValue.encode(value) }
@@ -1665,12 +1665,12 @@ public struct StorageRow: DBModel {
 
     public static let record = Column<StorageRow, String>("record")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func create(record: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(record: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["record"] = try JSONValue.encode(record)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(record: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(record: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = record { values_["record"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -1707,12 +1707,12 @@ public struct Tail: DBModel {
         let built_ = Query<Self>(relation: "since", params: ["containerId": try JSONValue.encode(containerId), "afterSequence": try JSONValue.encode(afterSequence), "pinned": try JSONValue.encode(pinned)])
         return built_
     }
-    @concurrent public static func create(text: String, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(text: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["text"] = try JSONValue.encode(text)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(text: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(text: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = text { values_["text"] = try JSONValue.encode(value) }
         return try await self.update(values: values_, in: scope_)
@@ -1753,14 +1753,14 @@ public struct UnionSample: DBModel {
     public static let attachment = Column<UnionSample, RecordAttachmentKind>("attachment")
     public static let props = Column<UnionSample, MomentWidgetItemPropsKind>("props")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func create(label: String? = nil, attachment: RecordAttachment? = nil, props: MomentWidgetItemProps? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(label: String? = nil, attachment: RecordAttachment? = nil, props: MomentWidgetItemProps? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = label { values_["label"] = try JSONValue.encode(value) }
         if let value = attachment { values_["attachment"] = try JSONValue.encode(value) }
         if let value = props { values_["props"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(label: String?? = nil, attachment: RecordAttachment?? = nil, props: MomentWidgetItemProps?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(label: String?? = nil, attachment: RecordAttachment?? = nil, props: MomentWidgetItemProps?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = label { values_["label"] = try JSONValue.encode(value) }
         if let value = attachment { values_["attachment"] = try JSONValue.encode(value) }
@@ -1822,13 +1822,13 @@ public struct User: DBSingleton {
         return built_
     }
     public static var singleton: Query<Self> { Self.profile }
-    @concurrent public static func create(name: String, birthday: String? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(name: String, birthday: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["name"] = try JSONValue.encode(name)
         if let value = birthday { values_["birthday"] = try JSONValue.encode(value) }
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(name: String? = nil, birthday: String?? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(name: String? = nil, birthday: String?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = name { values_["name"] = try JSONValue.encode(value) }
         if let value = birthday { values_["birthday"] = try JSONValue.encode(value) }
@@ -1876,14 +1876,14 @@ public struct Vibe: DBModel {
     public static let userId = Column<Vibe, String>("userId")
     public static let kind = Column<Vibe, VibeKind>("kind")
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    @concurrent public static func create(momentId: String, userId: String, kind: VibeKind, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public static func create(momentId: String, userId: String, kind: VibeKind, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         values_["momentId"] = try JSONValue.encode(momentId)
         values_["userId"] = try JSONValue.encode(userId)
         values_["kind"] = try JSONValue.encode(kind)
         return try await Self.create(values: values_, in: scope_)
     }
-    @concurrent public func update(momentId: String? = nil, userId: String? = nil, kind: VibeKind? = nil, in scope_: AccountScope? = nil) async throws -> Self {
+    @concurrent public func update(momentId: String? = nil, userId: String? = nil, kind: VibeKind? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
         var values_: [String: JSONValue] = [:]
         if let value = momentId { values_["momentId"] = try JSONValue.encode(value) }
         if let value = userId { values_["userId"] = try JSONValue.encode(value) }

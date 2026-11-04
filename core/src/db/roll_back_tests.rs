@@ -106,13 +106,15 @@ fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     let db = booted();
     let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
     for id in ["a", "b"] { put(&db, "moments", json!({"id": id, "userId": "u1", "text": id})); }
+    let first = crate::value::fractional_between(None, None).unwrap();
+    let second = crate::value::fractional_between(Some(&first), None).unwrap();
     let mut initial = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    for id in ["a", "b"] { initial.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid(id), order_key: id.to_string() }); }
+    for (id, key) in [("a", &first), ("b", &second)] { initial.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid(id), order_key: key.clone() }); }
     db.land(&db.admit().unwrap(), initial).unwrap();
     db.destroy(&db.admit().unwrap(), "moments", &rid("b")).unwrap();
     put(&db, "moments", json!({"id": "x", "userId": "u1", "text": "x"}));
     let mut replacement = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    replacement.scope_ops.push(ScopeOp::Append { scope, row: rid("x"), order_key: "b".into() });
+    replacement.scope_ops.push(ScopeOp::Append { scope, row: rid("x"), order_key: second.clone() });
     db.land(&db.admit().unwrap(), replacement).unwrap();
     db.roll_back(&db.admit().unwrap(), only_seq(&db)).unwrap();
     let members: Vec<String> = db.shared.store.scope_members("moments", "feed").unwrap().into_iter().map(|(id, _)| id).collect();

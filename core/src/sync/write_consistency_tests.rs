@@ -102,7 +102,7 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
                     assert_eq!(db.outbox().unwrap().len(), 1, "operation survives unrelated reset");
                 }
             };
-            let (result, ()) = tokio::join!(crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &operation, None)), reset);
+            let (result, ()) = tokio::join!(crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &operation, None, false)), reset);
             result.unwrap();
         }
         let mut entries = db.outbox().unwrap();
@@ -215,7 +215,7 @@ async fn network_writes_preserve_pending_fields() {
                 let node = json!({"id":"r1","body":"server","size":7});
                 let payload = if source == "response" { json!({"updateRecord":{"record":node}}) } else { json!({"updateRecord":{"record":{"id":"r0","body":"confirmed"},"related":node}}) };
                 transport.enqueue("UpdateRecord", Reply::data(payload));
-                crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("UpdateRecord", "mutation UpdateRecord { updateRecord { record { id } } }", "updateRecord.record"), None)).await.unwrap();
+                crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("UpdateRecord", "mutation UpdateRecord { updateRecord { record { id } } }", "updateRecord.record"), None, true)).await.unwrap();
             }
             _ => unreachable!(),
         }
@@ -294,7 +294,7 @@ async fn removing_upload_item_rewrites_mapped_values() {
     let entry = db.outbox().unwrap().remove(0);
     let sending = super::send::Sending { effects: std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&sync.inner))), admitted: &db.admit().unwrap(), entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
     transport.enqueue("CreateRecords", Reply::data(json!({"records":[{"id":"r0","clientKey":"key-0"},{"id":"r2","clientKey":"key-2"}]})));
-    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None)).await.unwrap();
+    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true)).await.unwrap();
     let call = transport.calls().into_iter().find(|call| call.operation_name == "CreateRecords").unwrap();
     assert_eq!(call.variables["items"][0]["position"], 0);
     assert_eq!(call.variables["items"][1]["position"], 1);

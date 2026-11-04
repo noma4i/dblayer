@@ -263,13 +263,11 @@ impl Db {
                 envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record), items: files.clone() });
                 Ok(Some(envelope))
             }).map_err(plan_fault)?;
-            let result = committed.result();
+            let result = pending.insert(committed).result();
             let operation = result.operations.first().copied().ok_or_else(|| DbError::Internal("upload batch has no operation".into()))?;
             let revision = result.revision.ok_or_else(|| DbError::Internal("upload batch has no revision".into()))?;
             let snapshots = result.item_snapshots.iter().map(|(item, row)| row.clone().map(|row| (item.clone(), row)).ok_or_else(|| DbError::Internal("upload batch item is missing".into()))).collect::<Result<Vec<_>, _>>()?;
-            let ticket = claim(operation);
-            *pending = Some(committed);
-            Ok::<_, DbError>((snapshots, operation, revision, ticket))
+            Ok::<_, DbError>((snapshots, operation, revision, claim(operation)))
         })?;
         let snapshots = snapshots.into_iter().map(|(item, row)| self.shared.overlay_snapshot(model, row).map(|row| (item, row))).collect::<Result<Vec<_>, _>>()?;
         Ok((snapshots, operation, revision, ticket))

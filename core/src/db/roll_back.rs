@@ -290,10 +290,10 @@ impl Db {
     }
 
     pub(crate) fn roll_back_at(&self, admitted: &crate::lifecycle::Admitted, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
-        self.roll_back_if(admitted, seq, generation, None, &[])
+        self.roll_back_if(admitted, seq, generation, None)
     }
 
-    pub(crate) fn roll_back_if(&self, admitted: &crate::lifecycle::Admitted, seq: i64, generation: Generation, still: Option<&Still<'_>>, debts: &[crate::commit::WindowDebt]) -> Result<CommitResult, DbError> {
+    pub(crate) fn roll_back_if(&self, admitted: &crate::lifecycle::Admitted, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
         let result = self.commit_following(&admitted.authority(), generation, |reader| {
                 discarded = Vec::new();
@@ -309,7 +309,6 @@ impl Db {
                 };
                 let plan = restore(reader, &Prior::related_operations(reader, &entry)?, &entry)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-                envelope.window_debts = debts.to_vec();
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
                 envelope.operation_transitions = plan.transitions;

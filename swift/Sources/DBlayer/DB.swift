@@ -34,7 +34,8 @@ public enum DB {
 
   /// Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions.
   @concurrent public static func resume() async throws {
-    try await database.resume()
+    let (database, epoch) = try admitted(nil)
+    try await database.resume(epoch: epoch)
   }
 
   @concurrent public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type, in scope: AccountScope? = nil) async throws -> Answer {

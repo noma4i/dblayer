@@ -16,29 +16,24 @@ pub(crate) struct FinishedOperation {
 
 #[derive(Debug)]
 pub(crate) struct OutcomeTicket {
-    result: Mutex<Option<FinishedOperation>>,
-    changed: tokio::sync::watch::Sender<u64>,
+    result: tokio::sync::watch::Sender<Option<FinishedOperation>>,
     discarded: Mutex<std::collections::BTreeSet<String>>,
 }
 
 impl OutcomeTicket {
     fn new() -> Self {
-        let (changed, _) = tokio::sync::watch::channel(0);
-        Self { result: Mutex::new(None), changed, discarded: Mutex::new(Default::default()) }
+        Self { result: tokio::sync::watch::Sender::new(None), discarded: Mutex::new(Default::default()) }
     }
 
     pub(crate) async fn result(&self) -> FinishedOperation {
-        let mut changes = self.changed.subscribe();
-        loop {
-            changes.borrow_and_update();
-            if let Some(result) = super::super::locked(&self.result).clone() { return result; }
-            if changes.changed().await.is_err() { unreachable!(); }
-        }
+        let mut changes = self.result.subscribe();
+        let finished = changes.wait_for(Option::is_some).await.ok().and_then(|finished| finished.clone());
+        finished.unwrap_or(FinishedOperation { result: SendResult::Discarded, answer: None, value: None, items: Vec::new(), discarded: Vec::new() })
     }
 
     #[cfg(test)]
     pub(crate) fn finished(&self) -> Option<FinishedOperation> {
-        super::super::locked(&self.result).clone()
+        self.result.borrow().clone()
     }
 
     pub(crate) fn discard_item(&self, item: String) {
@@ -47,8 +42,7 @@ impl OutcomeTicket {
 
     pub(crate) fn finish(&self, mut value: FinishedOperation) {
         value.discarded = super::super::locked(&self.discarded).iter().cloned().collect();
-        *super::super::locked(&self.result) = Some(value);
-        self.changed.send_modify(|version| *version += 1);
+        crate::db::lock::effect(|| { self.result.send_replace(Some(value)); });
     }
 }
 
@@ -59,7 +53,9 @@ pub(crate) struct Outcomes {
 }
 
 impl Outcomes {
+    /// The ticket of an operation: a retry of upload items keeps the ticket the upload call returned.
     pub(crate) fn claim(&mut self, sequence: i64) -> Arc<OutcomeTicket> {
+        if let Some(ticket) = self.ticket(sequence) { return ticket; }
         let ticket = Arc::new(OutcomeTicket::new());
         self.tickets.insert(sequence, Arc::downgrade(&ticket));
         ticket

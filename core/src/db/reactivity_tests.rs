@@ -427,11 +427,9 @@ fn work(db: Db, seed_value: u64) {
                 let _ = db.destroy(&db.admit().unwrap(), "moments", &rid(&id));
             }
             3 => {
+                let rows: std::collections::BTreeMap<_, _> = (0..seed.below(8)).map(|_| random_row(&mut seed, 14)).collect();
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-                for _ in 0..seed.below(8) {
-                    let (id, row) = random_row(&mut seed, 14);
-                    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&id), row });
-                }
+                envelope.entity_ops.extend(rows.into_iter().map(|(id, row)| EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&id), row }));
                 db.land(&db.admit().unwrap(), envelope).unwrap();
             }
             4 => {

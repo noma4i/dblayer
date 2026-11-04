@@ -515,29 +515,25 @@ impl Rig {
             let create = message["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
             create["on_failure"] = json!("keep");
         }
-        if reactions {
-            let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
-            let mut field = crate::schema::FieldSpec::array("reactions");
-            field.app_type = Some("Reaction".into());
-            field.default = Some(json!([]));
-            field.fields = vec![crate::schema::FieldSpec::scalar("body", crate::value::ScalarKind::Str), crate::schema::FieldSpec::scalar("userId", crate::value::ScalarKind::Id)];
-            message["fields"].as_array_mut().unwrap().push(serde_json::to_value(field).unwrap());
-            let mut action = crate::schema::ActionDeclaration::new("react", crate::schema::RootShape::Upsert);
-            action.mutation = Some("MessageReact".into());
-            action.args.insert("body".into(), "string".into());
-            action.args.insert("userId".into(), "id".into());
-            action.variables.insert("id".into(), "id".into());
-            action.variables.insert("body".into(), "body".into());
-            action.variables.insert("userId".into(), "userId".into());
-            action.optimistic.insert("reactions".into(), json!({"$keyed":{"by":"userId","element":{"body":{"$arg":"body"},"userId":{"$arg":"userId"}}}}));
-            message["actions"].as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
-        }
+        if reactions { add_reactions(&mut models); }
         let database = opener
             .open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), false, false, Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
             .await
             .unwrap();
         database.register_operations(plain_operations()).unwrap();
         Rig { opener, database, world, switch, clock }
+    }
+
+    /// A plain transport sends independent mutations side by side: the reaction model on it.
+    pub(super) async fn plain_for_reactions(first: Arc<World>) -> Rig {
+        let switch = Switchable::new(Some(first.clone()), false);
+        let clock = TestClock::new(1_000_000);
+        let opener = OpenDatabase::new();
+        let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
+        add_reactions(&mut models);
+        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), false, false, None, None, None, None).await.unwrap();
+        database.register_operations(plain_operations()).unwrap();
+        Rig { opener, database, world: first, switch, clock }
     }
 
     /// The harness path of the apps: a plain transport with a switchable target and no session client.
@@ -713,4 +709,22 @@ impl Held {
     pub(super) fn never_showed(&self, account: &str) -> bool {
         ![&self.rows, &self.window_rows, &self.single, &self.entity].iter().any(|rows| Self::showed(rows, 0, account))
     }
+}
+
+fn add_reactions(models: &mut Value) {
+    let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
+    let mut field = crate::schema::FieldSpec::array("reactions");
+    field.app_type = Some("Reaction".into());
+    field.default = Some(json!([]));
+    field.fields = vec![crate::schema::FieldSpec::scalar("body", crate::value::ScalarKind::Str), crate::schema::FieldSpec::scalar("userId", crate::value::ScalarKind::Id)];
+    message["fields"].as_array_mut().unwrap().push(serde_json::to_value(field).unwrap());
+    let mut action = crate::schema::ActionDeclaration::new("react", crate::schema::RootShape::Upsert);
+    action.mutation = Some("MessageReact".into());
+    action.args.insert("body".into(), "string".into());
+    action.args.insert("userId".into(), "id".into());
+    action.variables.insert("id".into(), "id".into());
+    action.variables.insert("body".into(), "body".into());
+    action.variables.insert("userId".into(), "userId".into());
+    action.optimistic.insert("reactions".into(), json!({"$keyed":{"by":"userId","element":{"body":{"$arg":"body"},"userId":{"$arg":"userId"}}}}));
+    message["actions"].as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
 }

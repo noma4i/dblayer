@@ -102,6 +102,7 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
         }
     }
     connection.execute("DELETE FROM scope_member WHERE model = ?1", params![model])?;
+    connection.execute("DELETE FROM scope_revision WHERE model = ?1", params![model])?;
     clear_model(connection, model)?;
     connection.execute("DELETE FROM tombstone WHERE model = ?1", params![model])?;
     connection.execute("DELETE FROM local_pending WHERE model = ?1", params![model])?;
@@ -146,7 +147,7 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
             connection.execute_batch(&format!("DELETE FROM {table}"))?;
         }
     }
-    connection.execute_batch("DELETE FROM scope_member; DELETE FROM tombstone; DELETE FROM window_marker; DELETE FROM query_window; DELETE FROM local_pending;")?;
+    connection.execute_batch("DELETE FROM scope_member; DELETE FROM scope_revision; DELETE FROM tombstone; DELETE FROM window_marker; DELETE FROM query_window; DELETE FROM local_pending;")?;
     clear_sync(connection, None)?;
     clear_all(connection)?;
     Ok(())

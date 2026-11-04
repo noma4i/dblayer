@@ -18,7 +18,7 @@ fn record() -> OperationRecord {
         base_revision: Some(3),
         created_at: 5,
         dedupe_key: None,
-        rollback: Some(json!({"rows": [{"kind": "edited", "model": "messages", "id": "m1", "before": {"body": "old"}, "owned": {"body": true}}]})),
+        rollback: Some(json!({"rows": [{"kind": "edited", "model": "messages", "id": "m1", "before": {"body": "old"}, "owned": {"body": 1}}]})),
         upload: None,
     }
 }
@@ -61,7 +61,7 @@ fn an_operation_keeps_its_rows_and_values_in_child_tables() {
     let (store, seq) = begun();
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_row WHERE seq = {seq} AND row_id IN ('m1', 'm2')")), 2);
     assert!(count(&store, &format!("SELECT COUNT(*) FROM op_value WHERE seq = {seq} AND part = 'input'")) >= 6);
-    assert!(count(&store, &format!("SELECT COUNT(*) FROM op_value WHERE seq = {seq} AND part = 'prior'")) >= 6);
+    assert!(count(&store, &format!("SELECT COUNT(*) FROM op_effect_value WHERE seq = {seq}")) >= 6);
 }
 
 #[test]
@@ -198,6 +198,6 @@ fn rewriting_an_operation_replaces_its_rows_and_values() {
     next.rollback = None;
     send(&store, vec![OperationTransition::Begin(Box::new(next))]);
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_row WHERE seq = {seq}")), 1);
-    assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_value WHERE seq = {seq} AND part = 'prior'")), 0);
+    assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_effect_value WHERE seq = {seq}")), 0);
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_value WHERE seq = {seq} AND part = 'input'")), 2);
 }

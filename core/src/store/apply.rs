@@ -638,10 +638,17 @@ pub(crate) fn apply_envelope(
     collect_scopes(connection, &changes.changes, &destroyed, &mut result.scopes)?;
     for item in &destroyed {
         let removed = match &item.reason {
-            DestroyReason::Replaced { by } => connection.execute(
-                "UPDATE OR REPLACE scope_member SET row_id = ?1 WHERE model = ?2 AND row_id = ?3",
-                params![by.as_str(), item.model.as_str(), item.id],
-            )?,
+            DestroyReason::Replaced { by } => {
+                let moved = connection.execute(
+                    "UPDATE OR REPLACE scope_member SET row_id = ?1 WHERE model = ?2 AND row_id = ?3",
+                    params![by.as_str(), item.model.as_str(), item.id],
+                )?;
+                connection.execute(
+                    "DELETE FROM scope_revision WHERE model = ?1 AND row_id = ?2 AND scope_key IN (SELECT scope_key FROM scope_member WHERE model = ?1 AND row_id = ?3)",
+                    params![item.model.as_str(), item.id, by.as_str()],
+                )?;
+                moved
+            }
             _ => connection.execute(
                 "DELETE FROM scope_member WHERE model = ?1 AND row_id = ?2",
                 params![item.model.as_str(), item.id],

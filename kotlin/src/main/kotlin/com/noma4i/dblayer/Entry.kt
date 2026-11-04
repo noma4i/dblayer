@@ -23,7 +23,7 @@ object DBlayer {
 
     /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions. */
     suspend fun resume() {
-        offCaller { database.resume() }
+        onAccount(null) { database, epoch -> database.resume(epoch) }
     }
 
     /** Tells the library whether the app lets the model subscriptions run. `open(listening = false)` starts none from a committed credential until `setListening(true)`. Allowed with a committed credential, they start once. `setListening(false)` and `sessionReset()` stop them. Call it from the app state that gates subscriptions, for example registration complete. */

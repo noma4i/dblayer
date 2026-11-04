@@ -210,7 +210,11 @@ impl Inner {
                     last_key: reader.scope_last_key(&model, scope.key.as_str())?,
                     incoming: reader.scope_members_among(&model, scope.key.as_str(), if keeps_member_order { &[] } else { &wanted })?,
                 };
-                plan_landing(&scope, &model_key, &stored, &roots).map_err(|error| SyncError::Malformed(error.to_string()))?
+                let membership = Db::scope_membership(reader, &model, scope.key.as_str(), attempt.base_revision).map_err(|error| SyncError::Malformed(error.to_string()))?;
+                let (placed, left): (Vec<_>, Vec<_>) = roots.iter().cloned().partition(|row| row.get("id").and_then(read_id).is_none_or(|id| membership.get(id.as_str()) != Some(&false)));
+                let mut plan = plan_landing(&scope, &model_key, &stored, &placed).map_err(|error| SyncError::Malformed(error.to_string()))?;
+                plan.entity_ops.extend(left.into_iter().filter_map(|row| row.get("id").and_then(read_id).map(|id| EntityOp::Upsert { model: model_key.clone(), id, row })));
+                plan
             };
             let planned: BTreeSet<(ModelKey, RowId)> = plan.entity_ops.iter().map(|op| {
                 let row = op.row_ref();

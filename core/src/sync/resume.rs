@@ -177,10 +177,10 @@ impl Inner {
     pub(crate) fn resume_on_event(self: &Arc<Self>) {
         if !self.connectivity.is_online() { return; }
         let (Ok(runtime), Some(epoch)) = (Handle::try_current(), self.waking_epoch()) else { return };
-        let lifecycle = self.db.shared.store.lifecycle.clone();
+        let admission = self.db.shared.store.lifecycle.admit_woken(crate::lifecycle::Origin::Session, "resume", epoch);
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
-            let Some(admitted) = lifecycle.admit_after_transition(crate::lifecycle::Origin::Session, "resume", epoch).await else { return };
+            let Some(admitted) = admission.await else { return };
             if let Some(inner) = inner.upgrade() { let _ = inner.request_resume(&admitted, Cause::Event, None); }
         }));
     }

@@ -207,10 +207,10 @@ impl Inner {
             if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
             state.running = true;
         }
-        let lifecycle = self.db.shared.store.lifecycle.clone();
+        let admission = self.db.shared.store.lifecycle.admit_woken(crate::lifecycle::Origin::Session, "preload", epoch);
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
-            let Some(admitted) = lifecycle.admit_after_transition(crate::lifecycle::Origin::Session, "preload", epoch).await else {
+            let Some(admitted) = admission.await else {
                 if let Some(inner) = inner.upgrade() { locked(&inner.preload.state).running = false; }
                 return;
             };

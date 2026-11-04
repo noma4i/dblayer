@@ -33,11 +33,10 @@ extension BridgeProbeTests {
     try #require(await entered(rereadHold), "the automatic reread did not reach the transport")
     rereadHold.release()
     var projection = ListProjection<Person>()
-    let deadline = ContinuousClock.now + .seconds(10)
-    while ContinuousClock.now < deadline && projection.rows.map(\.id) != current + ["u9"] {
-      let remaining = deadline - ContinuousClock.now
-      guard let delivery = await cursor.next("the reread delivery", timeout: remaining) else { break }
-      _ = projection.apply(delivery)
+    await eventually("the reread delivery", timeout: .seconds(10)) {
+      if projection.rows.map(\.id) == current + ["u9"] { return true }
+      if let delivery = await cursor.next("the reread delivery", timeout: .seconds(10)) { _ = projection.apply(delivery) }
+      return projection.rows.map(\.id) == current + ["u9"]
     }
     #expect(projection.rows.map(\.id) == current + ["u9"])
   }

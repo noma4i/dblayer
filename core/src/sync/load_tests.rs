@@ -286,8 +286,9 @@ async fn list_load_replaces_membership_completely() {
 async fn consecutive_list_loads_keep_the_server_order() {
     let rig = rig();
     let params = params(json!({"userId": "u1"}));
-    for ids in [vec!["m3", "m0", "m6", "m2"], vec!["m2", "m3", "m4", "m5", "m7"], vec!["m0", "m5", "m2"], vec!["m7", "m6", "m1", "m3", "m2"]] {
-        rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()})));
+    let lists = [vec!["m3", "m0", "m6", "m2"], vec!["m2", "m3", "m4", "m5", "m7"], vec!["m0", "m5", "m2"], vec!["m7", "m6", "m1", "m3", "m2"]];
+    for ids in &lists { rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()}))); }
+    for ids in lists {
         crate::test_wait::within(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, LoadOptions { force: true })).await.unwrap();
         assert_eq!(member_ids(&rig, "moments", "by_user", &params), ids);
     }

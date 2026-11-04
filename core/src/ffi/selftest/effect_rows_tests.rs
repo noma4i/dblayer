@@ -107,7 +107,7 @@ async fn a_member_event_keeps_the_open_join_in_the_list() {
     hold.entered_for("the join").await;
     rig.switch.emit(json!({"data":{"memberChanged":{"id":"u1","name":"updated"}}}).to_string());
     let applied = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        while let Some(delivery) = deliveries.recv().await {
+        while let Some(delivery) = crate::test_wait::within_secs(20, deliveries.recv()).await {
             let rows = match delivery.value {
                 crate::ffi::StreamValue::Snapshot { rows, .. } | crate::ffi::StreamValue::Delta { rows, .. } => rows,
                 _ => continue,
@@ -152,7 +152,7 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     old.release();
     bound(refreshing).await.unwrap().unwrap();
     let shown = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        while let Some(delivery) = deliveries.recv().await {
+        while let Some(delivery) = crate::test_wait::within_secs(20, deliveries.recv()).await {
             let rows = match delivery.value {
                 crate::ffi::StreamValue::Snapshot { rows, .. } | crate::ffi::StreamValue::Delta { rows, .. } => rows,
                 _ => continue,
@@ -168,9 +168,10 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reversed_reaction_answers_keep_the_other_users_reaction() {
-    let rig = Rig::encrypted_for_reactions(false, false, true).await;
+  for parallel in [true, false] {
+    let rig = if parallel { Rig::plain_for_reactions(World::new("server", "A", true)).await } else { Rig::encrypted_for_reactions(false, false, true).await };
     rig.world.seed_reacted_message();
-    rig.login_ios("A").await;
+    if !parallel { rig.login_ios("A").await; }
     let epoch = rig.database.session_epoch();
     bound(rig.database.refresh(epoch, "Message".into(), "thread".into(), json!({"chatId":"c1"}).to_string())).await.unwrap();
     let initial = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
@@ -182,6 +183,10 @@ async fn reversed_reaction_answers_keep_the_other_users_reaction() {
     let patch = json!({"reactions":{"$keyed":{"by":"userId","element":{"body":{"$arg":"body"},"userId":{"$arg":"userId"}}}}}).to_string();
     let first_receipt = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "react".into(), patch.clone(), json!({"body":"A","userId":"u1"}).to_string())).await.unwrap();
     first.entered_for("react").await;
+    if !parallel {
+        first.release();
+        assert!(matches!(bound(rig.database.outcome(first_receipt.clone())).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    }
     let second_receipt = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "react".into(), patch, json!({"body":"","userId":"u1"}).to_string())).await.unwrap();
     let optimistic = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     assert_eq!(optimistic.cells[3], other);
@@ -194,6 +199,7 @@ async fn reversed_reaction_answers_keep_the_other_users_reaction() {
     let row = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     assert_eq!(row.cells[3], other);
     rig.database.close_now();
+  }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -224,9 +230,8 @@ async fn a_refused_durable_send_keeps_its_row_when_declared() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
-  for first_join in [false, true] {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
+  for (parallel, first_join) in [(true, false), (true, true), (false, false), (false, true)] {
+    let rig = if parallel { Rig::plain(World::new("server", "A", true), false).await } else { let rig = Rig::encrypted().await; rig.login_ios("A").await; rig };
     let epoch = rig.database.session_epoch();
     let group = confirmed_group(&rig).await;
     rig.world.set_members("JOINED", &["u1", "u2", "u3", "u4"]);
@@ -240,17 +245,29 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     let first = rig.world.hold_then(if first_join { "AddMember" } else { "RemoveMember" }, Fault::Refuse { code: "FORBIDDEN", confirmed: true });
     let second = rig.world.hold_next(if first_join { "RemoveMember" } else { "AddMember" });
     let start = |action: &'static str| { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
-    let joining = start(if first_join { "add_member" } else { "remove_member" });
+    let (earlier, later) = if first_join { ("add_member", "remove_member") } else { ("remove_member", "add_member") };
+    let joining = start(earlier);
     first.entered_for("the first change").await;
-    let leaving = start(if first_join { "remove_member" } else { "add_member" });
-    let both_arrived = tokio::time::timeout(std::time::Duration::from_secs(5), second.entered()).await.is_ok();
-    if !both_arrived { first.release(); second.release(); old.release(); let _ = bound(joining).await; let _ = bound(leaving).await; let _ = bound(reading).await; panic!("the second change did not reach the transport while the first was held"); }
-    let joining = bound(joining).await.unwrap().unwrap();
-    let leaving = bound(leaving).await.unwrap().unwrap();
-    second.release();
-    assert!(matches!(bound(rig.database.outcome(leaving)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    first.release();
-    assert!(matches!(bound(rig.database.outcome(joining)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+    if parallel {
+        let leaving = start(later);
+        let both_arrived = tokio::time::timeout(std::time::Duration::from_secs(5), second.entered()).await.is_ok();
+        if !both_arrived { first.release(); second.release(); old.release(); let _ = bound(joining).await; let _ = bound(leaving).await; let _ = bound(reading).await; panic!("the second change did not reach the transport while the first was held"); }
+        let joining = bound(joining).await.unwrap().unwrap();
+        let leaving = bound(leaving).await.unwrap().unwrap();
+        second.release();
+        assert!(matches!(bound(rig.database.outcome(leaving)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+        first.release();
+        assert!(matches!(bound(rig.database.outcome(joining)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+    } else {
+        let joining = bound(joining).await.unwrap().unwrap();
+        first.release();
+        assert!(matches!(bound(rig.database.outcome(joining)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
+        let leaving = start(later);
+        second.entered_for("the second change").await;
+        second.release();
+        let leaving = bound(leaving).await.unwrap().unwrap();
+        assert!(matches!(bound(rig.database.outcome(leaving)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    }
     old.release();
     bound(reading).await.unwrap().unwrap();
     let query = json!({"model": "Member", "relation": "group_members", "params": params}).to_string();

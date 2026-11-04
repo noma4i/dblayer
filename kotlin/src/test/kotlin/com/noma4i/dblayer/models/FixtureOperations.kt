@@ -44,20 +44,22 @@ data class BlobProfile(
             return built_
         }
         suspend fun setVideo(video: Blob, account: AccountScope? = null) = requireNotNull(BlobProfile.current.read(account).firstOrNull()) { "singleton is missing" }.setVideo(video, account)
-        suspend fun create(label: String? = null, account: AccountScope? = null): BlobProfile = onAccount(account) { database_, epoch_ ->
+        suspend fun create(label: String? = null, account: AccountScope? = null): MutationReceipt<BlobProfile> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 label?.let { this.put("label", jsonValue(it)) }
             }
-            BlobProfile.read(database_.create(epoch_, "BlobProfile", values_.jsonText(), "{}"))
+            MutationReceipt(database_, BlobProfile, database_.create(epoch_, "BlobProfile", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): BlobProfile = onAccount(account) { database_, epoch_ ->
+    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<BlobProfile> = onAccount(account) { database_, epoch_ ->
         val values_ = buildJsonObject {
             this.put("label", label)
         }
-        BlobProfile.read(database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, BlobProfile, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
-    suspend fun setVideo(video: Blob, account: AccountScope? = null): BlobProfile = this.act("set_video", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf("video" to jsonValue(video))), BlobProfile, account)
+    suspend fun retry(action: String?, account: AccountScope? = null): MutationReceipt<BlobProfile> = BlobProfile.retry(id, action, account)
+    suspend fun destroy(account: AccountScope? = null): MutationReceipt<BlobProfile> = BlobProfile.destroy(id, account)
+    suspend fun setVideo(video: Blob, account: AccountScope? = null): MutationReceipt<BlobProfile> = this.act("set_video", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf("video" to jsonValue(video))), BlobProfile, account)
 }
 
 @Immutable
@@ -87,20 +89,22 @@ data class Clip(
         fun createFileVariables(widgets: List<StickerWidgetInput>? = null): JsonObject = buildJsonObject {
             if (widgets != null) this.put("widgets", jsonValue(widgets))
         }
-        suspend fun create(title: String? = null, account: AccountScope? = null): Clip = onAccount(account) { database_, epoch_ ->
+        suspend fun create(title: String? = null, account: AccountScope? = null): MutationReceipt<Clip> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 title?.let { this.put("title", jsonValue(it)) }
             }
-            Clip.read(database_.create(epoch_, "Clip", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Clip, database_.create(epoch_, "Clip", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): Clip = onAccount(account) { database_, epoch_ ->
+    suspend fun update(title: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Clip> = onAccount(account) { database_, epoch_ ->
         val values_ = buildJsonObject {
             this.put("title", title)
         }
-        Clip.read(database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Clip, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
-    suspend fun createFile(account: AccountScope, request: UploadRequest): ActionAnswer<Clip, ClipCreateFileResult> = account.upload(this, "create_file", request, ClipCreateFileResult.serializer())
+    suspend fun retry(action: String?, account: AccountScope? = null): MutationReceipt<Clip> = Clip.retry(id, action, account)
+    suspend fun destroy(account: AccountScope? = null): MutationReceipt<Clip> = Clip.destroy(id, account)
+    suspend fun createFile(account: AccountScope, request: UploadRequest): MutationReceipt<Clip> = account.upload(this, "create_file", request, Clip)
 }
 
 @Immutable
@@ -138,22 +142,24 @@ data class Inbox(
             var built_ = Query("Inbox", this, relation = "shelf", params = buildJsonObject { this.put("list", jsonValue(list)) })
             return built_
         }
-        suspend fun create(title: String, stance: String? = null, account: AccountScope? = null): Inbox = onAccount(account) { database_, epoch_ ->
+        suspend fun create(title: String, stance: String? = null, account: AccountScope? = null): MutationReceipt<Inbox> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("title", jsonValue(title))
                 stance?.let { this.put("stance", jsonValue(it)) }
             }
-            Inbox.read(database_.create(epoch_, "Inbox", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Inbox, database_.create(epoch_, "Inbox", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, stance: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): Inbox = onAccount(account) { database_, epoch_ ->
+    suspend fun update(title: String? = null, stance: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<Inbox> = onAccount(account) { database_, epoch_ ->
         val values_ = buildJsonObject {
             title?.let { this.put("title", jsonValue(it)) }
             this.put("stance", stance)
         }
-        Inbox.read(database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Inbox, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
-    suspend fun move(list: ContainerShelfKind, account: AccountScope? = null): Inbox = this.act("move", JsonObject(parseJsonObject("""{"stance":{"${'$'}map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}""") + mapOf()), JsonObject(mapOf("list" to jsonValue(list))), Inbox, account)
+    suspend fun retry(action: String?, account: AccountScope? = null): MutationReceipt<Inbox> = Inbox.retry(id, action, account)
+    suspend fun destroy(account: AccountScope? = null): MutationReceipt<Inbox> = Inbox.destroy(id, account)
+    suspend fun move(list: ContainerShelfKind, account: AccountScope? = null): MutationReceipt<Inbox> = this.act("move", JsonObject(parseJsonObject("""{"stance":{"${'$'}map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}""") + mapOf()), JsonObject(mapOf("list" to jsonValue(list))), Inbox, account)
 }
 
 @Immutable
@@ -187,21 +193,23 @@ data class MediaEntry(
             var built_ = Query("MediaEntry", this, relation = "media", params = buildJsonObject { this.put("chatId", jsonValue(chatId)) })
             return built_
         }
-        suspend fun create(text: String? = null, sequenceNumber: Long, account: AccountScope? = null): MediaEntry = onAccount(account) { database_, epoch_ ->
+        suspend fun create(text: String? = null, sequenceNumber: Long, account: AccountScope? = null): MutationReceipt<MediaEntry> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 text?.let { this.put("text", jsonValue(it)) }
                 this.put("sequenceNumber", jsonValue(sequenceNumber))
             }
-            MediaEntry.read(database_.create(epoch_, "MediaEntry", values_.jsonText(), "{}"))
+            MutationReceipt(database_, MediaEntry, database_.create(epoch_, "MediaEntry", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, sequenceNumber: Long? = null, account: AccountScope? = null): MediaEntry = onAccount(account) { database_, epoch_ ->
+    suspend fun update(text: GraphQLNullable<String> = GraphQLNullable.Omitted, sequenceNumber: Long? = null, account: AccountScope? = null): MutationReceipt<MediaEntry> = onAccount(account) { database_, epoch_ ->
         val values_ = buildJsonObject {
             this.put("text", text)
             sequenceNumber?.let { this.put("sequenceNumber", jsonValue(it)) }
         }
-        MediaEntry.read(database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, MediaEntry, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
+    suspend fun retry(action: String?, account: AccountScope? = null): MutationReceipt<MediaEntry> = MediaEntry.retry(id, action, account)
+    suspend fun destroy(account: AccountScope? = null): MutationReceipt<MediaEntry> = MediaEntry.destroy(id, account)
 }
 
 @Immutable
@@ -236,19 +244,21 @@ data class Roster(
             var built_ = Query("Roster", this, relation = "complete_members", params = buildJsonObject { this.put("containerId", jsonValue(containerId)); this.put("order", jsonValue(order)) })
             return built_
         }
-        suspend fun create(title: String, account: AccountScope? = null): Roster = onAccount(account) { database_, epoch_ ->
+        suspend fun create(title: String, account: AccountScope? = null): MutationReceipt<Roster> = onAccount(account) { database_, epoch_ ->
             val values_ = buildJsonObject {
                 this.put("title", jsonValue(title))
             }
-            Roster.read(database_.create(epoch_, "Roster", values_.jsonText(), "{}"))
+            MutationReceipt(database_, Roster, database_.create(epoch_, "Roster", values_.jsonText(), "{}"))
         }
     }
-    suspend fun update(title: String? = null, account: AccountScope? = null): Roster = onAccount(account) { database_, epoch_ ->
+    suspend fun update(title: String? = null, account: AccountScope? = null): MutationReceipt<Roster> = onAccount(account) { database_, epoch_ ->
         val values_ = buildJsonObject {
             title?.let { this.put("title", jsonValue(it)) }
         }
-        Roster.read(database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
+        MutationReceipt(database_, Roster, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
     }
+    suspend fun retry(action: String?, account: AccountScope? = null): MutationReceipt<Roster> = Roster.retry(id, action, account)
+    suspend fun destroy(account: AccountScope? = null): MutationReceipt<Roster> = Roster.destroy(id, account)
 }
 
 @Immutable

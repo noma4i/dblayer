@@ -246,10 +246,10 @@ extension BridgeProbeTests {
     try #require(await entered(hold), "join did not reach the transport")
     try transport.base.emit("MemberChanged", json: #"{"data":{"memberChanged":{"id":"u1","name":"updated"}}}"#)
     var projection = ListProjection<Person>()
-    let deadline = ContinuousClock.now + .seconds(10)
-    while ContinuousClock.now < deadline && !projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" }) {
-      guard let delivery = await cursor.next("the member event", timeout: deadline - ContinuousClock.now) else { break }
-      _ = projection.apply(delivery)
+    await eventually("the member event", timeout: .seconds(10)) {
+      if projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" }) { return true }
+      if let delivery = await cursor.next("the member event", timeout: .seconds(10)) { _ = projection.apply(delivery) }
+      return projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" })
     }
     try #require(projection.rows.contains { $0.id == "u1" && $0.name == "updated" })
     #expect(projection.rows.map(\.id).contains("u4"))

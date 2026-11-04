@@ -44,6 +44,21 @@ async fn next_finished(sends: &mut Vec<SendFuture<'_>>) -> (OutboxOperation, Res
     }).await
 }
 
+/// An operation that names the temporary id of another record waits for the sends in flight: the answer of that record's create swaps the id first.
+fn names_unconfirmed_record(entry: &OutboxOperation) -> bool {
+    let own = entry.operation.temp_id.as_ref();
+    entry.operation.row_ids.iter().any(|id| id.is_temp() && Some(id) != own) || mentions_temp(&entry.input, own)
+}
+
+fn mentions_temp(value: &Value, own: Option<&RowId>) -> bool {
+    match value {
+        Value::String(text) => crate::identity::is_temp_id(text) && own.is_none_or(|own| own.as_str() != text),
+        Value::Array(items) => items.iter().any(|item| mentions_temp(item, own)),
+        Value::Object(fields) => fields.values().any(|item| mentions_temp(item, own)),
+        _ => false,
+    }
+}
+
 enum Delivery {
     Response(Response),
     Rejected(OperationFailure),
@@ -265,6 +280,17 @@ impl Inner {
                 continue;
             };
             if !self.admitted(crate::lifecycle::Origin::Session) { break; }
+            if !sends.is_empty() && names_unconfirmed_record(&entry) {
+                while !sends.is_empty() {
+                    publish.release();
+                    let (finished, result) = next_finished(&mut sends).await;
+                    publish.release();
+                    publish.acquire().await;
+                    self.record_send(&publish.effects, &mut report, &mut cursor, checked, finished, result?)?;
+                }
+                cursor = cursor.min(entry.operation.id.0 - 1);
+                continue;
+            }
             if self.refusal_state() != checked {
                 publish.release();
                 checked = self.refuse_non_durable(admitted, &publish.effects)?;
@@ -371,9 +397,7 @@ impl Inner {
     }
 
     fn roll_back_refused(&self, sending: &Sending<'_>, generation: Generation, failure: &OperationFailure) -> Result<(), DbError> {
-        let debts = if sending.action == "destroy" { self.refused_destroy_debts(&sending.model).map_err(|error| DbError::Internal(error.to_string()))? } else { Vec::new() };
-        crate::blocking::blocking_unit(|| self.db.roll_back_if(sending.admitted, sending.entry.operation.id.0, generation, None, &debts))?;
-        self.queue_committed_debts(sending.admitted, &sending.effects, &debts).map_err(|error| DbError::Internal(error.to_string()))?;
+        crate::blocking::blocking_unit(|| self.db.roll_back_if(sending.admitted, sending.entry.operation.id.0, generation, None))?;
         self.finish_ticket(&sending.effects, sending.entry.operation.id.0, SendResult::Rejected(failure.clone()), None, None, Vec::new());
         Ok(())
     }
@@ -445,13 +469,14 @@ impl Inner {
         let operation = locked(&self.operations).get(&mutation).cloned();
         let Some(operation) = operation else {
             let failure = OperationFailure::new(FailureKind::Rejected, format!("operation {mutation} is not registered"));
-            return self.refuse(&sending, failure, self.keeps_on_refusal(&sending.model, &sending.action)?).await;
+            return self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure));
         };
-        self.send_reserved(&sending, &operation, resumed, reserved).await
+        let keep = self.keeps_on_refusal(&sending.model, &sending.action)?;
+        self.send_reserved(&sending, &operation, resumed, reserved, keep).await
     }
 
-    pub(crate) async fn send_owned<'a>(&'a self, sending: &Sending<'a>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>) -> Result<SendResult, SyncError> {
-        self.send_reserved(sending, operation, resumed, None).await
+    pub(crate) async fn send_owned<'a>(&'a self, sending: &Sending<'a>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>, keep: bool) -> Result<SendResult, SyncError> {
+        self.send_reserved(sending, operation, resumed, None, keep).await
     }
 
     fn reserve_send<'a>(&'a self, admitted: &'a crate::lifecycle::Admitted, seq: i64, generation: Generation, effects: std::sync::Arc<DeliveryEffects>, ordered: bool) -> Option<InFlight<'a>> {
@@ -471,8 +496,7 @@ impl Inner {
         Some(InFlight { admitted, inner: self, effects, seq, generation, attempt, settled: true, before, started })
     }
 
-    async fn send_reserved<'a>(&'a self, sending: &Sending<'a>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>, reserved: Option<InFlight<'a>>) -> Result<SendResult, SyncError> {
-        let keep = self.keeps_on_refusal(&sending.model, &sending.action)?;
+    async fn send_reserved<'a>(&'a self, sending: &Sending<'a>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>, reserved: Option<InFlight<'a>>, keep: bool) -> Result<SendResult, SyncError> {
         let seq = sending.entry.operation.id.0;
         let key = (sending.generation, seq);
         let Some(mut in_flight) = reserved.or_else(|| self.reserve_send(sending.admitted, seq, sending.generation, sending.effects.clone(), true)) else { return Ok(SendResult::Discarded) };
@@ -502,7 +526,7 @@ impl Inner {
             Box::pin(self.deliver_or_resume(admitted, request, resumed))
         };
         let first = std::future::poll_fn(|cx| Poll::Ready(delivery.as_mut().poll(cx))).await;
-        if let Some(started) = in_flight.started.take() { let _ = started.send(()); }
+        if let Some(started) = in_flight.started.take() { crate::db::lock::effect(|| { let _ = started.send(()); }); }
         let delivery = match first { Poll::Ready(delivery) => delivery, Poll::Pending => delivery.await };
         if locked(&self.final_attempts).active.get(&key) != Some(&attempt) {
             in_flight.settled = true;
@@ -606,9 +630,11 @@ impl Inner {
         let ended_by_network = unreached && !survives;
         let deferred = unreached && survives && self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1);
         let exhausted = unreached && survives && !deferred;
+        let keep = !ended_by_network && (keep || exhausted || matches!(&delivery, Delivery::Rejected(OperationFailure { kind: FailureKind::Session(code), .. }) if code.keeps_queue()));
         let rejected = exhausted || ended_by_network || matches!(delivery, Delivery::Rejected(..));
         let result = match delivery {
             Delivery::Response(response) => self.settle_response(sending, operation, response).await?,
+            Delivery::Rejected(failure) if sending.action == "destroy" && failure.extensions.as_ref().and_then(|fields| fields.code.as_deref()) == Some("NOT_FOUND") => self.land_response(sending, operation, Value::Null).await?,
             Delivery::Rejected(failure) => self.refuse(sending, failure, keep).await?,
             Delivery::Unreached(failure) if deferred => {
                 self.postpone(sending, failure)?
@@ -617,7 +643,7 @@ impl Inner {
             Delivery::Unknown(failure) => self.fail(sending, OperationStatus::DeliveryUnknown, failure, SendResult::DeliveryUnknown)?,
         };
         if result == SendResult::Discarded {
-            return self.park_operation(sending, unsettled, deferred, rejected, keep);
+            return self.park_operation(sending, unsettled, deferred, rejected, keep || sending.action == "destroy");
         }
         Ok(result)
     }
@@ -647,7 +673,7 @@ impl Inner {
     }
 
     async fn refuse(&self, sending: &Sending<'_>, failure: OperationFailure, keep: bool) -> Result<SendResult, SyncError> {
-        if keep {
+        if keep || sending.action == "destroy" {
             let result = self.fail(sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure))?;
             return Ok(result);
         }

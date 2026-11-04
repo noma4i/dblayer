@@ -72,9 +72,11 @@ impl Inner {
         let clock = self.clock.clone();
         let deadline = clock.now().saturating_add(wait);
         let inner = Arc::downgrade(self);
+        let woken = wait.is_zero().then(|| lifecycle.admit_woken(crate::lifecycle::Origin::Session, "outbox flush", epoch));
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
             clock.sleep(deadline.saturating_sub(clock.now())).await;
-            let Some(admitted) = lifecycle.admit_after_transition(crate::lifecycle::Origin::Session, "outbox flush", epoch).await else { return };
+            let admission = woken.unwrap_or_else(|| lifecycle.admit_woken(crate::lifecycle::Origin::Session, "outbox flush", epoch));
+            let Some(admitted) = admission.await else { return };
             let Some(inner) = inner.upgrade() else { return };
             let _ = admitted.run(inner.flush_pending(&admitted)).await;
         }));
@@ -92,10 +94,10 @@ impl Inner {
     fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind) {
         let Ok(runtime) = Handle::try_current() else { return };
         let Some(epoch) = self.waking_epoch() else { return };
-        let lifecycle = self.db.shared.store.lifecycle.clone();
+        let admission = self.db.shared.store.lifecycle.admit_woken(crate::lifecycle::Origin::Session, "retry load", epoch);
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
-            let Some(admitted) = lifecycle.admit_after_transition(crate::lifecycle::Origin::Session, "retry load", epoch).await else { return };
+            let Some(admitted) = admission.await else { return };
             let Some(inner) = inner.upgrade() else { return };
             let Ok(resolved) = inner.resolve(crate::lifecycle::Origin::Session, &target.model, &target.relation, &target.params) else { return };
             if resolved.members_complete || resolved.media.is_some() {
