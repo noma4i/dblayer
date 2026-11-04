@@ -284,8 +284,8 @@ push_maven_branch() {
 }
 
 if [ "$publish" = --publish ]; then
-  git push origin master
-  git push origin "$version"
+  git push origin "$package_sha:refs/heads/master"
+  git push origin "$package_sha:refs/tags/$version"
   push_maven_branch "$(git remote get-url origin)"
   files=(); for file in "${attachments[@]}"; do files+=("$stage/$file"); done
   if ! gh release view "$version" >/dev/null 2>&1; then

@@ -9,7 +9,7 @@ The owner chooses each version and authorizes publication. Use a minor version f
 3. Commit those three files as `Release X.Y.Z` on `master`. Exactly one commit with that subject must exist since the previous tag. Keep the tree clean.
 4. Run `make release VERSION=X.Y.Z` for a dry run. It builds the four release files, stages Maven artifacts, runs the sequence suites (and, when the release needs them, the app suites), writes `RECEIPT.json` into the stage, prints the generated `Package.swift`, and checks that manifest in a temporary copy.
 5. After the owner agrees, run `make release-publish VERSION=X.Y.Z`. It runs the same checks, writes `Package.swift`, adds the generated `dblayer.swift`, and commits both as `Package release X.Y.Z` after the `Release` commit.
-6. The release script tags the packaging commit, pushes `master` and the tag, publishes the staged Maven files to the orphan `maven` branch, then creates the GitHub Release with the four release files.
+6. The release script tags the packaging commit, pushes the verified packaging commit as `master` and as the tag, publishes the staged Maven files to the orphan `maven` branch, then creates the GitHub Release with the four release files.
 
 The root `Package.swift` pins the tag URL and the checksum of `DBlayerFFI.xcframework.zip`. Keep `swift/Package.swift` and `scripts/build_ios.sh` for local development.
 

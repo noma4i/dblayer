@@ -117,6 +117,10 @@ if command and command[0] == "commit" and os.environ.get("STUB_COMMIT_EXTRA"):
     open(os.environ["STUB_COMMIT_EXTRA"], "w").write("extra\\n")
     subprocess.run([os.environ["REAL_GIT"], "add", "-f", os.environ["STUB_COMMIT_EXTRA"]], check=True)
 if command and command[0] in ("clone", "fetch", "pull", "push"): sys.exit(0)
+if command[:1] == ["tag"] and len(command) == 3 and os.environ.get("STUB_AFTER_TAG"):
+    rc = subprocess.run([os.environ["REAL_GIT"], *a]).returncode
+    subprocess.run([os.environ["REAL_GIT"], *(a[:2] if a[0] == "-C" else []), "commit", "-q", "--allow-empty", "-m", "Foreign commit after the tag"], check=True)
+    sys.exit(rc)
 if a[:2] == ["ls-remote", "--heads"]: sys.exit(0)
 if a[:2] == ["remote", "get-url"]: print("https://example.invalid/dblayer.git"); sys.exit(0)
 rc = subprocess.run([os.environ["REAL_GIT"], *a]).returncode
@@ -290,7 +294,8 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     ):
         for mode in modes:
             bad, bad_env = fixture(base / f"report-{kind}-{mode}", touch=touch)
-            run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **{variable: mode}), expected=1, contains="lane reports are missing or incomplete")
+            text = f"release: {kind}.tsv is missing or empty" if mode == "missing-file" else "lane reports are missing or incomplete"
+            run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **{variable: mode}), expected=1, contains=text)
             assert_no_release(bad, bad_env, base / f"report-{kind}-{mode}/events")
             assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
             print(f"ok {kind} report {mode} refuses the tag")
@@ -305,6 +310,21 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         assert_no_release(bad, bad_env, base / f"identity-{mode}/events", foreign=int(mode == "foreign-package-commit"))
         assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
         print(f"ok {mode} refuses the receipt, the package commit and the tag")
+    dry, dry_env = fixture(base / "identity-foreign-package-commit-dry", touch=boundary)
+    run(["bash", "scripts/release.sh", version], dry, dict(dry_env, STUB_MOVE_HEAD="1", STUB_MOVE_SUBJECT=f"Package release {version}"), expected=1, contains="source commit changed during the run")
+    assert_no_release(dry, dry_env, base / "identity-foreign-package-commit-dry/events", foreign=1)
+    assert not (dry / "target/release-1.2.3/RECEIPT.json").exists()
+    print("ok foreign-package-commit refuses the receipt in the dry run")
+    late, late_env = fixture(base / "foreign-after-tag")
+    run(["bash", "scripts/release.sh", version, "--publish"], late, dict(late_env, STUB_AFTER_TAG="1"))
+    tagged = subprocess.check_output([real_git, "-C", str(late), "rev-parse", version + "^{commit}"], text=True).strip()
+    head = subprocess.check_output([real_git, "-C", str(late), "rev-parse", "HEAD"], text=True).strip()
+    assert tagged != head, "the foreign commit did not land after the tag"
+    late_events = (base / "foreign-after-tag/events").read_text().splitlines()
+    assert f"git push origin {tagged}:refs/heads/master" in late_events, late_events
+    assert f"git push origin {tagged}:refs/tags/{version}" in late_events, late_events
+    assert not any(head in line or line == "git push origin master" for line in late_events if line.startswith("git push ")), late_events
+    print("ok a foreign commit landing after the tag is not pushed")
     package_cases = (
         ("extra", ("Package.swift", "swift/Sources/DBlayer/dblayer.swift", "core/src/extra.rs")),
         ("only-binding", ("swift/Sources/DBlayer/dblayer.swift",)),
