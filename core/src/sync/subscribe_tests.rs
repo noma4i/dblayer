@@ -1093,6 +1093,84 @@ async fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_noth
     }
 }
 
+fn current_user_rig(directory: Option<&std::path::Path>) -> Rig {
+    let rig = match directory {
+        Some(directory) => {
+            let rig = rig_on(Db::open(&directory.join("db.sqlite"), specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+            rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+            rig
+        }
+        None => rig_with_subscription(),
+    };
+    rig.transport.script_subscription("MomentChanged", vec![]);
+    for name in ["before", "after"] {
+        rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":name}})));
+    }
+    rig
+}
+
+fn user_name(rig: &Rig) -> Option<String> {
+    rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().and_then(|row| row.text("name").map(str::to_string))
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_event_refused_at_its_sql_commit_by_a_session_start_reloads_the_fresh_window_once_in_the_new_epoch() {
+    for debounced in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let rig = current_user_rig(Some(directory.path()));
+        let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
+        rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+        let spec = if debounced { EventSpec::new("moment_changed").debounced(Duration::from_secs(1)).merged_by_row() } else { EventSpec::new("moment_changed") };
+        let _subscription = rig.sync.subscribe(SubscriptionDef::new(spec, "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
+        rig.transport.await_calls("MomentChanged", 1).await;
+        rig.transport.await_consumed("MomentChanged").await;
+        let life = rig.db.shared.store.lifecycle.clone();
+        let epoch = life.epoch_now().value();
+        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { assert!(life.start_session(Some("another-account".into()), epoch)); }));
+        rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
+        rig.transport.await_consumed("MomentChanged").await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        assert_eq!((rig.transport.call_count("CurrentUser"), user_name(&rig)), (2, Some("after".into())), "debounced: {debounced}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lost_event_reloads_an_already_stale_window_once() {
+    let rig = current_user_rig(None);
+    let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
+    rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.await_consumed("MomentChanged").await;
+    {
+        let _app = rig.db.as_app();
+        let keys: Vec<String> = rig.db.observed_reads().into_iter().map(|entry| entry.key).collect();
+        rig.db.shared.store.invalidate_windows(&rig.db.authority().unwrap(), &keys).unwrap();
+    }
+    rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
+    let life = rig.db.shared.store.lifecycle.clone();
+    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!((rig.transport.call_count("CurrentUser"), user_name(&rig)), (2, Some("after".into())));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_session_start_drops_the_replaced_connection_without_holding_a_library_lock() {
+    let rig = rig_with_subscription();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.await_consumed("MomentChanged").await;
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "queued", "userId": null})));
+    let life = rig.db.shared.store.lifecycle.clone();
+    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    rig.transport.await_cancellations("MomentChanged", 1).await;
+    rig.transport.await_calls("MomentChanged", 2).await;
+    rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
+    rig.transport.await_consumed("MomentChanged").await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() {
     let directory = tempfile::tempdir().unwrap();

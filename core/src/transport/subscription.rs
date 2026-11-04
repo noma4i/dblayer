@@ -22,6 +22,7 @@ impl ServerSubscriptionHandle {
 
     pub fn cancel(&self) {
         if !self.inner.cancelled.swap(true, Ordering::SeqCst) {
+            crate::db::lock::assert_no_library_lock("ServerSubscription cancel");
             (self.inner.on_cancel)();
         }
     }

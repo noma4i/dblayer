@@ -186,10 +186,10 @@ impl Feed {
         }).collect()
     }
 
-    async fn reload_lost(&self) {
+    async fn reload_lost(&self) -> bool {
         {
-            let mut lost = locked(&self.lost);
-            if !std::mem::take(&mut lost.reload) { return; }
+            let mut lost = crate::db::locked(&self.lost);
+            if !std::mem::take(&mut lost.reload) { return false; }
         }
         let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
         let mut failed = false;
@@ -200,21 +200,27 @@ impl Feed {
                 failed = true;
             }
         }
-        if failed { locked(&self.lost).reload = true; }
+        if failed { crate::db::locked(&self.lost).reload = true; }
+        true
     }
 
     fn hold(&self, held: bool) {
-        locked(&self.lost).held = held;
+        crate::db::locked(&self.lost).held = held;
+    }
+
+    fn lose_superseded(&self) {
+        if !self.epoch.life().admits_epoch(self.epoch.value()) { crate::db::locked(&self.lost).reload = true; }
     }
 
     fn lose_queued(&self, connection: Option<ServerSubscription>, change: &Option<crate::lifecycle::Invalidated>) {
-        let mut lost = locked(&self.lost);
+        let rebound = matches!(change, Some(crate::lifecycle::Invalidated::Rebound));
+        let queued = connection.is_some_and(|mut connection| rebound && connection.take_queued_responses());
+        let mut lost = crate::db::locked(&self.lost);
         let held = std::mem::take(&mut lost.held);
-        if !matches!(change, Some(crate::lifecycle::Invalidated::Rebound)) {
+        if !rebound {
             *lost = LostEvents::default();
             return;
         }
-        let queued = connection.is_some_and(|mut connection| connection.take_queued_responses());
         lost.reload |= held || queued;
     }
 
@@ -512,7 +518,7 @@ impl Feed {
             Ok((stale, held_files)) => self.inner.discard_files(held_files).await.map(|()| stale),
             Err(error) => Err(error),
         };
-        match applied {
+        let complete = match applied {
             Ok(stale) => {
                 let mut reloaded = true;
                 for model in stale {
@@ -533,7 +539,9 @@ impl Feed {
                 }
                 false
             }
-        }
+        };
+        if !complete { self.lose_superseded(); }
+        complete
     }
 
     fn try_apply(&self, items: Vec<Pending>, generation: Generation) -> Result<(Vec<String>, Vec<String>), SyncError> {
@@ -761,7 +769,7 @@ impl Feed {
                         status.connected = true;
                         status.connects > 1
                     };
-                    if reconnected {
+                    if !self.reload_lost().await && reconnected {
                         let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
                         for model in models {
                             if self.inner.reload_watched(&model, None, false).await.is_err() {
@@ -770,7 +778,6 @@ impl Feed {
                             }
                         }
                     }
-                    self.reload_lost().await;
                     lifecycle.handle(Event::Connected);
                     tokio::select! {
                         biased;
