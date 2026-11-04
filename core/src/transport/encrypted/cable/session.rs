@@ -20,14 +20,14 @@ impl CableSession {
         Self { lifecycle: Lifecycle::new(clock, online), next_id: 0, cancellations, cancel }
     }
 
-    pub fn subscribe(&mut self, request: GraphQLRequest) -> (String, ServerSubscription) {
+    pub fn subscribe(&mut self, admitted: crate::lifecycle::Admitted, request: GraphQLRequest) -> (String, ServerSubscription) {
         self.next_id += 1;
         let id = self.next_id.to_string();
         let (events, receiver) = mpsc::unbounded_channel();
         if let Some(failure) = self.lifecycle.refusal() {
             crate::db::lock::effect(|| { let _ = events.send(SubscriptionEvent::Failed(failure.clone())); });
         } else {
-            self.lifecycle.core.entries.insert(id.clone(), Entry { request, events });
+            self.lifecycle.core.entries.insert(id.clone(), Entry { request, events, admitted });
             self.lifecycle.handle(Event::Demand);
             if self.lifecycle.is_open() {
                 let frame = self.lifecycle.core.frame(&id);
@@ -41,6 +41,15 @@ impl CableSession {
     }
 
     pub fn has_demand(&self) -> bool { !self.lifecycle.core.entries.is_empty() }
+
+    pub(super) fn discard_ended(&mut self) {
+        let ended: Vec<_> = self.lifecycle.core.entries.iter().filter(|(_, entry)| !entry.admitted.is_current()).map(|(id, _)| id.clone()).collect();
+        for id in ended { self.unsubscribe(&id); }
+    }
+
+    pub(super) fn admitted(&self) -> Option<&crate::lifecycle::Admitted> {
+        self.lifecycle.core.entries.values().next().map(|entry| &entry.admitted)
+    }
 
     pub fn is_connecting(&self) -> bool { self.lifecycle.is_connecting() }
 

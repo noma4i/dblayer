@@ -14,6 +14,10 @@ pub use wire::{CableConnect, CableSocket, CableSubscriptions, SocketEvent};
 mod session_tests;
 #[cfg(test)]
 mod wire_tests;
+#[cfg(test)]
+fn test_admission() -> crate::lifecycle::Admitted {
+    crate::db::Db::open_in_memory(Vec::new(), None).unwrap().admit().unwrap()
+}
 pub use link::CableLink;
 
 const CLIENT_BYTES: usize = 32 * 1024;

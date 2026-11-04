@@ -105,7 +105,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
         let row = db.create(&db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
         let key = db.outbox().unwrap()[0].operation.client_mutation_id.clone();
         let (sync, client) = encrypted(&db, exchange.clone(), credentials.clone());
-        client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
+        client.mutate(&db.admit().unwrap(), "/api/auth/social", json!({"provider": "test"})).await.unwrap();
         crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await.unwrap();
         assert_eq!(db.outbox().unwrap()[0].operation.status, OperationStatus::DeliveryUnknown);
         (row.id.clone(), key)
@@ -114,7 +114,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     assert_eq!(db.outbox().unwrap()[0].operation.client_mutation_id, key);
     let (sync, client) = encrypted(&db, exchange.clone(), credentials);
     client.clear_credential_for_test().unwrap();
-    client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
+    client.mutate(&db.admit().unwrap(), "/api/auth/social", json!({"provider": "test"})).await.unwrap();
     crate::sync::rig::app(&sync, sync.retry(&sync.inner.db.admit().unwrap(), "moments", &id, None)).await.unwrap();
     assert!(db.outbox().unwrap().is_empty());
     assert!(db.find("moments", &id).unwrap().is_none());

@@ -196,11 +196,10 @@ impl EncryptedClient {
         }
     }
 
-    pub async fn session_call(&self, operation: &str, body: Value) -> Result<Answer, TransportError> {
-        let admitted = self.admit("session call")?;
+    pub async fn session_call(&self, admitted: &Admitted, operation: &str, body: Value) -> Result<Answer, TransportError> {
+        self.validate(admitted)?;
         let epoch = admitted.value();
-        let (answer, after) = self.call_admitted(&admitted, operation.to_string(), body).await?;
-        drop(admitted);
+        let (answer, after) = self.call_admitted(admitted, operation.to_string(), body).await?;
         self.conclude(epoch, after).await?;
         Ok(answer)
     }
@@ -264,11 +263,10 @@ impl EncryptedClient {
         Ok(client)
     }
 
-    pub async fn mutate(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
-        let admitted = self.admit("mutation")?;
+    pub async fn mutate(&self, admitted: &Admitted, path: &str, body: Value) -> Result<Answer, TransportError> {
+        self.validate(admitted)?;
         let epoch = admitted.value();
-        let (answer, after) = admitted.run(self.mutate_in(&admitted, path, body, None, false)).await??;
-        drop(admitted);
+        let (answer, after) = admitted.run(self.mutate_in(admitted, path, body, None, false)).await??;
         self.conclude(epoch, after).await?;
         Ok(answer)
     }
@@ -322,11 +320,10 @@ impl EncryptedClient {
         Ok(self.read_connection(state::pending)?.and_then(|pending| pending.owner))
     }
 
-    pub async fn resume(&self) -> Result<Option<Answer>, TransportError> {
-        let admitted = self.admit("session resume")?;
+    pub async fn resume(&self, admitted: &Admitted) -> Result<Option<Answer>, TransportError> {
+        self.validate(admitted)?;
         let epoch = admitted.value();
-        let result = admitted.run(self.resume_in(&admitted)).await?;
-        drop(admitted);
+        let result = admitted.run(self.resume_in(admitted)).await?;
         match result {
             Err(error) if permanently_refused(&error) => Ok(None),
             Err(error) => Err(error),
@@ -517,9 +514,8 @@ impl EncryptedClient {
         }
     }
 
-    pub(super) fn cable_credential(&self) -> Result<String, TransportError> {
-        let admitted = self.admit("cable credential")?;
-        self.credential(&admitted)
+    pub(super) fn cable_credential(&self, admitted: &Admitted) -> Result<String, TransportError> {
+        self.credential(admitted)
     }
 
     fn verified(&self, credential: String) -> Result<String, TransportError> {

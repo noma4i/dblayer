@@ -16,7 +16,7 @@ async fn transport(rest: MockTransport) -> (EncryptedTransport, Arc<FakeServer>)
     let server = FakeServer::new(clock.clone());
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
     let client = EncryptedClient::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), Db::open_in_memory(Vec::new(), None).unwrap(), clock).unwrap();
-    client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    client.mutate(&client.admit("test call").unwrap(), "/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     (EncryptedTransport::new(Arc::new(client), Arc::new(rest)), server)
 }
 

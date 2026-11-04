@@ -82,7 +82,7 @@ async fn a_key_that_does_not_match_the_pin_leaves_the_credential_and_the_session
     let rig = Rig::new();
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     let client = rig.client(&db);
-    client.mutate(SOCIAL, signed_in()).await.unwrap();
+    client.mutate(&client.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap();
     let (credential, session) = (rig.credentials.inner.value(), rows(&db).0);
     let before = rig.touched();
 
@@ -100,11 +100,11 @@ async fn a_refusal_code_keeps_the_credential_the_session_row_and_the_pending_req
             let rig = Rig::new();
             let db = Db::open_in_memory(Vec::new(), None).unwrap();
             let client = rig.client(&db);
-            client.mutate(SOCIAL, signed_in()).await.unwrap();
+            client.mutate(&client.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap();
             let (credential, digest) = (rig.credentials.inner.value().unwrap(), rows(&db).0.unwrap().credential_digest);
             rig.server.refuse_next(code, confirmed);
 
-            let outcome = client.mutate(GRAPHQL, json!({ "query": "mutation { m }" })).await;
+            let outcome = client.mutate(&client.admit("test call").unwrap(), GRAPHQL, json!({ "query": "mutation { m }" })).await;
 
             let case = format!("{code} confirmed={confirmed}");
             match confirmed {
@@ -124,12 +124,12 @@ async fn a_request_that_never_left_is_sent_once_by_resume_after_a_restart() {
     let path = directory.path().join("session.sqlite");
     let first = rig.client(&file_db(&path));
     rig.server.drop_next_request();
-    super::client_tests::cancel_pending(first.mutate(SOCIAL, signed_in()));
+    super::client_tests::cancel_pending(first.mutate(&first.admit("test call").unwrap(), SOCIAL, signed_in()));
     assert_eq!(rig.server.seen().len(), 0);
     drop(first);
 
     let db = file_db(&path);
-    let answer = rig.client(&db).resume().await.unwrap().unwrap();
+    let answer = rig.client(&db).resume(&rig.client(&db).admit("test call").unwrap()).await.unwrap().unwrap();
 
     assert_eq!(answer.body, json!({ "nextStep": "authenticated" }));
     assert_eq!((rig.server.executed().len(), rows(&db).0.unwrap().sequence, rows(&db).1), (1, 1, None));
@@ -141,14 +141,14 @@ async fn an_answer_that_was_executed_but_never_committed_is_confirmed_once_by_re
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     let first = rig.client(&file_db(&path));
-    first.mutate(SOCIAL, signed_in()).await.unwrap();
+    first.mutate(&first.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap();
     rig.server.lose_next_answer();
-    super::client_tests::cancel_pending(first.mutate(GRAPHQL, json!({ "query": "mutation { m }" })));
+    super::client_tests::cancel_pending(first.mutate(&first.admit("test call").unwrap(), GRAPHQL, json!({ "query": "mutation { m }" })));
     assert_eq!(rig.server.executed().len(), 2);
     drop(first);
 
     let db = file_db(&path);
-    let answer = rig.client(&db).resume().await.unwrap().unwrap();
+    let answer = rig.client(&db).resume(&rig.client(&db).admit("test call").unwrap()).await.unwrap().unwrap();
 
     assert_eq!(answer.body, json!({ "data": { "done": "mutation { m }" } }));
     assert_eq!((rig.server.executed().len(), rows(&db).0.unwrap().sequence, rows(&db).1), (2, 2, None));
@@ -161,7 +161,7 @@ async fn a_stored_credential_without_matching_sequence_state_is_reported_without
         let db = Db::open_in_memory(Vec::new(), None).unwrap();
         let client = rig.client(&db);
         if case == "cached" {
-            client.mutate(SOCIAL, signed_in()).await.unwrap();
+            client.mutate(&client.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap();
             db.shared.store.lock().connection.execute("DELETE FROM encrypted_session", []).unwrap();
         } else {
             rig.credentials.inner.set("saved-before-the-crash").unwrap();
@@ -171,7 +171,7 @@ async fn a_stored_credential_without_matching_sequence_state_is_reported_without
         }
         let before = (rig.touched(), rig.credentials.inner.value(), rows(&db), rig.server.seen().len());
 
-        let error = client.mutate(SOCIAL, signed_in()).await.unwrap_err();
+        let error = client.mutate(&client.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap_err();
 
         assert_eq!(crate::transport::retry::RetryClass::of_error(&error), crate::transport::retry::RetryClass::Fatal, "{case}");
         assert_eq!(crate::ffi::DbError::from(crate::sync::SyncError::Transport(error)), crate::ffi::DbError::Session { code: crate::transport::SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }, "{case}");
@@ -185,9 +185,9 @@ fn session_model() -> crate::schema::ModelSpec {
 
 async fn session_at_seven(rig: &Rig, db: &Db) -> EncryptedClient {
     let client = rig.client(db);
-    client.mutate(SOCIAL, signed_in()).await.unwrap();
+    client.mutate(&client.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap();
     for _ in 1..7 {
-        client.mutate(GRAPHQL, json!({ "query": "mutation { m }" })).await.unwrap();
+        client.mutate(&client.admit("test call").unwrap(), GRAPHQL, json!({ "query": "mutation { m }" })).await.unwrap();
     }
     client
 }
@@ -204,7 +204,7 @@ async fn session_sequence_and_pending_survive_every_database_clearing_path() {
             let client = session_at_seven(&rig, &db).await;
             if pending {
                 rig.server.lose_next_answer();
-                super::client_tests::cancel_pending(client.mutate(GRAPHQL, json!({ "query": "mutation { pending }" })));
+                super::client_tests::cancel_pending(client.mutate(&client.admit("test call").unwrap(), GRAPHQL, json!({ "query": "mutation { pending }" })));
             }
             let before = (rows(&db), rig.credentials.inner.value(), rig.touched());
             assert_eq!(before.0.0.as_ref().unwrap().sequence, 7);
@@ -244,7 +244,7 @@ async fn session_sequence_and_pending_survive_every_database_clearing_path() {
             assert_eq!((rows(&db), rig.credentials.inner.value(), rig.touched()), before, "{case}, pending={pending}");
             let format: String = db.shared.store.lock().connection.query_row("SELECT value FROM manifest WHERE key = 'format_version'", [], |row| row.get(0)).unwrap();
             assert_eq!(format, crate::ddl::format_version());
-            let answer = if pending { client.resume().await.unwrap().unwrap() } else { client.mutate(GRAPHQL, json!({ "query": "mutation { next }" })).await.unwrap() };
+            let answer = if pending { client.resume(&client.admit("test call").unwrap()).await.unwrap().unwrap() } else { client.mutate(&client.admit("test call").unwrap(), GRAPHQL, json!({ "query": "mutation { next }" })).await.unwrap() };
             assert_eq!(answer.sequence, Some(8), "{case}, pending={pending}");
             assert_eq!(rig.credentials.inner.value(), before.1);
             assert_eq!(rig.touched(), before.2);
@@ -292,7 +292,7 @@ async fn changed_session_table_ddl_migrates_the_sequence_and_complete_pending_re
         inner.connection.execute("INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:save', 'pending', 0, 0)", []).unwrap();
         assert!(inner.connection.last_insert_rowid() > before.0.1.as_ref().unwrap().owner.as_ref().unwrap().seq);
     }
-    let answer = rig.client(&db).resume().await.unwrap().unwrap();
+    let answer = rig.client(&db).resume(&rig.client(&db).admit("test call").unwrap()).await.unwrap().unwrap();
     assert_eq!(answer.sequence, Some(8));
     assert_eq!(rig.server.executed().len(), 8);
     assert_eq!(rig.touched(), before.2);
@@ -306,7 +306,7 @@ async fn explicit_session_reset_clears_credential_sequence_and_pending_after_reo
     let db = file_db(&path);
     let client = session_at_seven(&rig, &db).await;
     rig.server.lose_next_answer();
-    super::client_tests::cancel_pending(client.mutate(GRAPHQL, json!({ "query": "mutation { pending }" })));
+    super::client_tests::cancel_pending(client.mutate(&client.admit("test call").unwrap(), GRAPHQL, json!({ "query": "mutation { pending }" })));
     assert!(rows(&db).1.is_some());
 
     client.reset().await.unwrap();
@@ -316,7 +316,7 @@ async fn explicit_session_reset_clears_credential_sequence_and_pending_after_reo
     let db = file_db(&path);
     assert_eq!((rig.credentials.inner.value(), rows(&db)), (None, (None, None)));
     assert_eq!(rig.touched(), (1, 1));
-    assert_eq!(rig.client(&db).resume().await, Ok(None));
+    assert_eq!(rig.client(&db).resume(&rig.client(&db).admit("test call").unwrap()).await, Ok(None));
 }
 
 #[tokio::test]
@@ -324,14 +324,14 @@ async fn a_session_row_without_its_credential_drops_the_old_pending_request_and_
     let rig = Rig::new();
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     rig.server.drop_next_request();
-    super::client_tests::cancel_pending(rig.client(&db).mutate(SOCIAL, signed_in()));
+    super::client_tests::cancel_pending(rig.client(&db).mutate(&rig.client(&db).admit("test call").unwrap(), SOCIAL, signed_in()));
     rig.credentials.inner.clear().unwrap();
 
     let restored = rig.client(&db);
 
-    assert_eq!(restored.resume().await, Ok(None));
+    assert_eq!(restored.resume(&restored.admit("test call").unwrap()).await, Ok(None));
     assert_eq!((rig.server.seen().len(), rows(&db).1), (0, None));
-    restored.mutate(SOCIAL, signed_in()).await.unwrap();
+    restored.mutate(&restored.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap();
     assert_eq!((rig.server.executed().len(), rows(&db).0.unwrap().sequence), (1, 1));
 }
 
@@ -340,11 +340,11 @@ async fn a_logout_whose_credential_could_not_be_cleared_is_finished_by_resume_wi
     let rig = Rig::new();
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     let client = rig.client(&db);
-    client.mutate(SOCIAL, signed_in()).await.unwrap();
+    client.mutate(&client.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap();
     rig.credentials.fail_next_clear.store(true, Ordering::SeqCst);
 
-    assert!(client.mutate("/api/logout", json!({})).await.is_err());
-    let resumed = client.resume().await.unwrap();
+    assert!(client.mutate(&client.admit("test call").unwrap(), "/api/logout", json!({})).await.is_err());
+    let resumed = client.resume(&client.admit("test call").unwrap()).await.unwrap();
 
     assert_eq!(resumed.map(|answer| answer.body), Some(json!({ "revoked": true })));
     assert_eq!((rig.credentials.inner.value(), rows(&db)), (None, (None, None)));

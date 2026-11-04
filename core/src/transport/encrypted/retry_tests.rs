@@ -57,7 +57,8 @@ async fn audit_offline_encrypted_http_makes_zero_attempts() {
         let error = failed_first.then(|| Err(TransportError::Network("unavailable".into())));
         let (client, http, db) = rig_at(error, None, clock.clone());
         let client = Arc::new(client);
-        let mut call = Box::pin(client.session_call("social", json!({})));
+        let admitted = client.admit("test call").unwrap();
+        let mut call = Box::pin(client.session_call(&admitted, "social", json!({})));
         if failed_first { assert!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending()); }
         db.connectivity().set_online(false);
         for _ in 0..3 {
@@ -91,7 +92,7 @@ async fn audit_durable_upload_owns_the_failed_http_attempt() {
     drop(call);
     assert_eq!(http.seen.lock().unwrap().len(), 1);
     assert!(super::state::pending(&db.shared.store.lock().connection).unwrap().is_some());
-    client.resume().await.unwrap().unwrap();
+    client.resume(&client.admit("test call").unwrap()).await.unwrap().unwrap();
     let seen = http.seen.lock().unwrap();
     assert_eq!(seen.len(), 2);
     let confirmed = code.is_some_and(|(_, confirmed)| confirmed);
@@ -111,7 +112,7 @@ async fn temporary_http_failures_retry_without_spending_sequence() {
         let answer = if route == "read" {
             http.server.clone().with_sequence(&client.credential(&client.admit("test credential").unwrap()).unwrap(), 0);
             client.read(&db.admit().unwrap(), "/api/graphql", json!({"query": "query { a }"})).await
-        } else { client.session_call(route, json!({})).await };
+        } else { client.session_call(&client.admit("test call").unwrap(), route, json!({})).await };
         assert!(answer.is_ok(), "{error:?}: {answer:?}");
         let seen = http.seen.lock().unwrap();
         assert_eq!(seen.len(), 2);
@@ -128,7 +129,7 @@ async fn temporary_sealed_codes_preserve_unconfirmed_pending_and_advance_confirm
     for code in ["TIMEOUT", "SERVICE_UNAVAILABLE", "INTERNAL_SERVER_ERROR", "DATABASE_ERROR"] {
         for confirmed in [false, true] {
             let (client, http, db) = rig(None, Some((code, confirmed)));
-            let answer = client.session_call("social", json!({})).await.unwrap();
+            let answer = client.session_call(&client.admit("test call").unwrap(), "social", json!({})).await.unwrap();
             assert!(answer.body.get("error").is_none(), "{code}, confirmed={confirmed}: {answer:?}");
             let seen = http.seen.lock().unwrap();
             assert_eq!(seen.len(), 2);
@@ -146,7 +147,7 @@ async fn fatal_http_and_security_failures_return_without_retrying() {
         .chain([TransportError::Security { code: SecurityCode::TlsTrust, detail: "certificate".into() }, TransportError::Config { code: ConfigCode::UnsupportedVersion, detail: "version".into() }]);
     for error in errors {
         let (client, http, _) = rig(Some(Err(error.clone())), None);
-        assert_eq!(client.session_call("social", json!({})).await, Err(error));
+        assert_eq!(client.session_call(&client.admit("test call").unwrap(), "social", json!({})).await, Err(error));
         assert_eq!(http.seen.lock().unwrap().len(), 1);
     }
 }
@@ -155,13 +156,14 @@ async fn fatal_http_and_security_failures_return_without_retrying() {
 async fn dropping_the_call_during_backoff_stops_the_retry_and_preserves_pending() {
     use std::{future::Future, task::{Context, Waker}};
     let (client, http, db) = rig(Some(Err(TransportError::Network("offline".into()))), None);
-    let mut call = Box::pin(client.session_call("social", json!({})));
+    let admitted = client.admit("test call").unwrap();
+    let mut call = Box::pin(client.session_call(&admitted, "social", json!({})));
     assert!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     drop(call);
     tokio::time::advance(Duration::from_secs(60)).await;
     assert_eq!(http.seen.lock().unwrap().len(), 1);
     assert!(super::state::pending(&db.shared.store.lock().connection).unwrap().is_some());
-    assert!(client.resume().await.unwrap().is_some());
+    assert!(client.resume(&client.admit("test call").unwrap()).await.unwrap().is_some());
     assert_eq!(http.server.executed().len(), 1);
 }
 
@@ -179,7 +181,8 @@ async fn local_credential_and_sqlite_failures_return_before_http_without_retryin
         let credentials: Arc<dyn CredentialSlot> = if case == "sqlite" { Arc::new(MemoryCredentials::default()) } else { Arc::new(BrokenCredentials(case == "credential read")) };
         let client = EncryptedClient::new(&client.config, http.clone(), credentials, db.clone(), Arc::new(TestClock::default())).unwrap();
         if case == "sqlite" { db.shared.store.lock().connection.execute_batch("DROP TABLE encrypted_pending").unwrap(); }
-        let mut call = Box::pin(client.session_call("social", json!({})));
+        let admitted = client.admit("test call").unwrap();
+        let mut call = Box::pin(client.session_call(&admitted, "social", json!({})));
         assert!(matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(TransportError::Network(_)))), "{case}");
         assert!(http.seen.lock().unwrap().is_empty(), "{case}");
     }

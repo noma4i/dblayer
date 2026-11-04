@@ -13,6 +13,7 @@ const PONG_WAIT: Duration = Duration::from_secs(20);
 pub(super) struct Entry {
     pub(super) request: GraphQLRequest,
     pub(super) events: mpsc::UnboundedSender<SubscriptionEvent>,
+    pub(super) admitted: crate::lifecycle::Admitted,
 }
 
 pub(super) struct Core {

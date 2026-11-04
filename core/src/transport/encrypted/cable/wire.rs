@@ -28,6 +28,7 @@ pub trait CableConnect: Send + Sync {
 
 struct Add {
     request: GraphQLRequest,
+    admitted: crate::lifecycle::Admitted,
     reply: oneshot::Sender<ServerSubscription>,
 }
 
@@ -44,16 +45,16 @@ pub struct CableSubscriptions {
 }
 
 impl CableSubscriptions {
-    pub fn new(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(config: EncryptedConfig, credential: Arc<dyn Fn(&crate::lifecycle::Admitted) -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, clock: Arc<dyn Clock>) -> Self {
         let (commands, receiver) = mpsc::unbounded_channel();
         let wakes = Arc::new(AtomicUsize::new(0));
         crate::task::spawn(crate::task::Carry::Detached, run(config, credential, connect, online.clone(), receiver, wakes.clone(), clock));
         Self { commands, wakes }
     }
 
-    pub async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
+    pub async fn subscribe(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         let (reply, receiver) = oneshot::channel();
-        crate::db::lock::effect(|| self.commands.send(Command::Add(Add { request, reply })).map_err(|_| TransportError::Network("cable stopped".into())))?;
+        crate::db::lock::effect(|| self.commands.send(Command::Add(Add { request, admitted: admitted.clone(), reply })).map_err(|_| TransportError::Network("cable stopped".into())))?;
         receiver.await.map_err(|_| TransportError::Network("cable stopped".into()))
     }
 
@@ -104,7 +105,7 @@ async fn await_connected<T>(next: impl std::future::Future<Output = T>, session:
             _ = session.cancelled() => {}
             command = commands.recv() => {
                 match command {
-                    Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
+                    Some(Command::Add(add)) => { session.discard_ended(); let (_, subscription) = session.subscribe(add.admitted, add.request); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
                     Some(Command::Resume) => session.resume(),
                     #[cfg(test)]
                     Some(Command::Settled(sender)) => { crate::db::lock::effect(|| { let _ = sender.send(()); }); }
@@ -152,21 +153,23 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
     }
 }
 
-async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, mut commands: mpsc::UnboundedReceiver<Command>, wakes: Arc<AtomicUsize>, clock: Arc<dyn Clock>) {
+async fn run(config: EncryptedConfig, credential: Arc<dyn Fn(&crate::lifecycle::Admitted) -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, mut commands: mpsc::UnboundedReceiver<Command>, wakes: Arc<AtomicUsize>, clock: Arc<dyn Clock>) {
     let mut session = CableSession::new(clock.clone(), online.clone());
     let mut connection: Option<(Arc<dyn CableSocket>, CableLink)> = None;
     let mut incoming = None;
     loop {
+        session.discard_ended();
         session.connectivity();
         settle(&config.cable_channel, &mut connection, &mut session).await;
         if connection.is_none() { incoming = None; }
         if session.is_connecting() && connection.is_none() {
             let attempt = async {
                 config.validate()?;
-                let credential = credential()?;
+                let admitted = session.admitted().cloned().ok_or_else(|| TransportError::Interrupted("cable has no current subscription".into()))?;
+                let credential = credential(&admitted)?;
                 if credential.is_empty() { return Err(TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "empty cable credential".into() }); }
-                let socket = timeout(clock.as_ref(), Duration::from_secs(10), await_connected(connect.open(), &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable opening timeout".into()))???;
-                let result = timeout(clock.as_ref(), Duration::from_secs(10), handshake(socket.as_ref(), &config, &credential, &mut session, &mut commands, &online)).await.map_err(|_| TransportError::Network("cable handshake timeout".into())).and_then(|result| result);
+                let socket = timeout(clock.as_ref(), Duration::from_secs(10), admitted.run(await_connected(connect.open(), &mut session, &mut commands, &online))).await.map_err(|_| TransportError::Network("cable opening timeout".into()))????;
+                let result = timeout(clock.as_ref(), Duration::from_secs(10), admitted.run(handshake(socket.as_ref(), &config, &credential, &mut session, &mut commands, &online))).await.map_err(|_| TransportError::Network("cable handshake timeout".into())).and_then(|result| result.map_err(TransportError::from)).and_then(|result| result);
                 match result {
                     Ok(link) => Ok((socket, link)),
                     Err(error) => { socket.close().await; Err(error) }
@@ -193,10 +196,11 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
         let deadline = session.deadline();
         let waits_online = session.has_demand() && !online.is_online();
         let waits_offline = session.has_demand() && online.is_online();
+        let admission = session.admitted().cloned();
         tokio::select! {
             command = commands.recv() => {
                 match command {
-                    Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
+                    Some(Command::Add(add)) => { session.discard_ended(); let (_, subscription) = session.subscribe(add.admitted, add.request); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
                     Some(Command::Resume) => session.resume(),
                     #[cfg(test)]
                     Some(Command::Settled(sender)) => { crate::db::lock::effect(|| { let _ = sender.send(()); }); }
@@ -232,6 +236,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
             }
             _ = online.online(), if waits_online => {}
             _ = online.offline(), if waits_offline => {}
+            _ = async { match admission { Some(admitted) => { let _ = admitted.run(std::future::pending::<()>()).await; }, None => std::future::pending().await } } => {}
         }
     }
     if let Some((socket, _)) = connection { socket.close().await; }

@@ -25,7 +25,7 @@ impl Rig {
     pub(super) async fn signed_in() -> Self {
         let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
         let rig = Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock, db: Db::open_in_memory(Vec::new(), None).unwrap() };
-        rig.client().mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+        rig.client().mutate(&rig.client().admit("test call").unwrap(), "/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
         rig
     }
 
@@ -158,7 +158,7 @@ async fn a_restart_between_the_miss_and_the_answer_to_the_second_send_resumes_th
 
     super::client_tests::cancel_pending(rig.transport().mutate(&rig.db.admit().unwrap(), request(WRITE)));
     assert_eq!(rig.pending_sequence(), Some(3));
-    let answer = rig.client().resume().await.unwrap().unwrap();
+    let answer = rig.client().resume(&rig.client().admit("test call").unwrap()).await.unwrap().unwrap();
 
     assert_eq!(answer.body, json!({ "data": { "done": WRITE } }));
     let sent = rig.graphql_requests();
@@ -170,11 +170,11 @@ async fn a_restart_between_the_miss_and_the_answer_to_the_second_send_resumes_th
 #[tokio::test]
 async fn a_restart_between_the_miss_and_the_second_send_leaves_no_effect_and_the_resent_mutation_runs_once() {
     let rig = Rig::signed_in().await;
-    let miss = rig.client().mutate("/api/graphql", super::graphql::graphql_body(&request(WRITE), false)).await.unwrap();
+    let miss = rig.client().mutate(&rig.client().admit("test call").unwrap(), "/api/graphql", super::graphql::graphql_body(&request(WRITE), false)).await.unwrap();
     assert_eq!(miss.body["errors"][0]["extensions"]["code"], "PERSISTED_QUERY_NOT_FOUND");
     assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (1, None));
 
-    assert_eq!(rig.client().resume().await, Ok(None));
+    assert_eq!(rig.client().resume(&rig.client().admit("test call").unwrap()).await, Ok(None));
     rig.transport().mutate(&rig.db.admit().unwrap(), request(WRITE)).await.unwrap();
 
     assert_eq!(rig.server.executed().len(), 2);

@@ -4,6 +4,7 @@
 
 ### Added
 - `NoSession` reports server work without a session or transport on both platforms.
+- Core encrypted calls and cable subscriptions take the admission of their caller.
 - Value bridge: `AccountScope`, `ValueStream`, `Projected`, snapshots and keyed deltas with the session epoch.
 - `AccountScope.send`: a durable message command with `CommandStatus`, refused for an old epoch.
 - `refresh`, `loadMore` and `loaded` on a stream, interrupted when its session ends.

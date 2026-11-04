@@ -39,7 +39,7 @@ async fn rig() -> Rig {
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
     let client = EncryptedClient::new(&config, server.clone(), credentials.clone(), db.clone(), clock).unwrap();
-    client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    client.mutate(&client.admit("test call").unwrap(), "/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     server.register("query Q { q }");
     server.register("mutation M { m }");
     Rig { transport: EncryptedTransport::new(Arc::new(client), Arc::new(MockTransport::new())), server, credentials, db }

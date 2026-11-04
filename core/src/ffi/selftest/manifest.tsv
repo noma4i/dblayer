@@ -209,3 +209,5 @@ S111		core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches
 S111		swift	BridgeProbeTests.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	red-by-reading	S1: old resume is refused	arch-audit Astra A1
 S111		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	red-by-reading	S1: old resume is refused	arch-audit Astra A1
 S112		core	an_admission_from_another_database_cannot_start_a_server_call	red-by-reading	core-only: Admitted is not exposed through FFI	arch-audit Astra A1
+S113		core	a_foreign_admission_cannot_start_an_encrypted_call	red-by-reading	core-only: Admitted is not exposed through FFI	arch-audit Astra A1
+S114		core	an_old_subscription_cannot_read_the_next_accounts_cable_credential	red-by-reading	core-only: Admitted is not exposed through FFI	coordinator msg_bdf329f95a8b

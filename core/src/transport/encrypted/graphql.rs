@@ -27,7 +27,7 @@ impl CableConnect for TransportCable {
 impl EncryptedTransport {
     pub fn new(client: Arc<EncryptedClient>, rest: Arc<dyn Transport>) -> Self {
         let credentials = client.clone();
-        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move || credentials.cable_credential()), Arc::new(TransportCable(rest.clone())), client.online.clone(), client.clock.clone());
+        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move |admitted| credentials.cable_credential(admitted)), Arc::new(TransportCable(rest.clone())), client.online.clone(), client.clock.clone());
         Self { client, rest, cable }
     }
 
@@ -104,7 +104,7 @@ impl Transport for EncryptedTransport {
 
     async fn subscribe(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         self.client.validate(admitted)?;
-        self.cable.subscribe(request).await
+        self.cable.subscribe(admitted, request).await
     }
 
     async fn put(&self, admitted: &crate::lifecycle::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
