@@ -69,6 +69,7 @@ pub use model_event::{ModelEvent, ModelEventItem, ModelEvents};
 pub use resume::{ResumeReport, Watch};
 pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
+pub(crate) use send::OutcomeTicket;
 pub use subscribe::{EventEffect, Updates, SubscriptionDef, SubscriptionStatus};
 
 use std::collections::{BTreeMap, HashMap};
@@ -144,6 +145,7 @@ pub(crate) struct Inner {
     pub counters: Mutex<Counters>,
     pub landing: Mutex<()>,
     pub issued: AtomicI64,
+    pub issued_floor: std::sync::OnceLock<Result<i64, String>>,
     pub(crate) upload_housekeeping_due: std::sync::atomic::AtomicBool,
     pub(crate) upload_orphan_gate: tokio::sync::Mutex<()>,
     pub lives: Mutex<HashMap<String, live::Live>>,
@@ -166,7 +168,6 @@ pub(crate) struct Inner {
     /// The operations that waited for a retry when the network came back. They do not wait for their backoff once: the first attempt after the return takes them out, and a second failure waits by the normal backoff.
     pub(crate) backoff_released: Mutex<std::collections::BTreeSet<i64>>,
     /// The row the answer of an operation carried at its root, by operation: the call that waits for the answer returns it.
-    pub(crate) answers: Mutex<send::Answers>,
     pub uploads: Mutex<upload::UploadRuns>,
     pub(crate) upload_effects: crate::db::dispatch::OrderedEffects,
     pub(crate) file_tasks: Arc<tokio::sync::watch::Sender<usize>>,
@@ -295,6 +296,7 @@ impl Sync {
             counters: Mutex::new(Counters::default()),
             landing: Mutex::new(()),
             issued: AtomicI64::new(0),
+            issued_floor: std::sync::OnceLock::new(),
             upload_housekeeping_due: std::sync::atomic::AtomicBool::new(true),
             upload_orphan_gate: tokio::sync::Mutex::new(()),
             lives: Mutex::new(HashMap::new()),
@@ -312,7 +314,6 @@ impl Sync {
             #[cfg(test)]
             after_network_change: Mutex::new(None),
             backoff_released: Mutex::new(std::collections::BTreeSet::new()),
-            answers: Mutex::new(send::Answers::default()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
             upload_effects: crate::db::dispatch::OrderedEffects::default(),
             file_tasks: Arc::new(tokio::sync::watch::channel(0).0),
@@ -365,9 +366,7 @@ impl Sync {
 
     #[cfg(test)]
     pub fn counters(&self) -> Counters {
-        let mut counters = locked(&self.inner.counters).clone();
-        counters.lost_outcomes = locked(&self.inner.outcomes).lost();
-        counters
+        locked(&self.inner.counters).clone()
     }
 }
 

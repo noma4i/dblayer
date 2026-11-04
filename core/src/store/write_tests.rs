@@ -14,10 +14,10 @@ fn a_sql_write_outside_an_envelope_is_refused_once_its_epoch_has_gone() {
     let (store, _) = booted_store();
     let key = crate::identity::ListKey::compose(&["messages", "thread", "1"]).as_str().to_string();
     store.save_window(&super::windows::WindowRecord { key, cursor: None, has_next: false, total: None, pages: 1, issued: 0, applied: 0, generation: 0 }).unwrap();
-    assert!(store.invalidate_family(&stale(&store), "messages", "thread").is_err());
+    assert!(store.invalidate_family(&stale(&store), "messages", "thread", 1).is_err());
     assert!(store.stale_window_keys().unwrap().is_empty(), "a refused write changed the window");
     let current = store.lifecycle.admit(Origin::Explicit, "test write").unwrap().authority();
-    assert_eq!(store.invalidate_family(&current, "messages", "thread").unwrap(), 1);
+    assert_eq!(store.invalidate_family(&current, "messages", "thread", 1).unwrap(), 1);
 }
 
 #[test]

@@ -114,7 +114,7 @@ pub(crate) fn row_operation_sequences(connection: &Connection, keys: &BTreeSet<(
 }
 
 pub(crate) fn referencing_sequences(connection: &Connection, ids: &BTreeSet<String>) -> rusqlite::Result<BTreeSet<i64>> {
-    let mut statement = connection.prepare_cached("SELECT seq FROM op_row WHERE row_id = ?1 UNION SELECT seq FROM op_value WHERE text = ?1")?;
+    let mut statement = connection.prepare_cached("SELECT seq FROM op_row WHERE row_id = ?1 UNION SELECT seq FROM op_value WHERE text = ?1 UNION SELECT seq FROM op_effect WHERE row_id = ?1 UNION SELECT seq FROM op_effect_value WHERE text = ?1")?;
     let mut sequences = BTreeSet::new();
     for id in ids {
         sequences.extend(statement.query_map([id], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?);

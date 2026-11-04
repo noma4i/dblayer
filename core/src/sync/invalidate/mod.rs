@@ -77,7 +77,7 @@ impl Inner {
 impl Inner {
     pub(crate) async fn expire_and_reload_watched(&self, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<usize, SyncError> {
         let keys: Vec<String> = self.db.observed_reads().into_iter().filter(|entry| entry.model == model).map(|entry| entry.key).collect();
-        self.db.shared.store.invalidate_windows(&admitted.authority(), &keys)?;
+        self.db.shared.store.invalidate_windows(&admitted.authority(), &keys, self.next_issued()?)?;
         self.reload_watched(admitted, model, None, true).await
     }
 }

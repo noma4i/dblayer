@@ -1,5 +1,8 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Bound::{Excluded, Unbounded};
+use std::future::Future;
+use std::pin::Pin;
+use std::task::Poll;
 
 use rusqlite::Connection;
 use serde_json::Value;
@@ -9,7 +12,7 @@ use crate::operation::OperationStatus;
 use crate::db::{DbError, OutboxOperation, Prior, TempReplacement};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::operation::{quarantine_add, Operation, QuarantineReason};
-use crate::schema::{ActionDeclaration, OnFailure, RemoteShape};
+use crate::schema::{OnFailure, RemoteShape};
 use crate::store::{PlanCommitError, Reader, StoreError};
 use crate::syncstate::{FailureKind, OperationFailure};
 use crate::transport::{GraphQLRequest, Response, ResponseOutcome, RetryClass, TransportError};
@@ -25,10 +28,25 @@ use super::settle::response_ops;
 use super::variables::{idempotent_variables, mutation_variables};
 
 const SETTLE_ATTEMPTS: usize = 3;
+const MAX_IN_FLIGHT: usize = 16;
+
+type SendFuture<'a> = Pin<Box<dyn Future<Output = (OutboxOperation, Result<SendResult, SyncError>)> + Send + 'a>>;
+
+async fn next_finished(sends: &mut Vec<SendFuture<'_>>) -> (OutboxOperation, Result<SendResult, SyncError>) {
+    std::future::poll_fn(|cx| {
+        for index in 0..sends.len() {
+            if let Poll::Ready(result) = sends[index].as_mut().poll(cx) {
+                drop(sends.swap_remove(index));
+                return Poll::Ready(result);
+            }
+        }
+        Poll::Pending
+    }).await
+}
 
 enum Delivery {
     Response(Response),
-    Rejected(OperationFailure, bool),
+    Rejected(OperationFailure),
     Unreached(OperationFailure),
     Unknown(OperationFailure),
 }
@@ -54,7 +72,6 @@ pub(crate) struct FinalAttempts {
 struct Bound {
     model: String,
     action: String,
-    declaration: ActionDeclaration,
     mutation: String,
     variables: Value,
 }
@@ -82,11 +99,16 @@ impl Drop for InFlight<'_> {
         let failure = OperationFailure::new(FailureKind::Network, "the send was cancelled before an answer was settled");
         let seq = self.seq;
         let generation = self.generation;
-        if let Err(error) = self.inner.commit(self.admitted, generation, |_| {
+        let committed = self.inner.commit(self.admitted, generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
             envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() });
             Ok(Some(envelope))
-        }) { self.inner.fail_commit(self.admitted, error); }
+        });
+        match committed {
+            Ok(Some(_)) => self.inner.finish_ticket(seq, SendResult::DeliveryUnknown, None, None),
+            Ok(None) => {},
+            Err(error) => self.inner.fail_commit(self.admitted, error),
+        }
     }
 }
 
@@ -110,23 +132,22 @@ fn delivery_of(result: Result<Response, TransportError>, replayable: bool) -> De
                 return Delivery::Unreached(OperationFailure { kind: FailureKind::Server, message: message_of(&response), extensions: response.extensions() });
             }
             let kind = auth.map_or(FailureKind::Rejected, FailureKind::Session);
-            Delivery::Rejected(OperationFailure { kind, message: message_of(&response), extensions: response.extensions() }, false)
+            Delivery::Rejected(OperationFailure { kind, message: message_of(&response), extensions: response.extensions() })
         }
         Err(error @ TransportError::Network(_)) => Delivery::Unreached(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Interrupted(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, error.to_string())),
         Err(error @ TransportError::Http { status, .. }) if status == 408 || status == 429 || replayable && (500..600).contains(&status) => Delivery::Unreached(OperationFailure::new(FailureKind::Server, error.to_string())),
         Err(error @ TransportError::Http { status, .. }) if status >= 500 => Delivery::Unknown(OperationFailure::new(FailureKind::Server, error.to_string())),
-        Err(error) if crate::transport::encrypted::permanently_refused(&error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string()), true),
-        Err(TransportError::Session { code, detail }) => Delivery::Rejected(OperationFailure::new(FailureKind::Session(code), detail), false),
+        Err(TransportError::Session { code, detail }) => Delivery::Rejected(OperationFailure::new(FailureKind::Session(code), detail)),
         Err(TransportError::Graphql { messages, extensions }) if retryable => {
             Delivery::Unreached(OperationFailure { kind: FailureKind::Server, message: messages.join("\n"), extensions })
         }
         Err(TransportError::Graphql { messages, extensions }) => {
             let auth = extensions.as_ref().and_then(|fields| fields.code.as_deref()).and_then(crate::transport::SessionCode::from_wire).filter(|code| code.keeps_queue());
-            Delivery::Rejected(OperationFailure { kind: auth.map_or(FailureKind::Rejected, FailureKind::Session), message: messages.join("\n"), extensions }, false)
+            Delivery::Rejected(OperationFailure { kind: auth.map_or(FailureKind::Rejected, FailureKind::Session), message: messages.join("\n"), extensions })
         }
         Err(error @ TransportError::Decode(_)) => Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
-        Err(error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string()), false),
+        Err(error) => Delivery::Rejected(OperationFailure::new(FailureKind::Rejected, error.to_string())),
     }
 }
 
@@ -135,6 +156,12 @@ fn message_of(response: &Response) -> String {
 }
 
 impl Inner {
+    fn finish_ticket(&self, sequence: i64, result: SendResult, answer: Option<Value>, value: Option<crate::db::Row>) {
+        let ticket = locked(&self.outcomes).take_ticket(sequence);
+        if let Some(ticket) = ticket {
+            ticket.finish(super::FinishedOperation { result, answer, value });
+        }
+    }
     pub(crate) fn fail_commit(&self, admitted: &crate::lifecycle::Admitted, error: SyncError) {
         let stored = self.db.shared.store.lock();
         let life = &self.db.shared.store.lifecycle;
@@ -160,28 +187,55 @@ impl Inner {
         let mut checked = self.refuse_non_durable(admitted)?;
         locked(self.operation_queue()?).begin_pass();
         let mut cursor = i64::MIN;
+        let mut sends: Vec<SendFuture<'_>> = Vec::new();
+        let mut changes = self.db.outbox_changes();
         loop {
             if self.refusal_state() != checked {
                 checked = self.refuse_non_durable(admitted)?;
             }
-            let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? else { break };
+            changes.borrow_and_update();
+            let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? else {
+                if sends.is_empty() { break; }
+                tokio::select! {
+                    (entry, result) = next_finished(&mut sends) => self.record_send(&mut report, &mut cursor, checked, entry, result?)?,
+                    changed = changes.changed() => { if changed.is_err() { break; } }
+                }
+                continue;
+            };
             if !self.admitted(crate::lifecycle::Origin::Session) { break; }
             if self.refusal_state() != checked {
                 checked = self.refuse_non_durable(admitted)?;
                 if !locked(self.operation_queue()?).pending.contains(&entry.operation.id.0) { continue; }
             }
-            locked(self.operation_queue()?).attempted(entry.operation.id.0);
             locked(&self.backoff_released).remove(&entry.operation.id.0);
-            let result = self.send(admitted, &entry, None, Some(checked)).await?; // lock-ok: queue guard ended at statement
-            if result == SendResult::Discarded && self.refusal_state() != checked {
-                cursor = entry.operation.id.0 - 1;
-                continue;
+            let mut send: SendFuture<'_> = Box::pin(async move {
+                let result = self.send(admitted, &entry, None, Some(checked)).await;
+                (entry, result)
+            });
+            let first = std::future::poll_fn(|cx| Poll::Ready(send.as_mut().poll(cx))).await;
+            match first {
+                Poll::Ready((entry, result)) => self.record_send(&mut report, &mut cursor, checked, entry, result?)?,
+                Poll::Pending => sends.push(send),
             }
-            self.keep_discarded(&entry, &result);
-            report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key.clone(), result });
+            if sends.len() >= MAX_IN_FLIGHT {
+                let (entry, result) = next_finished(&mut sends).await;
+                self.record_send(&mut report, &mut cursor, checked, entry, result?)?;
+            }
         }
         locked(self.operation_queue()?).begin_pass();
         Ok(report)
+    }
+
+    fn record_send(&self, report: &mut FlushReport, cursor: &mut i64, checked: RefusalState, entry: OutboxOperation, result: SendResult) -> Result<(), SyncError> {
+        if result == SendResult::Discarded && self.refusal_state() != checked {
+            *cursor = (*cursor).min(entry.operation.id.0 - 1);
+        }
+        if !matches!(result, SendResult::Committed) { locked(self.operation_queue()?).attempted(entry.operation.id.0); }
+        if result == SendResult::Discarded && self.outbox_operation(entry.operation.id.0)?.is_none() {
+            self.finish_ticket(entry.operation.id.0, SendResult::Discarded, None, None);
+        }
+        report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key, result });
+        Ok(())
     }
 
     pub(crate) fn newest_operation(&self) -> Option<i64> {
@@ -217,9 +271,13 @@ impl Inner {
             let Some((model, action)) = Operation::split_action_key(&entry.operation.action_key) else { continue };
             if self.survives_offline(&model, &action) && !of_left_account { continue; }
             let failure = OperationFailure::new(if of_left_account { FailureKind::Rejected } else { FailureKind::Network }, if of_left_account { format!("{model}.{action} belongs to the account that signed out") } else { format!("{model}.{action} needs the network") });
-            let mut kept = self.keep_refusal(&entry, &SendResult::Rejected(failure));
-            crate::blocking::blocking_unit(|| self.db.roll_back_at(admitted, seq, self.db.generation()))?;
-            kept.landed();
+            let generation = self.db.generation();
+            let sending = Sending { admitted, entry: &entry, model, action, generation, base_revision: 0, checked: None };
+            if self.keeps_on_refusal(&sending.model, &sending.action)? {
+                self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure))?;
+            } else {
+                self.roll_back_refused(&sending, generation, &failure)?;
+            }
         }
         #[cfg(test)]
         if let Some(probe) = locked(&self.refusal_probe).as_ref() { probe(); }
@@ -232,26 +290,8 @@ impl Inner {
         spec.actions.iter().find(|declared| declared.name == action).is_none_or(|declared| declared.mutation.is_none() || declared.durable || declared.upload)
     }
 
-    /// The row at the root of an answer is published before the commit that closes the operation, so a waiter that sees the operation closed finds it. A call that waits keeps its result until it reads it or goes away. At most 256 results that nobody waits for stay.
-    pub(in crate::sync) fn publish_answer_root(&self, operation: i64, root: Option<RowId>) {
-        locked(&self.answers).publish(operation, root);
-    }
-
-    fn keep_outcome(&self, entry: &OutboxOperation, result: &SendResult) {
-        let Some((model, _)) = Operation::split_action_key(&entry.operation.action_key) else { return };
-        let rows = entry.operation.row_ids.iter().cloned().chain(entry.operation.temp_id.clone()).collect();
-        locked(&self.outcomes).keep(entry.operation.id.0, &model, &entry.operation.action_key, rows, result);
-    }
-
-    fn keep_discarded(&self, entry: &OutboxOperation, result: &SendResult) {
-        if *result == SendResult::Discarded {
-            self.keep_outcome(entry, result);
-        }
-    }
-
-    fn keep_refusal(&self, entry: &OutboxOperation, result: &SendResult) -> super::outcomes::KeptRefusal<'_> {
-        self.keep_outcome(entry, result);
-        super::outcomes::KeptRefusal::new(&self.outcomes, entry.operation.id.0)
+    fn keeps_on_refusal(&self, model: &str, action: &str) -> Result<bool, SyncError> {
+        Ok(self.db.spec(model)?.actions.iter().find(|declared| declared.name == action).is_some_and(|declared| declared.on_failure == OnFailure::Keep))
     }
 
     fn refused(&self) {
@@ -260,9 +300,10 @@ impl Inner {
     }
 
     fn roll_back_refused(&self, sending: &Sending<'_>, generation: Generation, failure: &OperationFailure) -> Result<(), DbError> {
-        let mut kept = self.keep_refusal(sending.entry, &SendResult::Rejected(failure.clone()));
-        crate::blocking::blocking_unit(|| self.db.roll_back_at(sending.admitted, sending.entry.operation.id.0, generation))?;
-        kept.landed();
+        let debts = if sending.action == "destroy" { self.refused_destroy_debts(&sending.model).map_err(|error| DbError::Internal(error.to_string()))? } else { Vec::new() };
+        crate::blocking::blocking_unit(|| self.db.roll_back_if(sending.admitted, sending.entry.operation.id.0, generation, None, &debts))?;
+        self.queue_committed_debts(sending.admitted, &debts).map_err(|error| DbError::Internal(error.to_string()))?;
+        self.finish_ticket(sending.entry.operation.id.0, SendResult::Rejected(failure.clone()), None, None);
         self.refused();
         Ok(())
     }
@@ -321,23 +362,25 @@ impl Inner {
         let Some(input) = self.db.shared.read(&[], |reader| Ok(crate::store::blob::variables(reader.connection(), entry.operation.id.0, &entry.input)?))? else { return Ok(None) };
         let variables = mutation_variables(&declaration, &input, entry.operation.temp_id.as_ref(), &is_id);
         let variables = idempotent_variables(&declaration, &entry.input, variables, &entry.operation.client_mutation_id);
-        Ok(Some(Bound { model, action, declaration, mutation, variables }))
+        Ok(Some(Bound { model, action, mutation, variables }))
     }
 
     async fn send(&self, admitted: &crate::lifecycle::Admitted, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>, checked: Option<RefusalState>) -> Result<SendResult, SyncError> {
-        let Some((Bound { model, action, declaration, mutation, .. }, generation, base_revision)) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
+        let Some((Bound { model, action, mutation, .. }, generation, base_revision)) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
             let Some(bound) = self.bind(entry)? else { return Ok(None) };
             Ok(Some((bound, self.db.generation(), self.db.revision_seq()?)))
         })? else { return Ok(SendResult::Skipped(SkipReason::NotBound)) };
         let sending = Sending { admitted, entry, model, action, generation, base_revision, checked };
-        let Some(operation) = locked(&self.operations).get(&mutation).cloned() else {
+        let operation = locked(&self.operations).get(&mutation).cloned();
+        let Some(operation) = operation else {
             let failure = OperationFailure::new(FailureKind::Rejected, format!("operation {mutation} is not registered"));
-            return self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure));
+            return self.refuse(&sending, failure, self.keeps_on_refusal(&sending.model, &sending.action)?).await;
         };
-        self.send_owned(&sending, &operation, resumed, declaration.on_failure == OnFailure::Keep).await
+        self.send_owned(&sending, &operation, resumed).await
     }
 
-    pub(crate) async fn send_owned(&self, sending: &Sending<'_>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>, keep: bool) -> Result<SendResult, SyncError> {
+    pub(crate) async fn send_owned(&self, sending: &Sending<'_>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>) -> Result<SendResult, SyncError> {
+        let keep = self.keeps_on_refusal(&sending.model, &sending.action)?;
         let seq = sending.entry.operation.id.0;
         let key = (sending.generation, seq);
         let attempt = {
@@ -359,7 +402,7 @@ impl Inner {
             Err(error) => {
                 in_flight.settled = true;
                 let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
-                return self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure));
+                return self.refuse(&sending, failure, keep).await;
             }
         };
         request.owner = Some(crate::transport::RequestOwner { seq, item_position: -1, stage: "mutation".into() });
@@ -459,35 +502,32 @@ impl Inner {
             if let Some(upload) = upload { self.resume_upload(upload, result).await; }
             return Ok(());
         }
-        let sent = self.send(admitted, &entry, Some(result), None).await?;
-        self.keep_discarded(&entry, &sent);
+        self.send(admitted, &entry, Some(result), None).await?;
         Ok(())
     }
 
     async fn settle_delivery(&self, sending: &Sending<'_>, operation: &OperationDef, delivery: Delivery, keep: bool) -> Result<SendResult, SyncError> {
         let unsettled = match &delivery {
             Delivery::Response(_) => OperationFailure::new(FailureKind::Unrecognized, "the answer arrived after the database was reset"),
-            Delivery::Rejected(failure, _) | Delivery::Unreached(failure) | Delivery::Unknown(failure) => failure.clone(),
+            Delivery::Rejected(failure) | Delivery::Unreached(failure) | Delivery::Unknown(failure) => failure.clone(),
         };
         let unreached = matches!(delivery, Delivery::Unreached(_));
         let survives = self.survives_offline(&sending.model, &sending.action);
         let ended_by_network = unreached && !survives;
         let deferred = unreached && survives && self.send_backoff(sending.entry.operation.id.0).allows(sending.entry.operation.attempts + 1);
         let exhausted = unreached && survives && !deferred;
-        let keep = !ended_by_network && (keep || exhausted || matches!(&delivery, Delivery::Rejected(_, true)) || matches!(&delivery, Delivery::Rejected(OperationFailure { kind: FailureKind::Session(code), .. }, _) if code.keeps_queue()));
         let rejected = exhausted || ended_by_network || matches!(delivery, Delivery::Rejected(..));
         let result = match delivery {
             Delivery::Response(response) => self.settle_response(sending, operation, response).await?,
-            Delivery::Rejected(failure, _) if sending.action == "destroy" && failure.extensions.as_ref().and_then(|fields| fields.code.as_deref()) == Some("NOT_FOUND") => self.land_response(sending, operation, Value::Null).await?,
-            Delivery::Rejected(failure, _) => self.refuse(sending, failure, keep).await?,
+            Delivery::Rejected(failure) => self.refuse(sending, failure, keep).await?,
             Delivery::Unreached(failure) if deferred => {
                 self.postpone(sending, failure)?
             }
-            Delivery::Unreached(failure) => self.refuse(sending, failure, survives).await?,
+            Delivery::Unreached(failure) => self.refuse(sending, failure, keep).await?,
             Delivery::Unknown(failure) => self.fail(sending, OperationStatus::DeliveryUnknown, failure, SendResult::DeliveryUnknown)?,
         };
         if result == SendResult::Discarded {
-            return self.park_operation(sending, unsettled, deferred, rejected, keep || sending.action == "destroy");
+            return self.park_operation(sending, unsettled, deferred, rejected, keep);
         }
         Ok(result)
     }
@@ -517,11 +557,8 @@ impl Inner {
     }
 
     async fn refuse(&self, sending: &Sending<'_>, failure: OperationFailure, keep: bool) -> Result<SendResult, SyncError> {
-        if keep || sending.action == "destroy" {
+        if keep {
             let result = self.fail(sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure))?;
-            if sending.action == "destroy" && result != SendResult::Discarded {
-                self.mark_lists_after_refused_destroy(sending.admitted, &sending.model)?;
-            }
             return Ok(result);
         }
         self.roll_back(sending, failure).await
@@ -651,11 +688,8 @@ impl Inner {
         if temp.is_some() && (normalized.roots.len() != 1 || real.is_none() || real == temp || !creatable) {
             return self.quarantine(sending, &data);
         }
-        self.keep_answer(spec, sending, operation, &data);
-        self.keep_outcome(entry, &SendResult::Committed);
-        let mut kept = super::outcomes::KeptAnswer::new(&self.outcomes, entry.operation.id.0);
-        let publishes_root = spec.actions.iter().any(|action| action.name == sending.action && action.returns_answer());
-        if publishes_root { self.publish_answer_root(entry.operation.id.0, real.clone()); }
+        let answer = self.answer_fields(spec, sending, operation, &data);
+        let debts = self.mutation_debts(&sending.model, &sending.action)?;
         let held = Prior::of(entry)?.map(|prior| prior.held_files()).unwrap_or_default();
         let owned: Vec<RowId> = entry.operation.row_ids.iter().chain(&temp).cloned().collect();
         let created = Prior::of(entry)?.map(|prior| prior.created_beyond(&owned)).unwrap_or_default();
@@ -668,6 +702,8 @@ impl Inner {
                 let outbox = crate::operation::referencing_sequences(reader.connection(), &ids).map_err(StoreError::from)?.into_iter().filter_map(|seq| OutboxOperation::read(reader, seq).transpose()).collect::<Result<Vec<_>, _>>()?;
                 let mut drops = 0;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
+                envelope.window_debts = debts.clone();
+                envelope.snapshot = real.as_ref().or_else(|| entry.operation.row_ids.first()).map(|id| RowRef::new(ModelKey::new(&sending.model), id.clone()));
                 envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
                 if let (Some(temp), Some(real)) = (&temp, &real) {
                     self.db.swap_temp(reader, &mut envelope, &outbox, TempReplacement { model: &sending.model, temp, real }, entry.operation.id.0)?;
@@ -709,30 +745,26 @@ impl Inner {
             }
             generation = self.db.generation();
         }
-        if committed.is_none() {
-            if publishes_root { locked(&self.answers).forget(entry.operation.id.0); }
-            return Ok(SendResult::Discarded);
-        }
-        kept.committed();
+        let Some(committed) = committed else { return Ok(SendResult::Discarded) };
+        self.queue_committed_debts(sending.admitted, &debts)?;
+        let value = committed.snapshot.map(|row| self.db.shared.overlay_snapshot(&sending.model, row)).transpose()?;
+        self.finish_ticket(entry.operation.id.0, SendResult::Committed, answer, value);
         #[cfg(test)]
         if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
         self.discard_files(sending.admitted, held.iter().map(|file| file.id.clone()).collect()).await?;
         self.discard_files(sending.admitted, blob_files).await?;
-        self.invalidate_after(sending.admitted, &sending.model, &sending.action)?;
         Ok(SendResult::Committed)
     }
 
-    fn keep_answer(&self, spec: &crate::schema::ModelSpec, sending: &Sending<'_>, operation: &OperationDef, data: &Value) {
-        let Some(declared) = spec.actions.iter().find(|declared| declared.name == sending.action).cloned() else { return };
+    fn answer_fields(&self, spec: &crate::schema::ModelSpec, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> Option<Value> {
+        let declared = spec.actions.iter().find(|declared| declared.name == sending.action).cloned()?;
         if declared.result.is_empty() && !declared.upload {
-            return;
+            return None;
         }
         let root = declared.root.as_deref().unwrap_or(&operation.root_path);
         let payload = data.get(root.split('.').next().unwrap_or(root));
         let fields = declared.result.iter().map(|(name, kind)| (name.clone(), payload.and_then(|payload| payload.get(name)).filter(|value| answer_kind_matches(kind, value)).cloned().unwrap_or(Value::Null)));
-        let entry = sending.entry;
-        let rows = entry.operation.row_ids.iter().cloned().chain(entry.operation.temp_id.clone()).collect();
-        locked(&self.outcomes).answered(entry.operation.id.0, &sending.model, &entry.operation.action_key, rows, Value::Object(fields.collect()));
+        Some(Value::Object(fields.collect()))
     }
 
     fn read_response(&self, spec: &crate::schema::ModelSpec, sending: &Sending<'_>, operation: &OperationDef, data: &Value) -> Result<(Normalized, Vec<RowRef>), SyncError> {
@@ -779,9 +811,10 @@ impl Inner {
 
     fn fail(&self, sending: &Sending<'_>, status: OperationStatus, failure: OperationFailure, result: SendResult) -> Result<SendResult, SyncError> {
         let seq = sending.entry.operation.id.0;
-        let mut kept = self.keep_refusal(sending.entry, &result);
+        let debts = if status == OperationStatus::Failed && sending.action == "destroy" { self.refused_destroy_debts(&sending.model)? } else { Vec::new() };
         let committed = self.commit(sending.admitted, sending.generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
+            envelope.window_debts = debts.clone();
             if status == OperationStatus::Failed && sending.action == "destroy" {
                 if let Some(prior) = Prior::of(sending.entry)? {
                     (envelope.entity_ops, envelope.scope_ops) = prior.reappearing();
@@ -793,7 +826,8 @@ impl Inner {
         if committed.is_none() {
             return Ok(SendResult::Discarded);
         }
-        kept.landed();
+        self.queue_committed_debts(sending.admitted, &debts)?;
+        self.finish_ticket(seq, result.clone(), None, None);
         self.refused();
         Ok(result)
     }

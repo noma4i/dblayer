@@ -59,6 +59,9 @@ pub(super) enum Fault {
     /// The request is held, then ends in the inner fault.
     HoldThen(Arc<Gate>, Box<Fault>),
     Refuse { code: &'static str, confirmed: bool },
+    Http(u16),
+    Business,
+    Answer(Value),
     /// The request does not reach the server: the caller sees a network error.
     Down,
 }
@@ -113,6 +116,9 @@ impl World {
     /// A message of the thread `c1` that the server already holds for this account.
     pub(super) fn seed_message(&self, account: &str, id: &str, text: &str, at: i64) {
         self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at})));
+    }
+    pub(super) fn seed_reacted_message(&self) {
+        self.state.lock().unwrap().messages.push(("A".into(), json!({"__typename":"Message","id":"m1","chatId":"c1","text":"hello","at":1,"reactions":[{"userId":"u2","body":"B"}]})));
     }
     pub(super) fn set_members(&self, order: &str, ids: &[&str]) {
         self.state.lock().unwrap().group_members.insert(order.into(), ids.iter().map(|id| id.to_string()).collect());
@@ -182,6 +188,8 @@ impl World {
                 if commits { state.messages.push((account.clone(), message.clone())); }
                 json!({"data":{"messageForward":{"message":message,"chat":{"id":input["chatId"],"updatedAt":"2026-11-04T00:00:00Z"}}}})
             }
+            "MessageReact" => json!({"data":{"messageReact":{"__typename":"Message","id":"m1","chatId":"c1","text":"hello","at":1}}}),
+            "DeleteGroup" => json!({"data":{"deleteGroup":{"id":body["variables"]["id"]}}}),
             "CreateGroup" => {
                 let variables = &body["variables"];
                 let group = json!({"__typename":"Group","id":format!("g{}", state.messages.len() + 1),"name":variables["name"]});
@@ -210,11 +218,14 @@ impl World {
         Some((answer, fault))
     }
 
-    async fn plain(&self, operation: &str) -> Result<String, DbError> {
-        let Some((answer, fault)) = self.enter(operation, None, &Value::Null) else {
+    async fn plain(&self, operation: &str, body: &Value) -> Result<String, DbError> {
+        let Some((answer, fault)) = self.enter(operation, None, body) else {
             return Err(DbError::Http { status: 400, detail: format!("forbidden {operation}") });
         };
         match pass_gate(fault).await {
+            Some(Fault::Http(status)) => return Err(DbError::Http { status, detail: "refused".into() }),
+            Some(Fault::Business) => return Ok(json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}).to_string()),
+            Some(Fault::Answer(answer)) => return Ok(answer.to_string()),
             Some(Fault::Refuse { code, .. }) => return Err(DbError::Session { code: SessionCode::Unauthenticated, detail: code.into() }),
             Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
@@ -239,6 +250,9 @@ impl EncryptedHttp for World {
         };
         let mut sealed_sequence = sequence;
         match pass_gate(fault).await {
+            Some(Fault::Http(status)) => return Ok(EncryptedReply { status, body: String::new() }),
+            Some(Fault::Business) => answer = json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
+            Some(Fault::Answer(value)) => answer = value,
             Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
             Some(Fault::Refuse { code, confirmed }) => {
                 answer = json!({"error": code});
@@ -258,6 +272,7 @@ pub(super) struct Switchable {
     attempts: AtomicUsize,
     failures: Mutex<Vec<String>>,
     sinks: Mutex<Vec<(String, Arc<SubscriptionSink>)>>,
+    subscription_opened: Notify,
     unsubscribed: Mutex<Vec<String>>,
     sink_opened: Notify,
     sink_closed: Notify,
@@ -265,7 +280,7 @@ pub(super) struct Switchable {
 
 impl Switchable {
     pub(super) fn new(target: Option<Arc<World>>, invalid: bool) -> Arc<Self> {
-        Arc::new(Self { target: Mutex::new(target), invalid, tokens: AtomicUsize::new(0), attempts: AtomicUsize::new(0), failures: Mutex::new(Vec::new()), sinks: Mutex::new(Vec::new()), unsubscribed: Mutex::new(Vec::new()), sink_opened: Notify::new(), sink_closed: Notify::new() })
+        Arc::new(Self { target: Mutex::new(target), invalid, tokens: AtomicUsize::new(0), attempts: AtomicUsize::new(0), failures: Mutex::new(Vec::new()), sinks: Mutex::new(Vec::new()), subscription_opened: Notify::new(), unsubscribed: Mutex::new(Vec::new()), sink_opened: Notify::new(), sink_closed: Notify::new() })
     }
     pub(super) fn set(&self, target: Option<Arc<World>>) { *self.target.lock().unwrap() = target; }
     pub(super) fn unsubscribed(&self) -> Vec<String> { self.unsubscribed.lock().unwrap().clone() }
@@ -286,6 +301,11 @@ impl Switchable {
             bound(notified).await;
         }
     }
+    pub(super) async fn subscription_opened(&self) { within_secs(BOUND, self.subscription_opened.notified()).await }
+    pub(super) fn emit(&self, json: String) {
+        let sink = self.sinks.lock().unwrap().first().map(|(_, sink)| sink.clone()).expect("the subscription is open");
+        sink.event(json).unwrap();
+    }
     fn current(&self) -> Result<Arc<World>, DbError> {
         self.target.lock().unwrap().clone().ok_or_else(|| match self.invalid {
             true => DbError::Invalid { detail: "No test transport".into() },
@@ -300,18 +320,19 @@ impl Transport for Switchable {
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
     async fn cable_close(&self, _: String) {}
-    async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name).await }
-    async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name).await }
+    async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name, &json!({"variables": serde_json::from_str::<Value>(&request.variables_json)?})).await }
+    async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name, &json!({"variables": serde_json::from_str::<Value>(&request.variables_json)?})).await }
     async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
         let opened = async {
             let world = self.current()?;
-            world.plain(&format!("subscribe:{}", request.operation_name)).await?;
+            world.plain(&format!("subscribe:{}", request.operation_name), &Value::Null).await?;
             let token = format!("{}-{}", world.label, self.tokens.fetch_add(1, Ordering::SeqCst));
             sink.opened(token.clone())?;
             sink.ready();
             self.sinks.lock().unwrap().push((token, sink));
             self.sink_opened.notify_one();
+            self.subscription_opened.notify_one();
             Ok(())
         };
         let result: Result<(), DbError> = opened.await;
@@ -320,7 +341,7 @@ impl Transport for Switchable {
     }
     fn unsubscribe(&self, token: String) { self.unsubscribed.lock().unwrap().push(token); self.sink_closed.notify_one(); }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
-        self.current()?.plain("PUT").await?;
+        self.current()?.plain("PUT", &Value::Null).await?;
         Ok(PutReply { status: 200, etag: Some("etag".into()) })
     }
 }
@@ -346,7 +367,10 @@ const OPERATIONS: &str = r#"[
     {"name":"AddMember","document":"mutation AddMember($groupId: ID!, $userIds: [ID!]!) { addMember(groupId: $groupId, userIds: $userIds) { id name left membership } }"},
     {"name":"RemoveMember","document":"mutation RemoveMember($groupId: ID!, $userIds: [ID!]!) { removeMember(groupId: $groupId, userIds: $userIds) { id name left membership } }"},
     {"name":"GroupMembers","document":"query GroupMembers($groupId: ID!, $order: String!) { groupMembers(groupId: $groupId, order: $order) { id name } }"},
-    {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at } chat { id updatedAt } } }"}
+    {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at } chat { id updatedAt } } }"},
+    {"name":"MessageReact","document":"mutation MessageReact($id: ID!, $body: String!, $userId: ID!) { messageReact(id: $id, body: $body, userId: $userId) { id chatId text at reactions { body userId } } }"},
+    {"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"},
+    {"name":"DeleteGroup","document":"mutation DeleteGroup($id: ID!) { deleteGroup(id: $id) { id } }"}
 ]"#;
 
 /// The plain harness also holds a memory model that a server subscription feeds.
@@ -460,6 +484,18 @@ fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 }
 impl Rig {
     /// The app path: the real EncryptedClient, only the HTTP exchange is the fake world.
     pub(super) async fn encrypted() -> Rig {
+        Self::encrypted_with_member_page(false).await
+    }
+
+    pub(super) async fn encrypted_with_member_page(page: bool) -> Rig {
+        Self::encrypted_with_options(page, false).await
+    }
+
+    pub(super) async fn encrypted_with_options(page: bool, keep_message: bool) -> Rig {
+        Self::encrypted_for_reactions(page, keep_message, false).await
+    }
+
+    pub(super) async fn encrypted_for_reactions(page: bool, keep_message: bool, reactions: bool) -> Rig {
         let world = World::new("server", "initial", false);
         let switch = Switchable::new(Some(world.clone()), false);
         let mut encrypted = crate::transport::encrypted::protocol_tests::config();
@@ -468,8 +504,36 @@ impl Rig {
         encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), sessionless: true });
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
+        let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
+        if page {
+            let member = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Member").unwrap();
+            let relation = member["relations"].as_array_mut().unwrap().iter_mut().find(|relation| relation["name"] == "group_members").unwrap();
+            relation["remote"]["shape"]["coverage"] = json!("page");
+        }
+        if keep_message {
+            let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
+            let create = message["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
+            create["on_failure"] = json!("keep");
+        }
+        if reactions {
+            let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
+            let mut field = crate::schema::FieldSpec::array("reactions");
+            field.app_type = Some("Reaction".into());
+            field.default = Some(json!([]));
+            field.fields = vec![crate::schema::FieldSpec::scalar("body", crate::value::ScalarKind::Str), crate::schema::FieldSpec::scalar("userId", crate::value::ScalarKind::Id)];
+            message["fields"].as_array_mut().unwrap().push(serde_json::to_value(field).unwrap());
+            let mut action = crate::schema::ActionDeclaration::new("react", crate::schema::RootShape::Upsert);
+            action.mutation = Some("MessageReact".into());
+            action.args.insert("body".into(), "string".into());
+            action.args.insert("userId".into(), "id".into());
+            action.variables.insert("id".into(), "id".into());
+            action.variables.insert("body".into(), "body".into());
+            action.variables.insert("userId".into(), "userId".into());
+            action.optimistic.insert("reactions".into(), json!({"$keyed":{"by":"userId","element":{"body":{"$arg":"body"},"userId":{"$arg":"userId"}}}}));
+            message["actions"].as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
+        }
         let database = opener
-            .open_with_clock(config(), plain_models(), Some(switch.clone()), None, clock.clone(), false, false, Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
+            .open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), false, false, Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
             .await
             .unwrap();
         database.register_operations(plain_operations()).unwrap();
@@ -478,10 +542,40 @@ impl Rig {
 
     /// The harness path of the apps: a plain transport with a switchable target and no session client.
     pub(super) async fn plain(first: Arc<World>, invalid: bool) -> Rig {
+        Self::plain_with_create_policy(first, invalid, false).await
+    }
+
+    pub(super) async fn plain_with_create_policy(first: Arc<World>, invalid: bool, keep: bool) -> Rig {
+        Self::plain_with_member_events(first, invalid, keep, false).await
+    }
+
+    pub(super) async fn plain_with_member_events(first: Arc<World>, invalid: bool, keep: bool, events: bool) -> Rig {
+        Self::plain_with_group_destroy(first, invalid, keep, events, false).await
+    }
+
+    pub(super) async fn plain_with_group_destroy(first: Arc<World>, invalid: bool, keep: bool, events: bool, destroy: bool) -> Rig {
         let switch = Switchable::new(Some(first.clone()), invalid);
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
-        let database = opener.open_with_clock(config(), plain_models(), Some(switch.clone()), None, clock.clone(), false, false, None, None, None, None).await.unwrap();
+        let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
+        if keep {
+            let group = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Group").unwrap();
+            let create = group["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
+            create["on_failure"] = json!("keep");
+        }
+        if events {
+            let member = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Member").unwrap();
+            let relation = member["relations"].as_array_mut().unwrap().iter_mut().find(|relation| relation["name"] == "group_members").unwrap();
+            relation["updates"] = json!([{"subscription":"MemberChanged","set":{},"removes":false}]);
+        }
+        if destroy {
+            let group = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Group").unwrap();
+            let mut action = crate::schema::ActionDeclaration::new("destroy", crate::schema::RootShape::Destroy);
+            action.mutation = Some("DeleteGroup".into());
+            action.variables.insert("id".into(), "id".into());
+            group["actions"].as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
+        }
+        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), false, false, None, None, None, None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
         Rig { opener, database, world: first, switch, clock }
     }

@@ -29,7 +29,7 @@ async fn sending_uses_the_input_frozen_by_its_owner_instead_of_a_stale_snapshot(
     let operation = rig.sync.inner.operations.lock().unwrap()["UpdateMoment"].clone();
     let sending = super::Sending { admitted: &rig.db.admit().unwrap(), entry: &stale, model: "moments".into(), action: "update".into(), generation, base_revision: rig.db.revision_seq().unwrap(), checked: None };
     rig.transport.enqueue("UpdateMoment", updated("m1", "after"));
-    crate::sync::rig::app(&rig.sync, rig.sync.inner.send_owned(&sending, &operation, None, false)).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.inner.send_owned(&sending, &operation, None)).await.unwrap();
     assert_eq!(rig.transport.calls()[0].variables["text"], "after");
     assert!(rig.db.outbox().unwrap().is_empty());
 }

@@ -35,6 +35,28 @@ impl Db {
         Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, Some((model, id, key.as_deref())))?)
     }
 
+    pub(crate) fn retry_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>, claim: impl FnOnce(i64) -> T) -> Result<(i64, i64, T), DbError> {
+        let key = self.action_operation_key(model, action)?;
+        let generation = self.generation();
+        let mut sequence = None;
+        let (committed, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
+            let entries = OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?;
+            let stuck: Vec<_> = entries.into_iter().filter(is_stuck).filter(|entry| key.as_ref().is_none_or(|key| entry.operation.action_key == *key)).collect();
+            let [entry] = stuck.as_slice() else { return Err(DbError::Internal("retry requires exactly one failed operation".into())) };
+            let seq = entry.operation.id.0;
+            sequence = Some(seq);
+            let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+            if is_failed_destroy(entry) { envelope.entity_ops = Prior::of(entry)?.map(|prior| prior.hiding()).unwrap_or_default(); }
+            envelope.operation_transitions.push(OperationTransition::Retry { seq });
+            Ok(Some(envelope))
+        }).map_err(plan_fault)?;
+        let seq = sequence.ok_or_else(|| DbError::Internal("retry has no operation".into()))?;
+        let revision = committed.result().revision.ok_or_else(|| DbError::Internal("retry has no revision".into()))?;
+        let ticket = claim(seq);
+        committed.publish();
+        Ok((seq, revision, ticket))
+    }
+
     pub fn retry_all(&self, admitted: &crate::lifecycle::Admitted) -> Result<usize, DbError> {
         let stuck: Vec<OutboxOperation> = self.outbox()?.into_iter().filter(is_stuck).collect();
         Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, None)?)
@@ -121,7 +143,7 @@ impl Db {
                 if self.remove_upload_item_if(admitted, &model, &id, seq, true, Some(&still))? { removed += 1; }
             } else if rolled_back.insert(seq) {
                 let still = |_: &crate::store::Reader<'_>, entry: &OutboxOperation| Ok(entry.operation.status == OperationStatus::Failed && entry.operation.since <= due);
-                if !self.roll_back_if(admitted, seq, self.generation(), Some(&still))?.is_noop() { removed += 1; }
+                if !self.roll_back_if(admitted, seq, self.generation(), Some(&still), &[])?.is_noop() { removed += 1; }
             }
         }
         Ok(removed)

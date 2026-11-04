@@ -5,12 +5,12 @@ use super::{create_fields, declared_types, enum_decls, standard_args, writable_f
 use crate::operation::OperationCall;
 use crate::schema_check::SchemaTypes;
 
-/// Kotlin `read`, `put`, `act` and `actAnswering` are not listed: the templates call them as `Model.read`, `this.put`, `this.act`.
+/// Kotlin `read`, `put` and `act` are not listed: the templates call them as `Model.read`, `this.put`, `this.act`.
 const BARE_CALLS: &[&str] = &["self", "this", "jsonValue", "mapOf", "mutableMapOf", "buildJsonObject", "parseJsonObject", "requireNotNull", "onAccount", "listOf", "emptyMap"];
 
 const IMPORTED_TYPES: &[&str] = &[
     "Query", "Condition", "Order", "Column", "Association", "FileField", "FileInfo", "JSONValue", "JsonElement", "JsonObject", "JsonArray", "JsonPrimitive", "JsonNull", "JsonEncoder", "DB", "DBlayer", "DBModel", "DBSingleton",
-    "ModelDecoder", "AccountScope", "Sent", "ActionAnswer", "UploadRequest", "UploadInfo", "SyncInfo", "WireRow", "Cell", "CellReader", "Blob", "IDText", "IDTexts", "GraphQLNullable", "ListSerializer", "UnionSerializer",
+    "ModelDecoder", "AccountScope", "MutationReceipt", "OperationOutcome", "UploadRequest", "UploadInfo", "SyncInfo", "WireRow", "Cell", "CellReader", "Blob", "IDText", "IDTexts", "GraphQLNullable", "ListSerializer", "UnionSerializer",
     "UnionTypenameKey", "RawEnumSerializer", "RawEnum", "KSerializer", "SerialDescriptor", "SerializationException", "SerialName", "Serializable", "Immutable", "EncodeDefault", "ExperimentalSerializationApi", "OptIn",
     "Operations", "Self", "Pair", "Date", "String", "Int", "Long", "Bool", "Boolean", "Double", "List", "Map", "Dictionary", "Array", "Codable", "Encodable", "Equatable", "Hashable", "Sendable", "Encoder", "Decoder",
     "CodingKey", "CodingKeys", "DecodingError",

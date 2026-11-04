@@ -119,11 +119,6 @@ pub struct ScopeRowsResult {
 
 pub(crate) const MEMBER_EXISTS_SQL: &str = "SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3";
 
-#[derive(Debug, Default)]
-pub(crate) struct PendingPriors {
-    pub fields: BTreeMap<(String, String), BTreeMap<String, HashSet<i64>>>,
-}
-
 pub(crate) fn read_revision(connection: &Connection) -> Result<i64, StoreError> {
     manifest_read(connection, REVISION_SEQ_KEY)?.map(|text| {
         text.parse::<i64>().map_err(|error| StoreError::Constraint(format!("invalid stored revision: {error}")))
@@ -133,7 +128,6 @@ pub(crate) fn read_revision(connection: &Connection) -> Result<i64, StoreError> 
 pub struct Reader<'a> {
     connection: &'a Connection,
     models: &'a BTreeMap<String, ModelInfo>,
-    pub(crate) pending: std::cell::OnceCell<PendingPriors>,
 }
 
 #[derive(Debug, Default)]
@@ -145,7 +139,7 @@ pub struct EdgeRead {
 
 impl<'a> Reader<'a> {
     pub(crate) fn new(connection: &'a Connection, models: &'a BTreeMap<String, ModelInfo>) -> Self {
-        Self { connection, models, pending: std::cell::OnceCell::new() }
+        Self { connection, models }
     }
 
     pub(crate) fn connection(&self) -> &'a Connection {
@@ -204,6 +198,16 @@ impl<'a> Reader<'a> {
         let members: Vec<(String, String)> = rows.collect::<Result<_, _>>()?;
         read_members(members.len());
         Ok(members)
+    }
+
+    pub(crate) fn scope_changes_since(&self, model: &str, scope_key: &str, revision: i64) -> Result<Vec<(String, Option<String>)>, StoreError> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT r.row_id, m.order_key FROM scope_revision AS r \
+             LEFT JOIN scope_member AS m ON m.model = r.model AND m.scope_key = r.scope_key AND m.row_id = r.row_id \
+             WHERE r.model = ?1 AND r.scope_key = ?2 AND r.revision > ?3 ORDER BY r.revision, r.row_id",
+        )?;
+        let rows = statement.query_map(params![model, scope_key, revision], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub(crate) fn scope_first_ids(&self, model: &str, scope_key: &str, limit: usize) -> Result<Vec<String>, StoreError> {

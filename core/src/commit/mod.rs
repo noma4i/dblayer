@@ -176,6 +176,13 @@ pub struct WindowSave {
     pub cleared_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowDebt {
+    pub model: String,
+    pub relation: String,
+    pub since: i64,
+}
+
 /// The one point of order between a change of the network and the commit of a start. A change of the network, the account or the connection happens while it holds this line, and a start checks its admission and commits while it holds it.
 #[derive(Clone, Default)]
 pub struct NetworkLine {
@@ -228,6 +235,8 @@ pub struct CommitEnvelope {
     pub file_ops: Vec<FileOp>,
     pub operation_transitions: Vec<OperationTransition>,
     pub window: Option<WindowSave>,
+    pub window_debts: Vec<WindowDebt>,
+    pub snapshot: Option<RowRef>,
     pub origin: WriteOrigin,
     pub generation: Generation,
     pub writes_local: bool,
@@ -272,6 +281,8 @@ impl CommitEnvelope {
             file_ops: Vec::new(),
             operation_transitions: Vec::new(),
             window: None,
+            window_debts: Vec::new(),
+            snapshot: None,
             origin,
             generation,
             writes_local: false,
@@ -282,7 +293,7 @@ impl CommitEnvelope {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.pending_locals.is_empty()
+        self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.window_debts.is_empty() && self.pending_locals.is_empty()
     }
 
     pub fn validate(&self, current: Generation) -> Result<(), EnvelopeFault> {
@@ -345,7 +356,7 @@ pub struct RowChange {
     pub fields: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CommitResult {
     pub tx_id: Uuid,
     pub revision: Option<i64>,
@@ -357,6 +368,7 @@ pub struct CommitResult {
     pub(crate) queue_operations: BTreeMap<i64, Option<crate::operation::QueueOperation>>,
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
+    pub(crate) snapshot: Option<crate::db::Row>,
 }
 
 impl CommitResult {
@@ -372,6 +384,7 @@ impl CommitResult {
             queue_operations: BTreeMap::new(),
             replaced: Vec::new(),
             unknown_operation_acks: 0,
+            snapshot: None,
         }
     }
 

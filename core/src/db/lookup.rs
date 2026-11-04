@@ -17,6 +17,14 @@ use super::row::{Record, Row};
 pub(crate) type RowKey = (String, i64);
 
 impl Shared {
+    pub(crate) fn overlay_snapshot(&self, model: &str, row: Row) -> Result<Row, DbError> {
+        let spec = self.spec(model)?;
+        if spec.ephemeral.is_empty() { return Ok(row); }
+        let mut row = (*row).clone();
+        row.ephemeral = self.ephemeral.lock().overlay(spec, row.id.as_str(), &mut row.data);
+        Ok(Arc::new(row))
+    }
+
     pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, DbError> {
         let snapshot_revision = reader.revision_seq()?;
         let stored = reader.stored_rows(model, ids)?;

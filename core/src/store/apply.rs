@@ -174,7 +174,7 @@ impl Store {
 fn attempt(inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
     let transaction = inner.connection.unchecked_transaction()?;
     let outcome = apply_envelope(&transaction, &inner.models, envelope, now_ms)?;
-    if outcome.is_noop() && envelope.window.is_none() && envelope.pending_locals.is_empty() {
+    if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;
     } else {
         transaction.commit()?;
@@ -233,7 +233,7 @@ fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> 
             None => read_rows(connection, seq)?.into_iter().map(|id| id.to_string()).collect(),
         };
         hidden.extend(ids.into_iter().map(|id| (model.clone(), id)));
-        let snapshot: Option<Value> = read_value(connection, seq, "prior")?;
+        let snapshot = crate::db::op_effect::read_prior(connection, seq)?;
         let rows = snapshot.as_ref().and_then(|snapshot| snapshot.get("rows")).and_then(Value::as_array);
         for item in rows.into_iter().flatten() {
             let owner = item.get("model").and_then(Value::as_str);
@@ -678,6 +678,18 @@ pub(crate) fn apply_envelope(
     if let Some(window) = &envelope.window {
         save_window(connection, window, envelope.generation, now_ms)?;
     }
+    for debt in &envelope.window_debts {
+        super::windows::mark_families(connection, &[(debt.model.clone(), debt.relation.clone())], debt.since)?;
+    }
+
+    if let Some(target) = &envelope.snapshot {
+        let reader = Reader::new(connection, models);
+        let id = target.id.to_string();
+        if let Some(stored) = reader.stored_rows(target.model.as_str(), &[id.clone()])?.remove(&id) {
+            let sync = crate::syncstate::read_sync(connection, target.model.as_str(), &[id.clone()])?.remove(&id).unwrap_or_default();
+            result.snapshot = Some(std::sync::Arc::new(crate::db::Record { id: stored.id, revision: stored.revision, data: stored.row, sync, ephemeral: 0 }));
+        }
+    }
 
     result.renewed = changes.renewed;
     if wrote {
@@ -727,7 +739,7 @@ fn save_window(connection: &Connection, window: &WindowSave, generation: Generat
     let record = WindowRecord { key: window.key.clone(), cursor, has_next, total: window.total, pages: window.pages, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
     upsert_window(connection, &record, now_ms)?;
     if window.invalidated {
-        connection.execute("UPDATE query_window SET invalidated = 1 WHERE key = ?1", [&window.key])?;
+        connection.execute("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key = ?1", params![window.key, window.issued])?;
     }
     if let Some(marker) = &window.marker {
         connection.execute("DELETE FROM window_marker WHERE window_key = ?1", [&window.key])?;
@@ -737,7 +749,7 @@ fn save_window(connection: &Connection, window: &WindowSave, generation: Generat
         }
     }
     if let Some(landed_at) = window.cleared_at {
-        connection.execute("UPDATE query_window SET invalidated = 0, landed_at = ?1 WHERE key = ?2", params![landed_at, window.key])?;
+        connection.execute("UPDATE query_window SET stale_since = CASE WHEN stale_since <= ?3 THEN NULL ELSE stale_since END, landed_at = ?1 WHERE key = ?2", params![landed_at, window.key, window.applied])?;
     }
     Ok(())
 }
@@ -890,7 +902,7 @@ fn stamp_confirmed_rows(
 ) -> Result<(), StoreError> {
     for transition in transitions {
         let OperationTransition::Close { seq, status: OperationStatus::Committed, .. } = transition else { continue };
-        let Some(snapshot) = read_value(connection, *seq, "prior")? else { continue };
+        let Some(snapshot) = crate::db::op_effect::read_prior(connection, *seq)? else { continue };
         for item in snapshot.get("rows").and_then(Value::as_array).into_iter().flatten() {
             let (Some(kind), Some(model), Some(id)) =
                 (item.get("kind").and_then(Value::as_str), item.get("model").and_then(Value::as_str), item.get("id").and_then(Value::as_str))
@@ -1170,7 +1182,8 @@ pub(super) fn begin_operation(connection: &Connection, record: &OperationRecord)
     let seq = record.seq.unwrap_or_else(|| connection.last_insert_rowid());
     write_rows(connection, seq, &record.row_ids)?;
     write_value(connection, seq, "input", Some(&record.input))?;
-    write_value(connection, seq, "prior", record.rollback.as_ref())?;
+    let revision = connection.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM manifest WHERE key = 'revision_seq'), 0) + 1", [], |row| row.get(0))?;
+    crate::db::op_effect::write_prior(connection, seq, revision, record.rollback.as_ref())?;
     if let Some(state) = &record.upload {
         crate::operation::write_upload(connection, seq, 0, state)?;
     }

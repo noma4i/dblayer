@@ -27,7 +27,7 @@ fn a_model_operation_takes_schema_enums_and_input_objects_as_typed_args() {
     let declared = compile(MODEL, Some(SCHEMA)).unwrap();
     let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
     for line in [
-        "@concurrent public func answerConnection(decision: ConnectionAction, note: NoteInput? = nil, status: ConnectionStatus, in scope_: AccountScope? = nil) async throws -> Self {",
+        "@concurrent public func answerConnection(decision: ConnectionAction, note: NoteInput? = nil, status: ConnectionStatus, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {",
         "public enum ConnectionAction: Codable, Sendable, Hashable {",
         "public struct NoteInput",
         "values_[\"connectionStatus\"] = try JSONValue.encode(status)",
@@ -36,7 +36,7 @@ fn a_model_operation_takes_schema_enums_and_input_objects_as_typed_args() {
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     for line in [
-        "suspend fun answerConnection(decision: ConnectionAction, note: NoteInput? = null, status: ConnectionStatus, account: AccountScope? = null): Sample = this.act(\"answer_connection\"",
+        "suspend fun answerConnection(decision: ConnectionAction, note: NoteInput? = null, status: ConnectionStatus, account: AccountScope? = null): MutationReceipt<Sample> = this.act(\"answer_connection\"",
         "sealed class ConnectionAction(override val raw: String) : RawEnum {",
         "data class NoteInput(",
     ] {

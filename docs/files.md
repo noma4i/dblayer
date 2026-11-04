@@ -157,7 +157,7 @@ On Android the app gives the text and the small icon of the notification to `DBl
 
 API 34 and later run one user-initiated job with a network requirement. API 33 runs a sticky `dataSync` foreground task that starts its notification before `open` finishes. The library does not use WorkManager. A job or foreground task never repeats a transfer: retries follow the upload `Backoff` of the core. When the system refuses the start, the reason appears in the `error` of the accepted upload and nothing else changes. Upload requests (the file `PUT`, the steps and the content mutation) use the network of the job, all other requests use the default route. A restart or a force stop continues at the next `open`.
 
-`retry`, `discard` and `settled` take an `action`. Pass `null` for the whole record, or a declared action for only its operations and uploads. An action the model does not declare is refused. Preparing the request and calling the library run off the caller thread.
+`retry` and `discard` take an `action`. Pass `null` for the whole record, or a declared action. `retry` returns a new receipt. Preparing the request and calling the library run off the caller thread.
 
 ### Create with an upload
 
@@ -167,24 +167,19 @@ Declare a named operation for each content mutation, with `upload MutationName` 
 
 ```swift
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
-let moment = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: request)).row
-moment.uploads["upload_clip"]?.percent      // 42.0
-try await moment.confirmedId()
+let receipt = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: request))
+receipt.optimisticValue?.uploads["upload_clip"]?.percent
+let outcome = try await receipt.outcome()
 ```
 
 ```kotlin
 val request = UploadRequest(path = file.path, variables = variables)
-val moment = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request)).row
-moment.uploads["upload_clip"]?.percent      // 42.0
-moment.confirmedId()
+val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request))
+receipt.optimisticValue?.uploads?.get("upload_clip")?.percent
+val outcome = receipt.outcome()
 ```
 
-Each generated upload method returns `ActionAnswer`, like an action declared with `returns`.
-Call `answer()` to wait for the file transfer and final mutation, then read the declared response fields.
-Fields the server omitted are `nil` in Swift and `null` in Kotlin.
-For example, `moment.uploadClip(request, in: scope).answer()` returns the fields declared by `upload_clip`.
-Swift calls use `try await` and Kotlin calls run in a coroutine.
-The generic `upload` also returns `ActionAnswer` and takes the answer type, like `actAnswering`.
+Each generated upload method returns a receipt. Its outcome includes the declared response fields as JSON after the transfer and final mutation.
 
 ### Create several records with uploads
 
@@ -273,13 +268,13 @@ end
 ```swift
 let widgets = [MomentWidgetInput(kind: .emoji, props: .emoji(MomentEmojiInput(code: "fire")))]
 let request = UploadRequest(path: url.path, variables: try Moment.createFileVariables(widgets: widgets))
-let moment = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "create_file", request: request)).row
+let receipt = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "create_file", request: request))
 ```
 
 ```kotlin
 val widgets = listOf(MomentWidgetInput(kind = WidgetKind.Emoji, props = MomentWidgetProps.Emoji(MomentEmojiInput(code = "fire"))))
 val request = UploadRequest(path = file.path, variables = Moment.createFileVariables(widgets = widgets))
-val moment = AccountScope.current().send(Moment, values, upload = UploadCommand("create_file", request)).row
+val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("create_file", request))
 ```
 
 ### Scenarios

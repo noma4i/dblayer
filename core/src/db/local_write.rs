@@ -30,6 +30,7 @@ use super::row::Row;
 pub struct Acted {
     pub row: Row,
     pub operation: i64,
+    pub revision: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,7 +53,7 @@ impl OutboxOperation {
 
     fn from_operation(reader: &Reader<'_>, operation: Operation) -> Result<Self, StoreError> {
         let input = crate::operation::read_value(reader.connection(), operation.id.0, "input")?.unwrap_or(Value::Null);
-        let rollback = crate::operation::read_value(reader.connection(), operation.id.0, "prior")?;
+        let rollback = super::op_effect::read_prior(reader.connection(), operation.id.0)?;
         Ok(Self { operation, input, rollback })
     }
 
@@ -126,6 +127,13 @@ pub(super) fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId,
     Ok(operations)
 }
 
+fn created_members(operations: &[ScopeOp], owned: i64) -> Vec<PriorRow> {
+    operations.iter().filter_map(|operation| match operation {
+        ScopeOp::Append { scope, row, .. } => Some(PriorRow::Join { model: scope.model.to_string(), id: row.to_string(), scope_key: scope.key.to_string(), before: None, owned }),
+        _ => None,
+    }).collect()
+}
+
 pub(crate) fn plan_fault(error: PlanCommitError<DbError>) -> DbError {
     match error {
         PlanCommitError::Plan(error) => error,
@@ -160,23 +168,37 @@ impl Db {
 
     /// Creates the row in the data generation the caller was admitted in: a commit after that generation ended is refused as stale.
     pub(crate) fn create_in(&self, admitted: &crate::lifecycle::Admitted, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
-        self.create_queued(admitted, pinned, model, values, args).map(|(row, _)| row)
+        self.create_queued(admitted, pinned, model, values, args).map(|(row, _, _)| row)
     }
 
-    pub(crate) fn create_queued(&self, admitted: &crate::lifecycle::Admitted, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>), DbError> {
+    pub(crate) fn create_queued(&self, admitted: &crate::lifecycle::Admitted, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>, i64), DbError> {
+        self.create_claiming(admitted, pinned, model, values, args, |_| ()).map(|(row, operation, revision, ())| (row, operation, revision))
+    }
+
+    pub(crate) fn create_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Row, Option<i64>, i64, T), DbError> {
         if !args.is_empty() { self.expire_blobs_before_use(admitted)?; }
         self.fill_local_sources(model, &mut values)?;
-        let (id, operation) = self.insert_local(admitted, model, values, args, Action::Create, (None, pinned), None)?;
-        let row = self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
-        Ok((row, operation))
+        let mut unannounced = None;
+        let (id, operation, revision) = self.insert_local(admitted, model, values, args, Action::Create, (None, pinned), Some(&mut unannounced))?;
+        let claimed = claim(operation);
+        let row = unannounced.as_ref().and_then(|commit| commit.result().snapshot.clone()).ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+        let row = self.shared.overlay_snapshot(model, row)?;
+        if let Some(unannounced) = unannounced { unannounced.publish(); }
+        Ok((row, operation, revision, claimed))
     }
 
-    pub(crate) fn create_held(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
+    pub(crate) fn create_held(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, action: &str, values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
+        self.create_held_claiming(admitted, generation, model, action, values, input, state, |_| ()).map(|(id, _, _, ())| id)
+    }
+
+    pub(crate) fn create_held_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState, claim: impl FnOnce(i64) -> T) -> Result<(RowId, i64, i64, T), DbError> {
         let id = values.get("id").and_then(read_id).unwrap_or_else(|| RowId::generate_temp(None));
         values.insert("id".into(), Value::String(id.to_string()));
         self.preparing_uploads(admitted, model, generation, |files, generation, committed| {
             let item = files.prepare(model, id, uuid::Uuid::new_v4().to_string(), input, state)?;
-            self.insert_local(admitted, model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed)).map(|(id, _)| id)
+            let (id, operation, revision) = self.insert_local(admitted, model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed))?;
+            let operation = operation.ok_or_else(|| DbError::Internal("upload has no operation".into()))?;
+            Ok((id, operation, revision, claim(operation)))
         })
     }
 
@@ -231,7 +253,11 @@ impl Db {
                     envelope.scope_ops.extend(local_scope_ops(reader, spec, id, data)?);
                     envelope.entity_ops.push(EntityOp::Upsert { model: spec.key.clone(), id: id.clone(), row: data.clone() });
                 }
-                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record.clone()), items: files.clone() });
+                let mut record = record.clone();
+                let mut prior: Prior = serde_json::from_value(record.rollback.take().unwrap_or(Value::Null)).map_err(StoreError::from)?;
+                prior.rows.extend(created_members(&envelope.scope_ops, reader.revision_seq()? + 1));
+                record.rollback = Some(prior.to_value());
+                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record), items: files.clone() });
                 Ok(Some(envelope))
             }).map_err(plan_fault)?;
             *pending = Some(committed);
@@ -239,7 +265,7 @@ impl Db {
         })
     }
 
-    fn insert_local<'a>(&'a self, admitted: &crate::lifecycle::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>), DbError> {
+    fn insert_local<'a>(&'a self, admitted: &crate::lifecycle::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>, i64), DbError> {
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &values)?;
         let mut input = values;
@@ -275,11 +301,13 @@ impl Db {
             }
             queued.scope_ops = local_scope_ops(reader, spec, &id, &data)?;
             plan.upsert(key.clone(), vec![data.clone()]);
-            queued.rollback = Some(Prior { rows: vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }] }.to_value());
+            let mut rows = vec![PriorRow::Created { model: model.to_string(), id: id.to_string() }];
+            rows.extend(created_members(&queued.scope_ops, reader.revision_seq()? + 1));
+            queued.rollback = Some(Prior { rows }.to_value());
             Ok(Some(self.touch_ops(reader, spec, &[&data], &RowRef::new(key.clone(), id.clone()))?))
         })?;
         let operation = committed.operations.first().copied();
-        Ok((id, operation))
+        Ok((id, operation, committed.revision.ok_or_else(|| DbError::Internal("created row has no revision".into()))?))
     }
 
     pub fn update(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, patch: Map<String, Value>) -> Result<Row, DbError> {
@@ -287,6 +315,14 @@ impl Db {
     }
 
     pub fn update_with(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        self.update_queued(admitted, model, id, patch, args).map(|(row, _, _)| row)
+    }
+
+    pub(crate) fn update_queued(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>, i64), DbError> {
+        self.update_claiming(admitted, model, id, patch, args, |_| ()).map(|(row, operation, revision, ())| (row, operation, revision))
+    }
+
+    pub(crate) fn update_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Row, Option<i64>, i64, T), DbError> {
         if !args.is_empty() { self.expire_blobs_before_use(admitted)?; }
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &patch)?;
@@ -301,7 +337,8 @@ impl Db {
         let sends_args = !args.is_empty();
         input.extend(args);
         let mut queued = Queued { action: Action::Update, row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
-        let committed = !self.commit_local_optional(admitted, spec, &mut queued, None, None, |reader, plan, queued| {
+        let mut unannounced = None;
+        let committed = self.commit_local_optional(admitted, spec, &mut queued, None, Some(&mut unannounced), |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
@@ -311,19 +348,24 @@ impl Db {
             queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());
             plan.update(key.clone(), id.clone(), merged.clone());
             Ok(Some(self.touch_ops(reader, spec, &[&merged, &current], &own)?))
-        })?
-        .is_noop();
-        if !committed {
+        })?;
+        if committed.is_noop() {
             {
                 let life = &self.shared.store.lifecycle;
                 let _line = life.commit_line();
                 if !std::sync::Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() { return Err(DbError::NoSession { detail: "the session of this write ended".into() }); }
                 self.shared.ephemeral.lock().track(model, id.as_str(), i64::MAX);
             }
-            let current = self.find(model, id)?;
-            return current.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() });
         }
-        self.find(model, id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
+        let operation = committed.operations.first().copied();
+        let claimed = claim(operation);
+        let row = match committed.snapshot.clone() {
+            Some(row) => self.shared.overlay_snapshot(model, row)?,
+            None => self.shared.read(&[model], |reader| self.shared.load(reader, model, &[id.to_string()]))?.remove(id.as_str()).ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?,
+        };
+        if let Some(unannounced) = unannounced { unannounced.publish(); }
+        let revision = match committed.revision { Some(revision) => revision, None => self.revision_seq()? };
+        Ok((row, operation, revision, claimed))
     }
 
     pub fn act(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
@@ -386,13 +428,14 @@ impl Db {
         })?;
         let operation = committed.operations.first().copied().ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
         let claimed = claim(operation);
-        if let Some(unannounced) = unannounced { unannounced.publish(); }
-        let row = match self.find(model, id)? {
-            Some(row) => row,
+        let row = match committed.snapshot.clone() {
+            Some(row) => self.shared.overlay_snapshot(model, row)?,
             None if declared.as_ref().is_some_and(|declared| declared.removes_receiver) => receiver_row.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?,
             None => return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() }),
         };
-        Ok((Acted { row, operation }, claimed))
+        if let Some(unannounced) = unannounced { unannounced.publish(); }
+        let revision = committed.revision.ok_or_else(|| DbError::Internal("action has no revision".into()))?;
+        Ok((Acted { row, operation, revision }, claimed))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -480,19 +523,21 @@ impl Db {
 
     fn join_scope_rows(&self, reader: &Reader<'_>, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, queued: &mut Queued) -> Result<(), DbError> {
         let (lists, ids) = self.effect_lists(effect, call)?;
+        let owned = reader.revision_seq()? + 1;
         for (scope, key) in lists {
             for id in &ids {
                 if reader.point(&effect.model, id)?.is_none() {
+                    rows.push(PriorRow::Join { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None, owned });
                     continue;
                 }
                 if let Some(held) = reader.scope_member_key(&effect.model, &key, id)? {
-                    rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(held) });
+                    rows.push(PriorRow::Join { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(held), owned });
                     continue;
                 }
                 let last = reader.scope_last_key(&effect.model, &key)?;
                 let order_key = fractional_between(last.as_deref(), None).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
                 queued.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id)?, order_key });
-                rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None });
+                rows.push(PriorRow::Join { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None, owned });
             }
         }
         Ok(())
@@ -500,27 +545,34 @@ impl Db {
 
     fn leave_scope_rows(&self, reader: &Reader<'_>, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, queued: &mut Queued) -> Result<(), DbError> {
         let (lists, ids) = self.effect_lists(effect, call)?;
+        let owned = reader.revision_seq()? + 1;
         for (scope, key) in lists {
             for id in &ids {
                 let Some(order_key) = reader.scope_member_key(&effect.model, &key, id)? else {
-                    rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None });
+                    rows.push(PriorRow::Leave { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None, owned });
                     continue;
                 };
                 queued.scope_ops.push(ScopeOp::Detach { scope: scope.clone(), row: RowId::new(id)? });
-                rows.push(PriorRow::Member { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(order_key) });
+                rows.push(PriorRow::Leave { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(order_key), owned });
             }
         }
         Ok(())
     }
 
     pub fn destroy(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {
+        self.destroy_claiming(admitted, model, id, |_| ()).map(|(destroyed, _, _, ())| destroyed)
+    }
+
+    pub(crate) fn destroy_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Vec<RowRef>, Option<i64>, i64, T), DbError> {
         let spec = self.shared.spec(model)?;
         let own = RowRef::new(ModelKey::new(model), id.clone());
         let generation = self.generation();
         let created_at = self.shared.store.lock().now_ms();
         let mut destroyed: Vec<RowRef> = Vec::new();
         let mut discarded: Vec<String> = Vec::new();
-        self.commit_following(&admitted.authority(), generation, |reader| {
+        let mut will_send = false;
+        let (committed, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
+                will_send = false;
                 if reader.point(model, id.as_str())?.is_none() {
                     return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
                 }
@@ -549,12 +601,18 @@ impl Db {
                 };
                 if !spec.is_local() {
                     envelope.operation_transitions.push(self.begin(reader, spec, &queued, created_at)?);
+                    will_send = true;
                 }
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
+        let result = committed.result();
+        let operation = if will_send { result.operations.first().copied() } else { None };
+        let revision = result.revision.ok_or_else(|| DbError::Internal("destroy has no revision".into()))?;
+        let claimed = claim(operation);
+        committed.publish();
         self.shared.files.discard(&discarded).map_err(super::files::io_fault)?;
-        Ok(destroyed)
+        Ok((destroyed, operation, revision, claimed))
     }
 
     /// The version of the outbox: it grows on every commit that touches an operation and on every reset.
@@ -598,6 +656,11 @@ impl Db {
                 let mut envelope: CommitEnvelope = plan.envelope(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops.extend(touches);
                 envelope.scope_ops.extend(std::mem::take(&mut queued.scope_ops));
+                let snapshot_id = queued.rollback.as_ref().and_then(|value| serde_json::from_value::<Prior>(value.clone()).ok()).and_then(|prior| prior.rows.into_iter().find_map(|row| match row {
+                    PriorRow::Created { model, id } if model == spec.key.as_str() => RowId::new(&id).ok(),
+                    _ => None,
+                })).unwrap_or_else(|| queued.row_id.clone());
+                envelope.snapshot = Some(RowRef::new(spec.key.clone(), snapshot_id));
                 if !spec.is_local() {
                     envelope.operation_transitions.push(self.begin(reader, spec, queued, created_at)?);
                 }

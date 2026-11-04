@@ -82,6 +82,15 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
     Ok(())
 }
 
+pub(super) fn mark_families(connection: &Connection, families: &[(String, String)], since: i64) -> Result<usize, StoreError> {
+    let mut update = connection.prepare_cached("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key LIKE ?1 ESCAPE '\\' AND applied < ?2")?;
+    let mut marked = 0;
+    for (model, relation) in families {
+        marked += update.execute(params![like_prefix(&family_prefix(model, relation)), since])?;
+    }
+    Ok(marked)
+}
+
 impl Store {
     pub(crate) fn marker(&self, key: &str, generation: i64) -> Result<Option<crate::commit::WindowMarker>, StoreError> {
         let inner = self.lock();
@@ -133,22 +142,22 @@ impl Store {
         inner.ensure_healthy()?;
         Ok(inner
             .connection
-            .query_row("SELECT landed_at, invalidated FROM query_window WHERE key = ?1", params![key], |row| {
+            .query_row("SELECT landed_at, stale_since IS NOT NULL FROM query_window WHERE key = ?1", params![key], |row| {
                 Ok(WindowFreshness { landed_at: row.get(0)?, invalidated: row.get::<_, i64>(1)? != 0 })
             })
             .optional()?)
     }
 
-    pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::Authority, model: &str, relation: &str) -> Result<usize, StoreError> {
+    pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
         let pattern = like_prefix(&family_prefix(model, relation));
-        self.write_store(authority, |inner| Ok(inner.connection.execute("UPDATE query_window SET invalidated = 1 WHERE key LIKE ?1 ESCAPE '\\'", params![pattern])?))
+        self.write_store(authority, |inner| Ok(inner.connection.execute("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key LIKE ?1 ESCAPE '\\' AND applied < ?2", params![pattern, since])?))
     }
 
-    pub(crate) fn invalidate_windows(&self, authority: &crate::lifecycle::Authority, keys: &[String]) -> Result<usize, StoreError> {
+    pub(crate) fn invalidate_windows(&self, authority: &crate::lifecycle::Authority, keys: &[String], since: i64) -> Result<usize, StoreError> {
         self.write_store(authority, |inner| {
             let mut marked = 0;
             for key in keys {
-                marked += inner.connection.execute("UPDATE query_window SET invalidated = 1 WHERE key = ?1", params![key])?;
+                marked += inner.connection.execute("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key = ?1 AND applied < ?2", params![key, since])?;
             }
             Ok(marked)
         })
@@ -157,15 +166,21 @@ impl Store {
     #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
         let admitted = self.lifecycle.admit(crate::lifecycle::Origin::Explicit, "test invalidate").map_err(|_| StoreError::Refused)?;
-        self.invalidate_family(&admitted.authority(), model, relation)
+        self.invalidate_family(&admitted.authority(), model, relation, self.max_window_sequence()? + 1)
     }
 
     #[cfg(test)]
     pub fn stale_window_keys(&self) -> Result<Vec<String>, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        let mut statement = inner.connection.prepare("SELECT key FROM query_window WHERE invalidated = 1 ORDER BY key")?;
+        let mut statement = inner.connection.prepare("SELECT key FROM query_window WHERE stale_since IS NOT NULL ORDER BY key")?;
         let keys = statement.query_map([], |row| row.get(0))?;
         Ok(keys.collect::<Result<_, _>>()?)
+    }
+
+    pub(crate) fn max_window_sequence(&self) -> Result<i64, StoreError> {
+        let inner = self.lock();
+        inner.ensure_healthy()?;
+        Ok(inner.connection.query_row("SELECT COALESCE(MAX(MAX(issued, applied, COALESCE(stale_since, 0))), 0) FROM query_window", [], |row| row.get(0))?)
     }
 }

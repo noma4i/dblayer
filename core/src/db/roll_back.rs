@@ -85,17 +85,28 @@ impl<'a> Chain<'a> {
 
     /// The next open operation that changes the same member of the same list. It inherits the state before this operation.
     fn later_member_writer(&self, own: i64, model: &str, id: &str, scope_key: &str) -> Option<i64> {
-        self.open.range(own + 1..).find(|(_, open)| open.prior.rows.iter().any(|row| matches!(row, PriorRow::Member { model: m, id: i, scope_key: s, .. } if m == model && i == id && s == scope_key))).map(|(seq, _)| *seq)
+        self.open.range(own + 1..).find(|(_, open)| open.prior.rows.iter().any(|row| matches!(row, PriorRow::Join { model: m, id: i, scope_key: s, .. } | PriorRow::Leave { model: m, id: i, scope_key: s, .. } if m == model && i == id && s == scope_key))).map(|(seq, _)| *seq)
     }
 
     fn hand_down_member(&mut self, seq: i64, (model, id, scope_key): (&str, &str, &str), before: &Option<String>) {
         let Some(open) = self.open.get_mut(&seq) else { return };
         for row in &mut open.prior.rows {
-            if let PriorRow::Member { model: m, id: i, scope_key: s, before: held } = row {
+            if let PriorRow::Join { model: m, id: i, scope_key: s, before: held, .. } | PriorRow::Leave { model: m, id: i, scope_key: s, before: held, .. } = row {
                 if m == model && i == id && s == scope_key {
                     *held = before.clone();
                     self.changed.insert(seq);
                 }
+            }
+        }
+    }
+
+    fn reown_member(&mut self, own: i64, (model, id, scope_key): (&str, &str, &str), revision: i64) {
+        let earlier = self.open.range(..own).rev().find(|(_, open)| open.prior.rows.iter().any(|row| matches!(row, PriorRow::Join { model: m, id: i, scope_key: s, .. } | PriorRow::Leave { model: m, id: i, scope_key: s, .. } if m == model && i == id && s == scope_key))).map(|(seq, _)| *seq);
+        let Some(seq) = earlier else { return };
+        let Some(open) = self.open.get_mut(&seq) else { return };
+        for row in &mut open.prior.rows {
+            if let PriorRow::Join { model: m, id: i, scope_key: s, owned, .. } | PriorRow::Leave { model: m, id: i, scope_key: s, owned, .. } = row {
+                if m == model && i == id && s == scope_key { *owned = revision; self.changed.insert(seq); }
             }
         }
     }
@@ -118,7 +129,7 @@ fn writes(row: &PriorRow, hidden: bool, model: &str, id: &str, field: &str) -> b
     match row {
         PriorRow::Edited { model: owner, id: row_id, owned, .. } => owner == model && row_id == id && owned.contains_key(field),
         PriorRow::Destroyed { model: owner, id: row_id, .. } => hidden && owner == model && row_id == id,
-        PriorRow::Created { .. } | PriorRow::Member { .. } => false,
+        PriorRow::Created { .. } | PriorRow::Join { .. } | PriorRow::Leave { .. } => false,
     }
 }
 
@@ -145,7 +156,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
                 plan.entity_ops.extend(entity_ops);
                 plan.scope_ops.extend(scope_ops);
             }
-            PriorRow::Member { model, id, scope_key, before } => {
+            PriorRow::Join { model, id, scope_key, before, .. } | PriorRow::Leave { model, id, scope_key, before, .. } => {
                 restore_member(reader, &mut chain, own, (model, id, scope_key), before, &mut plan)?;
             }
             PriorRow::Edited { model, id, before, owned } => {
@@ -163,9 +174,15 @@ fn restore_member(reader: &Reader<'_>, chain: &mut Chain<'_>, own: i64, (model, 
         chain.hand_down_member(later, (model, id, scope_key), before);
         return Ok(());
     }
+    let owns = reader.connection().query_row(
+        "SELECT EXISTS (SELECT 1 FROM op_effect e JOIN scope_revision r ON r.model = e.model AND r.scope_key = e.scope_key AND r.row_id = e.row_id AND r.operation_seq = e.seq WHERE e.seq = ?1 AND e.model = ?2 AND e.scope_key = ?3 AND e.row_id = ?4 AND e.kind IN ('join', 'leave'))",
+        rusqlite::params![own, model, scope_key, id], |row| row.get::<_, bool>(0),
+    )?;
+    if !owns { return Ok(()); }
     let (Ok(row), key) = (RowId::new(id), crate::identity::ListKey::from_raw(scope_key)) else { return Ok(()) };
     let scope = crate::commit::ScopeRef::new(ModelKey::new(model), key);
     let present = reader.scope_has_member(model, scope_key, id)?;
+    chain.reown_member(own, (model, id, scope_key), reader.revision_seq()? + 1);
     match (before, present) {
         (Some(order_key), true) => plan.scope_ops.push(ScopeOp::Move { scope, row, order_key: order_key.clone() }),
         (Some(order_key), false) => plan.scope_ops.push(ScopeOp::Append { scope, row, order_key: order_key.clone() }),
@@ -273,10 +290,10 @@ impl Db {
     }
 
     pub(crate) fn roll_back_at(&self, admitted: &crate::lifecycle::Admitted, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
-        self.roll_back_if(admitted, seq, generation, None)
+        self.roll_back_if(admitted, seq, generation, None, &[])
     }
 
-    pub(crate) fn roll_back_if(&self, admitted: &crate::lifecycle::Admitted, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
+    pub(crate) fn roll_back_if(&self, admitted: &crate::lifecycle::Admitted, seq: i64, generation: Generation, still: Option<&Still<'_>>, debts: &[crate::commit::WindowDebt]) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
         let result = self.commit_following(&admitted.authority(), generation, |reader| {
                 discarded = Vec::new();
@@ -292,6 +309,7 @@ impl Db {
                 };
                 let plan = restore(reader, &Prior::related_operations(reader, &entry)?, &entry)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+                envelope.window_debts = debts.to_vec();
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
                 envelope.operation_transitions = plan.transitions;

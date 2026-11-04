@@ -45,16 +45,16 @@ fn the_generated_calls_take_the_args_after_the_fields() {
     let models = parse_models(&model(PAIR)).unwrap();
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     for expected in [
-        "send(in scope_: AccountScope, name: String, momentId: String? = nil, signedId: String) async throws -> Sent<Self>",
+        "send(in scope_: AccountScope, name: String, momentId: String? = nil, signedId: String) async throws -> MutationReceipt<Self>",
         "args_[\"signedId\"] = try JSONValue.encode(signedId)",
-        "update(name: String? = nil, ownerId: String? = nil, signedId: String? = nil, in scope_: AccountScope? = nil) async throws -> Self",
+        "update(name: String? = nil, ownerId: String? = nil, signedId: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>",
     ] {
         assert!(swift.contains(expected), "swift lacks {expected}");
     }
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     for expected in [
-        "suspend fun send(account: AccountScope, name: String, momentId: String? = null, signedId: String): Sent<Sample>",
-        "suspend fun update(name: String? = null, ownerId: String? = null, signedId: String? = null, account: AccountScope? = null): Sample",
+        "suspend fun send(account: AccountScope, name: String, momentId: String? = null, signedId: String): MutationReceipt<Sample>",
+        "suspend fun update(name: String? = null, ownerId: String? = null, signedId: String? = null, account: AccountScope? = null): MutationReceipt<Sample>",
     ] {
         assert!(kotlin.contains(expected), "kotlin lacks {expected}");
     }

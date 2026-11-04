@@ -17,13 +17,13 @@ The sign-out also stops singleton subscriptions and empties their entities. Sign
 A write applies to the local database at once, so every open stream updates immediately. A send and a media upload are also placed in a durable queue in the same commit. Other actions that reach the server need the network and fail at once without it.
 
 ```swift
-let moment = try await Moment.send(in: scope, text: "hello", media: nil).row
+guard let moment = try await Moment.send(in: scope, text: "hello", media: nil).optimisticValue else { return }
 try await moment.update(text: "hello world")
 try await moment.destroy()
 ```
 
 ```kotlin
-val moment = Moment.send(scope, text = "hello", media = null).row
+val moment = requireNotNull(Moment.send(scope, text = "hello", media = null).optimisticValue)
 moment.update(text = GraphQLNullable.Value("hello world"))
 moment.destroy()
 ```
@@ -41,11 +41,11 @@ moment.update(text = GraphQLNullable.Null)
 `send` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send. `local :userId, from: { of: CurrentUser, field: :id }` fills the attribute from a singleton row. Repeat `local` with different destinations and sources. Generated `create` makes each sourced argument optional. A non-null explicit value wins. An absent singleton leaves the attribute unset. Duplicate destinations and incompatible types fail generation. `update` accepts plain `local` and rejects `local from:`.
 
 ```swift
-let message = try await Message.send(in: scope, text: "hello").row
+let message = try await Message.send(in: scope, text: "hello").optimisticValue
 ```
 
 ```kotlin
-val message = Message.send(scope, text = "hello").row
+val message = Message.send(scope, text = "hello").optimisticValue
 ``` Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
 ## Values the row does not store
@@ -63,11 +63,11 @@ end
 ```
 
 ```swift
-let message = try await Note.send(in: scope, groupId: group.id, body: "hi", attachedUserId: "42", file: signedId).row
+let message = try await Note.send(in: scope, groupId: group.id, body: "hi", attachedUserId: "42", file: signedId).optimisticValue
 ```
 
 ```kotlin
-val message = Note.send(scope, groupId = group.id, body = "hi", attachedUserId = "42", file = signedId).row
+val message = Note.send(scope, groupId = group.id, body = "hi", attachedUserId = "42", file = signedId).optimisticValue
 ```
 
 A parameter has a type (`:bool`, `:int`, `:num`, `:string`, `:id` or `[:id]`). `null: true` makes it optional: the call may leave it out and the variable is then not sent. The generated call takes the parameters after the attributes, in alphabetical order. The parameters of `update` are always optional.
@@ -95,30 +95,30 @@ Every record carries its sync state (`pending`, `sending`, `synced`, `failed`, `
 
 A created row joins, at the front, the list of every remote scope whose parameters it carries and that has no constant variable filter, so a live list shows it at once. A scope without parameters takes a created row only when it declares `insert_on: [:create]` (`scope :owned, insert_on: [:create] do ... end`): the list maps to a server query whose scope the client cannot evaluate, so the author says that every row this device creates belongs to it. A created row has a temporary id until the server answers. When the response arrives, the row's id is replaced in one commit. Observers receive the swap as a `replaced` entry in the diff, so the row does not disappear and appear again. Rows and queued changes that point at the temporary id through a declared `belongs_to`, `has_many` or `has_one` are rewritten in the same commit, so a child created before its parent is sent carries the real parent id.
 
-`settled(action)` waits until the server has answered every queued change of a record and throws on a refusal, which is how a screen shows a save error for an optimistic `update`:
+Each mutation returns a receipt. Its `optimisticValue` is the local value and its `revision` identifies the commit. `outcome()` waits for that operation alone.
+
+If the storage format changes, the library clears the server cache and keeps queued intentions. An operation whose row is absent is sent without restoring that row. Its declaration decides how a refusal is handled.
 
 ```swift
-try await user.update(name: name)
-try await user.settled(action: nil)
+let receipt = try await user.update(name: name)
+let outcome = try await receipt.outcome()
 ```
 
 ```kotlin
-user.update(name = name)
-user.settled(null)
+val receipt = user.update(name = name)
+val outcome = receipt.outcome()
 ```
 
-A refusal is kept until `settled(action)` or `confirmedId()` reads it, even when the server answered before you called them, and each refusal is reported once. Kept refusals live in memory: after a restart the row state (`failed`, `needsAttention`) is what remains. At most 2048 unread refusals are kept, the oldest is dropped past that and counted in the core counter `lost_outcomes`.
-
-To wait for the server id, for example to open the screen of the record you just created, call `confirmedId()`. It returns the real id once the queued `create` is answered and throws if the server refuses it or the device is offline:
+The outcome is retained while the receipt is held. A confirmed outcome contains the server value. A rejected outcome contains the refusal. A session end returns `interrupted`.
 
 ```swift
-let note = try await Note.send(in: scope, groupId: group.id, body: "hi").row
-let noteId = try await note.confirmedId()
+let receipt = try await Note.send(in: scope, groupId: group.id, body: "hi")
+let noteId = try await receipt.outcome().confirmedValue?.id
 ```
 
 ```kotlin
-val note = Note.send(scope, groupId = group.id, body = "hi").row
-val noteId = note.confirmedId()
+val receipt = Note.send(scope, groupId = group.id, body = "hi")
+val noteId = receipt.outcome().confirmedValue?.id
 ```
 
 A server row can reach the device before the answer of the mutation that created it (an event of the sent message). Add `match_by "groupId", "userId", "kind", "body"` to the `create` operation, or to a custom operation, to name the attributes that identify one sent record, dotted paths such as `"media.blobId"` read into objects. A new server row replaces the temporary row of a sent, not yet answered create when every named field is non-empty and equal on both. The swap is the same as for the answer: observers get a `replaced` entry, referencing rows and queued changes move to the real id, and the answer that follows finds nothing left to swap. A row that matches no sent record, or more than one, is stored as a new row.
@@ -277,13 +277,13 @@ end
 ```swift
 try await user.block()
 let sent = try await user.sendGift(giftId: "g1", chatId: chat.id)
-let text = try await sent.answer().successMessage
+let outcome = try await sent.outcome()
 ```
 
 ```kotlin
 user.block()
 val sent = user.sendGift(giftId = "g1", chatId = chat.id)
-val text = sent.answer().successMessage
+val outcome = sent.outcome()
 ```
 
 An action that needs the server fails at once while the network is away (`DbError.Network`). It does not wait in a queue.
@@ -302,12 +302,12 @@ end
 
 ```swift
 let sent = try await Message.send(in: scope, chatId: chat.id, text: "hi")
-let outcome = try await sent.outcome()   // .delivered(id:), .failed(message:), .ended
+let outcome = try await sent.outcome()   // .confirmed, .rejected, .deliveryUnknown, .interrupted
 ```
 
 ```kotlin
 val sent = Message.send(scope, chatId = chat.id, text = "hi")
-val outcome = sent.outcome()             // CommandStatus.Delivered, Failed, Ended
+val outcome = sent.outcome()             // Confirmed, Rejected, DeliveryUnknown, Interrupted
 ```
 
 `outcome()` waits for the one final value, also while the network is away. A command of an ended session ends with it and does not go to the next account.
@@ -315,7 +315,7 @@ A model without a server mutation for `create` keeps `Model.create(...)` for row
 
 ## What the server answered
 
-`returns` declares the scalar attributes of the mutation payload that the app needs, for example the text a server shows after a send (`:string`, `:int`, `:num`, `:bool` or `:id`). The payload is the object the mutation field returns, the first part of `response from:`. An operation with `returns` returns an answer handle instead of the model: `model` is the optimistic record, `answer()` waits for the server and returns a generated type with one optional property per declared attribute.
+`returns` declares the scalar attributes of the mutation payload that the app needs, such as a success message. The confirmed outcome contains them as `answerJSON` on Swift and `answerJson` on Kotlin.
 
 ```ruby
 operation :send_reward do
@@ -333,18 +333,18 @@ end
 
 ```swift
 let sent = try await user.sendReward(rewardId: "g1")
-let text = try await sent.answer().successNote
+let outcome = try await sent.outcome()
 ```
 
 ```kotlin
 val sent = user.sendReward(rewardId = "g1")
-val text = sent.answer().successNote
+val outcome = sent.outcome()
 ```
 
-`answer()` throws when the server refuses, even if the refusal came before the call, and when the device is offline. A field the server left out, or typed differently, is `nil` (`null` in Kotlin). The answer is read once and lives in memory like a kept refusal, so after a restart only the stored record remains.
+The receipt retains its outcome. Fields omitted by the server, or returned with another type, are null in the answer JSON.
 
 `optimistic` is applied locally at once and rolled back if the server refuses. `refetch` marks the listed scopes stale after success. See [server sync](server-sync.md).
 
 ## Replacing data
 
-`replace` swaps the full content of a list in one commit: new rows are inserted or updated, rows that are gone are removed, rows with identical content are not touched. Observers get exactly one delivery and never an empty list in between. Pull-to-refresh uses it.
+Refresh applies the server list in one commit. Observers never receive an empty list between the old and new values.

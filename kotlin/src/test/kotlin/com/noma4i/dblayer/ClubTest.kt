@@ -4,11 +4,24 @@ import com.noma4i.dblayer.models.Club
 import com.noma4i.dblayer.models.Letter
 import com.noma4i.dblayer.models.Person
 import com.noma4i.dblayer.models.modelsJSON
+import com.sun.jna.Library
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+import com.sun.jna.ptr.PointerByReference
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -27,11 +40,340 @@ private fun membersReply(ids: List<String>): String {
 
 private val FORBIDDEN = DbException.Http(403.toUShort(), "forbidden")
 
+private interface Sqlite : Library {
+    fun sqlite3_open(path: String, output: PointerByReference): Int
+    fun sqlite3_exec(database: Pointer, statement: String, callback: Pointer?, context: Pointer?, error: Pointer?): Int
+    fun sqlite3_close(database: Pointer): Int
+}
+
 private fun forwardAnswer(id: String, chat: String) = """{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"$id","chatId":"$chat","text":"hello","at":99}}}}"""
 
+private class MemberEventsTransport(val base: MockTransport = MockTransport()) : Transport by base {
+    val opened = CompletableDeferred<Unit>()
+    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
+        base.subscribe(request, sink)
+        if (request.operationName == "MemberChanged") opened.complete(Unit)
+    }
+}
+
+private fun clubModels(keep: Boolean = false, complete: Boolean = false, keepLetter: Boolean = false, events: Boolean = false, destroy: Boolean = false): String {
+    if (!keep && !complete && !keepLetter && !events && !destroy) return modelsJSON
+    return JsonArray(Json.parseToJsonElement(modelsJSON).jsonArray.map { model ->
+        val fields = model.jsonObject
+        if (((keep || destroy) && fields["key"] == JsonPrimitive("Club")) || (keepLetter && fields["key"] == JsonPrimitive("Letter"))) {
+            var actions = fields.getValue("actions").jsonArray.map { action ->
+                val properties = action.jsonObject
+                if ((keep || keepLetter) && properties["name"] == JsonPrimitive("create")) JsonObject(properties + ("on_failure" to JsonPrimitive("keep"))) else action
+            }
+            if (destroy && fields["key"] == JsonPrimitive("Club")) actions = actions + Json.parseToJsonElement("""{"name":"destroy","root_shape":"destroy","mutation":"DeleteClub","variables":{"id":"id"}}""")
+            JsonObject(fields + ("actions" to JsonArray(actions)))
+        } else if ((complete || events) && fields["key"] == JsonPrimitive("Person")) {
+            val relations = fields.getValue("relations").jsonArray.map { relation ->
+                val properties = relation.jsonObject
+                if (properties["name"] != JsonPrimitive("club_members")) relation else {
+                    var result = properties
+                    if (complete) {
+                        val remote = result.getValue("remote").jsonObject
+                        val shape = remote.getValue("shape").jsonObject
+                        result = JsonObject(result + ("remote" to JsonObject(remote + ("shape" to JsonObject(shape + ("coverage" to JsonPrimitive("complete")))))))
+                    }
+                    if (events) {
+                        val updates = Json.parseToJsonElement("""[{"subscription":"MemberChanged","set":{},"removes":false}]""")
+                        result = JsonObject(result + ("updates" to updates))
+                    }
+                    result
+                }
+            }
+            JsonObject(fields + ("relations" to JsonArray(relations)))
+        } else model
+    }).toString()
+}
+
 class ClubTest {
-    private suspend fun openClubSession(transport: MockTransport) {
-        reopen(Config(null, null, 32u), modelsJSON, transport)
+    @Test
+    fun anOperationOutcomeCanBeReadTwiceFromItsReceipt() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("CreateClub", CLUB_CREATED)
+        transport.enqueue("AddClubMember", clubAnswer("addClubMember"))
+        transport.enqueue("LeaveClub", clubAnswer("leaveClub"))
+        openClubSession(transport)
+        val club = confirmedClub()
+        val receipt = club.addMember(userIds = listOf("u9"))
+        assertEquals(club.id, withTimeout(5000) { receipt.outcome() }.confirmedValue?.id)
+        assertTrue(withTimeout(5000) { club.leave().outcome() } is OperationOutcome.Confirmed)
+        assertEquals(club.id, withTimeout(5000) { receipt.outcome() }.confirmedValue?.id)
+    }
+
+    @Test
+    fun aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow() = bounded {
+        for (keep in listOf(false, true)) {
+            val directory = java.nio.file.Files.createTempDirectory("dblayer-old-format").toFile()
+            val config = Config(directory.resolve("old.sqlite").absolutePath, null, 32u)
+            val models = clubModels(keepLetter = keep)
+            try {
+                reopenSigned(config, models, CLUB_DEFS)
+                val receipt = Letter.send(AccountScope.current(), chatId = "c1", text = "held", at = 1)
+                val id = requireNotNull(receipt.optimisticValue).id
+                DBlayer.close()
+                val sqlite = Native.load("sqlite3", Sqlite::class.java)
+                val handle = PointerByReference()
+                check(sqlite.sqlite3_open(requireNotNull(config.path), handle) == 0)
+                val changed = sqlite.sqlite3_exec(handle.value, "DROP TABLE IF EXISTS op_effect_value; DROP TABLE IF EXISTS op_effect; DROP TABLE IF EXISTS scope_revision; UPDATE manifest SET value = 'old' WHERE key = 'format_version'", null, null, null)
+                sqlite.sqlite3_close(handle.value)
+                check(changed == 0)
+                val transport = MockTransport()
+                transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused"))
+                val database = reopen(config, models, transport, CLUB_DEFS)
+                withTimeout(5000) { database.flush() }
+                assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
+                assertTrue(Query("Letter", Letter).readRow(id) == null)
+                transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused again"))
+                try {
+                    val retried = withTimeout(5000) { Letter.retry(id, null) }
+                    assertTrue(keep)
+                    assertTrue(withTimeout(5000) { retried.outcome() } is OperationOutcome.Rejected)
+                    assertTrue(Query("Letter", Letter).readRow(id) == null)
+                } catch (_: DbException.Database) {
+                    assertTrue(!keep)
+                }
+                DBlayer.close()
+            } finally {
+                DBlayer.close()
+                directory.deleteRecursively()
+            }
+        }
+    }
+
+    private suspend fun confirmedClub(): Club {
+        val receipt = withTimeout(5000) { Club.create(name = "friends") }
+        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        return Query("Club", Club).read().first()
+    }
+
+    private suspend fun removeMemberConfirmed(club: Club) {
+        val receipt = withTimeout(5000) { club.removeMember(userIds = listOf("u4")) }
+        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+    }
+
+    private suspend fun confirmedLetter(): Letter {
+        val receipt = withTimeout(5000) { Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1) }
+        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        return Query("Letter", Letter).read().first()
+    }
+
+    @Test
+    fun aRefusedDestroyRestoresTheRowAccordingToItsDeclaration() = bounded {
+        for (business in listOf(false, true)) {
+            val transport = MockTransport()
+            transport.enqueue("CreateClub", CLUB_CREATED)
+            openClubSession(transport, clubModels(destroy = true))
+            DBlayer.database.registerOperations("""[{"name":"DeleteClub","document":"mutation DeleteClub(${'$'}id: ID!) { deleteClub(id: ${'$'}id) { id } }"}]""")
+            val club = confirmedClub()
+            val hold = if (business) transport.hold("DeleteClub", """{"errors":[{"message":"refused","extensions":{"code":"REFUSED"}}]}""") else transport.hold("DeleteClub", failure = DbException.Http(422.toUShort(), "refused"))
+            try {
+                val receipt = club.destroy()
+                withTimeout(5000) { hold.entered() }
+                assertTrue(Query("Club", Club).readRow(club.id) == null)
+                hold.release()
+                assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
+                assertTrue(Query("Club", Club).readRow(club.id) != null)
+            } finally {
+                hold.release()
+            }
+        }
+    }
+
+    @Test
+    fun aMemberEventKeepsTheOpenJoinInTheList() = bounded {
+        val transport = MemberEventsTransport()
+        transport.base.enqueue("CreateClub", CLUB_CREATED)
+        transport.base.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3", "u4")))
+        openClubSession(transport, clubModels(events = true))
+        DBlayer.database.registerOperations("""[{"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"}]""")
+        val club = confirmedClub()
+        val joined = Person.clubMembers(club.id, "JOINED")
+        joined.load()
+        transport.base.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
+        removeMemberConfirmed(club)
+        assertTrue(joined.read().none { it.id == "u4" })
+        val scope = CoroutineScope(SupervisorJob())
+        val list = ListReader(joined, scope)
+        try {
+            list.waitForInitialLoad()
+            withTimeout(5000) { transport.opened.await() }
+            val hold = transport.base.hold("AddClubMember", clubAnswer("addClubMember"))
+            try {
+                val adding = async { club.addMember(userIds = listOf("u4")) }
+                withTimeout(5000) { hold.entered() }
+                transport.base.emit("MemberChanged", """{"data":{"memberChanged":{"id":"u1","name":"updated"}}}""")
+                val visible = withTimeout(5000) { list.rows.first { rows -> rows.any { it.id == "u1" && it.name == "updated" } } }
+                assertTrue(visible.any { it.id == "u4" })
+                val receipt = withTimeout(5000) { adding.await() }
+                transport.base.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3", "u4")))
+                hold.release()
+                assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+            } finally {
+                hold.release()
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun aRefusedDurableSendKeepsItsRowWhenDeclared() = bounded {
+      for (retry in listOf(false, true)) {
+        val transport = MockTransport()
+        openClubSession(transport, clubModels(keepLetter = true))
+        val hold = transport.hold("SendLetter", failure = DbException.Http(422.toUShort(), "refused"))
+        if (retry) transport.enqueue("SendLetter", LETTER_SENT)
+        try {
+            val sent = Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1)
+            val local = sent.optimisticValue!!
+            withTimeout(5000) { hold.entered() }
+            assertTrue(Query("Letter", Letter).readRow(local.id) != null)
+            hold.release()
+            assertTrue(withTimeout(5000) { sent.outcome() } is OperationOutcome.Rejected)
+            assertTrue(Query("Letter", Letter).readRow(local.id) != null)
+            if (retry) {
+                val retried = local.retry(null)
+                assertTrue(withTimeout(5000) { retried.outcome() } is OperationOutcome.Confirmed)
+            } else {
+                local.discard(null)
+            }
+            assertEquals(if (retry) 1 else 0, Query("Letter", Letter).read().size)
+        } finally {
+            hold.release()
+        }
+      }
+    }
+
+    @Test
+    fun aLaterConfirmedMembershipChangeSurvivesAnEarlierRefusal() = bounded {
+      for (firstJoin in listOf(false, true)) {
+        val transport = MockTransport()
+        val (club, joined, _) = openClubWithMembers(transport)
+        if (firstJoin) {
+            transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
+            removeMemberConfirmed(club)
+        }
+        assertEquals(!firstJoin, joined.read().any { it.id == "u4" })
+        val old = transport.hold("ClubMembers", membersReply(if (firstJoin) listOf("u1", "u2", "u3") else listOf("u1", "u2", "u3", "u4")))
+        val reading = async { joined.refresh() }
+        withTimeout(5000) { old.entered() }
+        val first = transport.hold(if (firstJoin) "AddClubMember" else "RemoveClubMember", failure = FORBIDDEN)
+        val second = transport.hold(if (firstJoin) "RemoveClubMember" else "AddClubMember", clubAnswer(if (firstJoin) "removeClubMember" else "addClubMember"))
+        val joining = async { if (firstJoin) club.addMember(userIds = listOf("u4")) else club.removeMember(userIds = listOf("u4")) }
+        try {
+            withTimeout(5000) { first.entered() }
+            val leaving = async { if (firstJoin) club.removeMember(userIds = listOf("u4")) else club.addMember(userIds = listOf("u4")) }
+            withTimeout(5000) { second.entered() }
+            val firstReceipt = withTimeout(5000) { joining.await() }
+            val secondReceipt = withTimeout(5000) { leaving.await() }
+            second.release()
+            assertTrue(withTimeout(5000) { secondReceipt.outcome() } is OperationOutcome.Confirmed)
+            first.release()
+            assertTrue(withTimeout(5000) { firstReceipt.outcome() } is OperationOutcome.Rejected)
+            old.release()
+            withTimeout(5000) { reading.await() }
+            assertEquals(!firstJoin, joined.read().any { it.id == "u4" })
+        } finally {
+            first.release()
+            second.release()
+            old.release()
+        }
+      }
+    }
+
+    @Test
+    fun forwardReturnsItsOptimisticValueBeforeTheServerAnswers() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("SendLetter", LETTER_SENT)
+        openClubSession(transport)
+        val source = confirmedLetter()
+        val hold = transport.hold("ForwardLetter", forwardAnswer("fwd-1", "c2"))
+        val forward = async { source.forward(targetChatId = "c2") }
+        try {
+            withTimeout(5000) { hold.entered() }
+            val receipt = withTimeoutOrNull(5000) { forward.await() }
+            assertTrue("forward did not return before the server answer", receipt != null)
+            val optimistic = receipt!!.optimisticValue!!
+            assertTrue(optimistic.id != "fwd-1" && optimistic.chatId == "c2")
+            val written = DBlayer.database.readRow(DBlayer.database.sessionEpoch(), "Letter", optimistic.id)!!
+            assertEquals(receipt.revision, written.revision)
+            val unchanged = Query("Letter", Letter).readRow(source.id)!!
+            assertTrue(unchanged.chatId == source.chatId && unchanged.text == source.text)
+            hold.release()
+            assertEquals("fwd-1", withTimeout(5000) { receipt.outcome() }.confirmedValue?.id)
+        } finally {
+            hold.release()
+        }
+    }
+
+    @Test
+    fun anOfflineActionIsNotSentAfterReconnectButALetterIsSentOnce() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("CreateClub", CLUB_CREATED)
+        transport.enqueue("SendLetter", LETTER_SENT)
+        openClubSession(transport)
+        val created = confirmedClub()
+        DBlayer.database.setOnline(false)
+        assertTrue(runCatching { created.addMember(userIds = listOf("u9")) }.isFailure)
+        val sent = Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1)
+        assertTrue(sent.optimisticValue != null)
+        assertEquals(0, transport.calls.count { it.operationName == "SendLetter" })
+        DBlayer.database.setOnline(true)
+        assertTrue(withTimeout(5000) { sent.outcome() } is OperationOutcome.Confirmed)
+        assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
+        assertEquals(0, transport.calls.count { it.operationName == "AddClubMember" })
+    }
+
+    @Test
+    fun aCreateRefusalFollowsTheDeclaredPolicy() = bounded {
+        for ((business, keep) in listOf(false to false, false to true, true to false, true to true)) {
+            val transport = MockTransport()
+            if (business) transport.enqueue("CreateClub", """{"errors":[{"message":"refused","extensions":{"code":"REFUSED"}}]}""")
+            else transport.enqueue("CreateClub", DbException.Http(422.toUShort(), "refused"))
+            openClubSession(transport, clubModels(keep))
+            val receipt = Club.create(name = "friends")
+            assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
+            assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
+            assertEquals(if (keep) 1 else 0, Query("Club", Club).read().size)
+        }
+    }
+
+    @Test
+    fun anAcknowledgedMembershipChangeSurvivesAnOlderListAnswer() = bounded {
+        for ((removing, answerFirst, complete) in listOf(Triple(false, false, false), Triple(false, true, false), Triple(true, false, false), Triple(true, true, false), Triple(false, false, true), Triple(false, true, true), Triple(true, false, true), Triple(true, true, true))) {
+            val transport = MockTransport()
+            val (created, joined, _) = openClubWithMembers(transport, clubModels(complete = complete))
+            if (!removing) {
+                transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
+                removeMemberConfirmed(created)
+            }
+            val old = if (removing) listOf("u1", "u2", "u3", "u4") else listOf("u1", "u2", "u3")
+            val hold = transport.hold("ClubMembers", membersReply(old))
+            val reading = async { joined.refresh() }
+            withTimeout(5000) { hold.entered() }
+            val mutation = transport.hold(if (removing) "RemoveClubMember" else "AddClubMember", clubAnswer(if (removing) "removeClubMember" else "addClubMember"))
+            val acting = async { if (removing) created.removeMember(userIds = listOf("u4")) else created.addMember(userIds = listOf("u4")) }
+            try {
+                withTimeout(5000) { mutation.entered() }
+                val receipt = withTimeout(5000) { acting.await() }
+                if (answerFirst) { mutation.release(); assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed) }
+                hold.release()
+                reading.await()
+                assertEquals(!removing, joined.read().map { it.id }.contains("u4"))
+                if (!answerFirst) { mutation.release(); assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed) }
+            } finally {
+                hold.release()
+                mutation.release()
+            }
+        }
+    }
+
+    private suspend fun openClubSession(transport: Transport, models: String = modelsJSON) {
+        reopen(Config(null, null, 32u), models, transport)
         DBlayer.database.registerOperations(CLUB_DEFS)
     }
 
@@ -43,7 +385,7 @@ class ClubTest {
         val transport = MockTransport()
         transport.enqueue("CreateClub", CLUB_CREATED, 300)
         openClubSession(transport)
-        val created = Club.create(name = "friends")
+        val created = confirmedClub()
         assertTrue("the call returned before the server answered", created.id == "g1" && created.name == "friends" && created.sync.state == SyncState.Synced)
         assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
 
@@ -53,12 +395,12 @@ class ClubTest {
     }
 
     /** Opens a session with a club whose two member lists hold u1 u2 u3 u4 (JOINED) and u2 u1 u3 u4 (OWNER_FIRST). */
-    private suspend fun openClubWithMembers(transport: MockTransport): Triple<Club, Query<Person>, Query<Person>> {
+    private suspend fun openClubWithMembers(transport: MockTransport, models: String = modelsJSON): Triple<Club, Query<Person>, Query<Person>> {
         transport.enqueue("CreateClub", CLUB_CREATED)
         transport.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3", "u4")))
         transport.enqueue("ClubMembers", membersReply(listOf("u2", "u1", "u3", "u4")))
-        openClubSession(transport)
-        val created = Club.create(name = "friends")
+        openClubSession(transport, models)
+        val created = confirmedClub()
         val joined = Person.clubMembers(created.id, "JOINED")
         val owners = Person.clubMembers(created.id, "OWNER_FIRST")
         joined.load()
@@ -77,19 +419,21 @@ class ClubTest {
             val original = listOf(listOf("u1", "u2", "u3", "u4"), listOf("u2", "u1", "u3", "u4"))
             if (!removing) {
                 transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
-                created.removeMember(userIds = listOf("u4"))
+                removeMemberConfirmed(created)
                 assertEquals("$case: the setup", listOf(listOf("u1", "u2", "u3"), listOf("u2", "u1", "u3")), lists())
             }
             val user = if (removing) "u2" else "u4"
             val hold = transport.hold(if (removing) "RemoveClubMember" else "AddClubMember", clubAnswer(if (removing) "removeClubMember" else "addClubMember"), if (refusal) FORBIDDEN else null)
-            val acting = async { runCatching { if (removing) created.removeMember(userIds = listOf(user)) else created.addMember(userIds = listOf(user)) } }
+            val acting = async { if (removing) created.removeMember(userIds = listOf(user)) else created.addMember(userIds = listOf(user)) }
             withTimeout(5000) { hold.entered() }
             val during = if (removing) listOf(listOf("u1", "u3", "u4"), listOf("u1", "u3", "u4")) else original
             assertEquals("$case: the lists before the answer", during, lists())
+            val receipt = withTimeout(5000) { acting.await() }
             hold.release()
-            assertEquals("$case: the outcome", refusal, acting.await().isFailure)
+            val outcome = withTimeout(5000) { receipt.outcome() }
+            assertTrue("$case: the outcome", if (refusal) outcome is OperationOutcome.Rejected else outcome is OperationOutcome.Confirmed)
             val after = if (refusal) (if (removing) original else listOf(listOf("u1", "u2", "u3"), listOf("u2", "u1", "u3"))) else during
-            eventually("the lists after the outcome") { lists() == after }
+            assertEquals("$case: the lists after the outcome", after, lists())
         }
     }
 
@@ -99,7 +443,8 @@ class ClubTest {
         val transport = MockTransport()
         val (created, joined, owners) = openClubWithMembers(transport)
         transport.enqueue("AddClubMember", clubAnswer("addClubMember"))
-        created.addMember(userIds = listOf("u9"))
+        val add = created.addMember(userIds = listOf("u9"))
+        assertTrue(withTimeout(5000) { add.outcome() } is OperationOutcome.Confirmed)
         assertEquals(1, transport.calls.count { it.operationName == "AddClubMember" })
         assertEquals(listOf("u1", "u2", "u3", "u4"), joined.read().map { it.id })
         assertEquals(listOf("u2", "u1", "u3", "u4"), owners.read().map { it.id })
@@ -119,12 +464,14 @@ class ClubTest {
         }
         val added = listOf(listOf("u1", "u2", "u3", "u4", "u9"), listOf("u2", "u1", "u3", "u4", "u9"))
         transport.enqueue("AddClubMember", clubAnswer("addClubMember"))
-        created.addMember(userIds = listOf("u9"))
+        val add = created.addMember(userIds = listOf("u9"))
+        assertTrue(withTimeout(5000) { add.outcome() } is OperationOutcome.Confirmed)
         readAgain(added[0], added[1])
         assertEquals("the lists after the add", added, lists())
         val removed = listOf(listOf("u1", "u2", "u3", "u4"), listOf("u2", "u1", "u3", "u4"))
         transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
-        created.removeMember(userIds = listOf("u9"))
+        val remove = created.removeMember(userIds = listOf("u9"))
+        assertTrue(withTimeout(5000) { remove.outcome() } is OperationOutcome.Confirmed)
         readAgain(removed[0], removed[1])
         assertEquals("the lists after the removal", removed, lists())
     }
@@ -145,15 +492,20 @@ class ClubTest {
         withTimeout(5000) { loadHold.entered() }
         val adding = async { created.addMember(userIds = listOf("u9")) }
         withTimeout(5000) { addHold.entered() }
-        addHold.release()
         try {
-            awaitWithin("the add to return with its answer while the list load is held") { adding.await() }
+            val receipt = withTimeout(5000) { adding.await() }
+            addHold.release()
+            assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+            loadHold.release()
+            withTimeout(5000) { refreshing.await() }
+            withTimeout(5000) { rereadHold.entered() }
+            rereadHold.release()
+            assertEquals(current + "u9", withTimeout(5000) { list.rows.first { rows -> rows.map { it.id } == current + "u9" } }.map { it.id })
         } finally {
             loadHold.release()
+            addHold.release()
             rereadHold.release()
         }
-        awaitWithin("the refresh to end once the holds are released") { refreshing.await() }
-        eventually("the list is read again after the held load") { list.rows.value.map { it.id } == current + "u9" }
         scope.cancel()
     }
 
@@ -164,13 +516,14 @@ class ClubTest {
             val transport = MockTransport()
             transport.enqueue("CreateClub", CLUB_CREATED)
             openClubSession(transport)
-            val created = Club.create(name = "friends")
+            val created = confirmedClub()
             val hold = transport.hold("LeaveClub", clubAnswer("leaveClub"), if (refusal) FORBIDDEN else null)
-            val leaving = async { runCatching { created.leave() } }
+            val leaving = async { created.leave() }
             withTimeout(5000) { hold.entered() }
             assertTrue("the club stayed in its list before the answer", Query("Club", Club).readRow(created.id) == null)
             hold.release()
-            assertEquals("the outcome of leave", refusal, leaving.await().isFailure)
+            val receipt = withTimeout(5000) { leaving.await() }
+            assertEquals("the outcome of leave", refusal, withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
             eventually("the club list after the outcome") { (Query("Club", Club).readRow(created.id) != null) == refusal }
         }
     }
@@ -181,14 +534,12 @@ class ClubTest {
         val transport = MockTransport()
         transport.enqueue("SendLetter", LETTER_SENT)
         openClubSession(transport)
-        val local = Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1).row
-        withTimeout(5000) { local.settled(null) }
-        val sourceId = withTimeout(5000) { local.confirmedId() }
-        val source = Query("Letter", Letter).readRow(sourceId)!!
+        val source = confirmedLetter()
+        val sourceId = source.id
 
         for ((target, id) in listOf("c1" to "fwd-1", "c2" to "fwd-2")) {
             transport.enqueue("ForwardLetter", forwardAnswer(id, target))
-            val answer = source.forward(targetChatId = target)
+            val answer = requireNotNull(withTimeout(5000) { source.forward(targetChatId = target).outcome() }.confirmedValue)
             assertTrue("$target: the call returned ${answer.id}, not the answer row", answer.id == id && answer.chatId == target)
             val unchanged = Query("Letter", Letter).readRow(sourceId)!!
             assertTrue("$target: the answer was written onto the source row", unchanged.chatId == "c1" && unchanged.text == "hello" && unchanged.at == 1L)
@@ -204,21 +555,19 @@ class ClubTest {
             val transport = MockTransport()
             transport.enqueue("SendLetter", LETTER_SENT)
             openClubSession(transport)
-            val local = Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1).row
-            withTimeout(5000) { local.settled(null) }
-            val sourceId = withTimeout(5000) { local.confirmedId() }
-            val source = Query("Letter", Letter).readRow(sourceId)!!
+            val source = confirmedLetter()
             val thread = Letter.thread("c2")
             assertTrue(thread.read().isEmpty())
 
             val hold = transport.hold("ForwardLetter", forwardAnswer("fwd-1", "c2"), if (refusal) FORBIDDEN else null)
-            val forwarding = async { runCatching { source.forward(targetChatId = "c2") } }
+            val forwarding = async { source.forward(targetChatId = "c2") }
             withTimeout(5000) { hold.entered() }
             val copy = thread.read().firstOrNull()
             assertTrue("$case: the target thread has no copy before the answer", copy != null)
             assertTrue("$case: the copy is ${copy!!.id}", copy.id != "fwd-1" && copy.text == "hello" && copy.chatId == "c2")
             hold.release()
-            assertEquals("$case: the outcome of forward", refusal, forwarding.await().isFailure)
+            val receipt = withTimeout(5000) { forwarding.await() }
+            assertEquals("$case: the outcome of forward", refusal, withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
             eventually("the target thread shows the outcome") { thread.read().map { it.id } == (if (refusal) emptyList() else listOf("fwd-1")) }
         }
     }

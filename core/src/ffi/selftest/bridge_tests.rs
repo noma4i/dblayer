@@ -7,7 +7,7 @@ use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig};
 use crate::ffi::lifecycle_tests::named;
-use crate::ffi::{Database, CommandRequest, CommandStatus, DbError, Placement, Replacement, StreamDelivery, StreamEnd, StreamRequest, StreamValue, ValueSink, WireRow, WireSyncState};
+use crate::ffi::{Database, CommandRequest, DbError, Placement, Replacement, StreamDelivery, StreamEnd, StreamRequest, StreamValue, ValueSink, WireOperationOutcome, WireRow, WireSyncState};
 use crate::test_wait::yield_until;
 
 /// What a platform reader holds: the deliveries in order, replayed into the rows its screen shows.
@@ -200,14 +200,14 @@ async fn a_message_sent_offline_goes_out_once_and_keeps_its_position() {
     let receipt = bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
     yield_until("the thread shows the queued message", || reader.rows().len() == 2).await;
     let queued = reader.rows();
-    assert_eq!(queued[1].id, receipt.row.id, "the new message sits after the first");
+    assert_eq!(queued[1].id, receipt.optimistic_value.as_ref().unwrap().id, "the new message sits after the first");
     assert_eq!(queued[1].sync.state, WireSyncState::Pending);
-    assert_eq!(rig.database.command_status(receipt.clone()).unwrap(), CommandStatus::Queued);
+    assert_eq!(receipt.optimistic_value.as_ref().unwrap().sync.state, WireSyncState::Pending);
     assert_eq!(rig.world.count("SendMessage"), 0, "the offline send reached the server");
 
     rig.database.set_online(true).unwrap();
-    let outcome = bound(rig.database.command_outcome(receipt.clone())).await.unwrap();
-    assert_eq!(outcome, CommandStatus::Delivered { id: "m2".into() });
+    let outcome = bound(rig.database.outcome(receipt.clone())).await.unwrap();
+    assert!(matches!(outcome, WireOperationOutcome::Confirmed { value: Some(row), .. } if row.id == "m2"));
     yield_until("the thread shows the confirmed message", || reader.rows().get(1).is_some_and(|row| row.id == "m2")).await;
     settle(&rig).await;
 
@@ -305,7 +305,7 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
     for (index, text) in ["six", "seven"].into_iter().enumerate() {
         let (before, mark) = (rig.database.db.counters().rows_delivered, reader.len());
         let receipt = bound(rig.database.send(message(epoch, text, 6 + index as i64))).await.unwrap();
-        bound(rig.database.command_outcome(receipt)).await.unwrap();
+        bound(rig.database.outcome(receipt)).await.unwrap();
         settle(&rig).await;
         let delta_rows: Vec<usize> = reader.deliveries().iter().skip(mark).filter_map(|delivery| if let StreamValue::Delta { rows, .. } = &delivery.value { Some(rows.len()) } else { None }).collect();
         assert!(!delta_rows.is_empty() && delta_rows.iter().all(|rows| *rows == 1), "a change of one row carried {delta_rows:?} rows");
@@ -338,7 +338,7 @@ async fn work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_ge
     for (index, text) in ["six", "seven"].into_iter().enumerate() {
         let (entity_mark, count_mark) = (entity.len(), count.len());
         let receipt = bound(rig.database.send(message(epoch, text, 6 + index as i64))).await.unwrap();
-        bound(rig.database.command_outcome(receipt)).await.unwrap();
+        bound(rig.database.outcome(receipt)).await.unwrap();
         settle(&rig).await;
         let entity_values = entity.deliveries().len() - entity_mark;
         let counts: Vec<i64> = count.deliveries().iter().skip(count_mark).filter_map(|delivery| if let StreamValue::Count { count, .. } = &delivery.value { Some(*count) } else { None }).collect();
@@ -410,15 +410,14 @@ async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_
     let epoch = rig.database.session_epoch();
     rig.database.set_online(false).unwrap();
     let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
-    let outcome = { let database = rig.database.clone(); let receipt = receipt.clone(); tokio::spawn(async move { database.command_outcome(receipt).await }) };
+    let outcome = { let database = rig.database.clone(); let receipt = receipt.clone(); tokio::spawn(async move { database.outcome(receipt).await }) };
     for _ in 0..50 { tokio::task::yield_now().await; }
     assert!(!outcome.is_finished(), "the outcome of a queued command returned before the command settled");
     bound(rig.database.session_reset()).await.unwrap();
-    assert_eq!(bound(outcome).await.unwrap().unwrap(), CommandStatus::Ended);
+    assert!(matches!(bound(outcome).await.unwrap().unwrap(), WireOperationOutcome::Interrupted));
     rig.database.set_online(true).unwrap();
     rig.login_ios("B").await;
-    assert_eq!(rig.database.command_status(receipt.clone()).unwrap(), CommandStatus::Ended, "a receipt of A answered in the epoch of B");
-    assert_eq!(bound(rig.database.command_outcome(receipt)).await.unwrap(), CommandStatus::Ended);
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Interrupted));
     assert_eq!(rig.world.count("SendMessage"), 0);
     rig.database.close_now();
 }
@@ -520,6 +519,14 @@ async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitt
 
 pub(super) fn group(name: &str) -> (String, String) { (json!({"name": name}).to_string(), "{}".into()) }
 
+async fn confirmed_group(rig: &Rig, epoch: u64, values: String, args: String) -> WireRow {
+    let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    match bound(rig.database.outcome(receipt)).await.unwrap() {
+        WireOperationOutcome::Confirmed { value: Some(row), .. } => row,
+        other => panic!("group create did not confirm: {other:?}"),
+    }
+}
+
 /// K01 (B1, J02): a send that passed its epoch check and waits before its SQL commit lands before the next sign-in changes the epoch, and its announcement is held until the session start finished: the operation of the account that left is in the cutoff and never goes out for the account that came.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_next_account() {
@@ -587,7 +594,7 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     assert!(refused(bound(rig.database.read_query(old, users.into())).await.map(|_| ())), "a read of A returned rows in the epoch of B");
     assert!(refused(bound(rig.database.read_row(old, "User".into(), "user".into())).await.map(|_| ())));
     assert!(refused(bound(rig.database.update(old, "User".into(), "user".into(), json!({"name":"hijacked"}).to_string(), "{}".into())).await.map(|_| ())));
-    assert!(refused(bound(rig.database.destroy(old, "User".into(), "user".into())).await));
+    assert!(refused(bound(rig.database.destroy(old, "User".into(), "user".into())).await.map(|_| ())));
     assert!(refused(bound(rig.database.set_local(old, "User".into(), "user".into(), "name".into(), "\"x\"".into())).await));
     assert!(refused(bound(rig.database.clone().upload_blob(old, "n".into(), "create".into(), crate::ffi::upload_wire::WireUploadRequest { path: "/nowhere".into(), name: None, mime: None, variables_json: "{}".into() })).await.map(|_| ())));
     let seen = bound(rig.database.read_row(current, "User".into(), "user".into())).await.unwrap().expect("the row of B");
@@ -629,7 +636,7 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     settle(&rig).await;
     assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out after the network returned");
     let receipt = bound(rig.database.send(message(epoch, "offline", 2))).await.unwrap();
-    assert_eq!(rig.database.command_status(receipt).unwrap(), CommandStatus::Queued);
+    assert_eq!(receipt.optimistic_value.as_ref().unwrap().sync.state, WireSyncState::Pending);
     rig.database.close_now();
 }
 
@@ -705,7 +712,7 @@ async fn a_server_create_returns_the_confirmed_row_and_needs_the_network() {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
-    let row = bound(rig.database.create(epoch, "Group".into(), values.clone(), args.clone())).await.unwrap();
+    let row = confirmed_group(&rig, epoch, values.clone(), args.clone()).await;
     assert!(!row.id.starts_with("tmp") && !row.id.contains("temp"), "the created row still has a temporary id: {}", row.id);
     assert!(named(&row, "friends"));
     assert_eq!(rig.world.count("CreateGroup"), 1);
@@ -825,8 +832,8 @@ async fn a_durable_command_that_failed_on_the_network_goes_out_at_once_when_the_
     assert_eq!(rig.world.count("SendMessage"), 0, "the failed attempt reached the server");
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
-    let outcome = bound(rig.database.command_outcome(receipt)).await.unwrap();
-    assert!(matches!(outcome, CommandStatus::Delivered { .. }), "the command did not go out after the network returned: {outcome:?}");
+    let outcome = bound(rig.database.outcome(receipt)).await.unwrap();
+    assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "the command did not go out after the network returned: {outcome:?}");
     assert_eq!(rig.world.count("SendMessage"), 1);
     rig.database.close_now();
 }
@@ -870,7 +877,8 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
         yield_until("the thread shows the source", || reader.texts().iter().any(|text| text.contains("hello"))).await;
         let before = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().expect("the source row");
         let acted = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": target}).to_string())).await.unwrap();
-        assert_eq!(acted.row.id, "forwarded-1", "{case}: the call returned the source row, not the answer row");
+        let outcome = bound(rig.database.outcome(acted)).await.unwrap();
+        assert!(matches!(outcome, WireOperationOutcome::Confirmed { value: Some(row), .. } if row.id == "forwarded-1"), "{case}: the confirmed row differs");
         let after = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().expect("the source row");
         assert_eq!(after.cells, before.cells, "{case}: the answer was written onto the source row");
         let forwarded = bound(rig.database.read_row(epoch, "Message".into(), "forwarded-1".into())).await.unwrap().expect("the answer row");
@@ -927,7 +935,7 @@ async fn adding_and_removing_a_member_ends_with_the_member_lists_of_the_server_i
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
-    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let created = confirmed_group(&rig, epoch, values, args).await;
     let orders = [("JOINED", ["u1", "u2", "u3"]), ("OWNER_FIRST", ["u2", "u1", "u3"])];
     for (order, ids) in orders { rig.world.set_members(order, &ids); }
     let mut readers = Vec::new();
@@ -966,19 +974,19 @@ async fn member_actions_change_both_member_lists_before_the_answer_and_a_refusal
             rig.login_ios("A").await;
             let epoch = rig.database.session_epoch();
             let (values, args) = group("friends");
-            let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+            let created = confirmed_group(&rig, epoch, values, args).await;
             seed_members(&rig, &created.id);
             let gate = if refusal { rig.world.hold_then(operation, Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next(operation) };
             let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": [user]}).to_string()).await }) };
             gate.entered_for(&case).await;
-            assert!(!acting.is_finished(), "{case}: the call ended before the request reached the server");
+            let receipt = bound(acting).await.unwrap().unwrap();
             assert_eq!((member_list(&rig, &created.id, "JOINED"), member_list(&rig, &created.id, "OWNER_FIRST")), (joined(changed[0]), joined(changed[1])), "{case}: the lists before the answer");
             gate.release();
-            let result = bound(acting).await.unwrap();
+            let result = bound(rig.database.outcome(receipt)).await.unwrap();
             settle(&rig).await;
             let expected = if refusal { original } else { changed };
             assert_eq!((member_list(&rig, &created.id, "JOINED"), member_list(&rig, &created.id, "OWNER_FIRST")), (joined(expected[0]), joined(expected[1])), "{case}: the lists after the outcome");
-            assert_eq!(result.is_err(), refusal, "{case}: the outcome of the call was {:?}", result.as_ref().err());
+            assert_eq!(matches!(result, WireOperationOutcome::Rejected { .. }), refusal, "{case}: the operation returned {result:?}");
             rig.database.close_now();
         }
     }
@@ -993,7 +1001,7 @@ async fn leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_r
         rig.login_ios("A").await;
         let epoch = rig.database.session_epoch();
         let (values, args) = group("friends");
-        let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+        let created = confirmed_group(&rig, epoch, values, args).await;
         let reader = Reader::open();
         let stream = rig.database.subscribe(epoch, groups(), reader.clone());
         bound(rig.database.stream_loaded(stream)).await.unwrap();
@@ -1003,9 +1011,10 @@ async fn leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_r
         gate.entered_for(case).await;
         yield_until("the group left the list before the answer", || ids_of(reader.rows()).is_empty()).await;
         gate.release();
-        let result = bound(acting).await.unwrap();
+        let receipt = bound(acting).await.unwrap().unwrap();
+        let result = bound(rig.database.outcome(receipt)).await.unwrap();
         settle(&rig).await;
-        assert_eq!(result.is_err(), refusal, "{case}: the outcome of the call was {:?}", result.as_ref().err());
+        assert_eq!(matches!(result, WireOperationOutcome::Rejected { .. }), refusal, "{case}: the operation returned {result:?}");
         if refusal {
             yield_until("the refusal put the group back", || ids_of(reader.rows()) == strings(&[created.id.as_str()])).await;
         } else {
@@ -1037,9 +1046,10 @@ async fn forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_i
         let copy = during.iter().find(|id| id.as_str() != "m1").unwrap();
         assert!(crate::identity::RowId::new(copy).unwrap().is_temp(), "{case}: the copy {copy} is not a temporary row");
         gate.release();
-        let result = bound(acting).await.unwrap();
+        let receipt = bound(acting).await.unwrap().unwrap();
+        let result = bound(rig.database.outcome(receipt)).await.unwrap();
         settle(&rig).await;
-        assert_eq!(result.is_err(), refusal, "{case}: the outcome of the call was {:?}", result.as_ref().err());
+        assert_eq!(matches!(result, WireOperationOutcome::Rejected { .. }), refusal, "{case}: the operation returned {result:?}");
         let expected = if refusal { strings(&["m1"]) } else { strings(&["m1", "forwarded-1"]) };
         yield_until("the thread shows the outcome", || ids_of(reader.rows()) == expected).await;
         rig.database.close_now();
@@ -1090,10 +1100,11 @@ async fn a_plain_action_that_never_reached_the_server_ends_with_the_network_erro
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
-    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let created = confirmed_group(&rig, epoch, values, args).await;
     rig.world.fail_next("LeaveGroup", Fault::Down);
-    let acted = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await;
-    assert!(matches!(acted, Err(DbError::Network { .. })), "the action whose request never reached the server did not end with the network error: {:?}", acted.as_ref().err());
+    let receipt = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await.unwrap();
+    let outcome = bound(rig.database.outcome(receipt)).await.unwrap();
+    assert!(matches!(outcome, WireOperationOutcome::Rejected { failure } if failure.kind == "network"));
     let after = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap();
     assert!(after.is_some(), "the group stayed removed after the failed request");
     assert!(rig.database.db.outbox().unwrap().is_empty(), "the failed action stayed queued");
@@ -1112,7 +1123,7 @@ async fn a_plain_action_unsent_when_the_network_drops_never_goes_out_after_it_re
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
-    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let created = confirmed_group(&rig, epoch, values, args).await;
     let sync = rig.database.sync.as_ref().expect("the database has a sync").clone();
     let sender_busy = sync.inner.outbox_gate.lock().await;
     let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "leave".into(), "{}".into(), "{}".into()).await }) };
@@ -1120,8 +1131,8 @@ async fn a_plain_action_unsent_when_the_network_drops_never_goes_out_after_it_re
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
     drop(sender_busy);
-    let acted = bound(acting).await.unwrap();
-    assert!(matches!(acted, Err(DbError::Network { .. })), "an action unsent at the drop did not end with the network error: {:?}", acted.as_ref().err());
+    let receipt = bound(acting).await.unwrap().unwrap();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { failure } if failure.kind == "network"));
     bound(rig.database.flush()).await.unwrap();
     settle(&rig).await;
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 0, "an action queued before the drop went out after the network returned");
@@ -1147,8 +1158,8 @@ async fn a_second_failure_after_a_network_return_waits_by_the_backoff_and_the_cl
     settle(&rig).await;
     assert_eq!(attempts(&rig), 2, "the command was tried again before its backoff");
     rig.clock.advance(3_600_000);
-    let outcome = bound(rig.database.command_outcome(receipt)).await.unwrap();
-    assert!(matches!(outcome, CommandStatus::Delivered { .. }), "the clock did not deliver the command: {outcome:?}");
+    let outcome = bound(rig.database.outcome(receipt)).await.unwrap();
+    assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "the clock did not deliver the command: {outcome:?}");
     rig.database.close_now();
 }
 
@@ -1186,17 +1197,15 @@ async fn a_running_flush_does_not_send_a_plain_action_after_the_network_dropped_
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
-    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let created = confirmed_group(&rig, epoch, values, args).await;
     let gate = rig.world.hold_next("SendMessage");
     bound(rig.database.send(message(epoch, "first", 1))).await.unwrap();
     gate.entered_for("the first send").await;
-    let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "leave".into(), "{}".into(), "{}".into()).await }) };
-    yield_until("the action is queued behind the send", || rig.database.db.outbox().unwrap().len() == 2).await;
     rig.database.set_online(false).unwrap();
+    let acted = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await;
+    assert!(matches!(acted, Err(DbError::Network { .. })));
     rig.database.set_online(true).unwrap();
     gate.release();
-    let acted = bound(acting).await.unwrap();
-    assert!(matches!(acted, Err(DbError::Network { .. })), "the action behind a send did not end with the network error: {:?}", acted.as_ref().err());
     settle(&rig).await;
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 0, "a running flush sent the action after the network dropped");
     rig.database.close_now();
@@ -1215,7 +1224,7 @@ async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_or
         rig.login_ios("A").await;
         let epoch = rig.database.session_epoch();
         let (values, args) = group("friends");
-        let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+        let created = confirmed_group(&rig, epoch, values, args).await;
         seed_members(&rig, &created.id);
         let (first_gate, second_gate) = (rig.world.hold_then(first.1, Fault::Refuse { code: "FORBIDDEN", confirmed: true }), rig.world.hold_then(second.1, Fault::Refuse { code: "FORBIDDEN", confirmed: true }));
         let args = json!({"userIds": [user]}).to_string();
@@ -1230,7 +1239,10 @@ async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_or
         let expected = |lists: [&[&str]; 2]| (strings(lists[0]), strings(lists[1]));
         assert_eq!(lists(&rig), expected(while_second), "{case}: the lists while the second change waits for its answer");
         second_gate.release();
-        assert!(bound(first_call).await.unwrap().is_err() && bound(second_call).await.unwrap().is_err(), "{case}: a refused change succeeded");
+        let first = bound(first_call).await.unwrap().unwrap();
+        let second = bound(second_call).await.unwrap().unwrap();
+        assert!(matches!(bound(rig.database.outcome(first)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+        assert!(matches!(bound(rig.database.outcome(second)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
         settle(&rig).await;
         assert_eq!(lists(&rig), expected(original), "{case}: the lists after both refusals");
         rig.database.close_now();
@@ -1252,7 +1264,7 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         rig.login_ios("A").await;
         let epoch = rig.database.session_epoch();
         let (values, args) = group("friends");
-        let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+        let created = confirmed_group(&rig, epoch, values, args).await;
         seed_members(&rig, &created.id);
         let held = |refused: bool| if refused { rig.world.hold_then(operation, Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next(operation) };
         let first_gate = held(first_refused);
@@ -1269,8 +1281,9 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         let wanted = (strings(expected[0]), strings(expected[1]));
         assert_eq!(lists(&rig), wanted, "{case}: the lists while the second change waits for its answer");
         second_gate.release();
-        let (first, second) = (bound(first_call).await.unwrap(), bound(second_call).await.unwrap());
-        assert_eq!((first.is_err(), second.is_err()), (first_refused, !first_refused), "{case}: the calls ended with {:?} and {:?}", first.as_ref().err(), second.as_ref().err());
+        let (first, second) = (bound(first_call).await.unwrap().unwrap(), bound(second_call).await.unwrap().unwrap());
+        let (first, second) = (bound(rig.database.outcome(first)).await.unwrap(), bound(rig.database.outcome(second)).await.unwrap());
+        assert_eq!((matches!(first, WireOperationOutcome::Rejected { .. }), matches!(second, WireOperationOutcome::Rejected { .. })), (first_refused, !first_refused), "{case}: the outcomes differ");
         settle(&rig).await;
         assert_eq!(lists(&rig), wanted, "{case}: the lists after both answers");
         rig.database.close_now();
@@ -1286,7 +1299,7 @@ async fn a_network_that_dropped_and_returned_right_after_the_refusal_decision_re
         rig.login_ios("A").await;
         let epoch = rig.database.session_epoch();
         let (values, args) = group("friends");
-        let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+        let created = confirmed_group(&rig, epoch, values, args).await;
         seed_members(&rig, &created.id);
         settle(&rig).await;
         let operation = match case { "create" => "CreateGroup", "leave" => "LeaveGroup", _ => "AddMember" };
@@ -1299,11 +1312,12 @@ async fn a_network_that_dropped_and_returned_right_after_the_refusal_decision_re
             }
         }));
         let result = match case {
-            "create" => { let (values, args) = group("second"); bound(rig.database.create(epoch, "Group".into(), values, args)).await.map(|_| ()) }
-            "leave" => bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await.map(|_| ()),
-            _ => bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "add_member".into(), "{}".into(), json!({"userIds": ["u4"]}).to_string())).await.map(|_| ()),
+            "create" => { let (values, args) = group("second"); bound(rig.database.create(epoch, "Group".into(), values, args)).await }
+            "leave" => bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await,
+            _ => bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "add_member".into(), "{}".into(), json!({"userIds": ["u4"]}).to_string())).await,
         };
-        assert!(result.is_err(), "{case}: the action succeeded although the network dropped and returned after the refusal decision");
+        let outcome = bound(rig.database.outcome(result.unwrap())).await.unwrap();
+        assert!(matches!(outcome, WireOperationOutcome::Rejected { .. }), "{case}: the action succeeded after the network dropped");
         settle(&rig).await;
         assert_eq!(rig.world.count(operation), sent_before, "{case}: the action went out after the network dropped and returned");
         rig.database.close_now();
@@ -1317,7 +1331,7 @@ async fn a_network_that_moves_between_the_plan_and_the_commit_of_a_start_refuses
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("friends");
-    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let created = confirmed_group(&rig, epoch, values, args).await;
     settle(&rig).await;
     let sent_before = rig.world.count("LeaveGroup");
     let (shared, inner) = (rig.database.db.shared.clone(), rig.database.sync.as_ref().unwrap().inner.clone());
@@ -1326,8 +1340,8 @@ async fn a_network_that_moves_between_the_plan_and_the_commit_of_a_start_refuses
         let moving = armed.clone();
         *shared.store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { *moving.network_lost.lock().unwrap() = i64::MAX; }));
     }));
-    let result = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await;
-    assert!(matches!(result, Err(DbError::Network { .. })), "the action ended with {:?}", result.as_ref().err());
+    let receipt = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await.unwrap();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { failure } if failure.kind == "network"));
     settle(&rig).await;
     assert_eq!(rig.world.count("LeaveGroup"), sent_before, "the action went out although the network moved before its start was committed");
     rig.database.close_now();

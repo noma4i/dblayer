@@ -7,35 +7,41 @@ use crate::task::Carry;
 use std::sync::Arc;
 
 impl Inner {
-    pub(crate) fn invalidate_after(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str) -> Result<(), SyncError> {
+    pub(crate) fn mutation_debts(&self, model: &str, action: &str) -> Result<Vec<crate::commit::WindowDebt>, SyncError> {
         let spec = self.db.spec(model)?;
-        let mut names: BTreeSet<String> = spec
-            .actions
-            .iter()
-            .find(|declared| declared.name == action)
-            .map(|declared| declared.refetch.iter().cloned().collect())
-            .unwrap_or_default();
+        let mut names: BTreeSet<String> = spec.actions.iter().find(|declared| declared.name == action)
+            .map(|declared| declared.refetch.iter().cloned().collect()).unwrap_or_default();
         if matches!(action, "create" | "destroy") {
-            let takes_response = action == "create";
-            names.extend(spec.relations.iter().filter(|relation| relation.remote.is_some() && !(takes_response && relation.joins_events)).map(|relation| relation.name.clone()));
+            names.extend(spec.relations.iter().filter(|relation| relation.remote.is_some() && !(action == "create" && relation.joins_events)).map(|relation| relation.name.clone()));
         }
-        let foreign: Vec<String> = names.iter().filter(|name| name.contains('.')).cloned().collect();
-        for name in &foreign {
-            names.remove(name);
-        }
-        let mut marks = Vec::new();
-        for (target, relation) in foreign.iter().filter_map(|name| name.split_once('.')) {
-            marks.push(self.mark_stale(admitted, target, BTreeSet::from([relation.to_string()]))?);
-        }
-        marks.push(self.mark_stale(admitted, model, names)?);
+        self.debts_for(model, names)
+    }
+
+    pub(crate) fn refused_destroy_debts(&self, model: &str) -> Result<Vec<crate::commit::WindowDebt>, SyncError> {
+        let names = self.db.spec(model)?.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
+        self.debts_for(model, names)
+    }
+
+    fn debts_for(&self, model: &str, names: BTreeSet<String>) -> Result<Vec<crate::commit::WindowDebt>, SyncError> {
+        if names.is_empty() { return Ok(Vec::new()); }
+        let since = self.next_issued()?;
+        Ok(names.into_iter().map(|name| {
+            let (target, relation) = name.split_once('.').unwrap_or((model, &name));
+            crate::commit::WindowDebt { model: target.to_string(), relation: relation.to_string(), since }
+        }).collect())
+    }
+
+    pub(crate) fn queue_committed_debts(&self, admitted: &crate::lifecycle::Admitted, debts: &[crate::commit::WindowDebt]) -> Result<(), SyncError> {
+        let retained = admitted.life().admit_passive(crate::lifecycle::Origin::Explicit, "reload", Some(admitted.value()))?;
+        let marks = debts.iter().map(|debt| StaleMark { model: debt.model.clone(), names: BTreeSet::from([debt.relation.clone()]), since: debt.since, admitted: retained.clone() });
         locked(&self.pending_reloads).extend(marks);
         Ok(())
     }
 
     fn mark_stale(&self, admitted: &crate::lifecycle::Admitted, model: &str, names: BTreeSet<String>) -> Result<StaleMark, SyncError> {
-        let since = self.next_issued();
+        let since = self.next_issued()?;
         for name in &names {
-            self.db.shared.store.invalidate_family(&admitted.authority(), model, name)?;
+            self.db.shared.store.invalidate_family(&admitted.authority(), model, name, since)?;
         }
         let admitted = admitted.life().admit_passive(crate::lifecycle::Origin::Explicit, "reload", Some(admitted.value()))?;
         Ok(StaleMark { model: model.to_string(), names, since, admitted })
@@ -52,12 +58,6 @@ impl Inner {
 
     pub(crate) async fn reload_lists_of_absent_parent(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {
         self.invalidate_model(admitted, model).await
-    }
-
-    pub(crate) fn mark_lists_after_refused_destroy(&self, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {
-        let mark = self.mark_model_stale(admitted, model)?;
-        locked(&self.pending_reloads).push(mark);
-        Ok(())
     }
 
     async fn invalidate_model(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {

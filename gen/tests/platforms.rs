@@ -121,7 +121,7 @@ end
     assert_eq!(action.root.as_deref(), Some("containerMute.container"));
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("@concurrent public func mute(mute: Bool, in scope_: AccountScope? = nil) async throws -> Self"));
+    assert!(swift.contains("@concurrent public func mute(mute: Bool, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
     assert!(swift.contains("values_[\"muted\"] = try JSONValue.encode(mute)"));
     assert!(swift.contains("args: [\"mute\": try JSONValue.encode(mute)]"));
     assert!(kotlin.contains("suspend fun mute(mute: Boolean, account: AccountScope? = null): Container"));
@@ -143,8 +143,8 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("@concurrent public static func send(in scope_: AccountScope, name: String? = nil, unreadCount: Int) async throws -> Sent<Self>"));
-    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String? = null, unreadCount: Long): Sent<Container>"));
+    assert!(swift.contains("@concurrent public static func send(in scope_: AccountScope, name: String? = nil, unreadCount: Int) async throws -> MutationReceipt<Self>"));
+    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String? = null, unreadCount: Long): MutationReceipt<Container>"));
 }
 
 #[test]
@@ -260,8 +260,8 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("static func send(in scope_: AccountScope, name: String, unreadCount: Int? = nil) async throws -> Sent<Self>"));
-    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String, unreadCount: Long? = null): Sent<Container>"));
+    assert!(swift.contains("static func send(in scope_: AccountScope, name: String, unreadCount: Int? = nil) async throws -> MutationReceipt<Self>"));
+    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String, unreadCount: Long? = null): MutationReceipt<Container>"));
     let map = r#"{"stance":{"$map":{"from":"shelf","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#;
     assert!(swift.contains(map), "Swift literal");
     assert!(kotlin.contains(&map.replace('$', "${'$'}")), "Kotlin literal");

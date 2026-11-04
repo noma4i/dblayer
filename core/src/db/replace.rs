@@ -4,7 +4,6 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{RowId, RowRef};
-use crate::operation::{open_operations, OutboxQueue};
 use crate::read::LandingPlan;
 use crate::schema::Coverage;
 use crate::store::Reader;
@@ -84,24 +83,26 @@ impl Db {
                 incoming.push((id, row.clone()));
             }
         }
-        let busy: HashSet<String> = OutboxQueue::new(open_operations(reader.connection())?).open_row_ids(model).into_iter().map(|id| id.to_string()).collect();
-        let names = current.iter().map(|member| member.id.clone()).collect::<Vec<_>>();
-        let newer: HashSet<String> = match base_revision {
-            Some(base) => reader.stored_rows(model.as_str(), &names)?.into_iter().filter(|(_, row)| row.revision > base).map(|(id, _)| id).collect(),
-            None => HashSet::new(),
+        let mut membership: HashMap<String, bool> = match base_revision {
+            Some(base) => reader.scope_changes_since(model.as_str(), scope_key, base)?.into_iter().map(|(id, order)| (id, order.is_some())).collect(),
+            None => HashMap::new(),
         };
-        let is_local = |id: &str| crate::identity::is_temp_id(id) || busy.contains(id) || newer.contains(id);
-
+        for (id, joined) in super::op_effect::open_scope_effects(reader.connection(), model.as_str(), scope_key)? {
+            membership.insert(id, joined);
+        }
+        incoming_ids.retain(|id| membership.get(id) != Some(&false));
         let anchor = (request.coverage == Coverage::Page && !request.replace_all)
             .then(|| incoming_ids.last().and_then(|last| current.iter().position(|member| &member.id == last)))
             .flatten();
+        let current_ids: HashSet<&str> = current.iter().map(|member| member.id.as_str()).collect();
+        incoming_ids.retain(|id| membership.get(id) != Some(&true) || !current_ids.contains(id.as_str()));
         let mut result: Vec<String> = incoming_ids.clone();
         if let Some(position) = anchor {
             result.extend(current.iter().skip(position + 1).filter(|member| !seen.contains(&member.id)).map(|member| member.id.clone()));
         }
         let mut present: HashSet<String> = result.iter().cloned().collect();
         for (index, member) in current.iter().enumerate() {
-            if is_local(&member.id) && present.insert(member.id.clone()) {
+            if membership.get(&member.id) == Some(&true) && present.insert(member.id.clone()) {
                 result.insert(index.min(result.len()), member.id.clone());
             }
         }
@@ -116,7 +117,7 @@ impl Db {
         let mut entity_ops: Vec<EntityOp> = incoming.into_iter().map(|(id, row)| EntityOp::Upsert { model: model.clone(), id, row }).collect();
 
         let mut destroyed: HashSet<RowRef> = HashSet::new();
-        for index in destroyable.iter().filter(|index| !is_local(&current[**index].id)) {
+        for index in &destroyable {
             let own = RowRef::new(model.clone(), RowId::new(&current[*index].id)?);
             for target in self.destroy_targets(reader, &own, WriteOrigin::Event)? {
                 let upserted = target.model == *model && seen.contains(target.id.as_str());

@@ -208,7 +208,7 @@ fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) 
     }
 }
 
-fn failure(failure: &OperationFailure) -> WireFailure {
+pub(super) fn failure(failure: &OperationFailure) -> WireFailure {
     WireFailure { kind: enum_text(&failure.kind).unwrap_or_default(), message: failure.message.clone(), extensions: failure.extensions.clone() }
 }
 

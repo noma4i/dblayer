@@ -178,14 +178,16 @@ impl Inner {
 
     pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
         let (generation, base_revision) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> { Ok((self.db.generation(), self.db.revision_seq()?)) })?;
-        Ok(FetchAttempt::new(key, self.next_issued(), generation, base_revision))
+        Ok(FetchAttempt::new(key, self.next_issued()?, generation, base_revision))
     }
 
-    pub(crate) fn next_issued(&self) -> i64 {
-        let now = self.now_ms();
-        let next = |previous: i64| previous.max(now - 1) + 1;
-        let previous = self.issued.try_update(Ordering::SeqCst, Ordering::SeqCst, |previous| Some(next(previous))).unwrap_or_else(|previous| previous);
-        next(previous)
+    pub(crate) fn next_issued(&self) -> Result<i64, SyncError> {
+        let floor = self.issued_floor.get_or_init(|| self.db.shared.store.max_window_sequence().map_err(|error| error.to_string()));
+        let floor = *floor.as_ref().map_err(|error| SyncError::Store(error.clone()))?;
+        self.issued.fetch_max(floor, Ordering::SeqCst);
+        self.issued.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |previous| previous.checked_add(1))
+            .map(|previous| previous + 1)
+            .map_err(|_| SyncError::Store("window sequence exhausted".into()))
     }
 
     fn window_is_fresh(&self, resolved: &Resolved<'_>) -> Result<bool, SyncError> {

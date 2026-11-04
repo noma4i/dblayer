@@ -2,7 +2,6 @@ package com.noma4i.dblayer
 
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.coroutines.ensureActive
@@ -82,38 +81,39 @@ suspend fun <T> onAccount(account: AccountScope?, call: suspend (Database, ULong
     return offCaller { call(admission.database, admission.epoch) }
 }
 
-suspend fun DBModel.retry(action: String?, account: AccountScope? = null): ULong = onAccount(account) { database, epoch -> database.retry(epoch, modelName, id, action) }
-suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?, account: AccountScope? = null): ULong = onAccount(account) { database, epoch -> database.retry(epoch, modelName, id, action) }
+suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?, account: AccountScope? = null): MutationReceipt<Model> = onAccount(account) { database, epoch -> MutationReceipt(database, this, database.retry(epoch, modelName, id, action)) }
 suspend fun DBModel.discard(action: String?, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.discard(epoch, modelName, id, action) }
 
-suspend fun DBModel.destroy(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.destroy(epoch, modelName, id) }
+suspend fun <Model : DBModel> ModelDecoder<Model>.destroy(id: String, account: AccountScope? = null): MutationReceipt<Model> = onAccount(account) { database, epoch -> MutationReceipt(database, this, database.destroy(epoch, modelName, id)) }
 
 suspend fun DBModel.setLocal(path: String, value: kotlinx.serialization.json.JsonElement, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.setLocal(epoch, modelName, id, path, value.jsonText()) }
 
-/** Waits until the server has answered the queued changes of the record, or of the declared `action` when given, throws on a refusal or when offline. */
-suspend fun DBModel.settled(action: String?, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.settled(epoch, modelName, id, action) }
-
-suspend fun DBModel.confirmedId(account: AccountScope? = null): String = onAccount(account) { database, epoch -> database.confirmed(epoch, modelName, id) }
-
-suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, decoder: ModelDecoder<Model>, account: AccountScope? = null): Model {
-    return onAccount(account) { database, epoch -> decoder.read(database.act(epoch, modelName, id, action, values.jsonText(), args.jsonText()).row) }
+suspend fun <Model : DBModel> Model.act(action: String, values: kotlinx.serialization.json.JsonObject, args: kotlinx.serialization.json.JsonObject, decoder: ModelDecoder<Model>, account: AccountScope? = null): MutationReceipt<Model> {
+    return onAccount(account) { database, epoch -> MutationReceipt(database, decoder, database.act(epoch, modelName, id, action, values.jsonText(), args.jsonText())) }
 }
 
-suspend fun <Model : DBModel, Answer> Model.actAnswering(
-    action: String,
-    values: kotlinx.serialization.json.JsonObject,
-    args: kotlinx.serialization.json.JsonObject,
-    decoder: ModelDecoder<Model>,
-    answerSerializer: KSerializer<Answer>,
-    account: AccountScope? = null,
-): ActionAnswer<Model, Answer> {
-    val admission = admit(account)
-    val queued = offCaller { admission.database.act(admission.epoch, modelName, id, action, values.jsonText(), args.jsonText()) }
-    return ActionAnswer(offCaller { decoder.read(queued.row) }, queued.operation, answerSerializer, admission.epoch, admission.database)
+sealed interface OperationOutcome<out Model : DBModel> {
+    val confirmedValue: Model? get() = null
+    class Confirmed<Model : DBModel>(override val confirmedValue: Model?, val answerJson: String?) : OperationOutcome<Model>
+    class Rejected(val failure: WireFailure) : OperationOutcome<Nothing>
+    data object DeliveryUnknown : OperationOutcome<Nothing>
+    data object Interrupted : OperationOutcome<Nothing>
 }
 
-class ActionAnswer<Model : DBModel, Answer>(val model: Model, private val operation: Long, private val serializer: KSerializer<Answer>, private val epoch: ULong, private val database: Database) {
-    suspend fun answer(): Answer = offCaller { dbJson.decodeFromString(serializer, database.answer(epoch, model.modelName, operation)) }
+class MutationReceipt<Model : DBModel>(private val database: Database, private val decoder: ModelDecoder<Model>, private val wire: WireOperationReceipt) {
+    val optimisticValue: Model? = wire.optimisticValue?.let(decoder::read)
+    val revision: Long = wire.revision
+    val epoch: ULong = wire.epoch
+    val operation: Long? = wire.operation
+
+    suspend fun outcome(): OperationOutcome<Model> = offCaller {
+        when (val result = database.outcome(wire)) {
+            is WireOperationOutcome.Confirmed -> OperationOutcome.Confirmed(result.value?.let(decoder::read), result.answerJson)
+            is WireOperationOutcome.Rejected -> OperationOutcome.Rejected(result.failure)
+            WireOperationOutcome.DeliveryUnknown -> OperationOutcome.DeliveryUnknown
+            WireOperationOutcome.Interrupted -> OperationOutcome.Interrupted
+        }
+    }
 }
 
 class ModelEvent<Model : DBModel>(val area: String, val kind: String, val id: String, val before: Model?, val after: Model?)

@@ -145,18 +145,16 @@ Bootstrap keeps its separate envelope and shares only the JWE encryption primiti
 
 A sealed answer of the encrypted session that carries an `error` field with a session code throws `DbError.Session(code:detail:)` (`DbException.Session` with `code` and `detail` in Kotlin). It is the same case that `sessionCall` throws, with the same `SessionCode`. No `Graphql` error and no text is parsed. `detail` holds the code text of the server.
 
-| Where | When it throws |
+| Where | Result |
 | ----- | -------------- |
 | `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
 | `DB.run(_:variables:)` and generated `Operations.*` calls (`DBlayer.database.run` in Kotlin) | the call got the sealed refusal |
-| `settled(action)`, `confirmedId()` and `answer()` of a row or an action that has a mutation | the queued mutation got the sealed refusal. `unauthenticated` and `accountUnavailable` keep the operation failed and the optimistic row in place, `error.kind` is `session:<CODE>` and `error.message` is the detail. Recover as in "Recover a queued mutation" below. Every other code follows the `onFailure` rule of the action, as for any refusal |
+| Mutation receipt `outcome()` | the queued mutation got the sealed refusal. The rejected outcome carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
 | streams (`scope.stream`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
 `flush()` and `retry(action)` do not throw for the refusal of one operation. `sessionResume()` throws sealed refusals but returns `nil` / `null` for permanent HTTP refusals listed below. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
 
-The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` also keep the optimistic row and the `Failed` operation.
-This applies to the GraphQL response and to the typed `Graphql` exception.
-`settled(action)`, `confirmedId()` and `answer()` return `Session` with the matching code on both platforms.
+The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` reach the rejected outcome with the same code. The action's declaration decides whether to keep its optimistic value.
 
 ### Recover a queued mutation
 

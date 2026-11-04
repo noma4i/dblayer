@@ -181,7 +181,7 @@ impl Inner {
         Ok(file.with_steps(uploads.steps(&mutation)))
     }
 
-    pub(crate) fn begin_upload(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, file: &UploadFile, state: UploadState) -> Result<i64, SyncError> {
+    pub(crate) fn begin_upload(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, file: &UploadFile, state: UploadState) -> Result<(i64, i64, crate::db::Row, Arc<crate::sync::OutcomeTicket>), SyncError> {
         let input = self.upload_input(model, action, file.clone())?;
         let family = self.db.spec(model)?.upload_family(action);
         let record = OperationRecord {
@@ -205,12 +205,17 @@ impl Inner {
                     return Err(SyncError::Params(format!("{model} {id} already has the upload {action}")));
                 }
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+                envelope.snapshot = Some(crate::identity::RowRef::new(crate::identity::ModelKey::new(model), id.clone()));
                 envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record.clone()), items: vec![item.clone()] });
                 Ok(Some(envelope))
             })?;
-            let seq = committed.as_ref().and_then(|result| result.result().operations.iter().next().copied()).ok_or(SyncError::Cancelled);
+            let result = committed.as_ref().map(|result| result.result()).ok_or(SyncError::Cancelled)?;
+            let seq = result.operations.iter().next().copied().ok_or(SyncError::Cancelled)?;
+            let revision = result.revision.ok_or(SyncError::Cancelled)?;
+            let row = result.snapshot.clone().ok_or(SyncError::Cancelled)?;
+            let ticket = locked(&self.outcomes).claim(seq);
             *pending = committed;
-            seq
+            Ok((seq, revision, row, ticket))
         })
     }
 
@@ -412,6 +417,21 @@ impl Sync {
         }).await?
     }
 
+    pub(crate) async fn upload_create_claiming(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<(RowId, i64, i64, Arc<crate::sync::OutcomeTicket>), SyncError> {
+        self.inner.require_session(admitted)?;
+        let inner = self.inner.clone();
+        let admitted = admitted.clone();
+        let generation = inner.db.generation();
+        let (model, action) = (model.to_string(), action.to_string());
+        crate::task::spawn_blocking(crate::task::Carry::here(), move || {
+            let input = inner.upload_input(&model, &action, file)?;
+            let (id, seq, revision, ticket) = inner.db.create_held_claiming(&admitted, generation, &model, &action, values, input, UploadState::queued(), |seq| locked(&inner.outcomes).claim(seq))?;
+            inner.start_uploads()?;
+            inner.db.report_upload_accepted(&admitted, &model, inner.db.accepted_items(std::slice::from_ref(&id))?);
+            Ok((id, seq, revision, ticket))
+        }).await.map_err(|error| SyncError::Store(error.to_string()))?
+    }
+
     pub fn check_uploads(&self) -> Result<(), SyncError> {
         if self.inner.config.uploads.is_some() { self.inner.upload_operations()?; }
         Ok(())
@@ -432,17 +452,18 @@ impl Sync {
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<i64, SyncError> {
+    pub(crate) async fn upload(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<(i64, i64, crate::db::Row, Arc<crate::sync::OutcomeTicket>), SyncError> {
         self.inner.require_session(admitted)?;
         let inner = self.inner.clone();
         let admitted = admitted.clone();
         let generation = inner.db.generation();
         let (model, id, action) = (model.to_string(), id.clone(), action.to_string());
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
-            let seq = inner.begin_upload(&admitted, generation, &model, &id, &action, &file, UploadState::queued())?;
+            let (seq, revision, row, ticket) = inner.begin_upload(&admitted, generation, &model, &id, &action, &file, UploadState::queued())?;
+            let row = inner.db.shared.overlay_snapshot(&model, row)?;
             inner.start_uploads()?;
             inner.db.report_upload_accepted(&admitted, &model, vec![crate::db::AcceptedUpload { seq, position: 0 }]);
-            Ok(seq)
+            Ok((seq, revision, row, ticket))
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 

@@ -444,31 +444,20 @@ public struct AccountScope: Sendable {
   }
 
   /// Writes the model locally and queues it for the server. It works without a network and after the app closed. Only a durable create action (sending a message) and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended.
-  @concurrent public func send<Model: DBModel>(_: Model.Type, values: [String: JSONValue], args: [String: JSONValue] = [:], upload: UploadCommand? = nil) async throws -> Sent<Model> {
+  @concurrent public func send<Model: DBModel>(_: Model.Type, values: [String: JSONValue], args: [String: JSONValue] = [:], upload: UploadCommand? = nil) async throws -> MutationReceipt<Model> {
     let receipt = try await database.send(request: CommandRequest(epoch: epoch, model: Model.modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text, upload: try upload.map { CommandUpload(action: $0.action, request: try $0.request.wire) }))
-    return Sent(row: try Model.decode(receipt.row), receipt: receipt, database: database)
+    return try MutationReceipt(database: database, wire: receipt)
   }
 
   /// Sends the file of an existing record through its declared upload action.
-  @concurrent public func upload<Model: DBModel, Answer: Decodable & Sendable>(_ row: Model, action: String, _ request: UploadRequest) async throws -> ActionAnswer<Model, Answer> {
-    let operation = try await database.upload(epoch: epoch, model: Model.modelName, rowId: row.id, action: action, request: request.wire)
-    return ActionAnswer(model: row, operation: operation, epoch: epoch, database: database)
+  @concurrent public func upload<Model: DBModel>(_ row: Model, action: String, _ request: UploadRequest) async throws -> MutationReceipt<Model> {
+    let receipt = try await database.upload(epoch: epoch, model: Model.modelName, rowId: row.id, action: action, request: request.wire)
+    return try MutationReceipt(database: database, wire: receipt)
   }
 
   @concurrent public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> [Model] {
     try await database.uploadCreateBatch(epoch: epoch, model: Model.modelName, items: items.map { try $0.wire }, request: request.wire).map(Model.decode)
   }
-}
-
-public struct Sent<Model: DBModel>: Sendable {
-  public let row: Model
-  fileprivate let receipt: CommandReceipt
-  fileprivate let database: Database
-
-  public func status() throws -> CommandStatus { try database.commandStatus(receipt: receipt) }
-
-  /// Waits for the one outcome: delivered, failed, or ended with the session. It waits while the network is away.
-  @concurrent public func outcome() async throws -> CommandStatus { try await database.commandOutcome(receipt: receipt) }
 }
 
 extension DB {

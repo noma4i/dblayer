@@ -1,6 +1,33 @@
 import Foundation
 import Testing
+import DBlayerTesting
 @testable import DBlayer
+
+enum WaitFailure: Error { case timeout, unexpectedOutcome }
+
+func entered(_ hold: Hold) async -> Bool {
+  await withTaskGroup(of: Bool.self) { group in
+    group.addTask { await hold.entered(); return !Task.isCancelled }
+    group.addTask { try? await Task.sleep(for: .seconds(10)); return false }
+    let arrived = await group.next() ?? false
+    group.cancelAll()
+    return arrived
+  }
+}
+
+func valueBeforeDeadline<Value: Sendable>(_ task: Task<Value, any Error>, release: @escaping @Sendable () -> Void) async throws -> Value {
+  try await withThrowingTaskGroup(of: Value.self) { group in
+    group.addTask { try await task.value }
+    group.addTask {
+      try await Task.sleep(for: .seconds(10))
+      task.cancel()
+      release()
+      throw WaitFailure.timeout
+    }
+    defer { group.cancelAll() }
+    return try await group.next()!
+  }
+}
 let hangGuard: Duration = .seconds(60)
 func eventually(
   _ what: String = "the condition",

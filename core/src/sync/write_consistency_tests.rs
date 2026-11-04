@@ -102,7 +102,7 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
                     assert_eq!(db.outbox().unwrap().len(), 1, "operation survives unrelated reset");
                 }
             };
-            let (result, ()) = tokio::join!(crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &operation, None, false)), reset);
+            let (result, ()) = tokio::join!(crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &operation, None)), reset);
             result.unwrap();
         }
         let mut entries = db.outbox().unwrap();
@@ -215,7 +215,7 @@ async fn network_writes_preserve_pending_fields() {
                 let node = json!({"id":"r1","body":"server","size":7});
                 let payload = if source == "response" { json!({"updateRecord":{"record":node}}) } else { json!({"updateRecord":{"record":{"id":"r0","body":"confirmed"},"related":node}}) };
                 transport.enqueue("UpdateRecord", Reply::data(payload));
-                crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("UpdateRecord", "mutation UpdateRecord { updateRecord { record { id } } }", "updateRecord.record"), None, true)).await.unwrap();
+                crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("UpdateRecord", "mutation UpdateRecord { updateRecord { record { id } } }", "updateRecord.record"), None)).await.unwrap();
             }
             _ => unreachable!(),
         }
@@ -294,7 +294,7 @@ async fn removing_upload_item_rewrites_mapped_values() {
     let entry = db.outbox().unwrap().remove(0);
     let sending = super::send::Sending { admitted: &db.admit().unwrap(), entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
     transport.enqueue("CreateRecords", Reply::data(json!({"records":[{"id":"r0","clientKey":"key-0"},{"id":"r2","clientKey":"key-2"}]})));
-    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true)).await.unwrap();
+    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None)).await.unwrap();
     let call = transport.calls().into_iter().find(|call| call.operation_name == "CreateRecords").unwrap();
     assert_eq!(call.variables["items"][0]["position"], 0);
     assert_eq!(call.variables["items"][1]["position"], 1);
@@ -319,7 +319,7 @@ async fn waiters_woken_by_the_commit_of_a_batch_get_the_real_ids() {
     let sending = super::send::Sending { admitted: &db.admit().unwrap(), entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
     let received = super::send::confirmed_tests::confirm_while_landing(&sync, ids.iter().map(|id| ("Record".to_string(), id.clone())).collect());
     transport.enqueue("CreateRecords", Reply::data(json!({"records":[{"id":"r0","clientKey":"key-0"},{"id":"r1","clientKey":"key-1"},{"id":"r2","clientKey":"key-2"}]})));
-    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true)).await.unwrap();
+    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None)).await.unwrap();
     let confirmed = crate::test_wait::recv_within(&received);
     *super::locked(&sync.inner.landed_probe) = None;
     assert_eq!(confirmed.into_iter().map(|result| result.unwrap().to_string()).collect::<Vec<_>>(), ["r0", "r1", "r2"]);

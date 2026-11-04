@@ -100,8 +100,45 @@ pub struct Config { pub path: Option<String>, pub data_version: Option<String>, 
 #[derive(uniffi::Record)]
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64, pub retained_observers: u64 }
 
-#[derive(uniffi::Record)]
-pub struct QueuedAction { pub row: WireRow, pub operation: i64 }
+#[derive(uniffi::Object)]
+pub struct WireReceiptTicket {
+    ticket: Option<Arc<crate::sync::OutcomeTicket>>,
+    life: Arc<Lifecycle>,
+    epoch: u64,
+    model: String,
+    operation: Option<i64>,
+    revision: i64,
+    optimistic_value: Option<WireRow>,
+}
+
+impl std::fmt::Debug for WireReceiptTicket {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("WireReceiptTicket").finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct WireOperationReceipt {
+    pub epoch: u64,
+    pub model: String,
+    pub operation: Option<i64>,
+    pub revision: i64,
+    pub optimistic_value: Option<WireRow>,
+    pub ticket: Arc<WireReceiptTicket>,
+}
+
+pub(super) fn receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Arc<crate::sync::OutcomeTicket>>, life: Arc<Lifecycle>) -> WireOperationReceipt {
+    let held = WireReceiptTicket { ticket, life, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone() };
+    WireOperationReceipt { epoch, model, operation, revision, optimistic_value, ticket: Arc::new(held) }
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum WireOperationOutcome {
+    Confirmed { value: Option<WireRow>, answer_json: Option<String> },
+    Rejected { failure: super::wire::WireFailure },
+    DeliveryUnknown,
+    Interrupted,
+}
 
 #[derive(uniffi::Object)]
 pub struct TestClock { clock: Arc<ManualClock> }
@@ -228,38 +265,27 @@ impl Database {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64, retained_observers: census.retained as u64 }
     }
-    /// Creates a row. A model that keeps the row on the device writes it at once. A model whose create declares a server mutation needs the network, waits for the answer of the server and returns the confirmed row. A durable create (sending a message) goes through `send`.
-    pub async fn create(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireRow, DbError> {
+    pub async fn create(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
         let declared = self.db.spec(&model)?.actions.iter().find(|action| action.name == "create").cloned();
         let remote = declared.as_ref().is_some_and(|action| action.mutation.is_some());
         if declared.as_ref().is_some_and(|action| action.durable) {
             return Err(DbError::Invalid { detail: format!("{model} sends its create as a durable command: use send") });
         }
         let origin = if remote { crate::lifecycle::Origin::Session } else { crate::lifecycle::Origin::Explicit };
-        let written = self.write_in_epoch(origin, epoch, "create", { let model = model.clone(); move |database, admitted| {
-            let created = database.db.create_queued(admitted, None, &model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
+        self.write_in_epoch(origin, epoch, "create", move |database, admitted| {
+            let sync = database.sync.clone();
+            let (row, operation, revision, ticket) = database.db.create_claiming(admitted, None, &model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?, |operation| operation.and_then(|operation| sync.as_ref().map(|sync| sync.claim_outcome(operation))))?;
             database.send_writes();
-            Ok(created)
-        } }).await?;
-        let (written, operation) = written;
-        if !remote { return Ok(self.wire(&model)?.row(&written)); }
-        let sync = self.sync()?.clone();
-        let (db, wire, temporary) = (self.db.clone(), self.wire(&model)?.clone(), written.id.clone());
-        self.serve_in_epoch(epoch, "create", move |admitted| async move {
-            let real = match operation {
-                Some(operation) => sync.confirmed_by(&admitted, &model, &temporary, operation).await?,
-                None => sync.confirmed(&admitted, &model, &temporary).await?,
-            };
-            let row = db.find(&model, &real)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {real} was not created") })?;
-            Ok::<_, DbError>(wire.row(&row))
+            Ok(receipt(epoch, model.clone(), operation, revision, Some(database.wire(&model)?.row(&row)), ticket, database.streams.clone()))
         }).await
     }
-    pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireRow, DbError> {
+    pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
         let origin = self.write_origin(&model, "update")?;
         self.write_in_epoch(origin, epoch, "update", move |database, admitted| {
-            let row = database.db.update_with(admitted, &model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
+            let sync = database.sync.clone();
+            let (row, operation, revision, ticket) = database.db.update_claiming(admitted, &model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?, |operation| operation.and_then(|operation| sync.as_ref().map(|sync| sync.claim_outcome(operation))))?;
             database.send_writes();
-            Ok(database.wire(&model)?.row(&row))
+            Ok(receipt(epoch, model.clone(), operation, revision, Some(database.wire(&model)?.row(&row)), ticket, database.streams.clone()))
         }).await
     }
     pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
@@ -267,48 +293,50 @@ impl Database {
             Ok(database.db.set_local(admitted, &model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
         }).await
     }
-    /// Queues the action. An action with no optimistic change and no declared result returns after the server answered, with the row at the root of the answer: the receiver row when the answer names the receiver, else the row the answer carried. The receiver row is never overwritten by an answer with another id.
-    pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
+    pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
         let origin = self.write_origin(&model, &action)?;
-        let declared = self.db.spec(&model)?.actions.iter().find(|declared| declared.name == action).cloned();
-        let waits = declared.as_ref().is_some_and(|declared| declared.returns_answer());
-        let removes_receiver = declared.as_ref().is_some_and(|declared| declared.removes_receiver);
-        let (call_model, call_action, receiver) = (model.clone(), action.clone(), row_id.clone());
-        let sync_for_wish = if waits { Some(self.sync()?.clone()) } else { None };
-        let (queued, wish) = self.write_in_epoch(origin, epoch, "act", move |database, admitted| {
-            let (acted, wish) = database.db.act_claiming(admitted, &model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?, |operation| sync_for_wish.map(|sync| sync.expect_answer(operation)))?;
+        self.write_in_epoch(origin, epoch, "act", move |database, admitted| {
+            let sync = database.sync()?.clone();
+            let (acted, ticket) = database.db.act_claiming(admitted, &model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?, |operation| sync.claim_outcome(operation))?;
             database.send_writes();
-            Ok((QueuedAction { row: database.wire(&model)?.row(&acted.row), operation: acted.operation }, wish))
-        }).await?;
-        if !waits { return Ok(queued); }
-        let (sync, db, wire, operation, left) = (self.sync()?.clone(), self.db.clone(), self.wire(&call_model)?.clone(), queued.operation, queued.row.clone());
-        self.serve_in_epoch(epoch, "act answer", move |admitted| async move {
-            let _wish = wish;
-            let receiver = id(&receiver)?;
-            sync.settled_operation(&admitted, &call_model, operation).await?;
-            let answered = match sync.answer_root(operation) {
-                Some(Some(root)) => root,
-                Some(None) => receiver.clone(),
-                None => return Err(DbError::Invalid { detail: format!("the answer to {call_model}.{call_action} was not published") }),
-            };
-            let row = match db.find(&call_model, &answered)? {
-                Some(row) => Some(row),
-                None => db.find(&call_model, &receiver)?,
-            };
-            match row {
-                Some(row) => Ok::<_, DbError>(QueuedAction { row: wire.row(&row), operation }),
-                None if removes_receiver => Ok(QueuedAction { row: left, operation }),
-                None => Err(DbError::Invalid { detail: format!("{call_model} {receiver} is gone after the answer") }),
-            }
+            Ok(receipt(epoch, model.clone(), Some(acted.operation), acted.revision, Some(database.wire(&model)?.row(&acted.row)), Some(ticket), database.streams.clone()))
         }).await
     }
-    pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<(), DbError> {
+    pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
         let origin = self.write_origin(&model, "destroy")?;
         self.write_in_epoch(origin, epoch, "destroy", move |database, admitted| {
-            database.db.destroy(admitted, &model, &id(&row_id)?)?;
+            let sync = database.sync.clone();
+            let (_, operation, revision, ticket) = database.db.destroy_claiming(admitted, &model, &id(&row_id)?, |operation| operation.and_then(|operation| sync.as_ref().map(|sync| sync.claim_outcome(operation))))?;
             database.send_writes();
-            Ok(())
+            Ok(receipt(epoch, model, operation, revision, None, ticket, database.streams.clone()))
         }).await
+    }
+    pub async fn outcome(&self, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
+        if !Arc::ptr_eq(&receipt.ticket.life, &self.streams) { return Err(DbError::Invalid { detail: "the receipt belongs to another database".into() }); }
+        if receipt.epoch != receipt.ticket.epoch || receipt.model != receipt.ticket.model || receipt.operation != receipt.ticket.operation || receipt.revision != receipt.ticket.revision || receipt.optimistic_value != receipt.ticket.optimistic_value {
+            return Err(DbError::Invalid { detail: "the receipt was changed".into() });
+        }
+        if !self.admits(receipt.epoch) { return Ok(WireOperationOutcome::Interrupted); }
+        let Some(ticket) = receipt.ticket.ticket.clone() else {
+            if receipt.operation.is_some() { return Err(DbError::Invalid { detail: "the operation has no sender".into() }); }
+            return Ok(WireOperationOutcome::Confirmed { value: receipt.optimistic_value, answer_json: None });
+        };
+        let result = self.in_epoch(receipt.epoch, "operation outcome", async move { Ok::<_, DbError>(ticket.result().await) }).await;
+        let result = match result {
+            Ok(result) => result,
+            Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),
+            Err(error) => return Err(error),
+        };
+        match result.result {
+            crate::sync::SendResult::Committed => {
+                let value = result.value.map(|row| self.wire(&receipt.model).map(|wire| wire.row(&row))).transpose()?;
+                Ok(WireOperationOutcome::Confirmed { value, answer_json: result.answer.map(|answer| answer.to_string()) })
+            }
+            crate::sync::SendResult::Rejected(failure) => Ok(WireOperationOutcome::Rejected { failure: super::wire::failure(&failure) }),
+            crate::sync::SendResult::DeliveryUnknown | crate::sync::SendResult::Quarantined => Ok(WireOperationOutcome::DeliveryUnknown),
+            crate::sync::SendResult::Discarded => Ok(WireOperationOutcome::Interrupted),
+            crate::sync::SendResult::Deferred | crate::sync::SendResult::Skipped(_) => Err(DbError::Invalid { detail: "operation has not finished".into() }),
+        }
     }
     pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
         self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "set ephemeral", move |database, admitted| {
@@ -421,14 +449,14 @@ impl Database {
         on_executor(async move { sync.flush(&admitted).await }).await?;
         Ok(())
     }
-    pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<u64, DbError> {
-        let Some(sync) = self.sync.clone() else { return Ok(0) };
-        let row = id(&row_id)?;
-        let db = self.db.clone();
-        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "retry", false, |admitted| async move {
-            let count = db.retry(&admitted, &model, &row, action.as_deref())?;
-            sync.flush(&admitted).await?;
-            Ok::<_, DbError>(count as u64)
+    pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<WireOperationReceipt, DbError> {
+        self.write_in_epoch(crate::lifecycle::Origin::Session, epoch, "retry", move |database, admitted| {
+            let sync = database.sync()?.clone();
+            let id = id(&row_id)?;
+            let (operation, revision, ticket) = database.db.retry_claiming(admitted, &model, &id, action.as_deref(), |operation| sync.claim_outcome(operation))?;
+            let row = database.db.find(&model, &id)?.map(|row| database.wire(&model).map(|wire| wire.row(&row))).transpose()?;
+            database.send_writes();
+            Ok(receipt(epoch, model, Some(operation), revision, row, Some(ticket), database.streams.clone()))
         }).await
     }
     pub async fn retry_all(&self, epoch: u64) -> Result<u64, DbError> {
@@ -478,12 +506,15 @@ impl Database {
         Ok(())
     }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.as_ref().map(Sync::downgrade), online: self.db.connectivity() })) }
-    pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<i64, DbError> {
+    pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
         let sync = self.sync()?.clone();
+        let wire = self.wire(&model)?.clone();
+        let life = self.streams.clone();
         let row = id(&row_id)?;
         self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "upload", false, |admitted| on_executor(async move {
             let file = request.into_file()?;
-            Ok::<_, DbError>(sync.upload(&admitted, &model, &row, &action, file).await?)
+            let (operation, revision, row, ticket) = sync.upload(&admitted, &model, &row, &action, file).await?;
+            Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, Some(wire.row(&row)), Some(ticket), life))
         })).await
     }
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<Vec<WireRow>, DbError> {
@@ -495,20 +526,6 @@ impl Database {
             let rows = sync.upload_create_batch(&admitted, &model, items, input).await?;
             Ok::<_, DbError>(rows.iter().map(|row| wire.row(row)).collect())
         })).await
-    }
-    pub async fn confirmed(&self, epoch: u64, model: String, row_id: String) -> Result<String, DbError> {
-        let sync = self.sync()?.clone();
-        let row = id(&row_id)?;
-        self.serve_in_epoch(epoch, "confirmed", |admitted| async move { Ok::<_, DbError>(sync.confirmed(&admitted, &model, &row).await?.to_string()) }).await
-    }
-    pub async fn settled(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
-        let sync = self.sync()?.clone();
-        let row = id(&row_id)?;
-        self.serve_in_epoch(epoch, "settled", |admitted| async move { Ok::<_, DbError>(sync.settled(&admitted, &model, &row, action.as_deref()).await?) }).await
-    }
-    pub async fn answer(&self, epoch: u64, model: String, operation: i64) -> Result<String, DbError> {
-        let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "answer", move |admitted| async move { Ok::<_, DbError>(sync.answer(&admitted, &model, operation).await?.to_string()) }).await
     }
     pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         let sync = self.sync()?.clone();

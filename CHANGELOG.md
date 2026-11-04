@@ -6,7 +6,7 @@
 - `NoSession` reports server work without a session or transport on both platforms.
 - Core encrypted calls and cable subscriptions take the admission of their caller.
 - Value bridge: `AccountScope`, `ValueStream`, `Projected`, snapshots and keyed deltas with the session epoch.
-- `AccountScope.send`: a durable message command with `CommandStatus`, refused for an old epoch.
+- `AccountScope.send`: a durable message command with an operation receipt, refused for an old epoch.
 - `refresh`, `loadMore` and `loaded` on a stream, interrupted when its session ends.
 - Lifecycle sequence tests for the core, Swift and Kotlin, listed in a manifest.
 - Streams for counts, related rows, rows by id, model events and upload status.
@@ -25,7 +25,7 @@
 - iOS uploads use a plain `URLSession` PUT.
 - Only a message send and a media upload wait for the network; other actions fail at once offline.
 - A send, a stream request and a prepared delivery end with the epoch they belong to.
-- A create the server answers goes through `create`, needs the network and returns the confirmed row; only a durable create uses `send`.
+- A server create returns its optimistic value and a separate outcome; only a durable create uses `send`.
 - Every command, one-off read and blob call carries the session epoch of its account and is refused when that account left.
 - A send needs a signed-in session.
 - An action that is not a durable command is refused and rolled back while the network is away, after a reopen and when another account signs in.
@@ -40,7 +40,7 @@
 - Projections, count streams and event streams report platform decode errors and source errors.
 - A durable send that failed on the network goes out at once when the network returns.
 - `refresh`, `loadMore` and a one-off load fail at once with the network error while offline, and the stream state shows it.
-- An action whose answer carries another row returns that row and leaves the receiver row unchanged.
+- An action whose answer carries another row returns that row in its outcome and leaves the receiver unchanged.
 - The first delivery of a projection is a snapshot; `takeEdits` returns `nil` until a delta arrives.
 - `run`, loads, node reads, cache reads, `retryAll`, `cancelUpload` and the Blob calls carry the session epoch and are refused when that session ended.
 - A scope keeps the database it was made for; a call with an old scope never reaches a database opened later.
@@ -244,7 +244,7 @@
 
 ### Added
 - `openTesting(listening: false)` holds model subscriptions until `setListening(true)`.
-- Upload actions return `ActionAnswer` with the declared fields of the final mutation.
+- Upload actions return the declared fields of the final mutation.
 
 ### Changed
 - Uploads with empty operations report the cause and the required operation definitions.

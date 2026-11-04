@@ -27,7 +27,7 @@ async fn a_write_yields_while_sqlite_is_busy_and_finishes_after_release() {
     });
     let yielded = received.recv_timeout(Duration::from_secs(2));
     drop(writer);
-    let row = join_within(thread).unwrap();
+    let row = join_within(thread).unwrap().optimistic_value.unwrap();
     assert!(yielded.unwrap());
     assert_eq!(database.db.find("Note", &crate::identity::RowId::new(&row.id).unwrap()).unwrap().unwrap().get("text"), Some(&serde_json::json!("saved")));
 }

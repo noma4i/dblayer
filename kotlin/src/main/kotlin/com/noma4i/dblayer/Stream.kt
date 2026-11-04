@@ -299,14 +299,6 @@ val ValueStream.uploadStatus: Flow<WireBlobSnapshot>
 /** The file of a media command and the declared upload action that sends it. */
 class UploadCommand(val action: String, val request: UploadRequest)
 
-/** The outcome of a durable command, or the row it wrote. */
-class Sent<Model : DBModel> internal constructor(val row: Model, private val receipt: CommandReceipt, private val database: Database) {
-    fun status(): CommandStatus = database.commandStatus(receipt)
-
-    /** Waits for the one outcome: delivered, failed, or ended with the session. It waits while the network is away. */
-    suspend fun outcome(): CommandStatus = offCaller { database.commandOutcome(receipt) }
-}
-
 /** The streams and commands of one signed-in account. The root of the app makes one after the sign-in and recreates its screens when the account changes: a scope whose session ended opens streams that end at once. */
 class AccountScope private constructor(val epoch: ULong, internal val database: Database) {
     /** [refreshOnConnect] loads the relation again when the stream opens, also when it is fresh. The first rows stay visible. */
@@ -324,15 +316,15 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
     fun uploadStatus(id: String): ValueStream = database.openValueStream(epoch, StreamRequest.Blob(id))
 
     /** Writes the model locally and queues it for the server. It works without a network and after the app closed. Only a durable create action (sending a message) and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended. */
-    suspend fun <Model : DBModel> send(decoder: ModelDecoder<Model>, values: JsonObject, args: JsonObject = JsonObject(emptyMap()), upload: UploadCommand? = null): Sent<Model> {
+    suspend fun <Model : DBModel> send(decoder: ModelDecoder<Model>, values: JsonObject, args: JsonObject = JsonObject(emptyMap()), upload: UploadCommand? = null): MutationReceipt<Model> {
         val receipt = offCaller { database.send(CommandRequest(epoch, decoder.modelName, values.jsonText(), args.jsonText(), upload?.let { CommandUpload(it.action, it.request.wire()) })) }
-        return Sent(decoder.read(receipt.row), receipt, database)
+        return MutationReceipt(database, decoder, receipt)
     }
 
     /** Sends the file of an existing record through its declared upload action. */
-    suspend fun <Model : DBModel, Answer> upload(row: Model, action: String, request: UploadRequest, answerSerializer: kotlinx.serialization.KSerializer<Answer>): ActionAnswer<Model, Answer> {
-        val operation = offCaller { database.upload(epoch, row.modelName, row.id, action, request.wire()) }
-        return ActionAnswer(row, operation, answerSerializer, epoch, database)
+    suspend fun <Model : DBModel> upload(row: Model, action: String, request: UploadRequest, decoder: ModelDecoder<Model>): MutationReceipt<Model> {
+        val receipt = offCaller { database.upload(epoch, row.modelName, row.id, action, request.wire()) }
+        return MutationReceipt(database, decoder, receipt)
     }
 
     suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): List<Model> =

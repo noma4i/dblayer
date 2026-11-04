@@ -19,9 +19,9 @@ pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
 const FINGERPRINT_PREFIX: &str = "fingerprint:";
-const CACHE_TABLES: [&str; 5] = ["window_marker", "scope_member", "scope_edge", "tombstone", "query_window"];
+const CACHE_TABLES: [&str; 6] = ["window_marker", "scope_member", "scope_revision", "scope_edge", "tombstone", "query_window"];
 
-const CACHE_STATEMENTS: [&str; 12] = [
+const CACHE_STATEMENTS: [&str; 18] = [
     "CREATE TABLE IF NOT EXISTS scope_member (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,
@@ -34,6 +34,38 @@ const CACHE_STATEMENTS: [&str; 12] = [
     "CREATE UNIQUE INDEX IF NOT EXISTS scope_order_unique ON scope_member (model, scope_key, order_key)",
     "CREATE INDEX IF NOT EXISTS scope_member_row ON scope_member (model, row_id, scope_key)",
     "CREATE INDEX IF NOT EXISTS scope_member_place ON scope_member (model, scope_key, place, row_id) WHERE place IS NOT NULL",
+    "CREATE TABLE IF NOT EXISTS scope_revision (
+  model TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  operation_seq INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (model, scope_key, row_id)
+) STRICT, WITHOUT ROWID",
+    "CREATE INDEX IF NOT EXISTS scope_revision_since ON scope_revision (model, scope_key, revision, row_id)",
+    "CREATE TRIGGER IF NOT EXISTS scope_revision_insert AFTER INSERT ON scope_member BEGIN
+  INSERT INTO scope_revision (model, scope_key, row_id, revision)
+  VALUES (new.model, new.scope_key, new.row_id, COALESCE((SELECT CAST(value AS INTEGER) FROM manifest WHERE key = 'revision_seq'), 0) + 1)
+  ON CONFLICT (model, scope_key, row_id) DO UPDATE SET revision = excluded.revision;
+END",
+    "CREATE TRIGGER IF NOT EXISTS scope_revision_delete AFTER DELETE ON scope_member BEGIN
+  INSERT INTO scope_revision (model, scope_key, row_id, revision)
+  VALUES (old.model, old.scope_key, old.row_id, COALESCE((SELECT CAST(value AS INTEGER) FROM manifest WHERE key = 'revision_seq'), 0) + 1)
+  ON CONFLICT (model, scope_key, row_id) DO UPDATE SET revision = excluded.revision;
+END",
+    "CREATE TRIGGER IF NOT EXISTS scope_revision_move AFTER UPDATE OF order_key, place ON scope_member WHEN old.order_key IS NOT new.order_key OR old.place IS NOT new.place BEGIN
+  INSERT INTO scope_revision (model, scope_key, row_id, revision)
+  VALUES (new.model, new.scope_key, new.row_id, COALESCE((SELECT CAST(value AS INTEGER) FROM manifest WHERE key = 'revision_seq'), 0) + 1)
+  ON CONFLICT (model, scope_key, row_id) DO UPDATE SET revision = excluded.revision;
+END",
+    "CREATE TRIGGER IF NOT EXISTS scope_revision_rename AFTER UPDATE OF model, scope_key, row_id ON scope_member WHEN old.model IS NOT new.model OR old.scope_key IS NOT new.scope_key OR old.row_id IS NOT new.row_id BEGIN
+  INSERT INTO scope_revision (model, scope_key, row_id, revision)
+  VALUES (old.model, old.scope_key, old.row_id, COALESCE((SELECT CAST(value AS INTEGER) FROM manifest WHERE key = 'revision_seq'), 0) + 1)
+  ON CONFLICT (model, scope_key, row_id) DO UPDATE SET revision = excluded.revision;
+  INSERT INTO scope_revision (model, scope_key, row_id, revision)
+  VALUES (new.model, new.scope_key, new.row_id, COALESCE((SELECT CAST(value AS INTEGER) FROM manifest WHERE key = 'revision_seq'), 0) + 1)
+  ON CONFLICT (model, scope_key, row_id) DO UPDATE SET revision = excluded.revision;
+END",
     "CREATE TABLE IF NOT EXISTS scope_edge (
   model TEXT NOT NULL,
   scope_key TEXT NOT NULL,
@@ -68,7 +100,7 @@ END",
   applied INTEGER NOT NULL,
   generation INTEGER NOT NULL,
   landed_at INTEGER NOT NULL,
-  invalidated INTEGER NOT NULL DEFAULT 0 CHECK (invalidated IN (0, 1))
+  stale_since INTEGER
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS window_marker (
   window_key TEXT NOT NULL,
@@ -80,7 +112,7 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 37] = [
+const CORE_STATEMENTS: [&str; 41] = [
     "CREATE TABLE IF NOT EXISTS blob_upload (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
@@ -123,6 +155,31 @@ const CORE_STATEMENTS: [&str; 37] = [
   error_kind TEXT,
   error_message TEXT
 ) STRICT",
+    "CREATE TABLE IF NOT EXISTS op_effect (
+  seq INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  scope_key TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('create', 'edit', 'destroy', 'join', 'leave')),
+  revision INTEGER NOT NULL,
+  PRIMARY KEY (seq, position)
+) STRICT, WITHOUT ROWID",
+    "CREATE INDEX IF NOT EXISTS op_effect_row ON op_effect (model, row_id, seq, position)",
+    "CREATE INDEX IF NOT EXISTS op_effect_scope ON op_effect (model, scope_key, seq, position, row_id) WHERE scope_key IS NOT NULL",
+    "CREATE TABLE IF NOT EXISTS op_effect_value (
+  seq INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  node INTEGER NOT NULL,
+  parent INTEGER NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT,
+  kind INTEGER NOT NULL,
+  whole INTEGER,
+  fraction REAL,
+  text TEXT,
+  PRIMARY KEY (seq, position, node)
+) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS op_item (
   seq INTEGER NOT NULL REFERENCES op(seq) ON DELETE CASCADE,
   position INTEGER NOT NULL,

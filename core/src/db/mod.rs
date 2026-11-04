@@ -26,6 +26,7 @@ mod lookup;
 pub(crate) use lookup::FINDS;
 mod maintain;
 mod observe;
+pub(crate) mod op_effect;
 mod observed_reads;
 pub(crate) use observed_reads::{ObservedRead, ObservedReadLease};
 mod open;

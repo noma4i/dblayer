@@ -53,13 +53,13 @@ pub fn user_agent(application: Option<String>) -> String {
     }
 }
 
-pub use database::{Config, Database, SubscriptionCensus, TestClock};
+pub use database::{Config, Database, SubscriptionCensus, TestClock, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 pub use opening::{OpenDatabase, OpenOptions};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use stream::{CachedQuery, EntityFetch, LivePhase, LoadMoreResult, Placement, Replacement, StreamCensus, StreamDelivery, StreamEnd, StreamRequest, StreamState, StreamValue, ValueSink};
-pub use command::{CommandReceipt, CommandRequest, CommandStatus};
+pub use command::CommandRequest;
 pub use upload_accepted::{UploadAcceptedSink, WireAcceptedUpload, WireRoundStep, WireUploadAccepted};
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
 pub use crate::transport::PutFile;
