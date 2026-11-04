@@ -164,11 +164,9 @@ async fn opening_legacy_pending_keeps_the_encrypted_sequence_and_session() {
     let note = database.create(database.session_epoch(), "Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap().optimistic_value.unwrap();
     let bytes = vec![7; 300 * 1024];
     database.attach(database.session_epoch(), "Note".into(), note.id.clone(), "attachment".into(), bytes.clone(), "file".into(), "application/octet-stream".into()).await.unwrap();
-    let feed = "query Feed { feed { id text } }";
-    rig.server.register(feed);
-    database.register_operations(json!([{"name":"Feed","document":feed,"rootPath":"feed"}]).to_string()).unwrap();
-    rig.server.reply_with(json!({"feed": [{"id":"cached", "text":"server"}]}));
-    database.refresh(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    let mut seeded = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, database.db.generation());
+    seeded.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new("Moment"), id: crate::identity::RowId::new("cached").unwrap(), row: json!({"id": "cached", "text": "server"}).as_object().unwrap().clone() });
+    database.db.land(&database.db.admit().unwrap(), seeded).unwrap();
     assert!(database.read_row(database.session_epoch(), "Moment".into(), "cached".into()).await.unwrap().is_some());
     rig.server.reply_with(json!({"makeMoment": {"id": "42"}}));
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);

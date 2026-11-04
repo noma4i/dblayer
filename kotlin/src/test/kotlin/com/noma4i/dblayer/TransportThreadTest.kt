@@ -93,7 +93,7 @@ class TransportThreadTest {
                 when (operation) {
                     "query" -> transport.query(request)
                     "mutation" -> transport.mutate(request)
-                    else -> transport.put(server.url("/upload").toString(), emptyMap(), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), "1.0.1", CancelledProgress(cancelled))
+                    else -> transport.put(server.url("/upload").toString(), emptyMap(), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), TransferIdentity(1L, "1.0.1", TransferStep.Put), CancelledProgress(cancelled))
                 }
             }.exceptionOrNull()
             assertEquals("$operation cancelled=$cancelled", expected, error?.javaClass)

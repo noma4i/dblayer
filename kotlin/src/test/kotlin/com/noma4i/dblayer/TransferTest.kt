@@ -91,6 +91,7 @@ private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Mod
 private suspend fun finishTransfers() = DBlayer.database.resumeUploads(DBlayer.database.sessionEpoch())
 
 class TransferTest {
+    @OptIn(DBlayerTestingApi::class)
     @Test
     fun openingLegacyPendingKeepsTheSessionAndLocalFile() = bounded {
         val directory = Files.createTempDirectory("legacy-pending").toFile()

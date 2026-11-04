@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Security
+import Testing
 @testable import DBlayer
 
 /// An encrypted server that opens every sealed request with the fixture key and seals the answer, so tests run the real encrypted session path and fake only the HTTP exchange.

@@ -40,9 +40,11 @@ impl Db {
         let key = self.action_operation_key(model, action)?;
         let generation = self.generation();
         let mut sequence = None;
+        let mut queued = false;
         let (committed, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
             sequence = None;
             let entries = OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?;
+            queued = !entries.is_empty();
             let stuck: Vec<_> = entries.into_iter().filter(is_stuck).filter(|entry| key.as_ref().is_none_or(|key| entry.operation.action_key == *key)).collect();
             if stuck.len() > 1 { return Err(DbError::Internal("retry requires at most one failed operation".into())); }
             if stuck.iter().any(|entry| entry.operation.error.as_ref().is_some_and(|error| error.kind == crate::syncstate::FailureKind::MissingFile)) { return Err(DbError::InvalidUpload("select the file again".into())); }
@@ -64,7 +66,7 @@ impl Db {
             None => self.find(model, id)?,
         };
         let row = row.map(|row| self.shared.overlay_snapshot(model, row)).transpose()?;
-        if sequence.is_none() && row.is_none() { return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() }); }
+        if !queued && row.is_none() { return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() }); }
         let ticket = sequence.map(claim);
         committed.publish();
         Ok((sequence, revision, row, ticket))

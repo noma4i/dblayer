@@ -23,7 +23,7 @@ class SessionBridgeTest {
             return """{"ticket":"t-2"}"""
         }
         override suspend fun sessionReset() { calls.add("reset") }
-        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?): WireOperationReceipt {
+        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?, source: WireUploadRequest?): WireOperationReceipt {
             calls.add("retry $model $rowId ${action ?: "null"}")
             throw DbException.Invalid("recorded")
         }
