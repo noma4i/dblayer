@@ -11,12 +11,12 @@ import kotlinx.coroutines.withTimeout
 class OptimisticReactionChainTest {
     @Test
     fun reactThenUndoKeepsTheOtherUsersReaction() = bounded {
-        val created = """{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","userId":"u2"}]}}}"""
+        val created = """{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","user":{"id":"u2"}}]}}}"""
         val transport = openRecordSession(reacts = 0, recordReply = created)
         val record = settledRecord()
         assertTrue(record.reactions.any { it.userId == "u2" && it.body == "B" })
-        val firstReply = """{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","userId":"u2"},{"body":"A","userId":"u1"}]}}}"""
-        val secondReply = """{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","userId":"u2"}]}}}"""
+        val firstReply = """{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","user":{"id":"u2"}},{"body":"A","user":{"id":"u1"}}]}}}"""
+        val secondReply = """{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","user":{"id":"u2"}}]}}}"""
         val first = transport.hold("RecordReact", firstReply)
         val second = transport.hold("RecordReact", secondReply)
         try {

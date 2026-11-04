@@ -226,7 +226,10 @@ impl World {
             Some(Fault::Http(status)) => return Err(DbError::Http { status, detail: "refused".into() }),
             Some(Fault::Business) => return Ok(json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}).to_string()),
             Some(Fault::Answer(answer)) => return Ok(answer.to_string()),
-            Some(Fault::Refuse { code, .. }) => return Err(DbError::Session { code: SessionCode::Unauthenticated, detail: code.into() }),
+            Some(Fault::Refuse { code, .. }) => return match SessionCode::from_wire(code) {
+                Some(session) => Err(DbError::Session { code: session, detail: code.into() }),
+                None => Ok(json!({"errors": [{"message": code, "extensions": {"code": code}}]}).to_string()),
+            },
             Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
         }

@@ -11,12 +11,12 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func reactThenUndoKeepsTheOtherUsersReaction() async throws {
-    let created = #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","userId":"u2"}]}}}"#
+    let created = #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","user":{"id":"u2"}}]}}}"#
     let transport = try await Self.openRecordSession(reacts: 0, recordReply: created)
     let record = try await Self.settledRecord()
     try #require(record.reactions.contains { $0.userId == "u2" && $0.body == "B" })
-    let firstReply = #"{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","userId":"u2"},{"body":"A","userId":"u1"}]}}}"#
-    let secondReply = #"{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","userId":"u2"}]}}}"#
+    let firstReply = #"{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","user":{"id":"u2"}},{"body":"A","user":{"id":"u1"}}]}}}"#
+    let secondReply = #"{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","user":{"id":"u2"}}]}}}"#
     let first = transport.hold("RecordReact", reply: firstReply)
     let second = transport.hold("RecordReact", reply: secondReply)
     defer { first.release(); second.release() }

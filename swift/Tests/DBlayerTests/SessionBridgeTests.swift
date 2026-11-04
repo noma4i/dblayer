@@ -62,7 +62,8 @@ extension BridgeProbeTests {
     try await withRecordingSession { recording in
       await #expect(throws: DbError.self) { try await Moment.retry(id: "42", action: "like") }
       await #expect(throws: DbError.self) { try await Moment.retry(id: "43", action: nil) }
-      #expect(try await DB.retryAll() == 7)
+      let retried = try await DB.retryAll()
+      #expect(retried == 7)
       #expect(recording.calls == ["retry Moment 42 like", "retry Moment 43 nil", "retryAll"])
     }
   }

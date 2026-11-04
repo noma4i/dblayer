@@ -181,7 +181,7 @@ impl Database {
             let (answer, after) = cancellable(async move { call_client.call_admitted(&admitted, operation, body).await }).await?.map_err(typed)?;
             Ok((refused(answer)?, after))
         }).await?;
-        client.conclude(epoch, after).await.map_err(typed)?;
+        cancellable(async move { client.conclude(epoch, after).await }).await?.map_err(typed)?;
         Ok(answer.body.to_string())
     }
 
@@ -194,7 +194,7 @@ impl Database {
         let (answer, after) = self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "session resume", restore, |admitted| async move {
             cancellable(async move { resume(&admitted, resume_client, sync).await }).await?
         }).await?;
-        client.conclude(epoch, after).await.map_err(typed)?;
+        cancellable(async move { client.conclude(epoch, after).await }).await?.map_err(typed)?;
         Ok(answer)
     }
 

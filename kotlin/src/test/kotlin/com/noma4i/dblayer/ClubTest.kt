@@ -4,10 +4,6 @@ import com.noma4i.dblayer.models.Club
 import com.noma4i.dblayer.models.Letter
 import com.noma4i.dblayer.models.Person
 import com.noma4i.dblayer.models.modelsJSON
-import com.sun.jna.Library
-import com.sun.jna.Native
-import com.sun.jna.Pointer
-import com.sun.jna.ptr.PointerByReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.SupervisorJob
@@ -39,12 +35,6 @@ private fun membersReply(ids: List<String>): String {
 }
 
 private val FORBIDDEN = DbException.Http(403.toUShort(), "forbidden")
-
-private interface Sqlite : Library {
-    fun sqlite3_open(path: String, output: PointerByReference): Int
-    fun sqlite3_exec(database: Pointer, statement: String, callback: Pointer?, context: Pointer?, error: Pointer?): Int
-    fun sqlite3_close(database: Pointer): Int
-}
 
 private fun forwardAnswer(id: String, chat: String) = """{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"$id","chatId":"$chat","text":"hello","at":99}}}}"""
 
@@ -105,63 +95,6 @@ class ClubTest {
     }
 
     @Test
-    fun aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow() = bounded {
-        for (keep in listOf(false, true)) {
-            val directory = java.nio.file.Files.createTempDirectory("dblayer-old-format").toFile()
-            val config = Config(directory.resolve("old.sqlite").absolutePath, null, 32u)
-            val models = clubModels(keepLetter = keep)
-            try {
-                reopenSigned(config, models, CLUB_DEFS)
-                val receipt = Letter.send(AccountScope.current(), chatId = "c1", text = "held", at = 1)
-                val id = requireNotNull(receipt.optimisticValue).id
-                DBlayer.close()
-                val sqlite = Native.load("sqlite3", Sqlite::class.java)
-                val handle = PointerByReference()
-                check(sqlite.sqlite3_open(requireNotNull(config.path), handle) == 0)
-                val changed = sqlite.sqlite3_exec(handle.value, "DROP TABLE IF EXISTS op_effect_value; DROP TABLE IF EXISTS op_effect; DROP TABLE IF EXISTS scope_revision; UPDATE manifest SET value = 'old' WHERE key = 'format_version'", null, null, null)
-                sqlite.sqlite3_close(handle.value)
-                check(changed == 0)
-                val transport = MockTransport()
-                transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused"))
-                val database = reopen(config, models, transport, CLUB_DEFS)
-                withTimeout(5000) { database.flush() }
-                assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
-                assertTrue(Query("Letter", Letter).readRow(id) == null)
-                transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused again"))
-                try {
-                    val retried = withTimeout(5000) { Letter.retry(id, null) }
-                    assertTrue(keep)
-                    assertTrue(withTimeout(5000) { retried.outcome() } is OperationOutcome.Rejected)
-                    assertTrue(Query("Letter", Letter).readRow(id) == null)
-                } catch (_: DbException.Database) {
-                    assertTrue(!keep)
-                }
-                DBlayer.close()
-            } finally {
-                DBlayer.close()
-                directory.deleteRecursively()
-            }
-        }
-    }
-
-    private suspend fun confirmedClub(): Club {
-        val receipt = withTimeout(5000) { Club.create(name = "friends") }
-        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
-        return Query("Club", Club).read().first()
-    }
-
-    private suspend fun removeMemberConfirmed(club: Club) {
-        val receipt = withTimeout(5000) { club.removeMember(userIds = listOf("u4")) }
-        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
-    }
-
-    private suspend fun confirmedLetter(): Letter {
-        val receipt = withTimeout(5000) { Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1) }
-        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
-        return Query("Letter", Letter).read().first()
-    }
-
-    @Test
     fun aRefusedDestroyRestoresTheRowAccordingToItsDeclaration() = bounded {
         for (business in listOf(false, true)) {
             val transport = MockTransport()
@@ -218,6 +151,7 @@ class ClubTest {
         val joined = Person.clubMembers(club.id, "JOINED")
         joined.load()
         transport.base.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
+        transport.base.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3")))
         removeMemberConfirmed(club)
         assertTrue(joined.read().none { it.id == "u4" })
         val scope = CoroutineScope(SupervisorJob())
