@@ -66,7 +66,7 @@ esac
         (repo / "core/src/ffi/selftest/manifest.tsv").write_text("version\t1\nid\taliases\tlane\ttest\tstate\ts1\tprovenance\n" + "".join(f"{n}\t\t{lane}\tT.{lane}{n}\tx\tx\tx\n" for lane, count in (("core", 3), ("swift", 2), ("kotlin", 2)) for n in range(count)))
     (repo / "scripts/build_ios.sh").write_text("""#!/bin/bash
 mkdir -p swift/DBlayerFFI.xcframework/{macos-arm64_x86_64,ios-arm64_x86_64-simulator,ios-arm64} swift/Sources/DBlayer
-printf bindings > swift/Sources/DBlayer/dblayer.swift
+printf generated-bindings > swift/Sources/DBlayer/dblayer.swift
 printf info > swift/DBlayerFFI.xcframework/Info.plist
 printf binary > swift/DBlayerFFI.xcframework/macos-arm64_x86_64/libdblayer.a
 printf binary > swift/DBlayerFFI.xcframework/ios-arm64_x86_64-simulator/libdblayer.a
@@ -113,6 +113,9 @@ import os, subprocess, sys
 a=sys.argv[1:]
 with open(os.environ["TEST_EVENTS"],"a") as f: f.write("git " + " ".join(a) + "\\n")
 command = a[2:] if a and a[0] == "-C" else a
+if command and command[0] == "commit" and os.environ.get("STUB_COMMIT_EXTRA"):
+    open(os.environ["STUB_COMMIT_EXTRA"], "w").write("extra\\n")
+    subprocess.run([os.environ["REAL_GIT"], "add", "-f", os.environ["STUB_COMMIT_EXTRA"]], check=True)
 if command and command[0] in ("clone", "fetch", "pull", "push"): sys.exit(0)
 if a[:2] == ["ls-remote", "--heads"]: sys.exit(0)
 if a[:2] == ["remote", "get-url"]: print("https://example.invalid/dblayer.git"); sys.exit(0)
@@ -214,6 +217,12 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     assert any(line.startswith("gh release download 1.2.3 ") for line in events), events
     print("ok publish uses four checksummed files and repeat reuses the tagged package commit")
     print("ok release tag is a lightweight tag")
+    package_head = subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    subprocess.run([real_git, "-C", str(repo), "tag", "-d", version], check=True, capture_output=True)
+    run(["bash", "scripts/release.sh", version, "--publish"], repo, env)
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", version + "^{commit}"], text=True).strip() == package_head
+    assert subprocess.check_output([real_git, "-C", str(repo), "rev-parse", "HEAD"], text=True).strip() == package_head
+    print("ok a rerun after the tag was deleted tags the same package commit")
 
     wrong, wrong_env = fixture(base / "wrong")
     subprocess.run([real_git, "-C", str(wrong), "commit", "--amend", "-m", "Release 9.9.9"], check=True, capture_output=True)
@@ -222,7 +231,8 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     dirty, dirty_env = fixture(base / "dirty")
     (dirty / "Package.swift").write_text("dirty")
     run(["bash", "scripts/release.sh", version], dirty, dirty_env, expected=1, contains="working tree is not clean")
-    print("ok dirty tracked file is rejected")
+    assert not (dirty / "target/release.lock").exists(), "the lock stayed after a refusal"
+    print("ok dirty tracked file is rejected and releases the lock")
     incomplete, incomplete_env = fixture(base / "incomplete")
     stage = incomplete / "target/release-1.2.3"
     stage.mkdir(parents=True)
@@ -288,34 +298,76 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         assert_no_release(bad, bad_env, base / f"identity-{mode}/events")
         assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
         print(f"ok {mode} refuses the receipt, the package commit and the tag")
-    mixed_files = ("Package.swift", "swift/Sources/DBlayer/dblayer.swift", "core/src/extra.rs")
-    for mode_args, label in (([], "dry run"), (["--publish"], "publish")):
-        mixed, mixed_env = fixture(base / f"mixed-{label.replace(' ', '-')}")
-        for name in mixed_files:
-            (mixed / name).parent.mkdir(parents=True, exist_ok=True)
-            (mixed / name).write_text("mixed\n")
-        subprocess.run([real_git, "-C", str(mixed), "add", "-f", *mixed_files], check=True)
-        subprocess.run([real_git, "-C", str(mixed), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
-        run(["bash", "scripts/release.sh", version, *mode_args], mixed, mixed_env, expected=1, contains="changes files other than Package.swift and dblayer.swift")
-        mixed_events = (base / f"mixed-{label.replace(' ', '-')}/events").read_text().splitlines() if (base / f"mixed-{label.replace(' ', '-')}/events").exists() else []
-        assert not any(line.startswith("gh ") or line.startswith("git push ") for line in mixed_events), mixed_events
-        assert subprocess.check_output([real_git, "-C", str(mixed), "tag", "--list", version], text=True).strip() == ""
-        assert not (mixed / "target/release-1.2.3").exists()
-        print(f"ok a Package release commit with an extra source change is refused in the {label}")
-    locked, locked_env = fixture(base / "locked")
+    package_cases = (
+        ("extra", ("Package.swift", "swift/Sources/DBlayer/dblayer.swift", "core/src/extra.rs")),
+        ("only-package", ("Package.swift",)),
+        ("only-binding", ("swift/Sources/DBlayer/dblayer.swift",)),
+    )
+    for case, files in package_cases:
+        for mode_args, label in (([], "dry run"), (["--publish"], "publish")):
+            name = f"package-{case}-{label.replace(' ', '-')}"
+            bad, bad_env = fixture(base / name)
+            for file in files:
+                (bad / file).parent.mkdir(parents=True, exist_ok=True)
+                (bad / file).write_text("changed\n")
+            subprocess.run([real_git, "-C", str(bad), "add", "-f", *files], check=True)
+            subprocess.run([real_git, "-C", str(bad), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
+            run(["bash", "scripts/release.sh", version, *mode_args], bad, bad_env, expected=1, contains="must change exactly Package.swift and dblayer.swift")
+            bad_events = (base / name / "events").read_text().splitlines() if (base / name / "events").exists() else []
+            assert not any(line.startswith("gh ") or line.startswith("git push ") for line in bad_events), bad_events
+            assert subprocess.check_output([real_git, "-C", str(bad), "tag", "--list", version], text=True).strip() == ""
+            assert not (bad / "target/release-1.2.3").exists()
+            assert not (bad / "target/release.lock").exists()
+            print(f"ok a Package release commit with {case} files is refused in the {label}")
+    own, own_env = fixture(base / "own-extra")
+    run(["bash", "scripts/release.sh", version, "--publish"], own, dict(own_env, STUB_COMMIT_EXTRA="core/extra.rs"), expected=1, contains="must change exactly Package.swift and dblayer.swift")
+    assert subprocess.check_output([real_git, "-C", str(own), "tag", "--list", version], text=True).strip() == ""
+    assert not any(line.startswith("gh ") or line.startswith("git push ") for line in (base / "own-extra/events").read_text().splitlines())
+    print("ok an extra staged file in the own package commit refuses the tag")
+
+    def lock_fixture(name):
+        repo, env = fixture(base / name)
+        (repo / "target/release.lock").mkdir(parents=True)
+        return repo, env, repo / "target/release.lock"
+
+    locked, locked_env, lock = lock_fixture("locked")
     holder = subprocess.Popen(["sleep", "60"])
     try:
-        (locked / "target/release.lock").mkdir(parents=True)
-        (locked / "target/release.lock/holder").write_text(f"{holder.pid} {version}\n")
-        run(["bash", "scripts/release.sh", version], locked, locked_env, expected=1, contains=f"another release run holds")
-        assert (locked / "target/release.lock/holder").read_text().startswith(str(holder.pid)), "the second run removed the lock of a live holder"
+        (lock / "holder").write_text(f"{holder.pid} {version}\n")
+        run(["bash", "scripts/release.sh", version], locked, locked_env, expected=1, contains=f"holder pid {holder.pid}, alive")
+        assert (lock / "holder").read_text().startswith(str(holder.pid)), "the second run removed the lock of a live holder"
         assert not (locked / "target/release-1.2.3").exists()
     finally:
         holder.kill()
         holder.wait()
+    run(["bash", "scripts/release.sh", version], locked, locked_env, expected=1, contains=f"holder pid {holder.pid}, dead")
+    assert (lock / "holder").read_text().startswith(str(holder.pid)), "the lock of a dead holder was replaced"
+    assert not (locked / "target/release-1.2.3").exists()
+    unwritten, unwritten_env, unwritten_lock = lock_fixture("lock-no-holder")
+    run(["bash", "scripts/release.sh", version], unwritten, unwritten_env, expected=1, contains="holder pid none, unknown")
+    assert unwritten_lock.is_dir(), "the lock without a holder was replaced"
+    assert str(unwritten_lock) in run(["bash", "scripts/release.sh", version], unwritten, unwritten_env, expected=1).stderr
+    shutil.rmtree(lock)
     run(["bash", "scripts/release.sh", version], locked, locked_env, contains="Package.swift to be written:")
-    assert not (locked / "target/release.lock").exists(), "the lock stayed after the run ended"
-    print("ok a held lock refuses the second run and a finished run releases it")
+    assert not lock.exists(), "the lock stayed after the run ended"
+    print("ok an existing lock refuses the run, is never replaced, and a finished run releases it")
+    import signal
+    import time
+    for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        sig_repo, sig_env = fixture(base / f"signal-{sig.name}")
+        (sig_repo / "scripts/check_docs.sh").write_text("#!/bin/sh\nmkdir -p \"$TEST_ROOT/target\"; touch \"$TEST_ROOT/target/started\"\nsleep 2\n")
+        subprocess.run([real_git, "-C", str(sig_repo), "commit", "-aq", "--amend", "--no-edit"], check=True, capture_output=True)
+        proc = subprocess.Popen(["bash", "scripts/release.sh", version], cwd=sig_repo, env=sig_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        deadline = time.time() + 30
+        while not (sig_repo / "target/started").exists():
+            assert time.time() < deadline and proc.poll() is None, f"the release run did not reach its first check: {proc.poll()} {proc.stderr.read() if proc.poll() is not None else ''}"
+            time.sleep(0.05)
+        assert (sig_repo / "target/release.lock").is_dir()
+        proc.send_signal(sig)
+        assert proc.wait(timeout=60) == 128 + sig.value, proc.returncode
+        assert not (sig_repo / "target/release.lock").exists(), f"the lock stayed after {sig.name}"
+        run(["bash", "scripts/release.sh", version], sig_repo, sig_env, contains="Package.swift to be written:")
+        print(f"ok {sig.name} releases the lock")
     dry, dry_env = fixture(base / "report-dry")
     run(["bash", "scripts/release.sh", version], dry, dict(dry_env, STUB_REPORT="partial"), expected=1, contains="lane reports are missing or incomplete")
     assert not (dry / "target/release-1.2.3/RECEIPT.json").exists()

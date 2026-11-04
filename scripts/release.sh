@@ -25,12 +25,11 @@ mkdir -p "$root/target"
 if ! mkdir "$lockdir" 2>/dev/null; then
   holder="$(cat "$lockdir/holder" 2>/dev/null || true)"
   holder_pid="${holder%% *}"
-  if [ -n "$holder_pid" ] && ! kill -0 "$holder_pid" 2>/dev/null; then
-    /bin/rm -rf "$lockdir"
-    mkdir "$lockdir" 2>/dev/null || fail "another release run holds $lockdir"
-  else
-    fail "another release run holds $lockdir: ${holder:-unknown holder}"
+  holder_state=unknown
+  if [ -n "$holder_pid" ]; then
+    if kill -0 "$holder_pid" 2>/dev/null; then holder_state=alive; else holder_state=dead; fi
   fi
+  fail "another release run holds $lockdir: holder pid ${holder_pid:-none}, ${holder_state}; remove the directory by hand only when no release run is alive"
 fi
 lock_owned=1
 printf '%s %s\n' "$$" "$version" > "$lockdir/holder"
@@ -41,8 +40,8 @@ check_package_commit() {
   local commit="$1" parent="$2"
   [ "$(git rev-parse "$commit^" 2>/dev/null)" = "$parent" ] || fail "package commit $commit is not directly on source commit $parent"
   local changed
-  changed="$(git diff-tree --no-commit-id --name-only -r "$commit")"
-  { [ -n "$changed" ] && [ -z "$(printf '%s\n' "$changed" | grep -vxF "$package_files" || true)" ]; } || fail "package commit $commit changes files other than Package.swift and dblayer.swift"
+  changed="$(git diff-tree --no-commit-id --name-only -r "$commit" | LC_ALL=C sort)"
+  [ "$changed" = "$(printf '%s\n' "$package_files" | LC_ALL=C sort)" ] || fail "package commit $commit must change exactly Package.swift and dblayer.swift"
 }
 package_sha=""
 source_sha="$(git rev-parse HEAD)"
