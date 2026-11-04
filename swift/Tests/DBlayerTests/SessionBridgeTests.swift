@@ -21,7 +21,7 @@ private final class RecordingSession: Database, @unchecked Sendable {
   }
   override func sessionReset() async throws { record("reset") }
   override func sessionEpoch() -> UInt64 { 1 }
-  override func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws -> WireOperationReceipt {
+  override func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws -> WireOperationReceipt {
     record("retry \(model) \(rowId) \(action ?? "nil")")
     throw DbError.Invalid(detail: "recorded")
   }

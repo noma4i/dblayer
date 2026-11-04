@@ -1,22 +1,15 @@
 package com.noma4i.dblayer
 
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.runBlocking
 
 fun main() = runBlocking {
     val schema = """[{"key":"Item","storage":"local","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}},{"name":"title","kind":{"type":"scalar","kind":"str"}}]}]"""
     OpenDatabase().open(Config(null, null, 32u), schema, OpenOptions("[]", null, false, false, true, true), null, null, null, null, null).use { db ->
-        val delivered = CountDownLatch(1)
-        val received = AtomicReference<StreamDelivery>()
+        val available = Semaphore(0)
         val sink = object : ValueSink {
-            override fun delivered(delivery: StreamDelivery) {
-                if (delivery.value is StreamValue.Snapshot && (delivery.value as StreamValue.Snapshot).rows.isNotEmpty()) {
-                    received.set(delivery)
-                    delivered.countDown()
-                }
-            }
+            override fun available() { available.release() }
         }
         val epoch = db.sessionEpoch()
         val created = checkNotNull(db.create(epoch, "Item", """{"title":"kept"}""", "{}").optimisticValue)
@@ -24,8 +17,15 @@ fun main() = runBlocking {
         check(created.sync.state == WireSyncState.SYNCED)
         check(created.cells.contains(Cell.Text("kept")))
         val stream = db.subscribe(epoch, StreamRequest.Query("""{"model":"Item"}"""), sink)
-        check(delivered.await(5, TimeUnit.SECONDS)) { "JNA callback was not delivered" }
-        check((received.get().value as StreamValue.Snapshot).rows.single().cells == created.cells)
+        var snapshot: StreamValue.Snapshot? = null
+        while (snapshot == null) {
+            check(available.tryAcquire(5, TimeUnit.SECONDS)) { "JNA callback was not delivered" }
+            while (true) {
+                val value = db.readStream(stream)?.value ?: break
+                if (value is StreamValue.Snapshot && value.rows.isNotEmpty()) snapshot = value
+            }
+        }
+        check(snapshot.rows.single().cells == created.cells)
         check(db.peekRow(epoch, "Item", created.id)?.cells == created.cells)
         db.cancelStream(stream)
         try {

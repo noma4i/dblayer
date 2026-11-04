@@ -68,14 +68,21 @@ struct MultipartTransport {
 
 #[derive(Default)]
 struct BlobStatus {
-    expired: Notify,
+    available: Notify,
 }
 
 impl crate::ffi::ValueSink for BlobStatus {
-    fn delivered(&self, delivery: crate::ffi::StreamDelivery) {
-        if let crate::ffi::StreamValue::Status { blob } = delivery.value {
-            if blob.state == crate::upload::BlobState::Expired { self.expired.notify_one(); }
+    fn available(&self) { self.available.notify_one(); }
+}
+
+async fn expired_status(db: &Database, stream: u64, status: &BlobStatus) {
+    loop {
+        while let Some(delivery) = db.read_stream(stream) {
+            if let crate::ffi::StreamValue::Status { blob } = delivery.value {
+                if blob.state == crate::upload::BlobState::Expired { return; }
+            }
         }
+        crate::test_wait::within(status.available.notified()).await;
     }
 }
 
@@ -463,7 +470,7 @@ async fn a_failed_blob_expires_when_the_network_returns_after_seven_days() {
     db.set_online(false).unwrap();
     clock.advance(7 * 24 * 60 * 60 * 1000);
     db.set_online(true).unwrap();
-    named_bound("expired status", status.expired.notified()).await;
+    named_bound("expired status", expired_status(&db, stream, &status)).await;
     assert_eq!(db.clone().blob(epoch, blob.id).await.unwrap().state, crate::upload::BlobState::Expired);
     db.cancel_stream(stream);
     named_bound("close database", db.close_database()).await.unwrap();
@@ -493,7 +500,7 @@ async fn reopening_after_seven_days_expires_a_failed_blob() {
     let epoch = db.session_epoch();
     let status = Arc::new(BlobStatus::default());
     let stream = db.subscribe(epoch, crate::ffi::StreamRequest::Blob { id: blob.id.clone() }, status.clone());
-    named_bound("expired status", status.expired.notified()).await;
+    named_bound("expired status", expired_status(&db, stream, &status)).await;
     assert_eq!(db.clone().blob(epoch, blob.id).await.unwrap().state, crate::upload::BlobState::Expired);
     db.cancel_stream(stream);
     named_bound("close reopened database", db.close_database()).await.unwrap();

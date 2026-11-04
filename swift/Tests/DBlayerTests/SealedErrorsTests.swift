@@ -12,7 +12,7 @@ private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed(
 
 private final class RefusedRetry: Database, @unchecked Sendable {
   override func sessionEpoch() -> UInt64 { 1 }
-  override func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws -> WireOperationReceipt { throw DbError.Invalid(detail: "retry refused") }
+  override func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws -> WireOperationReceipt { throw DbError.Invalid(detail: "retry refused") }
   override func retryAll(epoch: UInt64) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
 }
 

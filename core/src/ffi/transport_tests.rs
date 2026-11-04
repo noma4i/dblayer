@@ -36,13 +36,13 @@ fn subscription_sink_wakes_its_receiver_with_the_sender_lock_free() {
     });
     let waker = Waker::from(probe.clone());
     let mut context = Context::from_waker(&waker);
-    let mut next = Box::pin(receiver.recv());
+    let mut next = Box::pin(crate::transport::SubscriptionReceiver::recv(&mut receiver));
     assert!(next.as_mut().poll(&mut context).is_pending());
     sink.ready();
     assert_eq!((probe.wakes(), probe.violations()), (1, 0), "an event wakes the receiver with the sender lock free");
     assert!(matches!(next.as_mut().poll(&mut context), std::task::Poll::Ready(Some(SubscriptionEvent::Ready))));
     drop(next);
-    let mut next = Box::pin(receiver.recv());
+    let mut next = Box::pin(crate::transport::SubscriptionReceiver::recv(&mut receiver));
     assert!(next.as_mut().poll(&mut context).is_pending());
     sink.closed();
     assert_eq!((probe.wakes(), probe.violations()), (2, 0), "closing wakes the receiver with the sender lock free");
@@ -53,7 +53,7 @@ fn subscription_sink_wakes_its_receiver_with_the_sender_lock_free() {
     let (sender_owner, mut receiver) = self::sink();
     let probe = ProbeWaker::new(|| true);
     let waker = Waker::from(probe.clone());
-    let mut next = Box::pin(receiver.recv());
+    let mut next = Box::pin(crate::transport::SubscriptionReceiver::recv(&mut receiver));
     assert!(next.as_mut().poll(&mut Context::from_waker(&waker)).is_pending());
     drop(sender_owner);
     assert_eq!((probe.wakes(), probe.violations()), (1, 0), "sender drop wakes without tracked guards");

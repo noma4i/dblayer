@@ -113,7 +113,7 @@ pub fn subscription_channel() -> (SubscriptionSender, SubscriptionReceiver) {
 
 impl Clone for SubscriptionSender {
     fn clone(&self) -> Self {
-        self.0.queue.lock().expect("subscription queue").senders += 1;
+        crate::sync::locked(&self.0.queue).senders += 1;
         Self(self.0.clone())
     }
 }
@@ -121,17 +121,17 @@ impl Clone for SubscriptionSender {
 impl Drop for SubscriptionSender {
     fn drop(&mut self) {
         let ended = {
-            let mut queue = self.0.queue.lock().expect("subscription queue");
+            let mut queue = crate::sync::locked(&self.0.queue);
             queue.senders -= 1;
             queue.senders == 0
         };
-        if ended { self.0.wake.notify_one(); }
+        if ended { crate::db::lock::effect(|| self.0.wake.notify_one()); }
     }
 }
 
 impl SubscriptionSender {
     pub fn send(&self, event: SubscriptionEvent) -> Result<(), ()> {
-        let mut queue = self.0.queue.lock().expect("subscription queue");
+        let mut queue = crate::sync::locked(&self.0.queue);
         if !queue.receiving { return Err(()); }
         if queue.failure.is_some() { return Ok(()); }
         if matches!(event, SubscriptionEvent::Next(_)) { queue.ordinal += 1; }
@@ -153,14 +153,14 @@ impl SubscriptionSender {
             }
         }
         drop(queue);
-        self.0.wake.notify_one();
+        crate::db::lock::effect(|| self.0.wake.notify_one());
         Ok(())
     }
 }
 
 impl SubscriptionReceiver {
     pub(crate) fn try_recv(&mut self) -> Result<SubscriptionEvent, ()> {
-        let mut queue = self.0.queue.lock().expect("subscription queue");
+        let mut queue = crate::sync::locked(&self.0.queue);
         if let Some(event) = queue.events.pop_front() { return Ok(event); }
         if let Some((first, last)) = queue.lost.take() { return Ok(SubscriptionEvent::Lost { first, last }); }
         if std::mem::take(&mut queue.ready) {
@@ -176,14 +176,14 @@ impl SubscriptionReceiver {
             let channel = self.0.clone();
             let notified = channel.wake.notified();
             if let Ok(event) = self.try_recv() { return Some(event); }
-            if self.0.queue.lock().expect("subscription queue").senders == 0 { return None; }
+            if crate::sync::locked(&self.0.queue).senders == 0 { return None; }
             notified.await;
         }
     }
 }
 
 impl Drop for SubscriptionReceiver {
-    fn drop(&mut self) { self.0.queue.lock().expect("subscription queue").receiving = false; }
+    fn drop(&mut self) { crate::sync::locked(&self.0.queue).receiving = false; }
 }
 
 impl SubscriptionEvent {

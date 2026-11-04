@@ -43,8 +43,8 @@ private final class MemberEventsTransport: Transport, @unchecked Sendable {
     if request.operationName == "MemberChanged" { signal.yield(()) }
   }
   func unsubscribe(token: String) { base.unsubscribe(token: token) }
-  func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
-    try await base.put(url: url, headers: headers, file: file, tag: tag, progress: progress)
+  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    try await base.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }
 }
 

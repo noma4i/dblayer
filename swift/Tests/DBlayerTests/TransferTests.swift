@@ -115,8 +115,7 @@ extension BridgeProbeTests {
     let signals = AsyncStream<Bool>.makeStream()
     let arrived = Task { await server.heldRequest(); signals.continuation.yield(true) }
     let ended = Task { _ = await call.result; signals.continuation.yield(false) }
-    var signal = signals.stream.makeAsyncIterator()
-    let reached = await signal.next()
+    let reached = await Cursor(signals.stream).next("the held request or the end of the call")
     arrived.cancel()
     ended.cancel()
     try #require(reached == true)
@@ -126,8 +125,7 @@ extension BridgeProbeTests {
     let outcomes = AsyncStream<Bool>.makeStream()
     let lost = Task { await server.lostAnswer(); outcomes.continuation.yield(true) }
     let completed = Task { _ = await call.result; outcomes.continuation.yield(server.hasLostAnswer) }
-    var outcome = outcomes.stream.makeAsyncIterator()
-    let answerLost = await outcome.next()
+    let answerLost = await Cursor(outcomes.stream).next("the lost answer or the end of the call")
     lost.cancel()
     completed.cancel()
     try #require(answerLost == true)
@@ -296,12 +294,8 @@ extension BridgeProbeTests {
     _ = try await DB.openTesting(transport: transport, modelsJSON: "[]", path: path, uploads: uploads, startingAt: start.addingTimeInterval(7 * 24 * 60 * 60))
     try DB.database.registerOperations(defsJson: operations)
     let status = try AccountScope().uploadStatus(id)
-    var updates = status.makeAsyncIterator()
-    var expired = false
-    while let value = await updates.next() {
-      if value.state == .expired { expired = true; break }
-    }
-    #expect(expired)
+    let updates = Cursor(status)
+    #expect(await updates.first("the expired status") { $0.state == .expired } != nil)
     status.stream.cancel()
     try await DB.close()
   }
@@ -486,15 +480,11 @@ extension BridgeProbeTests {
     let blob = try await DB.upload(BlobUpload(name: "video", create: "CreateBlob"), request: UploadRequest(path: source.path))
     do { _ = try await blob.waitUntilUploaded(); Issue.record("the refused upload returned a signed ID") } catch {}
     let status = try AccountScope().uploadStatus(blob.id)
-    var updates = status.makeAsyncIterator()
+    let updates = Cursor(status)
     try DB.database.setOnline(online: false)
     clock.advance(by: 7 * 24 * 60 * 60)
     try DB.database.setOnline(online: true)
-    var expired = false
-    while let value = await updates.next() {
-      if value.state == .expired { expired = true; break }
-    }
-    #expect(expired)
+    #expect(await updates.first("the expired status") { $0.state == .expired } != nil)
     let result = try await DB.database.blob(epoch: DB.database.sessionEpoch(), id: blob.id)
     #expect(result.state == .expired)
     status.stream.cancel()

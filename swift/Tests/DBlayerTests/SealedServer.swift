@@ -41,7 +41,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   var routes: [(operation: String?, purpose: NetworkPurpose)] { lock.withLock { routed } }
   var effects: [[String: Any]] { lock.withLock { executed } }
   func loseAnswer(filename: String) { lock.withLock { lostFile = filename } }
-  func lostAnswer() async { var iterator = lostAnswers.stream.makeAsyncIterator(); _ = await iterator.next() }
+  func lostAnswer() async { _ = await Cursor(lostAnswers.stream).next("the lost answer") }
   var hasLostAnswer: Bool { lock.withLock { lost } }
 
   func pathRequests(_ path: String) -> Int { requests.filter { $0.path == path }.count }
@@ -66,8 +66,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   var parkedCount: Int { lock.withLock { parked.count } }
 
   func heldRequest() async {
-    var iterator = arrivals.stream.makeAsyncIterator()
-    _ = await iterator.next()
+    _ = await Cursor(arrivals.stream).next("a held request")
   }
 
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {

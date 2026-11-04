@@ -28,8 +28,8 @@ private final class PageTransport: Transport, @unchecked Sendable {
   func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
   func cableClose(token: String) async { await mock.cableClose(token: token) }
-  func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
-    try await mock.put(url: url, headers: headers, file: file, tag: tag, progress: progress)
+  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    try await mock.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }
 }
 

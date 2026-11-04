@@ -1360,7 +1360,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func resumeUploads(epoch: UInt64) async throws 
     
-    func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws  -> WireOperationReceipt
+    func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws  -> WireOperationReceipt
     
     func retryAll(epoch: UInt64) async throws  -> UInt64
     
@@ -2054,12 +2054,12 @@ open func resumeUploads(epoch: UInt64)async throws   {
         )
 }
     
-open func retry(epoch: UInt64, model: String, rowId: String, action: String?)async throws  -> WireOperationReceipt  {
+open func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?)async throws  -> WireOperationReceipt  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_retry(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterOptionString.lower(action)
+                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterOptionString.lower(action),FfiConverterOptionTypeWireUploadRequest.lower(source)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -2600,7 +2600,7 @@ public func FfiConverterTypeDatabase_lower(_ value: Database) -> UInt64 {
 
 public protocol EncryptedHttp: AnyObject, Sendable {
     
-    func post(path: String, body: String, upload: Bool) async throws  -> EncryptedReply
+    func post(path: String, body: String, purpose: NetworkPurpose) async throws  -> EncryptedReply
     
 }
 open class EncryptedHttpImpl: EncryptedHttp, @unchecked Sendable {
@@ -2656,12 +2656,12 @@ open class EncryptedHttpImpl: EncryptedHttp, @unchecked Sendable {
     
 
     
-open func post(path: String, body: String, upload: Bool)async throws  -> EncryptedReply  {
+open func post(path: String, body: String, purpose: NetworkPurpose)async throws  -> EncryptedReply  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_encryptedhttp_post(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(path),FfiConverterString.lower(body),FfiConverterBool.lower(upload)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(path),FfiConverterString.lower(body),FfiConverterTypeNetworkPurpose_lower(purpose)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -2704,7 +2704,7 @@ fileprivate struct UniffiCallbackInterfaceEncryptedHttp {
             uniffiHandle: UInt64,
             path: RustBuffer,
             body: RustBuffer,
-            upload: Int8,
+            purpose: RustBuffer,
             uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
             uniffiCallbackData: UInt64,
             uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
@@ -2717,7 +2717,7 @@ fileprivate struct UniffiCallbackInterfaceEncryptedHttp {
                 return try await uniffiObj.post(
                      path: try FfiConverterString.lift(path),
                      body: try FfiConverterString.lift(body),
-                     upload: try FfiConverterBool.lift(upload)
+                     purpose: try FfiConverterTypeNetworkPurpose_lift(purpose)
                 )
             }
 
@@ -4026,7 +4026,7 @@ public protocol Transport: AnyObject, Sendable {
     
     func unsubscribe(token: String) 
     
-    func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws  -> PutReply
+    func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws  -> PutReply
     
 }
 open class TransportImpl: Transport, @unchecked Sendable {
@@ -4205,12 +4205,12 @@ open func unsubscribe(token: String)  {try! rustCall() {
 }
 }
     
-open func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress)async throws  -> PutReply  {
+open func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress)async throws  -> PutReply  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_transport_put(
-                        self.uniffiCloneHandle(),FfiConverterString.lower(url),FfiConverterDictionaryStringString.lower(headers),FfiConverterTypePutFile_lower(file),FfiConverterString.lower(tag),FfiConverterTypeByteProgress_lower(progress)
+                        self.uniffiCloneHandle(),FfiConverterString.lower(url),FfiConverterDictionaryStringString.lower(headers),FfiConverterTypePutFile_lower(file),FfiConverterTypeTransferIdentity_lower(identity),FfiConverterTypeByteProgress_lower(progress)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -4573,7 +4573,7 @@ fileprivate struct UniffiCallbackInterfaceTransport {
             url: RustBuffer,
             headers: RustBuffer,
             file: RustBuffer,
-            tag: RustBuffer,
+            identity: RustBuffer,
             progress: UInt64,
             uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
             uniffiCallbackData: UInt64,
@@ -4588,7 +4588,7 @@ fileprivate struct UniffiCallbackInterfaceTransport {
                      url: try FfiConverterString.lift(url),
                      headers: try FfiConverterDictionaryStringString.lift(headers),
                      file: try FfiConverterTypePutFile_lift(file),
-                     tag: try FfiConverterString.lift(tag),
+                     identity: try FfiConverterTypeTransferIdentity_lift(identity),
                      progress: try FfiConverterTypeByteProgress_lift(progress)
                 )
             }
@@ -6874,19 +6874,77 @@ public func FfiConverterTypeSubscriptionCensus_lower(_ value: SubscriptionCensus
 }
 
 
+public struct TransferIdentity: Equatable, Hashable {
+    public var operationId: Int64
+    public var itemId: String
+    public var step: TransferStep
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(operationId: Int64, itemId: String, step: TransferStep) {
+        self.operationId = operationId
+        self.itemId = itemId
+        self.step = step
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TransferIdentity: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransferIdentity: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransferIdentity {
+        return
+            try TransferIdentity(
+                operationId: FfiConverterInt64.read(from: &buf), 
+                itemId: FfiConverterString.read(from: &buf), 
+                step: FfiConverterTypeTransferStep.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TransferIdentity, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.operationId, into: &buf)
+        FfiConverterString.write(value.itemId, into: &buf)
+        FfiConverterTypeTransferStep.write(value.step, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferIdentity_lift(_ buf: RustBuffer) throws -> TransferIdentity {
+    return try FfiConverterTypeTransferIdentity.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferIdentity_lower(_ value: TransferIdentity) -> RustBuffer {
+    return FfiConverterTypeTransferIdentity.lower(value)
+}
+
+
 public struct TransportRequest: Equatable, Hashable {
     public var document: String
     public var operationName: String
     public var variablesJson: String
-    public var upload: Bool
+    public var purpose: NetworkPurpose
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(document: String, operationName: String, variablesJson: String, upload: Bool) {
+    public init(document: String, operationName: String, variablesJson: String, purpose: NetworkPurpose) {
         self.document = document
         self.operationName = operationName
         self.variablesJson = variablesJson
-        self.upload = upload
+        self.purpose = purpose
     }
 
     
@@ -6908,7 +6966,7 @@ public struct FfiConverterTypeTransportRequest: FfiConverterRustBuffer {
                 document: FfiConverterString.read(from: &buf), 
                 operationName: FfiConverterString.read(from: &buf), 
                 variablesJson: FfiConverterString.read(from: &buf), 
-                upload: FfiConverterBool.read(from: &buf)
+                purpose: FfiConverterTypeNetworkPurpose.read(from: &buf)
         )
     }
 
@@ -6916,7 +6974,7 @@ public struct FfiConverterTypeTransportRequest: FfiConverterRustBuffer {
         FfiConverterString.write(value.document, into: &buf)
         FfiConverterString.write(value.operationName, into: &buf)
         FfiConverterString.write(value.variablesJson, into: &buf)
-        FfiConverterBool.write(value.upload, into: &buf)
+        FfiConverterTypeNetworkPurpose.write(value.purpose, into: &buf)
     }
 }
 
@@ -8991,6 +9049,72 @@ public func FfiConverterTypeLoadMoreResult_lower(_ value: LoadMoreResult) -> Rus
 
 
 
+public enum NetworkPurpose: Equatable, Hashable {
+    
+    case standard
+    case transfer
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension NetworkPurpose: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNetworkPurpose: FfiConverterRustBuffer {
+    typealias SwiftType = NetworkPurpose
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NetworkPurpose {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .standard
+        
+        case 2: return .transfer
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: NetworkPurpose, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .standard:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .transfer:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkPurpose_lift(_ buf: RustBuffer) throws -> NetworkPurpose {
+    return try FfiConverterTypeNetworkPurpose.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNetworkPurpose_lower(_ value: NetworkPurpose) -> RustBuffer {
+    return FfiConverterTypeNetworkPurpose.lower(value)
+}
+
+
+
+
 public enum RecreateReason: Equatable, Hashable {
     
     case unreadableFile
@@ -9760,6 +9884,75 @@ public func FfiConverterTypeTransactionDisposition_lift(_ buf: RustBuffer) throw
 #endif
 public func FfiConverterTypeTransactionDisposition_lower(_ value: TransactionDisposition) -> RustBuffer {
     return FfiConverterTypeTransactionDisposition.lower(value)
+}
+
+
+
+
+public enum TransferStep: Equatable, Hashable {
+    
+    case put
+    case part(number: UInt32
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TransferStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTransferStep: FfiConverterRustBuffer {
+    typealias SwiftType = TransferStep
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransferStep {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .put
+        
+        case 2: return .part(number: try FfiConverterUInt32.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TransferStep, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .put:
+            writeInt(&buf, Int32(1))
+        
+        
+        case let .part(number):
+            writeInt(&buf, Int32(2))
+            FfiConverterUInt32.write(number, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferStep_lift(_ buf: RustBuffer) throws -> TransferStep {
+    return try FfiConverterTypeTransferStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTransferStep_lower(_ value: TransferStep) -> RustBuffer {
+    return FfiConverterTypeTransferStep.lower(value)
 }
 
 
@@ -10740,6 +10933,30 @@ fileprivate struct FfiConverterOptionTypeWireUploadOperations: FfiConverterRustB
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeWireUploadRequest: FfiConverterRustBuffer {
+    typealias SwiftType = WireUploadRequest?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeWireUploadRequest.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeWireUploadRequest.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeDbError: FfiConverterRustBuffer {
     typealias SwiftType = DbError?
 
@@ -11611,7 +11828,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_resume_uploads() != 6392) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_retry() != 54597) {
+    if (uniffi_dblayer_checksum_method_database_retry() != 27065) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_retry_all() != 25573) {
@@ -11734,7 +11951,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_credentialstore_clear() != 42406) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_encryptedhttp_post() != 60341) {
+    if (uniffi_dblayer_checksum_method_encryptedhttp_post() != 63803) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_retryprogress_current() != 45910) {
@@ -11815,7 +12032,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_transport_unsubscribe() != 11368) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_transport_put() != 24122) {
+    if (uniffi_dblayer_checksum_method_transport_put() != 29868) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_uploadacceptedsink_accepted() != 26701) {
