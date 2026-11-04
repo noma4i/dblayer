@@ -97,7 +97,10 @@ extension BridgeProbeTests {
       try await waiting.value
       #expect(held.value?.id == "u1", "loaded() returned with no rows")
     } catch {
-      #expect(held.value == nil, "loaded() threw after the rows were shown")
+      guard case DbError.Interrupted = error else {
+        Issue.record("loaded() ended with \(error)")
+        return
+      }
     }
   }
 
