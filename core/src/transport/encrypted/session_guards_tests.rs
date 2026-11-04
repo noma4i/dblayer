@@ -290,7 +290,8 @@ async fn changed_session_table_ddl_migrates_the_sequence_and_complete_pending_re
     {
         let inner = db.shared.store.lock();
         inner.connection.execute("INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:save', 'pending', 0, 0)", []).unwrap();
-        assert!(inner.connection.last_insert_rowid() > before.0.1.as_ref().unwrap().owner.as_ref().unwrap().seq);
+        let Some(crate::transport::RequestOwner::Operation { seq }) = before.0.1.as_ref().unwrap().owner.as_ref() else { unreachable!("the stored request belongs to an operation") };
+        assert!(inner.connection.last_insert_rowid() > *seq);
     }
     let answer = rig.client(&db).resume(&rig.client(&db).admit("test call").unwrap()).await.unwrap().unwrap();
     assert_eq!(answer.sequence, Some(8));

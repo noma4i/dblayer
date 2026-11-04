@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,7 +8,7 @@ use crate::ddl::{create_core_tables, manifest_read, prepare_connection, sql_iden
 use crate::files::FileDirectories;
 use crate::transport::encrypted::state;
 
-use super::{Store, StoreError};
+use super::{ModelInfo, Store, StoreError};
 
 pub(crate) fn is_unreadable(error: &StoreError) -> bool {
     let (StoreError::Sqlite(error) | StoreError::Ddl(DdlError::Sqlite(error))) = error else { return false };
@@ -29,8 +30,9 @@ pub(super) fn legacy_format(connection: &Connection) -> Result<bool, StoreError>
     Ok(has_manifest && (schema == 0 || schema == crate::ddl::SCHEMA_VERSION) && manifest_read(connection, FORMAT_VERSION_KEY)?.as_deref() == Some(LEGACY_FORMAT))
 }
 
-pub(super) fn migrate_transfer_identity(connection: &Connection) -> Result<(), StoreError> {
-    let pending = legacy_pending(connection, true)?;
+pub(super) fn migrate_transfer_identity(connection: &Connection, models: &BTreeMap<String, ModelInfo>) -> Result<(), StoreError> {
+    let (pending, lost) = legacy_pending(connection, true)?;
+    let lost = match lost { Some((seq, position)) => lost_item(connection, models, seq, position)?, None => None };
     connection.execute_batch("ALTER TABLE op_item ADD COLUMN transfer_operation_id INTEGER NOT NULL DEFAULT 0;
         UPDATE op_item SET transfer_operation_id = seq;
         ALTER TABLE upload_orphan RENAME TO transfer_abort;
@@ -43,6 +45,11 @@ pub(super) fn migrate_transfer_identity(connection: &Connection) -> Result<(), S
     if let Some(pending) = pending {
         if let Some(crate::transport::RequestOwner::Unmatched { operation_id }) = &pending.owner {
             connection.execute("UPDATE op SET status = 'failed', transport_started = 0, error_kind = 'missing_file', error_message = 'Select the file again' WHERE seq = ?1", [operation_id])?;
+            if let Some(item) = &lost {
+                let state = crate::upload::UploadState { phase: crate::upload::UploadStatus::Failed, error: Some(crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::MissingFile, "Select the file again")), ..crate::upload::UploadState::queued() };
+                crate::operation::write_upload(connection, *operation_id, item.position, &state)?;
+                connection.execute("UPDATE op_item SET row_id = ?3, client_key = ?4, file_id = NULL, source_error = 'missing_file' WHERE seq = ?1 AND position = ?2", rusqlite::params![operation_id, item.position, item.row, item.key])?;
+            }
         }
         state::store_pending(connection, &pending)?;
     }
@@ -57,7 +64,7 @@ pub(super) fn recreate(connection: &Connection) -> Result<(), StoreError> {
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let session = if tables.iter().any(|table| table == "encrypted_session") { state::session(connection)? } else { None };
-    let pending = if tables.iter().any(|table| table == "encrypted_pending") { legacy_pending(connection, false)? } else { None };
+    let pending = if tables.iter().any(|table| table == "encrypted_pending") { legacy_pending(connection, false)?.0 } else { None };
     for table in &tables {
         connection.execute_batch(&format!("DROP TABLE IF EXISTS {}", sql_ident(table)))?;
     }
@@ -75,13 +82,40 @@ pub(super) fn recreate(connection: &Connection) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn legacy_pending(connection: &Connection, preserve_items: bool) -> Result<Option<state::Pending>, StoreError> {
+struct LostItem { position: i64, row: String, key: String }
+
+fn lost_item(connection: &Connection, models: &BTreeMap<String, ModelInfo>, seq: i64, position: i64) -> Result<Option<LostItem>, StoreError> {
+    let Some(input) = crate::operation::read_item_value(connection, seq, position, "input")? else { return Ok(None) };
+    let action_key: String = connection.query_row("SELECT action_key FROM op WHERE seq = ?1", [seq], |row| row.get(0))?;
+    let Some((model, name)) = crate::operation::Operation::upload_action(&action_key) else { return Ok(None) };
+    let Some(action) = models.get(&model).and_then(|info| info.spec.upload_action(&name)) else { return Ok(None) };
+    let mut statement = connection.prepare("SELECT row_id FROM op_row WHERE seq = ?1 AND row_id NOT IN (SELECT row_id FROM op_item WHERE seq = ?1 AND row_id IS NOT NULL) ORDER BY pos")?;
+    let candidates = statement.query_map([seq], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let Some(batch) = &action.batch else {
+        let [row] = candidates.as_slice() else { return Ok(None) };
+        return Ok(Some(LostItem { position, row: row.clone(), key: uuid::Uuid::new_v4().to_string() }));
+    };
+    let Some(field) = action.correlate.first() else { return Ok(None) };
+    let key = batch.input.iter().find(|(_, source)| *source == field).and_then(|(target, _)| input.pointer(&format!("/variables/{target}"))).and_then(serde_json::Value::as_str).map(str::to_string);
+    let Some(key) = key else { return Ok(None) };
+    let table = models.get(&model).map(|info| info.table.clone()).unwrap_or_else(|| crate::ddl::table_name(&model));
+    let lookup = format!("SELECT id FROM {} WHERE id = ?1 AND {} = ?2", sql_ident(&table), sql_ident(&crate::ddl::column_name(field)));
+    let mut matches = Vec::new();
+    for row in candidates {
+        if connection.query_row(&lookup, rusqlite::params![row, key], |found| found.get::<_, String>(0)).optional()?.is_some() { matches.push(row); }
+    }
+    let [row] = matches.as_slice() else { return Ok(None) };
+    Ok(Some(LostItem { position, row: row.clone(), key }))
+}
+
+fn legacy_pending(connection: &Connection, preserve_items: bool) -> Result<(Option<state::Pending>, Option<(i64, i64)>), StoreError> {
     let old: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM pragma_table_info('encrypted_pending') WHERE name = 'upload')", [], |row| row.get(0))?;
-    if !old { return Ok(state::pending(connection)?); }
+    if !old { return Ok((state::pending(connection)?, None)); }
     let pending = connection.query_row("SELECT credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage, upload FROM encrypted_pending WHERE id = 1", [], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?, row.get::<_, String>(5)?, row.get::<_, Option<i64>>(6)?, row.get::<_, Option<i64>>(7)?, row.get::<_, Option<String>>(8)?, row.get::<_, i64>(9)?))
     }).optional()?;
-    let Some((credential_digest, request_id, response_key, sequence, path, body, seq, position, stage, upload)) = pending else { return Ok(None) };
+    let Some((credential_digest, request_id, response_key, sequence, path, body, seq, position, stage, upload)) = pending else { return Ok((None, None)) };
+    let mut lost = None;
     let mut purpose = match upload { 0 => crate::transport::NetworkPurpose::Standard, 1 => crate::transport::NetworkPurpose::Transfer, _ => return Err(StoreError::Constraint("invalid legacy network purpose".into())) };
     let owner = match (seq, position, stage) {
         (Some(seq), Some(-1), Some(_)) => Some(crate::transport::RequestOwner::Operation { seq }),
@@ -89,6 +123,10 @@ fn legacy_pending(connection: &Connection, preserve_items: bool) -> Result<Optio
             let item_id: Option<String> = if preserve_items { connection.query_row("SELECT client_key FROM op_item WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position], |row| row.get(0)).optional()? } else { None };
             match (item_id, crate::operation::enum_from(&stage)) {
                 (Some(item_id), Ok(step)) => Some(crate::transport::RequestOwner::Transfer { operation_id: seq, item_id, step }),
+                (None, _) if preserve_items => {
+                    lost = Some((seq, position));
+                    Some(crate::transport::RequestOwner::Unmatched { operation_id: seq })
+                }
                 _ => Some(crate::transport::RequestOwner::Unmatched { operation_id: seq }),
             }
         }
@@ -112,7 +150,7 @@ fn legacy_pending(connection: &Connection, preserve_items: bool) -> Result<Optio
         (None, None, None) => None,
         _ => return Err(StoreError::Constraint("incomplete legacy pending owner".into())),
     };
-    Ok(Some(state::Pending { credential_digest, request_id, response_key, sequence, path, body, owner, purpose }))
+    Ok((Some(state::Pending { credential_digest, request_id, response_key, sequence, path, body, owner, purpose }), lost))
 }
 
 pub(crate) fn remove_database(path: &Path) -> Result<(), StoreError> {

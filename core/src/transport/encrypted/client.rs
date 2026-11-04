@@ -210,10 +210,10 @@ impl EncryptedClient {
     }
 
     async fn session_call_in(&self, admitted: &Admitted, operation: String, body: Value) -> Result<(Answer, After), TransportError> {
-        if operation == "logout" { return self.mutate_in(admitted, &self.config.endpoints.logout, body, None, false).await; }
+        if operation == "logout" { return self.mutate_in(admitted, &self.config.endpoints.logout, body, None, crate::transport::NetworkPurpose::Standard).await; }
         let operation = self.config.endpoints.session_operations.get(&operation).ok_or_else(|| TransportError::Decode(format!("unknown session operation {operation}")))?;
         if !operation.sessionless {
-            return self.mutate_in(admitted, &operation.path, body, None, false).await;
+            return self.mutate_in(admitted, &operation.path, body, None, crate::transport::NetworkPurpose::Standard).await;
         }
         let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
         loop {

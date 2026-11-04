@@ -13,7 +13,7 @@ use super::super::locked;
 use super::run::Runner;
 
 impl super::super::Inner {
-    pub(super) fn transfer_request(&self, name: &str, variables: Value, transfer: &crate::upload::Transfer, stage: UploadStage) -> Result<(crate::sync::OperationDef, GraphQLRequest), super::super::SyncError> {
+    pub(super) fn transfer_request(&self, name: &str, variables: Value, transfer: &crate::upload::Transfer, stage: UploadStage) -> Result<(std::sync::Arc<crate::sync::OperationDef>, GraphQLRequest), super::super::SyncError> {
         let operation = locked(&self.operations).get(name).cloned().ok_or_else(|| super::super::SyncError::Malformed(format!("operation {name} is not registered")))?;
         let request = transfer.request(&operation.document, &operation.name, variables, stage);
         Ok((operation, request))
