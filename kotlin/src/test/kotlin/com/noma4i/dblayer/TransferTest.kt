@@ -262,9 +262,9 @@ class TransferTest {
                     assertEquals(listOf("key-1", "key-2"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
                     assertEquals(listOf("signed-1.jpg", "signed-2.jpg"), sent.map { it.jsonObject.getValue("signedId").jsonPrimitive.content })
                     DBlayer.close()
-                } finally { server.hold(null) }
+                } finally { server.hold(null); DBlayer.close() }
             }
-        } finally { directory.deleteRecursively() }
+        } finally { DBlayer.close(); directory.deleteRecursively() }
     }
 
     @OptIn(DBlayerTestingApi::class)
@@ -294,7 +294,7 @@ class TransferTest {
             assertEquals(BlobState.EXPIRED, expired.state)
             restored.close()
             DBlayer.close()
-        } finally { scope.cancel(); directory.deleteRecursively() }
+        } finally { DBlayer.close(); scope.cancel(); directory.deleteRecursively() }
     }
 
     @Test
@@ -314,21 +314,21 @@ class TransferTest {
             failed.discard(null)
             assertNull(Moment.find(row.id).current())
             DBlayer.close()
-        } finally { source.delete() }
+        } finally { DBlayer.close(); source.delete() }
     }
 
     @Test
     fun discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen() = bounded {
         val directory = Files.createTempDirectory("photo").toFile()
+        val transport = MockTransport()
+        transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
+        val held = transport.hold("PresignParts")
+        val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
         try {
             val source = directory.resolve("photo").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null, 32u)
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
             val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
-            val transport = MockTransport()
-            transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
-            val held = transport.hold("PresignParts")
-            val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
             val db = reopen(config, modelsJSON, transport, operations, uploads)
             val queued = requireNotNull(AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path))).optimisticValue)
             held.entered()
@@ -350,7 +350,7 @@ class TransferTest {
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)
             DBlayer.close()
-        } finally { directory.deleteRecursively() }
+        } finally { held.release(); abort.release(); DBlayer.close(); directory.deleteRecursively() }
     }
 
     @Test
@@ -376,7 +376,7 @@ class TransferTest {
             val call = transport.calls.single { it.operationName == "CreateAsset" }
             assertEquals("key-1", Json.parseToJsonElement(call.variablesJson).jsonObject.getValue("clientKey").jsonPrimitive.content)
             DBlayer.close()
-        } finally { directory.deleteRecursively() }
+        } finally { DBlayer.close(); directory.deleteRecursively() }
     }
 
     @Test
@@ -404,16 +404,16 @@ class TransferTest {
             val filenames = transport.calls.filter { it.operationName == "CreateBlob" }.map { Json.parseToJsonElement(it.variablesJson).jsonObject.getValue("filename").jsonPrimitive.content }.sorted()
             assertEquals(listOf("0.jpg", "0.jpg", "1.jpg", "2.jpg"), filenames)
             DBlayer.close()
-        } finally { directory.deleteRecursively() }
+        } finally { DBlayer.close(); directory.deleteRecursively() }
     }
 
     @Test
     fun cancellingTheMiddleFileKeepsTheOtherFilesInOrder() = bounded {
         val directory = Files.createTempDirectory("album").toFile()
+        val transport = MockTransport()
+        val held = transport.hold("CreateBlob", reply = """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-0","blobId":"b0"}}}""")
         try {
             val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
-            val transport = MockTransport()
-            val held = transport.hold("CreateBlob", reply = """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-0","blobId":"b0"}}}""")
             transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-2","blobId":"b2"}}}""")
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a0","clientKey":"key-0","size":2,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
@@ -436,7 +436,7 @@ class TransferTest {
             val filenames = transport.calls.filter { it.operationName == "CreateBlob" }.map { Json.parseToJsonElement(it.variablesJson).jsonObject.getValue("filename").jsonPrimitive.content }.sorted()
             assertEquals(listOf("0.jpg", "2.jpg"), filenames)
             DBlayer.close()
-        } finally { directory.deleteRecursively() }
+        } finally { held.release(); DBlayer.close(); directory.deleteRecursively() }
     }
 
     @OptIn(DBlayerTestingApi::class)
@@ -459,7 +459,7 @@ class TransferTest {
             assertEquals(BlobState.EXPIRED, expired.state)
             blob.close()
             DBlayer.close()
-        } finally { scope.cancel(); source.delete() }
+        } finally { DBlayer.close(); scope.cancel(); source.delete() }
     }
 
     @Test
@@ -487,7 +487,7 @@ class TransferTest {
             assertEquals(listOf("https://storage/1", "https://storage/2", "https://storage/3"), transport.puts.sorted())
             blob.close()
             DBlayer.close()
-        } finally { scope.cancel(); directory.deleteRecursively() }
+        } finally { DBlayer.close(); scope.cancel(); directory.deleteRecursively() }
     }
 
     @Test
@@ -517,22 +517,22 @@ class TransferTest {
             assertEquals("large", info.name)
             assertEquals(300L * 1024, info.size)
             DBlayer.close()
-        } finally { directory.deleteRecursively() }
+        } finally { DBlayer.close(); directory.deleteRecursively() }
     }
 
     @Test
     fun anOfflineDiscardRoutesItsReopenedAbortAsATransfer() = bounded {
         val directory = Files.createTempDirectory("transfer").toFile()
         val scope = CoroutineScope(SupervisorJob())
+        val transport = MockTransport()
+        transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
+        val held = transport.hold("PresignParts")
+        val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
         try {
             val source = directory.resolve("video").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null, 8u)
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
             val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
-            val transport = MockTransport()
-            transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
-            val held = transport.hold("PresignParts")
-            val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
             val db = reopen(config, "[]", transport, operations, uploads)
             val blob = DBlayer.upload(BlobUpload("video", "CreateBlob"), UploadRequest(source.path), scope)
             held.entered()
@@ -559,6 +559,9 @@ class TransferTest {
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)
             DBlayer.close()
         } finally {
+            held.release()
+            abort.release()
+            DBlayer.close()
             scope.cancel()
             directory.deleteRecursively()
         }
