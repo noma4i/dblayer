@@ -349,13 +349,13 @@ pub(crate) fn read_fields(connection: &Connection, seq: i64) -> Result<Vec<Strin
     fields
 }
 
-pub(crate) fn record_orphan_uploads(connection: &Connection, seq: i64, position: Option<i64>) -> Result<()> {
+pub(crate) fn record_transfer_aborts(connection: &Connection, seq: i64, position: Option<i64>) -> Result<()> {
     let mut statement = connection.prepare_cached("SELECT position, storage_key, upload_id, transfer_operation_id, client_key FROM op_item WHERE seq = ?1 AND upload_id IS NOT NULL AND storage_key IS NOT NULL AND (?2 IS NULL OR position = ?2)")?;
     let pending = statement.query_map(params![seq, position], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?)))?.collect::<Result<Vec<_>>>()?;
     for (item, key, upload_id, operation_id, item_id) in pending {
         let input = read_item_value(connection, seq, item, "input")?.map(serde_json::from_value::<crate::upload::UploadInput>).transpose().map_err(from_sql_error)?;
         let Some(steps) = input.and_then(|input| input.steps.multipart) else { continue };
-        connection.prepare_cached("INSERT INTO upload_orphan (operation_id, item_id, storage_key, upload_id, abort_operation) VALUES (?1, ?2, ?3, ?4, ?5)")?.execute(params![operation_id, item_id, key, upload_id, steps.abort])?;
+        connection.prepare_cached("INSERT INTO transfer_abort (operation_id, item_id, storage_key, upload_id, abort_operation) VALUES (?1, ?2, ?3, ?4, ?5)")?.execute(params![operation_id, item_id, key, upload_id, steps.abort])?;
     }
     Ok(())
 }

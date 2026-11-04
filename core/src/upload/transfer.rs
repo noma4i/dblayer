@@ -4,28 +4,17 @@ use serde_json::Value;
 use super::UploadStage;
 
 #[derive(Clone)]
-pub(crate) struct Transfer {
-    pub operation_id: i64,
-    pub item_id: String,
-}
-
-pub(crate) struct AbortTransfer {
-    pub id: i64,
-    pub transfer: Transfer,
-    pub operation: String,
-    pub key: String,
-    pub upload_id: String,
-}
-
-impl AbortTransfer {
-    pub fn variables(&self) -> Value {
-        serde_json::json!({"key": &self.key, "uploadId": &self.upload_id})
-    }
+pub(crate) enum Transfer {
+    Active { operation_id: i64, item_id: String },
+    Abort { operation_id: i64, item_id: String, id: i64, operation: String, key: String, upload_id: String },
 }
 
 impl Transfer {
     pub fn owner(&self, step: UploadStage) -> RequestOwner {
-        RequestOwner::Transfer { operation_id: self.operation_id, item_id: self.item_id.clone(), step }
+        let (operation_id, item_id) = match self {
+            Self::Active { operation_id, item_id } | Self::Abort { operation_id, item_id, .. } => (*operation_id, item_id.clone()),
+        };
+        RequestOwner::Transfer { operation_id, item_id, step }
     }
 
     pub fn request(&self, document: &str, name: &str, variables: Value, step: UploadStage) -> GraphQLRequest {
@@ -33,6 +22,9 @@ impl Transfer {
     }
 
     pub fn put(&self, step: TransferStep) -> TransferIdentity {
-        TransferIdentity { operation_id: self.operation_id, item_id: self.item_id.clone(), step }
+        let (operation_id, item_id) = match self {
+            Self::Active { operation_id, item_id } | Self::Abort { operation_id, item_id, .. } => (*operation_id, item_id.clone()),
+        };
+        TransferIdentity { operation_id, item_id, step }
     }
 }

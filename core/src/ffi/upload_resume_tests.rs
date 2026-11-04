@@ -149,19 +149,9 @@ async fn resume_returns_a_direct_mutation_without_creating_an_upload_owner() {
 
 fn legacy_format(path: &std::path::Path) {
     let connection = rusqlite::Connection::open(path).unwrap();
-    connection.execute_batch("BEGIN;
-        CREATE TABLE encrypted_pending_old (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, request_id TEXT NOT NULL, response_key TEXT NOT NULL, sequence INTEGER NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, owner_seq INTEGER, item_position INTEGER, stage TEXT, upload INTEGER NOT NULL DEFAULT 0) STRICT;
-        INSERT INTO encrypted_pending_old SELECT id, credential_digest, request_id, response_key, sequence, path, body, owner_operation_id,
-            CASE owner_kind WHEN 'operation' THEN -1 WHEN 'transfer' THEN (SELECT position FROM op_item WHERE transfer_operation_id = owner_operation_id AND client_key = owner_item_id) END,
-            CASE owner_kind WHEN 'operation' THEN 'mutation' WHEN 'transfer' THEN owner_step END, purpose FROM encrypted_pending;
-        DROP TABLE encrypted_pending;
-        ALTER TABLE encrypted_pending_old RENAME TO encrypted_pending;
-        ALTER TABLE op_item DROP COLUMN transfer_operation_id;
-        DROP INDEX upload_orphan_identity;
-        ALTER TABLE upload_orphan DROP COLUMN operation_id;
-        ALTER TABLE upload_orphan DROP COLUMN item_id;
-        UPDATE manifest SET value = '36962b20688fd50d6443ff71baf6b0a8d657a4bf48c1d979c56f315176c64699' WHERE key = 'format_version';
-        COMMIT;").unwrap();
+    let old: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM pragma_table_info('encrypted_pending') WHERE name = 'owner_seq')", [], |row| row.get(0)).unwrap();
+    if old { return; }
+    connection.execute_batch(include_str!("../../../fixtures/transfer-legacy.sql")).unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -220,6 +210,34 @@ async fn opening_a_legacy_pending_upload_keeps_its_owner_and_file() {
     within(database.sync.as_ref().unwrap().wait_uploads()).await;
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "CreateBlob").count(), 1);
     assert!(database.db.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_legacy_transfer_item_cannot_retry_a_mutation_without_a_file() {
+    let rig = Rig::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let source = directory.path().join("clip.mp4");
+    std::fs::write(&source, b"abc").unwrap();
+    let database = open(&rig, &path).await;
+    database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
+    rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42"}}));
+    rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
+    database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()))).await.unwrap();
+    within(database.sync.as_ref().unwrap().wait_uploads()).await;
+    within(database.close_database()).await.unwrap();
+    drop(database);
+    legacy_format(&path);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute("DELETE FROM op_item", []).unwrap();
+    drop(connection);
+    let database = open(&rig, &path).await;
+    let before = within(database.retry_all(database.session_epoch())).await.unwrap_err();
+    assert!(before.to_string().contains("select the file again"), "{before:?}");
+    assert!(within(database.session_resume()).await.is_err());
+    let after = within(database.retry_all(database.session_epoch())).await.unwrap_err();
+    assert!(after.to_string().contains("select the file again"), "{after:?}");
+    assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "MakeMoment").count(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

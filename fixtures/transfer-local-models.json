@@ -1,0 +1,1 @@
+[{"key":"Note","storage":"local","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}},{"name":"text","kind":{"type":"scalar","kind":"str"}},{"name":"attachment","kind":{"type":"file"},"optional":true}]}]

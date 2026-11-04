@@ -176,6 +176,6 @@ impl UploadInfo {
 
     #[cfg(test)]
     pub fn is_retryable(&self) -> bool {
-        self.error.as_ref().is_some_and(|error| error.kind != crate::syncstate::FailureKind::Rejected)
+        self.error.as_ref().is_some_and(|error| !matches!(error.kind, crate::syncstate::FailureKind::Rejected | crate::syncstate::FailureKind::MissingFile))
     }
 }

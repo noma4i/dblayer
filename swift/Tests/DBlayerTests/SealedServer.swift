@@ -22,6 +22,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   private var cached: [String: (Data, String)] = [:]
   private var executed: [[String: Any]] = []
   private var lostFile: String?
+  private var lost = false
   private let answer: @Sendable (String, [String: Any]) -> [String: Any]
 
   /// `answer` maps the path and the request body of a signed-in request to the answer body.
@@ -41,6 +42,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   var effects: [[String: Any]] { lock.withLock { executed } }
   func loseAnswer(filename: String) { lock.withLock { lostFile = filename } }
   func lostAnswer() async { var iterator = lostAnswers.stream.makeAsyncIterator(); _ = await iterator.next() }
+  var hasLostAnswer: Bool { lock.withLock { lost } }
 
   func pathRequests(_ path: String) -> Int { requests.filter { $0.path == path }.count }
 
@@ -100,6 +102,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
       let filename = (sent["variables"] as? [String: Any])?["filename"] as? String
       guard filename != nil && filename == lostFile else { return false }
       lostFile = nil
+      lost = true
       return true
     }
     if lose { lostAnswers.continuation.yield(()); throw DbError.Network(detail: "lost answer") }

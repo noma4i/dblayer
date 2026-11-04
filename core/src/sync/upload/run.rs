@@ -128,7 +128,7 @@ impl Runner {
         }
         let batch = match &owner { crate::upload::UploadOwner::Action { model } => inner.db.spec(model)?.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&input.steps.mutation)), crate::upload::UploadOwner::Blob { .. } => false };
         let progress = TransferProgress::new(state.total_bytes, inner.config.upload.tick);
-        Ok(Some(Self { inner, admitted, seq, position, transfer: crate::upload::Transfer { operation_id, item_id }, run, token, batch, owner, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
+        Ok(Some(Self { inner, admitted, seq, position, transfer: crate::upload::Transfer::Active { operation_id, item_id }, run, token, batch, owner, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
     }
 
     pub(super) fn snapshot(&self) -> UploadState {

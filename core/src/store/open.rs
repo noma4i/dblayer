@@ -33,13 +33,19 @@ pub(super) fn migrate_transfer_identity(connection: &Connection) -> Result<(), S
     let pending = legacy_pending(connection, true)?;
     connection.execute_batch("ALTER TABLE op_item ADD COLUMN transfer_operation_id INTEGER NOT NULL DEFAULT 0;
         UPDATE op_item SET transfer_operation_id = seq;
-        ALTER TABLE upload_orphan ADD COLUMN operation_id INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE upload_orphan ADD COLUMN item_id TEXT NOT NULL DEFAULT '';
-        UPDATE upload_orphan SET operation_id = -(SELECT MIN(other.id) FROM upload_orphan AS other WHERE other.storage_key = upload_orphan.storage_key AND other.upload_id = upload_orphan.upload_id AND other.abort_operation = upload_orphan.abort_operation), item_id = 'legacy-orphan-' || (SELECT MIN(other.id) FROM upload_orphan AS other WHERE other.storage_key = upload_orphan.storage_key AND other.upload_id = upload_orphan.upload_id AND other.abort_operation = upload_orphan.abort_operation);
-        DELETE FROM upload_orphan WHERE id NOT IN (SELECT MIN(id) FROM upload_orphan GROUP BY storage_key, upload_id, abort_operation);
+        ALTER TABLE upload_orphan RENAME TO transfer_abort;
+        ALTER TABLE transfer_abort ADD COLUMN operation_id INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE transfer_abort ADD COLUMN item_id TEXT NOT NULL DEFAULT '';
+        UPDATE transfer_abort SET operation_id = -(SELECT MIN(other.id) FROM transfer_abort AS other WHERE other.storage_key = transfer_abort.storage_key AND other.upload_id = transfer_abort.upload_id AND other.abort_operation = transfer_abort.abort_operation), item_id = 'legacy-abort-' || (SELECT MIN(other.id) FROM transfer_abort AS other WHERE other.storage_key = transfer_abort.storage_key AND other.upload_id = transfer_abort.upload_id AND other.abort_operation = transfer_abort.abort_operation);
+        DELETE FROM transfer_abort WHERE id NOT IN (SELECT MIN(id) FROM transfer_abort GROUP BY storage_key, upload_id, abort_operation);
         DROP TABLE encrypted_pending;
         CREATE TABLE encrypted_pending (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, request_id TEXT NOT NULL, response_key TEXT NOT NULL, sequence INTEGER NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, owner_kind TEXT, owner_operation_id INTEGER, owner_item_id TEXT, owner_step TEXT, purpose INTEGER NOT NULL CHECK (purpose IN (0, 1))) STRICT;")?;
-    if let Some(pending) = pending { state::store_pending(connection, &pending)?; }
+    if let Some(pending) = pending {
+        if let Some(crate::transport::RequestOwner::Unmatched { operation_id }) = &pending.owner {
+            connection.execute("UPDATE op SET status = 'failed', transport_started = 0, error_kind = 'missing_file', error_message = 'Select the file again' WHERE seq = ?1", [operation_id])?;
+        }
+        state::store_pending(connection, &pending)?;
+    }
     crate::ddl::rebuild_transfer_tables(connection)?;
     create_core_tables(connection)?;
     Ok(())
@@ -86,6 +92,7 @@ fn legacy_pending(connection: &Connection, preserve_items: bool) -> Result<Optio
                 _ => Some(crate::transport::RequestOwner::Unmatched { operation_id: seq }),
             }
         }
+        (Some(seq), None, Some(_)) => Some(crate::transport::RequestOwner::Unmatched { operation_id: seq }),
         (None, None, None) if preserve_items => {
             let request: serde_json::Value = serde_json::from_str(&body).map_err(|error| StoreError::Constraint(error.to_string()))?;
             let abort = request.get("operationName").and_then(|value| value.as_str());
@@ -96,7 +103,7 @@ fn legacy_pending(connection: &Connection, preserve_items: bool) -> Result<Optio
                 match id {
                     Some(id) => {
                         purpose = crate::transport::NetworkPurpose::Transfer;
-                        Some(crate::transport::RequestOwner::Transfer { operation_id: -id, item_id: format!("legacy-orphan-{id}"), step: crate::upload::UploadStage::Abort })
+                        Some(crate::transport::RequestOwner::Transfer { operation_id: -id, item_id: format!("legacy-abort-{id}"), step: crate::upload::UploadStage::Abort })
                     }
                     None => None,
                 }

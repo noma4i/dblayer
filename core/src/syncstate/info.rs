@@ -40,6 +40,7 @@ pub enum FailureKind {
     Network,
     Server,
     Rejected,
+    MissingFile,
     Session(SessionCode),
     Unrecognized,
 }
@@ -52,6 +53,7 @@ impl FailureKind {
             FailureKind::Network => "network".into(),
             FailureKind::Server => "server".into(),
             FailureKind::Rejected => "rejected".into(),
+            FailureKind::MissingFile => "missing_file".into(),
             FailureKind::Session(code) => format!("{SESSION_PREFIX}{}", code.name()),
             FailureKind::Unrecognized => "unrecognized".into(),
         }
@@ -62,6 +64,7 @@ impl FailureKind {
             "network" => Some(FailureKind::Network),
             "server" => Some(FailureKind::Server),
             "rejected" => Some(FailureKind::Rejected),
+            "missing_file" => Some(FailureKind::MissingFile),
             "unrecognized" => Some(FailureKind::Unrecognized),
             _ => text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session),
         }

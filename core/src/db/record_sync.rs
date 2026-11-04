@@ -91,6 +91,9 @@ impl Db {
         if stuck.is_empty() {
             return Ok(0);
         }
+        if stuck.iter().any(|entry| entry.operation.error.as_ref().is_some_and(|error| error.kind == crate::syncstate::FailureKind::MissingFile)) {
+            return Err(DbError::InvalidUpload("select the file again".into()));
+        }
         let generation = self.generation();
         self.commit_following(&admitted.authority(), generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);

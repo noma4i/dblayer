@@ -1,0 +1,12 @@
+BEGIN;
+CREATE TABLE encrypted_pending_old (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, request_id TEXT NOT NULL, response_key TEXT NOT NULL, sequence INTEGER NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, owner_seq INTEGER, item_position INTEGER, stage TEXT, upload INTEGER NOT NULL DEFAULT 0) STRICT;
+INSERT INTO encrypted_pending_old SELECT id, credential_digest, request_id, response_key, sequence, path, body, owner_operation_id, CASE owner_kind WHEN 'operation' THEN -1 WHEN 'transfer' THEN (SELECT position FROM op_item WHERE transfer_operation_id = owner_operation_id AND client_key = owner_item_id) END, CASE owner_kind WHEN 'operation' THEN 'mutation' WHEN 'transfer' THEN owner_step END, purpose FROM encrypted_pending;
+DROP TABLE encrypted_pending;
+ALTER TABLE encrypted_pending_old RENAME TO encrypted_pending;
+ALTER TABLE op_item DROP COLUMN transfer_operation_id;
+DROP INDEX transfer_abort_identity;
+ALTER TABLE transfer_abort DROP COLUMN operation_id;
+ALTER TABLE transfer_abort DROP COLUMN item_id;
+ALTER TABLE transfer_abort RENAME TO upload_orphan;
+UPDATE manifest SET value = '36962b20688fd50d6443ff71baf6b0a8d657a4bf48c1d979c56f315176c64699' WHERE key = 'format_version';
+COMMIT;

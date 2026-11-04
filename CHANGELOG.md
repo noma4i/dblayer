@@ -27,6 +27,7 @@
 - Core writes and transport calls carry one `Admitted` value from the calling database.
 - Запросы передачи и её очистки несут назначение сети. PUT несёт идентичность операции, элемента и шага.
 - Android связывает отказ фонового запуска с эпохой принятой передачи.
+- При отсутствии элемента старой передачи `missing_file` запрещает повтор без файла.
 - Requests, loads, uploads and subscriptions hold a lease that a session end, reset or close ends.
 - `sessionReset` and `close` are async and return after clearing; `sessionReset` clears the data.
 - A session end replays after a crash between the credential and the data clear.

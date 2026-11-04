@@ -705,6 +705,7 @@ impl Feed {
                         }
                     }
                     Some(SubscriptionEvent::Lost { .. }) => {
+                        pending.clear();
                         crate::db::locked(&self.lost).reload = true;
                         self.reload_lost().await;
                     }

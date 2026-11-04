@@ -8,7 +8,9 @@ import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.selects.select
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -21,6 +23,27 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Test
+import com.sun.jna.Library
+import com.sun.jna.Native
+import com.sun.jna.Pointer
+import com.sun.jna.ptr.PointerByReference
+
+internal interface LegacySqlite : Library {
+    fun sqlite3_open(path: String, database: PointerByReference): Int
+    fun sqlite3_exec(database: Pointer, sql: String, callback: Pointer?, context: Pointer?, error: Pointer?): Int
+    fun sqlite3_close(database: Pointer): Int
+}
+
+private fun writeLegacyTransfer(path: String) {
+    val sqlite = Native.load("sqlite3", LegacySqlite::class.java)
+    val database = PointerByReference()
+    check(sqlite.sqlite3_open(path, database) == 0)
+    try {
+        check(sqlite.sqlite3_exec(database.value, java.io.File("../fixtures/transfer-legacy.sql").readText(), null, null, null) == 0)
+    } finally {
+        check(sqlite.sqlite3_close(database.value) == 0)
+    }
+}
 
 private class MultipartTransfer(val mock: MockTransport = MockTransport()) : Transport by mock {
     val puts = java.util.concurrent.CopyOnWriteArrayList<String>()
@@ -53,6 +76,64 @@ private class HoldSecondFile(private val server: SealedServer, private val mock:
 }
 
 class TransferTest {
+    @Test
+    fun openingLegacyPendingKeepsTheSessionAndLocalFile() = bounded {
+        val directory = Files.createTempDirectory("legacy-pending").toFile()
+        val server = SealedServer(deduplicate = true) { path, _ ->
+            Json.parseToJsonElement(if (path == "/api/auth/login_link") """{"sessionId":"A"}""" else """{"data":{"createBlob":{"id":"one"}}}""").jsonObject
+        }
+        try {
+            val path = directory.resolve("db.sqlite").path
+            val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", false))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
+            val transport = MockTransport()
+            val credentials = TransferCredential()
+            val models = java.io.File("../fixtures/transfer-local-models.json").readText()
+            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { id } }"}]"""
+            DBlayer.close()
+            DBlayer.openTesting(transport, models, path = path, encrypted = encrypted, credentials = credentials, http = server)
+            val database = DBlayer.database
+            database.registerOperations(operations)
+            database.sessionCall("login_link", """{"account":"A"}""")
+            val note = database.create(database.sessionEpoch(), "Note", """{"text":"kept"}""", "{}")
+            val bytes = ByteArray(300 * 1024) { 7 }
+            database.attach(database.sessionEpoch(), "Note", note.id, "attachment", bytes, "file", "application/octet-stream")
+            server.hold("CreateBlob")
+            val call = async { runCatching { database.run(database.sessionEpoch(), "CreateBlob", """{"filename":"pending"}""") } }
+            val arrived = async { server.heldRequest() }
+            select<Unit> {
+                arrived.onAwait { }
+                call.onAwait { throw AssertionError("the request returned before reaching the server: $it") }
+            }
+            database.setOnline(false)
+            server.loseAnswer("pending")
+            server.hold(null)
+            val lost = async { server.lostAnswer() }
+            select<Unit> {
+                lost.onAwait { }
+                call.onAwait { if (!server.hasLostAnswer()) throw AssertionError("the request ended before its answer was lost: $it") }
+            }
+            lost.cancel()
+            DBlayer.close()
+            call.await()
+            writeLegacyTransfer(path)
+            DBlayer.openTesting(transport, models, path = path, encrypted = encrypted, credentials = credentials, http = server)
+            val reopened = DBlayer.database
+            reopened.registerOperations(operations)
+            assertTrue(reopened.readRow(reopened.sessionEpoch(), "Note", note.id) != null)
+            assertArrayEquals(bytes, reopened.read(reopened.sessionEpoch(), "Note", note.id, "attachment"))
+            assertTrue(reopened.sessionResume() != null)
+            reopened.run(reopened.sessionEpoch(), "CreateBlob", """{"filename":"next"}""")
+            val effects = server.effects.filter { it["operationName"]?.jsonPrimitive?.content == "CreateBlob" }
+            assertEquals(1, effects.count { it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "pending" })
+            assertEquals(1, effects.count { it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "next" })
+            assertEquals(3, server.operationRequests("CreateBlob"))
+        } finally {
+            server.hold(null)
+            DBlayer.close()
+            directory.deleteRecursively()
+        }
+    }
+
     @Test
     fun multipartBatchAcceptsACorrelationKeyWithPathCharacters() = bounded {
         val directory = Files.createTempDirectory("multipart-key").toFile()

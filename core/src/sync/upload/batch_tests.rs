@@ -504,8 +504,8 @@ async fn discarding_one_batch_member_keeps_its_multipart_abort_after_the_item_is
     let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     db.shared.store.lock().connection.execute("UPDATE op_item SET upload_id = 'u1', storage_key = 'k1' WHERE row_id = ?1", [ids[0].as_str()]).unwrap();
     assert_eq!(db.discard(&db.admit().unwrap(), "Asset", &ids[0], None).unwrap(), 1);
-    let orphans = db.shared.store.upload_orphans().unwrap();
-    assert_eq!(orphans.iter().map(|abort| (abort.key.as_str(), abort.upload_id.as_str(), abort.operation.as_str())).collect::<Vec<_>>(), [("k1", "u1", "Abort")]);
+    let orphans = db.shared.store.pending_transfer_aborts().unwrap();
+    assert_eq!(orphans.iter().filter_map(|abort| match abort { crate::upload::Transfer::Abort { key, upload_id, operation, .. } => Some((key.as_str(), upload_id.as_str(), operation.as_str())), _ => None }).collect::<Vec<_>>(), [("k1", "u1", "Abort")]);
 }
 
 async fn failed_batch(whole_operation: bool) -> (Db, Sync, Arc<ManualClock>, Vec<crate::identity::RowId>) {

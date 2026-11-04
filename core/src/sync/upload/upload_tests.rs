@@ -1032,7 +1032,7 @@ fn fail_open_upload_as(rig: &Rig, seq: i64, message: &str) {
 }
 
 fn orphan_count(rig: &Rig) -> i64 {
-    rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT COUNT(*) FROM upload_orphan", [], |row| row.get::<_, i64>(0))?)).unwrap()
+    rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT COUNT(*) FROM transfer_abort", [], |row| row.get::<_, i64>(0))?)).unwrap()
 }
 
 fn confirmed_parts() -> Vec<UploadPart> {

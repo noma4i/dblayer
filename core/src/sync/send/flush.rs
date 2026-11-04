@@ -626,7 +626,7 @@ impl Inner {
                 match location {
                     Some(seq) => seq,
                     None if *step == crate::upload::UploadStage::Abort => {
-                        let name = self.db.shared.store.upload_orphan_name(*operation_id, item_id)?;
+                        let name = self.db.shared.store.transfer_abort_name(*operation_id, item_id)?;
                         let settled = match (name, result) {
                             (Some(name), Ok(response)) => {
                                 let operation = locked(&self.operations).get(&name).cloned().ok_or_else(|| SyncError::Malformed(format!("operation {name} is not registered")))?;
@@ -636,7 +636,7 @@ impl Inner {
                         };
                         if settled {
                             let authority = admitted.authority();
-                            self.db.shared.store.settle_upload_orphan_identity(&authority, *operation_id, item_id)?;
+                            self.db.shared.store.settle_transfer_abort_identity(&authority, *operation_id, item_id)?;
                         }
                         return Ok(());
                     }
@@ -644,8 +644,7 @@ impl Inner {
                 }
             }
             crate::transport::RequestOwner::Unmatched { operation_id } => {
-                self.fail_upload(admitted, *operation_id, SyncError::Store("the saved transfer no longer has an item".into()));
-                return Err(SyncError::Store("the saved transfer no longer has an item".into()));
+                return Err(SyncError::Store(format!("transfer {operation_id} has no file; select the file again")));
             }
         };
         let settled = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {

@@ -22,7 +22,7 @@ struct Exchange {
 
 #[async_trait]
 impl HttpExchange for Exchange {
-    async fn post(&self, path: &str, body: String, _: bool) -> Result<HttpReply, TransportError> {
+    async fn post(&self, path: &str, body: String, _: crate::transport::NetworkPurpose) -> Result<HttpReply, TransportError> {
         let request = open_request(&body, path, 1_800_000_000).unwrap();
         let reply = if path == "/api/graphql" {
             self.requests.lock().unwrap().push((request.clone(), body));

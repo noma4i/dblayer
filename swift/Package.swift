@@ -26,7 +26,8 @@ let package = Package(
     ),
     .testTarget(
       name: "DBlayerTests",
-      dependencies: ["DBlayer", "DBlayerTesting"]
+      dependencies: ["DBlayer", "DBlayerTesting"],
+      linkerSettings: [.linkedLibrary("sqlite3")]
     ),
     .testTarget(
       name: "ConsumerCheckTests",

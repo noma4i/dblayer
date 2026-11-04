@@ -119,9 +119,11 @@ class UploadWorkTest {
             val current = accepted.last()
             val stale = runCatching { database.backgroundRefused(old.epoch, current.items, "old refusal") }.exceptionOrNull()
             assertTrue("the old epoch must be rejected", stale is DbException.Interrupted)
-            assertNull("a new job must not replace a round that is ending", database.roundBegin(database.sessionEpoch()))
+            val newOwner = requireNotNull(database.roundBegin(database.sessionEpoch()))
             val late = requireNotNull(database.roundEnd(database.sessionEpoch(), owner))
             assertEquals(listOf(old.epoch, current.epoch), late.map { it.epoch })
+            assertEquals(WireRoundStep.DONE, database.roundNext(database.sessionEpoch(), newOwner))
+            database.roundEnd(database.sessionEpoch(), newOwner)
             val deliver = UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, items -> if (items == old.items) "old refusal" else null })
             late.forEach(deliver::accepted)
             assertTrue(rows.all { Asset.find(it.id).current()?.uploads?.values?.singleOrNull()?.error == null })
@@ -152,6 +154,38 @@ class UploadWorkTest {
             database.setOnline(false)
             AccountScope.current().uploadBatch(Asset, batch("new"), UploadBatchRequest(operation = "create_files"))
             assertEquals("the new session starts its own job", 2, starts.get())
+        } finally {
+            DBlayer.close()
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aNewSessionSchedulesUploadsWhenTheOldEndingRoundLostItsSession() = bounded {
+        val directory = Files.createTempDirectory("ending-epoch").toFile()
+        try {
+            val source = java.io.File(directory, "image.png").apply { writeText("image") }
+            val transport = MockTransport()
+            transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"B","name":"B"}}}""")
+            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"""
+            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            database.setOnline(false)
+            val starts = java.util.concurrent.atomic.AtomicInteger()
+            database.setUploadAcceptedSink(UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> starts.incrementAndGet(); null }))
+            fun batch(prefix: String) = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "$prefix-$it"); put("size", 2) }, path = source.path) }
+            AccountScope.current().uploadBatch(Asset, batch("old"), UploadBatchRequest(operation = "create_files"))
+            val owner = requireNotNull(database.roundBegin(database.sessionEpoch()))
+            assertEquals(WireRoundStep.DONE, database.roundNext(database.sessionEpoch(), owner))
+            DBlayer.sessionReset()
+            assertTrue(runCatching { database.roundEnd(database.sessionEpoch(), owner) }.exceptionOrNull() is DbException.NoSession)
+            database.setOnline(true)
+            User.profile.load(AccountScope.current())
+            database.setOnline(false)
+            AccountScope.current().uploadBatch(Asset, batch("new"), UploadBatchRequest(operation = "create_files"))
+            assertEquals(2, starts.get())
+            val next = requireNotNull(database.roundBegin(database.sessionEpoch()))
+            assertEquals(WireRoundStep.DONE, database.roundNext(database.sessionEpoch(), next))
+            database.roundEnd(database.sessionEpoch(), next)
         } finally {
             DBlayer.close()
             directory.deleteRecursively()

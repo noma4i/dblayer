@@ -47,6 +47,7 @@ struct Cover {
     epoch: u64,
     phase: Phase,
     late: Vec<UploadAccepted>,
+    retired: Option<(u32, Vec<UploadAccepted>)>,
     reply: Reply,
 }
 
@@ -102,6 +103,10 @@ impl RoundFlow {
                 context.reply = Reply::Step(RoundStep::Stale);
                 Handled
             }
+            RoundEvent::End(owner) if context.retired.as_ref().is_some_and(|(old, _)| old == owner) => {
+                context.reply = Reply::Ended(context.retired.take().map(|(_, groups)| groups));
+                Handled
+            }
             RoundEvent::End(_) => {
                 context.reply = Reply::Ended(None);
                 Handled
@@ -155,6 +160,14 @@ impl RoundFlow {
     #[state(superstate = "any")]
     fn ending(context: &mut Cover, event: &RoundEvent) -> Outcome<State> {
         match event {
+            RoundEvent::Accept(group) if group.epoch != context.epoch => {
+                context.accepted += 1;
+                context.late.push(group.clone());
+                context.retired = Some((context.round, std::mem::take(&mut context.late)));
+                context.round += 1;
+                context.reply = Reply::Accepted(true);
+                Transition(State::idle())
+            }
             RoundEvent::Accept(group) => {
                 context.accepted += 1;
                 context.late.push(group.clone());

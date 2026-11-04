@@ -238,7 +238,7 @@ const CORE_STATEMENTS: [&str; 42] = [
   PRIMARY KEY (seq, pos)
 ) STRICT, WITHOUT ROWID",
     "CREATE INDEX IF NOT EXISTS op_row_id ON op_row (row_id)",
-    "CREATE TABLE IF NOT EXISTS upload_orphan (
+    "CREATE TABLE IF NOT EXISTS transfer_abort (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   operation_id INTEGER NOT NULL,
   item_id TEXT NOT NULL,
@@ -246,7 +246,7 @@ const CORE_STATEMENTS: [&str; 42] = [
   upload_id TEXT NOT NULL,
   abort_operation TEXT NOT NULL
 ) STRICT",
-    "CREATE UNIQUE INDEX IF NOT EXISTS upload_orphan_identity ON upload_orphan (operation_id, item_id)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS transfer_abort_identity ON transfer_abort (operation_id, item_id)",
     "CREATE TABLE IF NOT EXISTS op_part (
   seq INTEGER NOT NULL,
   item_position INTEGER NOT NULL,
@@ -628,7 +628,7 @@ pub(crate) fn create_core_tables(connection: &Connection) -> Result<(), DdlError
 }
 
 pub(crate) fn rebuild_transfer_tables(connection: &Connection) -> Result<(), DdlError> {
-    for name in ["op_item", "upload_orphan"] {
+    for name in ["op_item", "transfer_abort"] {
         let prefix = format!("CREATE TABLE IF NOT EXISTS {name} (");
         let statement = CORE_STATEMENTS.iter().find(|statement| statement.starts_with(&prefix)).ok_or(rusqlite::Error::InvalidQuery)?;
         let next = format!("{name}_next");

@@ -327,6 +327,7 @@ A finished upload closes its operation and removes its entry from `uploads`. The
 - Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts.
 - Each step and multipart part stores its retry count and next retry time. Restarting preserves both. A successful step removes its retry record.
 - An explicit `retry(action)` after failure clears saved retry counts and times, giving unfinished steps a fresh budget.
+- Если при переносе старой базы элемент передачи отсутствует, ошибка получает вид `missing_file`. Повтор без файла отклоняется.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
 - A `403` renews the single-upload url or affected part url after backoff. The renewal uses that PUT step's retry budget. Urls older than the presign lifetime are requested again for unfinished parts.
 - The final content mutation uses the [outbox retry policy](server-sync.md#retries), including its saved budget and encrypted request identity.

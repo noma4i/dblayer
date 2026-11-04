@@ -10,7 +10,7 @@ use crate::upload::UploadInput;
 use super::StoreError;
 
 pub(super) fn remove_item(connection: &Connection, seq: i64, position: i64) -> Result<(), StoreError> {
-    crate::operation::record_orphan_uploads(connection, seq, Some(position))?;
+    crate::operation::record_transfer_aborts(connection, seq, Some(position))?;
     connection.execute("DELETE FROM file WHERE id = (SELECT file_id FROM op_item WHERE seq = ?1 AND position = ?2) AND field LIKE 'op_item.%'", params![seq, position])?;
     erase_item(connection, seq, position)
 }
@@ -59,33 +59,33 @@ pub(super) fn separate_items(connection: &Connection, seq: i64, action: &str, mu
 }
 
 impl super::Store {
-    pub(crate) fn upload_orphan_name(&self, operation_id: i64, item_id: &str) -> Result<Option<String>, StoreError> {
+    pub(crate) fn transfer_abort_name(&self, operation_id: i64, item_id: &str) -> Result<Option<String>, StoreError> {
         use rusqlite::OptionalExtension;
         let inner = self.lock();
-        Ok(inner.connection.query_row("SELECT abort_operation FROM upload_orphan WHERE operation_id = ?1 AND item_id = ?2", params![operation_id, item_id], |row| row.get(0)).optional()?)
+        Ok(inner.connection.query_row("SELECT abort_operation FROM transfer_abort WHERE operation_id = ?1 AND item_id = ?2", params![operation_id, item_id], |row| row.get(0)).optional()?)
     }
 
-    pub(crate) fn upload_orphans(&self) -> Result<Vec<crate::upload::AbortTransfer>, StoreError> {
+    pub(crate) fn pending_transfer_aborts(&self) -> Result<Vec<crate::upload::Transfer>, StoreError> {
         let inner = self.lock();
-        let mut statement = inner.connection.prepare("SELECT id, operation_id, item_id, storage_key, upload_id, abort_operation FROM upload_orphan ORDER BY id")?;
-        let rows = statement.query_map([], |row| Ok(crate::upload::AbortTransfer {
+        let mut statement = inner.connection.prepare("SELECT id, operation_id, item_id, storage_key, upload_id, abort_operation FROM transfer_abort ORDER BY id")?;
+        let rows = statement.query_map([], |row| Ok(crate::upload::Transfer::Abort {
             id: row.get(0)?,
-            transfer: crate::upload::Transfer { operation_id: row.get(1)?, item_id: row.get(2)? },
+            operation_id: row.get(1)?, item_id: row.get(2)?,
             key: row.get(3)?, upload_id: row.get(4)?, operation: row.get(5)?,
         }))?.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
 
-    pub(crate) fn settle_upload_orphan(&self, authority: &crate::lifecycle::Authority, id: i64) -> Result<(), StoreError> {
+    pub(crate) fn settle_transfer_abort(&self, authority: &crate::lifecycle::Authority, id: i64) -> Result<(), StoreError> {
         self.write_store(authority, |inner| {
-            inner.connection.execute("DELETE FROM upload_orphan WHERE id = ?1", [id])?;
+            inner.connection.execute("DELETE FROM transfer_abort WHERE id = ?1", [id])?;
             Ok(())
         })
     }
 
-    pub(crate) fn settle_upload_orphan_identity(&self, authority: &crate::lifecycle::Authority, operation_id: i64, item_id: &str) -> Result<bool, StoreError> {
+    pub(crate) fn settle_transfer_abort_identity(&self, authority: &crate::lifecycle::Authority, operation_id: i64, item_id: &str) -> Result<bool, StoreError> {
         self.write_store(authority, |inner| {
-            Ok(inner.connection.execute("DELETE FROM upload_orphan WHERE operation_id = ?1 AND item_id = ?2", params![operation_id, item_id])? > 0)
+            Ok(inner.connection.execute("DELETE FROM transfer_abort WHERE operation_id = ?1 AND item_id = ?2", params![operation_id, item_id])? > 0)
         })
     }
 }

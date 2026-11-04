@@ -38,6 +38,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
     private val lostAnswers = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
     private val cached = java.util.concurrent.ConcurrentHashMap<String, Pair<JsonObject, String>>()
     private val lostFile = java.util.concurrent.atomic.AtomicReference<String?>(null)
+    private val lost = AtomicBoolean(false)
     val effects = CopyOnWriteArrayList<JsonObject>()
 
     init {
@@ -71,6 +72,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
     suspend fun heldRequest() { arrivals.receive() }
     fun loseAnswer(filename: String) { lostFile.set(filename) }
     suspend fun lostAnswer() { lostAnswers.receive() }
+    fun hasLostAnswer(): Boolean = lost.get()
 
     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
         val request = open(body)
@@ -99,6 +101,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
         val filename = sent["variables"]?.jsonObject?.get("filename")?.jsonPrimitive?.content
         val wanted = lostFile.get()
         if (filename != null && filename == wanted && lostFile.compareAndSet(wanted, null)) {
+            lost.set(true)
             lostAnswers.trySend(Unit)
             throw DbException.Network("lost answer")
         }

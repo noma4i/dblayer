@@ -1,5 +1,5 @@
 mod multipart;
-mod orphan;
+mod cleanup;
 mod run;
 #[cfg(test)]
 mod run_tests;
@@ -406,7 +406,7 @@ impl Inner {
         received.await.map_err(|_| SyncError::Cancelled)?.map_err(|error| crate::store::StoreError::from(error).into())
     }
 
-    pub(crate) fn fail_upload(&self, admitted: &crate::lifecycle::Admitted, seq: i64, error: SyncError) {
+    fn fail_upload(&self, admitted: &crate::lifecycle::Admitted, seq: i64, error: SyncError) {
         let generation = self.db.generation();
         if let Err(failed) = self.commit(admitted, generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
@@ -499,7 +499,7 @@ impl Sync {
     pub async fn resume_uploads(&self, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
         self.inner.require_session(admitted)?;
         admitted.run(async {
-            self.inner.abort_orphan_uploads(admitted).await?;
+            self.inner.abort_transfers(admitted).await?;
             self.inner.start_uploads()?;
             self.wait_uploads().await;
             Ok(())

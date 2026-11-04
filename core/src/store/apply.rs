@@ -973,7 +973,7 @@ fn apply_transitions(
                         if *expired { continue; }
                         return Err(StoreError::Constraint("Blob is pinned to an operation".into()));
                     }
-                    crate::operation::record_orphan_uploads(connection, seq, None)?;
+                    crate::operation::record_transfer_aborts(connection, seq, None)?;
                     connection.execute("UPDATE blob_upload SET seq = NULL, ready = 0, expired = ?1 WHERE id = ?2", params![expired, id])?;
                     delete_operation(connection, seq)?;
                     result.operations.insert(seq);
@@ -1038,7 +1038,7 @@ fn apply_transitions(
                 }
                 result.operations.extend(super::blob::release(connection, *seq, *status == OperationStatus::Committed)?);
                 if *status == OperationStatus::RolledBack {
-                    crate::operation::record_orphan_uploads(connection, *seq, None)?;
+                    crate::operation::record_transfer_aborts(connection, *seq, None)?;
                 }
                 delete_operation(connection, *seq)?;
                 result.operations.insert(*seq);
@@ -1150,7 +1150,7 @@ fn apply_transitions(
                         return Err(StoreError::Constraint("Blob owner has an unknown outcome".into()));
                     }
                     super::blob::release(connection, *seq, false)?;
-                    crate::operation::record_orphan_uploads(connection, *seq, None)?;
+                    crate::operation::record_transfer_aborts(connection, *seq, None)?;
                 }
                 let removed = if matches { delete_operation(connection, *seq)? } else { 0 };
                 if removed == 0 {

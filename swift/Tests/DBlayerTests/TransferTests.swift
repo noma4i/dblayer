@@ -3,6 +3,22 @@ import Foundation
 import Testing
 @testable import DBlayer
 
+@_silgen_name("sqlite3_open") private func legacyOpen(_ path: UnsafePointer<CChar>, _ database: UnsafeMutablePointer<OpaquePointer?>) -> Int32
+@_silgen_name("sqlite3_exec") private func legacyExec(_ database: OpaquePointer?, _ sql: UnsafePointer<CChar>, _ callback: UnsafeMutableRawPointer?, _ context: UnsafeMutableRawPointer?, _ error: UnsafeMutableRawPointer?) -> Int32
+@_silgen_name("sqlite3_close") private func legacyClose(_ database: OpaquePointer?) -> Int32
+
+private func transferFixture(_ name: String) throws -> String {
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+  return try String(contentsOf: root.appendingPathComponent("fixtures/\(name)"), encoding: .utf8)
+}
+
+private func writeLegacyTransfer(_ path: String) throws {
+  var database: OpaquePointer?
+  guard legacyOpen(path, &database) == 0 else { throw DbError.Invalid(detail: "cannot open the legacy fixture") }
+  defer { _ = legacyClose(database) }
+  guard legacyExec(database, try transferFixture("transfer-legacy.sql"), nil, nil, nil) == 0 else { throw DbError.Invalid(detail: "cannot write the legacy fixture") }
+}
+
 private final class MultipartTransfer: Transport, @unchecked Sendable {
   let mock = MockTransport()
   private let lock = NSLock()
@@ -59,6 +75,67 @@ private final class HoldSecondFile: Transport, @unchecked Sendable {
 }
 
 extension BridgeProbeTests {
+  @MainActor @Test(.timeLimit(.minutes(1)))
+  func openingLegacyPendingKeepsTheSessionAndLocalFile() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "db.sqlite").path
+    let server = try SealedServer(deduplicate: true) { path, _ in
+      path == "/api/auth/login_link" ? ["sessionId": "A"] : ["data": ["createBlob": ["id": "one"]]]
+    }
+    defer { server.hold(operation: nil) }
+    let encrypted = EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", sessionless: false)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
+    let transport = MockTransport()
+    let credentials = TransferCredential()
+    let models = try transferFixture("transfer-local-models.json")
+    let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { id } }"}]"#
+    try await DB.close()
+    _ = try await DB.openTesting(transport: transport, modelsJSON: models, path: path, encrypted: encrypted, credentials: credentials, http: server)
+    let database = try DB.database
+    try database.registerOperations(defsJson: operations)
+    _ = try await database.sessionCall(operation: "login_link", bodyJson: #"{"account":"A"}"#)
+    let note = try await database.create(epoch: database.sessionEpoch(), model: "Note", valuesJson: #"{"text":"kept"}"#, argsJson: "{}")
+    let bytes = Data(repeating: 7, count: 300 * 1024)
+    _ = try await database.attach(epoch: database.sessionEpoch(), model: "Note", rowId: note.id, field: "attachment", bytes: bytes, name: "file", mime: "application/octet-stream")
+    server.hold(operation: "CreateBlob")
+    let call = Task { try await database.run(epoch: database.sessionEpoch(), operation: "CreateBlob", variablesJson: #"{"filename":"pending"}"#) }
+    let signals = AsyncStream<Bool>.makeStream()
+    let arrived = Task { await server.heldRequest(); signals.continuation.yield(true) }
+    let ended = Task { _ = await call.result; signals.continuation.yield(false) }
+    var signal = signals.stream.makeAsyncIterator()
+    let reached = await signal.next()
+    arrived.cancel()
+    ended.cancel()
+    try #require(reached == true)
+    try database.setOnline(online: false)
+    server.loseAnswer(filename: "pending")
+    server.hold(operation: nil)
+    let outcomes = AsyncStream<Bool>.makeStream()
+    let lost = Task { await server.lostAnswer(); outcomes.continuation.yield(true) }
+    let completed = Task { _ = await call.result; outcomes.continuation.yield(server.hasLostAnswer) }
+    var outcome = outcomes.stream.makeAsyncIterator()
+    let answerLost = await outcome.next()
+    lost.cancel()
+    completed.cancel()
+    try #require(answerLost == true)
+    try await DB.close()
+    _ = try? await call.value
+    try writeLegacyTransfer(path)
+    _ = try await DB.openTesting(transport: transport, modelsJSON: models, path: path, encrypted: encrypted, credentials: credentials, http: server)
+    let reopened = try DB.database
+    try reopened.registerOperations(defsJson: operations)
+    #expect(try await reopened.readRow(epoch: reopened.sessionEpoch(), model: "Note", rowId: note.id) != nil)
+    #expect(try await reopened.read(epoch: reopened.sessionEpoch(), model: "Note", rowId: note.id, field: "attachment") == bytes)
+    _ = try #require(try await reopened.sessionResume())
+    _ = try await reopened.run(epoch: reopened.sessionEpoch(), operation: "CreateBlob", variablesJson: #"{"filename":"next"}"#)
+    let effects = server.effects.filter { $0["operationName"] as? String == "CreateBlob" }
+    #expect(effects.filter { ($0["variables"] as? [String: Any])?["filename"] as? String == "pending" }.count == 1)
+    #expect(effects.filter { ($0["variables"] as? [String: Any])?["filename"] as? String == "next" }.count == 1)
+    #expect(server.operationRequests("CreateBlob") == 3)
+    try await DB.close()
+  }
+
   @MainActor @Test(.timeLimit(.minutes(1)))
   func multipartBatchAcceptsACorrelationKeyWithPathCharacters() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
