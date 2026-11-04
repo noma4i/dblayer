@@ -155,7 +155,7 @@ async fn inv_fresh_08_offline_load_makes_no_call_and_online_loads_again() {
 
 #[tokio::test]
 async fn offline_interrupts_a_load_without_waiting_for_http() {
-    use std::{future::Future, task::{Context, Poll, Waker}};
+    use std::{future::Future, task::{Context, Waker}};
     for cached in [false, true] {
     let rig = rig();
     if cached {
@@ -168,8 +168,9 @@ async fn offline_interrupts_a_load_without_waiting_for_http() {
     let admitted = rig.db.admit().unwrap();
     let mut load = Box::pin(rig.sync.load(&admitted, "moments", "feed", &params, LoadOptions::default()));
     assert!(load.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+    crate::test_wait::yield_until("the flight task sends its request", || rig.transport.call_count("MomentsFeed") == 1 + usize::from(cached)).await;
     rig.sync.set_online(false);
-    assert!(matches!(load.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(SyncError::Offline))));
+    assert_eq!(crate::test_wait::within_secs(5, load).await, Err(SyncError::Offline), "the load waited for the held HTTP answer");
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1 + usize::from(cached));
     }
 }

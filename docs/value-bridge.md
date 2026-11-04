@@ -87,7 +87,7 @@ One owner in the core serves each stream. The wrappers keep no registry, no lock
 | --- | --- |
 | `refresh()` | Loads the relation again. |
 | `loadMore()` | Loads the next page. |
-| `loaded()` | On `Projected`: returns when the projection shows the settled state of the first load. With rows and a network error it returns and the state keeps the error. Another error of the load, or any error without rows, it throws. |
+| `loaded()` | On `Projected`: returns when the projection shows the settled state of the first load. With rows it returns for any error of the load, and the state keeps the error in the `Loaded` phase. It throws the error of the `Failed` phase, which the core gives only without rows. The outcome of an own request comes from `beginLoad(...).result()`. |
 | `shown(revision)` | On `Projected`: returns when the projection shows the database at that revision or later, also when the write of that revision changed none of its rows. |
 
 A call that outlives its epoch ends as `Interrupted`.

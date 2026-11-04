@@ -76,12 +76,11 @@ fn enrolling_a_stream_does_the_same_work_with_existing_streams() {
 
 #[tokio::test]
 async fn stream_close_terminates_waiters() {
-    let database = local_notes().await;
-    database.create(database.session_epoch(), "Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap();
+    let (database, _transport) = with_transport(Arc::new(crate::pacing::SystemClock));
     let rows = Arc::new(Rows::default());
-    let live = database.watch_query(r#"{"model":"Note"}"#, rows.clone());
+    let live = database.watch_query(r#"{"model":"Notice"}"#, rows.clone());
     within(live.wait_for_initial_load()).await.unwrap();
-    let pending = database.watch(StreamRequest::Events { model: "Note".into() }, Arc::new(Rows::default()));
+    let pending = database.watch(StreamRequest::Events { model: "Notice".into() }, Arc::new(Rows::default()));
     let waiting = { let pending = pending.clone(); tokio::spawn(within(async move { pending.wait_for_initial_load().await })) };
     tokio::task::yield_now().await;
     database.close_now();
@@ -89,7 +88,7 @@ async fn stream_close_terminates_waiters() {
     yield_until("the list ended", || !rows.ended().is_empty()).await;
     assert_eq!(rows.ended(), vec![StreamEnd::Closed]);
     let late = Arc::new(Rows::default());
-    database.watch_query(r#"{"model":"Note"}"#, late.clone());
+    database.watch_query(r#"{"model":"Notice"}"#, late.clone());
     yield_until("a stream opened after the close ended", || !late.ended().is_empty()).await;
     assert_eq!(late.ended(), vec![StreamEnd::Closed]);
     assert_eq!(database.stream_census().open, 0);
@@ -120,8 +119,8 @@ async fn closing_the_database_ends_a_blob_status_stream_with_one_outcome() {
     let id = { let sync = database.sync.as_ref().unwrap(); crate::sync::rig::app(sync, sync.upload_blob(&database.db.admit().unwrap(), "test", "CreateBlob", crate::upload::UploadFile::new(file.path().to_str().unwrap()))).await.unwrap() };
     let rows = Arc::new(Rows::default());
     database.watch(StreamRequest::Blob { id }, rows.clone());
-    yield_until("the first status arrived", || !rows.values().is_empty()).await;
-    assert!(matches!(rows.values()[0], super::StreamValue::Status { .. }));
+    yield_until("the first status arrived", || rows.values().iter().any(|value| matches!(value, super::StreamValue::Status { .. }))).await;
+    assert!(matches!(rows.values().as_slice(), [super::StreamValue::State { state }, super::StreamValue::Status { .. }, ..] if state.settled), "the stream opens with one settled state, then the status: {:?}", rows.values());
     database.close_now();
     yield_until("the status stream ended", || !rows.ended().is_empty()).await;
     assert_eq!(rows.ended(), vec![StreamEnd::Closed]);

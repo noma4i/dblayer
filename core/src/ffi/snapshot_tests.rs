@@ -129,7 +129,7 @@ async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_s
         assert!(first.error.is_some(), "call {index}");
         assert!(subscription.wait_for_initial_load().await.is_err(), "call {index}: a stream that ended has no initial load to wait for");
     }
-    assert_eq!(db.stream_census().open, 0, "a failed open leaves nothing in the table");
+    crate::test_wait::yield_until("the reader read every end", || db.stream_census().open == 0).await;
 }
 
 #[tokio::test]

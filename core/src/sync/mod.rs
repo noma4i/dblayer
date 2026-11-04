@@ -123,8 +123,33 @@ pub(crate) struct Flights {
     pub owners: HashMap<String, (u64, crate::identity::Generation)>,
     pub interest: HashMap<String, usize>,
     pub tasks: HashMap<String, (u64, tokio::task::AbortHandle)>,
+    pub pending: usize,
     #[cfg(test)]
     pub joined: JoinedLoads,
+}
+
+type Abandoned = (tokio::task::AbortHandle, Option<watch::Sender<Option<FlightEnd>>>);
+
+impl Flights {
+    /// Stops the flight of a key that no caller wants: it leaves the table at once, so the next caller starts a new flight instead of joining the stopped one.
+    fn abandon(&mut self, key: &str) -> Option<Abandoned> {
+        let (token, task) = self.tasks.remove(key)?;
+        let mut waiting = None;
+        if self.owners.get(key).is_some_and(|(owner, _)| *owner == token) {
+            self.owners.remove(key);
+            self.coalescing.finish(key);
+            self.node_rereads.remove(key);
+            waiting = self.waiting.remove(key);
+        }
+        Some((task, waiting))
+    }
+
+    /// The flights no caller wants, once no caller waits to name its key.
+    fn unwanted(&mut self) -> Vec<Abandoned> {
+        if self.pending > 0 { return Vec::new(); }
+        let keys: Vec<String> = self.tasks.keys().filter(|key| self.interest.get(*key).is_none_or(|count| *count == 0)).cloned().collect();
+        keys.iter().filter_map(|key| self.abandon(key)).collect()
+    }
 }
 
 #[cfg(test)]

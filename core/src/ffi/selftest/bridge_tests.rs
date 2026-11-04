@@ -93,6 +93,12 @@ impl Reader {
     }
 }
 
+/// The network goes away while the held request is at the server: the load ends with the network error at once. A test clock never moves by itself, so a network error the server returns would wait for a retry without end.
+async fn network_drops_during(rig: &Rig, held: &super::rig_tests::Gate) {
+    held.entered().await;
+    rig.database.set_online(false).unwrap();
+}
+
 fn profile() -> StreamRequest { StreamRequest::Query { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() } }
 
 fn users() -> StreamRequest { StreamRequest::Query { query_json: r#"{"model":"User","relation":"all","params":{}}"#.into() } }
@@ -385,10 +391,12 @@ async fn a_profile_delivery_is_ready_with_its_rows_before_an_explicit_refresh() 
 async fn a_cold_profile_delivers_a_complete_first_frame_when_empty_or_failed() {
     for failed in [false, true] {
         let world = World::new("server", "A", true);
-        if failed { world.fail_next("MyProfile", Fault::Down); } else { world.empty_profile(); }
+        let down = failed.then(|| world.hold_then("MyProfile", Fault::Down));
+        if !failed { world.empty_profile(); }
         let rig = Rig::plain(world, false).await;
         let reader = Reader::open();
         rig.database.subscribe_reading(rig.database.session_epoch(), profile(), reader.clone());
+        if let Some(down) = down { network_drops_during(&rig, &down).await; }
         bound(async {
             loop {
                 let changed = reader.changed.notified();
@@ -419,9 +427,10 @@ async fn a_cached_entity_remains_loaded_when_its_initial_network_read_fails() {
     let first = rig.database.subscribe_reading(epoch, request(), Reader::open());
     bound(rig.database.loaded(first)).await.unwrap();
     rig.database.cancel_stream(first);
-    rig.world.fail_next("UserNode", Fault::Down);
+    let down = rig.world.hold_then("UserNode", Fault::Down);
     let reader = Reader::open();
     let stream = rig.database.subscribe_reading(epoch, request(), reader.clone());
+    network_drops_during(&rig, &down).await;
     let result = bound(rig.database.loaded(stream)).await;
     assert!(result.is_ok(), "a cached entity should remain loaded: {result:?}");
     assert_eq!(reader.rows().first().map(|row| row.id.as_str()), Some("user"));
@@ -611,8 +620,8 @@ async fn a_fresh_profile_is_read_again_after_expiry_and_keeps_rows_on_error() {
     bound(load()).await.unwrap();
     assert_eq!(rig.world.log().iter().filter(|call| call.operation == "MyProfile").count(), 2);
     rig.clock.advance(301_000);
-    rig.world.fail_next("MyProfile", Fault::Down);
-    let outcome = bound(load()).await;
+    let down = rig.world.hold_then("MyProfile", Fault::Down);
+    let (outcome, ()) = tokio::join!(bound(load()), network_drops_during(&rig, &down));
     assert!(outcome.is_ok() || matches!(&outcome, Err(DbError::Network { .. })), "unexpected load outcome: {outcome:?}");
     bound(async {
         loop {

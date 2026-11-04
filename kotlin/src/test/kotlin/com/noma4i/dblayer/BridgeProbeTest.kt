@@ -171,9 +171,13 @@ class BridgeProbeTest {
             val listScope = CoroutineScope(SupervisorJob())
             try {
                 val list = ListReader(Moment.feed, listScope, refreshOnConnect = true)
-                val failure = runCatching { withTimeout(5000) { list.waitForInitialLoad() } }.exceptionOrNull()
-                if (index == 2) assertEquals(true, failure is DbException.Http) else assertNull(failure)
+                withTimeout(5000) { list.waitForInitialLoad() }
                 assertEquals(index + 1, transport.calls.count { it.operationName == "MomentsFeed" })
+                if (index == 2) {
+                    val failed = withTimeout(5000) { list.snapshot.first { it.error != null } }
+                    assertEquals(true, failed.error is DbException.Http)
+                    assertEquals(LivePhase.LOADED, failed.phase)
+                }
                 assertEquals("a", withTimeout(5000) { list.rows.first { it.isNotEmpty() } }.first().uuid)
             } finally {
                 listScope.cancel()

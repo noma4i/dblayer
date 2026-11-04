@@ -158,7 +158,7 @@ class TestClockTest {
         try {
             val transport = MockTransport()
             repeat(2) { transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""") }
-            transport.enqueue("MomentsFeed", DbException.Network("down"))
+            val down = transport.hold("MomentsFeed", failure = DbException.Network("down"))
             DBlayer.close()
             val clock = DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
@@ -172,7 +172,9 @@ class TestClockTest {
             Moment.feed.load()
             assertEquals(2, transport.calls.count { it.operationName == "MomentsFeed" })
             clock.advance(5 * 60_000L + 1_000)
-            val failure = runCatching { Moment.feed.load() }.exceptionOrNull()
+            val failing = async { runCatching { Moment.feed.load() }.exceptionOrNull() }
+            networkDrops(during = down)
+            val failure = failing.await()
             assertTrue(failure == null || failure is DbException.Network)
             val state = held.projection.first { it.error != null }
             assertEquals(3, transport.calls.count { it.operationName == "MomentsFeed" })

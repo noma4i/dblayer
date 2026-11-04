@@ -139,13 +139,14 @@ struct BridgeProbeTests {
         transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false}}}}"#)
       }
       let list = Projected<Moment>(try AccountScope().stream(Moment.feed, refreshOnConnect: true))
-      do {
-        try await list.loaded()
-        #expect(index < 2)
-      } catch DbError.Http(let status, _) {
-        #expect(index == 2 && status == 400)
-      }
+      try await list.loaded()
       #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == index + 1)
+      if index == 2 {
+        await eventually("the own request shows its error with the rows") { list.error != nil }
+        guard case .Http(let status, _) = list.error else { Issue.record("not an HTTP error: \(String(describing: list.error))"); return }
+        #expect(status == 400)
+        #expect(list.phase == .loaded)
+      }
       await eventually("initial rows remain visible") { list.rows.first?.uuid == "a" }
     }
   }

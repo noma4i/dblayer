@@ -117,8 +117,10 @@ extension BridgeProbeTests {
     let held = Projected<MediaMessage>(try DB.account().stream(failedQuery))
     defer { held.stream.cancel() }
     try await held.loaded()
-    transport.enqueue("ChatMedia", failure: .Network(detail: "down"))
-    do { try await failedQuery.loadAll(); Issue.record("the failed page returned successfully") }
+    let down = transport.hold("ChatMedia", failure: .Network(detail: "down"))
+    async let failing: Void = failedQuery.loadAll()
+    try await networkDrops(during: down)
+    do { try await failing; Issue.record("the failed page returned successfully") }
     catch DbError.Network {} catch { Issue.record("unexpected error: \(error)") }
     guard await observe("the failed media page arrives", { held.error != nil }) else { return }
     #expect(held.rows.map(\.id) == ["x1"])

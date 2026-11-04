@@ -66,3 +66,9 @@ fun stateOf(delivery: StreamDelivery): StreamState? = when (val value = delivery
     is StreamValue.State -> value.state
     else -> null
 }
+
+/** The network goes away while the held request is at the server: the load ends with the network error at once. The test clock never moves by itself, so a network error the server returns would wait for a retry without end. */
+suspend fun networkDrops(during: Hold) {
+    during.entered()
+    DBlayer.database.setOnline(false)
+}

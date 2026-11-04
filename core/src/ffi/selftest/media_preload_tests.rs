@@ -67,6 +67,7 @@ fn models() -> String {
     let mut media_kind = FieldSpec::scalar("mediaKind", ScalarKind::Str);
     media_kind.nullable = true;
     let mut media = ModelSpec::new("MediaMessage", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("chatId", ScalarKind::Id), FieldSpec::scalar("kind", ScalarKind::Str), media_kind, FieldSpec::scalar("sequenceNumber", ScalarKind::Int)]);
+    media.indexes.push(vec!["chatId".into()]);
     for (name, field, value, kinds, gifts) in [("visual_media", "mediaKind", "IMAGE", Some(json!(["IMAGE", "VIDEO"])), false), ("audio_media", "mediaKind", "AUDIO", Some(json!(["AUDIO"])), false), ("gift_media", "kind", "GIFT", None, true)] {
         let mut relation = RelationSpec::new(name, &["chatId"]);
         let test = if name == "visual_media" { RowTest::In { values: vec![json!("IMAGE"), json!("VIDEO")] } } else { RowTest::Equals { value: json!(value) } };

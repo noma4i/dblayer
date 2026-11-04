@@ -170,7 +170,7 @@ extension BridgeProbeTests {
     defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     for _ in 0 ..< 2 { transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#) }
-    transport.enqueue("MomentsFeed", failure: .Network(detail: "down"))
+    let down = transport.hold("MomentsFeed", failure: .Network(detail: "down"))
     let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
@@ -184,7 +184,9 @@ extension BridgeProbeTests {
     try await Moment.feed.load()
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
     clock.advance(by: 5 * 60 + 1)
-    do { try await Moment.feed.load() } catch DbError.Network {} catch { Issue.record("unexpected error: \(error)") }
+    async let failing: Void = Moment.feed.load()
+    try await networkDrops(during: down)
+    do { try await failing } catch DbError.Network {} catch { Issue.record("unexpected error: \(error)") }
     guard await observe("the network error arrives", { held.error != nil }) else { return }
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3)
     #expect(held.rows.map(\.id) == ["1"])

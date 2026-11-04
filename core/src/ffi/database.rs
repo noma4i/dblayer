@@ -189,7 +189,7 @@ pub struct WireBatchOutcome { pub result: WireBatchResult, pub items: Vec<WireIt
 #[derive(uniffi::Object)]
 pub struct LoadRequest {
     outcome: tokio::sync::watch::Receiver<Option<Result<(), DbError>>>,
-    held: Mutex<Option<(crate::sync::Interest, tokio::task::AbortHandle)>>,
+    held: Mutex<Option<tokio::task::AbortHandle>>,
 }
 
 fn load_cancelled() -> DbError { DbError::Interrupted { detail: "the load was cancelled".into() } }
@@ -206,9 +206,8 @@ impl LoadRequest {
     /// Gives up this caller's interest. The request goes on while another caller waits for it.
     pub fn cancel(&self) {
         let held = crate::db::locked(&self.held).take();
-        let Some((interest, task)) = held else { return };
+        let Some(task) = held else { return };
         crate::db::lock::effect(|| task.abort());
-        drop(interest);
     }
 }
 
@@ -469,17 +468,20 @@ impl Database {
     pub fn begin_load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
         let sync = self.sync()?.clone();
         drop(self.acquire(crate::lifecycle::Origin::Explicit, epoch, "load")?);
-        let params: Map<String, Value> = serde_json::from_str(&params_json)?;
-        let interest = sync.interest(&model, &relation, &params)?;
+        let pending = sync.pending_interest();
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
         let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
             let result = this.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "load", true, |admitted| async move {
+                let params: Map<String, Value> = serde_json::from_str(&params_json)?;
+                let interest = sync.interest(&model, &relation, &params);
+                drop(pending);
+                let _interest = interest?;
                 Ok::<_, DbError>(sync.load(&admitted, &model, &relation, &params, LoadOptions::default()).await.map(drop)?)
             }).await;
             crate::db::lock::effect(|| sender.send_replace(Some(result)));
         });
-        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some((interest, task.abort_handle()))) }))
+        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
     }
     pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         self.require_online(&format!("{model}.{relation} refresh"))?;

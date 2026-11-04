@@ -11,7 +11,7 @@ pub(crate) trait Reader: Send + Sync {
     fn delivered(&self, delivery: StreamDelivery);
 }
 
-/// Reads the journal of a stream each time the core says values wait, and keeps what `loaded()` of a platform would return: the first settled state, its error when it failed without rows, `Interrupted` after an end that is not `Invalid`.
+/// Reads the journal of a stream each time the core says values wait, and keeps what `loaded()` of a platform would return: the first settled state, its error only in the `Failed` phase, `Interrupted` after an end that is not `Invalid`.
 pub(crate) struct Pull {
     table: Weak<StreamTable>,
     id: OnceLock<u64>,
@@ -64,10 +64,9 @@ impl Pull {
             _ => return,
         };
         if state.phase == LivePhase::Failed { self.failure.lock().unwrap().clone_from(&state.error); }
-        let outcome = state.settled.then(|| match (&state.phase, &state.error, state.error_kind.as_deref()) {
-            (LivePhase::Failed, Some(error), _) => Err(error.clone()),
-            (_, None | Some(DbError::Network { .. }), _) | (_, _, Some("subscription")) => Ok(delivery.seq),
-            (_, Some(error), _) => Err(error.clone()),
+        let outcome = state.settled.then(|| match (&state.phase, &state.error) {
+            (LivePhase::Failed, Some(error)) => Err(error.clone()),
+            _ => Ok(delivery.seq),
         });
         self.outcome.send_replace(outcome);
     }

@@ -15,6 +15,7 @@ fn spawn_load(rig: &Rig) -> tokio::task::JoinHandle<Result<super::super::load::L
     tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &Map::new(), LoadOptions::default()).await })
 }
 
+/// The flight is a task of the flight table, not of the caller that started it: the waiting caller keeps it, and its one request answers the waiter (S211).
 #[tokio::test(start_paused = true)]
 async fn inv_conc_05_a_waiting_caller_survives_the_cancelled_flight_owner() {
     let rig = rig();
@@ -28,7 +29,7 @@ async fn inv_conc_05_a_waiting_caller_survives_the_cancelled_flight_owner() {
     assert!(owner.await.unwrap_err().is_cancelled());
     let outcome = waiter.await.unwrap().unwrap();
     assert_eq!(outcome.status, LoadStatus::Loaded);
-    assert_eq!(rig.transport.call_count("MomentsFeed") - before, 1);
+    assert_eq!((before, rig.transport.call_count("MomentsFeed")), (1, 1), "the request of the cancelled caller answers the waiter");
 }
 
 #[tokio::test(start_paused = true)]

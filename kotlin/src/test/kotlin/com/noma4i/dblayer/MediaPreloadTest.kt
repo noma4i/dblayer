@@ -5,6 +5,7 @@ import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
@@ -116,8 +117,10 @@ class MediaPreloadTest {
             val failedQuery = MediaMessage.giftMedia("c2")
             val held = Projected(AccountScope.current().stream(failedQuery), MediaMessage, scope)
             held.loaded()
-            transport.enqueue("ChatMedia", DbException.Network("down"))
-            assertTrue(runCatching { failedQuery.loadAll() }.exceptionOrNull() is DbException.Network)
+            val down = transport.hold("ChatMedia", failure = DbException.Network("down"))
+            val failing = async { runCatching { failedQuery.loadAll() }.exceptionOrNull() }
+            networkDrops(during = down)
+            assertTrue(failing.await() is DbException.Network)
             val failed = held.projection.first { it.error != null }
             assertEquals(listOf("x1"), failed.rows.map { it.id })
             assertEquals(LivePhase.LOADED, failed.phase)

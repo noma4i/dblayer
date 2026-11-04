@@ -60,11 +60,12 @@ extension BridgeProbeTests {
     for failed in [false, true] {
       try await DB.close()
       let transport = MockTransport()
-      if failed { transport.enqueue("CurrentUserQuery", failure: .Network(detail: "down")) }
-      else { transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":null}}"#) }
+      let down = failed ? transport.hold("CurrentUserQuery", failure: .Network(detail: "down")) : nil
+      if !failed { transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":null}}"#) }
       try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
       try DB.database.registerOperations(defsJson: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]"#)
       let held = Projected<CurrentUser>(try DB.account().stream(CurrentUser.current))
+      if let down { try await networkDrops(during: down) }
       do {
         try await held.loaded()
         #expect(!failed, "the failed load returned successfully")
@@ -142,13 +143,14 @@ extension BridgeProbeTests {
     defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
-    transport.enqueue("ContainerNode", failure: .Network(detail: "down"))
+    let down = transport.hold("ContainerNode", failure: .Network(detail: "down"))
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: #"[{"name":"ContainerNode","document":"query ContainerNode($id: ID!) { node(id: $id) { ... on Container { id title shareUrl isPublic } } }"}]"#)
     let first = Projected<Container>(try DB.account().entity(Container.self, "c1", fetch: .force))
     try await first.loaded()
     first.stream.cancel()
     let held = Projected<Container>(try DB.account().entity(Container.self, "c1", fetch: .force))
+    try await networkDrops(during: down)
 
     try await held.loaded()
     #expect(held.value?.title == "one")
