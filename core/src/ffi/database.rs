@@ -245,7 +245,7 @@ impl Database {
         if !remote { return Ok(self.wire(&model)?.row(&written)); }
         let sync = self.sync()?.clone();
         let (db, wire, temporary) = (self.db.clone(), self.wire(&model)?.clone(), written.id.clone());
-        self.serve_in_epoch(epoch, "create", |admitted| async move {
+        self.serve_in_epoch(epoch, "create", move |admitted| async move {
             let real = match operation {
                 Some(operation) => sync.confirmed_by(&admitted, &model, &temporary, operation).await?,
                 None => sync.confirmed(&admitted, &model, &temporary).await?,
@@ -282,7 +282,7 @@ impl Database {
         }).await?;
         if !waits { return Ok(queued); }
         let (sync, db, wire, operation, left) = (self.sync()?.clone(), self.db.clone(), self.wire(&call_model)?.clone(), queued.operation, queued.row.clone());
-        self.serve_in_epoch(epoch, "act answer", |admitted| async move {
+        self.serve_in_epoch(epoch, "act answer", move |admitted| async move {
             let _wish = wish;
             let receiver = id(&receiver)?;
             sync.settled_operation(&admitted, &call_model, operation).await?;
@@ -385,7 +385,7 @@ impl Database {
     }
     pub async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "load all", |admitted| async move {
+        self.serve_in_epoch(epoch, "load all", move |admitted| async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load_all(&admitted, &model, &relation, &params, LoadOptions { force }).await?)
         }).await
@@ -508,7 +508,7 @@ impl Database {
     }
     pub async fn answer(&self, epoch: u64, model: String, operation: i64) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "answer", |admitted| async move { Ok::<_, DbError>(sync.answer(&admitted, &model, operation).await?.to_string()) }).await
+        self.serve_in_epoch(epoch, "answer", move |admitted| async move { Ok::<_, DbError>(sync.answer(&admitted, &model, operation).await?.to_string()) }).await
     }
     pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         let sync = self.sync()?.clone();

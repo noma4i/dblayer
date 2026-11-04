@@ -45,7 +45,7 @@ async fn inv_op_02_a_retry_during_a_flush_does_not_let_a_later_write_overtake_th
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         rig.db.retry_all(&rig.db.admit().unwrap()).unwrap();
     };
-    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), retry);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), retry);
     flushed.unwrap();
     let texts: Vec<_> = rig.transport.calls().into_iter().filter(|call| call.operation_name == "UpdateMoment").map(|call| call.variables["text"].clone()).collect();
     assert_eq!(texts, [json!("first"), json!("other")]);

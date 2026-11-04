@@ -716,8 +716,8 @@ impl Inner {
         kept.committed();
         #[cfg(test)]
         if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
-        self.discard_files(held.iter().map(|file| file.id.clone()).collect()).await?;
-        self.discard_files(blob_files).await?;
+        self.discard_files(sending.admitted, held.iter().map(|file| file.id.clone()).collect()).await?;
+        self.discard_files(sending.admitted, blob_files).await?;
         self.invalidate_after(sending.admitted, &sending.model, &sending.action)?;
         Ok(SendResult::Committed)
     }

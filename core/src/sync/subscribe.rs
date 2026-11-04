@@ -342,7 +342,7 @@ impl Feed {
         }
         let definition = Arc::new(SubscriptionDef { model: model.to_string(), effect: if terminal { EventEffect::Destroy } else { EventEffect::Upsert }, ..(*self.def).clone() });
         let (_, held_files) = self.try_apply(vec![Pending { definition, bucket: String::new(), id: id.clone(), node, generation, stamp: received }], generation)?;
-        self.inner.discard_files(held_files).await?;
+        self.inner.discard_files(&self.epoch, held_files).await?;
         if let Some(before) = before {
             if !self.inner.publish_rows(Heard { stamp: received, area, kind }, model, id.as_str(), before, self.inner.db.find(model, &id)) {
                 return Err(SyncError::Event("payload event could not be published".into()));
@@ -515,7 +515,7 @@ impl Feed {
         }
         let models: BTreeSet<_> = items.iter().map(|item| item.definition.model.clone()).collect();
         let applied = match self.try_apply(items, current) {
-            Ok((stale, held_files)) => self.inner.discard_files(held_files).await.map(|()| stale),
+            Ok((stale, held_files)) => self.inner.discard_files(&self.epoch, held_files).await.map(|()| stale),
             Err(error) => Err(error),
         };
         let complete = match applied {

@@ -103,7 +103,7 @@ async fn a_load_after_the_create_landed_does_not_bring_back_a_row_whose_destroy_
         rig.db.update(&rig.db.admit().unwrap(), "moments", &local.id, params(json!({"text": "edited"}))).unwrap();
         rig.db.destroy(&rig.db.admit().unwrap(), "moments", &local.id).unwrap();
     };
-    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), queue_behind_the_create);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), queue_behind_the_create);
     flushed.unwrap();
     assert!(!rig.db.outbox().unwrap().is_empty());
     assert_eq!(text_of(&rig, "moments", "m77"), None);
@@ -123,7 +123,7 @@ async fn the_real_row_that_landed_before_the_create_response_goes_away_with_the_
         rig.db.destroy(&rig.db.admit().unwrap(), "moments", &local.id).unwrap();
         put(&rig, "moments", moment("m77", "hello"));
     };
-    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), destroy_then_land);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), destroy_then_land);
     flushed.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(text_of(&rig, "moments", "m77"), None);
@@ -139,7 +139,7 @@ async fn a_refused_destroy_of_a_row_that_was_created_meanwhile_brings_back_the_r
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         rig.db.destroy(&rig.db.admit().unwrap(), "moments", &local.id).unwrap();
     };
-    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), destroy);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), destroy);
     flushed.unwrap();
     assert_eq!(rig.db.find("moments", &local.id).unwrap(), None);
     assert_eq!(text_of(&rig, "moments", "m77"), Some("hello".to_string()));

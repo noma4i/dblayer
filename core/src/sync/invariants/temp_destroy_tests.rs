@@ -29,7 +29,7 @@ async fn inv_op_21_destroy_while_the_create_is_in_flight_waits_and_then_destroys
         tokio::time::sleep(Duration::from_secs(1)).await;
         rig.db.destroy(&rig.db.admit().unwrap(), "moments", &local.id).unwrap();
     };
-    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), destroy);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), destroy);
     flushed.unwrap();
     assert_eq!(names(&rig), ["CreateMoment", "DeleteMoment"]);
     assert_eq!(rig.transport.calls()[1].variables["id"], json!("m77"));

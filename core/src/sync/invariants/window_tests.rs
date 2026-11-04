@@ -19,10 +19,10 @@ async fn inv_fresh_02_an_invalidation_during_a_flight_gets_exactly_one_repeat_th
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let invalidate = async {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        crate::sync::rig::app(&rig.sync, rig.sync.inner.reload_lists_of_absent_parent("moments")).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.inner.reload_lists_of_absent_parent(&rig.db.admit().unwrap(), "moments")).await.unwrap();
     };
     let no_params = none();
-    let (loaded, ()) = tokio::join!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &no_params, LoadOptions { force: true }), invalidate);
+    let (loaded, ()) = tokio::join!(async { rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &no_params, LoadOptions { force: true }).await }, invalidate);
     loaded.unwrap();
     tokio::time::sleep(Duration::from_secs(10)).await;
     let key = rig.sync.window_key("moments", "feed", &none()).unwrap();

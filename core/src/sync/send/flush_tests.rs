@@ -205,7 +205,7 @@ async fn inv_op_03_concurrent_flushes_send_each_operation_once() {
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    let (first, second) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())));
+    let (first, second) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }));
     assert_eq!(first.unwrap().committed() + second.unwrap().committed(), 1);
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
 }

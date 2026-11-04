@@ -25,7 +25,7 @@ impl HttpExchange for Exchange {
         let request = open_request(&body, path, 1_800_000_000).unwrap();
         let reply = if path == "/api/graphql" {
             self.requests.lock().unwrap().push((request.clone(), body));
-            let response = self.server.mutate(GraphQLRequest::new("", "CreateMoment", request["body"]["variables"].clone())).await?;
+            let response = self.server.lock().unwrap().mutate(GraphQLRequest::new("", "CreateMoment", request["body"]["variables"].clone()))?;
             serde_json::to_value(response).unwrap()
         } else { json!({"ok": true}) };
         Ok(HttpReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), reply) })
@@ -51,10 +51,9 @@ struct Server {
     refuse: Option<&'static str>,
 }
 
-#[async_trait]
-impl Transport for Mutex<Server> {
-    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
-        let mut server = self.lock().unwrap();
+impl Server {
+    fn mutate(&mut self, request: GraphQLRequest) -> Result<Response, TransportError> {
+        let server = self;
         server.calls.push(request.variables.clone());
         if let Some(code) = server.refuse.take() {
             return Ok(serde_json::from_value(json!({"errors": [{"message": code, "extensions": {"code": code, "retryable": code == "IN_PROGRESS"}}]})).unwrap());
@@ -71,6 +70,13 @@ impl Transport for Mutex<Server> {
         };
         if std::mem::take(&mut server.lose_answer) { return Err(TransportError::Interrupted("lost response".into())); }
         Ok(answer)
+    }
+}
+
+#[async_trait]
+impl Transport for Mutex<Server> {
+    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
+        self.lock().unwrap().mutate(request)
     }
     async fn query(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<Response, TransportError> { unreachable!() }
     async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<ServerSubscription, TransportError> { unreachable!() }

@@ -646,7 +646,7 @@ async fn server_calls_without_a_transport_report_no_session() {
     assert!(matches!(create, Err(DbError::NoSession { .. })), "create: {create:?}");
     assert!(matches!(load, Err(DbError::NoSession { .. })), "load: {load:?}");
     assert!(matches!(send, Err(DbError::NoSession { .. })), "send: {send:?}");
-    assert!(matches!(act, Err(DbError::NoSession { .. })), "act: {act:?}");
+    assert!(matches!(act, Err(DbError::NoSession { .. })));
     database.close_now();
 }
 

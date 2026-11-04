@@ -14,7 +14,7 @@ pub(in crate::sync) fn confirm_while_landing(sync: &Sync, targets: Vec<(String, 
         let (finished, finish) = std::sync::mpsc::channel();
         for (index, (model, id)) in targets.iter().cloned().enumerate() {
             let (waiter, finished) = (waiter.clone(), finished.clone());
-            drop(runtime.spawn(async move { let _ = finished.send((index, waiter.confirmed(&model, &id).await)); }));
+            drop(runtime.spawn(async move { let _ = finished.send((index, waiter.confirmed(&waiter.inner.db.admit().unwrap(), &model, &id).await)); }));
         }
         let mut settled: Vec<_> = (0..targets.len()).map(|_| crate::test_wait::recv_within(&finish)).collect();
         settled.sort_by_key(|(index, _)| *index);

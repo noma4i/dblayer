@@ -536,10 +536,10 @@ async fn failed_batch_work_older_than_seven_days_is_removed_per_item_and_whole_b
     for (whole_operation, removed) in [(false, [true, false]), (true, [true, true])] {
         let (db, sync, clock, ids) = failed_batch(whole_operation).await;
         clock.advance(std::time::Duration::from_secs(7 * 24 * 3600 - 3600));
-        crate::sync::rig::app(&sync, sync.inner.expire_uploads()).await.unwrap();
+        crate::sync::rig::app(&sync, sync.inner.expire_uploads(&sync.inner.db.admit().unwrap())).await.unwrap();
         assert!(ids.iter().all(|id| db.find("Asset", id).unwrap().is_some()), "whole_operation={whole_operation}: not yet due");
         clock.advance(std::time::Duration::from_secs(2 * 3600));
-        crate::sync::rig::app(&sync, sync.inner.expire_uploads()).await.unwrap();
+        crate::sync::rig::app(&sync, sync.inner.expire_uploads(&sync.inner.db.admit().unwrap())).await.unwrap();
         let gone: Vec<bool> = ids.iter().map(|id| db.find("Asset", id).unwrap().is_none()).collect();
         assert_eq!(gone, removed, "whole_operation={whole_operation}");
     }
@@ -614,10 +614,10 @@ async fn an_unreadable_candidate_is_reported_by_expiry_and_expires_once_readable
     let (db, sync, clock, ids) = failed_batch(false).await;
     clock.advance(std::time::Duration::from_secs(8 * 24 * 3600));
     db.shared.store.lock().connection.execute_batch("ALTER TABLE op_part RENAME TO op_part_hidden").unwrap();
-    assert!(crate::sync::rig::app(&sync, sync.inner.expire_uploads()).await.is_err(), "a read failure must not look like a skipped candidate");
+    assert!(crate::sync::rig::app(&sync, sync.inner.expire_uploads(&sync.inner.db.admit().unwrap())).await.is_err(), "a read failure must not look like a skipped candidate");
     assert!(db.find("Asset", &ids[0]).unwrap().is_some());
     db.shared.store.lock().connection.execute_batch("ALTER TABLE op_part_hidden RENAME TO op_part").unwrap();
-    crate::sync::rig::app(&sync, sync.inner.expire_uploads()).await.unwrap();
+    crate::sync::rig::app(&sync, sync.inner.expire_uploads(&sync.inner.db.admit().unwrap())).await.unwrap();
     assert!(db.find("Asset", &ids[0]).unwrap().is_none());
 }
 

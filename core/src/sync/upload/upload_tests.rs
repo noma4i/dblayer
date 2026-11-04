@@ -1237,7 +1237,7 @@ async fn uploads_are_identified_by_their_declared_action_and_each_cancels_alone(
     rig.sync.set_online(false);
     let source = file(b"abcdef");
     let generation = rig.db.generation();
-    let begin = |action: &str| (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), generation, "moments", &rid("m1"), action, &input(&source), UploadState::queued()));
+    let begin = |action: &str| rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), generation, "moments", &rid("m1"), action, &input(&source), UploadState::queued());
     begin("upload").unwrap();
     begin("cover").unwrap();
     assert!(matches!(begin("upload"), Err(SyncError::Params(_))), "the same action twice on one record is refused");

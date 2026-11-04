@@ -16,7 +16,7 @@ async fn reset_during_flush(rig: &Rig, models: &[&str]) {
         tokio::time::sleep(Duration::from_secs(1)).await;
         rig.db.reset(models).unwrap();
     };
-    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), reset);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), reset);
     flushed.unwrap();
 }
 
@@ -62,7 +62,7 @@ async fn a_create_answered_after_a_reset_of_another_model_leaves_no_temp_row_beh
         tokio::time::sleep(Duration::from_secs(1)).await;
         rig.db.reset(&["vibes"]).unwrap();
     };
-    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), reset);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), reset);
     flushed.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(rig.db.find("moments", &local.id).unwrap(), None);

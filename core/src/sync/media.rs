@@ -79,7 +79,7 @@ impl Inner {
             let checked = self.media_marker(admitted, resolved, media, prefix).await?;
             stable = checked == before;
             if stable && before.sequence != prefix {
-                confirmed = self.media_marker(resolved, media, before.sequence).await?;
+                confirmed = self.media_marker(admitted, resolved, media, before.sequence).await?;
                 stable = confirmed.sequence == before.sequence && confirmed.values.get("revision") == before.values.get("revision");
             }
         } else {

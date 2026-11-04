@@ -51,7 +51,7 @@ async fn inv_cascade_05_an_answer_to_a_sending_operation_after_the_server_delete
         tokio::time::sleep(Duration::from_secs(1)).await;
         server_destroys(&rig, "m1").await
     };
-    let (flushed, _subscription) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), delete);
+    let (flushed, _subscription) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), delete);
     flushed.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(text_of(&rig, "moments", "m1"), None);

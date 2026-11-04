@@ -51,7 +51,7 @@ async fn inv_wait_02_a_waiting_caller_wakes_zero_times_in_ten_seconds_of_an_unch
     let rig = rig_with(super::super::SyncConfig { send_backoff: crate::pacing::Backoff::new(Duration::from_secs(30), Duration::from_secs(30)), ..Default::default() });
     let id = postponed_create(&rig);
     tokio::select! {
-        _ = rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &id, None) => panic!("settled returned while the backoff has not passed"),
+        _ = async { rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &id, None).await } => panic!("settled returned while the backoff has not passed"),
         () = tokio::time::sleep(Duration::from_secs(10)) => {}
     }
     let counters = rig.sync.counters();
