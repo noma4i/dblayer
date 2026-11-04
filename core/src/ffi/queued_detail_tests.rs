@@ -42,7 +42,7 @@ impl Transport for GraphqlRefusal {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn graphql_extensions_reach_run_refresh_and_settled() {
+async fn graphql_extensions_reach_run_refresh_and_the_operation_outcome() {
     use crate::transport::{GraphqlExtensions, TransactionDisposition};
     for (fields, expected) in [
         (serde_json::json!({"code":"UNKNOWN_PRODUCT","transactionDisposition":"FINISH"}), Some(GraphqlExtensions { code: Some("UNKNOWN_PRODUCT".into()), transaction_disposition: Some(TransactionDisposition::Finish), fields: Default::default() })),
@@ -53,7 +53,7 @@ async fn graphql_extensions_reach_run_refresh_and_settled() {
         (serde_json::json!({"code":42,"transactionDisposition":false}), None),
         (serde_json::Value::Null, None),
     ] {
-        for entry in ["run", "refresh", "settled"] {
+        for entry in ["run", "refresh", "outcome"] {
             let response = serde_json::json!({"errors":[{"message":"purchase refused","extensions":fields},{"message":"secondary","extensions":{"code":"SECONDARY","transactionDisposition":"KEEP"}}]}).to_string();
             let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(GraphqlRefusal(response))), None, None, None, None, None).await.unwrap();
             database.register_operations(OPERATIONS.into()).unwrap();
@@ -61,8 +61,10 @@ async fn graphql_extensions_reach_run_refresh_and_settled() {
                 "run" => database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err(),
                 "refresh" => database.refresh(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
                 _ => {
-                    let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
-                    database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.unwrap_err()
+                    let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+                    let failure = database.refusal_of(receipt).await;
+                    assert_eq!(failure.extensions, expected, "{entry}: {fields}");
+                    continue;
                 }
             };
             let DbError::Graphql { extensions, .. } = error else { panic!("{entry}: {error:?}") };
@@ -85,18 +87,18 @@ impl Transport for Refusing {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_session_error_thrown_by_a_platform_transport_keeps_code_and_detail_through_run_and_settled() {
+async fn a_session_error_thrown_by_a_platform_transport_keeps_code_and_detail_through_run_and_the_operation_outcome() {
     for (code, detail) in THROWN {
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code, detail.to_string()))), None, None, None, None, None).await.unwrap();
         database.register_operations(OPERATIONS.into()).unwrap();
 
         let run = database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
-        let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
-        let settled = database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.unwrap_err();
+        let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+        let refused = database.refusal_of(receipt).await;
 
         let expected = (code, detail.to_string());
         assert_eq!(session(run), expected, "run {code:?}");
-        assert_eq!(session(settled), expected, "settled {code:?}");
+        assert_eq!((refused.session_code, refused.message), (Some(code), detail.to_string()), "outcome {code:?}");
     }
 }
 
@@ -105,8 +107,8 @@ async fn a_failed_queued_mutation_keeps_the_session_code_and_detail_in_its_store
     for (code, detail) in [(SessionCode::Unauthenticated, "token expired"), (SessionCode::AccountUnavailable, "blocked until Monday")] {
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code, detail.to_string()))), None, None, None, None, None).await.unwrap();
         database.register_operations(OPERATIONS.into()).unwrap();
-        let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
-        database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.unwrap_err();
+        let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+        database.refusal_of(receipt).await;
 
         let stored: Vec<_> = database.db.outbox().unwrap().iter().map(|entry| entry.operation.error.clone()).collect();
 

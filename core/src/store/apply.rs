@@ -10,7 +10,7 @@ use crate::operation::OperationStatus;
 use crate::commit::WriteOrigin;
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
-use crate::operation::{delete_operation, OperationEvent, failure_cells, write_operation_error, read_rows, read_value, stored_row_id, write_rows, write_value};
+use crate::operation::{delete_operation, OperationEvent, failure_cells, write_operation_error, read_rows, stored_row_id, write_rows, write_value};
 use crate::syncstate::{operation_keys, recompute_sync_with, OperationFailure, SyncKey};
 
 use super::file_ops::{apply_file_ops, release_files};
@@ -1090,6 +1090,10 @@ fn apply_transitions(
                 if saved == 0 {
                     result.unknown_operation_acks += 1;
                     continue;
+                }
+                if matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled | crate::upload::UploadStatus::DeliveryUnknown) {
+                    let open: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM op_item WHERE seq = ?1 AND phase NOT IN ('failed', 'cancelled', 'delivery_unknown'))", [seq], |row| row.get(0))?;
+                    if !open { result.ended_uploads.push((*seq, state.phase, state.error.clone())); }
                 }
                 result.operations.insert(*seq);
                 wrote = true;

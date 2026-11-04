@@ -168,7 +168,7 @@ async fn terminal_operations_delete_retry_records() {
         put(&rig, "assets", json!({"id": "a"}));
         grants(&rig);
         for _ in 0..2 { rig.transport.enqueue_put("https://storage/file", PutReply::status(503)); }
-        let seq = crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "assets", &rid("a"), "upload", source_input(&source))).await.unwrap();
+        let (seq, _, _, _) = crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "assets", &rid("a"), "upload", source_input(&source))).await.unwrap();
         rig.sync.wait_uploads().await;
         assert_eq!(retry_rows(&rig), 1);
         match action {

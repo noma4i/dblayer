@@ -185,7 +185,7 @@ impl Inner {
         let floor = self.issued_floor.get_or_init(|| self.db.shared.store.max_window_sequence().map_err(|error| error.to_string()));
         let floor = *floor.as_ref().map_err(|error| SyncError::Store(error.clone()))?;
         self.issued.fetch_max(floor, Ordering::SeqCst);
-        self.issued.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |previous| previous.checked_add(1))
+        self.issued.try_update(Ordering::SeqCst, Ordering::SeqCst, |previous| previous.checked_add(1))
             .map(|previous| previous + 1)
             .map_err(|_| SyncError::Store("window sequence exhausted".into()))
     }

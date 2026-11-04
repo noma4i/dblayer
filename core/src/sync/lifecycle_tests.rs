@@ -56,10 +56,9 @@ async fn ending_the_session_cancels_a_send_in_flight_and_frees_the_outbox() {
 async fn closing_the_database_ends_an_answer_wait_for_a_pending_operation() {
     let rig = rig();
     rig.sync.end_session_for_test();
-    rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "unsent"}))).unwrap();
-    let seq = rig.db.outbox().unwrap()[0].operation.id.0;
-    let sync = rig.sync.clone();
-    let waiting = tokio::spawn(async move { sync.answer(&sync.inner.db.admit().unwrap(), "moments", seq).await });
+    let (_, ticket) = create_claimed(&rig.sync, "moments", params(json!({"text": "unsent"})));
+    let admitted = rig.sync.inner.db.admit().unwrap();
+    let waiting = tokio::spawn(async move { admitted.run(ticket.result()).await.map(drop) });
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(!waiting.is_finished());
     rig.sync.close();

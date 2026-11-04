@@ -141,9 +141,13 @@ impl Drop for InFlight<'_> {
         }
         attempts.active.remove(&(self.generation, self.seq));
         drop(attempts);
-        if self.settled {
-            return;
-        }
+        if !self.settled { self.give_up(); }
+        locked(&self.inner.outcomes).end_send(self.seq);
+    }
+}
+
+impl InFlight<'_> {
+    fn give_up(&mut self) {
         let failure = OperationFailure::new(FailureKind::Network, "the send was cancelled before an answer was settled");
         let seq = self.seq;
         let generation = self.generation;
@@ -366,17 +370,11 @@ impl Inner {
         Ok(self.db.spec(model)?.actions.iter().find(|declared| declared.name == action).is_some_and(|declared| declared.on_failure == OnFailure::Keep))
     }
 
-    fn refused(&self) {
-        #[cfg(test)]
-        if let Some(probe) = locked(&self.refused_probe).as_ref() { probe(); }
-    }
-
     fn roll_back_refused(&self, sending: &Sending<'_>, generation: Generation, failure: &OperationFailure) -> Result<(), DbError> {
         let debts = if sending.action == "destroy" { self.refused_destroy_debts(&sending.model).map_err(|error| DbError::Internal(error.to_string()))? } else { Vec::new() };
         crate::blocking::blocking_unit(|| self.db.roll_back_if(sending.admitted, sending.entry.operation.id.0, generation, None, &debts))?;
         self.queue_committed_debts(sending.admitted, &sending.effects, &debts).map_err(|error| DbError::Internal(error.to_string()))?;
         self.finish_ticket(&sending.effects, sending.entry.operation.id.0, SendResult::Rejected(failure.clone()), None, None, Vec::new());
-        self.refused();
         Ok(())
     }
 
@@ -463,6 +461,7 @@ impl Inner {
         attempts.next += 1;
         let attempt = attempts.next;
         attempts.active.insert(key, attempt);
+        locked(&self.outcomes).begin_send(seq);
         let (before, started) = if ordered {
             let before = attempts.next_start.take();
             let (started, next_start) = tokio::sync::oneshot::channel();
@@ -844,8 +843,6 @@ impl Inner {
         let value = committed.snapshot.map(|row| self.db.shared.overlay_snapshot(&sending.model, row)).transpose()?;
         let items = committed.item_snapshots.into_iter().filter_map(|(item, row)| row.map(|row| (item, row))).map(|(item, row)| self.db.shared.overlay_snapshot(&sending.model, row).map(|row| (item, row))).collect::<Result<Vec<_>, _>>()?;
         self.finish_ticket(&sending.effects, entry.operation.id.0, SendResult::Committed, answer, value, items);
-        #[cfg(test)]
-        if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
         self.discard_files(sending.admitted, held.iter().map(|file| file.id.clone()).collect()).await?;
         self.discard_files(sending.admitted, blob_files).await?;
         Ok(SendResult::Committed)
@@ -923,7 +920,6 @@ impl Inner {
         }
         self.queue_committed_debts(sending.admitted, &sending.effects, &debts)?;
         self.finish_ticket(&sending.effects, seq, result.clone(), None, None, Vec::new());
-        self.refused();
         Ok(result)
     }
 

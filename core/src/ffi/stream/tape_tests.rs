@@ -162,4 +162,11 @@ impl Database {
         let request = crate::ffi::CommandRequest { epoch: self.session_epoch(), model: model.into(), values_json: values_json.into(), args_json: "{}".into(), upload: None };
         self.send(request).await.unwrap()
     }
+
+    pub(crate) async fn refusal_of(&self, receipt: super::super::WireOperationReceipt) -> super::super::WireFailure {
+        match self.outcome(receipt).await.unwrap() {
+            super::super::WireOperationOutcome::Rejected { failure } => failure,
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
 }

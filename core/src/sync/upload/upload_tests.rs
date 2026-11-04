@@ -1283,15 +1283,6 @@ async fn retry_and_discard_act_on_one_declared_action_or_the_whole_record() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn settled_waits_only_for_the_selected_upload_action() {
-    let (rig, _source) = two_failed_uploads().await;
-    rig.db.retry(&rig.db.admit().unwrap(), "moments", &rid("m1"), Some("cover")).unwrap();
-    rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), Some("upload")).unwrap();
-    assert!(matches!(rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), Some("upload")).await, Ok(())), "nothing of that action is open");
-    assert!(matches!(rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), Some("cover")).await, Err(SyncError::Offline)), "the pending cover upload is awaited");
-}
-
-#[tokio::test(start_paused = true)]
 async fn a_single_upload_takes_its_mutation_from_the_declaration_and_refuses_one_without_it() {
     let source = file(b"abcdef");
     let try_upload = |declared: Option<&str>| {
@@ -1310,28 +1301,20 @@ async fn a_single_upload_takes_its_mutation_from_the_declaration_and_refuses_one
     assert!(bare.db.outbox().unwrap().is_empty());
 }
 
-async fn reason(rig: &Rig, action: Option<&str>) -> Result<(), String> {
-    rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), action).await.map_err(|error| error.to_string())
-}
-
 #[tokio::test(start_paused = true)]
-async fn settled_for_one_action_reports_only_the_refusal_that_action_owns() {
+async fn the_receipt_of_an_upload_action_carries_only_the_refusal_of_its_own_operation() {
     let rig = upload_rig(small());
-    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    let updated = crate::sync::rig::update_claimed(&rig.sync, "moments", &rid("m1"), params(json!({"text": "new"})));
     rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     rig.sync.set_online(false);
     let source = file(TWELVE);
+    let mut refusals = Vec::new();
     for action in ["upload", "cover"] {
-        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), action, &input(&source), resumable(Vec::new()))).unwrap();
+        let (seq, _, _, ticket) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), action, &input(&source), resumable(Vec::new()))).unwrap();
         fail_open_upload_as(&rig, seq, &format!("{action}-lost"));
+        refusals.push(crate::sync::rig::refusal(&ticket));
     }
-    let cover = reason(&rig, Some("cover")).await.unwrap_err();
-    assert!(cover.contains("cover-lost") && !cover.contains("upload-lost") && !cover.contains("not allowed"), "{cover}");
-    let upload = reason(&rig, Some("upload")).await.unwrap_err();
-    assert!(upload.contains("upload-lost") && !upload.contains("cover-lost") && !upload.contains("not allowed"), "{upload}");
-    rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), Some("upload")).unwrap();
-    rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), Some("cover")).unwrap();
-    reason(&rig, Some("cover")).await.expect("an unread refusal of an ordinary action is not the cover upload's");
-    assert!(reason(&rig, None).await.unwrap_err().contains("not allowed"), "the whole record still reports it");
+    assert_eq!(refusals, ["upload-lost", "cover-lost"]);
+    assert_eq!(crate::sync::rig::refusal(&updated), "not allowed");
 }

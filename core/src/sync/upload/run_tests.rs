@@ -24,7 +24,7 @@ async fn corrupt_upload_headers_reject_single_and_multipart_answers_before_put()
             }
             rig.transport.enqueue("CreateMoment", created("m1"));
             let source = file(if multipart { b"abcdefghijkl" } else { b"abcdef" });
-            crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", input(&source))).await.unwrap();
+            let (_, _, _, ticket) = crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", input(&source))).await.unwrap();
             rig.sync.wait_uploads().await;
             let puts = rig.transport.put_calls();
             if valid {
@@ -32,8 +32,8 @@ async fn corrupt_upload_headers_reject_single_and_multipart_answers_before_put()
                 assert!(puts.iter().all(|put| put.headers.is_empty()));
             } else {
                 assert!(puts.is_empty(), "multipart={multipart}, headers={headers}");
-                let error = rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), Some("upload")).await.unwrap_err();
-                assert!(error.to_string().contains("headers"), "{error}");
+                let error = crate::sync::rig::refusal(&ticket);
+                assert!(error.contains("headers"), "{error}");
                 assert_eq!(rig.transport.call_count("CreateMoment"), 0);
             }
         }
@@ -56,7 +56,7 @@ async fn durable_upload_failures_reach_the_waiting_operation() {
             state.upload_id = Some("upload".into());
             rig.transport.enqueue("AbortMultipart", crate::transport::Reply::data(serde_json::json!({"abortMultipart": {"ok": true}})));
         }
-        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state)).unwrap();
+        let (seq, _, _, ticket) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state)).unwrap();
         let (run, token) = rig.sync.inner.register(seq, 0).unwrap();
         {
             let stored = rig.db.shared.store.lock();
@@ -76,8 +76,7 @@ async fn durable_upload_failures_reach_the_waiting_operation() {
             crate::sync::rig::app(&rig.sync, run::drive(rig.sync.inner.clone(), rig.db.admit().unwrap(), seq, 0, run, token, mode, None)).await;
         }
         rig.sync.inner.finish_run(&rig.db.admit().unwrap(), seq, 0, run);
-        let settled = rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), Some("upload")).await;
-        assert!(settled.is_err(), "{case}: the failed write was hidden");
+        assert!(!matches!(ticket.finished().map(|finished| finished.result), Some(crate::sync::SendResult::Committed)), "{case}: the failed write was hidden");
         assert!(rig.db.shared.store.apply_failure().is_some(), "{case}: the failure could not be recorded");
     }
 }
@@ -139,7 +138,7 @@ fn cancellation_does_not_wait_for_queued_file_io() {
     runtime.block_on(async {
         let rig = upload_rig(small());
         let source = file(b"abcdef");
-        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
+        let (seq, _, _, ticket) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let occupied = tokio::task::spawn_blocking(move || {
@@ -170,7 +169,7 @@ async fn a_final_mutation_does_not_hold_a_file_permit() {
         let state = if transferred {
             UploadState { transferred: true, signed_id: Some("sid".into()), blob_id: Some("b1".into()), ..UploadState::queued() }
         } else { UploadState::queued() };
-        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state)).unwrap();
+        let (seq, _, _, ticket) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state)).unwrap();
         if transferred { locked(&rig.sync.inner.uploads).active_files = 1; }
         rig.sync.inner.spawn_run(seq, 0, RunMode::Transfer).unwrap();
         rig.transport.await_calls("CreateMoment", 1).await;
@@ -266,7 +265,7 @@ fn a_runner_dropped_outside_its_runtime_removes_its_cache_file_on_the_blocking_p
     let (rig, runner, id, path) = runtime.block_on(async {
         let rig = upload_rig(small());
         let source = file(b"inline");
-        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
+        let (seq, _, _, ticket) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
         let id = rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT file_id FROM op_item WHERE seq = ?1", [seq], |row| row.get::<_, String>(0))?)).unwrap();
         crate::files::watch_file_io(&id);
         let runner = std::sync::Arc::new(super::run::Runner::load(rig.sync.inner.clone(), rig.db.admit().unwrap(), seq, 0, 0, crate::transport::CancelToken::new(), true).unwrap().unwrap());
@@ -301,7 +300,7 @@ fn queued_cleanup_survives_dropping_the_sync_that_queued_it() {
         super::upload_tests::register_upload_operations(&rig.sync);
         crate::sync::rig::put(&rig, "moments", crate::sync::rig::moment("m1", "x"));
         let source = file(b"inline");
-        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
+        let (seq, _, _, ticket) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
         let runner = std::sync::Arc::new(super::run::Runner::load(rig.sync.inner.clone(), rig.db.admit().unwrap(), seq, 0, 0, crate::transport::CancelToken::new(), true).unwrap().unwrap());
         assert!(runner.materialize().await.is_ok());
         let path = std::path::PathBuf::from(&runner.input.path);

@@ -1,4 +1,4 @@
-use super::sealed_errors_tests::{session, signed_in};
+use super::sealed_errors_tests::signed_in;
 use super::session_guards_tests::Rig;
 use super::SessionCode;
 use crate::operation::OperationStatus;
@@ -28,7 +28,8 @@ async fn a_permanently_refused_pending_owner_is_failed_by_resume() {
     let entries = database.db.outbox().unwrap();
     assert_eq!(entries[0].operation.status, OperationStatus::Failed);
     assert_eq!(entries[0].operation.error.as_ref().unwrap().kind, crate::syncstate::FailureKind::Rejected);
-    assert!(database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.is_err());
+    let expected = if resume { super::WireOperationOutcome::DeliveryUnknown } else { super::WireOperationOutcome::Rejected { failure: super::wire::failure(entries[0].operation.error.as_ref().unwrap()) } };
+    assert_eq!(database.outcome(row).await.unwrap(), expected);
     assert_eq!(database.session_resume().await.unwrap(), None);
   }
 }
@@ -41,15 +42,16 @@ async fn a_queued_create_refused_without_a_sequence_is_executed_once_by_resume_a
     let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
 
-    let refused = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap_err();
+    let id = row.optimistic_value.as_ref().unwrap().id.clone();
+    let refused = database.refusal_of(row).await;
     let effects_when_refused = mutation_effects(&rig);
     database.session_resume().await.unwrap();
-    database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap();
-    let settled = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await;
+    let retried = database.retry(database.session_epoch(), "Moment".into(), id, None).await.unwrap();
+    let outcome = database.outcome(retried).await.unwrap();
 
-    assert_eq!((session(refused).0, effects_when_refused), (SessionCode::AccountUnavailable, 0));
+    assert_eq!((refused.session_code, effects_when_refused), (Some(SessionCode::AccountUnavailable), 0));
     assert_eq!(mutation_effects(&rig), 1);
-    assert!(settled.is_ok(), "{settled:?}");
+    assert!(matches!(outcome, super::WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
     let states: Vec<OperationStatus> = database.db.outbox().unwrap().iter().map(|entry| entry.operation.status).collect();
     assert_eq!(states, []);
 }
@@ -98,11 +100,10 @@ async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_th
     let competing = competing.lock().unwrap().take();
     if let Some(flush) = competing { flush.await.unwrap().unwrap(); }
     database.flush().await.unwrap();
-    let settled = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await;
 
     assert_eq!(effects_when_lost, 1);
     assert_eq!(mutation_effects(&rig), 1);
-    assert!(settled.is_ok(), "{settled:?}");
+    assert_eq!(database.outcome(row).await.unwrap(), super::WireOperationOutcome::DeliveryUnknown);
     assert_eq!(database.db.outbox().unwrap().len(), 0);
   }
 }

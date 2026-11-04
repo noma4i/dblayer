@@ -241,18 +241,18 @@ async fn a_mutation_does_not_wait_for_a_load_of_its_refetched_list_that_is_in_fl
     let held = rig.sync.refresh(&admitted, "moments", "history", &no_params);
     let liking = async {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        let liked = rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        let (_, liked) = act_claimed(&rig.sync, "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({})));
         rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
         rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
-        let first = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation(&rig.sync.inner.db.admit().unwrap(), "moments", liked.operation))).await;
-        let liked_again = rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
-        let second = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation(&rig.sync.inner.db.admit().unwrap(), "moments", liked_again.operation))).await;
+        let first = tokio::time::timeout(std::time::Duration::from_secs(60), async { flushed(&rig).await; liked.result().await.result }).await;
+        let (_, liked_again) = act_claimed(&rig.sync, "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({})));
+        let second = tokio::time::timeout(std::time::Duration::from_secs(60), async { flushed(&rig).await; liked_again.result().await.result }).await;
         (first, second)
     };
     let (held, (first, second)) = tokio::join!(held, liking);
     held.unwrap();
-    first.expect("the answer of the first mutation waited for the load that was in flight").expect("the first mutation failed");
-    second.expect("the second mutation waited behind the refetch of the first").expect("the second mutation failed");
+    assert_eq!(first.expect("the answer of the first mutation waited for the load that was in flight"), crate::sync::SendResult::Committed);
+    assert_eq!(second.expect("the second mutation waited behind the refetch of the first"), crate::sync::SendResult::Committed);
 }
 
 #[tokio::test(start_paused = true)]
@@ -272,10 +272,10 @@ async fn a_mutation_returns_with_its_own_answer_while_its_reread_is_held() {
         })
     });
     load(&rig, "history").await;
-    let liked = rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+    let (_, liked) = act_claimed(&rig.sync, "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({})));
     rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
-    let settled = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation(&rig.sync.inner.db.admit().unwrap(), "moments", liked.operation))).await;
-    settled.expect("the call of the mutation waited for its reread").expect("the mutation failed");
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async { flushed(&rig).await; liked.result().await.result }).await;
+    assert_eq!(outcome.expect("the call of the mutation waited for its reread"), crate::sync::SendResult::Committed);
     rig.transport.await_calls("MomentsHistory", 2).await;
     assert!(invalidated(&rig, "history"), "the reread has not been answered yet");
     tokio::time::sleep(std::time::Duration::from_secs(3601)).await;

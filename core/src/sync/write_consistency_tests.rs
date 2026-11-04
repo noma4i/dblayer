@@ -302,29 +302,6 @@ async fn removing_upload_item_rewrites_mapped_values() {
     assert_eq!(call.variables["items"][1]["size"], 2);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn waiters_woken_by_the_commit_of_a_batch_get_the_real_ids() {
-    let (db, sync, transport) = rig(spec());
-    let ids = batch(&db, 3);
-    let seq = db.outbox().unwrap()[0].operation.id.0;
-    let mut transferred = CommitEnvelope::new(WriteOrigin::Response, db.generation());
-    for position in 0..3 {
-        let mut state = crate::upload::UploadState::queued();
-        state.transferred = true;
-        state.signed_id = Some(format!("signed-{position}"));
-        transferred.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: position, state: Box::new(state) });
-    }
-    db.land(&db.admit().unwrap(), transferred).unwrap();
-    let entry = db.outbox().unwrap().remove(0);
-    let sending = super::send::Sending { effects: std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&sync.inner))), admitted: &db.admit().unwrap(), entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
-    let received = super::send::confirmed_tests::confirm_while_landing(&sync, ids.iter().map(|id| ("Record".to_string(), id.clone())).collect());
-    transport.enqueue("CreateRecords", Reply::data(json!({"records":[{"id":"r0","clientKey":"key-0"},{"id":"r1","clientKey":"key-1"},{"id":"r2","clientKey":"key-2"}]})));
-    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None)).await.unwrap();
-    let confirmed = crate::test_wait::recv_within(&received);
-    *super::locked(&sync.inner.landed_probe) = None;
-    assert_eq!(confirmed.into_iter().map(|result| result.unwrap().to_string()).collect::<Vec<_>>(), ["r0", "r1", "r2"]);
-}
-
 #[test]
 fn removing_upload_item_erases_children() {
         let (db, _sync, _transport) = rig(spec());

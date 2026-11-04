@@ -1,6 +1,5 @@
 mod flush;
 mod outcomes;
-#[cfg(test)] mod answer_wait_tests;
 mod pause;
 #[cfg(test)] mod pause_tests;
 mod report;
@@ -71,8 +70,6 @@ impl Sync {
 #[cfg(test)]
 mod answer_tests;
 #[cfg(test)]
-pub(super) mod confirmed_tests;
-#[cfg(test)]
 mod correlate_tests;
 #[cfg(test)]
 mod failure_tests;
@@ -85,15 +82,11 @@ mod network_tests;
 #[cfg(test)]
 mod order_tests;
 #[cfg(test)]
-mod outcomes_tests;
-#[cfg(test)]
 mod pass_tests;
-#[cfg(test)]
-mod refusal_window_tests;
 #[cfg(test)]
 mod reset_tests;
 #[cfg(test)]
-mod settle_wait_tests;
+mod timer_tests;
 #[cfg(test)]
 mod rollback_tests;
 #[cfg(test)]

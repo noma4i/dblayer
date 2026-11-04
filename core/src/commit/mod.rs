@@ -371,6 +371,7 @@ pub struct CommitResult {
     pub unknown_operation_acks: u32,
     pub(crate) snapshot: Option<crate::db::Row>,
     pub(crate) item_snapshots: Vec<(String, Option<crate::db::Row>)>,
+    pub(crate) ended_uploads: Vec<(i64, crate::upload::UploadStatus, Option<crate::syncstate::OperationFailure>)>,
 }
 
 impl CommitResult {
@@ -388,6 +389,7 @@ impl CommitResult {
             unknown_operation_acks: 0,
             snapshot: None,
             item_snapshots: Vec::new(),
+            ended_uploads: Vec::new(),
         }
     }
 

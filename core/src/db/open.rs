@@ -55,6 +55,7 @@ pub(crate) struct Shared {
     pub replaced_ids: Arc<Mutex<HashMap<String, String>>>,
     pub creates: Arc<Mutex<HashMap<String, i64>>>,
     pub operation_queues: Arc<crate::operation::OperationQueues>,
+    pub outcomes: Arc<Mutex<crate::sync::Outcomes>>,
     pub connectivity: Arc<crate::transport::Connectivity>,
     pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
@@ -235,13 +236,14 @@ impl Db {
             for key in entry.created_keys() { locked(&creates).insert(key, entry.operation.id.0); }
         }
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
+        let outcomes = Arc::new(Mutex::new(crate::sync::Outcomes::default()));
         let replaced_log = dispatch.clone();
         store.set_commit_log(Box::new(move |event| {
             if let StoreEvent::Committed(result) = event {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), replaced_ids: replaced_ids.clone(), creates: creates.clone(), operation_queues: operation_queues.clone()}));
+        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), replaced_ids: replaced_ids.clone(), creates: creates.clone(), operation_queues: operation_queues.clone(), outcomes: outcomes.clone() }));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -262,6 +264,7 @@ impl Db {
             replaced_ids,
             creates,
             operation_queues,
+            outcomes,
             connectivity: crate::transport::Connectivity::new(true),
             ephemeral: ephemeral.clone(),
             files: path.map_or_else(FileDirectories::scratch, FileDirectories::beside),
@@ -336,10 +339,17 @@ struct CommitTargets {
     replaced_ids: Arc<Mutex<HashMap<String, String>>>,
     creates: Arc<Mutex<HashMap<String, i64>>>,
     operation_queues: Arc<crate::operation::OperationQueues>,
+    outcomes: Arc<Mutex<crate::sync::Outcomes>>,
+}
+
+fn finish_outcomes(ended: Vec<(Arc<crate::sync::OutcomeTicket>, crate::sync::SendResult)>) {
+    for (ticket, result) in ended {
+        crate::db::lock::effect(|| ticket.finish(crate::sync::FinishedOperation { result, answer: None, value: None, items: Vec::new(), discarded: Vec::new() }));
+    }
 }
 
 fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
-    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, replaced_ids, creates, operation_queues } = targets;
+    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, replaced_ids, creates, operation_queues, outcomes } = targets;
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             locked(&replaced_ids).extend(result.replaced.iter().map(|(from, to)| (format!("{}\0{}", from.model.as_str(), from.id.as_str()), to.to_string())));
@@ -348,6 +358,8 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
                 for key in entry.created_keys() { locked(&creates).insert(key, entry.operation.id.0); }
             }
             operation_queues.changed(&result.queue_operations);
+            let ended = locked(&outcomes).committed(result);
+            finish_outcomes(ended);
             {
                 let mut cache = locked(&cache);
                 if let Some(revision) = result.revision {
@@ -391,6 +403,8 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
         }
         StoreEvent::Reset { revision, models, operations } => {
             operation_queues.reset(&operations);
+            let ended = locked(&outcomes).reset(&operations);
+            finish_outcomes(ended);
             {
                 let mut cache = locked(&cache);
                 cache.committed(revision);

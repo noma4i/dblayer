@@ -17,8 +17,6 @@ pub struct Counters {
     pub peek_hits: usize,
     pub peek_misses: usize,
     pub transport_calls: usize,
-    pub lost_outcomes: usize,
-    pub settle_parks: usize,
     pub edge_read_steps: usize,
     pub edge_read_scans: usize,
     pub sql_under_owner: usize,
@@ -36,10 +34,6 @@ pub struct Counters {
 impl Counters {
     pub fn record_transport_call(&mut self) {
         self.transport_calls += 1;
-    }
-
-    pub fn record_settle_park(&mut self) {
-        self.settle_parks += 1;
     }
 
     pub fn record_stale_version_drops(&mut self, count: usize) {
@@ -67,8 +61,6 @@ impl Add for Counters {
             peek_hits: self.peek_hits + other.peek_hits,
             peek_misses: self.peek_misses + other.peek_misses,
             transport_calls: self.transport_calls + other.transport_calls,
-            lost_outcomes: self.lost_outcomes + other.lost_outcomes,
-            settle_parks: self.settle_parks + other.settle_parks,
             edge_read_steps: self.edge_read_steps + other.edge_read_steps,
             edge_read_scans: self.edge_read_scans + other.edge_read_scans,
             sql_under_owner: self.sql_under_owner + other.sql_under_owner,

@@ -57,17 +57,3 @@ async fn a_create_that_is_retried_during_a_pass_does_not_let_its_later_updates_o
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(update_texts(&rig), ["x", "one", "two"]);
 }
-
-#[tokio::test(start_paused = true)]
-async fn waiting_for_one_record_loads_no_operations_of_independent_records() {
-    let rig = rig();
-    for number in 0..30 {
-        put(&rig, "moments", moment(&format!("r{number}"), "plain"));
-        rig.db.update(&rig.db.admit().unwrap(), "moments", &RowId::new(&format!("r{number}")).unwrap(), params(json!({"text": "edited"}))).unwrap();
-    }
-    put(&rig, "moments", moment("target", "plain"));
-    let before = rig.db.counters();
-    rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &RowId::new("target").unwrap(), None).await.unwrap();
-    let after = rig.db.counters();
-    assert_eq!((after.outbox_reads - before.outbox_reads, after.outbox_rows_loaded - before.outbox_rows_loaded), (0, 0), "waiting for an idle record must not load the queue");
-}

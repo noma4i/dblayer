@@ -573,91 +573,47 @@ async fn action_that_ignores_its_response_keeps_the_local_row() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn confirmed_waits_for_the_server_id_of_a_local_create() {
+async fn the_outcome_of_a_write_is_the_answer_the_server_gave_to_its_operation() {
     let rig = rig();
-    let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
+    let (_, confirmed) = create_claimed(&rig.sync, "moments", params(json!({"text": "hello"})));
     rig.transport.enqueue("CreateMoment", created("m77", "hello"));
-    let real = rig.sync.confirmed(&rig.sync.inner.db.admit().unwrap(), "moments", &local.id).await.unwrap();
-    assert_eq!(real.as_str(), "m77");
-    assert_eq!(rig.sync.confirmed(&rig.sync.inner.db.admit().unwrap(), "moments", &real).await.unwrap(), real);
-}
+    flushed(&rig).await;
+    assert_eq!(settled(&confirmed), SendResult::Committed);
+    assert_eq!(confirmed.finished().unwrap().value.unwrap().id.as_str(), "m77");
 
-#[tokio::test(start_paused = true)]
-async fn confirmed_fails_when_the_create_was_refused() {
-    let rig = rig();
-    let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
+    let (_, refused) = create_claimed(&rig.sync, "moments", params(json!({"text": "again"})));
     rig.transport.enqueue("CreateMoment", Reply::graphql_error("nope", "FORBIDDEN"));
-    assert!(rig.sync.confirmed(&rig.sync.inner.db.admit().unwrap(), "moments", &local.id).await.is_err());
-}
+    flushed(&rig).await;
+    assert!(refusal(&refused).contains("nope"));
 
-#[tokio::test(start_paused = true)]
-async fn settled_waits_for_every_change_of_the_record() {
-    let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
-    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    let updated_ticket = update_claimed(&rig.sync, "moments", &rid("m1"), params(json!({"text": "new"})));
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), None).await.unwrap();
+    flushed(&rig).await;
+    assert_eq!(settled(&updated_ticket), SendResult::Committed);
     assert!(rig.db.outbox().unwrap().is_empty());
-}
 
-#[tokio::test(start_paused = true)]
-async fn settled_fails_with_the_refusal() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "t"));
-    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    let update_refused = update_claimed(&rig.sync, "moments", &rid("m1"), params(json!({"text": "newer"})));
     rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
-    let error = rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), None).await.unwrap_err();
-    assert!(error.to_string().contains("not allowed"));
-}
+    flushed(&rig).await;
+    assert!(refusal(&update_refused).contains("not allowed"));
 
-#[tokio::test(start_paused = true)]
-async fn settled_reports_a_refusal_answered_before_it_started_and_reports_it_once() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "t"));
-    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
-    rig.transport.enqueue("UpdateMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    assert!(rig.db.outbox().unwrap().is_empty());
-    let error = rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), None).await.unwrap_err();
-    assert!(error.to_string().contains("not allowed"));
-    rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), None).await.unwrap();
-}
-
-#[tokio::test(start_paused = true)]
-async fn confirmed_reports_a_create_refused_before_it_started() {
-    let rig = rig();
-    let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
-    rig.transport.enqueue("CreateMoment", Reply::graphql_error("nope", "FORBIDDEN"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    assert!(rig.sync.confirmed(&rig.sync.inner.db.admit().unwrap(), "moments", &local.id).await.unwrap_err().to_string().contains("nope"));
-}
-
-#[tokio::test(start_paused = true)]
-async fn settled_reports_a_destroy_and_a_kept_update_refused_before_it_started() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "t"));
-    rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
+    let destroyed = destroy_claimed(&rig.sync, "moments", &rid("m1"));
     rig.transport.enqueue("DeleteMoment", Reply::graphql_error("no destroy", "FORBIDDEN"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    assert!(rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), None).await.unwrap_err().to_string().contains("no destroy"));
+    flushed(&rig).await;
+    assert!(refusal(&destroyed).contains("no destroy"));
+
     let keeping = keeping_rig();
     put(&keeping, "moments", moment("m2", "t"));
-    keeping.db.update(&keeping.db.admit().unwrap(), "moments", &rid("m2"), params(json!({"text": "new"}))).unwrap();
+    let kept = update_claimed(&keeping.sync, "moments", &rid("m2"), params(json!({"text": "new"})));
     keeping.transport.enqueue("UpdateMoment", Reply::graphql_error("kept", "FORBIDDEN"));
-    crate::sync::rig::app(&keeping.sync, keeping.sync.flush(&keeping.sync.inner.db.admit().unwrap())).await.unwrap();
-    assert!(keeping.sync.settled(&keeping.sync.inner.db.admit().unwrap(), "moments", &rid("m2"), None).await.unwrap_err().to_string().contains("kept"));
-}
-
-#[tokio::test(start_paused = true)]
-async fn settled_forgets_a_refusal_that_a_retry_has_since_committed() {
-    let rig = rig_without_operations(crate::db::Db::open_in_memory(specs(), None).unwrap(), crate::transport::MockTransport::new(), crate::sync::SyncConfig::default());
-    put(&rig, "moments", moment("m1", "old"));
-    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
-    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    rig.sync.register(crate::sync::OperationDef::new("UpdateMoment", "operation UpdateMoment { x }", "updateMoment"));
-    rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    crate::sync::rig::app(&rig.sync, rig.sync.retry(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), None)).await.unwrap();
-    rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), None).await.unwrap();
+    flushed(&keeping).await;
+    assert!(refusal(&kept).contains("kept"));
+    let retried = retry_claimed(&keeping.sync, "moments", &rid("m2"), None);
+    keeping.transport.enqueue("UpdateMoment", updated("m2", "new"));
+    flushed(&keeping).await;
+    assert_eq!(settled(&retried), SendResult::Committed);
+    assert!(refusal(&kept).contains("kept"));
 }
 
 #[tokio::test(start_paused = true)]

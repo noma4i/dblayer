@@ -36,6 +36,11 @@ impl OutcomeTicket {
         }
     }
 
+    #[cfg(any(test, feature = "stress"))]
+    pub(crate) fn finished(&self) -> Option<FinishedOperation> {
+        super::super::locked(&self.result).clone()
+    }
+
     pub(crate) fn discard_item(&self, item: String) {
         super::super::locked(&self.discarded).insert(item);
     }
@@ -50,6 +55,7 @@ impl OutcomeTicket {
 #[derive(Default)]
 pub(crate) struct Outcomes {
     tickets: BTreeMap<i64, Weak<OutcomeTicket>>,
+    sending: std::collections::BTreeSet<i64>,
 }
 
 impl Outcomes {
@@ -66,4 +72,47 @@ impl Outcomes {
     pub(crate) fn ticket(&self, sequence: i64) -> Option<Arc<OutcomeTicket>> {
         self.tickets.get(&sequence).and_then(Weak::upgrade)
     }
+
+    pub(crate) fn begin_send(&mut self, sequence: i64) {
+        self.sending.insert(sequence);
+    }
+
+    pub(crate) fn end_send(&mut self, sequence: i64) {
+        self.sending.remove(&sequence);
+    }
+
+    /// Operations that a commit ended outside a send: the send settles its own operation with the answer it read.
+    pub(crate) fn committed(&mut self, result: &crate::commit::CommitResult) -> Vec<(Arc<OutcomeTicket>, SendResult)> {
+        let uploads = result.ended_uploads.iter().map(|(sequence, phase, error)| (*sequence, upload_result(*phase, error.as_ref())));
+        let operations = result.queue_operations.iter().filter_map(|(sequence, entry)| ended_result(entry.as_ref()).map(|ended| (*sequence, ended)));
+        let mut ended = Vec::new();
+        for (sequence, result) in uploads.chain(operations) {
+            if self.sending.contains(&sequence) { continue; }
+            if let Some(ticket) = self.take_ticket(sequence) { ended.push((ticket, result)); }
+        }
+        ended
+    }
+
+    pub(crate) fn reset(&mut self, kept: &[crate::operation::QueueOperation]) -> Vec<(Arc<OutcomeTicket>, SendResult)> {
+        let kept: std::collections::BTreeSet<i64> = kept.iter().map(|entry| entry.operation.id.0).collect();
+        let gone: Vec<i64> = self.tickets.keys().copied().filter(|sequence| !kept.contains(sequence) && !self.sending.contains(sequence)).collect();
+        gone.into_iter().filter_map(|sequence| self.take_ticket(sequence)).map(|ticket| (ticket, SendResult::Discarded)).collect()
+    }
+}
+
+fn refused(error: Option<&crate::syncstate::OperationFailure>) -> SendResult {
+    SendResult::Rejected(error.cloned().unwrap_or_else(|| crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "the operation failed")))
+}
+
+fn ended_result(entry: Option<&crate::operation::QueueOperation>) -> Option<SendResult> {
+    let Some(entry) = entry else { return Some(SendResult::Discarded) };
+    match entry.operation.status {
+        crate::operation::OperationStatus::Failed => Some(refused(entry.operation.error.as_ref())),
+        crate::operation::OperationStatus::DeliveryUnknown => Some(SendResult::DeliveryUnknown),
+        _ => None,
+    }
+}
+
+fn upload_result(phase: crate::upload::UploadStatus, error: Option<&crate::syncstate::OperationFailure>) -> SendResult {
+    if phase == crate::upload::UploadStatus::DeliveryUnknown { SendResult::DeliveryUnknown } else { refused(error) }
 }

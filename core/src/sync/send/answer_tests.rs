@@ -16,63 +16,21 @@ fn starred(extra: serde_json::Value) -> Reply {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_answer_of_an_action_carries_the_declared_fields_of_the_payload() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "t"));
-    let acted = rig.db.act(&rig.db.admit().unwrap(), "moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
-    rig.transport.enqueue("StarMoment", starred(json!({"successMessage": "Shared", "copies": 3, "undeclared": "x"})));
-    let answer = rig.sync.answer(&rig.sync.inner.db.admit().unwrap(), "moments", acted.operation).await.unwrap();
-    assert_eq!(answer, json!({"successMessage": "Shared", "copies": 3}));
-    assert!(rig.sync.answer(&rig.sync.inner.db.admit().unwrap(), "moments", acted.operation).await.is_err());
-}
-
-#[tokio::test(start_paused = true)]
-async fn a_declared_field_the_server_left_out_or_typed_otherwise_reads_as_null() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "t"));
-    let acted = rig.db.act(&rig.db.admit().unwrap(), "moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
-    rig.transport.enqueue("StarMoment", starred(json!({"copies": "many"})));
-    assert_eq!(rig.sync.answer(&rig.sync.inner.db.admit().unwrap(), "moments", acted.operation).await.unwrap(), json!({"successMessage": null, "copies": null}));
-}
-
-#[tokio::test(start_paused = true)]
-async fn the_answer_of_an_action_refused_before_it_was_asked_for_is_the_refusal() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "t"));
-    let acted = rig.db.act(&rig.db.admit().unwrap(), "moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
-    rig.transport.enqueue("StarMoment", Reply::graphql_error("not allowed", "FORBIDDEN"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    let error = rig.sync.answer(&rig.sync.inner.db.admit().unwrap(), "moments", acted.operation).await.unwrap_err();
-    assert!(error.to_string().contains("not allowed"));
-}
-
-#[tokio::test(start_paused = true)]
-async fn the_answer_of_an_action_is_kept_before_the_commit_that_closes_its_operation_is_announced() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "t"));
-    let acted = rig.db.act(&rig.db.admit().unwrap(), "moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
-    let (sequence, inner) = (acted.operation, rig.sync.inner.clone());
-    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let probe = seen.clone();
-    *rig.db.shared.store.after_commit.lock().unwrap() = Some(Box::new(move |result| {
-        if result.operations.contains(&sequence) {
-            probe.lock().unwrap().push(crate::sync::locked(&inner.outcomes).take("moments", sequence).is_ok());
-        }
-    }));
-    rig.transport.enqueue("StarMoment", starred(json!({"successMessage": "Shared", "copies": 3})));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    assert!(seen.lock().unwrap().contains(&true));
-}
-
-#[tokio::test(start_paused = true)]
-async fn an_action_reply_with_every_payload_field_null_is_a_delivered_answer() {
-    let rig = rig();
-    put(&rig, "moments", moment("m1", "t"));
-    let acted = rig.db.act(&rig.db.admit().unwrap(), "moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
-    rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"successMessage": null, "copies": null, "moment": null, "viewer": null}})));
-    assert_eq!(rig.sync.answer(&rig.sync.inner.db.admit().unwrap(), "moments", acted.operation).await.unwrap(), json!({"successMessage": null, "copies": null}));
-    assert!(rig.db.outbox().unwrap().is_empty());
-    assert_eq!(rig.db.find("moments", &rid("m1")).unwrap().unwrap().get("text"), Some(&json!("t")));
+async fn the_answer_of_an_action_carries_its_declared_fields_and_null_for_a_missing_or_mistyped_one() {
+    for (reply, answer) in [
+        (starred(json!({"successMessage": "Shared", "copies": 3, "undeclared": "x"})), json!({"successMessage": "Shared", "copies": 3})),
+        (starred(json!({"copies": "many"})), json!({"successMessage": null, "copies": null})),
+        (Reply::data(json!({"starMoment": {"successMessage": null, "copies": null, "moment": null, "viewer": null}})), json!({"successMessage": null, "copies": null})),
+    ] {
+        let rig = rig();
+        put(&rig, "moments", moment("m1", "t"));
+        let (_, ticket) = act_claimed(&rig.sync, "moments", "star", &rid("m1"), params(json!({})), params(json!({})));
+        rig.transport.enqueue("StarMoment", reply);
+        flushed(&rig).await;
+        assert_eq!(settled(&ticket), super::SendResult::Committed, "{answer}");
+        assert_eq!(ticket.finished().unwrap().answer, Some(answer.clone()));
+        assert!(rig.db.outbox().unwrap().is_empty(), "{answer}");
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -106,10 +64,10 @@ async fn an_action_reply_without_a_payload_object_keeps_the_delivery_unknown() {
     for reply in [json!({"starMoment": null}), json!({"other": {"moment": null}}), json!({"starMoment": "garbage"})] {
         let rig = rig();
         put(&rig, "moments", moment("m1", "t"));
-        let acted = rig.db.act(&rig.db.admit().unwrap(), "moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
+        let (_, ticket) = act_claimed(&rig.sync, "moments", "star", &rid("m1"), params(json!({})), params(json!({})));
         rig.transport.enqueue("StarMoment", Reply::data(reply.clone()));
-        let error = rig.sync.answer(&rig.sync.inner.db.admit().unwrap(), "moments", acted.operation).await.unwrap_err();
-        assert!(error.to_string().contains("the answer is unknown"), "{reply}: {error}");
+        flushed(&rig).await;
+        assert_eq!(settled(&ticket), super::SendResult::Quarantined, "{reply}");
         assert_eq!(rig.db.outbox().unwrap().len(), 1, "{reply}");
     }
 }

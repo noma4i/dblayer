@@ -70,7 +70,7 @@ pub use resume::{ResumeReport, Watch};
 pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
 pub use upload::{ItemId, ItemOutcome, ItemReceipt, OperationOutcome, OperationReceipt};
-pub(crate) use send::{DeliveryEffects, OutcomeTicket};
+pub(crate) use send::{DeliveryEffects, FinishedOperation, OutcomeTicket, Outcomes};
 pub use subscribe::{EventEffect, Updates, SubscriptionDef, SubscriptionStatus};
 
 use std::collections::{BTreeMap, HashMap};
@@ -176,13 +176,9 @@ pub(crate) struct Inner {
     pub(crate) resume: resume::ResumeOwner,
     pub(crate) preload: preload::PreloadOwner,
     pub(crate) entity_due: Mutex<Vec<entity_fetch::DueRefresh>>,
-    pub outcomes: Mutex<send::Outcomes>,
-    #[cfg(test)]
-    pub(crate) landed_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
+    pub outcomes: Arc<Mutex<send::Outcomes>>,
     #[cfg(test)]
     pub(crate) failure_probe: Mutex<Option<FailureProbe>>,
-    #[cfg(test)]
-    pub(crate) refused_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     #[cfg(test)]
     pub(crate) refusal_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     pub final_attempts: Mutex<send::FinalAttempts>,
@@ -321,13 +317,9 @@ impl Sync {
             resume: resume::ResumeOwner::new(),
             preload: preload::PreloadOwner::default(),
             entity_due: Mutex::new(Vec::new()),
-            outcomes: Mutex::new(send::Outcomes::default()),
-            #[cfg(test)]
-            landed_probe: Mutex::new(None),
+            outcomes: db.shared.outcomes.clone(),
             #[cfg(test)]
             failure_probe: Mutex::new(None),
-            #[cfg(test)]
-            refused_probe: Mutex::new(None),
             #[cfg(test)]
             refusal_probe: Mutex::new(None),
             final_attempts: Mutex::new(send::FinalAttempts::default()),

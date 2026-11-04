@@ -18,13 +18,12 @@ async fn graphql_auth_refusals_keep_unsent_rows_failed() {
             }),
         ] {
             let rig = rig();
-            let row = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text":"unsent"}))).unwrap();
+            let (row, ticket) = create_claimed(&rig.sync, "moments", params(json!({"text":"unsent"})));
             rig.transport.enqueue("CreateMoment", reply);
             crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
             assert!(rig.db.find("moments", &row.id).unwrap().is_some(), "{code} removed the row");
             assert_eq!(rig.db.outbox().unwrap()[0].operation.status, OperationStatus::Failed);
-            assert!(matches!(rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &row.id, None).await,
-                Err(super::super::SyncError::Transport(TransportError::Session { code: actual, .. })) if actual == SessionCode::of(code)));
+            assert!(matches!(settled(&ticket), super::SendResult::Rejected(failure) if failure.kind == crate::syncstate::FailureKind::Session(SessionCode::of(code))));
         }
     }
 }

@@ -1145,7 +1145,7 @@ async fn a_lost_event_reloads_an_already_stale_window_once() {
     {
         let admitted = rig.db.admit().unwrap();
         let keys: Vec<String> = rig.db.observed_reads().into_iter().map(|entry| entry.key).collect();
-        rig.db.shared.store.invalidate_windows(&admitted.authority(), &keys).unwrap();
+        rig.db.shared.store.invalidate_windows(&admitted.authority(), &keys, rig.sync.inner.next_issued().unwrap()).unwrap();
     }
     rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
     let life = rig.db.shared.store.lifecycle.clone();

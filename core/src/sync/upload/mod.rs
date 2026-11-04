@@ -46,7 +46,7 @@ pub struct ItemReceipt {
     pub optimistic_value: crate::db::Row,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OperationReceipt {
     pub epoch: u64,
     pub operation: i64,
@@ -66,6 +66,12 @@ pub enum ItemOutcome {
 pub struct OperationOutcome {
     pub result: crate::sync::SendResult,
     pub items: Vec<ItemOutcome>,
+}
+
+impl std::fmt::Debug for OperationReceipt {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("OperationReceipt").field("epoch", &self.epoch).field("operation", &self.operation).field("revision", &self.revision).field("items", &self.items).finish_non_exhaustive()
+    }
 }
 
 impl OperationReceipt {

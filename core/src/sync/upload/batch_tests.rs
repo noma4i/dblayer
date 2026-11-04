@@ -284,8 +284,6 @@ async fn one_failed_file_does_not_fail_a_transferred_sibling() {
     assert_eq!(db.find("Asset", &ids[1]).unwrap().unwrap().sync.state, SyncState::Sending);
     assert_eq!(transport.put_calls().len(), 1);
     assert_eq!(transport.call_count("CreateAssets"), 0);
-    let settled = tokio::time::timeout(std::time::Duration::from_millis(100), sync.settled(&sync.inner.db.admit().unwrap(), "Asset", &ids[0], None)).await;
-    assert!(matches!(settled, Ok(Err(_))), "{settled:?}");
     sync.register(crate::sync::OperationDef::new("CreateAsset", "mutation x { x }", "createAsset.asset"));
     transport.enqueue("CreateAsset", crate::transport::Reply::data(json!({"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2}}})));
     crate::sync::rig::app(&sync, sync.discard(&sync.inner.db.admit().unwrap(), "Asset", &ids[0], None)).await.unwrap();
