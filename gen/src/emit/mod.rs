@@ -440,8 +440,9 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         if let Some(relation) = singleton_relation(model) {
             for action in model.actions.iter().filter(|action| !action.upload && action.args.values().any(|kind| kind == "blob")) {
                 let params = action.args.iter().map(|(arg, kind)| format!("{}: {}", identifier(arg, false), arg_type(kind, false))).collect::<Vec<_>>().join(", ");
-                let args = action.args.keys().map(|arg| identifier(arg, false)).collect::<Vec<_>>().join(", ");
-                writeln!(out, "        suspend fun {}({params}) = requireNotNull({}.read().firstOrNull()) {{ \"singleton is missing\" }}.{}({args})", identifier(&name(&action.name), false), identifier(&name(&relation.name), false), identifier(&name(&action.name), false)).unwrap();
+                let args = action.args.keys().map(|arg| identifier(arg, false)).chain(std::iter::once("account".to_string())).collect::<Vec<_>>().join(", ");
+                let params = kotlin_scope(&params);
+                writeln!(out, "        suspend fun {}({params}) = requireNotNull({}.read(account).firstOrNull()) {{ \"singleton is missing\" }}.{}({args})", identifier(&name(&action.name), false), identifier(&name(&relation.name), false), identifier(&name(&action.name), false)).unwrap();
             }
         }
         for action in model.actions.iter().filter(|action| action.upload && !action.args.is_empty()) {

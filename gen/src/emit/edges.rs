@@ -53,8 +53,8 @@ pub(super) fn swift_accessors(out: &mut String, types: &mut String, model: &Mode
     let (method, class) = (name(&relation.name), type_name(model, relation));
     let (declared, passed) = parameters(model, relation, decls, true);
     let printed = identifier(&method, true);
-    let scope = if passed.is_empty() { printed } else { format!("{printed}({passed})") };
-    writeln!(out, "    @concurrent public static func {method}Edge({declared}of id: String) async throws -> {class}? {{ try await {scope}.edgeValues(of: id).map({class}.init) }}").unwrap();
+    let query = if passed.is_empty() { printed } else { format!("{printed}({passed})") };
+    writeln!(out, "    @concurrent public static func {method}Edge({declared}of id: String, in scope: AccountScope? = nil) async throws -> {class}? {{ try await {query}.edgeValues(of: id, in: scope).map({class}.init) }}").unwrap();
     writeln!(types, "public struct {class}: Sendable, Equatable {{").unwrap();
     for field in &relation.edge_fields {
         writeln!(types, "    public let {}: {}", identifier(&field.name, true), field_type(field, true)).unwrap();
@@ -73,8 +73,8 @@ pub(super) fn kotlin_accessors(out: &mut String, types: &mut String, model: &Mod
     let (method, class) = (name(&relation.name), type_name(model, relation));
     let (declared, passed) = parameters(model, relation, decls, false);
     let printed = identifier(&method, false);
-    let scope = if passed.is_empty() { printed } else { format!("{printed}({passed})") };
-    writeln!(out, "        suspend fun {method}Edge({declared}id: String): {class}? = {scope}.edgeValues(id)?.let {{ {class}(it) }}").unwrap();
+    let query = if passed.is_empty() { printed } else { format!("{printed}({passed})") };
+    writeln!(out, "        suspend fun {method}Edge({declared}id: String, account: AccountScope? = null): {class}? = {query}.edgeValues(id, account)?.let {{ {class}(it) }}").unwrap();
     let fields: Vec<String> = relation.edge_fields.iter().map(|field| format!("    val {}: {} = null", identifier(&field.name, false), field_type(field, false))).collect();
     writeln!(types, "@Immutable\ndata class {class}(\n{}\n) {{", fields.join(",\n")).unwrap();
     let reads: Vec<String> = relation.edge_fields.iter().map(|field| read(field, false)).collect();

@@ -42,7 +42,7 @@ data class BlobProfile(
             var built = Query("BlobProfile", this, relation = "current", params = buildJsonObject {  })
             return built
         }
-        suspend fun setVideo(video: Blob) = requireNotNull(current.read().firstOrNull()) { "singleton is missing" }.setVideo(video)
+        suspend fun setVideo(video: Blob, account: AccountScope? = null) = requireNotNull(current.read(account).firstOrNull()) { "singleton is missing" }.setVideo(video, account)
         suspend fun create(label: String? = null, account: AccountScope? = null): BlobProfile = onAccount(account) { database, epoch ->
             val values = buildJsonObject {
                 label?.let { put("label", jsonValue(it)) }

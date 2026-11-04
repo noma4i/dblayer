@@ -704,12 +704,12 @@ public struct Moment: DBModel {
         let built = Query<Self>(relation: "feed", params: [:])
         return built
     }
-    @concurrent public static func feedEdge(of id: String) async throws -> MomentFeedEdge? { try await feed.edgeValues(of: id).map(MomentFeedEdge.init) }
+    @concurrent public static func feedEdge(of id: String, in scope: AccountScope? = nil) async throws -> MomentFeedEdge? { try await feed.edgeValues(of: id, in: scope).map(MomentFeedEdge.init) }
     public static func vibeFeed(_ vibeId: String) throws -> Query<Self> {
         let built = Query<Self>(relation: "vibe_feed", params: ["vibeId": try JSONValue.encode(vibeId)])
         return built
     }
-    @concurrent public static func vibeFeedEdge(_ vibeId: String, of id: String) async throws -> MomentVibeFeedEdge? { try await vibeFeed(vibeId).edgeValues(of: id).map(MomentVibeFeedEdge.init) }
+    @concurrent public static func vibeFeedEdge(_ vibeId: String, of id: String, in scope: AccountScope? = nil) async throws -> MomentVibeFeedEdge? { try await vibeFeed(vibeId).edgeValues(of: id, in: scope).map(MomentVibeFeedEdge.init) }
     @concurrent public static func send(in scope: AccountScope, text: String? = nil, media: JSONValue? = nil) async throws -> Sent<Self> {
         var values: [String: JSONValue] = [:]
         if let value = text { values["text"] = try JSONValue.encode(value) }

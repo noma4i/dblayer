@@ -667,12 +667,12 @@ data class Moment(
             var built = Query("Moment", this, relation = "feed", params = buildJsonObject {  })
             return built
         }
-        suspend fun feedEdge(id: String): MomentFeedEdge? = feed.edgeValues(id)?.let { MomentFeedEdge(it) }
+        suspend fun feedEdge(id: String, account: AccountScope? = null): MomentFeedEdge? = feed.edgeValues(id, account)?.let { MomentFeedEdge(it) }
         fun vibeFeed(vibeId: String): Query<Moment> {
             var built = Query("Moment", this, relation = "vibe_feed", params = buildJsonObject { put("vibeId", jsonValue(vibeId)) })
             return built
         }
-        suspend fun vibeFeedEdge(vibeId: String, id: String): MomentVibeFeedEdge? = vibeFeed(vibeId).edgeValues(id)?.let { MomentVibeFeedEdge(it) }
+        suspend fun vibeFeedEdge(vibeId: String, id: String, account: AccountScope? = null): MomentVibeFeedEdge? = vibeFeed(vibeId).edgeValues(id, account)?.let { MomentVibeFeedEdge(it) }
         suspend fun send(account: AccountScope, text: String? = null, media: JsonElement? = null): Sent<Moment> {
             val values = buildJsonObject {
                 text?.let { put("text", jsonValue(it)) }

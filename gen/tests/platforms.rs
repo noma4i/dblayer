@@ -288,3 +288,54 @@ fn every_create_form_closes_the_kotlin_companion() {
         assert_eq!(opened, closed, "unbalanced braces for create form {create:?}");
     }
 }
+
+#[test]
+fn every_generated_accessor_that_reaches_the_database_takes_the_account() {
+    let models = parse_models(r#"model Moment do
+  attribute :text, :string
+  scope :feed do
+    query "MomentsFeed"
+    paginate size: 20, direction: :forward
+    edge do
+      attribute :impressionUuid, :string, null: true
+    end
+  end
+  scope :vibe_feed do
+    parameter :vibeId, :string
+    query "MomentsFeed"
+    paginate size: 20, direction: :forward
+    edge do
+      attribute :score, :int, null: true
+    end
+  end
+  operation :like do
+    mutation "LikeMoment"
+    optimistic false
+  end
+end
+
+model Me do
+  attribute :name, :string
+  scope :profile do
+    query "AccountProfile"
+  end
+  operation :set_avatar do
+    mutation "SetAvatar"
+    optimistic false
+    parameter :photo, :blob
+    variables photo: :photo
+  end
+end
+"#).unwrap();
+    let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
+    for line in swift.lines().filter(|line| line.contains("public static func feedEdge(") || line.contains("public static func vibeFeedEdge(")) {
+        assert!(line.contains("in scope: AccountScope? = nil") && line.contains("edgeValues(of: id, in: scope)"), "{line}");
+    }
+    for line in kotlin.lines().filter(|line| line.contains("suspend fun feedEdge(") || line.contains("suspend fun vibeFeedEdge(")) {
+        assert!(line.contains("account: AccountScope? = null") && line.contains("edgeValues(id, account)"), "{line}");
+    }
+    assert!(kotlin.lines().any(|line| line.contains("suspend fun vibeFeedEdge(vibeId: String, id: String, account: AccountScope? = null)")));
+    assert!(swift.contains("vibeFeedEdge(_ vibeId: String, of id: String, in scope: AccountScope? = nil)"), "{swift}");
+    assert!(kotlin.lines().any(|line| line.contains("suspend fun setAvatar(photo: Blob, account: AccountScope? = null)") && line.contains("profile.read(account)") && line.contains(".setAvatar(photo, account)")), "{kotlin}");
+    assert!(swift.contains("like(in scope: AccountScope? = nil)") && kotlin.contains("fun like(account: AccountScope? = null)"));
+}

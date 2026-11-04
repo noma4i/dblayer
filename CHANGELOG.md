@@ -53,6 +53,7 @@
 - A network change waits for the start of an action that already passed its check.
 - A subscription event lost at a session start reloads the windows that watch its model.
 - `sessionResume` writes in the session epoch of its call.
+- Generated `*Edge` reads and the Kotlin singleton blob actions take the account like every other generated accessor.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

@@ -628,13 +628,13 @@ end
 
 ```swift
 let edge = try await Moment.feedEdge(of: moment.id)      // MomentFeedEdge?
-let vibe = try await Moment.vibeFeedEdge(vibeId, of: moment.id)
+let vibe = try await Moment.vibeFeedEdge(vibeId, of: moment.id, in: scope)   // `in scope: AccountScope? = nil`
 edge?.impressionUuid                                      // String?
 ```
 
 ```kotlin
 val edge = Moment.feedEdge(moment.id)                     // MomentFeedEdge?, suspend
-val vibe = Moment.vibeFeedEdge(vibeId, moment.id)
+val vibe = Moment.vibeFeedEdge(vibeId, moment.id, account = scope)   // `account: AccountScope? = null`
 edge?.impressionUuid                                      // String?
 ```
 
