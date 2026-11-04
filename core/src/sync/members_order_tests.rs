@@ -47,8 +47,8 @@ async fn total_of(rig: &Rig, params: &serde_json::Map<String, Value>) -> Option<
     total
 }
 
-#[tokio::test(start_paused = true)]
-async fn owner_first_keeps_the_server_order_across_load_more_and_a_restart() {
+#[test]
+fn owner_first_keeps_the_server_order_across_load_more_and_a_restart() { crate::test_wait::paused(async {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("members.sqlite");
     let owner_first = scope("c1", "OWNER_FIRST");
@@ -65,10 +65,10 @@ async fn owner_first_keeps_the_server_order_across_load_more_and_a_restart() {
     }
     let reopened = rig_with_db(Db::open(&path, vec![users()], None).unwrap());
     assert_eq!(member_ids(&reopened, "users", "chat_members", &owner_first), server_order);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn each_order_of_one_chat_has_its_own_window_members_cursor_and_total() {
+#[test]
+fn each_order_of_one_chat_has_its_own_window_members_cursor_and_total() { crate::test_wait::paused(async {
     let rig = members_rig();
     let (joined, owner_first) = (scope("c1", "JOINED"), scope("c1", "OWNER_FIRST"));
     rig.transport.enqueue("ChatMembers", page(&["j1", "j2"], true, 4));
@@ -85,10 +85,10 @@ async fn each_order_of_one_chat_has_its_own_window_members_cursor_and_total() {
     assert_eq!(member_ids(&rig, "users", "chat_members", &joined), ["j1", "j2", "j3", "j4"]);
     assert_eq!(member_ids(&rig, "users", "chat_members", &owner_first), ["o1", "o2", "o3", "o4"]);
     assert_eq!((total_of(&rig, &joined).await, total_of(&rig, &owner_first).await), (Some(4), Some(4)));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn two_chats_stay_apart_in_the_same_order() {
+#[test]
+fn two_chats_stay_apart_in_the_same_order() { crate::test_wait::paused(async {
     let rig = members_rig();
     let (one, two) = (scope("c1", "OWNER_FIRST"), scope("c2", "OWNER_FIRST"));
     rig.transport.enqueue("ChatMembers", page(&["a1", "a2"], false, 2));
@@ -98,4 +98,4 @@ async fn two_chats_stay_apart_in_the_same_order() {
     assert_eq!(member_ids(&rig, "users", "chat_members", &one), ["a1", "a2"]);
     assert_eq!(member_ids(&rig, "users", "chat_members", &two), ["b1"]);
     assert_eq!((total_of(&rig, &one).await, total_of(&rig, &two).await), (Some(2), Some(1)));
-}
+}) }

@@ -14,8 +14,8 @@ async fn cancelled_resolves_after_cancel_and_for_late_waiters() {
     assert!(token.is_cancelled());
 }
 
-#[tokio::test(start_paused = true)]
-async fn offline_blocks_until_online() {
+#[test]
+fn offline_blocks_until_online() { crate::test_wait::paused(async {
     let link = Connectivity::new(true);
     assert!(link.is_online());
     link.set_online(false);
@@ -27,4 +27,4 @@ async fn offline_blocks_until_online() {
     assert!(!waiting.is_finished());
     link.set_online(true);
     waiting.await.unwrap();
-}
+}) }

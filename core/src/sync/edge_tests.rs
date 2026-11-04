@@ -33,8 +33,8 @@ fn values(uuid: &str, score: i64) -> Option<Map<String, Value>> {
     Some(params(json!({"impressionUuid": uuid, "impressionScore": score})))
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_value_from_another_connection_does_not_replace_the_main_feed_value() {
+#[test]
+fn a_value_from_another_connection_does_not_replace_the_main_feed_value() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!("imp-1"), json!(5))]));
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!(null), json!(null))]));
@@ -42,10 +42,10 @@ async fn a_value_from_another_connection_does_not_replace_the_main_feed_value() 
     refresh(&rig, "vibe_feed", &vibe("v1")).await;
     assert_eq!(read(&rig, "feed", &none(), "m1"), values("imp-1", 5));
     assert_eq!(read(&rig, "vibe_feed", &vibe("v1"), "m1"), Some(Map::new()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn connections_keep_their_own_non_null_values_by_key() {
+#[test]
+fn connections_keep_their_own_non_null_values_by_key() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!("imp-1"), json!(5))]));
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!("vibe-a"), json!(7))]));
@@ -56,10 +56,10 @@ async fn connections_keep_their_own_non_null_values_by_key() {
     assert_eq!(read(&rig, "feed", &none(), "m1"), values("imp-1", 5));
     assert_eq!(read(&rig, "vibe_feed", &vibe("a"), "m1"), values("vibe-a", 7));
     assert_eq!(read(&rig, "vibe_feed", &vibe("b"), "m1"), values("vibe-b", 9));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn the_same_connection_replaces_its_value_with_a_new_one_and_with_null() {
+#[test]
+fn the_same_connection_replaces_its_value_with_a_new_one_and_with_null() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!("imp-1"), json!(5))]));
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!("imp-2"), json!(6))]));
@@ -69,10 +69,10 @@ async fn the_same_connection_replaces_its_value_with_a_new_one_and_with_null() {
     assert_eq!(read(&rig, "feed", &none(), "m1"), values("imp-2", 6));
     refresh(&rig, "feed", &none()).await;
     assert_eq!(read(&rig, "feed", &none(), "m1"), Some(Map::new()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_answer_without_edges_leaves_the_connection_values_alone() {
+#[test]
+fn an_answer_without_edges_leaves_the_connection_values_alone() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!("imp-1"), json!(5))]));
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "m1", "text": "plain", "userId": "u1"}]})));
@@ -80,10 +80,10 @@ async fn an_answer_without_edges_leaves_the_connection_values_alone() {
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions { force: true }).await.unwrap();
     assert_eq!(text_of(&rig, "moments", "m1").as_deref(), Some("plain"));
     assert_eq!(read(&rig, "feed", &none(), "m1"), values("imp-1", 5));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_row_that_leaves_the_connection_loses_its_value() {
+#[test]
+fn a_row_that_leaves_the_connection_loses_its_value() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!("imp-1"), json!(5)), edge("m2", json!("imp-2"), json!(6))]));
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m2", json!("imp-2"), json!(6))]));
@@ -91,10 +91,10 @@ async fn a_row_that_leaves_the_connection_loses_its_value() {
     refresh(&rig, "feed", &none()).await;
     assert_eq!(read(&rig, "feed", &none(), "m1"), None);
     assert_eq!(read(&rig, "feed", &none(), "m2"), values("imp-2", 6));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn the_values_survive_a_restart_and_a_cache_reset_clears_them() {
+#[test]
+fn the_values_survive_a_restart_and_a_cache_reset_clears_them() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("edge.sqlite");
     let transport = MockTransport::new();
@@ -107,10 +107,10 @@ async fn the_values_survive_a_restart_and_a_cache_reset_clears_them() {
     assert_eq!(read(&rig, "feed", &none(), "m1"), values("imp-1", 5));
     rig.db.reset(&["moments"]).unwrap();
     assert_eq!(read(&rig, "feed", &none(), "m1"), None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn one_read_costs_the_same_at_20_and_2000_list_rows() {
+#[test]
+fn one_read_costs_the_same_at_20_and_2000_list_rows() { crate::test_wait::paused(async {
     let mut reads = Vec::new();
     for size in [20, 2000] {
         let rig = rig();
@@ -125,4 +125,4 @@ async fn one_read_costs_the_same_at_20_and_2000_list_rows() {
     assert!(reads[0].0 > 0, "the read was counted: {reads:?}");
     assert_eq!(reads[0], reads[1], "steps and full scans of one read at 20 and 2000 rows");
     assert_eq!(reads[1].1, 0, "no table scan");
-}
+}) }

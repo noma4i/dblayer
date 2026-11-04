@@ -37,6 +37,7 @@ fn inv_op_01_a_local_write_cut_at_any_step_leaves_the_row_the_operation_and_row_
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
         interrupt_at(&db, limit);
         let ok = write(&db);
+        db.close().unwrap();
         drop(db);
         let db = Db::open(&path, all_specs(), None).unwrap();
         let landed = db.find("moments", &rid("m1")).unwrap().unwrap().text("text") == Some("two");

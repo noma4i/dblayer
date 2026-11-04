@@ -42,8 +42,8 @@ async fn open(rig: &Rig, path: &std::path::Path) -> Arc<Database> {
     database
 }
 
-#[tokio::test(start_paused = true)]
-async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
+#[test]
+fn resume_does_not_repeat_a_step_owned_by_an_active_upload() { crate::test_wait::paused(async {
     use std::future::Future;
     use std::task::{Context, Waker};
 
@@ -78,7 +78,7 @@ async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
     resume.await.unwrap();
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "CreateBlob").count(), 1);
     assert!(database.db.outbox().unwrap().is_empty());
-}
+}) }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
@@ -293,6 +293,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "AbortMultipart").count(), 0);
     assert!(matches!(database.session.as_ref().unwrap().pending_owner().unwrap(), Some(crate::transport::RequestOwner::Transfer { step: crate::upload::UploadStage::Abort, .. })));
     drop(sync);
+    database.db.close().unwrap();
     drop(database);
     let database = open(&rig, &path).await;
     database.session_resume().await.unwrap();

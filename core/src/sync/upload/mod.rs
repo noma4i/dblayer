@@ -353,19 +353,18 @@ impl Inner {
 
     fn finish_run(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, seq: i64, position: i64, run: u64) {
         if !self.with_uploads(|runs, effects| runs.finish(seq, position, run, effects)) { return; }
-        let retry = {
+        let unfinished = (|| -> Result<bool, SyncError> {
+            let retried = locked(self.operation_queue()?).entries.get(&seq).is_some_and(|entry| entry.uploading && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation));
+            if !retried { return Ok(false); }
+            Ok(self.operation_uploads(seq)?.remove(&(seq, position)).is_some_and(|state| state.awaits_transfer()))
+        })();
+        {
             let life = &self.db.shared.store.lifecycle;
             let _line = life.commit_line();
             if !admitted.is_current() { return; }
-            (|| -> Result<(), SyncError> {
-            let retried = locked(self.operation_queue()?).entries.get(&seq).is_some_and(|entry| entry.uploading && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation));
-            if !retried { return Ok(()); }
-            let unfinished = self.operation_uploads(seq)?.remove(&(seq, position)).is_some_and(|state| state.awaits_transfer());
-            if unfinished { locked(&self.uploads).ready.entry((seq, position)).or_insert(ReadyRun { mode: RunMode::Transfer, resumed: None }); }
-            Ok(())
-            })()
-        };
-        if let Err(error) = retry {
+            if matches!(unfinished, Ok(true)) { locked(&self.uploads).ready.entry((seq, position)).or_insert(ReadyRun { mode: RunMode::Transfer, resumed: None }); }
+        }
+        if let Err(error) = unfinished {
             self.fail_upload(admitted, seq, error);
         }
         self.drain_uploads();

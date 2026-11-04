@@ -9,8 +9,8 @@ use crate::value::ScalarKind;
 use serde_json::json;
 use std::io::Write;
 
-#[tokio::test(start_paused = true)]
-async fn server_entries_read_nested_paths_once_before_keyed_edits() {
+#[test]
+fn server_entries_read_nested_paths_once_before_keyed_edits() { crate::test_wait::paused(async {
     let mut failures = Vec::new();
     for entry in ["load", "node", "nodes", "event", "action", "lands", "upload"] {
         let mut reactions = FieldSpec::array("reactions").nullable().with_default(json!([]));
@@ -101,4 +101,4 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
         assert_eq!(cleared.roots[0].get("reactions"), Some(&serde_json::Value::Null), "{entry}: explicit null");
     }
     assert!(failures.is_empty(), "{failures:#?}");
-}
+}) }

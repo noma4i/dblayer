@@ -225,8 +225,8 @@ impl Ephemerals {
         self.wake.notify_all();
     }
 
-    pub(crate) fn start(ephemerals: Arc<Ephemerals>, shared: Weak<Shared>) -> Result<(), DbError> {
-        super::threads::spawn_named(crate::task::Carry::Detached, "dblayer-ephemeral", move || {
+    pub(crate) fn start(threads: &Arc<super::threads::LiveThreads>, ephemerals: Arc<Ephemerals>, shared: Weak<Shared>) -> Result<(), DbError> {
+        threads.start(crate::task::Carry::Detached, "dblayer-ephemeral", move || {
                 while ephemerals.wait_for_due() {
                     let Some(shared) = shared.upgrade() else { return };
                     let db = Db { shared };

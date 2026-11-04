@@ -86,6 +86,34 @@ private final class HoldSecondFile: Transport, @unchecked Sendable {
   }
 }
 
+private func createdBlob(_ index: Int) -> String {
+  "{\"data\":{\"createBlob\":{\"url\":\"https://storage/file\",\"headers\":{},\"signedId\":\"signed-\(index)\",\"blobId\":\"b\(index)\"}}}"
+}
+
+private final class RefuseFirstFile: Transport, @unchecked Sendable {
+  private let mock: MockTransport
+  private let lock = NSLock()
+  private var refused = false
+  init(_ mock: MockTransport) { self.mock = mock }
+  func openCable(lease: CableLease) async throws { try await mock.openCable(lease: lease) }
+  func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
+  func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
+  func cableClose(token: String) async { await mock.cableClose(token: token) }
+  func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
+  func mutate(request: TransportRequest) async throws -> String {
+    let answer = try await mock.mutate(request: request)
+    let variables = try? JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8)) as? [String: Any]
+    guard request.operationName == "CreateBlob", variables?["filename"] as? String == "0.jpg" else { return answer }
+    let first = lock.withLock { () -> Bool in defer { refused = true }; return !refused }
+    return first ? #"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"# : answer
+  }
+  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { try await mock.subscribe(request: request, sink: sink) }
+  func unsubscribe(token: String) { mock.unsubscribe(token: token) }
+  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    try await mock.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
+  }
+}
+
 extension BridgeProbeTests {
   @MainActor @Test(.timeLimit(.minutes(1)))
   func openingLegacyPendingKeepsTheSessionAndLocalFile() async throws {
@@ -367,11 +395,10 @@ extension BridgeProbeTests {
       return file
     }
     let transport = MockTransport()
-    transport.enqueue("CreateBlob", reply: #"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"#)
-    transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"b1"}}}"#)
+    for index in 0..<2 { transport.enqueue("CreateBlob", reply: createdBlob(index)) }
     transport.enqueue("CreateAsset", reply: #"{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: operations, uploads: UploadOperations(createBlob: .init("CreateBlob")))
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: RefuseFirstFile(transport), operations: operations, uploads: UploadOperations(createBlob: .init("CreateBlob")))
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(2), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)
@@ -399,13 +426,10 @@ extension BridgeProbeTests {
       return file
     }
     let transport = MockTransport()
-    transport.enqueue("CreateBlob", reply: #"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"#)
-    for index in 0..<3 {
-      transport.enqueue("CreateBlob", reply: "{\"data\":{\"createBlob\":{\"url\":\"https://storage/file\",\"headers\":{},\"signedId\":\"signed-\(index)\",\"blobId\":\"b\(index)\"}}}")
-    }
+    for index in 0..<4 { transport.enqueue("CreateBlob", reply: createdBlob(index)) }
     transport.enqueue("CreateAssets", reply: #"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: operations, uploads: UploadOperations(createBlob: .init("CreateBlob")))
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: RefuseFirstFile(transport), operations: operations, uploads: UploadOperations(createBlob: .init("CreateBlob")))
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(3), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)

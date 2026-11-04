@@ -8,8 +8,8 @@ use crate::db::Db;
 use crate::query::Query;
 use crate::transport::MockTransport;
 
-#[tokio::test(start_paused = true)]
-async fn inv_id_02_inv_id_03_no_reference_to_the_temp_id_survives_the_confirmation_of_its_create() {
+#[test]
+fn inv_id_02_inv_id_03_no_reference_to_the_temp_id_survives_the_confirmation_of_its_create() { crate::test_wait::paused(async {
     for typed in [false, true] {
         let mut specs = specs_with_references();
         if typed {
@@ -36,10 +36,10 @@ async fn inv_id_02_inv_id_03_no_reference_to_the_temp_id_survives_the_confirmati
         assert_eq!(rig.db.find("moments", &rid("m77")).unwrap().unwrap().get("typing"), Some(&json!(true)));
         assert_eq!(mentions(&rig.db, &temp), Vec::<String>::new());
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_after_it() {
+#[test]
+fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_after_it() { crate::test_wait::paused(async {
     let rig = rig();
     let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
     put(&rig, "moments", moment("m77", "hello"));
@@ -49,4 +49,4 @@ async fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_r
     assert_eq!(ids, ["m77"]);
     assert!(rig.db.find("moments", &local.id).unwrap().is_none());
     assert!(rig.db.outbox().unwrap().is_empty());
-}
+}) }

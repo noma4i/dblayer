@@ -22,8 +22,8 @@ async fn an_admission_from_another_database_cannot_start_a_server_call() {
     assert!(rig.transport.calls().is_empty());
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_run_sends_the_variables_and_returns_the_value_at_the_root() {
+#[test]
+fn a_run_sends_the_variables_and_returns_the_value_at_the_root() { crate::test_wait::paused(async {
     let rig = registered();
     rig.transport.enqueue("QrCodeCreate", Reply::data(json!({"qrCodeCreate": {"url": "https://q"}})));
     let value = rig.sync.run(&rig.sync.inner.db.admit().unwrap(), "QrCodeCreate", json!({"input": {"kind": "chat"}})).await.unwrap();
@@ -31,27 +31,27 @@ async fn a_run_sends_the_variables_and_returns_the_value_at_the_root() {
     let calls = rig.transport.calls();
     assert_eq!(calls.last().unwrap().variables, json!({"input": {"kind": "chat"}}));
     assert_eq!(calls.last().unwrap().kind, CallKind::Mutation);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_run_of_a_query_uses_the_query_call_and_an_unknown_name_fails() {
+#[test]
+fn a_run_of_a_query_uses_the_query_call_and_an_unknown_name_fails() { crate::test_wait::paused(async {
     let rig = registered();
     rig.transport.enqueue("Pricing", Reply::data(json!({"pricing": {"plan": "gold"}})));
     assert_eq!(rig.sync.run(&rig.sync.inner.db.admit().unwrap(), "Pricing", json!({})).await.unwrap(), json!({"plan": "gold"}));
     assert_eq!(rig.transport.calls().last().unwrap().kind, CallKind::Query);
     assert!(matches!(rig.sync.run(&rig.sync.inner.db.admit().unwrap(), "Nope", json!({})).await, Err(SyncError::UnknownOperation(_))));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_run_answered_with_errors_fails_with_every_message() {
+#[test]
+fn a_run_answered_with_errors_fails_with_every_message() { crate::test_wait::paused(async {
     let rig = registered();
     rig.transport.enqueue("QrCodeCreate", Reply::graphql_messages(&["first", "second"]));
     let error = rig.sync.run(&rig.sync.inner.db.admit().unwrap(), "QrCodeCreate", json!({})).await.unwrap_err();
     assert_eq!(error.to_string(), "graphql: first\nsecond");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_aggregate_run_returns_the_nested_value_and_writes_no_rows() {
+#[test]
+fn an_aggregate_run_returns_the_nested_value_and_writes_no_rows() { crate::test_wait::paused(async {
     let rig = registered();
     rig.sync.register(OperationDef::new("ChatMedia", "query ChatMedia($chatId: ID!, $upToSequence: Int) { node(id: $chatId) { ... on Chat { id mediaLibrary(upToSequence: $upToSequence) { visualCount latestSequence } } } }", "node"));
     let before = rig.db.revision_seq().unwrap();
@@ -61,4 +61,4 @@ async fn an_aggregate_run_returns_the_nested_value_and_writes_no_rows() {
     assert_eq!(rig.transport.calls().last().unwrap().variables, json!({"chatId": "c1", "upToSequence": 120}));
     assert_eq!(rig.db.revision_seq().unwrap(), before);
     assert_eq!(member_ids(&rig, "moments", "feed", &params(json!({}))), Vec::<String>::new());
-}
+}) }

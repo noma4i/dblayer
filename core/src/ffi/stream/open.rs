@@ -59,8 +59,8 @@ impl EventReader for EventFeed {
         stream.heard(wire, stamp);
     }
 
-    fn unread(&self) {
-        if let Some(stream) = self.stream.upgrade() { stream.unread(); }
+    fn unread(&self, count: u64) {
+        if let Some(stream) = self.stream.upgrade() { stream.unread(count); }
     }
 }
 

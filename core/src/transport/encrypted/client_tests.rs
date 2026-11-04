@@ -125,6 +125,7 @@ async fn resume_discards_a_legacy_sessionless_pending_without_sending() {
     rig.server.drop_next_request();
     cancel_pending(client.mutate(&client.admit("test call").unwrap(), "/api/auth/otp", json!({})));
     drop(client);
+    db.close().unwrap();
     drop(db);
     let db = file_db(&path);
     let mut config = config();
@@ -194,10 +195,12 @@ async fn a_lost_answer_is_recovered_after_a_restart_by_the_same_request_with_a_f
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
-    let client = rig.client(&file_db(&path));
+    let first_db = file_db(&path);
+    let client = rig.client(&first_db);
     client.mutate(&client.admit("test call").unwrap(), "/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     rig.server.lose_next_answer();
     cancel_pending(client.mutate(&client.admit("test call").unwrap(), "/api/graphql", graphql("mutation { once }")));
+    first_db.close().unwrap();
     drop(client);
 
     rig.clock.advance(Duration::from_secs(5));
@@ -417,8 +420,8 @@ async fn local_413_does_not_poison_the_session() {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_confirmed_retry_that_exceeds_the_size_limit_does_not_poison_pending() {
+#[test]
+fn a_confirmed_retry_that_exceeds_the_size_limit_does_not_poison_pending() { crate::test_wait::paused(async {
     let rig = Rig::new();
     let db = memory_db();
     let client = rig.client(&db);
@@ -445,7 +448,7 @@ async fn a_confirmed_retry_that_exceeds_the_size_limit_does_not_poison_pending()
     assert!(rows(&db).1.is_none(), "oversized retry remained pending");
     client.mutate(&client.admit("test call").unwrap(), "/api/auth/social", json!({})).await.unwrap();
     assert_eq!(rows(&db).0.unwrap().sequence, 10);
-}
+}) }
 
 #[tokio::test]
 async fn a_pending_request_of_a_replaced_credential_is_reported_and_never_sent() {

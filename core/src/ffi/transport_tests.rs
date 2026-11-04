@@ -17,10 +17,10 @@ fn subscription_failures_keep_graphql_extensions() {
     let (sink, mut receiver) = sink();
     let extensions = crate::transport::GraphqlExtensions { code: Some("NOT_FOUND".into()), transaction_disposition: Some(crate::transport::TransactionDisposition::Keep), fields: Default::default() };
     sink.failed(super::DbError::Graphql { messages: vec!["missing".into()], extensions: Some(extensions.clone()) });
-    let Ok(SubscriptionEvent::Failed(failure)) = receiver.try_recv() else { panic!("missing failure") };
+    let Ok(SubscriptionEvent::Failed(failure)) = receiver.try_recv().map(|(event, _)| event) else { panic!("missing failure") };
     assert!(matches!(failure.error, crate::transport::TransportError::Graphql { extensions: Some(found), .. } if found == extensions));
     sink.event(r#"{"errors":[{"message":"missing","extensions":{"code":"NOT_FOUND","transactionDisposition":"KEEP"}}]}"#.into()).unwrap();
-    let Ok(SubscriptionEvent::Failed(failure)) = receiver.try_recv() else { panic!("missing frame failure") };
+    let Ok(SubscriptionEvent::Failed(failure)) = receiver.try_recv().map(|(event, _)| event) else { panic!("missing frame failure") };
     assert!(matches!(failure.error, crate::transport::TransportError::Graphql { extensions: Some(found), .. } if found == extensions));
 }
 
@@ -40,7 +40,7 @@ fn subscription_sink_wakes_its_receiver_with_the_sender_lock_free() {
     assert!(next.as_mut().poll(&mut context).is_pending());
     sink.ready();
     assert_eq!((probe.wakes(), probe.violations()), (1, 0), "an event wakes the receiver with the sender lock free");
-    assert!(matches!(next.as_mut().poll(&mut context), std::task::Poll::Ready(Some(SubscriptionEvent::Ready))));
+    assert!(matches!(next.as_mut().poll(&mut context), std::task::Poll::Ready(Some((SubscriptionEvent::Ready, _)))));
     drop(next);
     let mut next = Box::pin(crate::transport::SubscriptionReceiver::recv(&mut receiver));
     assert!(next.as_mut().poll(&mut context).is_pending());
@@ -133,7 +133,7 @@ fn a_frame_without_data_fails_the_subscription_as_internal_and_an_enveloped_fram
     let (sink, mut receiver) = sink();
 
     let rejected = sink.event(r#"{"messageCreated":{"message":{"id":"9"}}}"#.to_string());
-    let failure = match receiver.try_recv() {
+    let failure = match receiver.try_recv().map(|(event, _)| event) {
         Ok(SubscriptionEvent::Failed(failure)) => Some(failure),
         _ => None,
     };
@@ -141,7 +141,7 @@ fn a_frame_without_data_fails_the_subscription_as_internal_and_an_enveloped_fram
     assert_eq!(failure.map(|failure| failure.kind), Some(SubscriptionFailureKind::Internal));
 
     sink.event(r#"{"data":{"messageCreated":{"message":{"id":"9"}}}}"#.to_string()).unwrap();
-    assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Next(_))));
+    assert!(matches!(receiver.try_recv().map(|(event, _)| event), Ok(SubscriptionEvent::Next(_))));
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn inv_panic_01_a_subscription_sink_survives_a_poisoned_lock() {
     let (sink, mut receiver) = sink();
     crate::db::fixtures::poison(&sink.sender);
     sink.ready();
-    assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Ready)));
+    assert!(matches!(receiver.try_recv().map(|(event, _)| event), Ok(SubscriptionEvent::Ready)));
     sink.closed();
 }
 

@@ -38,15 +38,15 @@ async fn stored_seed_read_failures_remain_visible_with_and_without_rows() {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_relation_never_loaded_is_idle_with_nothing_more() {
+#[test]
+fn a_relation_never_loaded_is_idle_with_nothing_more() { crate::test_wait::paused(async {
     let rig = rig();
     let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     assert_eq!(*state.borrow(), RelationState { complete: false, phase: LoadPhase::NotLoaded, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0, needs_reload: None });
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn the_state_follows_a_load_from_loading_to_idle_with_the_page_flag() {
+#[test]
+fn the_state_follows_a_load_from_loading_to_idle_with_the_page_flag() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2").after(Duration::from_secs(1)));
     let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
@@ -59,10 +59,10 @@ async fn the_state_follows_a_load_from_loading_to_idle_with_the_page_flag() {
     load.await.unwrap().unwrap();
     let done = state.borrow().clone();
     assert_eq!((done.phase, done.has_more, done.error.is_none(), done.loaded_at.is_some()), (LoadPhase::Loaded, true, true, true));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn load_more_clears_the_page_flag_on_the_last_page() {
+#[test]
+fn load_more_clears_the_page_flag_on_the_last_page() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["b"], false, "c2"));
@@ -71,10 +71,10 @@ async fn load_more_clears_the_page_flag_on_the_last_page() {
     assert!(state.borrow().has_more);
     rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none()).await.unwrap();
     assert!(!state.borrow().has_more);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn the_state_carries_the_total_the_server_reports_for_the_whole_list() {
+#[test]
+fn the_state_carries_the_total_the_server_reports_for_the_whole_list() { crate::test_wait::paused(async {
     let rig = rig();
     let page = |ids: &[&str], cursor: &str, total: i64| {
         let mut data = feed_page(ids.iter().map(|id| moment(id, id)).collect(), true, cursor);
@@ -91,10 +91,10 @@ async fn the_state_carries_the_total_the_server_reports_for_the_whole_list() {
     assert_eq!(state.borrow().total, Some(8));
     let reopened = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     assert_eq!(reopened.borrow().total, Some(8));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_failed_load_reports_its_kind_and_the_next_success_clears_it() {
+#[test]
+fn a_failed_load_reports_its_kind_and_the_next_success_clears_it() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::fail(crate::transport::TransportError::Http { status: 422, body: "no".to_string() }));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
@@ -106,20 +106,20 @@ async fn a_failed_load_reports_its_kind_and_the_next_success_clears_it() {
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     let healed = state.borrow().clone();
     assert_eq!((healed.phase, healed.error), (LoadPhase::Loaded, None));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_second_receiver_starts_from_the_stored_window() {
+#[test]
+fn a_second_receiver_starts_from_the_stored_window() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let mut fresh = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     within(fresh.changed()).await.unwrap();
     assert!(fresh.borrow().has_more && fresh.borrow().loaded_at.is_some());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_the_next_page() {
+#[test]
+fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_the_next_page() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1").after(Duration::from_secs(1)));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1").after(Duration::from_secs(1)));
@@ -149,7 +149,7 @@ async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_
     assert_eq!(running(&state.borrow()), (false, false, true));
     more.await.unwrap().unwrap();
     assert_eq!(running(&state.borrow()), (false, false, false));
-}
+}) }
 
 #[tokio::test]
 async fn watching_a_relation_state_does_not_wait_for_the_store_writer() {

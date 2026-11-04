@@ -90,6 +90,9 @@ pub enum SubscriptionEvent {
 
 const CAPACITY: usize = 256;
 
+pub(crate) type FrameLease = Box<dyn Send>;
+type FrameHold = Arc<dyn Fn() -> Option<FrameLease> + Send + Sync>;
+
 struct Queue {
     events: VecDeque<SubscriptionEvent>,
     ordinal: u64,
@@ -99,6 +102,14 @@ struct Queue {
     failure: Option<SubscriptionFailure>,
     senders: usize,
     receiving: bool,
+    hold: Option<FrameHold>,
+    held: Option<FrameLease>,
+}
+
+impl Queue {
+    fn is_empty(&self) -> bool {
+        self.events.is_empty() && self.lost.is_none() && !self.ready && self.failure.is_none()
+    }
 }
 
 struct Channel { queue: Mutex<Queue>, wake: Notify }
@@ -107,7 +118,7 @@ pub struct SubscriptionSender(Arc<Channel>);
 pub struct SubscriptionReceiver(Arc<Channel>);
 
 pub fn subscription_channel() -> (SubscriptionSender, SubscriptionReceiver) {
-    let channel = Arc::new(Channel { queue: Mutex::new(Queue { events: VecDeque::new(), ordinal: 0, lost: None, after_ready: None, ready: false, failure: None, senders: 1, receiving: true }), wake: Notify::new() });
+    let channel = Arc::new(Channel { queue: Mutex::new(Queue { events: VecDeque::new(), ordinal: 0, lost: None, after_ready: None, ready: false, failure: None, senders: 1, receiving: true, hold: None, held: None }), wake: Notify::new() });
     (SubscriptionSender(channel.clone()), SubscriptionReceiver(channel))
 }
 
@@ -131,9 +142,12 @@ impl Drop for SubscriptionSender {
 
 impl SubscriptionSender {
     pub fn send(&self, event: SubscriptionEvent) -> Result<(), ()> {
+        let hold = crate::sync::locked(&self.0.queue).hold.clone();
+        let mut lease = hold.and_then(|hold| hold());
         let mut queue = crate::sync::locked(&self.0.queue);
-        if !queue.receiving { return Err(()); }
-        if queue.failure.is_some() { return Ok(()); }
+        if !queue.receiving { drop(queue); drop(lease); return Err(()); }
+        if queue.failure.is_some() { drop(queue); drop(lease); return Ok(()); }
+        if queue.held.is_none() { queue.held = lease.take(); }
         if matches!(event, SubscriptionEvent::Next(_)) { queue.ordinal += 1; }
         if queue.events.len() < CAPACITY && queue.lost.is_none() && queue.after_ready.is_none() && !queue.ready {
             queue.events.push_back(event);
@@ -153,25 +167,31 @@ impl SubscriptionSender {
             }
         }
         drop(queue);
+        drop(lease);
         crate::db::lock::effect(|| self.0.wake.notify_one());
         Ok(())
     }
 }
 
 impl SubscriptionReceiver {
-    pub(crate) fn try_recv(&mut self) -> Result<SubscriptionEvent, ()> {
+    pub(crate) fn try_recv(&mut self) -> Result<(SubscriptionEvent, Option<FrameLease>), ()> {
         let mut queue = crate::sync::locked(&self.0.queue);
-        if let Some(event) = queue.events.pop_front() { return Ok(event); }
-        if let Some((first, last)) = queue.lost.take() { return Ok(SubscriptionEvent::Lost { first, last }); }
-        if std::mem::take(&mut queue.ready) {
-            queue.lost = queue.after_ready.take();
-            return Ok(SubscriptionEvent::Ready);
-        }
-        if let Some(failure) = queue.failure.take() { return Ok(SubscriptionEvent::Failed(failure)); }
-        Err(())
+        let event = Self::pop(&mut queue).ok_or(())?;
+        let lease = if queue.is_empty() { queue.held.take() } else { None };
+        Ok((event, lease))
     }
 
-    pub(crate) async fn recv(&mut self) -> Option<SubscriptionEvent> {
+    fn pop(queue: &mut Queue) -> Option<SubscriptionEvent> {
+        if let Some(event) = queue.events.pop_front() { return Some(event); }
+        if let Some((first, last)) = queue.lost.take() { return Some(SubscriptionEvent::Lost { first, last }); }
+        if std::mem::take(&mut queue.ready) {
+            queue.lost = queue.after_ready.take();
+            return Some(SubscriptionEvent::Ready);
+        }
+        queue.failure.take().map(SubscriptionEvent::Failed)
+    }
+
+    pub(crate) async fn recv(&mut self) -> Option<(SubscriptionEvent, Option<FrameLease>)> {
         loop {
             let channel = self.0.clone();
             let notified = channel.wake.notified();
@@ -180,10 +200,28 @@ impl SubscriptionReceiver {
             notified.await;
         }
     }
+
+    fn hold_frames(&self, hold: FrameHold) {
+        let waiting = !crate::sync::locked(&self.0.queue).is_empty();
+        let mut lease = if waiting { hold() } else { None };
+        let mut queue = crate::sync::locked(&self.0.queue);
+        if !queue.is_empty() && queue.held.is_none() { queue.held = lease.take(); }
+        queue.hold = Some(hold);
+        drop(queue);
+        drop(lease);
+    }
 }
 
 impl Drop for SubscriptionReceiver {
-    fn drop(&mut self) { crate::sync::locked(&self.0.queue).receiving = false; }
+    fn drop(&mut self) {
+        let (held, hold) = {
+            let mut queue = crate::sync::locked(&self.0.queue);
+            queue.receiving = false;
+            (queue.held.take(), queue.hold.take())
+        };
+        drop(held);
+        drop(hold);
+    }
 }
 
 impl SubscriptionEvent {
@@ -199,6 +237,7 @@ impl SubscriptionEvent {
 pub struct ServerSubscription {
     events: SubscriptionReceiver,
     handle: ServerSubscriptionHandle,
+    frame: Option<FrameLease>,
     #[cfg(any(test, feature = "stress"))]
     on_next: Option<Box<dyn Fn(ConsumerSignal) + Send + Sync>>,
 }
@@ -226,6 +265,7 @@ impl ServerSubscription {
         Self {
             events,
             handle,
+            frame: None,
             #[cfg(any(test, feature = "stress"))]
             on_next: None,
         }
@@ -237,13 +277,21 @@ impl ServerSubscription {
         self
     }
 
+    pub(crate) fn hold_frames(&self, hold: impl Fn() -> Option<FrameLease> + Send + Sync + 'static) {
+        self.events.hold_frames(Arc::new(hold));
+    }
+
     pub async fn next(&mut self) -> Option<SubscriptionEvent> {
+        drop(self.frame.take());
         #[cfg(any(test, feature = "stress"))]
         let _waiting = self.on_next.as_deref().map(|hook| {
             hook(ConsumerSignal::Waiting);
             Waiting(hook)
         });
-        let event = self.events.recv().await;
+        let event = self.events.recv().await.map(|(event, lease)| {
+            self.frame = lease;
+            event
+        });
         #[cfg(any(test, feature = "stress"))]
         if let (Some(hook), Some(_)) = (&self.on_next, &event) {
             hook(ConsumerSignal::Received);
@@ -253,7 +301,7 @@ impl ServerSubscription {
 
     pub(crate) fn take_queued_responses(&mut self) -> bool {
         let mut taken = false;
-        while let Ok(event) = self.events.try_recv() {
+        while let Ok((event, _)) = self.events.try_recv() {
             taken |= matches!(event, SubscriptionEvent::Next(_) | SubscriptionEvent::Lost { .. });
         }
         taken

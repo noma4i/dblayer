@@ -5,8 +5,8 @@ use super::upload_tests::{file, input, multipart_replies, rid, small, upload_rig
 use crate::transport::PutReply;
 use crate::upload::{UploadInfo, UploadStatus};
 
-#[tokio::test(start_paused = true)]
-async fn inv_upload_15_every_step_of_an_upload_reaches_the_observer_with_current_bytes_and_a_rising_fraction() {
+#[test]
+fn inv_upload_15_every_step_of_an_upload_reaches_the_observer_with_current_bytes_and_a_rising_fraction() { crate::test_wait::paused(async {
     let rig = upload_rig(small());
     let seen: Arc<Mutex<Vec<Option<UploadInfo>>>> = Arc::default();
     let sink = seen.clone();
@@ -42,4 +42,4 @@ async fn inv_upload_15_every_step_of_an_upload_reaches_the_observer_with_current
     assert!(uploading.len() > 3 && uploading.last() == Some(&12), "bytes seen: {uploading:?}");
     assert!(shown.iter().any(|info| info.status == UploadStatus::Sending));
     assert_eq!(infos.last().cloned().unwrap(), None);
-}
+}) }

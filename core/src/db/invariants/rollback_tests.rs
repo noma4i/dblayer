@@ -37,6 +37,7 @@ fn inv_rollback_09_a_rollback_after_a_restart_gives_the_same_result_as_before_it
         if started {
             start(&first, first.outbox().unwrap()[0].operation.id.0);
         }
+        first.close().unwrap();
         drop(first);
         let reopened = crate::db::Db::open(&path, all_specs(), None).unwrap();
         let oldest = reopened.outbox().unwrap()[0].operation.id.0;

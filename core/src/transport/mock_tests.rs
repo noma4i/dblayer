@@ -37,14 +37,14 @@ async fn queue_pops_in_order_and_last_reply_repeats() {
     assert_eq!(data(mock.query(&super::test_admission().unwrap(), ping()).await.unwrap()), json!(2));
 }
 
-#[tokio::test(start_paused = true)]
-async fn delay_waits_on_paused_clock_without_real_sleep() {
+#[test]
+fn delay_waits_on_paused_clock_without_real_sleep() { crate::test_wait::paused(async {
     let mock = MockTransport::new();
     mock.enqueue("Ping", Reply::data(json!(1)).after(Duration::from_secs(5)));
     let started = Instant::now();
     mock.query(&super::test_admission().unwrap(), ping()).await.unwrap();
     assert_eq!(started.elapsed(), Duration::from_secs(5));
-}
+}) }
 
 #[tokio::test]
 async fn journal_records_calls_in_order_with_kind_and_variables() {

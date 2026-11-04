@@ -13,8 +13,8 @@ fn ids(rows: &[crate::db::Row]) -> Ids {
     rows.iter().map(|row| row.id.to_string()).collect()
 }
 
-#[tokio::test(start_paused = true)]
-async fn readers_opened_between_the_commit_and_its_announcement_of_a_swap_never_see_an_empty_set() {
+#[test]
+fn readers_opened_between_the_commit_and_its_announcement_of_a_swap_never_see_an_empty_set() { crate::test_wait::paused(async {
     let rig = rig();
     let temp = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap().id.to_string();
     let query = Query::new("moments");
@@ -44,4 +44,4 @@ async fn readers_opened_between_the_commit_and_its_announcement_of_a_swap_never_
         assert!(!seen.is_empty(), "{name}: nothing was read");
         assert!(seen.iter().all(|rows| *rows == before || *rows == after), "{name}: {seen:?}");
     }
-}
+}) }

@@ -42,28 +42,28 @@ async fn node_answered_after(wipe: fn(&Rig)) {
     assert_eq!(stored(&rig, "chats", "c1"), None);
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_03_nodes_answer_after_reset_all_lands_nothing() {
+#[test]
+fn inv_fresh_03_nodes_answer_after_reset_all_lands_nothing() { crate::test_wait::paused(async {
     nodes_answered_after(reset_everything).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_03_nodes_answer_after_a_cache_reset_lands_nothing() {
+#[test]
+fn inv_fresh_03_nodes_answer_after_a_cache_reset_lands_nothing() { crate::test_wait::paused(async {
     nodes_answered_after(reset_chats_cache).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_03_node_answer_after_reset_all_lands_nothing() {
+#[test]
+fn inv_fresh_03_node_answer_after_reset_all_lands_nothing() { crate::test_wait::paused(async {
     node_answered_after(reset_everything).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_03_node_answer_after_a_cache_reset_lands_nothing() {
+#[test]
+fn inv_fresh_03_node_answer_after_a_cache_reset_lands_nothing() { crate::test_wait::paused(async {
     node_answered_after(reset_chats_cache).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn nodes_answer_in_the_same_generation_still_lands() {
+#[test]
+fn nodes_answer_in_the_same_generation_still_lands() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatsByIds", data(json!({"nodes": [{"id": "c1", "title": "a"}]})).after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
@@ -71,10 +71,10 @@ async fn nodes_answer_in_the_same_generation_still_lands() {
     let rows = task.await.unwrap().unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("a"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_03_next_page_answer_after_reset_all_lands_nothing() {
+#[test]
+fn inv_fresh_03_next_page_answer_after_reset_all_lands_nothing() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], false, "c4").after(Duration::from_secs(5)));
@@ -86,10 +86,10 @@ async fn inv_fresh_03_next_page_answer_after_reset_all_lands_nothing() {
     let outcome = task.await.unwrap();
     assert!(matches!(&outcome, Err(super::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))), "the explicit call straddling the reset must end with its outcome: {outcome:?}");
     assert_eq!((text_of(&rig, "moments", "c"), text_of(&rig, "moments", "d")), (None, None));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_03_resume_answer_after_reset_all_lands_nothing() {
+#[test]
+fn inv_fresh_03_resume_answer_after_reset_all_lands_nothing() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m2"], false, "c2").after(Duration::from_secs(5)));
@@ -104,4 +104,4 @@ async fn inv_fresh_03_resume_answer_after_reset_all_lands_nothing() {
     assert!(matches!(task.await.unwrap(), Err(crate::sync::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))));
     assert_eq!((text_of(&rig, "moments", "m1"), text_of(&rig, "moments", "m2")), (None, None));
     assert!(member_ids(&rig, "moments", "feed", &none()).is_empty());
-}
+}) }

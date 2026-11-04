@@ -63,6 +63,8 @@ pub use warm::Peeked;
 pub(crate) use listeners::{CallState, Feed};
 pub(crate) use local_write::read_outbox;
 pub(crate) use open::locked;
+#[cfg(test)]
+pub(crate) use open::Shared;
 pub(crate) use merge::Admission;
 pub(crate) use prior::Prior;
 pub(crate) use swap::TempReplacement;

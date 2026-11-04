@@ -43,8 +43,8 @@ impl CableSocket for LifecycleSocket {
     async fn close(&self) { self.socket.close().await; }
 }
 
-#[tokio::test(start_paused = true)]
-async fn server_pongs_keep_pending_receive_alive_for_120_seconds() {
+#[test]
+fn server_pongs_keep_pending_receive_alive_for_120_seconds() { crate::test_wait::paused(async {
     let (incoming, receiver) = mpsc::unbounded_channel();
     let (outgoing, sent) = mpsc::unbounded_channel();
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
@@ -88,7 +88,7 @@ async fn server_pongs_keep_pending_receive_alive_for_120_seconds() {
     assert_eq!(lifecycle.cancellations.load(Ordering::SeqCst), 0);
     assert_eq!(pongs.load(Ordering::SeqCst), 4);
     server.abort();
-}
+}) }
 
 pub(super) struct Peer {
     pub(super) incoming: mpsc::UnboundedSender<SocketEvent>,
@@ -161,8 +161,8 @@ pub(super) struct FakeConnect {
     pub(super) opens: AtomicUsize,
 }
 
-#[tokio::test(start_paused = true)]
-async fn authenticated_error_retryability_controls_feed_until_resume() {
+#[test]
+fn authenticated_error_retryability_controls_feed_until_resume() { crate::test_wait::paused(async {
     use crate::schema::{FieldSpec, ModelSpec, RelationSpec, UpdatesSpec};
     use crate::value::ScalarKind;
     for (code, retryable) in [("REFUSED", false), ("REFUSED", true), ("NEW_REFUSAL_2", false), ("NEW_REFUSAL_2", true)] {
@@ -218,10 +218,10 @@ async fn authenticated_error_retryability_controls_feed_until_resume() {
         assert!(!status().stopped, "{code}");
         assert_eq!(http.reads.load(Ordering::SeqCst), 0);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn stopping_subscriptions_drops_pending_open() {
+#[test]
+fn stopping_subscriptions_drops_pending_open() { crate::test_wait::paused(async {
     struct PendingOpen {
         started: mpsc::UnboundedSender<()>,
         stopped: mpsc::UnboundedSender<()>,
@@ -256,10 +256,10 @@ async fn stopping_subscriptions_drops_pending_open() {
         if tokio::time::timeout(std::time::Duration::from_secs(1), stops.recv()).await.is_err() { failures.push(action); }
     }
     assert!(failures.is_empty(), "pending socket open survived: {failures:?}");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn terminal_open_refusals_are_not_retried() {
+#[test]
+fn terminal_open_refusals_are_not_retried() { crate::test_wait::paused(async {
     struct Refused(u16, AtomicUsize);
     #[async_trait]
     impl CableConnect for Refused {
@@ -297,7 +297,7 @@ async fn terminal_open_refusals_are_not_retried() {
     assert!(matches!(failure.error, TransportError::Session { .. }));
     assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
     assert_eq!(cable.wake_count(), 0);
-}
+}) }
 
 #[async_trait]
 impl CableConnect for FakeConnect {
@@ -326,8 +326,8 @@ struct Credentials {
     writes: AtomicUsize,
 }
 
-#[tokio::test(start_paused = true)]
-async fn credential_failure_never_opens_a_socket() {
+#[test]
+fn credential_failure_never_opens_a_socket() { crate::test_wait::paused(async {
     for credential in [Err(TransportError::Network("credential unavailable".into())), Ok(String::new())] {
         let (_incoming, receiver) = mpsc::unbounded_channel();
         let (outgoing, mut sent) = mpsc::unbounded_channel();
@@ -344,7 +344,7 @@ async fn credential_failure_never_opens_a_socket() {
         assert_eq!(socket.closes.load(Ordering::SeqCst), 0);
         assert!(sent.try_recv().is_err());
     }
-}
+}) }
 
 impl crate::transport::CredentialSlot for Credentials {
     fn get(&self) -> Result<Option<String>, TransportError> { Ok(self.value.lock().unwrap().clone()) }
@@ -360,8 +360,8 @@ impl crate::transport::CredentialSlot for Credentials {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retries() {
+#[test]
+fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retries() { crate::test_wait::paused(async {
     use crate::transport::CredentialSlot;
     for (code, reason, terminal) in [(4400,"",false), (4401,"",true), (4403,"",true), (4408,"",false), (4409,"",false), (4429,"",false), (4430,"SUPERSEDED",false), (4500,"",false), (4503,"",false), (1000,"LOGGED_OUT",true),
         (1003,"",false),
@@ -401,10 +401,10 @@ async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retri
             assert_eq!(connect.opens.load(Ordering::SeqCst), 2);
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn authentication_refusal_before_ready_stops_without_reopening() {
+#[test]
+fn authentication_refusal_before_ready_stops_without_reopening() { crate::test_wait::paused(async {
     let (incoming, receiver) = mpsc::unbounded_channel();
     let (outgoing, _sent) = mpsc::unbounded_channel();
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
@@ -425,7 +425,7 @@ async fn authentication_refusal_before_ready_stops_without_reopening() {
     let _signed_in = cable.subscribe(&test_admission(), GraphQLRequest::new("subscription { recordEvents { __typename } }", "SignedInChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 2);
-}
+}) }
 
 #[async_trait]
 impl crate::transport::HttpExchange for Http {
@@ -440,8 +440,8 @@ impl crate::transport::HttpExchange for Http {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
+#[test]
+fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() { crate::test_wait::paused(async {
     use crate::schema::{ChangeRead, FieldSpec, ModelSpec, NodeRead, RelationSpec, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let (kat, config, challenge, _) = super::link_tests::inputs();
@@ -477,10 +477,10 @@ async fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() {
     let row = db.find("Chat", &crate::identity::RowId::new("c1").unwrap()).unwrap().expect("HTTP row");
     assert_eq!(row.text("title"), Some("from HTTP"));
     assert_eq!(http.reads.load(Ordering::SeqCst), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn no_socket_or_timer_work_without_subscribers() {
+#[test]
+fn no_socket_or_timer_work_without_subscribers() { crate::test_wait::paused(async {
     let (_incoming, receiver) = mpsc::unbounded_channel();
     let (outgoing, mut sent) = mpsc::unbounded_channel();
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
@@ -493,10 +493,10 @@ async fn no_socket_or_timer_work_without_subscribers() {
     assert_eq!(connect.opens.load(Ordering::SeqCst), 0);
     assert!(sent.try_recv().is_err());
     assert_eq!(cable.wake_count(), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn closing_the_last_subscription_or_transport_releases_the_socket() {
+#[test]
+fn closing_the_last_subscription_or_transport_releases_the_socket() { crate::test_wait::paused(async {
     for (drop_transport, ready) in [(false, true), (true, true), (false, false), (true, false)] {
         let (incoming, receiver) = mpsc::unbounded_channel();
         let (outgoing, sent) = mpsc::unbounded_channel();
@@ -523,10 +523,10 @@ async fn closing_the_last_subscription_or_transport_releases_the_socket() {
         assert_eq!(socket.closes.load(Ordering::SeqCst), 1, "drop_transport={drop_transport}, ready={ready}");
         assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_failed_write_closes_the_connection_before_backoff() {
+#[test]
+fn a_failed_write_closes_the_connection_before_backoff() { crate::test_wait::paused(async {
     let (incoming, receiver) = mpsc::unbounded_channel();
     let (outgoing, sent) = mpsc::unbounded_channel();
     let socket = Arc::new(FakeSocket { incoming:tokio::sync::Mutex::new(receiver), outgoing, closes:AtomicUsize::new(0) });
@@ -543,10 +543,10 @@ async fn a_failed_write_closes_the_connection_before_backoff() {
     cable.settled().await.unwrap();
     assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
     assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn encrypted_subscription_sends_one_ping_then_closes_on_missing_pong() {
+#[test]
+fn encrypted_subscription_sends_one_ping_then_closes_on_missing_pong() { crate::test_wait::paused(async {
     let (incoming, receiver) = mpsc::unbounded_channel();
     let (outgoing, sent) = mpsc::unbounded_channel();
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
@@ -567,4 +567,4 @@ async fn encrypted_subscription_sends_one_ping_then_closes_on_missing_pong() {
     tokio::time::advance(std::time::Duration::from_secs(20)).await;
     tokio::task::yield_now().await;
     assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
-}
+}) }

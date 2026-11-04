@@ -77,6 +77,19 @@ private class HoldSecondFile(private val server: SealedServer, private val mock:
     }
 }
 
+private const val REFUSED_BLOB = """{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"""
+
+private fun createdBlob(index: Int) = """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-$index","blobId":"b$index"}}}"""
+
+private class RefuseFirstFile(private val mock: MockTransport) : Transport by mock {
+    private val refused = java.util.concurrent.atomic.AtomicBoolean(false)
+    override suspend fun mutate(request: TransportRequest): String {
+        val answer = mock.mutate(request)
+        val file = Json.parseToJsonElement(request.variablesJson).jsonObject["filename"]?.jsonPrimitive?.content
+        return if (request.operationName == "CreateBlob" && file == "0.jpg" && refused.compareAndSet(false, true)) REFUSED_BLOB else answer
+    }
+}
+
 private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Model>): List<String?> {
     val outcome = receipt.outcome()
     assertEquals(BatchResult.Confirmed, outcome.result)
@@ -359,11 +372,10 @@ class TransferTest {
         try {
             val files = (0..1).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
             val transport = MockTransport()
-            transport.enqueue("CreateBlob", """{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}""")
-            transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"b1"}}}""")
+            repeat(2) { index -> transport.enqueue("CreateBlob", createdBlob(index)) }
             transport.enqueue("CreateAsset", """{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            reopen(Config(null, null, 32u), modelsJSON, RefuseFirstFile(transport), operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 2); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
@@ -385,11 +397,10 @@ class TransferTest {
         try {
             val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
             val transport = MockTransport()
-            transport.enqueue("CreateBlob", """{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}""")
-            repeat(3) { index -> transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-$index","blobId":"b$index"}}}""") }
+            repeat(4) { index -> transport.enqueue("CreateBlob", createdBlob(index)) }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            reopen(Config(null, null, 32u), modelsJSON, RefuseFirstFile(transport), operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }

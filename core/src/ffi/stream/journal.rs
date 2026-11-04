@@ -44,13 +44,13 @@ impl Journal {
         if was_empty { Appended::First } else { Appended::Queued }
     }
 
-    /// One position that could not be read: the reader hears it as lost.
-    pub(super) fn lose(&mut self) -> Appended {
-        if self.end.is_some() { return Appended::Queued; }
+    /// Positions that could not be read: the reader hears them as lost.
+    pub(super) fn lose(&mut self, count: u64) -> Appended {
+        if self.end.is_some() || count == 0 { return Appended::Queued; }
         let was_empty = self.is_empty();
-        self.last += 1;
-        let position = self.last;
-        self.entries.push_back((position, StreamValue::Lost { first: position, last: position }));
+        let first = self.last + 1;
+        self.last += count;
+        self.entries.push_back((self.last, StreamValue::Lost { first, last: self.last }));
         self.merge();
         while self.entries.len() > JOURNAL_LIMIT && self.evict() {}
         if was_empty { Appended::First } else { Appended::Queued }

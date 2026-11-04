@@ -296,8 +296,9 @@ impl Worker {
         }
         let pending = world.pending_events.clone();
         pending.fetch_add(1, Ordering::SeqCst);
+        let clock = world.rig.clock.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
+            crate::pacing::Clock::sleep(&clock, delay).await;
             emit();
             pending.fetch_sub(1, Ordering::SeqCst);
         });

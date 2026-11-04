@@ -15,8 +15,8 @@ fn shared_rig(models: Vec<crate::schema::ModelSpec>) -> Rig {
     rig
 }
 
-#[tokio::test(start_paused = true)]
-async fn shared_receivers_keep_their_debounce_in_either_open_order() {
+#[test]
+fn shared_receivers_keep_their_debounce_in_either_open_order() { crate::test_wait::paused(async {
     for reverse in [false, true] {
         let mut users = users_spec();
         users.relations[0].updates.push(serde_json::from_value(json!({"subscription":"Signal", "root":"first", "debounce":"100.milliseconds"})).unwrap());
@@ -47,10 +47,10 @@ async fn shared_receivers_keep_their_debounce_in_either_open_order() {
         assert_eq!(text_of(&rig, "moments", "m"), Some("two".into()));
         assert_eq!(rig.transport.call_count("Signal"), 1);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn debounced_definitions_of_one_model_apply_both_field_sets() {
+#[test]
+fn debounced_definitions_of_one_model_apply_both_field_sets() { crate::test_wait::paused(async {
     let mut users = users_spec();
     users.fields.push(crate::schema::FieldSpec::scalar("label", crate::value::ScalarKind::Str).optional());
     for root in ["first", "second"] {
@@ -66,10 +66,10 @@ async fn debounced_definitions_of_one_model_apply_both_field_sets() {
     rig.transport.await_waits("Signal", waits + 1).await;
     let row = rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap();
     assert_eq!((row.text("name"), row.text("label")), (Some("Ann"), Some("friend")));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn shared_feed_applies_only_active_definitions_and_reports_failure_to_each_receiver() {
+#[test]
+fn shared_feed_applies_only_active_definitions_and_reports_failure_to_each_receiver() { crate::test_wait::paused(async {
     let mut users = users_spec();
     for (relation, root) in [("incoming_a", "first"), ("incoming_b", "second")] {
         let mut scope = crate::schema::RelationSpec::global(relation);
@@ -94,7 +94,7 @@ async fn shared_feed_applies_only_active_definitions_and_reports_failure_to_each
     rig.transport.emit("Signal", SubscriptionEvent::Failed(refusal.clone()));
     rig.transport.await_cancellations("Signal", 1).await;
     for failure in &mut failures {
-        let (source, seen) = tokio::time::timeout(Duration::from_secs(1), failure.receiver.recv()).await.unwrap().unwrap().unwrap();
+        let (source, seen) = crate::test_wait::timeout(Duration::from_secs(1), failure.receiver.recv()).await.unwrap().unwrap().unwrap();
         assert!(failure.sources.contains(&source));
         assert_eq!(seen, refusal);
         assert_eq!((failure.recheck)(), Some(refusal.clone()));
@@ -107,10 +107,10 @@ async fn shared_feed_applies_only_active_definitions_and_reports_failure_to_each
     assert_eq!(row("a").unwrap().text("name"), Some("two"));
     assert_eq!(row("b").unwrap().text("name"), Some("three"));
     assert_eq!(rig.transport.call_count("Signal"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn memory_scope_events_follow_readers_and_expire_without_http() {
+#[test]
+fn memory_scope_events_follow_readers_and_expire_without_http() { crate::test_wait::paused(async {
     use crate::schema::{FieldSpec, ModelSpec, RelationSpec, Storage, UpdatesSpec};
     use crate::value::ScalarKind;
     let mut model = ModelSpec::new("notices", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str)]);
@@ -137,16 +137,16 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
     drop(first);
     assert_eq!(rig.transport.cancellations("BulletinAdded"), 0);
     drop(second);
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     rig.transport.await_cancellations("BulletinAdded", 1).await;
     emit();
     assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
     assert_eq!(rig.transport.cancellations("BulletinAdded"), 1);
     assert!(rig.transport.calls().iter().all(|call| call.kind == crate::transport::CallKind::Subscription));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn changes_declarations_share_one_subscription_until_the_last_reader_leaves() {
+#[test]
+fn changes_declarations_share_one_subscription_until_the_last_reader_leaves() { crate::test_wait::paused(async {
     let mut spec = users_spec();
     spec.changes.push(crate::schema::ChangeRead { area: "USER".into(), relation: "current".into(), parameter: None, removes_on: vec![], observed: false, payload: None, id_of: None });
     let mut serialized = serde_json::to_value(spec).unwrap();
@@ -161,13 +161,13 @@ async fn changes_declarations_share_one_subscription_until_the_last_reader_leave
     drop(first);
     assert_eq!(rig.transport.cancellations("RecordEvents"), 0);
     drop(second);
-    tokio::time::advance(Duration::from_secs(10)).await;
+    crate::test_wait::pass(Duration::from_secs(10)).await;
     rig.transport.await_cancellations("RecordEvents", 1).await;
     assert_eq!(rig.transport.cancellations("RecordEvents"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn dropping_sync_stops_subscriptions_at_every_lifetime_stage() {
+#[test]
+fn dropping_sync_stops_subscriptions_at_every_lifetime_stage() { crate::test_wait::paused(async {
     let mut results = Vec::new();
     for stage in ["starting", "active", "lingering", "clone", "direct"] {
         let rig = rig();
@@ -188,7 +188,7 @@ async fn dropping_sync_stops_subscriptions_at_every_lifetime_stage() {
         results.push((stage, inner.upgrade().is_none(), rig.transport.call_count("MomentListen"), rig.transport.cancellations("MomentListen")));
     }
     assert!(results.iter().all(|(_, released, opened, closed)| *released && opened == closed), "{results:?}");
-}
+}) }
 
 fn none() -> Map<String, serde_json::Value> {
     Map::new()
@@ -198,8 +198,8 @@ fn event(node: serde_json::Value) -> SubscriptionEvent {
     SubscriptionEvent::Next(Response::data(json!({"momentEvent": node})))
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_01_first_reader_starts_the_subscription_and_the_second_does_not_duplicate_it() {
+#[test]
+fn inv_live_01_first_reader_starts_the_subscription_and_the_second_does_not_duplicate_it() { crate::test_wait::paused(async {
     let rig = rig();
     let first = rig.sync.watch("moments", "pulse", &none()).unwrap();
     rig.transport.await_calls("MomentEvents", 1).await;
@@ -209,43 +209,43 @@ async fn inv_live_01_first_reader_starts_the_subscription_and_the_second_does_no
     assert_eq!(rig.transport.call_count("MomentEvents"), 1);
     assert_eq!(rig.sync.inner.live_status(KEY), Some((2, true)));
     drop((first, second));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn watching_a_relation_without_updates_starts_nothing() {
+#[test]
+fn watching_a_relation_without_updates_starts_nothing() { crate::test_wait::paused(async {
     let rig = rig();
     let _watch = rig.sync.watch("moments", "feed", &none()).unwrap();
     assert_eq!(rig.transport.call_count("MomentEvents"), 0);
     assert_eq!(rig.sync.inner.live_status(KEY), None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_01_subscription_closes_after_the_last_reader_leaves_and_the_linger_passes() {
+#[test]
+fn inv_live_01_subscription_closes_after_the_last_reader_leaves_and_the_linger_passes() { crate::test_wait::paused(async {
     let rig = rig();
     let watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
     rig.transport.await_calls("MomentEvents", 1).await;
     drop(watch);
-    tokio::time::sleep(Duration::from_secs(29)).await;
+    crate::test_wait::pass(Duration::from_secs(29)).await;
     assert_eq!(rig.sync.inner.live_status(KEY), Some((0, true)));
     assert_eq!(rig.transport.cancellations("MomentEvents"), 0);
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(rig.sync.inner.live_status(KEY), None);
     assert_eq!(rig.transport.cancellations("MomentEvents"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_01_reader_returning_within_the_linger_keeps_the_same_subscription() {
+#[test]
+fn inv_live_01_reader_returning_within_the_linger_keeps_the_same_subscription() { crate::test_wait::paused(async {
     let rig = rig();
     drop(rig.sync.watch("moments", "pulse", &none()).unwrap());
-    tokio::time::sleep(Duration::from_secs(10)).await;
+    crate::test_wait::pass(Duration::from_secs(10)).await;
     let _back = rig.sync.watch("moments", "pulse", &none()).unwrap();
-    tokio::time::sleep(Duration::from_secs(60)).await;
+    crate::test_wait::pass(Duration::from_secs(60)).await;
     assert_eq!(rig.sync.inner.live_status(KEY), Some((1, true)));
     assert_eq!(rig.transport.call_count("MomentEvents"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_03_dropped_connection_rereads_the_expired_watched_relation_after_it_reconnects() {
+#[test]
+fn inv_live_03_dropped_connection_rereads_the_expired_watched_relation_after_it_reconnects() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1", "m2"], false, "c2"));
@@ -255,14 +255,14 @@ async fn inv_live_03_dropped_connection_rereads_the_expired_watched_relation_aft
     assert_eq!(rig.transport.call_count("MomentsPulse"), 1);
     rig.transport.disconnect("MomentEvents");
     rig.clock.advance(Duration::from_secs(300));
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    crate::test_wait::pass(Duration::from_secs(3)).await;
     assert_eq!(rig.transport.call_count("MomentEvents"), 2);
     assert_eq!(rig.transport.call_count("MomentsPulse"), 2);
     assert_eq!(member_ids(&rig, "moments", "pulse", &none()), ["m1", "m2"]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn event_with_the_deleted_by_field_set_removes_the_row() {
+#[test]
+fn event_with_the_deleted_by_field_set_removes_the_row() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     let _watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
@@ -273,10 +273,10 @@ async fn event_with_the_deleted_by_field_set_removes_the_row() {
     rig.transport.emit("MomentEvents", event(json!({"id": "m1", "text": "edited", "userId": null, "destroyed": true})));
     rig.transport.await_consumed("MomentEvents").await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_relation_with_two_subscriptions_starts_both_and_a_removing_one_deletes_the_row() {
+#[test]
+fn a_relation_with_two_subscriptions_starts_both_and_a_removing_one_deletes_the_row() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     let watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
@@ -288,12 +288,12 @@ async fn a_relation_with_two_subscriptions_starts_both_and_a_removing_one_delete
     rig.transport.await_consumed("MomentRemoved").await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     drop(watch);
-    tokio::time::sleep(Duration::from_secs(31)).await;
+    crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentRemoved"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn listen_opens_the_model_subscriptions_without_a_reader_and_unlisten_closes_them() {
+#[test]
+fn listen_opens_the_model_subscriptions_without_a_reader_and_unlisten_closes_them() { crate::test_wait::paused(async {
     let rig = rig();
     rig.sync.inner.listen_all();
     rig.transport.await_calls("MomentListen", 1).await;
@@ -302,12 +302,12 @@ async fn listen_opens_the_model_subscriptions_without_a_reader_and_unlisten_clos
     rig.transport.await_consumed("MomentListen").await;
     assert_eq!(text_of(&rig, "moments", "m9"), Some("pushed".to_string()));
     rig.sync.inner.unlisten_all();
-    tokio::time::sleep(Duration::from_secs(31)).await;
+    crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() {
+#[test]
+fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     rig.sync.inner.listen_all();
@@ -315,19 +315,19 @@ async fn event_root_and_id_paths_find_the_row_in_a_wrapped_payload() {
     rig.transport.emit("MomentWrapped", SubscriptionEvent::Next(Response::data(json!({"momentWrapped": {"wrapped": {"key": "m1", "text": "from wrapper"}}}))));
     rig.transport.await_consumed("MomentWrapped").await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("from wrapper".to_string()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_debounced_listen_subscribes_and_lands_its_frame_after_the_interval() {
+#[test]
+fn a_debounced_listen_subscribes_and_lands_its_frame_after_the_interval() { crate::test_wait::paused(async {
     let rig = rig();
     rig.sync.inner.listen_all();
     rig.transport.await_calls("MomentDebounced", 1).await;
     assert_eq!(rig.transport.call_count("MomentDebounced"), 1);
     rig.transport.emit("MomentDebounced", SubscriptionEvent::Next(Response::data(json!({"momentDebounced": {"id": "m7", "text": "later", "userId": null}}))));
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    crate::test_wait::pass(Duration::from_millis(400)).await;
     rig.transport.await_consumed("MomentDebounced").await;
     assert_eq!(text_of(&rig, "moments", "m7"), Some("later".to_string()));
-}
+}) }
 
 fn vibe_sub_variables(rig: &Rig) -> Vec<serde_json::Value> {
     rig.transport.calls().into_iter().filter(|call| call.operation_name == "VibeEvents").map(|call| call.variables).collect()
@@ -350,8 +350,8 @@ async fn subscriptions_reopen_and_deliver_after_a_data_reset() {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn readers_with_different_params_open_separate_subscriptions_with_those_variables() {
+#[test]
+fn readers_with_different_params_open_separate_subscriptions_with_those_variables() { crate::test_wait::paused(async {
     let rig = rig();
     let a = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
     let b = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "b"}))).unwrap();
@@ -361,84 +361,84 @@ async fn readers_with_different_params_open_separate_subscriptions_with_those_va
     variables.sort_by_key(|value| value.to_string());
     assert_eq!(variables, [json!({"vibeId": "a"}), json!({"vibeId": "b"})]);
     drop((a, b, a_again));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn last_reader_of_a_param_set_closes_only_its_subscription_and_the_event_lands() {
+#[test]
+fn last_reader_of_a_param_set_closes_only_its_subscription_and_the_event_lands() { crate::test_wait::paused(async {
     let rig = rig();
     let a = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
     let a_again = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap();
     let b = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "b"}))).unwrap();
     rig.transport.await_calls("VibeEvents", 2).await;
     drop(a);
-    tokio::time::sleep(Duration::from_secs(31)).await;
+    crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("VibeEvents"), 0);
     drop(a_again);
-    tokio::time::sleep(Duration::from_secs(31)).await;
+    crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("VibeEvents"), 1);
     rig.transport.emit("VibeEvents", SubscriptionEvent::Next(Response::data(json!({"momentEvent": moment("m9", "from b")}))));
     rig.transport.await_consumed("VibeEvents").await;
     assert_eq!(rig.db.query(&crate::query::Query::new("moments")).unwrap().iter().filter(|row| row.text("text") == Some("from b")).count(), 1);
     drop(b);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_committed_credential_starts_the_model_subscriptions_and_the_end_of_the_session_stops_them() {
+#[test]
+fn a_committed_credential_starts_the_model_subscriptions_and_the_end_of_the_session_stops_them() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.set_session(None);
     rig.sync.commit_session_for_test();
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 0, "no credential");
     rig.transport.set_session(Some("first"));
     rig.sync.commit_session_for_test();
     rig.transport.await_calls("MomentListen", 1).await;
     rig.sync.end_session_for_test();
-    tokio::time::sleep(Duration::from_secs(31)).await;
+    crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1, "logout");
     rig.transport.set_session(Some("second"));
     rig.sync.commit_session_for_test();
     rig.transport.await_calls("MomentListen", 2).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 2, "next sign-in");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_denied_listening_keeps_a_committed_credential_from_opening_subscriptions_until_allowed() {
+#[test]
+fn a_denied_listening_keeps_a_committed_credential_from_opening_subscriptions_until_allowed() { crate::test_wait::paused(async {
     let rig = rig();
     rig.sync.set_listening(false);
     rig.transport.set_session(Some("stored"));
     rig.sync.commit_session_for_test();
     rig.transport.set_session(Some("signed-in"));
     rig.sync.commit_session_for_test();
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 0, "stored credential and sign-in while denied");
     rig.sync.set_listening(true);
     rig.sync.set_listening(true);
     rig.transport.await_calls("MomentListen", 1).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 1, "allowed twice starts them once");
     rig.sync.set_listening(false);
-    tokio::time::sleep(Duration::from_secs(31)).await;
+    crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1, "denied again");
     rig.sync.set_listening(true);
     rig.transport.await_calls("MomentListen", 2).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn allowing_listening_without_a_credential_opens_nothing_and_logout_stops_the_allowed_listen() {
+#[test]
+fn allowing_listening_without_a_credential_opens_nothing_and_logout_stops_the_allowed_listen() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.set_session(None);
     rig.sync.commit_session_for_test();
     rig.sync.set_listening(false);
     rig.sync.set_listening(true);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 0, "no credential");
     rig.transport.set_session(Some("first"));
     rig.sync.commit_session_for_test();
     rig.transport.await_calls("MomentListen", 1).await;
     rig.sync.end_session_for_test();
-    tokio::time::sleep(Duration::from_secs(31)).await;
+    crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1, "logout");
     rig.sync.set_listening(true);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 1, "allowed after logout needs a new credential");
-}
+}) }

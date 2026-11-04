@@ -122,10 +122,12 @@ async fn a_request_that_never_left_is_sent_once_by_resume_after_a_restart() {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
-    let first = rig.client(&file_db(&path));
+    let first_db = file_db(&path);
+    let first = rig.client(&first_db);
     rig.server.drop_next_request();
     super::client_tests::cancel_pending(first.mutate(&first.admit("test call").unwrap(), SOCIAL, signed_in()));
     assert_eq!(rig.server.seen().len(), 0);
+    first_db.close().unwrap();
     drop(first);
 
     let db = file_db(&path);
@@ -140,11 +142,13 @@ async fn an_answer_that_was_executed_but_never_committed_is_confirmed_once_by_re
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
-    let first = rig.client(&file_db(&path));
+    let first_db = file_db(&path);
+    let first = rig.client(&first_db);
     first.mutate(&first.admit("test call").unwrap(), SOCIAL, signed_in()).await.unwrap();
     rig.server.lose_next_answer();
     super::client_tests::cancel_pending(first.mutate(&first.admit("test call").unwrap(), GRAPHQL, json!({ "query": "mutation { m }" })));
     assert_eq!(rig.server.executed().len(), 2);
+    first_db.close().unwrap();
     drop(first);
 
     let db = file_db(&path);
@@ -237,6 +241,7 @@ async fn session_sequence_and_pending_survive_every_database_clearing_path() {
                 _ => unreachable!(),
             }
             drop(client);
+            db.close().unwrap();
             drop(db);
 
             let db = Db::open(&path, vec![session_model()], None).unwrap();
@@ -278,6 +283,7 @@ async fn changed_session_table_ddl_migrates_the_sequence_and_complete_pending_re
          UPDATE manifest SET value = 'previous-session-ddl' WHERE key = 'format_version'",
     ).unwrap();
     drop(client);
+    db.close().unwrap();
     drop(db);
 
     let db = file_db(&path);
@@ -312,6 +318,7 @@ async fn explicit_session_reset_clears_credential_sequence_and_pending_after_reo
 
     client.reset().await.unwrap();
     drop(client);
+    db.close().unwrap();
     drop(db);
 
     let db = file_db(&path);

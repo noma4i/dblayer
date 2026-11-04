@@ -46,8 +46,8 @@ async fn shutdown(rig: Rig) {
     assert!(database.upgrade().is_none(), "the database remained open");
 }
 
-#[tokio::test(start_paused = true)]
-async fn restart_preserves_each_put_budget_and_deadline() {
+#[test]
+fn restart_preserves_each_put_budget_and_deadline() { crate::test_wait::paused(async {
     let mut observed = Vec::new();
     for multipart in [false, true] {
         let directory = tempfile::tempdir().unwrap();
@@ -66,10 +66,10 @@ async fn restart_preserves_each_put_budget_and_deadline() {
         grants(&rig);
         for _ in 0..2 { rig.transport.enqueue_put("https://storage/file", PutReply::status(503)); }
         rig.sync.inner.start_uploads().unwrap();
-        tokio::time::advance(Duration::from_millis(1)).await;
+        crate::test_wait::pass(Duration::from_millis(1)).await;
         assert!(rig.transport.put_calls().is_empty(), "restart skipped saved deadline");
         rig.sync.set_online(false);
-        tokio::time::advance(Duration::from_secs(1)).await;
+        crate::test_wait::pass(Duration::from_secs(1)).await;
         assert!(rig.transport.put_calls().is_empty(), "offline during the saved wait sent a PUT");
         rig.sync.set_online(true);
         rig.sync.wait_uploads().await;
@@ -78,14 +78,14 @@ async fn restart_preserves_each_put_budget_and_deadline() {
         shutdown(rig).await;
     }
     assert_eq!(observed, [(false, 1), (true, 1)], "restart granted another retry");
-}
+}) }
 
 fn retry_rows(rig: &Rig) -> u32 {
     rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT count(*) FROM op_item_retry", [], |row| row.get(0))?)).unwrap()
 }
 
-#[tokio::test(start_paused = true)]
-async fn restart_preserves_each_graphql_step_budget() {
+#[test]
+fn restart_preserves_each_graphql_step_budget() { crate::test_wait::paused(async {
     let mut observed = Vec::new();
     for operation in ["Grant", "Start", "Sign", "Finish"] {
         let directory = tempfile::tempdir().unwrap();
@@ -104,7 +104,7 @@ async fn restart_preserves_each_graphql_step_budget() {
         for _ in 0..2 { rig.transport.enqueue(operation, Reply::fail(crate::transport::TransportError::Network("unavailable".into()))); }
         grants(&rig);
         rig.sync.inner.start_uploads().unwrap();
-        tokio::time::advance(Duration::from_millis(1)).await;
+        crate::test_wait::pass(Duration::from_millis(1)).await;
         assert_eq!(rig.transport.call_count(operation), 0, "{operation} skipped its deadline");
         rig.sync.wait_uploads().await;
         observed.push((operation, rig.transport.call_count(operation)));
@@ -112,10 +112,10 @@ async fn restart_preserves_each_graphql_step_budget() {
         shutdown(rig).await;
     }
     assert_eq!(observed, [("Grant", 1), ("Start", 1), ("Sign", 1), ("Finish", 1)]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn concurrent_parts_keep_independent_retry_records() {
+#[test]
+fn concurrent_parts_keep_independent_retry_records() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let rig = reopen(&directory.path().join("retry.sqlite"), 1);
     let source = file(b"0123456789ab");
@@ -132,10 +132,10 @@ async fn concurrent_parts_keep_independent_retry_records() {
     assert!(rig.db.outbox().unwrap()[0].operation.upload.as_ref().unwrap().is_transferred());
     assert_eq!(retry_rows(&rig), 0);
     shutdown(rig).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn manual_retry_refreshes_the_budget_and_success_removes_its_record() {
+#[test]
+fn manual_retry_refreshes_the_budget_and_success_removes_its_record() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let rig = reopen(&directory.path().join("retry.sqlite"), 1);
     let source = file(b"abcdef");
@@ -155,10 +155,10 @@ async fn manual_retry_refreshes_the_budget_and_success_removes_its_record() {
     assert_eq!(retry_rows(&rig), 0, "successful PUT retained its retry record");
     assert_eq!(rig.db.sync_info("assets", &rid("a")).unwrap().uploads.get("upload").cloned().unwrap().attempts, 0);
     shutdown(rig).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn terminal_operations_delete_retry_records() {
+#[test]
+fn terminal_operations_delete_retry_records() { crate::test_wait::paused(async {
     use crate::commit::{CommitEnvelope, OperationTransition, WriteOrigin};
     use crate::operation::OperationStatus;
     for action in ["close", "discard", "cancel"] {
@@ -184,10 +184,10 @@ async fn terminal_operations_delete_retry_records() {
         assert_eq!(retry_rows(&rig), 0, "{action} left retry records");
         shutdown(rig).await;
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn alternating_grant_failures_and_put_expiry_share_only_the_put_budget() {
+#[test]
+fn alternating_grant_failures_and_put_expiry_share_only_the_put_budget() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let rig = reopen(&directory.path().join("retry.sqlite"), 1);
     let source = file(b"abcdef");
@@ -206,10 +206,10 @@ async fn alternating_grant_failures_and_put_expiry_share_only_the_put_budget() {
     assert_eq!((info.status, info.attempts), (UploadStatus::Failed, 1));
     assert_eq!(retry_rows(&rig), 1);
     shutdown(rig).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn fifty_retries_exhaust_the_step_budget() {
+#[test]
+fn fifty_retries_exhaust_the_step_budget() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let rig = reopen(&directory.path().join("retry.sqlite"), UploadConfig::default().backoff.max_attempts);
     let source = file(b"abcdef");
@@ -222,4 +222,4 @@ async fn fifty_retries_exhaust_the_step_budget() {
     let info = rig.db.sync_info("assets", &rid("a")).unwrap().uploads.get("upload").cloned().unwrap();
     assert_eq!((info.status, info.attempts), (UploadStatus::Failed, 50));
     shutdown(rig).await;
-}
+}) }

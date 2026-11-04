@@ -231,7 +231,17 @@ pub fn rig_on(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
 }
 
 pub fn rig_without_operations(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
-    let clock = TestClock::new(Duration::from_millis(START_MS));
+    #[cfg(test)]
+    if crate::test_wait::world_clock().is_some() {
+        let clock = crate::test_wait::clock(Duration::from_millis(START_MS));
+        transport.delay_on(Arc::new(clock.clone()));
+        crate::test_wait::enter_world(&db);
+        return rig_on_clock(db, transport, config, clock);
+    }
+    rig_on_clock(db, transport, config, TestClock::new(Duration::from_millis(START_MS)))
+}
+
+pub(crate) fn rig_on_clock(db: Db, transport: MockTransport, config: SyncConfig, clock: TestClock) -> Rig {
     let sync = Sync::new(db.clone(), Arc::new(transport.clone()), Arc::new(clock.clone()), config);
     Rig { sync, db, transport, clock }
 }
@@ -314,13 +324,17 @@ pub async fn await_outbox(changes: &mut tokio::sync::watch::Receiver<u64>, ready
 
 pub async fn await_tasks_ended() {
     let metrics = tokio::runtime::Handle::current().metrics();
+    #[cfg(test)]
+    let driver = usize::from(crate::test_wait::world_clock().is_some());
+    #[cfg(not(test))]
+    let driver = 0;
     for _ in 0..10_000 {
-        if metrics.num_alive_tasks() == 0 {
+        if metrics.num_alive_tasks() <= driver {
             return;
         }
         tokio::task::yield_now().await;
     }
-    panic!("{} tasks are still alive", metrics.num_alive_tasks());
+    panic!("{} tasks are still alive", metrics.num_alive_tasks() - driver);
 }
 
 pub async fn await_state(state: &super::RelationWatch, ready: impl Fn(&super::RelationState) -> bool) {

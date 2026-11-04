@@ -16,7 +16,7 @@ fn sink() -> (RefreshSink, Told) {
 }
 
 async fn told(told: &Told, count: usize) -> Vec<Option<RefreshError>> {
-    within(async { while told.lock().unwrap().len() < count { tokio::time::sleep(Duration::from_millis(10)).await; } }).await;
+    within(async { while told.lock().unwrap().len() < count { crate::test_wait::pass(Duration::from_millis(10)).await; } }).await;
     told.lock().unwrap().iter().map(|(_, error)| error.clone()).collect()
 }
 
@@ -24,8 +24,8 @@ fn ids(id: &str) -> Vec<String> {
     vec![id.to_string()]
 }
 
-#[tokio::test(start_paused = true)]
-async fn two_readers_of_one_entity_send_one_request_and_a_stale_read_of_a_fresh_row_sends_none() {
+#[test]
+fn two_readers_of_one_entity_send_one_request_and_a_stale_read_of_a_fresh_row_sends_none() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "one"}})).after(Duration::from_secs(1)));
     let (sink, got) = sink();
@@ -40,20 +40,20 @@ async fn two_readers_of_one_entity_send_one_request_and_a_stale_read_of_a_fresh_
     rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Force, sink).unwrap();
     told(&got, 4).await;
     assert_eq!(rig.transport.call_count("ChatNode"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_stale_read_of_a_missing_row_sends_one_request() {
+#[test]
+fn a_stale_read_of_a_missing_row_sends_one_request() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c2", "title": "x"}})));
     let (sink, got) = sink();
     rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c2"), super::EntityFetch::Stale, sink).unwrap();
     told(&got, 1).await;
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_offline_refresh_reports_offline_and_repeats_once_when_the_network_returns() {
+#[test]
+fn an_offline_refresh_reports_offline_and_repeats_once_when_the_network_returns() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.sync.set_online(false);
     let (sink, got) = sink();
@@ -64,17 +64,17 @@ async fn an_offline_refresh_reports_offline_and_repeats_once_when_the_network_re
     rig.sync.set_online(true);
     assert_eq!(told(&got, 2).await, [Some(RefreshError::Offline), None]);
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_model_without_a_node_read_is_refused() {
+#[test]
+fn a_model_without_a_node_read_is_refused() { crate::test_wait::paused(async {
     let rig = super::rig::rig();
     let (sink, _) = sink();
     assert!(rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "moments", &ids("m1"), super::EntityFetch::Force, sink).is_err());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn entity_fetch_presence_modes() {
+#[test]
+fn entity_fetch_presence_modes() { crate::test_wait::paused(async {
     for (mode, present, negative, expected) in [
         (super::EntityFetch::IfMissing, true, false, 0),
         (super::EntityFetch::IfMissing, false, false, 1),
@@ -95,10 +95,10 @@ async fn entity_fetch_presence_modes() {
         assert_eq!(told(&got, 1).await, [None]);
         assert_eq!(rig.transport.call_count("ChatNode") - before, expected, "{mode:?}, present={present}, negative={negative}");
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn entity_if_missing_online() {
+#[test]
+fn entity_if_missing_online() { crate::test_wait::paused(async {
     for arriving in [false, true] {
         let rig = node_rig();
         rig.sync.set_online(false);
@@ -112,20 +112,20 @@ async fn entity_if_missing_online() {
         assert_eq!(told(&got, 2).await.last(), Some(&None));
         assert_eq!(rig.transport.call_count("ChatNode"), usize::from(!arriving));
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn entity_if_missing_read_error() {
+#[test]
+fn entity_if_missing_read_error() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.db.shared.store.fail_next_entity_reads(1);
     let (sink, got) = sink();
     rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::IfMissing, sink).unwrap();
     assert!(matches!(&told(&got, 1).await[0], Some(RefreshError::Failed(_))));
     assert_eq!(rig.transport.call_count("ChatNode"), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn entity_if_missing_shared() {
+#[test]
+fn entity_if_missing_shared() { crate::test_wait::paused(async {
     let rig = node_rig();
     let (sink, got) = sink();
     rig.transport.enqueue("ChatNode", data(json!({"node":{"id":"c1", "title":"shared"}})).after(Duration::from_secs(1)));
@@ -145,7 +145,7 @@ async fn entity_if_missing_shared() {
     tokio::task::yield_now().await;
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
     assert_eq!(got.lock().unwrap().len(), 4);
-}
+}) }
 
 struct EntityClock {
     clock: crate::pacing::TestClock,
@@ -176,7 +176,7 @@ async fn entity_if_missing_idle() {
     rig.db.shared.store.fail_next_entity_reads(1);
     tokio::time::pause();
     rig.clock.advance(Duration::from_secs(10));
-    tokio::time::advance(Duration::from_secs(10)).await;
+    crate::test_wait::pass(Duration::from_secs(10)).await;
     tokio::task::yield_now().await;
     assert_eq!(before, (clock.sleeps.load(Ordering::SeqCst), clock.wakes.load(Ordering::SeqCst)));
     assert_eq!(got.lock().unwrap().len(), 1);
@@ -194,8 +194,8 @@ impl Drop for DropProbe {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_cancelled_parked_refresh_releases_its_sink_outside_the_due_lock() {
+#[test]
+fn a_cancelled_parked_refresh_releases_its_sink_outside_the_due_lock() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.sync.set_online(false);
     let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
@@ -208,10 +208,10 @@ async fn a_cancelled_parked_refresh_releases_its_sink_outside_the_due_lock() {
     assert!(seen.lock().unwrap().is_empty());
     rig.sync.cancel_entity_refresh(&cancel);
     assert_eq!(*seen.lock().unwrap(), [true]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_pending_refresh_does_not_keep_the_database_alive() {
+#[test]
+fn a_pending_refresh_does_not_keep_the_database_alive() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "slow"}})).after(Duration::from_secs(3600)));
     let (sink, _) = sink();
@@ -223,10 +223,10 @@ async fn a_pending_refresh_does_not_keep_the_database_alive() {
     assert!(matches!(rig.sync.inner.db.admit(), Err(crate::db::DbError::NoSession { .. })));
     for _ in 0..8 { tokio::task::yield_now().await; }
     assert_eq!(rig.transport.call_count("ChatNode"), 1, "a closed database sends nothing");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn dropping_the_last_owner_ends_a_pending_refresh() {
+#[test]
+fn dropping_the_last_owner_ends_a_pending_refresh() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "slow"}})).after(Duration::from_secs(3600)));
     let (sink, _) = sink();
@@ -236,4 +236,4 @@ async fn dropping_the_last_owner_ends_a_pending_refresh() {
     let sync = rig.sync;
     drop(sync);
     yield_until("the last drop released the database", || owner.upgrade().is_none()).await;
-}
+}) }

@@ -9,8 +9,8 @@ use crate::upload::{UploadBatchInput, UploadItem, UploadOperations};
 use super::upload_tests::{blob, created, input, rid};
 use crate::test_wait::within;
 
-#[tokio::test(start_paused = true)]
-async fn local_models_reject_uploads_without_creating_rows_or_files() {
+#[test]
+fn local_models_reject_uploads_without_creating_rows_or_files() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let mut model = crate::schema::ModelSpec::new("moments", vec![
         crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id),
@@ -26,7 +26,7 @@ async fn local_models_reject_uploads_without_creating_rows_or_files() {
     assert!(rig.db.find("moments", &rid("local-upload")).unwrap().is_none());
     assert!(rig.db.shared.files.directory_entries().unwrap().is_empty());
     assert!(rig.db.outbox().unwrap().is_empty());
-}
+}) }
 
 #[test]
 fn reset_rejects_upload_admission_waiting_for_a_blocking_thread() {
@@ -59,8 +59,8 @@ fn reset_rejects_upload_admission_waiting_for_a_blocking_thread() {
     });
 }
 
-#[tokio::test(start_paused = true)]
-async fn refused_admission_removes_only_its_prepared_files() {
+#[test]
+fn refused_admission_removes_only_its_prepared_files() { crate::test_wait::paused(async {
     for mode in ["existing", "create", "batch"] {
         let directory = tempfile::tempdir().unwrap();
         let mut models = specs();
@@ -76,7 +76,7 @@ async fn refused_admission_removes_only_its_prepared_files() {
         assert_eq!(rig.db.shared.files.read("kept").unwrap(), b"keep");
         assert!(rig.db.outbox().unwrap().is_empty(), "{mode}");
     }
-}
+}) }
 
 async fn admit(rig: &Rig, mode: &str, source: &tempfile::NamedTempFile) -> Result<usize, crate::sync::SyncError> {
     Ok(match mode {
@@ -102,8 +102,8 @@ async fn admit(rig: &Rig, mode: &str, source: &tempfile::NamedTempFile) -> Resul
     })
 }
 
-#[tokio::test(start_paused = true)]
-async fn admitted_large_files_live_on_disk_and_resume_without_the_source() {
+#[test]
+fn admitted_large_files_live_on_disk_and_resume_without_the_source() { crate::test_wait::paused(async {
     for mode in ["existing", "create", "batch"] {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("db.sqlite");
@@ -130,6 +130,7 @@ async fn admitted_large_files_live_on_disk_and_resume_without_the_source() {
         let mut tasks = std::mem::take(&mut super::locked(&rig.sync.inner.uploads).tasks);
         tasks.abort_all();
         while within(tasks.join_next()).await.is_some() {}
+        rig.db.close().unwrap();
         drop(rig);
         let rig = rig_on(Db::open(&path, models, None).unwrap(), MockTransport::new(), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });
         rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
@@ -145,4 +146,4 @@ async fn admitted_large_files_live_on_disk_and_resume_without_the_source() {
         assert!(rig.db.outbox().unwrap().is_empty(), "{mode}");
         assert!(!source_path.exists());
     }
-}
+}) }

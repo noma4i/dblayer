@@ -35,8 +35,8 @@ fn answer(chats: &[(&str, &[&str])]) -> Reply {
     Reply::data(json!({"viewer": {"chats": {"edges": edges, "pageInfo": {"hasNextPage": false, "endCursor": chats.last().map(|(id, _)| *id)}}}}))
 }
 
-#[tokio::test(start_paused = true)]
-async fn each_list_value_has_its_window_and_the_server_answer_decides_the_members() {
+#[test]
+fn each_list_value_has_its_window_and_the_server_answer_decides_the_members() { crate::test_wait::paused(async {
     let rig = chats_rig();
     let (primary, secondary) = (params(json!({"list": "PRIMARY"})), params(json!({"list": "SECONDARY"})));
     rig.transport.enqueue("Chats", answer(&[("c1", &["PRIMARY", "SECONDARY"]), ("c2", &["PRIMARY"])]));
@@ -49,10 +49,10 @@ async fn each_list_value_has_its_window_and_the_server_answer_decides_the_member
     assert_eq!(member_ids(&rig, "chats", "list", &secondary), ["c1", "c3"]);
     let stored = rig.db.find("chats", &RowId::new("c3").unwrap()).unwrap().unwrap();
     assert_eq!(stored.get("lists"), Some(&json!(["SECONDARY", "FUTURE"])));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_stale_window_reloads_and_a_chat_the_server_dropped_leaves_only_that_window() {
+#[test]
+fn a_stale_window_reloads_and_a_chat_the_server_dropped_leaves_only_that_window() { crate::test_wait::paused(async {
     let rig = chats_rig();
     let (primary, secondary) = (params(json!({"list": "PRIMARY"})), params(json!({"list": "SECONDARY"})));
     rig.transport.enqueue("Chats", answer(&[("c1", &["PRIMARY", "SECONDARY"]), ("c2", &["PRIMARY"])]));
@@ -65,4 +65,4 @@ async fn a_stale_window_reloads_and_a_chat_the_server_dropped_leaves_only_that_w
     assert_eq!(rig.transport.call_count("Chats"), 3);
     assert_eq!(member_ids(&rig, "chats", "list", &primary), ["c2"]);
     assert_eq!(member_ids(&rig, "chats", "list", &secondary), ["c1"]);
-}
+}) }

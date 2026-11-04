@@ -78,18 +78,18 @@ pub(super) fn data(value: Value) -> Reply {
     Reply::data(value)
 }
 
-#[tokio::test(start_paused = true)]
-async fn node_reads_one_entity_and_lands_its_row() {
+#[test]
+fn node_reads_one_entity_and_lands_its_row() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "Hi", "shareUrl": "u", "isPublic": true}})));
     let row = rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", false).await.unwrap().unwrap();
     assert_eq!((row.text("title"), row.get("isPublic")), (Some("Hi"), Some(&json!(true))));
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("shareUrl"), Some("u"));
     assert_eq!(rig.transport.calls()[0].variables, json!({"id": "c1"}));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_joins_a_manual_node_flight_and_keeps_its_membership_intent() {
+#[test]
+fn an_event_joins_a_manual_node_flight_and_keeps_its_membership_intent() { crate::test_wait::paused(async {
     use std::time::Duration;
     use crate::schema::Membership;
     use crate::transport::{Response, SubscriptionEvent};
@@ -116,19 +116,19 @@ async fn an_event_joins_a_manual_node_flight_and_keeps_its_membership_intent() {
     let manual = tokio::spawn(async move { sync.node(&sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await });
     rig.transport.await_calls("ChatNode", 1).await;
     rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"CHAT", "action":"UPDATED", "recordId":"c1"}]}}))));
-    tokio::time::timeout(Duration::from_secs(1), rig.sync.wait_joined(1)).await.expect("the event must join the manual request");
-    let row = tokio::time::timeout(Duration::from_secs(10), manual).await.expect("the manual request must complete").unwrap().unwrap().unwrap();
+    crate::test_wait::timeout(Duration::from_secs(1), rig.sync.wait_joined(1)).await.expect("the event must join the manual request");
+    let row = crate::test_wait::timeout(Duration::from_secs(10), manual).await.expect("the manual request must complete").unwrap().unwrap().unwrap();
     assert_eq!(row.text("title"), Some("same"));
-    let item = tokio::time::timeout(Duration::from_secs(5), events.next()).await.expect("the event must be served by the shared request");
+    let item = crate::test_wait::timeout(Duration::from_secs(5), events.next()).await.expect("the event must be served by the shared request");
     let Some(super::model_event_tests::HeardItem::Event(event)) = item else { panic!("expected a model event: {item:?}") };
     assert_eq!(event.before.unwrap().text("title"), Some("before"));
     assert_eq!(event.after.unwrap().text("title"), Some("same"));
     assert_eq!(member_ids(&rig, "chats", "list", &values), ["c1"]);
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_relation_under_node_lands_the_connection_rows() {
+#[test]
+fn a_relation_under_node_lands_the_connection_rows() { crate::test_wait::paused(async {
     let rig = node_rig();
     let edges = json!([{"node": {"id": "m1", "chatId": "c1", "text": "a"}}, {"node": {"id": "m2", "chatId": "c1", "text": "b"}}]);
     rig.transport.enqueue("ChatThread", data(json!({"node": {"messages": {"edges": edges, "pageInfo": {"hasNextPage": false, "endCursor": "e"}}}})));
@@ -136,10 +136,10 @@ async fn a_relation_under_node_lands_the_connection_rows() {
     assert_eq!(outcome.rows, 2);
     assert_eq!(member_ids(&rig, "messages", "thread", &params(json!({"chatId": "c1"}))), ["m1", "m2"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"chatId": "c1", "first": 20}));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_subset_read_changes_only_the_selected_fields() {
+#[test]
+fn a_subset_read_changes_only_the_selected_fields() { crate::test_wait::paused(async {
     let rig = node_rig();
     put(&rig, "messages", json!({"id": "m1", "chatId": "c1", "text": "keep", "media": {"fileUrl": "http://f", "extra": 1}}));
     rig.transport.enqueue("MessageTranscodeStatus", data(json!({"node": {"id": "m1", "chatId": "c1", "media": {"kind": "VIDEO", "fileUrl": ""}}})));
@@ -147,10 +147,10 @@ async fn a_subset_read_changes_only_the_selected_fields() {
     assert_eq!(row.text("text"), Some("keep"));
     assert_eq!(row.get("media"), Some(&json!({"fileUrl": "http://f", "extra": 1, "kind": "VIDEO"})));
     assert_eq!(rig.transport.calls()[0].variables, json!({"messageId": "m1"}));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_rereads_with_force_and_a_plain_call_inside_fresh_for_does_not() {
+#[test]
+fn an_event_rereads_with_force_and_a_plain_call_inside_fresh_for_does_not() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "one"}})));
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "two"}})));
@@ -159,10 +159,10 @@ async fn an_event_rereads_with_force_and_a_plain_call_inside_fresh_for_does_not(
     assert_eq!((fresh.text("title"), rig.transport.call_count("ChatNode")), (Some("one"), 1));
     let forced = rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await.unwrap().unwrap();
     assert_eq!((forced.text("title"), rig.transport.call_count("ChatNode")), (Some("two"), 2));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_answer_without_a_matching_entity_is_none_and_writes_nothing() {
+#[test]
+fn an_answer_without_a_matching_entity_is_none_and_writes_nothing() { crate::test_wait::paused(async {
     let rig = node_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "old"}));
     let before = rig.db.revision_seq().unwrap();
@@ -172,20 +172,20 @@ async fn an_answer_without_a_matching_entity_is_none_and_writes_nothing() {
     }
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("old"));
     assert_eq!(rig.db.revision_seq().unwrap(), before);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn nodes_reads_many_in_one_request_keeps_order_and_skips_missing() {
+#[test]
+fn nodes_reads_many_in_one_request_keeps_order_and_skips_missing() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatsByIds", data(json!({"nodes": [{"id": "c2", "title": "b"}, null, {}, {"id": "c1", "title": "a"}]})));
     let rows = crate::sync::rig::app(&rig.sync, rig.sync.nodes(&rig.sync.inner.db.admit().unwrap(), "chats", "batch", &["c2", "x", "y", "c1"])).await.unwrap();
     assert_eq!(rows.iter().map(|row| row.text("title").unwrap()).collect::<Vec<_>>(), ["b", "a"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"ids": ["c2", "x", "y", "c1"]}));
     assert_eq!(rig.transport.call_count("ChatsByIds"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn nodes_accepts_duplicate_ids_and_keeps_response_order() {
+#[test]
+fn nodes_accepts_duplicate_ids_and_keeps_response_order() { crate::test_wait::paused(async {
     let rig = node_rig();
     rig.transport.enqueue("ChatsByIds", data(json!({"nodes": [
         {"id": "c2", "title": "old", "shareUrl": "kept"}, null,
@@ -195,4 +195,4 @@ async fn nodes_accepts_duplicate_ids_and_keeps_response_order() {
     assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["c2", "c1", "c2"]);
     assert_eq!(rows.iter().map(|row| row.text("title")).collect::<Vec<_>>(), [Some("last"), Some("middle"), Some("last")]);
     assert_eq!(stored(&rig, "chats", "c2").unwrap().text("shareUrl"), Some("kept"));
-}
+}) }

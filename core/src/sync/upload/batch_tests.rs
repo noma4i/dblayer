@@ -124,8 +124,8 @@ async fn batch_renumber_delivery_unknown_discards_every_member_without_rewriting
     assert!(seen.lock().unwrap().iter().all(Vec::is_empty));
 }
 
-#[tokio::test(start_paused = true)]
-async fn batch_sends_ordered_items_once_and_replaces_by_key() {
+#[test]
+fn batch_sends_ordered_items_once_and_replaces_by_key() { crate::test_wait::paused(async {
     for early in [false, true] {
     let mut asset = spec();
     asset.actions[1].lands.push(crate::schema::ActionLanding { model: "Entry".into(), root: "createAssets.entry".into() });
@@ -198,7 +198,7 @@ async fn batch_sends_ordered_items_once_and_replaces_by_key() {
     }
     assert!(db.outbox().unwrap().is_empty());
     }
-}
+}) }
 
 pub(super) fn spec() -> ModelSpec {
     let mut model = ModelSpec::new("Asset", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("clientKey", ScalarKind::Str), FieldSpec::scalar("size", ScalarKind::Int)]);
@@ -397,6 +397,7 @@ async fn restart_preserves_files_and_unknown_delivery_keeps_the_request_or_disca
         tasks.abort_all();
         while within(tasks.join_next()).await.is_some() {}
         drop(sync);
+        db.close().unwrap();
         drop(db);
         let db = Db::open(&path, vec![model], None).unwrap();
         let sync = Sync::new(db.clone(), transport.clone(), Arc::new(ManualClock::new(std::time::Duration::ZERO)), SyncConfig { uploads: Some(UploadOperations::empty().create_blob("CreateBlob")), ..SyncConfig::default() });

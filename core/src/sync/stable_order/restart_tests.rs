@@ -12,8 +12,8 @@ async fn displaced_chat(rig: &Rig) {
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
 }
 
-#[tokio::test(start_paused = true)]
-async fn the_shown_order_survives_closing_and_opening_the_database() {
+#[test]
+fn the_shown_order_survives_closing_and_opening_the_database() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("chat.sqlite");
     {
@@ -26,10 +26,10 @@ async fn the_shown_order_survives_closing_and_opening_the_database() {
     let reopened = chat_rig_on(Db::open(&path, vec![messages_spec(true)], Some("v1")).unwrap());
     let (log, _window) = watch_thread(&reopened, 50);
     assert_eq!(shown(&log), ["m1", "m2", "m5", "m9"]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_reset_gives_the_order_of_the_server_back() {
+#[test]
+fn a_reset_gives_the_order_of_the_server_back() { crate::test_wait::paused(async {
     let rig = chat_rig(true);
     enqueue_page(&rig, vec![message("m1", Some(1), 1), message("m2", Some(2), 2), message("m5", Some(5), 5)], false, "c");
     enqueue_page(&rig, vec![message("m1", Some(1), 1), message("m2", Some(2), 2), message("m9", Some(3), 9), message("m5", Some(5), 5)], false, "c");
@@ -43,4 +43,4 @@ async fn a_reset_gives_the_order_of_the_server_back() {
 
     load_first_page(&rig).await;
     assert_eq!(shown(&log), ["m1", "m2", "m9", "m5"]);
-}
+}) }

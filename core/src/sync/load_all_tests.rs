@@ -56,8 +56,8 @@ fn list_reply() -> Reply {
     Reply::data(json!({"moments": []}))
 }
 
-#[tokio::test(start_paused = true)]
-async fn load_all_reads_the_connection_to_the_confirmed_end() {
+#[test]
+fn load_all_reads_the_connection_to_the_confirmed_end() { crate::test_wait::paused(async {
     let cases = vec![
         Case { name: "pages to the end", max_pages: None, replies: pages_to_the_end(), run: Run::Once, relation: "feed", want: Ok(()), calls: 3, members: Some(&["a", "b", "c", "d", "e"]) },
         Case { name: "complete and fresh makes no request", max_pages: None, replies: pages_to_the_end(), run: Run::ThenAgain, relation: "feed", want: Ok(()), calls: 3, members: Some(&["a", "b", "c", "d", "e"]) },
@@ -109,7 +109,7 @@ async fn load_all_reads_the_connection_to_the_confirmed_end() {
                 for reply in replies {
                     rig.transport.enqueue(operation, reply);
                 }
-                assert!(tokio::time::timeout(Duration::from_secs(5), load(false)).await.is_err(), "{}: the slow page ends the wait", case.name);
+                assert!(crate::test_wait::timeout(Duration::from_secs(5), load(false)).await.is_err(), "{}: the slow page ends the wait", case.name);
                 assert_eq!(flight_count(&rig), 0, "{}: the cancelled call left a flight", case.name);
                 load(false).await
             }
@@ -133,4 +133,4 @@ async fn load_all_reads_the_connection_to_the_confirmed_end() {
         }
         assert_eq!(flight_count(&rig), 0, "{}: a flight is left", case.name);
     }
-}
+}) }

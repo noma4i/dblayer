@@ -44,8 +44,8 @@ fn unreadable_answers(kind: &str, root: &str) -> Vec<(&'static str, Reply)> {
     answers
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_05_an_answer_that_cannot_be_read_never_acknowledges_a_mutation() {
+#[test]
+fn inv_op_05_an_answer_that_cannot_be_read_never_acknowledges_a_mutation() { crate::test_wait::paused(async {
     let mut acknowledged = Vec::new();
     for kind in ["create", "update", "destroy", "action"] {
         let root = queue(kind).2;
@@ -61,10 +61,10 @@ async fn inv_op_05_an_answer_that_cannot_be_read_never_acknowledges_a_mutation()
         }
     }
     assert!(acknowledged.is_empty(), "answers taken as acknowledgements: {acknowledged:#?}");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_14_an_answer_that_cannot_be_matched_is_kept_in_quarantine_and_the_operation_stays_open() {
+#[test]
+fn inv_op_14_an_answer_that_cannot_be_matched_is_kept_in_quarantine_and_the_operation_stays_open() { crate::test_wait::paused(async {
     for kind in ["update", "destroy", "action"] {
         let (rig, operation, _) = queue(kind);
         rig.transport.enqueue(operation, Reply::data(json!({"wrong": {"id": "m1"}})));
@@ -72,4 +72,4 @@ async fn inv_op_14_an_answer_that_cannot_be_matched_is_kept_in_quarantine_and_th
         let kept: usize = quarantine_counts(&rig.db.shared.store.lock().connection).unwrap().values().sum();
         assert_eq!((kept, rig.db.outbox().unwrap().len()), (1, 1), "{kind}");
     }
-}
+}) }

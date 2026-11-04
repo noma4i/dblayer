@@ -220,7 +220,7 @@ impl Inner {
             let slot = live_source(key).to_string();
             let linger: Duration = self.config.live_linger;
             let task = crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
-                tokio::time::sleep(linger).await;
+                inner.clock.sleep(linger).await;
                 inner.live_effects.under(&inner.lives, |lives, effects| {
                     if lives.get(&slot).is_some_and(|live| live.readers == 0) {
                         if let Some(mut live) = lives.remove(&slot) {

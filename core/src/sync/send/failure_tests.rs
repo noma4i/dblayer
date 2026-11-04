@@ -6,8 +6,8 @@ use crate::transport::{GraphqlExtensions, Reply, SessionCode, TransportError};
 
 use super::super::rig::*;
 
-#[tokio::test(start_paused = true)]
-async fn graphql_auth_refusals_keep_unsent_rows_failed() {
+#[test]
+fn graphql_auth_refusals_keep_unsent_rows_failed() { crate::test_wait::paused(async {
     for code in ["UNAUTHENTICATED", "ACCOUNT_UNAVAILABLE"] {
         for reply in [
             Reply::graphql_error("refused", code),
@@ -26,10 +26,10 @@ async fn graphql_auth_refusals_keep_unsent_rows_failed() {
             assert!(matches!(settled(&ticket), super::SendResult::Rejected(failure) if failure.kind == crate::syncstate::FailureKind::Session(SessionCode::of(code))));
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_answer_that_cannot_be_stored_parks_the_operation_as_unknown_instead_of_leaving_it_sending() {
+#[test]
+fn an_answer_that_cannot_be_stored_parks_the_operation_as_unknown_instead_of_leaving_it_sending() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let id = RowId::new("m1").unwrap();
@@ -42,10 +42,10 @@ async fn an_answer_that_cannot_be_stored_parks_the_operation_as_unknown_instead_
     assert_eq!((queue[0].operation.status, queue[0].operation.transport_started), (OperationStatus::DeliveryUnknown, true));
     rig.db.execute_for_test("DROP TRIGGER refuse_updates");
     assert_eq!(rig.db.retry_all(&rig.db.admit().unwrap()).unwrap(), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_06_a_cancelled_send_leaves_the_operation_as_unknown_delivery() {
+#[test]
+fn inv_op_06_a_cancelled_send_leaves_the_operation_as_unknown_delivery() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let id = RowId::new("m1").unwrap();
@@ -53,9 +53,9 @@ async fn inv_op_06_a_cancelled_send_leaves_the_operation_as_unknown_delivery() {
     rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})).after(std::time::Duration::from_secs(5)));
     let sync = rig.sync.clone();
     let task = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await });
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    crate::test_wait::pass(std::time::Duration::from_secs(1)).await;
     task.abort();
     let _ = task.await;
     let queue = rig.db.outbox().unwrap();
     assert_eq!((queue[0].operation.status, queue[0].operation.transport_started), (OperationStatus::DeliveryUnknown, true));
-}
+}) }

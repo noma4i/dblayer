@@ -257,8 +257,8 @@ async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
     assert_eq!(queries(&transport), 1);
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() {
+#[test]
+fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() { crate::test_wait::paused(async {
     let (db, transport, _) = open_rig(None, None, None).await;
     let query = r#"{"model":"Moment","relation":"feed","params":{}}"#;
     let first = db.watch_query(query, Arc::new(Rows::default()));
@@ -271,10 +271,10 @@ async fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() {
     assert_eq!(queries(&transport), 2);
     first.cancel();
     second.cancel();
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
+#[test]
+fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() { crate::test_wait::paused(async {
     for preloaded in [false, true] {
         let hold = Arc::new(tokio::sync::Semaphore::new(0));
         let gate = Arc::new(tokio::sync::Semaphore::new(usize::from(preloaded)));
@@ -285,7 +285,7 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
             within(transport.started.notified()).await;
         }
         let before = queries(&transport);
-        tokio::spawn({ let gate = gate.clone(); async move { tokio::time::sleep(Duration::from_secs(3)).await; gate.add_permits(1); } });
+        tokio::spawn({ let gate = gate.clone(); async move { crate::test_wait::pass(Duration::from_secs(3)).await; gate.add_permits(1); } });
         let seen = Arc::new(Tape::default());
         let live = db.watch_query(r#"{"model":"Moment","relation":"feed","params":{},"refreshOnConnect":true}"#, seen.clone());
         if preloaded {
@@ -300,7 +300,7 @@ async fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() {
         assert_eq!(queries(&transport) - before, 1, "preloaded={preloaded}");
         live.cancel();
     }
-}
+}) }
 
 #[tokio::test]
 async fn cancelling_a_live_query_finishes_its_initial_wait() {

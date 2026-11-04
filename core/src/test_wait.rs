@@ -157,3 +157,59 @@ impl Wake for ProbeWaker {
 pub(crate) fn mutex_free<T>(mutex: &Mutex<T>) -> bool {
     !matches!(mutex.try_lock(), Err(std::sync::TryLockError::WouldBlock))
 }
+
+struct World {
+    clock: crate::pacing::TestClock,
+    dbs: Vec<std::sync::Weak<crate::db::Shared>>,
+}
+
+thread_local! { static WORLD: std::cell::RefCell<Option<World>> = const { std::cell::RefCell::new(None) }; }
+
+struct Leave;
+
+impl Drop for Leave {
+    fn drop(&mut self) { WORLD.with(|world| world.borrow_mut().take()); }
+}
+
+pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().start_paused(true).build().expect("test runtime");
+    let clock = crate::pacing::TestClock::stopped(Duration::from_millis(crate::sync::rig::START_MS));
+    WORLD.with(|world| *world.borrow_mut() = Some(World { clock: clock.clone(), dbs: Vec::new() }));
+    let _leave = Leave;
+    runtime.block_on(async move {
+        let driver = tokio::spawn(async move { clock.drive(|| world_dbs().iter().all(crate::db::Db::delivered), || for db in world_dbs() { db.await_delivered(); }).await });
+        test.await;
+        driver.abort();
+    });
+}
+
+fn world_dbs() -> Vec<crate::db::Db> {
+    WORLD.with(|world| world.borrow().as_ref().map(|world| world.dbs.iter().filter_map(std::sync::Weak::upgrade).map(|shared| crate::db::Db { shared }).collect()).unwrap_or_default())
+}
+
+pub(crate) fn clock(start: Duration) -> crate::pacing::TestClock {
+    world_clock().map_or_else(|| crate::pacing::TestClock::new(start), |world| world.linked(start))
+}
+
+pub(crate) fn world_clock() -> Option<crate::pacing::TestClock> {
+    WORLD.with(|world| world.borrow().as_ref().map(|world| world.clock.clone()))
+}
+
+pub(crate) fn enter_world(db: &crate::db::Db) {
+    WORLD.with(|world| if let Some(world) = world.borrow_mut().as_mut() { world.dbs.push(std::sync::Arc::downgrade(&db.shared)); });
+}
+
+pub(crate) async fn pass(duration: Duration) {
+    match world_clock() {
+        Some(clock) => crate::pacing::Clock::sleep(&clock, duration).await,
+        None => tokio::time::sleep(duration).await,
+    }
+}
+
+pub(crate) async fn timeout<T>(duration: Duration, work: impl std::future::Future<Output = T>) -> Result<T, ()> {
+    tokio::select! {
+        biased;
+        output = work => Ok(output),
+        () = pass(duration) => Err(()),
+    }
+}

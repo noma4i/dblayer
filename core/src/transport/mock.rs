@@ -119,6 +119,7 @@ struct MockState {
     responder: Option<Responder>,
     put_progress: Option<Arc<dyn Fn() + Send + Sync>>,
     session: Option<Result<Option<String>, TransportError>>,
+    clock: Option<Arc<dyn crate::pacing::Clock>>,
 }
 
 struct Stream {
@@ -139,6 +140,18 @@ pub struct MockTransport {
 impl MockTransport {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn delay_on(&self, clock: Arc<dyn crate::pacing::Clock>) {
+        self.lock().clock = Some(clock);
+    }
+
+    async fn wait(&self, delay: Duration) {
+        let clock = self.lock().clock.clone();
+        match clock {
+            Some(clock) => clock.sleep(delay).await,
+            None => tokio::time::sleep(delay).await,
+        }
     }
 
     pub fn set_session(&self, session: Option<&str>) {
@@ -300,7 +313,7 @@ impl MockTransport {
         });
         let reply = reply.ok_or_else(|| TransportError::Unscripted(request.operation_name.clone()))?;
         if !reply.delay.is_zero() {
-            tokio::time::sleep(reply.delay).await;
+            self.wait(reply.delay).await;
         }
         reply.result
     }
@@ -333,7 +346,7 @@ impl MockTransport {
         let run = async {
             for step in 1..=PUT_STEPS {
                 if !reply.delay.is_zero() {
-                    tokio::time::sleep(reply.delay / PUT_STEPS).await;
+                    self.wait(reply.delay / PUT_STEPS).await;
                 }
                 (request.sent)(length * u64::from(step) / u64::from(PUT_STEPS));
                 if let Some(progress) = &progress { progress(); }

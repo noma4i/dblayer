@@ -5,8 +5,8 @@ use serde_json::json;
 use super::super::rig::*;
 use super::fixtures::*;
 
-#[tokio::test(start_paused = true)]
-async fn inv_conc_03_the_send_gate_is_released_when_a_flush_is_cancelled() {
+#[test]
+fn inv_conc_03_the_send_gate_is_released_when_a_flush_is_cancelled() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     put(&rig, "moments", moment("m2", "old"));
@@ -16,9 +16,9 @@ async fn inv_conc_03_the_send_gate_is_released_when_a_flush_is_cancelled() {
     rig.transport.enqueue("UpdateMoment", updated("m2", "new"));
     let sync = rig.sync.clone();
     let cancelled = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await });
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     cancelled.abort();
     let _ = cancelled.await;
-    let next = tokio::time::timeout(Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap()))).await;
+    let next = crate::test_wait::timeout(Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap()))).await;
     assert!(next.is_ok(), "the next flush waits for a gate nobody holds");
-}
+}) }

@@ -6,8 +6,8 @@ fn stored_files(rig: &Rig) -> i64 {
     rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT COUNT(*) FROM file", [], |row| row.get::<_, i64>(0))?)).unwrap()
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_file_05_maintain_and_sweep_files_keep_the_file_of_an_open_operation_until_it_closes() {
+#[test]
+fn inv_file_05_maintain_and_sweep_files_keep_the_file_of_an_open_operation_until_it_closes() { crate::test_wait::paused(async {
     let rig = upload_rig(small());
     let source = file(b"abcdef");
     (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
@@ -19,10 +19,10 @@ async fn inv_file_05_maintain_and_sweep_files_keep_the_file_of_an_open_operation
     assert_eq!(rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), None).unwrap(), 1);
     rig.db.sweep_files(&rig.db.admit().unwrap()).unwrap();
     assert_eq!(stored_files(&rig), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_file_08_a_file_is_read_in_ranges_up_to_the_single_threshold_or_the_part_size() {
+#[test]
+fn inv_file_08_a_file_is_read_in_ranges_up_to_the_single_threshold_or_the_part_size() { crate::test_wait::paused(async {
     let single = upload_rig(small());
     single_replies(&single);
     let below_threshold = file(b"012345678");
@@ -38,4 +38,4 @@ async fn inv_file_08_a_file_is_read_in_ranges_up_to_the_single_threshold_or_the_
     let mut sizes: Vec<usize> = multipart.transport.put_calls().iter().map(|put| put.body.len()).collect();
     sizes.sort_unstable();
     assert_eq!(sizes, [1, 5, 5]);
-}
+}) }

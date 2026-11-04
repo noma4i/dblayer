@@ -1,5 +1,6 @@
 use super::*;
 use workload::Op;
+use crate::sync::rig::rig_on;
 
 #[tokio::test]
 async fn inv_stress_01_oracle_reports_unreadable_rows() {

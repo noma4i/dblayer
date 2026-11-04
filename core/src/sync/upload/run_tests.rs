@@ -5,8 +5,8 @@ use super::upload_tests::{blob, created, file, input, rid, single_replies, small
 use crate::transport::PutReply;
 use crate::upload::{UploadConfig, UploadStage, UploadStatus};
 
-#[tokio::test(start_paused = true)]
-async fn corrupt_upload_headers_reject_single_and_multipart_answers_before_put() {
+#[test]
+fn corrupt_upload_headers_reject_single_and_multipart_answers_before_put() { crate::test_wait::paused(async {
     use crate::transport::Reply;
     use serde_json::{json, Value};
     for multipart in [false, true] {
@@ -38,7 +38,7 @@ async fn corrupt_upload_headers_reject_single_and_multipart_answers_before_put()
             }
         }
     }
-}
+}) }
 
 #[tokio::test]
 async fn durable_upload_failures_reach_the_waiting_operation() {
@@ -100,8 +100,8 @@ async fn inv_upload_18_materialization_and_cleanup_leave_the_async_executor() {
     assert!(rig.db.outbox().unwrap().is_empty());
 }
 
-#[tokio::test(start_paused = true)]
-async fn queued_files_start_in_order_without_waiting_tasks() {
+#[test]
+fn queued_files_start_in_order_without_waiting_tasks() { crate::test_wait::paused(async {
     let rig = upload_rig(small());
     rig.sync.set_online(false);
     let source = file(b"abcdef");
@@ -129,7 +129,7 @@ async fn queued_files_start_in_order_without_waiting_tasks() {
     assert_eq!(rig.transport.put_calls().len(), 4);
     assert_eq!(rig.transport.parallel_puts_peak(), 1);
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
-}
+}) }
 
 #[test]
 fn cancellation_does_not_wait_for_queued_file_io() {
@@ -148,7 +148,7 @@ fn cancellation_does_not_wait_for_queued_file_io() {
         let mut changes = rig.db.outbox_changes();
         rig.sync.inner.spawn_run(seq, 0, RunMode::Transfer).unwrap();
         crate::sync::rig::await_outbox(&mut changes, || rig.db.sync_info("moments", &rid("m1")).unwrap().uploads.get("upload").cloned().is_some_and(|upload| upload.status == UploadStatus::Preparing)).await;
-        let cancelled = tokio::time::timeout(Duration::from_secs(1), crate::sync::rig::app(&rig.sync, rig.sync.cancel_upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload"))).await;
+        let cancelled = crate::test_wait::timeout(Duration::from_secs(1), crate::sync::rig::app(&rig.sync, rig.sync.cancel_upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload"))).await;
         release_tx.send(()).unwrap();
         occupied.await.unwrap();
         rig.sync.wait_uploads().await;
@@ -158,8 +158,8 @@ fn cancellation_does_not_wait_for_queued_file_io() {
     });
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_final_mutation_does_not_hold_a_file_permit() {
+#[test]
+fn a_final_mutation_does_not_hold_a_file_permit() { crate::test_wait::paused(async {
     for transferred in [false, true] {
         let rig = upload_rig(small());
         rig.transport.enqueue("CreateBlob", blob());
@@ -176,10 +176,10 @@ async fn a_final_mutation_does_not_hold_a_file_permit() {
         assert_eq!(locked(&rig.sync.inner.uploads).active_files, usize::from(transferred));
         rig.sync.wait_uploads().await;
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn only_one_attempt_can_send_and_settle_the_same_upload() {
+#[test]
+fn only_one_attempt_can_send_and_settle_the_same_upload() { crate::test_wait::paused(async {
     let rig = upload_rig(UploadConfig { max_files: 2, ..small() });
     rig.transport.enqueue("CreateMoment", created("m9").after(Duration::from_secs(10)));
     let source = file(b"abcdef");
@@ -192,10 +192,10 @@ async fn only_one_attempt_can_send_and_settle_the_same_upload() {
     );
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn files_of_one_operation_share_the_file_limit() {
+#[test]
+fn files_of_one_operation_share_the_file_limit() { crate::test_wait::paused(async {
     let rig = upload_rig(UploadConfig { max_files: 2, ..small() });
     single_replies(&rig);
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(10)));
@@ -215,11 +215,11 @@ async fn files_of_one_operation_share_the_file_limit() {
     assert_eq!(rig.transport.parallel_puts_peak(), 2);
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     assert!(rig.db.outbox().unwrap().is_empty());
-}
+}) }
 
 
-#[tokio::test(start_paused = true)]
-async fn a_saved_single_grant_is_put_before_the_mutation_without_creating_another_blob() {
+#[test]
+fn a_saved_single_grant_is_put_before_the_mutation_without_creating_another_blob() { crate::test_wait::paused(async {
     let rig = upload_rig(small());
     let source = file(b"abcdef");
     let state = UploadState {
@@ -235,7 +235,7 @@ async fn a_saved_single_grant_is_put_before_the_mutation_without_creating_anothe
     assert_eq!(rig.transport.put_calls()[0].url, "https://s3/saved");
     assert_eq!(rig.transport.call_count("CreateBlob"), 0);
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
-}
+}) }
 
 
 #[tokio::test]
@@ -251,7 +251,7 @@ async fn an_unwritable_owned_file_is_failed_without_restarting_the_runner() {
     std::fs::remove_dir_all(parent).unwrap();
     std::fs::write(parent, b"obstacle").unwrap();
     rig.sync.inner.start_uploads().unwrap();
-    let finished = tokio::time::timeout(Duration::from_secs(5), rig.sync.wait_uploads()).await;
+    let finished = crate::test_wait::timeout(Duration::from_secs(5), rig.sync.wait_uploads()).await;
     assert!(finished.is_ok(), "the source error restarted the runner instead of failing the operation");
     assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().uploads.get("upload").cloned().unwrap().status, crate::upload::UploadStatus::Failed);
     assert!(rig.transport.calls().is_empty());

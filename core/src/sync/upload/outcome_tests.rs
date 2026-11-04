@@ -16,8 +16,8 @@ async fn uploaded_with_answer(answer: Reply) -> (Rig, tempfile::NamedTempFile) {
     (rig, source)
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_upload_03_an_event_showing_the_applied_effect_does_not_lift_failed_or_delivery_unknown() {
+#[test]
+fn inv_upload_03_an_event_showing_the_applied_effect_does_not_lift_failed_or_delivery_unknown() { crate::test_wait::paused(async {
     for (answer, state, status) in [
         (Reply::fail(TransportError::Interrupted("reset".into())), SyncState::DeliveryUnknown, UploadStatus::DeliveryUnknown),
         (Reply::graphql_error("nope", "FORBIDDEN"), SyncState::Failed, UploadStatus::Failed),
@@ -38,10 +38,10 @@ async fn inv_upload_03_an_event_showing_the_applied_effect_does_not_lift_failed_
         }
         assert!(rig.db.outbox().unwrap().is_empty(), "{status:?} left {:?}", rig.db.outbox().unwrap());
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_upload_13_the_content_mutation_meets_each_transport_outcome_like_an_ordinary_mutation() {
+#[test]
+fn inv_upload_13_the_content_mutation_meets_each_transport_outcome_like_an_ordinary_mutation() { crate::test_wait::paused(async {
     for (answer, expected) in [
         (Reply::fail(TransportError::Interrupted("reset".into())), vec![SyncState::DeliveryUnknown]),
         (Reply::fail(TransportError::Network("no connection".into())), vec![SyncState::Pending]),
@@ -53,10 +53,10 @@ async fn inv_upload_13_the_content_mutation_meets_each_transport_outcome_like_an
         assert_eq!(rig.db.outbox().unwrap().len(), 1, "an unconfirmed mutation must keep its operation");
         assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_05_an_unreadable_content_answer_keeps_the_upload_operation_and_the_row() {
+#[test]
+fn inv_op_05_an_unreadable_content_answer_keeps_the_upload_operation_and_the_row() { crate::test_wait::paused(async {
     let (rig, _source) = uploaded_with_answer(Reply::data(json!({"createMoment":{"text":"unreadable without id"}}))).await;
     let pending = rig.db.outbox().unwrap();
     assert_eq!(pending.len(), 1, "normalization must precede closing the upload operation");
@@ -64,4 +64,4 @@ async fn inv_op_05_an_unreadable_content_answer_keeps_the_upload_operation_and_t
     assert_eq!(text_of(&rig, "moments", "m1"), Some("x".into()));
     assert_eq!(upload_of(&rig, "m1").unwrap().status, UploadStatus::DeliveryUnknown);
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
-}
+}) }

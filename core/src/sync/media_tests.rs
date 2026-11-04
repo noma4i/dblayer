@@ -69,8 +69,8 @@ fn marker(rig: &Rig) -> crate::commit::WindowMarker {
     rig.db.shared.store.marker(&key, rig.db.generation().value() as i64).unwrap().unwrap()
 }
 
-#[tokio::test(start_paused = true)]
-async fn media_marker_reopen() {
+#[test]
+fn media_marker_reopen() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("media.sqlite");
     let server = Arc::new(Mutex::new(Server { size: 2, revision: 1, ..Server::default() }));
@@ -110,10 +110,10 @@ async fn media_marker_reopen() {
     let full_before = rig.transport.call_count("Full");
     rig.sync.load_all(&rig.sync.inner.db.admit().unwrap(), "media", "library", &arguments("c2"), LoadOptions::default()).await.unwrap();
     assert_eq!(rig.transport.call_count("Full") - full_before, 3, "parameters isolate markers");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn media_marker_commit() {
+#[test]
+fn media_marker_commit() { crate::test_wait::paused(async {
     for case in ["tail error", "full error", "cancel", "reset", "late row", "transaction", "changed marker", "bad cursor", "repeat cursor"] {
         let server = Arc::new(Mutex::new(Server { size: 2, revision: 1, ..Server::default() }));
         let rig = setup(Db::open_in_memory(specs(), None).unwrap(), server.clone());
@@ -132,7 +132,7 @@ async fn media_marker_commit() {
             }
             "cancel" => {
                 locked(&server).slow = true;
-                assert!(tokio::time::timeout(Duration::from_secs(1), load(&rig, true)).await.is_err());
+                assert!(crate::test_wait::timeout(Duration::from_secs(1), load(&rig, true)).await.is_err());
                 assert_eq!(rig.transport.call_count("Tail"), 1);
                 super::rig::await_state(&state, |state| state.error.is_some()).await;
                 let key = rig.sync.window_key("media", "library", &arguments("c1")).unwrap();
@@ -187,7 +187,7 @@ async fn media_marker_commit() {
             _ => unreachable!(),
         }
     }
-}
+}) }
 
 struct WorkClock { clock: TestClock, sleeps: AtomicUsize, wakes: AtomicUsize }
 impl Clock for WorkClock {
@@ -198,13 +198,13 @@ impl Clock for WorkClock {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn media_marker_work() {
+#[test]
+fn media_marker_work() { crate::test_wait::paused(async {
     for size in [20, 200, 2000] {
         let server = Arc::new(Mutex::new(Server { size, revision: 1, ..Server::default() }));
         let db = Db::open_in_memory(specs(), None).unwrap();
         let transport = MockTransport::new();
-        let clock = Arc::new(WorkClock { clock: TestClock::new(Duration::from_millis(START_MS)), sleeps: AtomicUsize::new(0), wakes: AtomicUsize::new(0) });
+        let clock = Arc::new(WorkClock { clock: crate::test_wait::clock(Duration::from_millis(START_MS)), sleeps: AtomicUsize::new(0), wakes: AtomicUsize::new(0) });
         let sync = Sync::new(db.clone(), Arc::new(transport.clone()), clock.clone(), SyncConfig::default());
         register(&sync);
         let source = server.clone();
@@ -220,8 +220,8 @@ async fn media_marker_work() {
         assert_eq!(marker(&rig).sequence, (size + 1) as i64);
         let before = (rig.transport.calls().len(), clock.sleeps.load(Ordering::SeqCst), clock.wakes.load(Ordering::SeqCst));
         rig.clock.advance(Duration::from_secs(86400));
-        tokio::time::advance(Duration::from_secs(86400)).await;
+        crate::test_wait::pass(Duration::from_secs(86400)).await;
         tokio::task::yield_now().await;
         assert_eq!((rig.transport.calls().len(), clock.sleeps.load(Ordering::SeqCst), clock.wakes.load(Ordering::SeqCst)), before, "idle work for {size} rows");
     }
-}
+}) }

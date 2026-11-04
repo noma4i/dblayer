@@ -95,8 +95,8 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it_once() {
+#[test]
+fn resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it_once() { crate::test_wait::paused(async {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
@@ -112,10 +112,10 @@ async fn resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it
     assert_eq!(resumed.as_deref(), Some(r#"{"nextStep":"authenticated"}"#));
     assert_eq!(restarted.session_resume().await.unwrap(), None);
     assert_eq!(rig.server.executed().len(), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_lost_logout_answer_is_resumed_through_the_bridge_and_clears_the_credential() {
+#[test]
+fn a_lost_logout_answer_is_resumed_through_the_bridge_and_clears_the_credential() { crate::test_wait::paused(async {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
@@ -131,7 +131,7 @@ async fn a_lost_logout_answer_is_resumed_through_the_bridge_and_clears_the_crede
 
     assert_eq!(resumed.as_deref(), Some(r#"{"revoked":true}"#));
     assert_eq!((rig.credentials.inner.value(), rig.server.executed().len()), (None, 2));
-}
+}) }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_logout_whose_credential_could_not_be_cleared_is_finished_by_resume_through_the_bridge() {

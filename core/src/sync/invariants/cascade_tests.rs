@@ -52,8 +52,8 @@ fn left(db: &Db) -> BTreeMap<String, Vec<String>> {
     found
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_event_04_inv_cascade_04_a_delete_event_removes_the_same_set_as_a_local_destroy_and_leaves_no_orphan() {
+#[test]
+fn inv_event_04_inv_cascade_04_a_delete_event_removes_the_same_set_as_a_local_destroy_and_leaves_no_orphan() { crate::test_wait::paused(async {
     let local = Db::open_in_memory(all_specs(), None).unwrap();
     seeded(&local);
     local.destroy(&local.admit().unwrap(), "users", &rid("u1")).unwrap();
@@ -71,10 +71,10 @@ async fn inv_event_04_inv_cascade_04_a_delete_event_removes_the_same_set_as_a_lo
     ].into_iter().map(|(key, ids)| (key.to_string(), ids.into_iter().map(str::to_string).collect())).collect();
     assert_eq!(left(&local), expected);
     assert_eq!(left(&rig.db), expected);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_event_09_inv_cascade_03_a_batch_of_events_touches_each_resident_parent_once_and_skips_absent_ones() {
+#[test]
+fn inv_event_09_inv_cascade_03_a_batch_of_events_touches_each_resident_parent_once_and_skips_absent_ones() { crate::test_wait::paused(async {
     let mut moments = moments_spec();
     moments.associations.iter_mut().for_each(|association| association.touches_parent = true);
     let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
@@ -87,15 +87,15 @@ async fn inv_event_09_inv_cascade_03_a_batch_of_events_touches_each_resident_par
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(event_spec, "MomentChanged", "moments", EventEffect::Upsert)).await.unwrap();
     for (id, user) in [("m1", "u1"), ("m2", "u1"), ("m3", "u9")] {
         rig.transport.emit("MomentChanged", event(json!({"id": id, "text": id, "userId": user})));
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        crate::test_wait::pass(Duration::from_millis(100)).await;
     }
     let waits = rig.transport.waits("MomentChanged");
     rig.clock.advance(Duration::from_millis(500));
     rig.transport.await_waits("MomentChanged", waits + 1).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(["m1", "m2", "m3"].map(|id| text_of(&rig, "moments", id)), [Some("m1".to_string()), Some("m2".to_string()), Some("m3".to_string())]);
     let touched: Vec<_> = changes(&log).iter().skip(1).flat_map(|change| change.diff.updated.clone()).collect();
     assert_eq!(touched, vec![rid("u1")]);
     assert_eq!(rig.db.find("users", &rid("u9")).unwrap(), None);
-}
+}) }

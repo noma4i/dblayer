@@ -7,8 +7,8 @@ fn none() -> Map<String, serde_json::Value> {
     Map::new()
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_dsl_03_the_page_size_of_a_remote_declaration_reaches_the_request() {
+#[test]
+fn inv_dsl_03_the_page_size_of_a_remote_declaration_reaches_the_request() { crate::test_wait::paused(async {
     use super::super::SyncConfig;
     use crate::db::Db;
     use crate::transport::MockTransport;
@@ -20,4 +20,4 @@ async fn inv_dsl_03_the_page_size_of_a_remote_declaration_reaches_the_request() 
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(rig.transport.calls()[0].variables["first"], json!(7));
-}
+}) }

@@ -45,11 +45,11 @@ struct Log {
 }
 
 impl Log {
-    fn gap(&self) {
+    fn gap(&self, lost: u64) {
         let mut items = self.items.lock().unwrap();
         match items.back_mut() {
-            Some(HeardItem::Lost(count)) => *count += 1,
-            _ => items.push_back(HeardItem::Lost(1)),
+            Some(HeardItem::Lost(count)) => *count += lost,
+            _ => items.push_back(HeardItem::Lost(lost)),
         }
         drop(items);
         self.ready.notify_one();
@@ -62,12 +62,12 @@ impl EventReader for Log {
     fn heard(&self, event: &super::ModelEvent, stamp: crate::lifecycle::Stamp) {
         let now = self.life.snapshot().stamp();
         if now.session_epoch != stamp.session_epoch { return; }
-        if now.generation != stamp.generation { return self.gap(); }
+        if now.generation != stamp.generation { return self.gap(1); }
         self.items.lock().unwrap().push_back(HeardItem::Event(event.clone()));
         self.ready.notify_one();
     }
 
-    fn unread(&self) { self.gap(); }
+    fn unread(&self, count: u64) { self.gap(count); }
 }
 
 /// A test reader of the events of a model with the sources it holds.
@@ -96,7 +96,7 @@ pub(super) async fn open_heard(sync: &super::Sync, model: &str) -> Result<Heard,
 }
 
 async fn within(events: &Heard) -> Option<HeardItem> {
-    tokio::time::timeout(std::time::Duration::from_secs(5), events.next()).await.expect("the next event did not arrive")
+    crate::test_wait::timeout(std::time::Duration::from_secs(5), events.next()).await.expect("the next event did not arrive")
 }
 
 fn expect_event(item: Option<HeardItem>) -> super::ModelEvent {
@@ -122,8 +122,8 @@ async fn model_events_open_again_after_a_data_reset() {
     assert_eq!((seen.area.as_str(), seen.kind.as_str(), seen.id.as_str()), ("CHAT", "DELETED", "c1"));
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_api_06_opening_events_establishes_the_subscription_or_returns_its_failure() {
+#[test]
+fn inv_api_06_opening_events_establishes_the_subscription_or_returns_its_failure() { crate::test_wait::paused(async {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "before"}));
     let events = open_heard(&rig.sync, "chats").await.unwrap();
@@ -135,37 +135,37 @@ async fn inv_api_06_opening_events_establishes_the_subscription_or_returns_its_f
     assert_eq!((title(&seen.before), title(&seen.after)), (Some("before"), Some("after")));
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
     events.close();
-    tokio::time::advance(rig.sync.inner.config.live_linger).await;
+    crate::test_wait::pass(rig.sync.inner.config.live_linger).await;
     rig.transport.await_cancellations("Changes", 1).await;
 
     let failed = chat_rig();
     failed.sync.inner.operations.lock().unwrap().remove("Changes");
-    let opened = tokio::time::timeout(std::time::Duration::from_secs(5), open_heard(&failed.sync, "chats")).await.expect("opening must report a failed subscription");
+    let opened = crate::test_wait::timeout(std::time::Duration::from_secs(5), open_heard(&failed.sync, "chats")).await.expect("opening must report a failed subscription");
     assert!(matches!(opened, Err(super::SyncError::UnknownOperation(operation)) if operation == "Changes"));
     assert!(!failed.sync.inner.has_event_readers("chats"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn offline_open_waits_for_connectivity_and_delivers_without_another_open() {
+#[test]
+fn offline_open_waits_for_connectivity_and_delivers_without_another_open() { crate::test_wait::paused(async {
     let rig = chat_rig();
     rig.sync.set_online(false);
     let mut opening = Box::pin(open_heard(&rig.sync, "chats"));
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
+    assert!(crate::test_wait::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
     assert_eq!(rig.transport.call_count("Changes"), 0);
     rig.sync.set_online(true);
-    let events = tokio::time::timeout(std::time::Duration::from_secs(5), opening).await.unwrap().unwrap();
+    let events = crate::test_wait::timeout(std::time::Duration::from_secs(5), opening).await.unwrap().unwrap();
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     assert_eq!(expect_event(within(&events).await).id, "c1");
     assert_eq!(rig.transport.call_count("Changes"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn opening_waits_for_server_ready_and_reports_a_refusal_before_ready() {
+#[test]
+fn opening_waits_for_server_ready_and_reports_a_refusal_before_ready() { crate::test_wait::paused(async {
     for refused in [false, true] {
         let rig = chat_rig();
         rig.transport.script_subscription("Changes", vec![]);
         let mut opening = Box::pin(open_heard(&rig.sync, "chats"));
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
+        assert!(crate::test_wait::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
         rig.transport.await_consumed("Changes").await;
         if refused {
             let error = crate::transport::TransportError::Http { status: 403, body: "refused".into() };
@@ -179,29 +179,29 @@ async fn opening_waits_for_server_ready_and_reports_a_refusal_before_ready() {
             assert_eq!(expect_event(within(&events).await).id, "c1");
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn abandoning_a_prepared_or_pending_feed_releases_its_subscription() {
+#[test]
+fn abandoning_a_prepared_or_pending_feed_releases_its_subscription() { crate::test_wait::paused(async {
     for pending in [false, true] {
         let rig = chat_rig();
         if pending { rig.transport.script_subscription("Changes", vec![]); }
         let mut opening = Box::pin(open_heard(&rig.sync, "chats"));
         if pending {
-            assert!(tokio::time::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
+            assert!(crate::test_wait::timeout(std::time::Duration::from_millis(50), &mut opening).await.is_err());
             drop(opening);
         } else {
             drop(opening.await.unwrap());
         }
         assert!(!rig.sync.inner.has_event_readers("chats"));
-        tokio::time::advance(rig.sync.inner.config.live_linger).await;
+        crate::test_wait::pass(rig.sync.inner.config.live_linger).await;
         rig.transport.await_cancellations("Changes", 1).await;
         assert_eq!(rig.sync.inner.live_status("Changes|{}"), None);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn removal_event_has_no_after_row_and_makes_no_request() {
+#[test]
+fn removal_event_has_no_after_row_and_makes_no_request() { crate::test_wait::paused(async {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "before"}));
     let events = open_heard(&rig.sync, "chats").await.unwrap();
@@ -210,10 +210,10 @@ async fn removal_event_has_no_after_row_and_makes_no_request() {
     let seen = expect_event(within(&events).await);
     assert_eq!((title(&seen.before), seen.after.is_none()), (Some("before"), true));
     assert_eq!(rig.transport.call_count("ChatNode"), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn two_events_of_one_row_arrive_in_order_and_chain_before_to_after() {
+#[test]
+fn two_events_of_one_row_arrive_in_order_and_chain_before_to_after() { crate::test_wait::paused(async {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "v1"}));
     let events = open_heard(&rig.sync, "chats").await.unwrap();
@@ -223,10 +223,10 @@ async fn two_events_of_one_row_arrive_in_order_and_chain_before_to_after() {
     let (first, second) = (expect_event(within(&events).await), expect_event(within(&events).await));
     assert_eq!([title(&first.before), title(&first.after), title(&second.before), title(&second.after)], [Some("v1"), Some("v2"), Some("v2"), Some("v3")]);
     assert_eq!(rig.transport.call_count("ChatNode"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn observed_event_rereads_every_watched_parameterized_read_once_and_no_other() {
+#[test]
+fn observed_event_rereads_every_watched_parameterized_read_once_and_no_other() { crate::test_wait::paused(async {
     let mut moments = moments_spec();
     moments.changes.push(ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, payload: None, id_of: None });
     moments.change_feed = Some(change_feed());
@@ -247,10 +247,10 @@ async fn observed_event_rereads_every_watched_parameterized_read_once_and_no_oth
     emit(&rig, vec![event("WALLET", "CREATED", "t2")]);
     expect_event(within(&events).await);
     assert_eq!(rig.transport.call_count("MomentsByMood"), 4);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_failed_read_leaves_a_gap_in_the_queue_at_the_place_of_the_event() {
+#[test]
+fn a_failed_read_leaves_a_gap_in_the_queue_at_the_place_of_the_event() { crate::test_wait::paused(async {
     let rig = chat_rig();
     let events = open_heard(&rig.sync, "chats").await.unwrap();
     let failure = || crate::db::DbError::InvalidUpload("read failed".into());
@@ -262,10 +262,10 @@ async fn a_failed_read_leaves_a_gap_in_the_queue_at_the_place_of_the_event() {
     assert_eq!(expect_event(within(&events).await).id, "c1");
     assert!(matches!(within(&events).await, Some(HeardItem::Lost(2))));
     assert_eq!(expect_event(within(&events).await).id, "c4");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_failed_reread_leaves_a_gap_for_the_reader() {
+#[test]
+fn a_failed_reread_leaves_a_gap_for_the_reader() { crate::test_wait::paused(async {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "before"}));
     let events = open_heard(&rig.sync, "chats").await.unwrap();
@@ -273,10 +273,10 @@ async fn a_failed_reread_leaves_a_gap_for_the_reader() {
     rig.transport.enqueue("ChatNode", Reply::fail(crate::transport::TransportError::Http { status: 422, body: "rejected".into() }));
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
     assert!(matches!(within(&events).await, Some(HeardItem::Lost(1))));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn rows_are_read_for_an_event_only_while_the_model_has_a_reader() {
+#[test]
+fn rows_are_read_for_an_event_only_while_the_model_has_a_reader() { crate::test_wait::paused(async {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "v1"}));
     let opened = open_heard(&rig.sync, "chats").await.unwrap();
@@ -294,10 +294,10 @@ async fn rows_are_read_for_an_event_only_while_the_model_has_a_reader() {
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
     expect_event(within(&events).await);
     assert_eq!(finds() - start, unwatched + 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_model_gets_the_events_of_a_changes_source_that_another_model_declares() {
+#[test]
+fn a_model_gets_the_events_of_a_changes_source_that_another_model_declares() { crate::test_wait::paused(async {
     for (change, area) in [
         (ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, payload: None, id_of: None }, "WALLET"),
         (ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, payload: None, id_of: None }, "MOOD"),
@@ -315,12 +315,12 @@ async fn a_model_gets_the_events_of_a_changes_source_that_another_model_declares
         let seen = expect_event(within(&events).await);
         assert_eq!((seen.area.as_str(), seen.id.as_str()), (area, "calm"), "{area}");
         assert_eq!(rig.transport.call_count("MomentsByMood"), 1, "{area}");
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "{area}: one event only");
+        assert!(crate::test_wait::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "{area}: one event only");
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_one_is_delivered() {
+#[test]
+fn an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_one_is_delivered() { crate::test_wait::paused(async {
     let (mut users, mut moments) = (users_spec(), moments_spec());
     users.change_feed = Some(change_feed());
     moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, payload: None, id_of: None });
@@ -332,13 +332,13 @@ async fn an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_on
     emit(&rig, vec![event("MOOD", "CREATED", "calm")]);
     rig.transport.await_calls("MomentsByMood", 1).await;
     let events = open_heard(&rig.sync, "moments").await.unwrap();
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "the earlier event is not replayed");
+    assert!(crate::test_wait::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "the earlier event is not replayed");
     emit(&rig, vec![event("MOOD", "CREATED", "wild")]);
     assert_eq!(expect_event(within(&events).await).id, "wild");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn one_event_of_an_area_shared_by_two_models_rereads_both_and_reaches_both_event_streams() {
+#[test]
+fn one_event_of_an_area_shared_by_two_models_rereads_both_and_reaches_both_event_streams() { crate::test_wait::paused(async {
     let (mut users, mut moments) = (users_spec(), moments_spec());
     for spec in [&mut users, &mut moments] {
         spec.changes.push(ChangeRead { area: "WALLET".into(), relation: "observed".into(), parameter: None, removes_on: vec![], observed: true, payload: None, id_of: None });
@@ -357,13 +357,13 @@ async fn one_event_of_an_area_shared_by_two_models_rereads_both_and_reaches_both
     for events in [&user_events, &moment_events] {
         let seen = expect_event(within(events).await);
         assert_eq!((seen.area.as_str(), seen.id.as_str()), ("WALLET", "t1"));
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "one item per event");
+        assert!(crate::test_wait::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "one item per event");
     }
     assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByMood")), (1, 1));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn two_reads_on_one_area_reread_once_each_and_deliver_one_event() {
+#[test]
+fn two_reads_on_one_area_reread_once_each_and_deliver_one_event() { crate::test_wait::paused(async {
     let (mut users, mut moments) = (users_spec(), moments_spec());
     users.change_feed = Some(change_feed());
     moments.changes.push(ChangeRead { area: "MOOD".into(), relation: "by_mood".into(), parameter: Some("mood".into()), removes_on: vec![], observed: false, payload: None, id_of: None });
@@ -378,11 +378,11 @@ async fn two_reads_on_one_area_reread_once_each_and_deliver_one_event() {
     let seen = expect_event(within(&events).await);
     assert_eq!((seen.area.as_str(), seen.id.as_str()), ("MOOD", "calm"));
     assert_eq!(rig.transport.call_count("MomentsByMood"), 2);
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "one event only");
-}
+    assert!(crate::test_wait::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "one event only");
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_in() {
+#[test]
+fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_in() { crate::test_wait::paused(async {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));
     let events = open_heard(&rig.sync, "chats").await.unwrap();
@@ -395,17 +395,17 @@ async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_i
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
     assert_eq!(expect_event(within(&events).await).id, "c1");
     rig.sync.end_session_for_test();
-    tokio::time::sleep(std::time::Duration::from_secs(31)).await;
+    crate::test_wait::pass(std::time::Duration::from_secs(31)).await;
     rig.transport.set_session(Some("second"));
     rig.sync.commit_session_for_test();
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    crate::test_wait::pass(std::time::Duration::from_secs(1)).await;
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     let seen = expect_event(within(&events).await);
     assert_eq!((seen.kind.as_str(), seen.id.as_str()), ("DELETED", "c1"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_events_collector_keeps_one_stream_across_a_session_start_and_hears_only_the_new_connection() {
+#[test]
+fn an_events_collector_keeps_one_stream_across_a_session_start_and_hears_only_the_new_connection() { crate::test_wait::paused(async {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));
     let events = open_heard(&rig.sync, "chats").await.unwrap();
@@ -421,11 +421,11 @@ async fn an_events_collector_keeps_one_stream_across_a_session_start_and_hears_o
     rig.transport.emit_on("Changes", 1, change("UPDATED"));
     let seen = expect_event(within(&events).await);
     assert_eq!((seen.kind.as_str(), seen.id.as_str(), title(&seen.after)), ("UPDATED", "c1", Some("new")));
-    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "the old connection delivered nothing");
-}
+    assert!(crate::test_wait::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "the old connection delivered nothing");
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listening() {
+#[test]
+fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listening() { crate::test_wait::paused(async {
     let rig = chat_rig();
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));
     let events = open_heard(&rig.sync, "chats").await.unwrap();
@@ -433,16 +433,16 @@ async fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listeni
     rig.sync.set_listening(false);
     rig.transport.set_session(Some("first"));
     rig.sync.commit_session_for_test();
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    crate::test_wait::pass(std::time::Duration::from_secs(1)).await;
     rig.sync.set_listening(true);
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "one"}})));
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
     assert_eq!(expect_event(within(&events).await).id, "c1");
     rig.sync.set_listening(false);
-    tokio::time::sleep(std::time::Duration::from_secs(31)).await;
+    crate::test_wait::pass(std::time::Duration::from_secs(31)).await;
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     assert_eq!(expect_event(within(&events).await).kind, "DELETED");
-}
+}) }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_event_received_before_the_session_ended_is_not_published_after_it() {

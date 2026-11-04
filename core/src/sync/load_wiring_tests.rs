@@ -25,8 +25,8 @@ fn enqueue(rig: &Rig, random: &mut Random) {
     rig.transport.enqueue("MomentsFeed", reply.after(delay));
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_17_the_state_of_a_real_sync_equals_the_oracle_over_random_commands() {
+#[test]
+fn inv_loadm_17_the_state_of_a_real_sync_equals_the_oracle_over_random_commands() { crate::test_wait::paused(async {
     for seed in 1..=SEEDS {
         let mut random = Random(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let rig = rig();
@@ -56,7 +56,7 @@ async fn inv_loadm_17_the_state_of_a_real_sync_equals_the_oracle_over_random_com
                 7 => rig.clock.advance(Duration::from_secs(400)),
                 _ => {}
             }
-            tokio::time::advance(Duration::from_millis(1)).await;
+            crate::test_wait::pass(Duration::from_millis(1)).await;
             let run = replay(&owner.history());
             assert_eq!(Some(state.borrow().clone()), expected(&run, &window), "seed {seed} step {step} commands {commands:?}");
             assert_eq!(owner.orphan_ends(), 0, "seed {seed} step {step}: the wiring ended a flight that never started");
@@ -64,9 +64,9 @@ async fn inv_loadm_17_the_state_of_a_real_sync_equals_the_oracle_over_random_com
         for flight in flights.drain(..) {
             flight.abort();
         }
-        tokio::time::sleep(Duration::from_secs(120)).await;
+        crate::test_wait::pass(Duration::from_secs(120)).await;
         assert_eq!(owner.flights(&window), 0, "seed {seed}: a flight outlived its caller, commands {commands:?}");
         assert_ne!(state.borrow().phase, LoadPhase::Loading, "seed {seed}: commands {commands:?}");
         assert_eq!(owner.orphan_ends(), 0, "seed {seed}");
     }
-}
+}) }

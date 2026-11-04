@@ -41,8 +41,8 @@ async fn exhaust(rig: &Rig, operation: &str) {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn unreached_mutation_stays_pending_and_leaves_again_after_the_pause() {
+#[test]
+fn unreached_mutation_stays_pending_and_leaves_again_after_the_pause() { crate::test_wait::paused(async {
     let rig = rig();
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", unreachable());
@@ -57,10 +57,10 @@ async fn unreached_mutation_stays_pending_and_leaves_again_after_the_pause() {
     assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap().committed(), 1);
     assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
     assert!(info(&rig, "m1").is_synced());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn interrupted_transfer_is_delivery_unknown_and_never_resent_by_itself() {
+#[test]
+fn interrupted_transfer_is_delivery_unknown_and_never_resent_by_itself() { crate::test_wait::paused(async {
     let rig = rig();
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Interrupted("reset".into())));
@@ -70,10 +70,10 @@ async fn interrupted_transfer_is_delivery_unknown_and_never_resent_by_itself() {
     rig.clock.advance(Duration::from_secs(3600));
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_17_offline_flag_holds_the_mutation_without_a_call_or_an_attempt_and_online_sends_it() {
+#[test]
+fn inv_op_17_offline_flag_holds_the_mutation_without_a_call_or_an_attempt_and_online_sends_it() { crate::test_wait::paused(async {
     let rig = rig();
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
@@ -86,23 +86,23 @@ async fn inv_op_17_offline_flag_holds_the_mutation_without_a_call_or_an_attempt_
     rig.sync.set_online(true);
     await_outbox(&mut outbox, || info(&rig, "m1").is_synced()).await;
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn the_pause_ends_by_itself_without_another_flush() {
+#[test]
+fn the_pause_ends_by_itself_without_another_flush() { crate::test_wait::paused(async {
     let rig = rig();
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", unreachable());
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     rig.clock.advance(Duration::from_secs(2));
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
     assert!(info(&rig, "m1").is_synced());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn forty_unreached_attempts_keep_the_edit_failed_and_own_pending() {
+#[test]
+fn forty_unreached_attempts_keep_the_edit_failed_and_own_pending() { crate::test_wait::paused(async {
     let rig = rig();
     queue_update(&rig, "new");
     let seq = rig.db.outbox().unwrap()[0].operation.id.0;
@@ -117,10 +117,10 @@ async fn forty_unreached_attempts_keep_the_edit_failed_and_own_pending() {
     assert_eq!((failed.state, failed.attempts), (SyncState::Failed, 40));
     assert_eq!(rig.db.outbox().unwrap()[0].operation.id.0, seq);
     assert!(crate::transport::encrypted::pending_matches(&rig.db, &crate::transport::RequestOwner::Operation { seq }).unwrap());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn forty_unreached_attempts_leave_a_kept_update_failed() {
+#[test]
+fn forty_unreached_attempts_leave_a_kept_update_failed() { crate::test_wait::paused(async {
     let rig = keeping_rig();
     queue_update(&rig, "new");
     exhaust(&rig, "UpdateMoment").await;
@@ -128,10 +128,10 @@ async fn forty_unreached_attempts_leave_a_kept_update_failed() {
     assert_eq!((failed.state, failed.attempts), (SyncState::Failed, 40));
     assert_eq!(failed.error.map(|error| error.kind), Some(FailureKind::Network));
     assert_eq!(rig.transport.call_count("UpdateMoment"), 40);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_08_forty_unreached_attempts_bring_a_destroyed_record_back_as_failed() {
+#[test]
+fn inv_op_08_forty_unreached_attempts_bring_a_destroyed_record_back_as_failed() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
@@ -140,10 +140,10 @@ async fn inv_op_08_forty_unreached_attempts_bring_a_destroyed_record_back_as_fai
     assert_eq!(text_of(&rig, "moments", "m1"), Some("old".to_string()));
     let failed = info(&rig, "m1");
     assert_eq!((failed.state, failed.attempts, failed.error.map(|error| error.kind)), (SyncState::Failed, 40, Some(FailureKind::Network)));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_waiting_mutation_holds_back_later_ones_on_the_same_record() {
+#[test]
+fn a_waiting_mutation_holds_back_later_ones_on_the_same_record() { crate::test_wait::paused(async {
     let rig = rig();
     queue_update(&rig, "first");
     rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "second"}))).unwrap();
@@ -157,26 +157,31 @@ async fn a_waiting_mutation_holds_back_later_ones_on_the_same_record() {
     let sent: Vec<_> = rig.transport.calls().into_iter().map(|call| call.variables).collect();
     assert_eq!(sent.len(), 3);
     assert!(rig.db.outbox().unwrap().is_empty());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn the_count_continues_after_a_restart() {
-    let rig = rig();
+#[test]
+fn the_count_continues_after_a_restart() { crate::test_wait::paused(async {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), Default::default());
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", unreachable());
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(info(&rig, "m1").attempts, 1);
-    let again = rig_on(rig.db.clone(), crate::transport::MockTransport::new(), Default::default());
+    let stopped_at = Clock::now(&rig.clock);
+    rig.db.close().unwrap();
+    drop(rig);
+    let again = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), Default::default());
     again.transport.enqueue("UpdateMoment", unreachable());
-    again.clock.set(Clock::now(&rig.clock) + Duration::from_secs(2));
+    again.clock.set(stopped_at + Duration::from_secs(2));
     crate::sync::rig::app(&again.sync, again.sync.flush(&again.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(again.transport.call_count("UpdateMoment"), 1);
     assert_eq!(info(&again, "m1").attempts, 2);
-    assert_eq!(rig.db.outbox().unwrap()[0].operation.status, OperationStatus::Pending);
-}
+    assert_eq!(again.db.outbox().unwrap()[0].operation.status, OperationStatus::Pending);
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn retry_all_sends_every_failed_and_unknown_record_again() {
+#[test]
+fn retry_all_sends_every_failed_and_unknown_record_again() { crate::test_wait::paused(async {
     let rig = keeping_rig();
     put(&rig, "moments", moment("m1", "a"));
     put(&rig, "moments", moment("m2", "b"));
@@ -191,7 +196,7 @@ async fn retry_all_sends_every_failed_and_unknown_record_again() {
     let report = crate::sync::rig::app(&rig.sync, rig.sync.retry_all(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(report.committed(), 2);
     assert_eq!(rig.transport.call_count("UpdateMoment"), 4);
-}
+}) }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_change_of_the_network_waits_for_the_commit_of_a_start_that_passed_its_admission() {

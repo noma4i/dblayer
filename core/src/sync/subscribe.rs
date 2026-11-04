@@ -704,18 +704,18 @@ impl Feed {
                             }
                         }
                     }
-                    Some(SubscriptionEvent::Lost { .. }) => {
+                    Some(SubscriptionEvent::Lost { first, last }) => {
                         pending.clear();
                         let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
                         for model in models {
-                            if self.inner.window_event(&self.epoch, super::invalidate::WindowTrigger::Lost { model: model.clone() }).is_err() { self.inner.publish_model_gap(&model); }
+                            self.inner.publish_model_loss(&model, last - first + 1);
+                            if self.inner.window_event(&self.epoch, super::invalidate::WindowTrigger::Lost { model: model.clone() }).is_err() { locked(&self.status).rejected += 1; }
                         }
                         crate::db::locked(&self.lost).reload = true;
                         self.reload_lost().await;
                     }
                     Some(SubscriptionEvent::Next(response)) => {
                         if generation != self.inner.db.generation() { continue; }
-                        let _frame = self.epoch.life().admit_session_at(crate::lifecycle::Origin::Session, "subscription frame", self.epoch.value()).ok();
                         self.hold(true);
                         lifecycle.handle(Event::Next);
                         self.publish(lifecycle);
@@ -761,6 +761,7 @@ impl Feed {
     async fn run(mut self, request: GraphQLRequest, first: Option<Opened>, mut resets: crate::lifecycle::Watch) {
         let mut lifecycle = Lifecycle::new(self.backoff);
         let mut opened = first;
+        let mut dropped = false;
         'open: loop {
             if !self.inner.admitted(crate::lifecycle::Origin::Session) {
                 opened = None;
@@ -773,6 +774,7 @@ impl Feed {
             let (generation, epoch, attempt) = tokio::select! {
                 biased;
                 change = invalidated(&mut resets) => {
+                    dropped = false;
                     self.lose_queued(opened.take().and_then(|(_, _, attempt)| attempt.ok()), &change);
                     lifecycle = Lifecycle::new(self.backoff);
                     continue;
@@ -793,7 +795,7 @@ impl Feed {
                         status.opening = false;
                         status.connects += 1;
                         status.connected = true;
-                        status.connects > 1
+                        std::mem::take(&mut dropped)
                     };
                     if !self.reload_lost().await && reconnected {
                         let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
@@ -807,6 +809,7 @@ impl Feed {
                     lifecycle.handle(Event::Connected);
                     match self.pump(&mut connection, &mut lifecycle, generation, &mut resets).await {
                         Pumped::Invalidated(change) => {
+                            dropped = false;
                             self.lose_queued(Some(connection), &change);
                             self.mark(|status| status.connected = false);
                             lifecycle = Lifecycle::new(self.backoff);
@@ -823,6 +826,7 @@ impl Feed {
                 }
             };
             self.mark(|status| status.connected = false);
+            dropped = true;
             lifecycle.handle(Event::Lost { kind, online: self.inner.connectivity.is_online() });
             self.publish(&lifecycle);
             if let Some(failure) = failed { self.notify_failure(&failure); }
@@ -873,9 +877,13 @@ impl Inner {
                 let generation = self.db.generation();
                 let epoch = admitted.value();
                 crate::db::lock::assert_no_library_lock("Transport::subscribe");
-                let opened = admitted.run(self.transport.subscribe(&admitted, request)).await;
+                let opened = admitted.run(self.transport.subscribe(&admitted, request)).await.unwrap_or_else(|ended| Err(ended.into()));
+                if let Ok(connection) = &opened {
+                    let life = lifecycle.clone();
+                    connection.hold_frames(move || life.admit_session_at(crate::lifecycle::Origin::Session, "subscription frame", epoch).ok().map(|lease| Box::new(lease) as Box<dyn Send>));
+                }
                 let admitted = lifecycle.admit_passive(crate::lifecycle::Origin::Session, "subscription event", Some(epoch)).ok()?;
-                Some((generation, admitted, opened.unwrap_or_else(|ended| Err(ended.into()))))
+                Some((generation, admitted, opened))
             } => result,
         }
     }

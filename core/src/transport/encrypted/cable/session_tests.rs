@@ -45,8 +45,8 @@ async fn ready_then_close(session: &mut CableSession) -> Duration {
     delay
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_wait_05_frames_postpone_the_single_deadline_without_timer_wakes() {
+#[test]
+fn inv_wait_05_frames_postpone_the_single_deadline_without_timer_wakes() { crate::test_wait::paused(async {
     use std::sync::atomic::AtomicUsize;
     use tokio::sync::mpsc;
     use super::wire_tests::{FakeSocket, FakeConnect, Peer};
@@ -71,10 +71,10 @@ async fn inv_wait_05_frames_postpone_the_single_deadline_without_timer_wakes() {
     tokio::time::advance(Duration::from_secs(25)).await;
     assert_eq!(within(peer.next()).await["t"], "ping");
     assert_eq!(cable.wake_count(), 1, "silence must fire exactly one timer");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn invalid_frames_preserve_failure_history() {
+#[test]
+fn invalid_frames_preserve_failure_history() { crate::test_wait::paused(async {
     let mut failures = Vec::new();
     for body in [
         json!({"t":"next", "id":"1", "result":{"errors":42}}),
@@ -99,10 +99,10 @@ async fn invalid_frames_preserve_failure_history() {
         }
     }
     assert!(failures.is_empty(), "invalid frames reset failure history: {failures:?}");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn independent_cable_sessions_do_not_retry_in_lockstep() {
+#[test]
+fn independent_cable_sessions_do_not_retry_in_lockstep() { crate::test_wait::paused(async {
     let mut sessions: Vec<_> = (0..3).map(|_| {
         let mut session = new_session();
         let subscription = session.subscribe(test_admission(), GraphQLRequest::new("subscription { x }", "X", json!({})));
@@ -110,10 +110,10 @@ async fn independent_cable_sessions_do_not_retry_in_lockstep() {
     }).collect();
     let delays: Vec<_> = sessions.iter_mut().map(|(session, _)| { session.open_failed(); backoff_delay(session) }).collect();
     assert!(delays.windows(2).any(|pair| pair[0] != pair[1]), "independent sessions use identical delays: {delays:?}");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn multiplexes_registered_subscriptions_and_cancels_only_the_selected_id() {
+#[test]
+fn multiplexes_registered_subscriptions_and_cancels_only_the_selected_id() { crate::test_wait::paused(async {
     let mut session = new_session();
     let mut subscriptions = Vec::new();
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../../../fixtures/change-events/subscriptions.json")).unwrap();
@@ -140,10 +140,10 @@ async fn multiplexes_registered_subscriptions_and_cancels_only_the_selected_id()
     session.closed(1006, "");
     reopen(&mut session).await;
     assert_eq!(ready(&mut session).len(), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn ping_deadline_exists_only_for_live_subscriptions_and_expires_without_pong() {
+#[test]
+fn ping_deadline_exists_only_for_live_subscriptions_and_expires_without_pong() { crate::test_wait::paused(async {
     let mut session = new_session();
     for _ in 0..4 {
         tokio::time::advance(Duration::from_secs(25)).await;
@@ -162,10 +162,10 @@ async fn ping_deadline_exists_only_for_live_subscriptions_and_expires_without_po
     assert!(!session.is_open());
     session.unsubscribe(&id);
     assert!(session.deadline().is_none());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry() {
+#[test]
+fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry() { crate::test_wait::paused(async {
     for (code, reason, terminal) in [(1000, "LOGGED_OUT", true), (4403, "ACCOUNT_LOCKED", true), (4503, "SERVER_RESTART", false)] {
         let mut session = new_session();
         let (_, mut subscription) = session.subscribe(test_admission(), request());
@@ -190,10 +190,10 @@ async fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry
             assert_eq!(ready(&mut session).len(), 1);
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn offline_creates_no_work_and_online_resumes_the_demanded_connection() {
+#[test]
+fn offline_creates_no_work_and_online_resumes_the_demanded_connection() { crate::test_wait::paused(async {
     let online = Connectivity::new(false);
     let mut session = CableSession::new(Arc::new(crate::pacing::TestClock::default()), online.clone());
     let _subscription = session.subscribe(test_admission(), request());
@@ -208,10 +208,10 @@ async fn offline_creates_no_work_and_online_resumes_the_demanded_connection() {
     online.set_online(true);
     session.connectivity();
     assert!(session.is_connecting());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn failed_openings_increase_backoff_only_with_online_subscribers() {
+#[test]
+fn failed_openings_increase_backoff_only_with_online_subscribers() { crate::test_wait::paused(async {
     let online = Connectivity::new(true);
     let mut retry = CableSession::new(Arc::new(crate::pacing::TestClock::default()), online.clone());
     retry.open_failed();
@@ -248,10 +248,10 @@ async fn failed_openings_increase_backoff_only_with_online_subscribers() {
     retry.closed(4401, "UNAUTHENTICATED");
     retry.open_failed();
     assert_eq!(retry.deadline(), None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn closes_right_after_ready_grow_jittered_delays_up_to_the_cap() {
+#[test]
+fn closes_right_after_ready_grow_jittered_delays_up_to_the_cap() { crate::test_wait::paused(async {
     let mut session = new_session();
     let _subscription = session.subscribe(test_admission(), request());
     let mut previous = Duration::ZERO;
@@ -264,10 +264,10 @@ async fn closes_right_after_ready_grow_jittered_delays_up_to_the_cap() {
         previous = delay;
     }
     assert!(below_ceiling, "delays carry no jitter");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn first_server_frame_after_ready_resets_attempts_and_other_frames_do_not() {
+#[test]
+fn first_server_frame_after_ready_resets_attempts_and_other_frames_do_not() { crate::test_wait::paused(async {
     for (frame, resets) in [
         (Some(json!({"t":"subscribed", "id":"1"})), true),
         (Some(json!({"t":"next", "id":"1", "result":{"data":{}}})), true),
@@ -291,4 +291,4 @@ async fn first_server_frame_after_ready_resets_attempts_and_other_frames_do_not(
         let delay = ready_then_close(&mut session).await;
         assert!(within_jitter(delay, second), "{frame:?}: {delay:?}");
     }
-}
+}) }

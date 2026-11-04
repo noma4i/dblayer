@@ -35,6 +35,8 @@ fn storage_rules_and_writes_follow_the_shared_cases() {
         assert_eq!(changes(&log).last().unwrap().rows[0].text("record"), Some("two"), "{name}");
         assert_eq!(db.outbox().unwrap().len(), 2 * usize::from(!local), "{name}: update");
         drop(observer);
+        db.close().unwrap();
+        assert_eq!(std::sync::Arc::strong_count(&db.shared), 1, "{name}: a database thread still holds the closed database");
         drop(db);
         let db = Db::open(&path, models, None).unwrap();
         let reopened = db.find("StorageRow", &row.id).unwrap().unwrap_or_else(|| panic!("{name}: row {} lost on reopen, report {:?}", row.id, db.open_report()));

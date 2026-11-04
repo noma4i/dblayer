@@ -48,8 +48,8 @@ async fn live_ready_wake_has_no_guards() {
     assert_eq!((probe.wakes(), probe.violations()), (1, 0), "the reset of ready wakes its waiter with the lives guard free");
 }
 
-#[tokio::test(start_paused = true)]
-async fn live_removal_drops_the_live_outside_the_guard() {
+#[test]
+fn live_removal_drops_the_live_outside_the_guard() { crate::test_wait::paused(async {
     for lingering in [false, true] {
         let rig = rig();
         let inner = rig.sync.inner.clone();
@@ -70,10 +70,10 @@ async fn live_removal_drops_the_live_outside_the_guard() {
         if lingering {
             assert!(!locked(&inner.lives).is_empty(), "the live lingers first");
             tokio::task::yield_now().await;
-            tokio::time::advance(inner.config.live_linger + Duration::from_millis(1)).await;
+            crate::test_wait::pass(inner.config.live_linger + Duration::from_millis(1)).await;
             yield_until("the linger ended", || locked(&inner.lives).is_empty()).await;
         }
         assert!(locked(&inner.lives).is_empty(), "lingering={lingering}: the last reader removed the live");
         assert_eq!((probe.wakes(), probe.violations()), (1, 0), "lingering={lingering}: dropping the live closes ready with the lives guard free");
     }
-}
+}) }

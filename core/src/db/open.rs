@@ -58,6 +58,7 @@ pub(crate) struct Shared {
     pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
     pub reads: Arc<ReadPool>,
+    pub threads: Arc<super::threads::LiveThreads>,
     pub files: FileDirectories,
     pub files_gate: Mutex<()>,
     pub upload_accepted: Mutex<Option<super::upload_accepted::UploadAcceptedCallback>>,
@@ -127,14 +128,18 @@ pub(crate) fn observers_held() -> bool {
 
 impl Drop for Shared {
     fn drop(&mut self) {
+        self.stop_threads();
+    }
+}
+
+impl Shared {
+    fn stop_threads(&self) {
         self.dispatch.close();
         self.ephemeral.close();
         self.executor.close();
         self.reads.close();
     }
-}
 
-impl Shared {
     pub(crate) fn spec(&self, model: &str) -> Result<&ModelSpec, DbError> {
         self.specs.get(model).ok_or_else(|| DbError::UnknownModel(model.to_string()))
     }
@@ -259,6 +264,7 @@ impl Db {
             counters: Arc::new(Mutex::new(Counters::default())),
             executor: Executor::new(dispatch.progress.clone()),
             reads: reads.clone(),
+            threads: Arc::default(),
             dispatch: dispatch.clone(),
             outbox_changes,
             operation_queues,
@@ -274,10 +280,17 @@ impl Db {
             #[cfg(test)]
             panic_key: Mutex::new(None),
         });
-        Dispatch::start(dispatch, Arc::downgrade(&shared))?;
-        ReadPool::start(&reads, Arc::downgrade(&shared))?;
-        Ephemerals::start(ephemeral, Arc::downgrade(&shared))?;
+        Dispatch::start(&shared.threads, dispatch, Arc::downgrade(&shared))?;
+        ReadPool::start(&shared.threads, &reads, Arc::downgrade(&shared))?;
+        Ephemerals::start(&shared.threads, ephemeral, Arc::downgrade(&shared))?;
         Ok(Db { shared })
+    }
+
+    /// Ends the lifecycle and returns after every database thread let go of the database, so the same file opens again at once.
+    pub fn close(&self) -> Result<(), DbError> {
+        self.shared.store.lifecycle.close();
+        self.shared.stop_threads();
+        self.shared.threads.wait_ended()
     }
 
     pub fn connectivity(&self) -> Arc<crate::transport::Connectivity> {

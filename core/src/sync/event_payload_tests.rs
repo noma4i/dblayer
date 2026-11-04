@@ -65,8 +65,8 @@ fn members(rig: &Rig, params: &Map<String, Value>) -> Vec<String> {
     member_ids(rig, "chats", "list", params)
 }
 
-#[tokio::test(start_paused = true)]
-async fn message_chat_request_cost() {
+#[test]
+fn message_chat_request_cost() { crate::test_wait::paused(async {
     for (full_chat, full_message, expected) in [(false, false, (1, 1)), (true, false, (1, 0)), (true, true, (0, 0))] {
         let (rig, updates) = payload_rig(full_chat, full_message).await;
         let mut chat = chat("c1", "new last message", 9007199254740993, "PRIMARY");
@@ -88,10 +88,10 @@ async fn message_chat_request_cost() {
         assert_eq!(stored(&rig, "messages", "m1").unwrap().text("text"), Some("received"));
         assert_eq!(updates.status().rejected, 0);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn message_moves_chat_targets() {
+#[test]
+fn message_moves_chat_targets() { crate::test_wait::paused(async {
     let (rig, updates) = payload_rig(false, true).await;
     put(&rig, "messages", json!({"id":"m1", "chatId":"c1", "text":"old"}));
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node":chat("c2", "new", 2, "PRIMARY")})));
@@ -104,10 +104,10 @@ async fn message_moves_chat_targets() {
     assert_eq!(stored(&rig, "chats", "c2").unwrap().text("title"), Some("new"));
     assert_eq!(rig.transport.call_count("MessageNode"), 0);
     assert_eq!(updates.status().rejected, 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn chat_payload_revision() {
+#[test]
+fn chat_payload_revision() { crate::test_wait::paused(async {
     let (rig, updates) = payload_rig(true, true).await;
     let primary = load_list(&rig, "PRIMARY").await;
     let secondary = load_list(&rig, "SECONDARY").await;
@@ -138,10 +138,10 @@ async fn chat_payload_revision() {
     pending.await.unwrap().unwrap();
     assert!(stored(&rig, "chats", "c1").is_none(), "a versioned answer cannot bypass the tombstone");
     assert!(members(&rig, &primary).is_empty());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn payload_errors_and_terminal_events_never_fall_back_to_http() {
+#[test]
+fn payload_errors_and_terminal_events_never_fall_back_to_http() { crate::test_wait::paused(async {
     let (rig, updates) = payload_rig(true, true).await;
     for payload in [Value::Null, json!({"id":"c1", "title":"incomplete"}), json!({"id":"c1", "title":"bad type", "revision":"bad", "lists":[]})] {
         emit(&rig, message(payload, json!({"id":"m1", "chatId":"c1", "text":"valid"})));
@@ -159,19 +159,19 @@ async fn payload_errors_and_terminal_events_never_fall_back_to_http() {
         assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("after removal"));
     }
     assert_eq!(rig.transport.calls().iter().map(|call| call.operation_name.as_str()).collect::<Vec<_>>(), ["Changes"]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn payload_events_use_current_readers_and_reject_the_connection_after_reset() {
+#[test]
+fn payload_events_use_current_readers_and_reject_the_connection_after_reset() { crate::test_wait::paused(async {
     let (rig, updates) = payload_rig(true, true).await;
     emit(&rig, message(chat("c1", "before reader", 1, "PRIMARY"), json!({"id":"m1", "chatId":"c1", "text":"old"})));
     rig.transport.await_consumed("Changes").await;
     updates.cancel();
     rig.transport.await_cancellations("Changes", 1).await;
     let events = super::model_event_tests::open_heard(&rig.sync, "chats").await.unwrap();
-    assert!(tokio::time::timeout(Duration::from_millis(1), events.next()).await.is_err(), "no replay");
+    assert!(crate::test_wait::timeout(Duration::from_millis(1), events.next()).await.is_err(), "no replay");
     emit(&rig, message(chat("c1", "after reader", 2, "PRIMARY"), json!({"id":"m1", "chatId":"c1", "text":"new"})));
-    let item = tokio::time::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
+    let item = crate::test_wait::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
     let HeardItem::Event(event) = item else { panic!("expected event") };
     assert_eq!(event.before.unwrap().text("title"), Some("before reader"));
     assert_eq!(event.after.unwrap().text("title"), Some("after reader"));
@@ -181,7 +181,7 @@ async fn payload_events_use_current_readers_and_reject_the_connection_after_rese
     assert!(stored(&rig, "chats", "c1").is_none());
     assert!(stored(&rig, "messages", "m1").is_none());
     events.close();
-}
+}) }
 
 struct EventClock {
     clock: crate::pacing::TestClock,
@@ -198,8 +198,8 @@ impl crate::pacing::Clock for EventClock {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn chat_event_work() {
+#[test]
+fn chat_event_work() { crate::test_wait::paused(async {
     use std::sync::atomic::{AtomicUsize, Ordering};
     for count in [1, 100] {
         let (original, original_updates) = payload_rig(true, true).await;
@@ -211,7 +211,7 @@ async fn chat_event_work() {
             spec.changes = vec![serde_json::from_value(json!({"area":format!("UNRELATED{index}"), "relation":"node"})).unwrap()];
             specs.push(spec);
         }
-        let clock = Arc::new(EventClock { clock: crate::pacing::TestClock::new(Duration::from_millis(START_MS)), wakes: AtomicUsize::new(0) });
+        let clock = Arc::new(EventClock { clock: crate::test_wait::clock(Duration::from_millis(START_MS)), wakes: AtomicUsize::new(0) });
         let db = Db::open_in_memory(specs, None).unwrap();
         let transport = MockTransport::new();
         let sync = super::Sync::new(db.clone(), Arc::new(transport.clone()), clock.clone(), SyncConfig::default());
@@ -225,8 +225,8 @@ async fn chat_event_work() {
         assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("target only"));
         let baseline = (rig.transport.calls().len(), rig.transport.waits("Changes"), clock.wakes.load(Ordering::SeqCst));
         rig.clock.advance(Duration::from_secs(86400));
-        tokio::time::advance(Duration::from_secs(86400)).await;
+        crate::test_wait::pass(Duration::from_secs(86400)).await;
         tokio::task::yield_now().await;
         assert_eq!((rig.transport.calls().len(), rig.transport.waits("Changes"), clock.wakes.load(Ordering::SeqCst)), baseline, "idle requests, stream wakeups and timer wakeups");
     }
-}
+}) }

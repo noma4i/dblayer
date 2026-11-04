@@ -160,8 +160,8 @@ impl HttpExchange for Reconnecting {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn bootstrap_retries_with_a_new_request_id() {
+#[test]
+fn bootstrap_retries_with_a_new_request_id() { crate::test_wait::paused(async {
   for fault in ["network", "408", "429", "500", "503", "599", "TIMEOUT", "SERVICE_UNAVAILABLE", "INTERNAL_SERVER_ERROR", "DATABASE_ERROR"] {
     let http = Arc::new(Reconnecting { calls: AtomicUsize::new(0), ids: std::sync::Mutex::new(Vec::new()), fault });
     let result = fetch_with(&configuration(), AppPlatform::Ios, "1.2", None, http.clone(), &crate::pacing::TestClock::new(Duration::from_secs(1_800_000_000))).await;
@@ -170,7 +170,7 @@ async fn bootstrap_retries_with_a_new_request_id() {
     assert_eq!(ids.len(), 2);
     assert_ne!(ids[0], ids[1]);
   }
-}
+}) }
 #[async_trait::async_trait]
 impl HttpExchange for Http {
     async fn post(&self, path: &str, token: String, _: crate::transport::NetworkPurpose) -> Result<HttpReply, TransportError> {

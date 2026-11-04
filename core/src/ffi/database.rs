@@ -675,15 +675,17 @@ impl Database {
         let admitted = db.admit()?;
         blocking(move || Ok(db.maintain(&admitted, &[]).map(|_| ())?)).await
     }
-    /// Closes the database: every lease ends, every holder closes, the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
+    /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
         let finished = self.close_holders();
         let lifecycle = self.streams.clone();
         let drained = on_executor(async move {
             tokio::time::timeout(Duration::from_secs(10), lifecycle.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", lifecycle.held().join("; ")) })
         }).await;
+        let db = self.db.clone();
+        let ended = blocking(move || Ok(db.close()?)).await;
         if finished { if let Some(lease) = self.lease.get() { lease.release(); } }
-        drained
+        drained.and(ended)
     }
 }
 

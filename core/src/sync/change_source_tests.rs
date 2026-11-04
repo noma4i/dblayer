@@ -30,8 +30,8 @@ fn chat_node_ids(rig: &Rig) -> Vec<serde_json::Value> {
     rig.transport.calls().iter().filter(|call| call.operation_name == "ChatNode").map(|call| call.variables["id"].clone()).collect()
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_message_event_rereads_the_chat_of_the_message_it_loaded() {
+#[test]
+fn a_message_event_rereads_the_chat_of_the_message_it_loaded() { crate::test_wait::paused(async {
     let (rig, subscription) = chat_of_message_rig().await;
     rig.transport.enqueue("MessageTranscodeStatus", Reply::data(json!({"node":{"id":"m1", "chatId":"c1"}})));
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node":{"id":"c1", "title":"fresh"}})));
@@ -41,20 +41,20 @@ async fn a_message_event_rereads_the_chat_of_the_message_it_loaded() {
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("fresh"));
     assert_eq!(rig.transport.call_count("MessageTranscodeStatus"), 1);
     assert_eq!(subscription.status().rejected, 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_missing_message_skips_the_chat_read() {
+#[test]
+fn a_missing_message_skips_the_chat_read() { crate::test_wait::paused(async {
     let (rig, subscription) = chat_of_message_rig().await;
     rig.transport.enqueue("MessageTranscodeStatus", Reply::data(json!({"node":null})));
     message_event(&rig, "CREATED", "m1");
     rig.transport.await_consumed("Changes").await;
     assert!(chat_node_ids(&rig).is_empty());
     assert_eq!(subscription.status().rejected, 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_failed_message_read_skips_the_chat_read_even_when_the_row_is_stored() {
+#[test]
+fn a_failed_message_read_skips_the_chat_read_even_when_the_row_is_stored() { crate::test_wait::paused(async {
     let (rig, subscription) = chat_of_message_rig().await;
     put(&rig, "messages", json!({"id":"m1", "chatId":"c1", "text":"old"}));
     rig.transport.enqueue("MessageTranscodeStatus", Reply::graphql_error("boom", "INTERNAL"));
@@ -62,10 +62,10 @@ async fn a_failed_message_read_skips_the_chat_read_even_when_the_row_is_stored()
     rig.transport.await_consumed("Changes").await;
     assert!(chat_node_ids(&rig).is_empty());
     assert_eq!(subscription.status().rejected, 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_deleted_message_still_rereads_the_chat_it_belonged_to() {
+#[test]
+fn a_deleted_message_still_rereads_the_chat_it_belonged_to() { crate::test_wait::paused(async {
     let (rig, subscription) = chat_of_message_rig().await;
     put(&rig, "messages", json!({"id":"m1", "chatId":"c1", "text":"old"}));
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node":{"id":"c1", "title":"after delete"}})));
@@ -75,7 +75,7 @@ async fn a_deleted_message_still_rereads_the_chat_it_belonged_to() {
     assert_eq!(chat_node_ids(&rig), [json!("c1")]);
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("after delete"));
     assert_eq!(subscription.status().rejected, 0);
-}
+}) }
 
 fn activity_model() -> crate::schema::ModelSpec {
     use crate::schema::FieldSpec;
@@ -93,8 +93,8 @@ fn activity_model() -> crate::schema::ModelSpec {
     model
 }
 
-#[tokio::test(start_paused = true)]
-async fn events_with_one_chat_and_user_are_one_row_and_an_inactive_event_deletes_it() {
+#[test]
+fn events_with_one_chat_and_user_are_one_row_and_an_inactive_event_deletes_it() { crate::test_wait::paused(async {
     let rig = rig_on(Db::open_in_memory(vec![activity_model()], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(super::OperationDef::new("ActionSignal", "subscription ActionSignal { actionSignal { chatId userId kind active } }", "actionSignal"));
     rig.sync.inner.listen_all();
@@ -112,4 +112,4 @@ async fn events_with_one_chat_and_user_are_one_row_and_an_inactive_event_deletes
     rig.transport.await_consumed("ActionSignal").await;
     let left: Vec<_> = rows().iter().map(|row| row.text("userId").unwrap().to_string()).collect();
     assert_eq!(left, ["u2"]);
-}
+}) }

@@ -4,8 +4,8 @@ use super::rig::*;
 use crate::operation::OperationStatus;
 use crate::transport::Reply;
 
-#[tokio::test(start_paused = true)]
-async fn an_ended_session_parks_the_outbox_until_the_next_session_starts() {
+#[test]
+fn an_ended_session_parks_the_outbox_until_the_next_session_starts() { crate::test_wait::paused(async {
     let rig = rig();
     let row = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "unsent"}))).unwrap();
     rig.sync.end_session_for_test();
@@ -17,10 +17,10 @@ async fn an_ended_session_parks_the_outbox_until_the_next_session_starts() {
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     assert!(rig.db.find("moments", &row.id).unwrap().is_none());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn repeating_a_session_online_or_listening_event_adds_no_request() {
+#[test]
+fn repeating_a_session_online_or_listening_event_adds_no_request() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &Default::default(), Default::default()).await.unwrap();
@@ -36,7 +36,7 @@ async fn repeating_a_session_online_or_listening_event_adds_no_request() {
     }
     rig.sync.settled_for_test().await;
     assert_eq!((rig.transport.call_count("MomentsFeed"), rig.transport.call_count("MomentListen")), settled);
-}
+}) }
 
 #[tokio::test]
 async fn ending_the_session_cancels_a_send_in_flight_and_frees_the_outbox() {
@@ -59,7 +59,7 @@ async fn closing_the_database_ends_the_outcome_wait_of_a_pending_operation() {
     let (_, ticket) = create_claimed(&rig.sync, "moments", params(json!({"text": "unsent"})));
     let admitted = rig.sync.inner.db.admit().unwrap();
     let waiting = tokio::spawn(async move { admitted.run(ticket.result()).await.map(drop) });
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    crate::test_wait::pass(std::time::Duration::from_millis(100)).await;
     assert!(!waiting.is_finished());
     rig.sync.close();
     assert!(crate::test_wait::within(waiting).await.unwrap().is_err(), "an outcome wait outlived the close");

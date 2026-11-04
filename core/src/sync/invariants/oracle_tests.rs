@@ -66,8 +66,8 @@ fn texts(rig: &Rig) -> Vec<String> {
     found
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_11_random_record_histories_end_equal_on_the_client_the_server_and_the_oracle() {
+#[test]
+fn inv_op_11_random_record_histories_end_equal_on_the_client_the_server_and_the_oracle() { crate::test_wait::paused(async {
     let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
     for seed in 1..=120u64 {
         let rig = rig();
@@ -147,7 +147,7 @@ async fn inv_op_11_random_record_histories_end_equal_on_the_client_the_server_an
     for kind in ["create", "update", "destroy", "discard", "flush"] {
         assert!(kinds.get(kind).copied().unwrap_or(0) >= 30, "too few {kind} steps: {kinds:?}");
     }
-}
+}) }
 
 fn rid_of(text: &str) -> RowId {
     RowId::new(text).unwrap()

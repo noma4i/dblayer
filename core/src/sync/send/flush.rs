@@ -167,6 +167,7 @@ impl Drop for InFlight<'_> {
         drop(attempts);
         if !self.settled { self.give_up(); }
         locked(&self.inner.outcomes).end_send(self.seq);
+        crate::db::lock::effect(|| self.inner.sends_ended.send_modify(|ended| *ended += 1));
     }
 }
 
@@ -344,8 +345,23 @@ impl Inner {
             publish.release();
             publish.acquire().await;
         }
+        let elsewhere: Vec<(Generation, i64)> = locked(&self.final_attempts).active.keys().copied().collect();
+        if !elsewhere.is_empty() {
+            publish.release();
+            self.sends_ended_of(&elsewhere).await;
+            publish.acquire().await;
+        }
         locked(self.operation_queue()?).begin_pass();
         Ok(report)
+    }
+
+    async fn sends_ended_of(&self, attempts: &[(Generation, i64)]) {
+        let mut ended = self.sends_ended.subscribe();
+        loop {
+            ended.borrow_and_update();
+            let running = { let active = locked(&self.final_attempts); attempts.iter().any(|key| active.active.contains_key(key)) };
+            if !running || ended.changed().await.is_err() { return; }
+        }
     }
 
     fn record_send(&self, effects: &DeliveryEffects, report: &mut FlushReport, cursor: &mut i64, checked: RefusalState, entry: OutboxOperation, result: SendResult) -> Result<(), SyncError> {
@@ -538,7 +554,7 @@ impl Inner {
         let admitted = sending.admitted;
         let mut delivery: Pin<Box<dyn Future<Output = Delivery> + Send + '_>> = if sending.entry.operation.upload.is_some() {
             Box::pin(async move {
-                match tokio::time::timeout(self.config.upload.step_timeout, self.deliver_or_resume(admitted, request, resumed)).await {
+                match crate::pacing::timeout(self.clock.as_ref(), self.config.upload.step_timeout, self.deliver_or_resume(admitted, request, resumed)).await {
                     Ok(delivery) => delivery,
                     Err(_) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, "the mutation timed out")),
                 }

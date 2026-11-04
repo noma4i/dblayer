@@ -77,8 +77,8 @@ async fn older_page(size: usize) -> Work {
     measured(&rig, directory, load_next_page(&rig)).await
 }
 
-#[tokio::test(start_paused = true)]
-async fn one_change_costs_the_same_work_at_every_list_size() {
+#[test]
+fn one_change_costs_the_same_work_at_every_list_size() { crate::test_wait::paused(async {
     for (name, small, large) in [
         ("an event row", event_row(SMALL).await, event_row(LARGE).await),
         ("a confirmed row", confirmed_row(SMALL).await, confirmed_row(LARGE).await),
@@ -87,4 +87,4 @@ async fn one_change_costs_the_same_work_at_every_list_size() {
         assert!(large.steps <= small.steps + small.steps / 10, "{name}: {} write steps at {SMALL} rows, {} at {LARGE}", small.steps, large.steps);
         assert!(small.rows_loaded <= WINDOW && large.rows_loaded <= WINDOW, "{name}: rows read {} at {SMALL} rows, {} at {LARGE}, window of {WINDOW}", small.rows_loaded, large.rows_loaded);
     }
-}
+}) }

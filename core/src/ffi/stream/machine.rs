@@ -27,7 +27,7 @@ pub(super) enum Input {
     Opened,
     Value(Cell<Option<StreamValue>>),
     Heard(Cell<Option<WireModelEvent>>, Stamp),
-    Unread,
+    Unread(u64),
     DataGone,
     Resync,
     /// The reader waits for the rows of this revision of the database.
@@ -312,7 +312,7 @@ impl Facts {
         let now = context.fixed.life.snapshot().stamp();
         if now.session_epoch != stamp.session_epoch { return; }
         let Some(event) = cell.take() else { return };
-        let appended = if now.generation == stamp.generation { self.journal.append(StreamValue::Event { event }) } else { self.journal.lose() };
+        let appended = if now.generation == stamp.generation { self.journal.append(StreamValue::Event { event }) } else { self.journal.lose(1) };
         self.noted(context, appended);
     }
 
@@ -339,8 +339,8 @@ impl Facts {
                 self.heard(context, cell, *stamp);
                 Handled
             }
-            Input::Unread => {
-                let appended = self.journal.lose();
+            Input::Unread(count) => {
+                let appended = self.journal.lose(*count);
                 self.noted(context, appended);
                 Handled
             }
@@ -398,7 +398,7 @@ impl Facts {
                 self.opened(context);
                 Transition(State::live())
             }
-            Input::Value(_) | Input::Heard(..) | Input::Unread => {
+            Input::Value(_) | Input::Heard(..) | Input::Unread(_) => {
                 self.opened(context);
                 let _ = self.running(context, event);
                 Transition(State::live())

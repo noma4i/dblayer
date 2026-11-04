@@ -27,7 +27,7 @@ pub struct ModelEvent {
 pub(crate) trait EventReader: Send + std::marker::Sync {
     fn model(&self) -> &str;
     fn heard(&self, event: &ModelEvent, stamp: crate::lifecycle::Stamp);
-    fn unread(&self);
+    fn unread(&self, count: u64);
 }
 
 static READERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -48,8 +48,10 @@ impl Inner {
         for reader in self.readers_of(&event.model) { reader.heard(&event, stamp); }
     }
 
-    pub(crate) fn publish_model_gap(&self, model: &str) {
-        for reader in self.readers_of(model) { reader.unread(); }
+    pub(crate) fn publish_model_gap(&self, model: &str) { self.publish_model_loss(model, 1); }
+
+    pub(crate) fn publish_model_loss(&self, model: &str, count: u64) {
+        for reader in self.readers_of(model) { reader.unread(count); }
     }
 
     /// A failed read is published as a gap in the queue, never as a row that was not there.

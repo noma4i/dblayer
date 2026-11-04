@@ -30,8 +30,8 @@ fn summary(state: &RelationState) -> (LoadPhase, Option<&'static str>) {
     (state.phase, state.error.as_ref().map(|error| error.kind))
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_05_a_load_offline_before_the_flight_ends_with_a_network_error() {
+#[test]
+fn inv_loadm_05_a_load_offline_before_the_flight_ends_with_a_network_error() { crate::test_wait::paused(async {
     let rig = rig();
     let state = feed_state(&rig).await;
     rig.sync.set_online(false);
@@ -39,10 +39,10 @@ async fn inv_loadm_05_a_load_offline_before_the_flight_ends_with_a_network_error
     assert_eq!(result.unwrap_err(), SyncError::Offline);
     assert_eq!(summary(&state.borrow()), (LoadPhase::Failed, Some("network")));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_05_an_offline_load_of_a_window_with_rows_keeps_the_rows_phase_and_shows_the_error() {
+#[test]
+fn inv_loadm_05_an_offline_load_of_a_window_with_rows_keeps_the_rows_phase_and_shows_the_error() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     let state = feed_state(&rig).await;
@@ -50,10 +50,10 @@ async fn inv_loadm_05_an_offline_load_of_a_window_with_rows_keeps_the_rows_phase
     rig.sync.set_online(false);
     assert!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.is_err());
     assert_eq!(summary(&state.borrow()), (LoadPhase::Loaded, Some("network")));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_05_going_offline_in_the_middle_of_a_flight_ends_it_with_a_network_error() {
+#[test]
+fn inv_loadm_05_going_offline_in_the_middle_of_a_flight_ends_it_with_a_network_error() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1").after(Duration::from_secs(30)));
     let state = feed_state(&rig).await;
@@ -63,10 +63,10 @@ async fn inv_loadm_05_going_offline_in_the_middle_of_a_flight_ends_it_with_a_net
     rig.sync.set_online(false);
     assert_eq!(flight.await.unwrap().unwrap_err(), SyncError::Offline);
     assert_eq!(summary(&state.borrow()), (LoadPhase::Failed, Some("network")));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_06_an_answer_that_arrives_after_the_caller_left_changes_nothing() {
+#[test]
+fn inv_loadm_06_an_answer_that_arrives_after_the_caller_left_changes_nothing() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1").after(Duration::from_secs(30)));
     let state = feed_state(&rig).await;
@@ -76,16 +76,16 @@ async fn inv_loadm_06_an_answer_that_arrives_after_the_caller_left_changes_nothi
     flight.abort();
     let _ = flight.await;
     assert_eq!(summary(&state.borrow()), (LoadPhase::NotLoaded, None));
-    tokio::time::sleep(Duration::from_secs(60)).await;
+    crate::test_wait::pass(Duration::from_secs(60)).await;
     assert_eq!(summary(&state.borrow()), (LoadPhase::NotLoaded, None));
     assert!(member_ids(&rig, "moments", "feed", &none()).is_empty());
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(summary(&state.borrow()), (LoadPhase::Loaded, None));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_07_a_window_with_two_flights_stays_loading_until_both_end_in_either_order() {
+#[test]
+fn inv_loadm_07_a_window_with_two_flights_stays_loading_until_both_end_in_either_order() { crate::test_wait::paused(async {
     for (refresh_takes, more_takes) in [(10, 20), (20, 10)] {
         let rig = rig();
         rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
@@ -108,10 +108,10 @@ async fn inv_loadm_07_a_window_with_two_flights_stays_loading_until_both_end_in_
         let done = state.borrow().clone();
         assert_eq!((done.phase, done.refreshing, done.fetching_more, done.error), (LoadPhase::Loaded, false, false, None), "{refresh_takes}/{more_takes}");
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_08_going_online_repeats_the_load_that_failed_by_network_once() {
+#[test]
+fn inv_loadm_08_going_online_repeats_the_load_that_failed_by_network_once() { crate::test_wait::paused(async {
     let rig = rig();
     let state = feed_state(&rig).await;
     rig.sync.set_online(false);
@@ -126,10 +126,10 @@ async fn inv_loadm_08_going_online_repeats_the_load_that_failed_by_network_once(
     rig.sync.set_online(true);
     await_tasks_ended().await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1, "a healed window is not loaded again");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_error() {
+#[test]
+fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_error() { crate::test_wait::paused(async {
     let rig = rig();
     let watched = feed_state(&rig).await;
     rig.sync.set_online(false);
@@ -149,10 +149,10 @@ async fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_e
     await_tasks_ended().await;
     assert_eq!(server.transport.call_count("MomentsFeed"), 1);
     assert_eq!(summary(&state.borrow()), (LoadPhase::Failed, Some("server")));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_04_a_background_failure_with_rows_is_loaded_with_the_error() {
+#[test]
+fn inv_loadm_04_a_background_failure_with_rows_is_loaded_with_the_error() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
@@ -162,10 +162,10 @@ async fn inv_loadm_04_a_background_failure_with_rows_is_loaded_with_the_error() 
     let kept = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(kept.status, LoadStatus::KeptStale);
     assert_eq!(summary(&state.borrow()), (LoadPhase::Loaded, Some("server")));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_09_a_cache_reset_returns_the_window_to_not_loaded() {
+#[test]
+fn inv_loadm_09_a_cache_reset_returns_the_window_to_not_loaded() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     let state = feed_state(&rig).await;
@@ -174,19 +174,19 @@ async fn inv_loadm_09_a_cache_reset_returns_the_window_to_not_loaded() {
     rig.db.reset(&["moments"]).unwrap();
     assert_eq!(summary(&state.borrow()), (LoadPhase::NotLoaded, None));
     assert_eq!(state.borrow().loaded_at, None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_01_closing_the_last_sync_handle_ends_every_window_as_closed() {
+#[test]
+fn inv_loadm_01_closing_the_last_sync_handle_ends_every_window_as_closed() { crate::test_wait::paused(async {
     let rig = rig();
     let state = feed_state(&rig).await;
     let Rig { sync, .. } = rig;
     drop(sync);
     assert_eq!(state.borrow().phase, LoadPhase::Closed);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_10_the_first_load_after_a_reopen_is_not_superseded_by_the_stored_window() {
+#[test]
+fn inv_loadm_10_the_first_load_after_a_reopen_is_not_superseded_by_the_stored_window() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -195,4 +195,4 @@ async fn inv_loadm_10_the_first_load_after_a_reopen_is_not_superseded_by_the_sto
     reopened.clock.advance(Duration::from_secs(400));
     let outcome = reopened.sync.load(&reopened.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(outcome.status, LoadStatus::Loaded);
-}
+}) }

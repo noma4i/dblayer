@@ -28,8 +28,8 @@ async fn freshness_read_does_not_hold_the_flight_lock() {
     assert!(crate::test_wait::recv_within(&received));
 }
 
-#[tokio::test(start_paused = true)]
-async fn first_page_lands_rows_members_and_window() {
+#[test]
+fn first_page_lands_rows_members_and_window() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], true, "c2"));
     let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -39,10 +39,10 @@ async fn first_page_lands_rows_members_and_window() {
     let stored = window(&rig, "feed", &none()).unwrap();
     assert_eq!((stored.cursor.as_deref(), stored.has_next), (Some("c2"), true));
     assert_eq!(rig.transport.calls()[0].variables, json!({"first": 2}));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn nested_author_lands_in_users() {
+#[test]
+fn nested_author_lands_in_users() { crate::test_wait::paused(async {
     let rig = rig();
     let node = json!({"id": "m1", "text": "hi", "author": {"id": "u1", "name": "Ann"}});
     rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![node], false, "c1")));
@@ -50,10 +50,10 @@ async fn nested_author_lands_in_users() {
     let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     assert_eq!(user.text("name"), Some("Ann"));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("hi".to_string()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_01_fresh_window_is_skipped_until_stale_time_passes() {
+#[test]
+fn inv_fresh_01_fresh_window_is_skipped_until_stale_time_passes() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -65,20 +65,20 @@ async fn inv_fresh_01_fresh_window_is_skipped_until_stale_time_passes() {
     let again = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(again.status, LoadStatus::Loaded);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn force_reloads_a_fresh_window() {
+#[test]
+fn force_reloads_a_fresh_window() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let forced = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     assert_eq!(forced.status, LoadStatus::Loaded);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn stale_window_loads_again() {
+#[test]
+fn stale_window_loads_again() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -86,10 +86,10 @@ async fn stale_window_loads_again() {
     let again = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(again.status, LoadStatus::Loaded);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn empty_result_uses_the_shorter_empty_window() {
+#[test]
+fn empty_result_uses_the_shorter_empty_window() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": []})));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
@@ -99,10 +99,10 @@ async fn empty_result_uses_the_shorter_empty_window() {
     rig.clock.advance(Duration::from_secs(6));
     let again = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(again.status, LoadStatus::Loaded);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_01_parallel_identical_loads_share_one_transport_call() {
+#[test]
+fn inv_fresh_01_parallel_identical_loads_share_one_transport_call() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2").after(Duration::from_secs(1)));
     let nothing = none();
@@ -118,28 +118,28 @@ async fn inv_fresh_01_parallel_identical_loads_share_one_transport_call() {
     assert_eq!(second_rows, ["m1", "m2"], "the second caller returned before the rows landed");
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     assert_eq!(rig.sync.counters().transport_calls, 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn network_error_is_retried_with_delay() {
+#[test]
+fn network_error_is_retried_with_delay() { crate::test_wait::paused(async {
     let mut delays = Vec::new();
     for _ in 0..3 {
         let rig = rig();
         rig.transport.enqueue("MomentsFeed", Reply::fail(TransportError::Network("down".to_string())));
         rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-        let started = tokio::time::Instant::now();
+        let started = crate::pacing::Clock::now(&rig.clock);
         let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
         assert_eq!((outcome.status, outcome.attempts), (LoadStatus::Loaded, 2));
-        delays.push(started.elapsed());
-        assert!((Duration::from_millis(800)..=Duration::from_secs(1)).contains(&started.elapsed()));
+        delays.push(crate::pacing::Clock::now(&rig.clock) - started);
+        assert!((Duration::from_millis(800)..=Duration::from_secs(1)).contains(&(crate::pacing::Clock::now(&rig.clock) - started)));
         assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
         assert_eq!(rig.sync.counters().transport_calls, 2);
     }
     assert!(delays.windows(2).any(|pair| pair[0] != pair[1]), "clients repeated together: {delays:?}");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_08_offline_load_makes_no_call_and_online_loads_again() {
+#[test]
+fn inv_fresh_08_offline_load_makes_no_call_and_online_loads_again() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.set_online(false);
@@ -151,7 +151,7 @@ async fn inv_fresh_08_offline_load_makes_no_call_and_online_loads_again() {
     assert_eq!(outcome.status, LoadStatus::Loaded);
     rig.sync.set_online(false);
     assert_eq!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await, Err(SyncError::Offline));
-}
+}) }
 
 #[tokio::test]
 async fn offline_interrupts_a_load_without_waiting_for_http() {
@@ -175,17 +175,17 @@ async fn offline_interrupts_a_load_without_waiting_for_http() {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn retry_budget_is_spent_then_the_error_is_returned() {
+#[test]
+fn retry_budget_is_spent_then_the_error_is_returned() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::fail(TransportError::Network("down".to_string())));
     let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await;
     assert_eq!(result, Err(SyncError::Transport(TransportError::Network("down".to_string()))));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 4);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn server_code_is_retried_and_fatal_code_is_not() {
+#[test]
+fn server_code_is_retried_and_fatal_code_is_not() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("busy", "SERVICE_UNAVAILABLE"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
@@ -195,10 +195,10 @@ async fn server_code_is_retried_and_fatal_code_is_not() {
     let fatal = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions::default()).await;
     assert!(matches!(fatal, Err(SyncError::Graphql { messages, .. }) if messages == ["nope"]));
     assert_eq!(rig.transport.call_count("MomentsByUser"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_05_inv_merge_10_failed_refresh_keeps_stale_data_unless_forced() {
+#[test]
+fn inv_fresh_05_inv_merge_10_failed_refresh_keeps_stale_data_unless_forced() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
@@ -212,18 +212,18 @@ async fn inv_fresh_05_inv_merge_10_failed_refresh_keeps_stale_data_unless_forced
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m1"]);
     assert_eq!(rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap(), row);
     assert_eq!(window(&rig, "feed", &none()), window_before);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_05_inv_merge_10_failed_first_load_without_window_is_an_error() {
+#[test]
+fn inv_fresh_05_inv_merge_10_failed_first_load_without_window_is_an_error() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
     let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await;
     assert!(matches!(result, Err(SyncError::Graphql { messages, .. }) if messages == ["nope"]));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn older_response_does_not_overwrite_newer_event_data() {
+#[test]
+fn older_response_does_not_overwrite_newer_event_data() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", json!({"id": "m1", "text": "old", "userId": null}));
     let page = Reply::data(feed_page(vec![moment("m1", "from server"), moment("m2", "m2")], false, "c2"));
@@ -236,10 +236,10 @@ async fn older_response_does_not_overwrite_newer_event_data() {
     assert_eq!(text_of(&rig, "moments", "m1"), Some("event wins".to_string()));
     assert_eq!(text_of(&rig, "moments", "m2"), Some("m2".to_string()));
     assert!(rig.sync.counters().stale_version_drops >= 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_05_row_destroyed_during_flight_is_not_resurrected() {
+#[test]
+fn inv_merge_05_row_destroyed_during_flight_is_not_resurrected() { crate::test_wait::paused(async {
     use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
     let rig = rig();
     put(&rig, "moments", json!({"id": "m1", "text": "old", "userId": null}));
@@ -254,10 +254,10 @@ async fn inv_merge_05_row_destroyed_during_flight_is_not_resurrected() {
     task.await.unwrap().unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m2"]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_03_response_after_a_reset_is_discarded() {
+#[test]
+fn inv_fresh_03_response_after_a_reset_is_discarded() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1").after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
@@ -267,10 +267,10 @@ async fn inv_fresh_03_response_after_a_reset_is_discarded() {
     let outcome = task.await.unwrap();
     assert!(matches!(&outcome, Err(SyncError::Transport(TransportError::Interrupted(_)))), "the explicit call straddling the reset must end with its outcome: {outcome:?}");
     assert_eq!(text_of(&rig, "moments", "m1"), None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn list_load_replaces_membership_completely() {
+#[test]
+fn list_load_replaces_membership_completely() { crate::test_wait::paused(async {
     let rig = rig();
     let mine = params(json!({"userId": "u1"}));
     let list = |ids: &[&str]| Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()}));
@@ -281,10 +281,10 @@ async fn list_load_replaces_membership_completely() {
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &mine, LoadOptions { force: true }).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "by_user", &mine), ["b", "c"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"userId": "u1"}));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn consecutive_list_loads_keep_the_server_order() {
+#[test]
+fn consecutive_list_loads_keep_the_server_order() { crate::test_wait::paused(async {
     let rig = rig();
     let params = params(json!({"userId": "u1"}));
     let lists = [vec!["m3", "m0", "m6", "m2"], vec!["m2", "m3", "m4", "m5", "m7"], vec!["m0", "m5", "m2"], vec!["m7", "m6", "m1", "m3", "m2"]];
@@ -293,10 +293,10 @@ async fn consecutive_list_loads_keep_the_server_order() {
         crate::test_wait::within(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, LoadOptions { force: true })).await.unwrap();
         assert_eq!(member_ids(&rig, "moments", "by_user", &params), ids);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn null_param_loads_its_own_list_and_sends_null() {
+#[test]
+fn null_param_loads_its_own_list_and_sends_null() { crate::test_wait::paused(async {
     let rig = rig();
     let unowned = params(json!({"userId": null}));
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [moment("a", "a")]})));
@@ -304,10 +304,10 @@ async fn null_param_loads_its_own_list_and_sends_null() {
     assert_eq!(outcome.status, LoadStatus::Loaded);
     assert_eq!(member_ids(&rig, "moments", "by_user", &unowned), ["a"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"userId": null}));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn singleton_load_and_refresh_store_without_observers() {
+#[test]
+fn singleton_load_and_refresh_store_without_observers() { crate::test_wait::paused(async {
     for force in [false, true] {
         let rig = rig();
         rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
@@ -321,10 +321,10 @@ async fn singleton_load_and_refresh_store_without_observers() {
         let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
         assert_eq!(user.text("name"), Some("Ann"));
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn refreshing_the_first_page_keeps_the_loaded_tail_when_the_anchor_is_found() {
+#[test]
+fn refreshing_the_first_page_keeps_the_loaded_tail_when_the_anchor_is_found() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], false, "c4"));
@@ -335,19 +335,19 @@ async fn refreshing_the_first_page_keeps_the_loaded_tail_when_the_anchor_is_foun
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["a", "b", "c", "d"]);
     assert_eq!(window(&rig, "feed", &none()).unwrap().cursor.as_deref(), Some("c4"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn rows_failing_normalization_are_counted_not_fatal() {
+#[test]
+fn rows_failing_normalization_are_counted_not_fatal() { crate::test_wait::paused(async {
     let rig = rig();
     let page = feed_page(vec![moment("m1", "ok"), json!({"text": "no id"})], false, "c1");
     rig.transport.enqueue("MomentsFeed", Reply::data(page));
     let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!((outcome.rows, outcome.dropped), (1, 1));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn unknown_names_are_reported() {
+#[test]
+fn unknown_names_are_reported() { crate::test_wait::paused(async {
     let rig = rig();
     let load = |model: &'static str, relation: &'static str| {
         let sync = rig.sync.clone();
@@ -356,25 +356,25 @@ async fn unknown_names_are_reported() {
     assert!(matches!(load("ghosts", "feed").await, Err(SyncError::UnknownModel(_))));
     assert!(matches!(load("moments", "nope").await, Err(SyncError::UnknownRelation { .. })));
     assert!(matches!(load("moments", "recent").await, Err(SyncError::NotRemote { .. })));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn missing_operation_registration_is_reported() {
+#[test]
+fn missing_operation_registration_is_reported() { crate::test_wait::paused(async {
     let rig = rig();
     rig.sync.inner.operations.lock().unwrap().clear();
     let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await;
     assert_eq!(result, Err(SyncError::UnknownOperation("MomentsFeed".to_string())));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn invalid_params_are_reported() {
+#[test]
+fn invalid_params_are_reported() { crate::test_wait::paused(async {
     let rig = rig();
     let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params(json!({"bogus": "x"})), LoadOptions::default()).await;
     assert!(matches!(result, Err(SyncError::Params(_))));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_observe_05_forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery() {
+#[test]
+fn inv_observe_05_forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -400,20 +400,20 @@ async fn inv_observe_05_forced_reload_of_a_complete_feed_replaces_the_members_in
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     let all = seen.lock().unwrap().clone();
     assert_eq!(all, vec![(vec!["m1".to_string(), "m2".to_string()], 0), (vec!["m2".to_string(), "m3".to_string()], 1)]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn rows_without_the_scope_column_get_the_param() {
+#[test]
+fn rows_without_the_scope_column_get_the_param() { crate::test_wait::paused(async {
     let rig = rig();
     let mine = params(json!({"userId": "u1"}));
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &mine, LoadOptions::default()).await.unwrap();
     let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
     assert_eq!(row.text("userId"), Some("u1"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn text_param_keys_its_own_window_without_a_column() {
+#[test]
+fn text_param_keys_its_own_window_without_a_column() { crate::test_wait::paused(async {
     let rig = rig();
     let cats = params(json!({"query": "cats"}));
     let dogs = params(json!({"query": "dogs"}));
@@ -424,10 +424,10 @@ async fn text_param_keys_its_own_window_without_a_column() {
     assert_eq!(member_ids(&rig, "moments", "search", &cats), ["a"]);
     assert_eq!(member_ids(&rig, "moments", "search", &dogs), ["b"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"query": "cats"}));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn enum_column_groups_a_relation_and_fills_rows() {
+#[test]
+fn enum_column_groups_a_relation_and_fills_rows() { crate::test_wait::paused(async {
     let rig = rig();
     let calm = params(json!({"mood": "calm"}));
     rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
@@ -435,7 +435,7 @@ async fn enum_column_groups_a_relation_and_fills_rows() {
     assert_eq!(member_ids(&rig, "moments", "by_mood", &calm), ["a"]);
     let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
     assert_eq!(row.text("mood"), Some("calm"));
-}
+}) }
 
 async fn rig_with_user_list(size: usize) -> (Rig, Map<String, serde_json::Value>) {
     let rig = rig();
@@ -453,8 +453,8 @@ fn reads_during(work: impl FnOnce()) -> usize {
     crate::identity::touches::member_reads() - before
 }
 
-#[tokio::test(start_paused = true)]
-async fn reading_the_stored_window_for_a_load_reads_the_same_members_at_every_list_size() {
+#[test]
+fn reading_the_stored_window_for_a_load_reads_the_same_members_at_every_list_size() { crate::test_wait::paused(async {
     let mut costs = Vec::new();
     for size in [100, 10_000] {
         let (rig, params) = rig_with_user_list(size).await;
@@ -462,10 +462,10 @@ async fn reading_the_stored_window_for_a_load_reads_the_same_members_at_every_li
         costs.push(reads_during(|| assert!(rig.sync.inner.stored(&resolved).unwrap().unwrap().has_rows)));
     }
     assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn creating_a_row_in_a_loaded_list_reads_the_same_members_at_every_list_size() {
+#[test]
+fn creating_a_row_in_a_loaded_list_reads_the_same_members_at_every_list_size() { crate::test_wait::paused(async {
     let mut costs = Vec::new();
     for size in [100, 10_000] {
         let (rig, params) = rig_with_user_list(size).await;
@@ -473,7 +473,7 @@ async fn creating_a_row_in_a_loaded_list_reads_the_same_members_at_every_list_si
         assert_eq!(member_ids(&rig, "moments", "by_user", &params).len(), size + 1);
     }
     assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");
-}
+}) }
 
 #[test]
 fn resolving_twice_shares_the_operation_and_the_relation_spec() {

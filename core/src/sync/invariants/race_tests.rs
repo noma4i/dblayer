@@ -7,8 +7,8 @@ use super::super::rig::*;
 use super::fixtures::*;
 use super::spec_fixtures::mentions;
 
-#[tokio::test(start_paused = true)]
-async fn inv_id_05_inv_op_18_an_update_queued_while_the_create_is_confirmed_follows_the_real_id_or_fails() {
+#[test]
+fn inv_id_05_inv_op_18_an_update_queued_while_the_create_is_confirmed_follows_the_real_id_or_fails() { crate::test_wait::paused(async {
     for schedule in ["before the flush", "while the create is in flight", "after the confirmation"] {
         let rig = rig();
         let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
@@ -47,4 +47,4 @@ async fn inv_id_05_inv_op_18_an_update_queued_while_the_create_is_confirmed_foll
         assert_eq!(sent_with_temp, 0, "{schedule}: calls carried the temp id");
         assert!(rig.db.outbox().unwrap().iter().all(|entry| entry.operation.row_ids.iter().all(|id| id.as_str() == "m77")), "{schedule}");
     }
-}
+}) }

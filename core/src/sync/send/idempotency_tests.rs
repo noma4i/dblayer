@@ -100,8 +100,8 @@ fn connect(db: &Db, server: Arc<Mutex<Server>>) -> Sync {
     sync
 }
 
-#[tokio::test(start_paused = true)]
-async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
+#[test]
+fn idempotency_survives_reopen_and_reuses_the_successful_answer() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("outbox.sqlite");
     let server = Arc::new(Mutex::new(Server { lose_answer: true, ..Server::default() }));
@@ -137,10 +137,10 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     let requests = exchange.requests.lock().unwrap();
     assert_ne!(requests[0].0["requestId"], requests[1].0["requestId"]);
     assert_ne!(requests[0].1, requests[1].1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn idempotency_selects_distinct_or_explicit_keys_only_for_supported_inputs() {
+#[test]
+fn idempotency_selects_distinct_or_explicit_keys_only_for_supported_inputs() { crate::test_wait::paused(async {
     for (accepts, explicit) in [(true, None), (true, Some("app-key")), (false, None)] {
         let db = Db::open_in_memory(models(accepts), None).unwrap();
         let server = Arc::new(Mutex::new(Server::default()));
@@ -158,10 +158,10 @@ async fn idempotency_selects_distinct_or_explicit_keys_only_for_supported_inputs
             (false, None) => assert!(server.calls.iter().all(|call| call["input"].get("clientMutationId").is_none())),
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn idempotency_refusals_keep_the_row_and_manual_retry_keeps_the_key() {
+#[test]
+fn idempotency_refusals_keep_the_row_and_manual_retry_keeps_the_key() { crate::test_wait::paused(async {
     for code in ["IN_PROGRESS", "DUPLICATE_CLIENT_KEY"] {
         let db = Db::open_in_memory(models(true), None).unwrap();
         let server = Arc::new(Mutex::new(Server { refuse: Some(code), ..Server::default() }));
@@ -177,4 +177,4 @@ async fn idempotency_refusals_keep_the_row_and_manual_retry_keeps_the_key() {
         assert_eq!(server.calls[0], server.calls[1]);
         assert_eq!(server.effects, 1);
     }
-}
+}) }

@@ -5,8 +5,8 @@ use super::rig::*;
 use crate::db::fixtures::changes;
 use crate::transport::Reply;
 
-#[tokio::test(start_paused = true)]
-async fn confirming_a_created_row_keeps_it_after_the_rows_shown_before() {
+#[test]
+fn confirming_a_created_row_keeps_it_after_the_rows_shown_before() { crate::test_wait::paused(async {
     let rig = chat_rig(true);
     load_page(&rig, vec![message("m1", Some(1), 1), message("m2", Some(2), 2), message("m5", Some(5), 5)], false, "c").await;
     let (log, _window) = watch_thread(&rig, 50);
@@ -24,10 +24,10 @@ async fn confirming_a_created_row_keeps_it_after_the_rows_shown_before() {
     assert_eq!(changes(&log).iter().skip(seen).map(|change| change.diff.replaced.len()).sum::<usize>(), 1, "the swap is a replace, not an insert and a remove");
     let whole: Vec<String> = rig.db.query(&thread_query(&rig)).unwrap().iter().map(|row| row.id.to_string()).collect();
     assert_eq!(whole, ["m1", "m2", "m5", "m9"], "a list read of the same relation keeps the same order");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_row_delivered_by_an_event_before_its_create_is_confirmed_keeps_the_place_of_the_created_row() {
+#[test]
+fn a_row_delivered_by_an_event_before_its_create_is_confirmed_keeps_the_place_of_the_created_row() { crate::test_wait::paused(async {
     let rig = chat_rig(true);
     load_page(&rig, vec![message("m1", Some(1), 1), message("m2", Some(2), 2), message("m5", Some(5), 5)], false, "c").await;
     let _subscription = subscribe_to_events(&rig).await;
@@ -43,10 +43,10 @@ async fn a_row_delivered_by_an_event_before_its_create_is_confirmed_keeps_the_pl
 
     event(&rig, message("m10", Some(4), 10)).await;
     assert_eq!(shown(&log), ["m1", "m2", "m5", "m9", "m10"], "the confirmed row is a neighbour by its own sequence number");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn many_inserts_at_one_place_rebalance_keys_rarely_and_only_nearby() {
+#[test]
+fn many_inserts_at_one_place_rebalance_keys_rarely_and_only_nearby() { crate::test_wait::paused(async {
     let rig = chat_rig(true);
     load_page(&rig, vec![message("a", Some(1), 1), message("z", Some(1_000_000), 2)], false, "c").await;
     let _subscription = subscribe_to_events(&rig).await;
@@ -65,10 +65,10 @@ async fn many_inserts_at_one_place_rebalance_keys_rarely_and_only_nearby() {
     assert!(longest <= crate::value::ORDER_KEY_LIMIT + 8, "the longest key has {longest} characters");
     let expected: Vec<String> = ["a".to_string()].into_iter().chain((999_700..1_000_000).map(|sequence| format!("n{sequence}"))).chain(["z".to_string()]).collect();
     assert_eq!(shown(&log), expected);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_shown_row_keeps_its_place_when_an_event_or_a_page_changes_its_sequence_number() {
+#[test]
+fn a_shown_row_keeps_its_place_when_an_event_or_a_page_changes_its_sequence_number() { crate::test_wait::paused(async {
     let rig = chat_rig(true);
     enqueue_page(&rig, vec![message("m1", Some(1), 1), message("m2", Some(2), 2), message("m3", Some(3), 3)], false, "c");
     enqueue_page(&rig, vec![message("m1", Some(1), 1), message("x", Some(2), 8), message("m3", Some(3), 3), message("m2", Some(9), 2)], false, "c");
@@ -85,10 +85,10 @@ async fn a_shown_row_keeps_its_place_when_an_event_or_a_page_changes_its_sequenc
     load_first_page(&rig).await;
     assert_eq!(shown(&log), ["m1", "m2", "m3", "x"], "the shown order wins over the order of a reloaded page");
     assert_eq!(moves_since(&log, seen), Vec::<String>::new());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn rows_of_a_later_page_and_of_events_take_their_place_by_sequence_number() {
+#[test]
+fn rows_of_a_later_page_and_of_events_take_their_place_by_sequence_number() { crate::test_wait::paused(async {
     let rig = chat_rig(true);
     enqueue_page(&rig, vec![message("m10", Some(10), 10), message("m20", Some(20), 20), message("m30", Some(30), 30)], true, "c1");
     enqueue_page(&rig, vec![message("m05", Some(5), 5), message("m15", Some(15), 15), message("m25", Some(25), 25)], false, "c2");
@@ -102,10 +102,10 @@ async fn rows_of_a_later_page_and_of_events_take_their_place_by_sequence_number(
     event(&rig, message("m40", Some(40), 40)).await;
     event(&rig, message("m22", Some(22), 22)).await;
     assert_eq!(shown(&log), ["m05", "m10", "m15", "m20", "m22", "m25", "m30", "m40"]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_later_row_is_placed_after_the_member_that_has_the_nearest_lower_current_sequence_number() {
+#[test]
+fn a_later_row_is_placed_after_the_member_that_has_the_nearest_lower_current_sequence_number() { crate::test_wait::paused(async {
     let rig = chat_rig(true);
     load_page(&rig, vec![message("a", Some(1), 1), message("b", Some(5), 2)], false, "c").await;
     let _subscription = subscribe_to_events(&rig).await;
@@ -116,14 +116,14 @@ async fn a_later_row_is_placed_after_the_member_that_has_the_nearest_lower_curre
     assert_eq!(shown(&log), ["a", "c", "b"], "a changed number does not move the row");
     event(&rig, message("d", Some(10), 4)).await;
     assert_eq!(shown(&log), ["a", "c", "d", "b"], "the neighbour of a new row is found by the current number of c, not by the number c had");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_created_row_goes_after_the_last_row_even_when_its_clock_is_behind() {
+#[test]
+fn a_created_row_goes_after_the_last_row_even_when_its_clock_is_behind() { crate::test_wait::paused(async {
     let rig = chat_ordered_by_time();
     load_page(&rig, vec![message("m1", Some(1), 1), message("m2", Some(2), 5)], false, "c").await;
     let (log, _window) = watch_thread(&rig, 50);
     let local = rig.db.create(&rig.db.admit().unwrap(), "messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:03.000Z"}))).unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(shown(&log), ["m1", "m2", local.id.as_str()]);
-}
+}) }

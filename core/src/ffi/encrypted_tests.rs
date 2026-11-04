@@ -67,14 +67,14 @@ pub(super) async fn cancel_on_retry(retries: &super::RetryProgress, call: impl s
     let mut waiting = retries.inner.watch();
     {
         let mut call = Box::pin(call);
-        let deadline = super::database::executor().unwrap().spawn(async { tokio::time::sleep(std::time::Duration::from_secs(10)).await });
+        let deadline = super::database::executor().unwrap().spawn(async { crate::test_wait::pass(std::time::Duration::from_secs(10)).await });
         tokio::select! { _ = waiting.wait_for(|snapshot| snapshot.active_calls > 0) => {}, _ = &mut call => {}, _ = deadline => panic!("the retry was not observed") }
         assert!(waiting.borrow().active_calls > 0, "call completed before retry");
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn cancel_on_retry_waits_for_a_retry_that_the_executor_reaches_late() {
+#[test]
+fn cancel_on_retry_waits_for_a_retry_that_the_executor_reaches_late() { crate::test_wait::paused(async {
     use crate::transport::retry::Retrying;
     let retries = super::RetryProgress::new();
     let progress = retries.inner.clone();
@@ -85,7 +85,7 @@ async fn cancel_on_retry_waits_for_a_retry_that_the_executor_reaches_late() {
         let _ = Retrying::new(&clock, &progress, &online, crate::pacing::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
     };
     cancel_on_retry(&retries, call).await;
-}
+}) }
 
 #[tokio::test]
 async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
@@ -113,11 +113,11 @@ async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
                 super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None, crate::transport::Connectivity::new(true)).await.map(|_| ())
             } else { db.session_call("social".into(), "{}".into()).await.map(|_| ()) }
         });
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        crate::test_wait::timeout(std::time::Duration::from_secs(2), async {
             tokio::select! { _ = http.started.notified() => {}, result = &mut call => panic!("unexpected completion {result:?}") }
         }).await.unwrap();
         drop(call);
-        tokio::time::timeout(std::time::Duration::from_secs(2), stopped.notified()).await.expect("dropping the foreign call drops HTTP");
+        crate::test_wait::timeout(std::time::Duration::from_secs(2), stopped.notified()).await.expect("dropping the foreign call drops HTTP");
     }
 }
 
@@ -228,7 +228,7 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
         (Arc::new(Tap { seen, deliveries: AtomicUsize::new(0), gate: Mutex::new(gate) }), receiver)
     }
     async fn reaches(seen: &mut watch::Receiver<Option<RetrySnapshot>>, expected: impl Fn(&RetrySnapshot) -> bool) {
-        tokio::time::timeout(std::time::Duration::from_secs(5), seen.wait_for(|snapshot| snapshot.as_ref().is_some_and(&expected))).await.expect("snapshot delivered").unwrap();
+        crate::test_wait::timeout(std::time::Duration::from_secs(5), seen.wait_for(|snapshot| snapshot.as_ref().is_some_and(&expected))).await.expect("snapshot delivered").unwrap();
     }
 
     let (posted, mut posts) = watch::channel(0);
@@ -243,7 +243,7 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
         async move { super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http, Some(retries), crate::transport::Connectivity::new(true)).await }
     });
 
-    tokio::time::timeout(std::time::Duration::from_secs(5), posts.wait_for(|posts| *posts >= 2)).await.expect("the request retried while the first delivery blocked").unwrap();
+    crate::test_wait::timeout(std::time::Duration::from_secs(5), posts.wait_for(|posts| *posts >= 2)).await.expect("the request retried while the first delivery blocked").unwrap();
     assert!(slow_seen.borrow().is_none(), "the blocked reader has not seen anything yet");
     assert_eq!(retries.current().active_calls, 1);
 

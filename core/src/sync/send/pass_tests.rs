@@ -12,8 +12,8 @@ fn update_texts(rig: &Rig) -> Vec<String> {
     rig.transport.calls().into_iter().filter(|call| call.operation_name == "UpdateMoment").map(|call| call.variables["text"].as_str().unwrap().to_string()).collect()
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_flush_reads_the_queue_once_and_visits_each_candidate_once() {
+#[test]
+fn a_flush_reads_the_queue_once_and_visits_each_candidate_once() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "plain"));
     let count = 8;
@@ -29,10 +29,10 @@ async fn a_flush_reads_the_queue_once_and_visits_each_candidate_once() {
     let candidates = rig.sync.counters().outbox_candidates;
     assert!(scans <= 1 && rows <= count * 3 && candidates <= count, "scans={scans}, rows={rows}, candidates={candidates}, operations={count}");
     assert_eq!(update_texts(&rig), (0..count).map(|number| number.to_string()).collect::<Vec<_>>());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_create_that_is_retried_during_a_pass_does_not_let_its_later_updates_overtake_the_earlier_ones() {
+#[test]
+fn a_create_that_is_retried_during_a_pass_does_not_let_its_later_updates_overtake_the_earlier_ones() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m9", "plain"));
     let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
@@ -56,4 +56,4 @@ async fn a_create_that_is_retried_during_a_pass_does_not_let_its_later_updates_o
     assert_eq!(update_texts(&rig), ["x"]);
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(update_texts(&rig), ["x", "one", "two"]);
-}
+}) }

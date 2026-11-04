@@ -211,6 +211,7 @@ pub(crate) struct Inner {
     #[cfg(test)]
     pub(crate) refusal_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     pub final_attempts: Mutex<send::FinalAttempts>,
+    pub(crate) sends_ended: tokio::sync::watch::Sender<u64>,
 }
 
 /// The retry wake of the outbox while it sleeps. A wake that woke up leaves the slot before its pass, so a newer wake never cancels a pass that runs.
@@ -366,6 +367,7 @@ impl Sync {
             #[cfg(test)]
             refusal_probe: Mutex::new(None),
             final_attempts: Mutex::new(send::FinalAttempts::default()),
+            sends_ended: tokio::sync::watch::Sender::new(0),
         };
         let this = Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) };
         let preloads = Arc::downgrade(&this.inner);

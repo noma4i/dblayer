@@ -382,8 +382,8 @@ impl Dispatch {
         self.wake.notify_all();
     }
 
-    pub(crate) fn start(dispatch: Arc<Dispatch>, shared: Weak<Shared>) -> Result<(), DbError> {
-        super::threads::spawn_named(crate::task::Carry::Detached, "dblayer-dispatch", move || {
+    pub(crate) fn start(threads: &Arc<super::threads::LiveThreads>, dispatch: Arc<Dispatch>, shared: Weak<Shared>) -> Result<(), DbError> {
+        threads.start(crate::task::Carry::Detached, "dblayer-dispatch", move || {
                 mark_core_thread();
                 OWNER_THREAD.with(|flag| flag.set(true));
                 while let Some(work) = dispatch.next_work() {
@@ -401,6 +401,18 @@ impl Dispatch {
 
 impl Db {
     /// Returns when the owner has handled every commit up to `revision`, every group has read it and every subscriber has taken the result. It reads the mark that the bridge reads as `rows_at`.
+    #[cfg(any(test, feature = "stress"))]
+    pub(crate) fn delivered(&self) -> bool {
+        if self.shared.store.lifecycle.snapshot().closed { return true; }
+        let revision = self.revision_seq().unwrap_or(0);
+        self.shared.dispatch.quiet_through(revision) && self.shared.reached_through(revision)
+    }
+
+    #[cfg(any(test, feature = "stress"))]
+    pub(crate) fn await_delivered(&self) {
+        self.await_revision(self.revision_seq().unwrap_or(0));
+    }
+
     pub fn await_revision(&self, revision: i64) {
         if on_core_thread() {
             return;

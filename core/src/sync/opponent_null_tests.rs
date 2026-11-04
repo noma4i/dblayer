@@ -85,8 +85,8 @@ async fn event(rig: &Rig, chat: Value) {
 
 macro_rules! opponent_cases {
     ($name:ident, $apply:ident, $prepare:expr) => {
-        #[tokio::test(start_paused = true)]
-        async fn $name() {
+        #[test]
+        fn $name() { crate::test_wait::paused(async {
             let rig = chat_rig();
             let prepare: fn(&Rig) = $prepare;
             prepare(&rig);
@@ -102,7 +102,7 @@ macro_rules! opponent_cases {
             assert_eq!(user_name(&rig, "u1"), Some("Ann".to_string()), "the user row stays");
             $apply(&rig, json!({"id": "c1", "title": "d", "opponent": {"id": "u2", "name": "Bob"}})).await;
             assert_eq!(opponent_id(&rig), Some("u2".to_string()), "a later object sets the key again");
-        }
+        }) }
     };
 }
 

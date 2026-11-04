@@ -41,8 +41,8 @@ fn ids(prefix: &str, range: std::ops::Range<u32>) -> Vec<String> {
     range.map(|n| format!("{prefix}{n}")).collect()
 }
 
-#[tokio::test(start_paused = true)]
-async fn load_more_reads_the_second_page_with_the_cursor_of_the_first() {
+#[test]
+fn load_more_reads_the_second_page_with_the_cursor_of_the_first() { crate::test_wait::paused(async {
     let rig = members_rig();
     let chat = params(json!({"chatId": "c1"}));
     rig.transport.enqueue("ChatMembers", page(0..30, "u", true));
@@ -54,20 +54,20 @@ async fn load_more_reads_the_second_page_with_the_cursor_of_the_first() {
     assert_eq!(rig.transport.calls()[0].variables, json!({"chatId": "c1", "first": 30}));
     assert_eq!(rig.transport.calls()[1].variables, json!({"chatId": "c1", "first": 30, "after": "u29"}));
     assert_eq!(member_ids(&rig, "users", "chat_members", &chat), ids("u", 0..45));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_second_load_inside_fresh_for_does_not_reach_the_network() {
+#[test]
+fn a_second_load_inside_fresh_for_does_not_reach_the_network() { crate::test_wait::paused(async {
     let rig = members_rig();
     let chat = params(json!({"chatId": "c1"}));
     rig.transport.enqueue("ChatMembers", page(0..2, "u", false));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat, Default::default()).await.unwrap();
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat, Default::default()).await.unwrap();
     assert_eq!(rig.transport.call_count("ChatMembers"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn two_chats_keep_separate_windows() {
+#[test]
+fn two_chats_keep_separate_windows() { crate::test_wait::paused(async {
     let rig = members_rig();
     let (one, two) = (params(json!({"chatId": "c1"})), params(json!({"chatId": "c2"})));
     rig.transport.enqueue("ChatMembers", page(0..3, "a", true));
@@ -79,15 +79,15 @@ async fn two_chats_keep_separate_windows() {
     assert_eq!(rig.transport.calls()[2].variables, json!({"chatId": "c1", "first": 30, "after": "a2"}));
     assert_eq!(member_ids(&rig, "users", "chat_members", &one), ids("a", 0..5));
     assert_eq!(member_ids(&rig, "users", "chat_members", &two), ids("b", 0..2));
-}
+}) }
 
 fn named_page(ids: &[&str], has_next: bool) -> Reply {
     let edges: Vec<Value> = ids.iter().map(|id| json!({"cursor": id, "node": {"id": id, "name": "x"}})).collect();
     Reply::data(json!({"node": {"members": {"edges": edges, "pageInfo": {"hasNextPage": has_next, "endCursor": ids.last()}}}}))
 }
 
-#[tokio::test(start_paused = true)]
-async fn the_server_order_survives_load_more_a_refresh_by_another_list_and_a_restart() {
+#[test]
+fn the_server_order_survives_load_more_a_refresh_by_another_list_and_a_restart() { crate::test_wait::paused(async {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("members.sqlite");
     let chat = params(json!({"chatId": "c1"}));
@@ -107,4 +107,4 @@ async fn the_server_order_survives_load_more_a_refresh_by_another_list_and_a_res
     }
     let reopened = rig_with_db(Db::open(&path, vec![users()], None).unwrap());
     assert_eq!(member_ids(&reopened, "users", "chat_members", &chat), server_order);
-}
+}) }

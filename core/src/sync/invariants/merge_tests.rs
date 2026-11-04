@@ -73,8 +73,8 @@ async fn land_through(path: Path, node: &Value) -> Rig {
     rig
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_01_inv_merge_02_inv_event_01_inv_event_02_every_path_applies_the_same_subset_of_fields_and_leaves_the_rest() {
+#[test]
+fn inv_merge_01_inv_merge_02_inv_event_01_inv_event_02_every_path_applies_the_same_subset_of_fields_and_leaves_the_rest() { crate::test_wait::paused(async {
     for path in [Path::Load, Path::Upsert, Path::Patch, Path::Response] {
         for case in 1..27u8 {
             let modes = [case % 3, case / 3 % 3, case / 9];
@@ -87,4 +87,4 @@ async fn inv_merge_01_inv_merge_02_inv_event_01_inv_event_02_every_path_applies_
             assert_eq!(rig.db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("Ann"), "{path:?} {modes:?} touched the user row");
         }
     }
-}
+}) }

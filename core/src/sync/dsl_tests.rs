@@ -24,8 +24,8 @@ fn signal(rig: &Rig, kind: Value, active: bool) {
     rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"signal":node}))));
 }
 
-#[tokio::test(start_paused = true)]
-async fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetimes() {
+#[test]
+fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetimes() { crate::test_wait::paused(async {
     let kinds = json!(["TYPING","RECORDING_AUDIO","RECORDING_VIDEO","UPLOADING_PHOTO","UPLOADING_VIDEO"]);
     let models = vec![action_model("actions", kinds.clone(), "8.seconds"), action_model("mirror", kinds, "8.seconds"), action_model("notices", json!(["SCREENSHOT"]), "1.minute")];
     let rig = rig_on(Db::open_in_memory(models, None).unwrap(), MockTransport::new(), SyncConfig::default());
@@ -49,10 +49,10 @@ async fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetim
     assert_eq!(rig.db.query(&Query::new("actions")).unwrap().len(), 1, "equal writes renew the lifetime");
     signal(&rig, json!("SCREENSHOT"), true);
     rig.transport.await_consumed("Signal").await;
-    let item = tokio::time::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
+    let item = crate::test_wait::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
     assert!(matches!(item, super::model_event_tests::HeardItem::Event(event) if event.kind == "SCREENSHOT" && event.after.is_some()));
     let late = super::model_event_tests::open_heard(&rig.sync, "notices").await.unwrap();
-    assert!(tokio::time::timeout(Duration::from_millis(1), late.next()).await.is_err(), "events are not replayed");
+    assert!(crate::test_wait::timeout(Duration::from_millis(1), late.next()).await.is_err(), "events are not replayed");
     signal(&rig, json!("UNKNOWN"), true);
     rig.transport.await_consumed("Signal").await;
     assert_eq!(rig.db.query(&Query::new("notices")).unwrap().len(), 1);
@@ -64,10 +64,10 @@ async fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetim
     rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
     assert_eq!(rig.db.query(&Query::new("notices")).unwrap().len(), 1);
     assert_eq!(rig.transport.call_count("Signal"), 1, "idle makes no requests");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_dsl_10_apply_not_values_require_a_present_string_before_any_write_or_delete() {
+#[test]
+fn inv_dsl_10_apply_not_values_require_a_present_string_before_any_write_or_delete() { crate::test_wait::paused(async {
     let rig = rig_on(Db::open_in_memory(vec![action_model("actions", json!({"not":["SCREENSHOT"]}), "8.seconds")], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(OperationDef::new("Signal", "subscription Signal { signal { chatId userId kind active } }", "signal"));
     rig.sync.inner.listen_all();
@@ -79,10 +79,10 @@ async fn inv_dsl_10_apply_not_values_require_a_present_string_before_any_write_o
         rig.transport.await_consumed("Signal").await;
         assert_eq!(!rig.db.query(&Query::new("actions")).unwrap().is_empty(), expected);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_dsl_11_unchanged_event_node_joins_loaded_membership_heads_and_manual_nodes_do_not() {
+#[test]
+fn inv_dsl_11_unchanged_event_node_joins_loaded_membership_heads_and_manual_nodes_do_not() { crate::test_wait::paused(async {
     let original = super::node_tests::node_rig();
     let mut models: Vec<_> = original.db.shared.specs.values().cloned().collect();
     let chat = models.iter_mut().find(|model| model.key.as_str() == "chats").unwrap();
@@ -149,4 +149,4 @@ async fn inv_dsl_11_unchanged_event_node_joins_loaded_membership_heads_and_manua
     let scalar = rig.db.spec("chats").unwrap().selection_key("scalar", json!({"name":"same"}).as_object().unwrap()).unwrap();
     assert_eq!(rig.db.query(&Query::new("chats").in_scope(scalar)).unwrap().iter().map(|row| row.id.to_string()).collect::<Vec<_>>(), ["c1"]);
     assert_eq!(rig.transport.call_count("Chats"), 3, "events do not reread lists");
-}
+}) }

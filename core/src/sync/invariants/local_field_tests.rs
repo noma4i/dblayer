@@ -42,18 +42,18 @@ fn both_kept(rig: &Rig, id: &str) -> bool {
     field(rig, id, "tone") == Some(json!("warm")) && field(rig, id, "cover.tone") == Some(json!({"hue": 30}))
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_12_a_full_refresh_keeps_the_locally_written_fields() {
+#[test]
+fn inv_merge_12_a_full_refresh_keeps_the_locally_written_fields() { crate::test_wait::paused(async {
     let rig = rig();
     load_feed(&rig, vec![json!({"id": "m1", "text": "a", "cover": {"url": "one"}})]).await;
     write_both(&rig, "m1");
     load_feed(&rig, vec![json!({"id": "m1", "text": "b", "cover": {"url": "two", "tone": {"hue": 99}}, "tone": "cold"})]).await;
     assert_eq!((field(&rig, "m1", "text"), field(&rig, "m1", "cover.url")), (Some(json!("b")), Some(json!("two"))));
     assert!(both_kept(&rig, "m1"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_12_a_partial_response_and_a_mutation_answer_keep_the_locally_written_fields() {
+#[test]
+fn inv_merge_12_a_partial_response_and_a_mutation_answer_keep_the_locally_written_fields() { crate::test_wait::paused(async {
     let rig = rig();
     load_feed(&rig, vec![json!({"id": "m1", "text": "a", "cover": {"url": "one"}})]).await;
     write_both(&rig, "m1");
@@ -64,20 +64,20 @@ async fn inv_merge_12_a_partial_response_and_a_mutation_answer_keep_the_locally_
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(field(&rig, "m1", "cover.url"), Some(json!("three")));
     assert!(both_kept(&rig, "m1"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_12_a_row_that_leaves_a_list_and_comes_back_keeps_the_locally_written_fields() {
+#[test]
+fn inv_merge_12_a_row_that_leaves_a_list_and_comes_back_keeps_the_locally_written_fields() { crate::test_wait::paused(async {
     let rig = rig();
     load_user(&rig, vec![json!({"id": "m1", "userId": "u1", "cover": {"url": "one"}}), json!({"id": "m2", "userId": "u1"})]).await;
     write_both(&rig, "m1");
     load_user(&rig, vec![json!({"id": "m2", "userId": "u1"})]).await;
     load_user(&rig, vec![json!({"id": "m1", "userId": "u1", "cover": {"url": "one"}}), json!({"id": "m2", "userId": "u1"})]).await;
     assert!(both_kept(&rig, "m1"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_12_a_write_before_the_row_exists_is_applied_when_the_row_arrives_and_survives_the_next_refresh() {
+#[test]
+fn inv_merge_12_a_write_before_the_row_exists_is_applied_when_the_row_arrives_and_survives_the_next_refresh() { crate::test_wait::paused(async {
     let rig = rig();
     write_both(&rig, "m9");
     assert!(rig.db.find("moments", &rid("m9")).unwrap().is_none());
@@ -87,20 +87,21 @@ async fn inv_merge_12_a_write_before_the_row_exists_is_applied_when_the_row_arri
     load_feed(&rig, vec![json!({"id": "m9", "text": "b", "cover": {"url": "two"}})]).await;
     assert!(both_kept(&rig, "m9"));
     assert_eq!(pending(&rig), 0);
-}
+}) }
 
 fn pending(rig: &Rig) -> i64 {
     rig.db.shared.store.lock().connection.query_row("SELECT COUNT(*) FROM local_pending", [], |row| row.get(0)).unwrap()
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_12_the_locally_written_fields_survive_a_restart_and_go_with_the_row() {
+#[test]
+fn inv_merge_12_the_locally_written_fields_survive_a_restart_and_go_with_the_row() { crate::test_wait::paused(async {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("12.sqlite");
     let rig = open_rig(&path);
     load_feed(&rig, vec![json!({"id": "m1", "text": "a", "cover": {"url": "one"}})]).await;
     write_both(&rig, "m1");
     rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m5"), "tone", json!("early")).unwrap();
+    rig.db.close().unwrap();
     drop(rig);
 
     let rig = open_rig(&path);
@@ -110,10 +111,10 @@ async fn inv_merge_12_the_locally_written_fields_survive_a_restart_and_go_with_t
     assert_eq!(field(&rig, "m5", "tone"), Some(json!("early")));
     rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
     assert!(field(&rig, "m1", "tone").is_none());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_12_one_write_is_one_delivery_to_every_subscription_of_the_row_and_an_equal_write_is_none() {
+#[test]
+fn inv_merge_12_one_write_is_one_delivery_to_every_subscription_of_the_row_and_an_equal_write_is_none() { crate::test_wait::paused(async {
     let rig = rig();
     load_feed(&rig, vec![json!({"id": "m1", "text": "a", "cover": {"url": "one"}})]).await;
     let (rows, row_count) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
@@ -132,10 +133,10 @@ async fn inv_merge_12_one_write_is_one_delivery_to_every_subscription_of_the_row
     rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m1"), "cover.tone", json!({"hue": 30})).unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!((rows.load(Ordering::SeqCst), row_count.load(Ordering::SeqCst)), (base.0 + 1, base.1 + 1));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_12_a_local_field_never_enters_the_server_request_or_the_outbox() {
+#[test]
+fn inv_merge_12_a_local_field_never_enters_the_server_request_or_the_outbox() { crate::test_wait::paused(async {
     let rig = rig();
     load_feed(&rig, vec![json!({"id": "m1", "text": "a", "cover": {"url": "one"}})]).await;
     write_both(&rig, "m1");
@@ -147,14 +148,14 @@ async fn inv_merge_12_a_local_field_never_enters_the_server_request_or_the_outbo
     assert_eq!(sent.len(), 1);
     assert!(!sent[0].to_string().contains("tone") && !sent[0].to_string().contains("forged"));
     assert!(both_kept(&rig, "m1"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_12_a_path_that_is_not_declared_local_is_refused() {
+#[test]
+fn inv_merge_12_a_path_that_is_not_declared_local_is_refused() { crate::test_wait::paused(async {
     let rig = rig();
     load_feed(&rig, vec![json!({"id": "m1", "text": "a"})]).await;
     for path in ["text", "cover", "cover.url", "ghost", "tone.deep"] {
         assert!(matches!(rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m1"), path, json!("x")), Err(crate::db::DbError::NotLocalField { .. })), "{path}");
     }
     assert!(matches!(rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m1"), "tone", json!(7)), Err(crate::db::DbError::LocalValue { .. })));
-}
+}) }

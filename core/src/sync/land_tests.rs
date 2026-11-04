@@ -107,8 +107,8 @@ fn later_attempt_replaces_an_earlier_one() {
     assert_eq!(text_of(&rig, "moments", "m1"), Some("issued 200".to_string()));
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_03_a_response_read_before_the_server_got_the_edit_does_not_undo_a_confirmed_edit() {
+#[test]
+fn inv_merge_03_a_response_read_before_the_server_got_the_edit_does_not_undo_a_confirmed_edit() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let id = crate::identity::RowId::new("m1").unwrap();
@@ -118,20 +118,20 @@ async fn inv_merge_03_a_response_read_before_the_server_got_the_edit_does_not_un
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     (rig.sync.inner.land(&rig.sync.inner.db.admit().unwrap(), stale)).unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("mine".to_string()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_merge_03_a_response_does_not_undo_an_edit_that_is_still_unconfirmed() {
+#[test]
+fn inv_merge_03_a_response_does_not_undo_an_edit_that_is_still_unconfirmed() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let id = crate::identity::RowId::new("m1").unwrap();
     rig.db.update(&rig.db.admit().unwrap(), "moments", &id, params(serde_json::json!({"text": "mine"}))).unwrap();
     (rig.sync.inner.land(&rig.sync.inner.db.admit().unwrap(), landing(&rig, 100, &["m1"]))).unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("mine".to_string()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_list_response_started_before_create_preserves_the_confirmed_member() {
+#[test]
+fn a_list_response_started_before_create_preserves_the_confirmed_member() { crate::test_wait::paused(async {
     for coverage in [crate::schema::Coverage::Page, crate::schema::Coverage::Complete] {
         let rig = rig();
         let query_params = params(serde_json::json!({"userId": "u42"}));
@@ -159,10 +159,10 @@ async fn a_list_response_started_before_create_preserves_the_confirmed_member() 
         (rig.sync.inner.land(&rig.sync.inner.db.admit().unwrap(), response(200))).unwrap();
         assert_eq!(member_ids(&rig, "moments", "by_user", &query_params), ["m1"], "{coverage:?}");
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_11_a_response_read_before_the_server_got_the_destroy_does_not_bring_the_row_back() {
+#[test]
+fn inv_fresh_11_a_response_read_before_the_server_got_the_destroy_does_not_bring_the_row_back() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     rig.db.destroy(&rig.db.admit().unwrap(), "moments", &crate::identity::RowId::new("m1").unwrap()).unwrap();
@@ -171,7 +171,7 @@ async fn inv_fresh_11_a_response_read_before_the_server_got_the_destroy_does_not
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     (rig.sync.inner.land(&rig.sync.inner.db.admit().unwrap(), stale)).unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), None);
-}
+}) }
 
 #[test]
 fn inv_merge_09_a_failing_window_write_leaves_no_landed_rows() {

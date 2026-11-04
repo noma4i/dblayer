@@ -84,6 +84,9 @@
 - The DSL refuses a name that ends with `_`.
 
 ### Fixed
+- `flush` returns after each pending operation ends its send, also one sent by a background pass.
+- Subscription frames dropped from a full input reach the events reader as lost positions.
+- Closing the database returns after its threads release the file, so the same file opens again at once.
 - A resumed window that owes a read is read without force: a debt that another request paid is not read again.
 - A reread after an event that kept the stored rows reports a gap to the events reader.
 - An event batch refused because its session ended is not reread in that session. The new session reloads the window once.

@@ -157,8 +157,8 @@ impl Stream {
     /// An event of the model, with the state of the database when its source event was received.
     pub(super) fn heard(&self, event: WireModelEvent, stamp: Stamp) { self.handle(Input::heard(event, stamp)); }
 
-    /// An event that could not be read: its position is lost.
-    pub(super) fn unread(&self) { self.handle(Input::Unread); }
+    /// Events that could not be read: their positions are lost.
+    pub(super) fn unread(&self, count: u64) { self.handle(Input::Unread(count)); }
 
     #[cfg(test)]
     pub(super) fn probe(&self) -> (bool, bool) {

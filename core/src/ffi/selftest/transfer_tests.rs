@@ -278,15 +278,17 @@ impl Transport for AlbumTransport {
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> {
         let name = request.operation_name.clone();
         let variables: serde_json::Value = serde_json::from_str(&request.variables_json).unwrap_or_default();
-        let count = {
+        let (count, first_of_file) = {
             let mut calls = self.calls.lock().unwrap();
+            let file = |call: &TransportRequest| serde_json::from_str::<serde_json::Value>(&call.variables_json).unwrap_or_default()["filename"].clone();
+            let first_of_file = !calls.iter().any(|call| call.operation_name == name && file(call) == variables["filename"]);
             calls.push(request);
-            calls.iter().filter(|call| call.operation_name == name).count()
+            (calls.iter().filter(|call| call.operation_name == name).count(), first_of_file)
         };
         match name.as_str() {
             "CreateBlob" => {
-                if count == 1 && self.fail_first { return Ok(r#"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"#.into()); }
-                if count == 1 { self.entered.notify_one(); self.release.acquire().await.unwrap().forget(); }
+                if self.fail_first && first_of_file && variables["filename"] == "0.jpg" { return Ok(r#"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"#.into()); }
+                if count == 1 && !self.fail_first { self.entered.notify_one(); self.release.acquire().await.unwrap().forget(); }
                 Ok(format!(r#"{{"data":{{"createBlob":{{"url":"https://storage/file","headers":{{}},"signedId":"signed-{count}","blobId":"b{count}"}}}}}}"#))
             }
             "CreateAssets" if self.fail_first => Ok(r#"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}"#.into()),
@@ -439,6 +441,7 @@ async fn records_below_the_minimum_go_as_single_steps_of_the_same_operation() {
     let receipt = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
     let rows = item_rows(&receipt);
     named_bound("refused file", db.sync.as_ref().unwrap().wait_uploads()).await;
+    assert_eq!(db.read_row(epoch, "Asset".into(), rows[0].clone()).await.unwrap().unwrap().sync.state, crate::ffi::WireSyncState::Failed);
     named_bound("discard file", db.discard(epoch, "Asset".into(), rows[0].clone(), Some("create_files".into()))).await.unwrap();
     let operation = receipt.operation;
     let (result, outcomes) = batch_items(&db, receipt).await;

@@ -8,8 +8,8 @@ fn vibe(number: usize) -> serde_json::Map<String, serde_json::Value> {
     params(json!({"vibeId": format!("v{number}")}))
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_19_unobserved_windows_are_forgotten_without_waiting_for_reset() {
+#[test]
+fn inv_loadm_19_unobserved_windows_are_forgotten_without_waiting_for_reset() { crate::test_wait::paused(async {
     let rig = rig();
     for number in 0..30 {
         drop(rig.sync.relation_state("moments", "vibe_feed", &vibe(number)).await.unwrap());
@@ -24,24 +24,24 @@ async fn inv_loadm_19_unobserved_windows_are_forgotten_without_waiting_for_reset
     assert_eq!(second.borrow().phase, super::load_machine::LoadPhase::NotLoaded);
     drop(second);
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_19_a_reset_keeps_a_window_with_a_flight() {
+#[test]
+fn inv_loadm_19_a_reset_keeps_a_window_with_a_flight() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1").after(std::time::Duration::from_secs(30)));
     let sync = rig.sync.clone();
     let flight = tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "vibe_feed", &vibe(1), LoadOptions::default()).await });
-    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    crate::test_wait::pass(std::time::Duration::from_millis(1)).await;
     rig.db.reset_all().unwrap();
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
     flight.abort();
     assert!(flight.await.unwrap_err().is_cancelled());
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_19_a_new_observer_of_a_window_whose_last_watch_drops_concurrently_stays_live() {
+#[test]
+fn inv_loadm_19_a_new_observer_of_a_window_whose_last_watch_drops_concurrently_stays_live() { crate::test_wait::paused(async {
     let rig = rig();
     let owner = rig.sync.inner.owner.clone();
     for number in 0..200 {
@@ -62,15 +62,15 @@ async fn inv_loadm_19_a_new_observer_of_a_window_whose_last_watch_drops_concurre
         owner.begin_flight(&window, target, false, None);
         assert_eq!(fresh.borrow().phase, super::load_machine::LoadPhase::Loading, "window {number} lost its observer");
     }
-}
+}) }
 
 fn stored(order: i64, total: Option<i64>, data: super::load_machine::Data) -> super::load_machine::Stored {
     let landed = matches!(data, super::load_machine::Data::Landed { .. });
     super::load_machine::Stored { epoch: 0, order: super::load_machine::Order { applied: order, pages: i64::from(landed) }, data, has_rows: landed && total.is_some(), revision: 0, stale_since: None }
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_19_a_late_seed_never_replaces_what_a_flight_already_landed() {
+#[test]
+fn inv_loadm_19_a_late_seed_never_replaces_what_a_flight_already_landed() { crate::test_wait::paused(async {
     use super::load_machine::{Data, LoadPhase};
     let rig = rig();
     let owner = rig.sync.inner.owner.clone();
@@ -85,4 +85,4 @@ async fn inv_loadm_19_a_late_seed_never_replaces_what_a_flight_already_landed() 
     ticket.landed(Some(landed()));
     owner.seed_observed(&window, resolved.model.clone(), Some(cold()));
     assert_eq!((watch.borrow().phase, watch.borrow().total, watch.borrow().loaded_at), (LoadPhase::Loaded, Some(3), Some(7)), "a late seed after Landed");
-}
+}) }

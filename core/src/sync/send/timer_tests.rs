@@ -33,8 +33,8 @@ impl<F: std::future::Future> std::future::Future for Polled<F> {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_wait_01_inv_wait_02_an_outcome_wait_wakes_only_when_its_operation_ends() {
+#[test]
+fn inv_wait_01_inv_wait_02_an_outcome_wait_wakes_only_when_its_operation_ends() { crate::test_wait::paused(async {
     use crate::sync::rig::*;
     use crate::db::fixtures::rid;
     use serde_json::json;
@@ -51,9 +51,9 @@ async fn inv_wait_01_inv_wait_02_an_outcome_wait_wakes_only_when_its_operation_e
     for text in ["one", "two", "three"] {
         rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m2"), params(json!({"text": text}))).unwrap();
     }
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    crate::test_wait::pass(std::time::Duration::from_secs(10)).await;
     assert_eq!((polls.load(std::sync::atomic::Ordering::SeqCst), rig.transport.call_count("CreateMoment")), (1, 1));
     crate::test_wait::within(flushing).await.unwrap().unwrap();
     assert_eq!(crate::test_wait::within(waiting).await.unwrap(), crate::sync::SendResult::Committed);
     assert_eq!(polls.load(std::sync::atomic::Ordering::SeqCst), 2);
-}
+}) }

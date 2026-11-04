@@ -21,8 +21,8 @@ async fn upload_without_a_session_refuses_before_accepting_a_file() {
     assert!(rig.transport.calls().is_empty());
 }
 
-#[tokio::test(start_paused = true)]
-async fn every_upload_entry_refuses_a_bad_declaration_without_touching_files_outbox_or_network() {
+#[test]
+fn every_upload_entry_refuses_a_bad_declaration_without_touching_files_outbox_or_network() { crate::test_wait::paused(async {
     let conflicting = UploadOperations {
         create_blob: Some(UploadOperation::rooted("CreateBlob", "a")),
         multipart: Some(MultipartOperations { initiate: UploadOperation::rooted("CreateBlob", "b"), presign: UploadOperation::new("CreateBlob"), complete: UploadOperation::new("CreateBlob"), abort: UploadOperation::new("CreateBlob") }),
@@ -57,7 +57,7 @@ async fn every_upload_entry_refuses_a_bad_declaration_without_touching_files_out
             assert!(rig.transport.calls().is_empty(), "{case}/{entry}: a request was sent");
         }
     }
-}
+}) }
 
 fn put_if(rig: &Rig, entry: &str) {
     if entry == "upload" { put(rig, "moments", moment("m1", "x")); }

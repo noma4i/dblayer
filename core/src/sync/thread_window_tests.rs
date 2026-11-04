@@ -54,8 +54,8 @@ async fn loaded_thread(rig: &Rig) -> Query {
     rig.db.remote_relation_query("moments", "thread", &params(json!({"userId": "c1"}))).unwrap().unwrap()
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_window_over_the_thread_shape_follows_the_tail_and_ignores_rows_before_it() {
+#[test]
+fn a_window_over_the_thread_shape_follows_the_tail_and_ignores_rows_before_it() { crate::test_wait::paused(async {
     let rig = thread_rig();
     let query = loaded_thread(&rig).await;
     assert!(query.scope.is_some(), "a relation that lists by a param column is a scoped query");
@@ -89,12 +89,12 @@ async fn a_window_over_the_thread_shape_follows_the_tail_and_ignores_rows_before
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(changes(&log).len(), calls, "a row before the window is not delivered");
     assert_eq!(rig.db.counters().rows_loaded, loaded);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_scope_without_a_local_sort_is_refused_with_its_reason() {
+#[test]
+fn a_scope_without_a_local_sort_is_refused_with_its_reason() { crate::test_wait::paused(async {
     let rig = rig();
     let query = rig.db.remote_relation_query("moments", "by_user", &params(json!({"userId": "c1"}))).unwrap().unwrap();
     let refused = rig.db.observe_window(query, WindowSpec::Tail { size: 3, max: None, paged: false }, |_: &crate::db::Change| {});
     assert!(matches!(refused, Err(crate::db::DbError::Query(crate::query::QueryError::NotWindowable))));
-}
+}) }

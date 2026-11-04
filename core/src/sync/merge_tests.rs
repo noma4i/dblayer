@@ -24,8 +24,8 @@ async fn load_page(rig: &Rig) {
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &serde_json::Map::new(), LoadOptions { force: true }).await.unwrap();
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_narrower_response_keeps_the_fields_it_does_not_select_on_every_delivery_path() {
+#[test]
+fn a_narrower_response_keeps_the_fields_it_does_not_select_on_every_delivery_path() { crate::test_wait::paused(async {
     for path in ["load", "next page", "mutation"] {
         let rig = rig();
         let kept: Vec<(&str, Value)> = match path {
@@ -56,10 +56,10 @@ async fn a_narrower_response_keeps_the_fields_it_does_not_select_on_every_delive
         }
         assert_eq!(stored.get("mood"), Some(&json!("calm")), "{path}: mood");
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_nested_row_keeps_the_fields_its_fragment_does_not_select_from_a_page_and_from_an_event() {
+#[test]
+fn a_nested_row_keeps_the_fields_its_fragment_does_not_select_from_a_page_and_from_an_event() { crate::test_wait::paused(async {
     for source in ["page", "event"] {
         let rig = rig();
         if source == "page" {
@@ -76,20 +76,20 @@ async fn a_nested_row_keeps_the_fields_its_fragment_does_not_select_from_a_page_
         }
         assert_eq!(row(&rig, "users", "u1").get("name"), Some(&json!("Ann")), "{source}");
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_field_selected_as_null_becomes_absent_and_the_others_stay() {
+#[test]
+fn a_field_selected_as_null_becomes_absent_and_the_others_stay() { crate::test_wait::paused(async {
     let rig = rig();
     enqueue_pages(&rig, vec![json!({"id": "m1", "text": "first", "userId": "u1"}), json!({"id": "m1", "userId": null})]);
     load_page(&rig).await;
     load_page(&rig).await;
     let stored = row(&rig, "moments", "m1");
     assert_eq!((stored.get("userId"), stored.get("text")), (None, Some(&json!("first"))));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_observer_gets_a_diff_of_the_changed_fields_only_and_nothing_for_equal_values() {
+#[test]
+fn an_observer_gets_a_diff_of_the_changed_fields_only_and_nothing_for_equal_values() { crate::test_wait::paused(async {
     let rig = rig();
     enqueue_pages(&rig, vec![json!({"id": "m1", "text": "a", "mood": "calm"}), json!({"id": "m1", "text": "b"}), json!({"id": "m1", "text": "b"})]);
     load_page(&rig).await;
@@ -109,4 +109,4 @@ async fn an_observer_gets_a_diff_of_the_changed_fields_only_and_nothing_for_equa
     load_page(&rig).await;
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(deliveries.load(Ordering::SeqCst), 2);
-}
+}) }

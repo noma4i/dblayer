@@ -40,6 +40,7 @@ fn inv_dsl_07_a_schema_change_quarantines_the_operations_of_every_server_model()
     put(&first, "users", json!({"id": "u1", "name": "Ann"}));
     first.update(&first.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
     first.update(&first.admit().unwrap(), "users", &rid("u1"), obj(json!({"name": "Bea"}))).unwrap();
+    first.close().unwrap();
     drop(first);
     let mut changed = all_specs();
     changed.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().fields.push(FieldSpec::scalar("extra", ScalarKind::Str).optional());

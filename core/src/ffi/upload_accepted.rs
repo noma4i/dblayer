@@ -77,7 +77,7 @@ impl Database {
     }
 
     pub fn round_end(&self, epoch: u64, owner: u32) -> Result<Option<Vec<WireUploadAccepted>>, DbError> {
-        let admitted = self.acquire(crate::lifecycle::Origin::Explicit, epoch, "end upload round")?;
+        let admitted = self.acquire(crate::lifecycle::Origin::Session, epoch, "end upload round")?;
         Ok(self.db.round_end(&admitted, owner)?.map(|late| late.into_iter().map(|group| WireUploadAccepted { epoch: group.epoch, model: group.model, items: group.items.into_iter().map(Into::into).collect() }).collect()))
     }
 

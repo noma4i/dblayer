@@ -29,11 +29,11 @@ use tokio::runtime::{Builder, Runtime};
 
 use crate::db::Db;
 use crate::identity::ListKey;
-use crate::pacing::Backoff;
+use crate::pacing::{Backoff, TestClock};
 use crate::transport::{EventSpec, MockTransport};
 use crate::upload::{UploadOperation, UploadOperations};
 
-use super::rig::{rig_on, specs};
+use super::rig::{register_operations, rig_on_clock, specs, START_MS};
 use super::{EventEffect, LoadOptions, OperationDef, SubscriptionDef, Sync, SyncConfig};
 
 use findings::Findings;
@@ -225,6 +225,10 @@ async fn worker_loop(id: usize, config: StressConfig, world: Arc<World>, progres
     }
 }
 
+async fn tick(world: Arc<World>) {
+    world.rig.clock.drive(|| world.rig.db.delivered(), || world.rig.db.await_delivered()).await;
+}
+
 async fn settle_uploads(sync: &Sync) {
     sync.wait_uploads().await;
 }
@@ -234,7 +238,7 @@ async fn drain(world: &World, progress: &Progress) {
     world.server.set_calm(true);
     let mut waited = 0;
     while world.pending_events.load(Ordering::SeqCst) > 0 && waited < 400 {
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        crate::pacing::Clock::sleep(&world.rig.clock, Duration::from_millis(5)).await;
         waited += 1;
     }
     for round in 0..DRAIN_ROUNDS {
@@ -249,7 +253,7 @@ async fn drain(world: &World, progress: &Progress) {
             return;
         }
         world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        crate::pacing::Clock::sleep(&world.rig.clock, Duration::from_millis(5)).await;
         if world.rig.db.outbox().map(|queue| queue.is_empty()).unwrap_or(false) {
             return;
         }
@@ -274,9 +278,12 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     let transport = MockTransport::new();
     let server = FakeServer::install(&transport, config.seed, findings.clone());
     server.seed_rows(workers, OWNED_ROWS, SHARED_ROWS);
+    let clock = TestClock::stopped(Duration::from_millis(START_MS));
     let mut sync_config = SyncConfig { uploads: Some(UploadOperations { create_blob: Some(UploadOperation::new("CreateBlob")), multipart: None }), ..SyncConfig::default() };
     sync_config.upload.backoff = Backoff::new(Duration::from_millis(5), Duration::from_millis(20)).limited(8);
-    let rig = rig_on(Db::open_in_memory(specs(), None).expect("open db"), transport, sync_config);
+    transport.delay_on(Arc::new(clock.clone()));
+    let rig = rig_on_clock(Db::open_in_memory(specs(), None).expect("open db"), transport, sync_config, clock);
+    register_operations(&rig.sync);
     rig.sync.register(OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
     rig.sync.register(OperationDef::new("CreateBlob", "operation CreateBlob { x }", "createBlob"));
     let universe = Universe::default();
@@ -285,6 +292,7 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     let watchers = Watchers::attach(&rig.db, &findings, &universe, &aliases, &rows, scope_of(&rig.db, "feed"));
     let scratch = scratch_dir();
     let world = Arc::new(World::new(rig, server, findings.clone(), universe, aliases, scratch.path().to_path_buf()));
+    let ticker = tokio::spawn(tick(world.clone()));
     world.server.set_calm(true);
     let _ = world.rig.sync.load(&world.rig.sync.inner.db.admit().unwrap(), "moments", "empty_aware", &Map::new(), LoadOptions { force: true }).await;
     world.server.set_calm(false);
@@ -298,7 +306,7 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     }
     let ops = progress.ops();
     drain(&world, &progress).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    crate::pacing::Clock::sleep(&world.rig.clock, Duration::from_millis(50)).await;
     world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
     let _ = world.rig.db.expire_ephemeral(&world.rig.db.admit().unwrap());
     check::queue(&world.rig.db, &findings);
@@ -310,5 +318,6 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     oracle::reloaded_client(&world);
     check::cache(&world.rig.db, &world.universe, &findings);
     watchers.finish(&world.rig.db, &findings);
+    ticker.abort();
     StressReport { findings: findings.all(), ops, digest: oracle::digest(&world), requests: world.server.received() }
 }

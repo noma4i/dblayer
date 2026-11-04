@@ -33,8 +33,8 @@ fn ids(rig: &Rig) -> Vec<String> {
     found
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_id_08_a_row_that_lands_before_the_answer_replaces_the_sent_temp_row() {
+#[test]
+fn inv_id_08_a_row_that_lands_before_the_answer_replaces_the_sent_temp_row() { crate::test_wait::paused(async {
     let rig = correlating_rig();
     put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
     let temp = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hi", "userId": "u1"}))).unwrap();
@@ -48,14 +48,14 @@ async fn inv_id_08_a_row_that_lands_before_the_answer_replaces_the_sent_temp_row
     assert_eq!(ids(&rig), ["m9"]);
     assert!(rig.db.find("moments", &temp.id).unwrap().is_none());
     assert_eq!(rig.db.outbox().unwrap().len(), 1);
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     flush.await.unwrap().unwrap();
     assert_eq!(ids(&rig), ["m9"]);
     assert!(rig.db.outbox().unwrap().is_empty());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_row_with_other_fields_or_a_record_not_sent_yet_keeps_the_temp_row() {
+#[test]
+fn a_row_with_other_fields_or_a_record_not_sent_yet_keeps_the_temp_row() { crate::test_wait::paused(async {
     let rig = correlating_rig();
     let temp = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hi", "userId": "u1"}))).unwrap();
     landed(&rig, "m8", "hi", json!("u1"));
@@ -70,4 +70,4 @@ async fn a_row_with_other_fields_or_a_record_not_sent_yet_keeps_the_temp_row() {
     landed(&rig, "m6", "hi", json!(null));
     assert!(rig.db.find("moments", &temp.id).unwrap().is_some());
     flush.abort();
-}
+}) }

@@ -4,8 +4,8 @@ use crate::transport::{Reply, Response};
 use crate::upload::{UploadRequest, UploadStage};
 use super::upload_tests::{file, input, rid, small, upload_rig};
 
-#[tokio::test(start_paused = true)]
-async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts() {
+#[test]
+fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts() { crate::test_wait::paused(async {
     let rig = upload_rig(small());
     let source = file(b"0123456789ab");
     let request = UploadRequest {
@@ -38,4 +38,4 @@ async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].variables["partNumbers"], json!([1, 3]));
     assert!(rig.db.outbox().unwrap().is_empty());
-}
+}) }

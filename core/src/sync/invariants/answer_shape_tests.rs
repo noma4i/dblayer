@@ -6,8 +6,8 @@ use crate::query::Query;
 use crate::sync::LoadOptions;
 use crate::transport::Reply;
 
-#[tokio::test(start_paused = true)]
-async fn inv_id_01_a_numeric_id_and_the_same_id_as_text_are_one_row_in_the_model_the_list_and_the_membership() {
+#[test]
+fn inv_id_01_a_numeric_id_and_the_same_id_as_text_are_one_row_in_the_model_the_list_and_the_membership() { crate::test_wait::paused(async {
     let rig = rig();
     let params = serde_json::Map::new();
     for id in [json!(54), json!("54")] {
@@ -19,7 +19,7 @@ async fn inv_id_01_a_numeric_id_and_the_same_id_as_text_are_one_row_in_the_model
         let members = rig.db.shared.store.scope_members("moments", &feed_key(&rig)).unwrap();
         assert_eq!(members.iter().map(|(row, _)| row.as_str()).collect::<Vec<_>>(), ["54"], "landed {id}");
     }
-}
+}) }
 
 fn feed_key(rig: &Rig) -> String {
     let spec = rig.db.spec("moments").unwrap();

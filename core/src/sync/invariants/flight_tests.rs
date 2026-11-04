@@ -16,46 +16,46 @@ fn spawn_load(rig: &Rig) -> tokio::task::JoinHandle<Result<super::super::load::L
 }
 
 /// The flight is a task of the flight table, not of the caller that started it: the waiting caller keeps it, and its one request answers the waiter (S211).
-#[tokio::test(start_paused = true)]
-async fn inv_conc_05_a_waiting_caller_survives_the_cancelled_flight_owner() {
+#[test]
+fn inv_conc_05_a_waiting_caller_survives_the_cancelled_flight_owner() { crate::test_wait::paused(async {
     let rig = rig();
     slow_feed(&rig);
     let owner = spawn_load(&rig);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     let waiter = spawn_load(&rig);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     let before = rig.transport.call_count("MomentsFeed");
     owner.abort();
     assert!(owner.await.unwrap_err().is_cancelled());
     let outcome = waiter.await.unwrap().unwrap();
     assert_eq!(outcome.status, LoadStatus::Loaded);
     assert_eq!((before, rig.transport.call_count("MomentsFeed")), (1, 1), "the request of the cancelled caller answers the waiter");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_conc_05_a_cancelled_flight_owner_leaves_no_loading_state() {
+#[test]
+fn inv_conc_05_a_cancelled_flight_owner_leaves_no_loading_state() { crate::test_wait::paused(async {
     let rig = rig();
     slow_feed(&rig);
     let state = rig.sync.relation_state("moments", "feed", &Map::new()).await.unwrap();
     let owner = spawn_load(&rig);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
     owner.abort();
     let _ = owner.await;
     let settled = state.borrow().clone();
     assert_eq!((settled.phase, settled.initial, settled.refreshing, settled.fetching_more, settled.error), (LoadPhase::NotLoaded, false, false, false, None));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_conc_05_a_waiting_caller_can_still_be_cancelled_itself() {
+#[test]
+fn inv_conc_05_a_waiting_caller_can_still_be_cancelled_itself() { crate::test_wait::paused(async {
     let rig = rig();
     slow_feed(&rig);
     let owner = spawn_load(&rig);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     let waiter = spawn_load(&rig);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     waiter.abort();
     assert!(waiter.await.unwrap_err().is_cancelled());
     assert_eq!(owner.await.unwrap().unwrap().status, LoadStatus::Loaded);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
-}
+}) }

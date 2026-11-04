@@ -55,8 +55,8 @@ fn mentions_in_ops(rig: &Rig, needle: &str) -> Vec<String> {
         .collect()
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_all_or_nothing() {
+#[test]
+fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_all_or_nothing() { crate::test_wait::paused(async {
     let (flushed, total) = {
         let root = tempfile::tempdir().unwrap();
         let rig = prepare(&root.path().join("1.sqlite"));
@@ -77,6 +77,7 @@ async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_
         interrupt_at(&rig, limit);
         faulted += usize::from(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.is_err());
         rig.sync.wait_uploads().await;
+        rig.db.close().unwrap();
         drop(rig);
         match check_all_or_nothing(&path, limit) {
             true => confirmed += 1,
@@ -85,4 +86,4 @@ async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_
     }
     assert!(faulted > 20, "only {faulted} runs hit a failure");
     assert!(confirmed > 0 && unconfirmed > 0, "{confirmed} confirmed, {unconfirmed} unconfirmed, {faulted} faulted, flush ended at step {flushed} of {total}");
-}
+}) }

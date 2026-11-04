@@ -2,7 +2,6 @@ use super::error::SyncError;
 use super::subscribe::{EventEffect, SubscriptionDef};
 use super::rig::*;
 use crate::db::Db;
-use crate::pacing::TestClock;
 use crate::query::Query;
 use crate::schema::{AssociationKind, AssociationSpec, Dependent, FieldSpec};
 use crate::value::ScalarKind;
@@ -31,8 +30,8 @@ fn upsert_def() -> SubscriptionDef {
     SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "moments", EventEffect::Upsert)
 }
 
-#[tokio::test(start_paused = true)]
-async fn direct_subscribe_applies_the_passed_definition_instead_of_schema_declarations() {
+#[test]
+fn direct_subscribe_applies_the_passed_definition_instead_of_schema_declarations() { crate::test_wait::paused(async {
     let rig = rig();
     put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
     put(&rig, "moments", moment("u1", "keep"));
@@ -44,10 +43,10 @@ async fn direct_subscribe_applies_the_passed_definition_instead_of_schema_declar
     rig.transport.await_consumed("MomentEvents").await;
     assert!(rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().is_none());
     assert_eq!(text_of(&rig, "moments", "u1"), Some("keep".into()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn shared_batch_merges_nested_partial_rows_before_admission() {
+#[test]
+fn shared_batch_merges_nested_partial_rows_before_admission() { crate::test_wait::paused(async {
     for stored in [false, true] {
         let mut users = users_spec();
         users.fields.push(FieldSpec::scalar("label", ScalarKind::Str).optional());
@@ -68,10 +67,10 @@ async fn shared_batch_merges_nested_partial_rows_before_admission() {
         assert_eq!((row.text("name"), row.text("label")), (Some("Ann"), Some("friend")));
         assert_eq!(rig.db.revision_seq().unwrap(), revision + 1);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn shared_changes_do_not_suppress_ephemeral_or_reread_definitions() {
+#[test]
+fn shared_changes_do_not_suppress_ephemeral_or_reread_definitions() { crate::test_wait::paused(async {
     let mut users = users_spec();
     users.change_feed = Some(crate::schema::ChangeFeed { subscription:"Signal".into(), root:"signal.changes".into(), ..change_feed() });
     users.changes.push(crate::schema::ChangeRead { area:"USER".into(), relation:"current".into(), parameter:None, removes_on:vec![], observed:false, payload:None, id_of:None });
@@ -89,10 +88,10 @@ async fn shared_changes_do_not_suppress_ephemeral_or_reread_definitions() {
     rig.transport.await_consumed("Signal").await;
     let row = rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap();
     assert_eq!((rig.transport.call_count("CurrentUser"), row.text("name"), row.get("typing")), (2, Some("effect"), Some(&json!(true))));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn model_ephemeral_and_reread_definitions_publish_before_and_after_events() {
+#[test]
+fn model_ephemeral_and_reread_definitions_publish_before_and_after_events() { crate::test_wait::paused(async {
     for effect in ["ephemeral", "reread"] {
         let mut users = users_spec();
         let apply = if effect == "ephemeral" { json!({"effect":effect, "fields":{"typing":"active"}}) } else { json!({"effect":effect, "via":"current"}) };
@@ -104,7 +103,7 @@ async fn model_ephemeral_and_reread_definitions_publish_before_and_after_events(
         let events = super::model_event_tests::open_heard(&rig.sync, "users").await.unwrap();
         rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"signal":{"id":"u", "active":true}}))));
         rig.transport.await_consumed("Signal").await;
-        let item = tokio::time::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
+        let item = crate::test_wait::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
         let super::model_event_tests::HeardItem::Event(event) = item else { panic!("expected event, got {item:?}"); };
         assert_eq!((event.id.as_str(), event.area.as_str(), event.kind.as_str()), ("u", "Signal", "UPDATED"));
         let before = event.before.unwrap();
@@ -115,10 +114,10 @@ async fn model_ephemeral_and_reread_definitions_publish_before_and_after_events(
             assert_eq!((before.text("name"), after.text("name")), (Some("before"), Some("after")));
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn refused_shared_batch_rereads_every_model_and_records_each_failed_recovery() {
+#[test]
+fn refused_shared_batch_rereads_every_model_and_records_each_failed_recovery() { crate::test_wait::paused(async {
     for reread_fails in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let mut users = users_spec();
@@ -146,17 +145,17 @@ async fn refused_shared_batch_rereads_every_model_and_records_each_failed_recove
         assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByUser")), (2, 2));
         assert!(rig.db.find("moments", &crate::identity::RowId::new("m9").unwrap()).unwrap().is_none());
         for events in [&users_events, &moments_events] {
-            let item = tokio::time::timeout(Duration::from_millis(1), events.next()).await;
+            let item = crate::test_wait::timeout(Duration::from_millis(1), events.next()).await;
             if reread_fails { assert!(matches!(item, Ok(Some(super::model_event_tests::HeardItem::Lost(1))))); } else { assert!(item.is_err()); }
         }
         let name = rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap().text("name").unwrap().to_string();
         assert_eq!(name, if reread_fails { "before" } else { "after" });
         assert_eq!(member_ids(&rig, "moments", "by_user", &params), if reread_fails { vec!["m1"] } else { vec!["m1", "m2"] });
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn initial_offline_subscription_makes_no_transport_call() {
+#[test]
+fn initial_offline_subscription_makes_no_transport_call() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     rig.sync.set_online(false);
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
@@ -170,10 +169,10 @@ async fn initial_offline_subscription_makes_no_transport_call() {
     rig.transport.await_calls("MomentChanged", 1).await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 1);
     assert!(!subscription.status().degraded);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn ready_then_failure_keeps_growing_backoff() {
+#[test]
+fn ready_then_failure_keeps_growing_backoff() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     rig.transport.script_subscription("MomentChanged", vec![]);
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
@@ -182,9 +181,9 @@ async fn ready_then_failure_keeps_growing_backoff() {
         rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
         rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
         rig.transport.await_cancellations("MomentChanged", attempt + 1).await;
-        tokio::time::advance(Duration::from_millis(ceiling * 800 - 10)).await;
+        crate::test_wait::pass(Duration::from_millis(ceiling * 800 - 10)).await;
         assert_eq!(rig.transport.call_count("MomentChanged"), attempt + 1, "attempt {attempt} reset its delay");
-        tokio::time::advance(Duration::from_millis(ceiling * 200 + 20)).await;
+        crate::test_wait::pass(Duration::from_millis(ceiling * 200 + 20)).await;
         rig.transport.await_calls("MomentChanged", attempt + 2).await;
         assert_eq!(rig.transport.call_count("MomentChanged"), attempt + 2, "attempt {attempt} exceeded its cap");
     }
@@ -193,14 +192,14 @@ async fn ready_then_failure_keeps_growing_backoff() {
     rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
     rig.transport.await_cancellations("MomentChanged", 8).await;
     assert!(reconnects_within_first_backoff(&rig, 9).await, "a healthy Next did not reset the backoff");
-}
+}) }
 
 async fn reconnects_within_first_backoff(rig: &Rig, call: usize) -> bool {
-    tokio::time::timeout(Duration::from_millis(1020), rig.transport.await_calls("MomentChanged", call)).await.is_ok()
+    crate::test_wait::timeout(Duration::from_millis(1020), rig.transport.await_calls("MomentChanged", call)).await.is_ok()
 }
 
-#[tokio::test(start_paused = true)]
-async fn subscription_normalization_does_not_invert_reset_locks() {
+#[test]
+fn subscription_normalization_does_not_invert_reset_locks() { crate::test_wait::paused(async {
     for effect in [EventEffect::Upsert, EventEffect::Patch] {
         let rig = rig_with_subscription();
         put(&rig, "moments", json!({"id": "m1", "text": "before", "userId": null}));
@@ -212,21 +211,21 @@ async fn subscription_normalization_does_not_invert_reset_locks() {
         let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
         assert_eq!(row.text("text"), Some("after"));
     }
-}
+}) }
 
 fn failed(kind: SubscriptionFailureKind) -> SubscriptionEvent {
     SubscriptionEvent::Failed(SubscriptionFailure::new(kind, "boom"))
 }
 
-#[tokio::test(start_paused = true)]
-async fn declared_removal_kinds_close_pending_writes_and_destroy_children_without_http() {
+#[test]
+fn declared_removal_kinds_close_pending_writes_and_destroy_children_without_http() { crate::test_wait::paused(async {
     removal_closes_pending_writes("DELETED").await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn access_revoked_closes_pending_writes_and_destroy_children_without_http() {
+#[test]
+fn access_revoked_closes_pending_writes_and_destroy_children_without_http() { crate::test_wait::paused(async {
     removal_closes_pending_writes("ACCESS_REVOKED").await;
-}
+}) }
 
 async fn removal_closes_pending_writes(kind: &str) {
     for area in ["MESSAGE", "CHAT", "MOMENT"] {
@@ -268,8 +267,8 @@ async fn removal_closes_pending_writes(kind: &str) {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn missing_change_kind_is_rejected_before_reading() {
+#[test]
+fn missing_change_kind_is_rejected_before_reading() { crate::test_wait::paused(async {
     let mut users = users_spec();
     users.change_feed = Some(change_feed());
         users.changes.push(serde_json::from_value(json!({"area":"USER", "relation":"current", "parameter":null})).unwrap());
@@ -280,10 +279,10 @@ async fn missing_change_kind_is_rejected_before_reading() {
     rig.transport.await_consumed("Changes").await;
     assert_eq!(subscription.status().rejected, 1);
     assert_eq!(rig.transport.calls().iter().filter(|call| call.kind != crate::transport::CallKind::Subscription).count(), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn declared_removals_keep_created_and_updated_node_reads() {
+#[test]
+fn declared_removals_keep_created_and_updated_node_reads() { crate::test_wait::paused(async {
     for kind in ["CREATED", "UPDATED"] {
         let original = super::node_tests::node_rig();
         let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
@@ -301,10 +300,10 @@ async fn declared_removals_keep_created_and_updated_node_reads() {
         assert_eq!(rig.db.find("chats", &crate::identity::RowId::new("c1").unwrap()).unwrap().unwrap().text("title"), Some("after"), "{kind}");
         assert_eq!(subscription.status().applied, 1);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn change_ids_reread_registered_nodes_and_count_undeclared_areas() {
+#[test]
+fn change_ids_reread_registered_nodes_and_count_undeclared_areas() { crate::test_wait::paused(async {
     let original = super::node_tests::node_rig();
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
     specs.iter_mut().find(|spec| spec.key.as_str() == "chats").unwrap().changes.push(crate::schema::ChangeRead { area: "CHAT".into(), relation: "node".into(), parameter: None, removes_on: vec![], observed: false, payload: None, id_of: None });
@@ -324,10 +323,10 @@ async fn change_ids_reread_registered_nodes_and_count_undeclared_areas() {
     assert_eq!(rig.transport.calls().iter().filter(|call| call.operation_name == "ChatNode").count(), 1);
     assert!(rig.db.query(&Query::new("messages")).unwrap().is_empty());
     assert_eq!(subscription.status().applied, 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn declared_subscription_rereads_or_ignores_without_copying_event_fields() {
+#[test]
+fn declared_subscription_rereads_or_ignores_without_copying_event_fields() { crate::test_wait::paused(async {
     for effect in ["reread", "ignore"] {
         let mut model = users_spec();
         model.listens.push(serde_json::from_value(json!({"subscription":"RecordSignal", "root":"recordSignal", "apply":{"effect":effect, "via":"current"}})).unwrap());
@@ -342,10 +341,10 @@ async fn declared_subscription_rereads_or_ignores_without_copying_event_fields()
         assert_eq!(rig.transport.call_count("CurrentUser"), usize::from(effect == "reread"));
         assert_eq!(rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap().text("name"), Some(if effect == "reread" { "fetched" } else { "before" }));
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn declared_activity_changes_only_ephemeral_typing_and_expires() {
+#[test]
+fn declared_activity_changes_only_ephemeral_typing_and_expires() { crate::test_wait::paused(async {
     let mut model = users_spec();
     model.listens.push(serde_json::from_value(json!({"subscription":"PresenceSignal", "root":"presenceSignal", "id":["memberId"], "apply":{"effect":"ephemeral", "fields":{"typing":"active"}, "matches":{"kind":["ACTIVE"]}}})).unwrap());
     let rig = rig_on(Db::open_in_memory(vec![model], None).unwrap(), MockTransport::new(), SyncConfig::default());
@@ -363,10 +362,10 @@ async fn declared_activity_changes_only_ephemeral_typing_and_expires() {
     rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
     assert_eq!(row().get("typing"), Some(&json!(false)));
     assert_eq!(row().text("name"), Some("Ann"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_shared_change_area_reads_each_declared_node_once() {
+#[test]
+fn a_shared_change_area_reads_each_declared_node_once() { crate::test_wait::paused(async {
     let original = super::node_tests::node_rig();
     let mut specs: Vec<_> = original.db.shared.specs.values().cloned().collect();
     for spec in &mut specs {
@@ -386,10 +385,10 @@ async fn a_shared_change_area_reads_each_declared_node_once() {
     assert_eq!(rig.transport.calls().iter().filter(|call| call.kind == crate::transport::CallKind::Query).count(), 2);
     assert_eq!(rig.db.find("messages", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap().text("text"), Some("updated"));
     assert!(rig.db.query(&Query::new("chats")).unwrap().is_empty());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
+#[test]
+fn memory_events_without_server_ids_create_distinct_expiring_rows() { crate::test_wait::paused(async {
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../fixtures/change-events/subscriptions.json")).unwrap();
     for index in [1, 3] {
         let fixture = &fixtures[index];
@@ -416,10 +415,10 @@ async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
         rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
         assert!(rig.db.query(&Query::new("notices")).unwrap().is_empty());
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_server_event_of_equal_values_renews_a_memory_row_and_stays_silent_for_observers() {
+#[test]
+fn a_server_event_of_equal_values_renews_a_memory_row_and_stays_silent_for_observers() { crate::test_wait::paused(async {
     let mut model = crate::schema::ModelSpec::new("notices", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str).optional()]);
     model.storage = crate::schema::Storage::Memory;
     model.expire_after = Some("8.seconds".into());
@@ -445,10 +444,10 @@ async fn a_server_event_of_equal_values_renews_a_memory_row_and_stays_silent_for
     rig.clock.advance(Duration::from_secs(4));
     rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
     crate::test_wait::spin_until("the notice expires", || rig.db.find("notices", &id).unwrap().is_none());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_03_repeated_ready_rereads_expired_watched_queries_after_cable_reconnect() {
+#[test]
+fn inv_live_03_repeated_ready_rereads_expired_watched_queries_after_cable_reconnect() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     rig.transport.script_subscription("MomentChanged", vec![]);
     for name in ["before", "after"] {
@@ -464,10 +463,10 @@ async fn inv_live_03_repeated_ready_rereads_expired_watched_queries_after_cable_
     rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(rig.transport.call_count("CurrentUser"), 2);
     assert_eq!(rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap().text("name"), Some("after"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn reconnect_reads_only_expired_watched_nodes() {
+#[test]
+fn reconnect_reads_only_expired_watched_nodes() { crate::test_wait::paused(async {
     let mut measurements = Vec::new();
     let mut expected = Vec::new();
     for reopen in [false, true] {
@@ -504,7 +503,7 @@ async fn reconnect_reads_only_expired_watched_nodes() {
                 if reopen {
                     rig.transport.disconnect("MomentChanged");
                     rig.clock.advance(Duration::from_secs(age));
-                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    crate::test_wait::pass(Duration::from_secs(2)).await;
                     assert_eq!(subscription.status().connects, 2);
                 } else {
                     rig.clock.advance(Duration::from_secs(age));
@@ -519,10 +518,10 @@ async fn reconnect_reads_only_expired_watched_nodes() {
         }
     }
     assert_eq!(measurements, expected);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn partial_child_events_preserve_absent_parent_fields_and_apply_explicit_null() {
+#[test]
+fn partial_child_events_preserve_absent_parent_fields_and_apply_explicit_null() { crate::test_wait::paused(async {
     for stored_child in [true, false] {
         let mut users = users_spec();
         users.fields.push(FieldSpec::scalar("lastMomentId", ScalarKind::Id).nullable().optional());
@@ -546,10 +545,10 @@ async fn partial_child_events_preserve_absent_parent_fields_and_apply_explicit_n
         }
         assert_eq!(subscription.status().applied, 2);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn upsert_event_changes_the_row_and_fires_the_observer() {
+#[test]
+fn upsert_event_changes_the_row_and_fires_the_observer() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     put(&rig, "moments", json!({"id": "m1", "text": "before", "userId": null}));
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
@@ -568,20 +567,20 @@ async fn upsert_event_changes_the_row_and_fires_the_observer() {
     assert_eq!(text_of(&rig, "moments", "m1"), Some("after".to_string()));
     assert_eq!(*seen.lock().unwrap(), ["before", "after"]);
     assert_eq!(subscription.status().applied, 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn upsert_event_lands_nested_author() {
+#[test]
+fn upsert_event_lands_nested_author() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "author": {"id": "u7", "name": "Zed"}})));
     rig.transport.await_consumed("MomentChanged").await;
     let user = rig.db.find("users", &crate::identity::RowId::new("u7").unwrap()).unwrap().unwrap();
     assert_eq!(user.text("name"), Some("Zed"));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn patch_event_merges_fields_and_skips_unknown_rows() {
+#[test]
+fn patch_event_merges_fields_and_skips_unknown_rows() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     put(&rig, "moments", json!({"id": "m1", "text": "keep", "userId": "u1"}));
     let def = SubscriptionDef::new(EventSpec::new("moment_patched"), "MomentChanged", "moments", EventEffect::Patch);
@@ -592,10 +591,10 @@ async fn patch_event_merges_fields_and_skips_unknown_rows() {
     let row = rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().unwrap();
     assert_eq!((row.text("text"), row.text("userId")), (Some("patched"), Some("u1")));
     assert_eq!(text_of(&rig, "moments", "ghost"), None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn destroy_event_removes_the_row() {
+#[test]
+fn destroy_event_removes_the_row() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     put(&rig, "moments", json!({"id": "m1", "text": "bye", "userId": null}));
     let def = SubscriptionDef::new(EventSpec::new("moment_gone"), "MomentChanged", "moments", EventEffect::Destroy);
@@ -603,10 +602,10 @@ async fn destroy_event_removes_the_row() {
     rig.transport.emit("MomentChanged", next(json!({"id": "m1"})));
     rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn dropping_the_subscription_cancels_the_transport() {
+#[test]
+fn dropping_the_subscription_cancels_the_transport() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.await_calls("MomentChanged", 1).await;
@@ -615,29 +614,29 @@ async fn dropping_the_subscription_cancels_the_transport() {
     assert_eq!(rig.transport.cancellations("MomentChanged"), 1);
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "late"})));
     assert_eq!(text_of(&rig, "moments", "m1"), None);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_03_dropped_connection_is_reopened_after_a_delay() {
+#[test]
+fn inv_live_03_dropped_connection_is_reopened_after_a_delay() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.disconnect("MomentChanged");
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(rig.transport.call_count("MomentChanged"), 2);
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "again"})));
     rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("again".to_string()));
     assert_eq!(subscription.status().connects, 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_03_offline_subscription_waits_without_spending_attempts_and_reconnects_online() {
+#[test]
+fn inv_live_03_offline_subscription_waits_without_spending_attempts_and_reconnects_online() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.sync.set_online(false);
     for _ in 0..4 {
         rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
-        tokio::time::sleep(Duration::from_secs(40)).await;
+        crate::test_wait::pass(Duration::from_secs(40)).await;
     }
     assert_eq!(rig.transport.call_count("MomentChanged"), 1);
     assert!(!subscription.status().degraded);
@@ -648,16 +647,16 @@ async fn inv_live_03_offline_subscription_waits_without_spending_attempts_and_re
     rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
     rig.transport.await_cancellations("MomentChanged", 2).await;
     assert!(reconnects_within_first_backoff(&rig, 3).await, "offline failures spent attempts");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_04_repeated_transport_failures_stay_degraded_until_next_after_ready() {
+#[test]
+fn inv_live_04_repeated_transport_failures_stay_degraded_until_next_after_ready() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     rig.transport.script_subscription("MomentChanged", vec![]);
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     for failures in 1..=4 {
         rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Transport));
-        tokio::time::sleep(Duration::from_secs(40)).await;
+        crate::test_wait::pass(Duration::from_secs(40)).await;
         assert_eq!(subscription.status().degraded, failures == 4, "after {failures} failures");
     }
     assert_eq!(rig.transport.call_count("MomentChanged"), 5);
@@ -671,67 +670,67 @@ async fn inv_live_04_repeated_transport_failures_stay_degraded_until_next_after_
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "healthy"})));
     rig.transport.await_consumed("MomentChanged").await;
     assert!(!subscription.status().degraded);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn terminal_http_subscription_failures_stop_without_retry() {
+#[test]
+fn terminal_http_subscription_failures_stop_without_retry() { crate::test_wait::paused(async {
     for status in [401, 403] {
         let rig = rig_with_subscription();
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(SubscriptionFailure::from_error(crate::transport::TransportError::Http { status, body: "refused".into() })));
-        tokio::time::sleep(Duration::from_secs(120)).await;
+        crate::test_wait::pass(Duration::from_secs(120)).await;
         assert!(subscription.status().stopped, "HTTP {status} was retried");
         assert_eq!(rig.transport.call_count("MomentChanged"), 1);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn independent_feeds_spread_reconnects() {
+#[test]
+fn independent_feeds_spread_reconnects() { crate::test_wait::paused(async {
     let mut delays = Vec::new();
     for _ in 0..8 {
         let rig = rig_with_subscription();
         let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         rig.transport.disconnect("MomentChanged");
         tokio::task::yield_now().await;
-        let started = tokio::time::Instant::now();
+        let started = crate::pacing::Clock::now(&rig.clock);
         for _ in 0..1100 {
             if rig.transport.call_count("MomentChanged") == 2 { break; }
-            tokio::time::sleep(Duration::from_millis(1)).await;
+            crate::test_wait::pass(Duration::from_millis(1)).await;
         }
         assert_eq!(rig.transport.call_count("MomentChanged"), 2);
-        delays.push(started.elapsed());
+        delays.push(crate::pacing::Clock::now(&rig.clock) - started);
     }
     assert!(delays.windows(2).any(|pair| pair[0] != pair[1]), "clients repeated together: {delays:?}");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_04_graphql_failure_stops_the_subscription() {
+#[test]
+fn inv_live_04_graphql_failure_stops_the_subscription() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", failed(SubscriptionFailureKind::Graphql));
-    tokio::time::sleep(Duration::from_secs(60)).await;
+    crate::test_wait::pass(Duration::from_secs(60)).await;
     assert!(subscription.status().stopped);
     assert!(subscription.status().degraded);
     assert_eq!(rig.transport.call_count("MomentChanged"), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn terminal_session_failure_stops_even_while_offline() {
+#[test]
+fn terminal_session_failure_stops_even_while_offline() { crate::test_wait::paused(async {
     for online in [false, true] {
         let rig = rig_with_subscription();
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         rig.sync.set_online(online);
         let error = crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "session_unknown".into() };
         rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(crate::transport::SubscriptionFailure::from_error(error.clone())));
-        tokio::time::sleep(Duration::from_secs(120)).await;
+        crate::test_wait::pass(Duration::from_secs(120)).await;
         assert!(subscription.status().stopped, "online={online}");
         assert_eq!(subscription.status().failure.unwrap().error, error);
         assert_eq!(rig.transport.call_count("MomentChanged"), 1);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_typed_session_refusal_during_subscribe_stops_without_retry() {
+#[test]
+fn a_typed_session_refusal_during_subscribe_stops_without_retry() { crate::test_wait::paused(async {
     struct Refusal;
     #[async_trait::async_trait]
     impl crate::transport::Transport for Refusal {
@@ -746,13 +745,13 @@ async fn a_typed_session_refusal_during_subscribe_stops_without_retry() {
     let sync = crate::sync::Sync::new(rig.db.clone(), std::sync::Arc::new(Refusal), std::sync::Arc::new(rig.clock.clone()), Default::default());
     *super::locked(&sync.inner.operations) = super::locked(&rig.sync.inner.operations).clone();
     let subscription = sync.subscribe(upsert_def()).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(120)).await;
+    crate::test_wait::pass(Duration::from_secs(120)).await;
     assert!(subscription.status().stopped);
     assert!(matches!(subscription.status().failure.unwrap().error, crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_event_08_debounced_events_land_once_per_row_after_the_interval() {
+#[test]
+fn inv_event_08_debounced_events_land_once_per_row_after_the_interval() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": null}));
     let _observer = rig.db.observe(Query::new("moments"), |_| {}).unwrap();
@@ -762,7 +761,7 @@ async fn inv_event_08_debounced_events_land_once_per_row_after_the_interval() {
     let _subscription = rig.sync.subscribe(def).await.unwrap();
     for text in ["one", "two", "three"] {
         rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": text})));
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        crate::test_wait::pass(Duration::from_millis(100)).await;
     }
     assert_eq!(text_of(&rig, "moments", "m1"), Some("start".to_string()));
     let waits = rig.transport.waits("MomentChanged");
@@ -771,25 +770,25 @@ async fn inv_event_08_debounced_events_land_once_per_row_after_the_interval() {
     assert_eq!(text_of(&rig, "moments", "m1"), Some("three".to_string()));
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(rig.db.counters().observer_calls, 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn event_spec_with_a_fault_is_rejected() {
+#[test]
+fn event_spec_with_a_fault_is_rejected() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let event = EventSpec::new("moment_changed").debounced(Duration::from_millis(500));
     let def = SubscriptionDef::new(event, "MomentChanged", "moments", EventEffect::Upsert);
     assert!(matches!(rig.sync.subscribe(def).await, Err(SyncError::Event(_))));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn unknown_operation_is_rejected() {
+#[test]
+fn unknown_operation_is_rejected() { crate::test_wait::paused(async {
     let rig = rig();
     let result = rig.sync.subscribe(upsert_def()).await;
     assert!(matches!(result, Err(SyncError::UnknownOperation(_))));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_sets_the_declared_ephemeral_values_on_its_row() {
+#[test]
+fn an_event_sets_the_declared_ephemeral_values_on_its_row() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
     let def = SubscriptionDef::new(EventSpec::new("typing"), "MomentChanged", "users", EventEffect::Patch).setting(params(json!({"typing": true})));
@@ -798,10 +797,10 @@ async fn an_event_sets_the_declared_ephemeral_values_on_its_row() {
     rig.transport.await_consumed("MomentChanged").await;
     let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     assert_eq!(user.get("typing"), Some(&json!(true)));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_destroying_event_sets_nothing() {
+#[test]
+fn a_destroying_event_sets_nothing() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
     let def = SubscriptionDef::new(EventSpec::new("typing"), "MomentChanged", "users", EventEffect::Destroy).setting(params(json!({"typing": true})));
@@ -811,10 +810,10 @@ async fn a_destroying_event_sets_nothing() {
     put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
     let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     assert_eq!(user.get("typing"), Some(&json!(false)));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_event_05_an_event_that_creates_a_row_does_not_reload_the_watched_lists_of_its_model() {
+#[test]
+fn inv_event_05_an_event_that_creates_a_row_does_not_reload_the_watched_lists_of_its_model() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2"));
@@ -822,17 +821,17 @@ async fn inv_event_05_an_event_that_creates_a_row_does_not_reload_the_watched_li
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": null})));
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    crate::test_wait::pass(Duration::from_secs(3)).await;
     assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1"]);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
-}
+}) }
 
 fn user_list(ids: &[&str]) -> crate::transport::Reply {
     crate::transport::Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()}))
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_a_gap_for_the_reader() {
+#[test]
+fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_a_gap_for_the_reader() { crate::test_wait::paused(async {
     for reread_fails in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let mut specs = specs();
@@ -856,23 +855,23 @@ async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_
             shared.store.advance_generation_for_test();
         }));
         rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        let gap = tokio::time::timeout(Duration::from_secs(1), events.next()).await;
+        crate::test_wait::pass(Duration::from_secs(3)).await;
+        let gap = crate::test_wait::timeout(Duration::from_secs(1), events.next()).await;
         let members = member_ids(&rig, "moments", "by_user", &params);
         assert_eq!(subscription.status().rejected, 1);
         assert_eq!(rig.transport.call_count("MomentsByUser"), 2);
         if reread_fails {
             assert_eq!(members, ["m1"]);
-            assert!(matches!(gap, Ok(Some(super::model_event_tests::HeardItem::Lost(1)))));
+            assert!(matches!(gap, Ok(Some(super::model_event_tests::HeardItem::Lost(1)))), "one refused batch leaves one lost position: {gap:?}");
         } else {
             assert_eq!(members, ["m1", "m2"]);
             assert!(gap.is_err());
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_event_05_an_event_row_joins_the_loaded_list_that_declares_it_and_does_not_reload_it() {
+#[test]
+fn inv_event_05_an_event_row_joins_the_loaded_list_that_declares_it_and_does_not_reload_it() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
     rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
@@ -881,10 +880,10 @@ async fn inv_event_05_an_event_row_joins_the_loaded_list_that_declares_it_and_do
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": "u1"})));
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    crate::test_wait::pass(Duration::from_secs(3)).await;
     assert_eq!(member_ids(&rig, "moments", "by_user", &params), ["m1", "m2"]);
     assert_eq!(rig.transport.call_count("MomentsByUser"), 1);
-}
+}) }
 
 struct RefusingFirstSubscribe {
     inner: MockTransport,
@@ -911,25 +910,25 @@ impl crate::transport::Transport for RefusingFirstSubscribe {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_live_02_a_refused_first_connection_is_retried_like_a_reconnect() {
+#[test]
+fn inv_live_02_a_refused_first_connection_is_retried_like_a_reconnect() { crate::test_wait::paused(async {
     let inner = MockTransport::new();
     let transport = Arc::new(RefusingFirstSubscribe { inner: inner.clone(), refusals: 1.into() });
     let db = Db::open_in_memory(specs(), None).unwrap();
-    let sync = Sync::new(db.clone(), transport, Arc::new(TestClock::new(Duration::from_millis(START_MS))), SyncConfig::default());
+    let sync = Sync::new(db.clone(), transport, Arc::new(crate::test_wait::clock(Duration::from_millis(START_MS))), SyncConfig::default());
     register_operations(&sync);
     sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
     let subscription = sync.subscribe(upsert_def()).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    crate::test_wait::pass(Duration::from_secs(3)).await;
     assert_eq!(subscription.status().connects, 1);
     inner.emit("MomentChanged", next(json!({"id": "m1", "text": "late", "userId": null})));
     inner.await_consumed("MomentChanged").await;
     let row = db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap();
     assert_eq!(row.and_then(|row| row.text("text").map(str::to_string)), Some("late".to_string()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_event_09_upsert_event_touches_the_parent_that_asks_for_it() {
+#[test]
+fn inv_event_09_upsert_event_touches_the_parent_that_asks_for_it() { crate::test_wait::paused(async {
     let mut moments = moments_spec();
     moments.associations.iter_mut().for_each(|association| association.touches_parent = true);
     let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments], None).unwrap(), MockTransport::new(), SyncConfig::default());
@@ -941,10 +940,10 @@ async fn inv_event_09_upsert_event_touches_the_parent_that_asks_for_it() {
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "t", "userId": "u1"})));
     rig.transport.await_consumed("MomentChanged").await;
     assert!(rig.db.find("users", &user).unwrap().unwrap().revision > before);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_for_a_child_whose_parent_is_not_stored_reloads_the_watched_lists_of_the_parent() {
+#[test]
+fn an_event_for_a_child_whose_parent_is_not_stored_reloads_the_watched_lists_of_the_parent() { crate::test_wait::paused(async {
     let mut users = users_spec();
     users.fields.push(FieldSpec::scalar("lastMomentId", ScalarKind::Id).nullable().optional());
     let mut moments = moments_spec();
@@ -958,9 +957,9 @@ async fn an_event_for_a_child_whose_parent_is_not_stored_reloads_the_watched_lis
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": "u9"})));
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    crate::test_wait::pass(Duration::from_secs(3)).await;
     assert_eq!(rig.transport.call_count("CurrentUser"), 2);
-}
+}) }
 
 async fn join_cost(size: usize) -> usize {
     let rig = rig_with_subscription();
@@ -973,19 +972,19 @@ async fn join_cost(size: usize) -> usize {
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     let before = crate::identity::touches::member_reads();
     rig.transport.emit("MomentChanged", next(json!({"id": "joined", "text": "new", "userId": "u1"})));
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    crate::test_wait::pass(Duration::from_secs(3)).await;
     let cost = crate::identity::touches::member_reads() - before;
     assert_eq!(member_ids(&rig, "moments", "by_user", &params).last().map(String::as_str), Some("joined"));
     cost
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_row_joining_a_loaded_list_reads_the_same_members_at_every_list_size() {
+#[test]
+fn an_event_row_joining_a_loaded_list_reads_the_same_members_at_every_list_size() { crate::test_wait::paused(async {
     assert_eq!(join_cost(100).await, join_cost(10_000).await, "member reads at 100 and 10000 rows");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_that_waits_for_its_debounce_never_commits_in_the_epoch_a_session_start_opened() {
+#[test]
+fn an_event_that_waits_for_its_debounce_never_commits_in_the_epoch_a_session_start_opened() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let debounced = SubscriptionDef::new(EventSpec::new("moment_changed").debounced(Duration::from_secs(1)).merged_by_row(), "MomentChanged", "moments", EventEffect::Upsert);
     let _subscription = rig.sync.subscribe(debounced).await.unwrap();
@@ -994,18 +993,18 @@ async fn an_event_that_waits_for_its_debounce_never_commits_in_the_epoch_a_sessi
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
     assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_millis(100)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_queued_before_a_session_start_never_commits_in_the_epoch_that_start_opened() {
+#[test]
+fn an_event_queued_before_a_session_start_never_commits_in_the_epoch_that_start_opened() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.await_calls("MomentChanged", 1).await;
@@ -1013,17 +1012,17 @@ async fn an_event_queued_before_a_session_start_never_commits_in_the_epoch_that_
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
     let life = rig.db.shared.store.lifecycle.clone();
     assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_delayed_callback_of_the_connection_a_session_start_replaced_changes_nothing() {
+#[test]
+fn a_delayed_callback_of_the_connection_a_session_start_replaced_changes_nothing() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.await_calls("MomentChanged", 1).await;
@@ -1034,12 +1033,12 @@ async fn a_delayed_callback_of_the_connection_a_session_start_replaced_changes_n
     rig.transport.emit_on("MomentChanged", 0, next(json!({"id": "m1", "text": "of the old connection", "userId": null})));
     rig.transport.emit_on("MomentChanged", 1, next(json!({"id": "m2", "text": "of the new connection", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!((text_of(&rig, "moments", "m1"), text_of(&rig, "moments", "m2")), (None, Some("of the new connection".into())));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_enqueued_right_after_a_session_start_is_applied() {
+#[test]
+fn an_event_enqueued_right_after_a_session_start_is_applied() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.await_calls("MomentChanged", 1).await;
@@ -1049,9 +1048,9 @@ async fn an_event_enqueued_right_after_a_session_start_is_applied() {
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
-}
+}) }
 
 #[derive(Clone, Copy, Debug)]
 enum Lost {
@@ -1060,8 +1059,8 @@ enum Lost {
     Debounced,
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_nothing_lost_reloads_nothing() {
+#[test]
+fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_nothing_lost_reloads_nothing() { crate::test_wait::paused(async {
     for lost in [Lost::Nothing, Lost::Queued, Lost::Debounced] {
         let rig = rig_with_subscription();
         rig.transport.script_subscription("MomentChanged", vec![]);
@@ -1086,25 +1085,38 @@ async fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_noth
         }
         let life = rig.db.shared.store.lifecycle.clone();
         assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        crate::test_wait::pass(Duration::from_secs(5)).await;
         let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
         let expected = if matches!(lost, Lost::Nothing) { (1, Some("before")) } else { (2, Some("after")) };
         assert_eq!((rig.transport.call_count("CurrentUser"), user.text("name")), expected, "lost: {lost:?}");
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_lost_event_range_reads_the_open_window_once() {
+#[test]
+fn a_lost_event_range_reads_the_open_window_once() { crate::test_wait::paused(async {
     let rig = current_user_rig(None);
     let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
+    let reader = Arc::new(LostPositions::default());
+    let held: Arc<dyn super::EventReader> = reader.clone();
+    rig.sync.inner.model_events.lock().unwrap().push((u64::MAX, Arc::downgrade(&held)));
     rig.transport.await_calls("MomentChanged", 1).await;
     rig.transport.await_consumed("MomentChanged").await;
     rig.transport.emit("MomentChanged", SubscriptionEvent::Lost { first: 1, last: 300 });
     rig.transport.await_calls("CurrentUser", 2).await;
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    crate::test_wait::pass(Duration::from_secs(5)).await;
     assert_eq!((rig.transport.call_count("CurrentUser"), user_name(&rig)), (2, Some("after".to_string())));
+    assert_eq!(reader.0.load(std::sync::atomic::Ordering::SeqCst), 300, "a reader of the model hears every lost position");
+}) }
+
+#[derive(Default)]
+struct LostPositions(std::sync::atomic::AtomicU64);
+
+impl super::EventReader for LostPositions {
+    fn model(&self) -> &str { "users" }
+    fn heard(&self, _: &super::ModelEvent, _: crate::lifecycle::Stamp) {}
+    fn unread(&self, count: u64) { self.0.fetch_add(count, std::sync::atomic::Ordering::SeqCst); }
 }
 
 fn current_user_rig(directory: Option<&std::path::Path>) -> Rig {
@@ -1127,8 +1139,8 @@ fn user_name(rig: &Rig) -> Option<String> {
     rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().and_then(|row| row.text("name").map(str::to_string))
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_refused_at_its_sql_commit_by_a_session_start_reloads_the_fresh_window_once_in_the_new_epoch() {
+#[test]
+fn an_event_refused_at_its_sql_commit_by_a_session_start_reloads_the_fresh_window_once_in_the_new_epoch() { crate::test_wait::paused(async {
     for debounced in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let rig = current_user_rig(Some(directory.path()));
@@ -1143,13 +1155,13 @@ async fn an_event_refused_at_its_sql_commit_by_a_session_start_reloads_the_fresh
         *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()); }));
         rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
         rig.transport.await_consumed("MomentChanged").await;
-        tokio::time::sleep(Duration::from_secs(5)).await;
+        crate::test_wait::pass(Duration::from_secs(5)).await;
         assert_eq!((rig.transport.call_count("CurrentUser"), user_name(&rig)), (2, Some("after".into())), "debounced: {debounced}");
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_lost_event_reloads_an_already_stale_window_once() {
+#[test]
+fn a_lost_event_reloads_an_already_stale_window_once() { crate::test_wait::paused(async {
     let rig = current_user_rig(None);
     let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
@@ -1164,12 +1176,12 @@ async fn a_lost_event_reloads_an_already_stale_window_once() {
     rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
     let life = rig.db.shared.store.lifecycle.clone();
     assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    crate::test_wait::pass(Duration::from_secs(5)).await;
     assert_eq!((rig.transport.call_count("CurrentUser"), user_name(&rig)), (2, Some("after".into())));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_session_start_drops_the_replaced_connection_without_holding_a_library_lock() {
+#[test]
+fn a_session_start_drops_the_replaced_connection_without_holding_a_library_lock() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.await_calls("MomentChanged", 1).await;
@@ -1181,12 +1193,12 @@ async fn a_session_start_drops_the_replaced_connection_without_holding_a_library
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() {
+#[test]
+fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() { crate::test_wait::paused(async {
     let directory = tempfile::tempdir().unwrap();
     let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
@@ -1202,23 +1214,23 @@ async fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts(
     let shared = rig.db.shared.clone();
     *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.advance_generation_for_test()));
     rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(SubscriptionFailure::new(SubscriptionFailureKind::Graphql, "refused")));
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     let status = updates.status();
     assert!(status.failure.is_some() && status.stopped, "the failure waited for the reload: {status:?}");
-    tokio::time::sleep(Duration::from_secs(200)).await;
+    crate::test_wait::pass(Duration::from_secs(200)).await;
     assert_eq!(rig.transport.call_count("MomentsByUser"), 1, "the pending event was still applied");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_subscription_that_was_opened_but_not_polled_is_opening_for_a_second_reader() {
+#[test]
+fn a_subscription_that_was_opened_but_not_polled_is_opening_for_a_second_reader() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let updates = rig.sync.subscribe(upsert_def()).await.unwrap();
     let status = updates.status();
     assert!(status.opening && !status.connected, "{status:?}");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_terminal_failure_is_published_as_stopped_before_its_listener_hears_it() {
+#[test]
+fn a_terminal_failure_is_published_as_stopped_before_its_listener_hears_it() { crate::test_wait::paused(async {
     let rig = rig_with_subscription();
     let stopped_when_heard = Arc::new(Mutex::new(None));
     let heard = stopped_when_heard.clone();
@@ -1229,10 +1241,10 @@ async fn a_terminal_failure_is_published_as_stopped_before_its_listener_hears_it
     crate::test_wait::yield_until("the failure reached the status", || updates.status().failure.is_some()).await;
     assert_eq!(*stopped_when_heard.lock().unwrap(), Some(true));
     assert!(updates.status().stopped);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn every_terminal_subscription_failure_reaches_the_listener_once() {
+#[test]
+fn every_terminal_subscription_failure_reaches_the_listener_once() { crate::test_wait::paused(async {
     let session = crate::transport::TransportError::Session { code: crate::transport::SessionCode::StateLost, detail: "lost".into() };
     for (case, failure, expected) in [
         ("graphql", SubscriptionFailure::new(SubscriptionFailureKind::Graphql, "refused"), 1),
@@ -1250,4 +1262,4 @@ async fn every_terminal_subscription_failure_reaches_the_listener_once() {
         while let Ok(notice) = failures.try_recv() { heard += usize::from(notice.is_some()); }
         assert_eq!(heard, expected, "{case}");
     }
-}
+}) }

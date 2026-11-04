@@ -11,8 +11,8 @@ fn failure() -> SubscriptionFailure {
     SubscriptionFailure { kind: SubscriptionFailureKind::Transport, error: TransportError::Session { code: SessionCode::Unauthenticated, detail: "session_unknown".into() }, close: None }
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_loadm_20_a_lagged_failure_channel_resyncs_from_the_subscription_status() {
+#[test]
+fn inv_loadm_20_a_lagged_failure_channel_resyncs_from_the_subscription_status() { crate::test_wait::paused(async {
     let rows = Arc::new(Rows::default());
     let request = Request { model: "User".into(), relation: None, params_json: "{}".into(), entity: None };
     let stream = Stream::new(1, 0, Arc::default(), &Arc::<StreamTable>::default(), Arc::new(Silent), request);
@@ -28,4 +28,4 @@ async fn inv_loadm_20_a_lagged_failure_channel_resyncs_from_the_subscription_sta
     let state = rows.state().unwrap();
     assert!(matches!(&state.error, Some(DbError::Session { code, detail }) if *code == SessionCode::Unauthenticated && detail == "session_unknown"), "error after lag: {:?}", state.error);
     assert_eq!(state.error_kind.as_deref(), Some("subscription"));
-}
+}) }

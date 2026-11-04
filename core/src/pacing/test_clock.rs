@@ -1,26 +1,124 @@
 use super::Clock;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+struct Time {
+    now: Duration,
+    started: Option<tokio::time::Instant>,
+    sleepers: BTreeMap<Duration, usize>,
+}
+
+impl Time {
+    fn base(&self) -> Duration {
+        self.now + self.started.map_or(Duration::ZERO, |started| started.elapsed())
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct TestClock {
-    time: std::sync::Arc<std::sync::Mutex<(Duration, tokio::time::Instant)>>,
-    changed: std::sync::Arc<tokio::sync::Notify>,
+    time: Arc<Mutex<Time>>,
+    shift: Arc<Mutex<Duration>>,
+    changed: Arc<tokio::sync::Notify>,
+    slept: Arc<tokio::sync::Notify>,
+}
+
+struct Sleeper<'a> {
+    clock: &'a TestClock,
+    deadline: Duration,
+}
+
+impl Drop for Sleeper<'_> {
+    fn drop(&mut self) {
+        let mut time = crate::db::locked(&self.clock.time);
+        if let Some(count) = time.sleepers.get_mut(&self.deadline) {
+            *count -= 1;
+            if *count == 0 { time.sleepers.remove(&self.deadline); }
+        }
+    }
 }
 
 impl TestClock {
     pub(crate) fn new(start: Duration) -> Self {
-        Self { time: std::sync::Arc::new(std::sync::Mutex::new((start, tokio::time::Instant::now()))), changed: std::sync::Arc::default() }
+        Self::with(start, Some(tokio::time::Instant::now()))
+    }
+
+    pub(crate) fn stopped(start: Duration) -> Self {
+        Self::with(start, None)
+    }
+
+    fn with(start: Duration, started: Option<tokio::time::Instant>) -> Self {
+        Self {
+            time: Arc::new(Mutex::new(Time { now: Duration::ZERO, started, sleepers: BTreeMap::new() })),
+            shift: Arc::new(Mutex::new(start)),
+            changed: Arc::default(),
+            slept: Arc::default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn linked(&self, start: Duration) -> Self {
+        let base = crate::db::locked(&self.time).base();
+        Self { time: self.time.clone(), shift: Arc::new(Mutex::new(start.saturating_sub(base))), changed: self.changed.clone(), slept: self.slept.clone() }
+    }
+
+    fn base(&self) -> Duration {
+        crate::db::locked(&self.time).base()
     }
 
     pub(crate) fn advance(&self, by: Duration) {
-        crate::db::locked(&self.time).0 += by;
+        *crate::db::locked(&self.shift) += by;
         crate::db::lock::effect(|| self.changed.notify_waiters());
     }
 
     #[cfg(test)]
     pub(crate) fn set(&self, now: Duration) {
-        *crate::db::locked(&self.time) = (now, tokio::time::Instant::now());
+        let base = self.base();
+        *crate::db::locked(&self.shift) = now.saturating_sub(base);
         crate::db::lock::effect(|| self.changed.notify_waiters());
+    }
+
+    #[cfg(any(test, feature = "stress"))]
+    fn advance_base(&self, by: Duration) {
+        crate::db::locked(&self.time).now += by;
+        crate::db::lock::effect(|| self.changed.notify_waiters());
+    }
+
+    #[cfg(any(test, feature = "stress"))]
+    fn next_deadline(&self) -> Option<Duration> {
+        crate::db::locked(&self.time).sleepers.keys().next().copied()
+    }
+
+    /// The only mover of a stopped clock: at each point where the runtime has nothing to run and `quiet` holds, time jumps to the nearest sleeper.
+    #[cfg(any(test, feature = "stress"))]
+    pub(crate) async fn drive(&self, quiet: impl Fn() -> bool, settle: impl Fn()) {
+        loop {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            if !quiet() {
+                settle();
+                continue;
+            }
+            let added = self.slept.notified();
+            tokio::pin!(added);
+            added.as_mut().enable();
+            match self.next_deadline() {
+                Some(deadline) => self.advance_base(deadline.saturating_sub(self.base())),
+                None => added.await,
+            }
+        }
+    }
+
+    fn sleeper(&self, deadline: Duration) -> Option<Sleeper<'_>> {
+        let mut time = crate::db::locked(&self.time);
+        if time.started.is_some() { return None; }
+        *time.sleepers.entry(deadline).or_default() += 1;
+        drop(time);
+        crate::db::lock::effect(|| self.slept.notify_waiters());
+        Some(Sleeper { clock: self, deadline })
+    }
+
+    fn stopped_deadline(&self, deadline: Duration) -> Duration {
+        deadline.saturating_sub(*crate::db::locked(&self.shift))
     }
 }
 
@@ -30,19 +128,27 @@ impl Default for TestClock {
 
 impl Clock for TestClock {
     fn now(&self) -> Duration {
-        let (start, instant) = *crate::db::locked(&self.time);
-        start + instant.elapsed()
+        self.base() + *crate::db::locked(&self.shift)
     }
 
     fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         let deadline = self.now() + duration;
         Box::pin(async move {
+            let mut stopped = None;
             loop {
                 let changed = self.changed.notified();
                 tokio::pin!(changed);
                 changed.as_mut().enable();
                 let now = self.now();
                 if now >= deadline { return; }
+                let at = self.stopped_deadline(deadline);
+                if stopped.as_ref().is_none_or(|sleeper: &Sleeper<'_>| sleeper.deadline != at) {
+                    stopped = self.sleeper(at);
+                }
+                if stopped.is_some() {
+                    changed.await;
+                    continue;
+                }
                 tokio::select! {
                     () = tokio::time::sleep(deadline - now) => return,
                     () = changed => {}

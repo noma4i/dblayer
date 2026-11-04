@@ -99,8 +99,8 @@ fn listed(rig: &Rig, relation: &str, query: &Map<String, Value>) -> Vec<String> 
     ids
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_row_joins_only_the_loaded_windows_whose_row_rules_hold() {
+#[test]
+fn an_event_row_joins_only_the_loaded_windows_whose_row_rules_hold() { crate::test_wait::paused(async {
     let (rig, _updates) = media_rig().await;
     let visual_media = load(&rig, "visual_media", None).await;
     let audio_media = load(&rig, "audio_media", None).await;
@@ -134,10 +134,10 @@ async fn an_event_row_joins_only_the_loaded_windows_whose_row_rules_hold() {
     assert_eq!(listed(&rig, "audio_since", &audio_since), ["audio-12"], "9 is not > 10");
     assert_eq!(listed(&rig, "gifts_since", &gifts_since), ["gift-13"], "a null sequenceNumber does not match");
     assert_eq!(listed(&rig, "constants_only", &constants_only), Vec::<String>::new(), "constant variables without a row rule keep automatic insertion off");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_member_that_stops_matching_leaves_its_windows() {
+#[test]
+fn a_member_that_stops_matching_leaves_its_windows() { crate::test_wait::paused(async {
     let (rig, _updates) = media_rig().await;
     let visual_media = load(&rig, "visual_media", None).await;
     let visual_since = load(&rig, "visual_since", Some(10)).await;
@@ -147,4 +147,4 @@ async fn a_member_that_stops_matching_leaves_its_windows() {
     assert_eq!((listed(&rig, "visual_media", &visual_media), listed(&rig, "visual_since", &visual_since)), (Vec::<String>::new(), Vec::<String>::new()));
     emit(&rig, message("m1", "TEXT", Some("IMAGE"), Some(8))).await;
     assert_eq!((listed(&rig, "visual_media", &visual_media), listed(&rig, "visual_since", &visual_since)), (vec!["m1".to_string()], Vec::<String>::new()));
-}
+}) }

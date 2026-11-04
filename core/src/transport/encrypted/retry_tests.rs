@@ -37,7 +37,7 @@ impl HttpExchange for Fault {
 }
 
 fn rig(error: Option<Result<HttpReply, TransportError>>, code: Option<(&'static str, bool)>) -> (EncryptedClient, Arc<Fault>, Db) {
-    rig_at(error, code, Arc::new(TestClock::new(Duration::from_secs(1_800_000_000))))
+    rig_at(error, code, Arc::new(crate::test_wait::clock(Duration::from_secs(1_800_000_000))))
 }
 
 fn rig_at(error: Option<Result<HttpReply, TransportError>>, code: Option<(&'static str, bool)>, clock: Arc<dyn crate::pacing::Clock>) -> (EncryptedClient, Arc<Fault>, Db) {
@@ -78,8 +78,8 @@ async fn audit_offline_encrypted_http_makes_zero_attempts() {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn audit_durable_upload_owns_the_failed_http_attempt() {
+#[test]
+fn audit_durable_upload_owns_the_failed_http_attempt() { crate::test_wait::paused(async {
     use std::{future::Future, task::{Context, Poll, Waker}};
     let failures = [(Some(Err(TransportError::Network("unavailable".into()))), None), (Some(Err(TransportError::Http { status: 503, body: String::new() })), None)]
         .into_iter().chain([false, true].map(|confirmed| (None, Some(("TIMEOUT", confirmed)))));
@@ -101,10 +101,10 @@ async fn audit_durable_upload_owns_the_failed_http_attempt() {
     assert_eq!(seen[0]["body"], seen[1]["body"]);
     assert!(super::state::pending(&db.shared.store.lock().connection).unwrap().is_none());
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn temporary_http_failures_retry_without_spending_sequence() {
+#[test]
+fn temporary_http_failures_retry_without_spending_sequence() { crate::test_wait::paused(async {
     let errors = std::iter::once(TransportError::Network("timeout".into())).chain(std::iter::once(TransportError::Network("connection reset".into())))
         .chain([408, 429, 500, 502, 503, 599].map(|status| TransportError::Http { status, body: String::new() }));
     for error in errors {
@@ -123,10 +123,10 @@ async fn temporary_http_failures_retry_without_spending_sequence() {
         assert_eq!(http.server.executed().len(), usize::from(route == "social"));
       }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn temporary_sealed_codes_preserve_unconfirmed_pending_and_advance_confirmed_sequence() {
+#[test]
+fn temporary_sealed_codes_preserve_unconfirmed_pending_and_advance_confirmed_sequence() { crate::test_wait::paused(async {
     for code in ["TIMEOUT", "SERVICE_UNAVAILABLE", "INTERNAL_SERVER_ERROR", "DATABASE_ERROR"] {
         for confirmed in [false, true] {
             let (client, http, db) = rig(None, Some((code, confirmed)));
@@ -140,10 +140,10 @@ async fn temporary_sealed_codes_preserve_unconfirmed_pending_and_advance_confirm
             assert_eq!(super::state::session(&db.shared.store.lock().connection).unwrap().unwrap().sequence, if confirmed { 2 } else { 1 });
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn fatal_http_and_security_failures_return_without_retrying() {
+#[test]
+fn fatal_http_and_security_failures_return_without_retrying() { crate::test_wait::paused(async {
     let errors = [400, 401, 403, 404, 405, 413, 415, 422].map(|status| TransportError::Http { status, body: String::new() }).into_iter()
         .chain([TransportError::Security { code: SecurityCode::TlsTrust, detail: "certificate".into() }, TransportError::Config { code: ConfigCode::UnsupportedVersion, detail: "version".into() }]);
     for error in errors {
@@ -151,25 +151,25 @@ async fn fatal_http_and_security_failures_return_without_retrying() {
         assert_eq!(client.session_call(&client.admit("test call").unwrap(), "social", json!({})).await, Err(error));
         assert_eq!(http.seen.lock().unwrap().len(), 1);
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn dropping_the_call_during_backoff_stops_the_retry_and_preserves_pending() {
+#[test]
+fn dropping_the_call_during_backoff_stops_the_retry_and_preserves_pending() { crate::test_wait::paused(async {
     use std::{future::Future, task::{Context, Waker}};
     let (client, http, db) = rig(Some(Err(TransportError::Network("offline".into()))), None);
     let admitted = client.admit("test call").unwrap();
     let mut call = Box::pin(client.session_call(&admitted, "social", json!({})));
     assert!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     drop(call);
-    tokio::time::advance(Duration::from_secs(60)).await;
+    crate::test_wait::pass(Duration::from_secs(60)).await;
     assert_eq!(http.seen.lock().unwrap().len(), 1);
     assert!(super::state::pending(&db.shared.store.lock().connection).unwrap().is_some());
     assert!(client.resume(&client.admit("test call").unwrap()).await.unwrap().is_some());
     assert_eq!(http.server.executed().len(), 1);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn local_credential_and_sqlite_failures_return_before_http_without_retrying() {
+#[test]
+fn local_credential_and_sqlite_failures_return_before_http_without_retrying() { crate::test_wait::paused(async {
     use std::{future::Future, task::{Context, Poll, Waker}};
     struct BrokenCredentials(bool);
     impl CredentialSlot for BrokenCredentials {
@@ -187,4 +187,4 @@ async fn local_credential_and_sqlite_failures_return_before_http_without_retryin
         assert!(matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(TransportError::Network(_)))), "{case}");
         assert!(http.seen.lock().unwrap().is_empty(), "{case}");
     }
-}
+}) }

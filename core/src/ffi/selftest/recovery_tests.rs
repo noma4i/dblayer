@@ -88,8 +88,8 @@ async fn a_data_reset_between_a_refused_pending_request_and_the_session_reset_ke
 }
 
 /// C17, I32: a pending encrypted request survives the close, the reopen of the same file resumes it once, and a reopen with a new data version keeps the credential and the next sequence.
-#[tokio::test(start_paused = true)]
-async fn a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once() {
+#[test]
+fn a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once() { crate::test_wait::paused(async {
     let rig = SessionRig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
@@ -97,6 +97,7 @@ async fn a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once(
     rig.server.drop_next_request();
     crate::ffi::encrypted_tests::cancel_on_retry(&rig.retries, first.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into())).await;
     first.close_now();
+    first.db.close().unwrap();
     drop(first);
 
     let reopened = rig.open(Some(&path), pin()).await.unwrap();
@@ -104,6 +105,7 @@ async fn a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once(
     assert_eq!(resumed.as_deref(), Some(r#"{"nextStep":"authenticated"}"#));
     assert_eq!(rig.server.executed().len(), 1);
     reopened.close_now();
+    reopened.db.close().unwrap();
     drop(reopened);
 
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
@@ -112,7 +114,7 @@ async fn a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once(
     migrated.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into()).await.unwrap();
     assert_eq!(rig.server.executed().len(), 2, "the next request after the new schema did not run once");
     migrated.close_now();
-}
+}) }
 
 struct HeldPut { gate: Arc<Gate>, ended: Arc<tokio::sync::Notify> }
 

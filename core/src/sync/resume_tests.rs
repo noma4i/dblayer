@@ -22,8 +22,8 @@ struct Window {
     calls: usize,
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_07_resume_reloads_a_watched_window_that_is_expired_marked_stale_or_never_loaded() {
+#[test]
+fn inv_fresh_07_resume_reloads_a_watched_window_that_is_expired_marked_stale_or_never_loaded() { crate::test_wait::paused(async {
     let cases = [
         Window { name: "stale", loaded_before: true, watched: true, marked_stale: false, idle_secs: 120, chunks: 1, loaded: 1, calls: 2 },
         Window { name: "recent", loaded_before: true, watched: true, marked_stale: false, idle_secs: 30, chunks: 0, loaded: 0, calls: 1 },
@@ -56,15 +56,15 @@ async fn inv_fresh_07_resume_reloads_a_watched_window_that_is_expired_marked_sta
             assert_eq!(rig.transport.call_count("MomentsFeed"), case.calls, "{} by_event={by_event}", case.name);
         }
     }
-}
+}) }
 
 fn stale_loaded_feed(rig: &Rig) -> crate::sync::Watch {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.watch("moments", "feed", &none()).unwrap()
 }
 
-#[tokio::test(start_paused = true)]
-async fn foreground_and_online_together_reload_a_stale_window_once() {
+#[test]
+fn foreground_and_online_together_reload_a_stale_window_once() { crate::test_wait::paused(async {
     let rig = rig();
     let _watch = stale_loaded_feed(&rig);
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -75,10 +75,10 @@ async fn foreground_and_online_together_reload_a_stale_window_once() {
     rig.sync.enter_foreground();
     within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn offline_foreground_is_ignored_and_the_return_online_reloads() {
+#[test]
+fn offline_foreground_is_ignored_and_the_return_online_reloads() { crate::test_wait::paused(async {
     let rig = rig();
     let _watch = stale_loaded_feed(&rig);
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -90,10 +90,10 @@ async fn offline_foreground_is_ignored_and_the_return_online_reloads() {
     rig.sync.set_online(true);
     within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_during_a_run_reloads_the_window_it_missed() {
+#[test]
+fn an_event_during_a_run_reloads_the_window_it_missed() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1").after(Duration::from_secs(10)));
     rig.transport.enqueue("MomentsByUser", rig_list(&["a"]));
@@ -104,10 +104,10 @@ async fn an_event_during_a_run_reloads_the_window_it_missed() {
     rig.sync.enter_foreground();
     within(rig.sync.settled_for_test()).await;
     assert_eq!((rig.transport.call_count("MomentsFeed"), rig.transport.call_count("MomentsByUser")), (1, 1));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn the_foreground_keeps_a_session_refusal_and_the_manual_resume_clears_it() {
+#[test]
+fn the_foreground_keeps_a_session_refusal_and_the_manual_resume_clears_it() { crate::test_wait::paused(async {
     use crate::transport::{SessionCode, SubscriptionEvent, SubscriptionFailure, TransportError};
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
@@ -126,10 +126,10 @@ async fn the_foreground_keeps_a_session_refusal_and_the_manual_resume_clears_it(
     assert_eq!(rig.transport.call_count("VibeEvents"), 1);
     within(rig.sync.resume(&rig.db.admit().unwrap())).await.unwrap();
     within(rig.transport.await_calls("VibeEvents", 2)).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_session_refusal_from_a_normal_load_keeps_events_away_until_the_manual_resume() {
+#[test]
+fn a_session_refusal_from_a_normal_load_keeps_events_away_until_the_manual_resume() { crate::test_wait::paused(async {
     use crate::transport::{SessionCode, TransportError};
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", crate::transport::Reply::fail(TransportError::Session { code: SessionCode::Unauthenticated, detail: "session_unknown".into() }));
@@ -142,10 +142,10 @@ async fn a_session_refusal_from_a_normal_load_keeps_events_away_until_the_manual
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     within(rig.sync.resume(&rig.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_session_failure_is_selected_among_the_failures_of_every_observed_subscription() {
+#[test]
+fn a_session_failure_is_selected_among_the_failures_of_every_observed_subscription() { crate::test_wait::paused(async {
     use crate::transport::{SessionCode, SubscriptionEvent, SubscriptionFailure, TransportError};
     let session = || TransportError::Session { code: SessionCode::Unauthenticated, detail: "session_unknown".into() };
     let denied = || TransportError::Http { status: 401, body: "denied".into() };
@@ -172,10 +172,10 @@ async fn a_session_failure_is_selected_among_the_failures_of_every_observed_subs
             assert_eq!(found.map(|failure| failure.error), expects_session.then(session), "{name}");
         }
     }
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_manual_resume_gets_the_report_of_the_pass_that_started_after_it_while_events_arrive() {
+#[test]
+fn a_manual_resume_gets_the_report_of_the_pass_that_started_after_it_while_events_arrive() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", crate::transport::Reply::graphql_error("nope", "FORBIDDEN").after(Duration::from_secs(10)));
     rig.transport.enqueue("MomentsByUser", rig_list(&["a"]));
@@ -193,20 +193,20 @@ async fn a_manual_resume_gets_the_report_of_the_pass_that_started_after_it_while
     assert_eq!((report.loaded, report.failed), (1, 1));
     within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_runner_dropped_before_its_first_poll_fails_the_waiting_resume() {
+#[test]
+fn a_runner_dropped_before_its_first_poll_fails_the_waiting_resume() { crate::test_wait::paused(async {
     let rig = rig();
     let (sender, mut report) = tokio::sync::oneshot::channel();
     let runner = rig.sync.inner.begin_resume(&rig.db.admit().unwrap(), super::resume_machine::Cause::Explicit, Some(sender)).unwrap();
     drop(runner.run());
     assert_eq!(report.try_recv(), Ok(Err(crate::sync::SyncError::Cancelled)));
     within(rig.sync.settled_for_test()).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_runner_aborted_during_a_pass_fails_every_waiting_resume_and_frees_the_owner() {
+#[test]
+fn a_runner_aborted_during_a_pass_fails_every_waiting_resume_and_frees_the_owner() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1").after(Duration::from_secs(10)));
     let _watch = rig.sync.watch("moments", "feed", &none()).unwrap();
@@ -221,10 +221,10 @@ async fn a_runner_aborted_during_a_pass_fails_every_waiting_resume_and_frees_the
     assert_eq!(first_report.try_recv(), Ok(Err(crate::sync::SyncError::Cancelled)));
     assert_eq!(queued_report.try_recv(), Ok(Err(crate::sync::SyncError::Cancelled)));
     assert!(within(rig.sync.resume(&rig.db.admit().unwrap())).await.is_ok());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn closing_cancels_the_run_an_event_started() {
+#[test]
+fn closing_cancels_the_run_an_event_started() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1").after(Duration::from_secs(10)));
     let _watch = rig.sync.watch("moments", "feed", &none()).unwrap();
@@ -232,12 +232,12 @@ async fn closing_cancels_the_run_an_event_started() {
     within(rig.transport.await_calls("MomentsFeed", 1)).await;
     let db = rig.db.clone();
     drop(rig.sync);
-    tokio::time::sleep(Duration::from_secs(30)).await;
+    crate::test_wait::pass(Duration::from_secs(30)).await;
     assert!(db.query(&crate::query::Query::new("moments")).unwrap().is_empty());
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_fresh_07_windows_are_reloaded_in_chunks() {
+#[test]
+fn inv_fresh_07_windows_are_reloaded_in_chunks() { crate::test_wait::paused(async {
     let rig = rig_with(SyncConfig { resume: ResumeDrain::new(Duration::from_secs(60), 2), ..SyncConfig::default() });
     rig.transport.enqueue("MomentsByUser", rig_list(&["a"]));
     let mut watches = Vec::new();
@@ -247,19 +247,19 @@ async fn inv_fresh_07_windows_are_reloaded_in_chunks() {
     let report = within(rig.sync.resume(&rig.db.admit().unwrap())).await.unwrap();
     assert_eq!((report.chunks, report.loaded, report.failed), (3, 5, 0));
     assert_eq!(rig.transport.call_count("MomentsByUser"), 5);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn failed_reload_is_counted() {
+#[test]
+fn failed_reload_is_counted() { crate::test_wait::paused(async {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", crate::transport::Reply::graphql_error("nope", "FORBIDDEN"));
     let _watch = rig.sync.watch("moments", "feed", &none()).unwrap();
     let report = within(rig.sync.resume(&rig.db.admit().unwrap())).await.unwrap();
     assert_eq!((report.loaded, report.failed), (0, 1));
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_dropped_watch_leaves_the_db_registry_and_resume_skips_it() {
+#[test]
+fn a_dropped_watch_leaves_the_db_registry_and_resume_skips_it() { crate::test_wait::paused(async {
     let rig = rig();
     let watch = rig.sync.watch("moments", "feed", &none()).unwrap();
     assert_eq!(rig.db.observed_reads().len(), 1);
@@ -267,14 +267,14 @@ async fn a_dropped_watch_leaves_the_db_registry_and_resume_skips_it() {
     assert!(rig.db.observed_reads().is_empty());
     let report = within(rig.sync.resume(&rig.db.admit().unwrap())).await.unwrap();
     assert_eq!((report.loaded, report.failed, rig.transport.call_count("MomentsFeed")), (0, 0, 0));
-}
+}) }
 
 fn rig_list(ids: &[&str]) -> crate::transport::Reply {
     crate::transport::Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()}))
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_committed_credential_resumes_once_and_the_same_credential_does_not() {
+#[test]
+fn a_committed_credential_resumes_once_and_the_same_credential_does_not() { crate::test_wait::paused(async {
     let rig = rig();
     let _watch = stale_loaded_feed(&rig);
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
@@ -292,10 +292,10 @@ async fn a_committed_credential_resumes_once_and_the_same_credential_does_not() 
     rig.sync.commit_session_for_test();
     within(rig.sync.settled_for_test()).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2, "same credential");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn refresh_on_foreground_reloads_a_fresh_window_once_per_foreground_event() {
+#[test]
+fn refresh_on_foreground_reloads_a_fresh_window_once_per_foreground_event() { crate::test_wait::paused(async {
     for (relation, reloads) in [("foreground_feed", 1), ("feed", 0)] {
         let rig = rig();
         rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
@@ -306,4 +306,4 @@ async fn refresh_on_foreground_reloads_a_fresh_window_once_per_foreground_event(
         within(rig.sync.settled_for_test()).await;
         assert_eq!(rig.transport.call_count("MomentsFeed"), 1 + reloads, "{relation}");
     }
-}
+}) }

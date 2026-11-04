@@ -76,8 +76,10 @@ class ModelEventsTest {
             screen.launch { stream.events(ChatActivityNotice).collect { item -> items.send(item); if (item is ModelEventItem.Ready) gate.await() } }
             assertEquals(ModelEventItem.Ready, awaitWithin("the source opens") { items.receive() })
             eventually("the signal subscription opens") { transport.calls.size == 1 }
-            for (index in 0 until 400) transport.emit("ChatActionSignal", screenshot("c$index"))
-            eventually("the 400 notices are stored") { Query(ChatActivityNotice.modelName, ChatActivityNotice).read().size == 400 }
+            for (burst in listOf(0 until 200, 200 until 400)) {
+                for (index in burst) transport.emit("ChatActionSignal", screenshot("c$index"))
+                eventually("the notices of the burst are stored") { Query(ChatActivityNotice.modelName, ChatActivityNotice).read().size == burst.last + 1 }
+            }
             gate.complete(Unit)
             var events = 0L
             val lost = mutableListOf<Pair<ULong, ULong>>()

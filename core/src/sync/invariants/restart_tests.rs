@@ -21,8 +21,8 @@ fn feed_members(rig: &Rig) -> usize {
     rig.db.shared.store.scope_members("moments", feed_scope(rig).key.as_str()).unwrap().len()
 }
 
-#[tokio::test(start_paused = true)]
-async fn inv_rollback_05_inv_file_03_a_refused_destroy_after_a_sweep_and_a_restart_brings_everything_back() {
+#[test]
+fn inv_rollback_05_inv_file_03_a_refused_destroy_after_a_sweep_and_a_restart_brings_everything_back() { crate::test_wait::paused(async {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("42.sqlite");
     let rig = open_rig(&path);
@@ -39,6 +39,7 @@ async fn inv_rollback_05_inv_file_03_a_refused_destroy_after_a_sweep_and_a_resta
     rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
     start(&rig.db, rig.db.outbox().unwrap()[0].operation.id.0);
     rig.db.sweep_files(&rig.db.admit().unwrap()).unwrap();
+    rig.db.close().unwrap();
     drop(rig);
 
     let rig = open_rig(&path);
@@ -55,15 +56,16 @@ async fn inv_rollback_05_inv_file_03_a_refused_destroy_after_a_sweep_and_a_resta
     assert!(rig.db.file("moments", &rid("m1"), "media").unwrap().is_some());
     assert_eq!(feed_members(&rig), 1);
     assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().state, SyncState::Failed);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn inv_op_03_an_operation_started_before_a_restart_is_not_sent_again_until_retry() {
+#[test]
+fn inv_op_03_an_operation_started_before_a_restart_is_not_sent_again_until_retry() { crate::test_wait::paused(async {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("3.sqlite");
     let rig = open_rig(&path);
     rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
     start(&rig.db, rig.db.outbox().unwrap()[0].operation.id.0);
+    rig.db.close().unwrap();
     drop(rig);
 
     let rig = open_rig(&path);
@@ -74,4 +76,4 @@ async fn inv_op_03_an_operation_started_before_a_restart_is_not_sent_again_until
     rig.db.retry(&rig.db.admit().unwrap(), "moments", &held.row_ids[0], None).unwrap();
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
-}
+}) }

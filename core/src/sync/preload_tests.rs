@@ -40,8 +40,8 @@ fn requests(rig: &Rig) -> usize {
     rig.transport.call_count("MomentsFeed")
 }
 
-#[tokio::test(start_paused = true)]
-async fn an_open_with_a_session_loads_each_declared_window_once() {
+#[test]
+fn an_open_with_a_session_loads_each_declared_window_once() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
@@ -52,10 +52,10 @@ async fn an_open_with_a_session_loads_each_declared_window_once() {
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_new_session_starts_the_load_and_the_same_session_does_not() {
+#[test]
+fn a_new_session_starts_the_load_and_the_same_session_does_not() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.transport.set_session(None);
     rig.sync.commit_session_for_test();
@@ -73,20 +73,20 @@ async fn a_new_session_starts_the_load_and_the_same_session_does_not() {
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 6);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_reset_loads_the_declared_windows_again() {
+#[test]
+fn a_reset_loads_the_declared_windows_again() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
     rig.db.reset(&["moments"]).unwrap();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 6);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_fresh_window_is_not_loaded() {
+#[test]
+fn a_fresh_window_is_not_loaded() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
@@ -97,10 +97,10 @@ async fn a_fresh_window_is_not_loaded() {
     rig.sync.inner.preload_on_event();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 6);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn offline_waits_for_the_online_event() {
+#[test]
+fn offline_waits_for_the_online_event() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.set_online(false);
     rig.sync.commit_session_for_test();
@@ -113,10 +113,10 @@ async fn offline_waits_for_the_online_event() {
     rig.sync.set_online(true);
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_failed_session_read_shows_in_the_window_and_the_load_starts_when_it_recovers() {
+#[test]
+fn a_failed_session_read_shows_in_the_window_and_the_load_starts_when_it_recovers() { crate::test_wait::paused(async {
     let rig = preloading();
     let window = rig.sync.relation_state("moments", "feed", &serde_json::Map::new()).await.unwrap();
     rig.transport.fail_session("session storage is locked");
@@ -128,10 +128,10 @@ async fn a_failed_session_read_shows_in_the_window_and_the_load_starts_when_it_r
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_event_while_signed_out_loads_nothing_until_the_session_appears() {
+#[test]
+fn an_event_while_signed_out_loads_nothing_until_the_session_appears() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.transport.set_session(None);
     rig.sync.commit_session_for_test();
@@ -142,25 +142,25 @@ async fn an_event_while_signed_out_loads_nothing_until_the_session_appears() {
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn going_offline_during_a_round_ends_it_and_the_online_event_loads_again() {
+#[test]
+fn going_offline_during_a_round_ends_it_and_the_online_event_loads_again() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1").after(Duration::from_secs(10)));
     rig.sync.commit_session_for_test();
-    tokio::time::sleep(Duration::from_millis(1)).await;
+    crate::test_wait::pass(Duration::from_millis(1)).await;
     rig.sync.set_online(false);
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
     rig.sync.set_online(true);
-    tokio::time::sleep(Duration::from_secs(11)).await;
+    crate::test_wait::pass(Duration::from_secs(11)).await;
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 5);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn power_saving_holds_the_load_until_it_ends() {
+#[test]
+fn power_saving_holds_the_load_until_it_ends() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.set_power_saving(true);
     rig.sync.commit_session_for_test();
@@ -177,10 +177,10 @@ async fn power_saving_holds_the_load_until_it_ends() {
     rig.sync.set_power_saving(false);
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_low_ram_device_never_loads() {
+#[test]
+fn a_low_ram_device_never_loads() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.set_low_ram(true);
     rig.sync.commit_session_for_test();
@@ -191,10 +191,10 @@ async fn a_low_ram_device_never_loads() {
     rig.sync.inner.preload_on_event();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 0);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn a_round_in_flight_stops_taking_work_when_power_saving_starts() {
+#[test]
+fn a_round_in_flight_stops_taking_work_when_power_saving_starts() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.set_power_saving(true);
     rig.sync.inner.preload_on_event();
@@ -203,7 +203,7 @@ async fn a_round_in_flight_stops_taking_work_when_power_saving_starts() {
     rig.sync.set_power_saving(false);
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
-}
+}) }
 
 fn deriving() -> (Rig, Arc<Mutex<Vec<&'static str>>>) {
     let mut moments = moments_spec();
@@ -237,8 +237,8 @@ fn feed_vibes(rig: &Rig) -> Vec<String> {
     vibes
 }
 
-#[tokio::test(start_paused = true)]
-async fn preload_limited_source() {
+#[test]
+fn preload_limited_source() { crate::test_wait::paused(async {
     let mut moments = moments_spec();
     let relation = moments.relations.iter_mut().find(|relation| relation.name == "vibe_feed").unwrap();
     relation.text_params.push("channel".into());
@@ -272,10 +272,10 @@ async fn preload_limited_source() {
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 42, "only the two incoming windows reach the transport");
     assert_eq!(feed_vibes(&rig).iter().filter(|id| id.as_str() == "v00020").count(), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn each_row_of_a_source_list_gets_one_scope_and_a_new_row_adds_one() {
+#[test]
+fn each_row_of_a_source_list_gets_one_scope_and_a_new_row_adds_one() { crate::test_wait::paused(async {
     let (rig, ids) = deriving();
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
@@ -290,10 +290,10 @@ async fn each_row_of_a_source_list_gets_one_scope_and_a_new_row_adds_one() {
     rig.sync.preload_settled().await;
     assert_eq!(feed_vibes(&rig), ["a", "b", "c"]);
     assert_eq!(rig.transport.call_count("VibesList"), 2);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn nothing_is_fetched_before_the_first_screen_shows_a_snapshot() {
+#[test]
+fn nothing_is_fetched_before_the_first_screen_shows_a_snapshot() { crate::test_wait::paused(async {
     let rig = preloading();
     let screen = rig.sync.first_screen();
     rig.sync.commit_session_for_test();
@@ -302,10 +302,10 @@ async fn nothing_is_fetched_before_the_first_screen_shows_a_snapshot() {
     screen.delivered();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_app_load_in_flight_holds_the_start_until_it_ends() {
+#[test]
+fn an_app_load_in_flight_holds_the_start_until_it_ends() { crate::test_wait::paused(async {
     let rig = preloading();
     let app = rig.sync.app_load();
     rig.sync.commit_session_for_test();
@@ -314,10 +314,10 @@ async fn an_app_load_in_flight_holds_the_start_until_it_ends() {
     drop(app);
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 3);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn an_app_load_started_during_the_round_is_served_before_the_queued_preload_fetches() {
+#[test]
+fn an_app_load_started_during_the_round_is_served_before_the_queued_preload_fetches() { crate::test_wait::paused(async {
     let mut moments = moments_spec();
     for relation in moments.relations.iter_mut().filter(|relation| relation.name == "vibe_feed") {
         let values = ["a", "b", "c", "d", "e"].map(|id| json!(id)).to_vec();
@@ -329,21 +329,21 @@ async fn an_app_load_started_during_the_round_is_served_before_the_queued_preloa
         Some(feed_reply(&["m1"], false, "c1").after(Duration::from_secs(delay)))
     });
     rig.sync.commit_session_for_test();
-    tokio::time::sleep(Duration::from_millis(1)).await;
+    crate::test_wait::pass(Duration::from_millis(1)).await;
     assert_eq!(requests(&rig), 3, "the round runs three fetches at once");
     let sync = rig.sync.clone();
     let app = tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "vibe_feed", &params(json!({"vibeId": "app"})), crate::sync::LoadOptions::default()).await });
-    tokio::time::sleep(Duration::from_secs(15)).await;
+    crate::test_wait::pass(Duration::from_secs(15)).await;
     assert_eq!(requests(&rig), 4, "the queued preload fetches wait while the app load is in flight");
     assert!(feed_vibes(&rig).contains(&"app".to_string()));
     app.await.unwrap().unwrap();
-    tokio::time::sleep(Duration::from_secs(30)).await;
+    crate::test_wait::pass(Duration::from_secs(30)).await;
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 6);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn refreshing_preloads_fetches_every_scope_once_even_when_all_are_fresh() {
+#[test]
+fn refreshing_preloads_fetches_every_scope_once_even_when_all_are_fresh() { crate::test_wait::paused(async {
     let (rig, ids) = deriving();
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
@@ -355,10 +355,10 @@ async fn refreshing_preloads_fetches_every_scope_once_even_when_all_are_fresh() 
     let mut refreshed = calls.clone();
     refreshed.sort();
     assert_eq!(refreshed, ["a", "b", "c"], "each scope, the one of the new row too, is fetched once");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn refreshing_preloads_offline_gives_the_error_and_sends_nothing() {
+#[test]
+fn refreshing_preloads_offline_gives_the_error_and_sends_nothing() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
@@ -366,21 +366,21 @@ async fn refreshing_preloads_offline_gives_the_error_and_sends_nothing() {
     rig.sync.set_online(false);
     assert_eq!(rig.sync.refresh_preloads(&rig.db.admit().unwrap()).await.unwrap_err(), crate::sync::SyncError::Offline);
     assert_eq!(rig.transport.calls().len(), before);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn refreshing_preloads_names_the_scopes_that_failed() {
+#[test]
+fn refreshing_preloads_names_the_scopes_that_failed() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.transport.respond_with(|request| Some(if request.variables["vibeId"] == "b" { Reply::graphql_messages(&["boom"]) } else { feed_reply(&["m1"], false, "c1") }));
     let failures = rig.sync.refresh_preloads(&rig.db.admit().unwrap()).await.unwrap();
     assert_eq!(requests(&rig), 3);
     assert_eq!(failures.len(), 1);
     assert_eq!((failures[0].model.as_str(), failures[0].relation.as_str(), failures[0].params["vibeId"].as_str()), ("moments", "vibe_feed", Some("b")));
-}
+}) }
 
 /// E01: a refresh that was admitted in one epoch sends nothing and writes nothing once a session started in another epoch, also for the load that still waits for a lane.
-#[tokio::test(start_paused = true)]
-async fn a_refresh_of_an_epoch_that_left_sends_nothing_from_the_load_waiting_for_a_lane() {
+#[test]
+fn a_refresh_of_an_epoch_that_left_sends_nothing_from_the_load_waiting_for_a_lane() { crate::test_wait::paused(async {
     let mut moments = moments_spec();
     for relation in &mut moments.relations {
         if relation.name == "vibe_feed" {
@@ -394,12 +394,12 @@ async fn a_refresh_of_an_epoch_that_left_sends_nothing_from_the_load_waiting_for
     let admitted = rig.db.admit().unwrap();
     let refreshing = { let sync = rig.sync.clone(); async move { sync.refresh_preloads(&admitted).await } };
     let running = tokio::spawn(refreshing);
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    crate::test_wait::pass(Duration::from_secs(1)).await;
     assert_eq!(requests(&rig), 3, "three loads hold the lanes and the fourth waits");
     rig.sync.set_preload(false);
     assert!(life.session_from(Some("another".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok(), "the session of the other epoch did not start");
-    tokio::time::sleep(Duration::from_secs(60)).await;
+    crate::test_wait::pass(Duration::from_secs(60)).await;
     let _ = running.await;
     assert_eq!(requests(&rig), 3, "the load that waited for a lane sent its request in the new epoch");
     assert_eq!(rig.db.shared.store.row_count("moments").unwrap(), 0, "an answer of the epoch that left was written");
-}
+}) }

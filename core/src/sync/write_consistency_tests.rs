@@ -70,8 +70,8 @@ fn save(db: &Db, values: Value) {
     db.land(&db.admit().unwrap(), envelope).unwrap();
 }
 
-#[tokio::test(start_paused = true)]
-async fn stale_generation_preserves_the_undelivered_attempt_budget() {
+#[test]
+fn stale_generation_preserves_the_undelivered_attempt_budget() { crate::test_wait::paused(async {
     let mut failures = Vec::new();
     let action = "create";
     for (attempts, expected) in [(1, crate::operation::OperationStatus::Pending), (40, crate::operation::OperationStatus::Failed)] {
@@ -96,7 +96,7 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
             let sending = super::send::Sending { effects: std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&sync.inner))), admitted: &db.admit().unwrap(), entry: &entry, model: "Record".into(), action: action.into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
             let reset = async {
                 if attempt == attempts {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    crate::test_wait::pass(Duration::from_secs(1)).await;
                     db.reset(&["Folder"]).unwrap();
                     assert_ne!(db.generation(), sending.generation);
                     assert_eq!(db.outbox().unwrap().len(), 1, "operation survives unrelated reset");
@@ -118,7 +118,7 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
         if body != expected_body { failures.push(format!("{action}/{attempts}: body {body:?}, expected {expected_body:?}")); }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
+}) }
 
 async fn load_empty(sync: &Sync, transport: &MockTransport) {
     transport.enqueue("Records", Reply::data(json!({"records":[]})));
@@ -149,8 +149,8 @@ fn local_batch_allocates_distinct_order_keys() {
     assert!(ids.iter().all(|id| found.contains(&id.to_string())));
 }
 
-#[tokio::test(start_paused = true)]
-async fn event_burst_allocates_distinct_order_keys() {
+#[test]
+fn event_burst_allocates_distinct_order_keys() { crate::test_wait::paused(async {
     let db = Db::open_in_memory(vec![spec()], None).unwrap();
     let transport = Arc::new(MockTransport::new());
     let clock = Arc::new(ManualClock::new(Duration::ZERO));
@@ -171,10 +171,10 @@ async fn event_burst_allocates_distinct_order_keys() {
     transport.await_waits("Changed", waits + 1).await;
     assert_eq!(subscription.status().rejected, 0);
     assert_eq!(members(&db), ["r1", "r2"]);
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn network_writes_preserve_pending_fields() {
+#[test]
+fn network_writes_preserve_pending_fields() { crate::test_wait::paused(async {
     let mut failures = Vec::new();
     for source in ["event", "event-related", "load", "load-related", "response", "lands"] {
         let mut model = spec();
@@ -228,17 +228,17 @@ async fn network_writes_preserve_pending_fields() {
         }
     }
     assert!(failures.is_empty(), "{failures:?}");
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn event_joins_an_existing_row_and_resolves_nested_paths() {
+#[test]
+fn event_joins_an_existing_row_and_resolves_nested_paths() { crate::test_wait::paused(async {
     event_join(false).await;
-}
+}) }
 
-#[tokio::test(start_paused = true)]
-async fn event_resolves_nested_id() {
+#[test]
+fn event_resolves_nested_id() { crate::test_wait::paused(async {
     event_join(true).await;
-}
+}) }
 
 async fn event_join(nested: bool) {
         let (db, sync, transport) = rig(spec());
@@ -263,8 +263,8 @@ async fn event_join(nested: bool) {
         }
 }
 
-#[tokio::test(start_paused = true)]
-async fn lands_accepts_lists() {
+#[test]
+fn lands_accepts_lists() { crate::test_wait::paused(async {
         let (db, sync, transport) = rig(spec());
         load_empty(&sync, &transport).await;
         save(&db, json!({"id":"r1","body":"before"}));
@@ -275,7 +275,7 @@ async fn lands_accepts_lists() {
         crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await.unwrap();
         assert_eq!(members(&db), ["r2", "r3"]);
         assert_eq!(db.shared.store.point("Record", "r2").unwrap().unwrap()["body"], "landed");
-}
+}) }
 
 #[tokio::test]
 async fn removing_upload_item_rewrites_mapped_values() {

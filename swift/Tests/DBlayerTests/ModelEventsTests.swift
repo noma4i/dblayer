@@ -48,8 +48,10 @@ extension BridgeProbeTests {
     let transport = try await Self.openNoticeRig()
     let collector = await opened(try DB.account().events(ChatActivityNotice.self))
     await eventually("the signal subscription opens") { transport.calls.count == 1 }
-    for index in 0..<400 { try transport.emit("ChatActionSignal", json: Self.screenshot("c\(index)")) }
-    await eventually("the 400 notices are stored") { (try? await Query<ChatActivityNotice>().read().count) == 400 }
+    for burst in [0..<200, 200..<400] {
+      for index in burst { try transport.emit("ChatActionSignal", json: Self.screenshot("c\(index)")) }
+      await eventually("the notices of the burst are stored") { (try? await Query<ChatActivityNotice>().read().count) == burst.upperBound }
+    }
     var events: UInt64 = 0
     var lost: [(UInt64, UInt64)] = []
     await eventually("the burst is accounted") {
