@@ -137,7 +137,10 @@ impl Stream {
     }
 
     /// Fails the stream before it has a value: one failed state, then the end.
-    pub(super) fn invalid(&self, error: DbError) { self.handle(Input::Invalid(error)); }
+    pub(super) fn invalid(&self, error: DbError) {
+        if !self.live() { return; }
+        self.handle(Input::Invalid(error));
+    }
 
     /// The source of a stream that carries no list is open: the reader hears one settled state.
     pub(super) fn ready(&self) {

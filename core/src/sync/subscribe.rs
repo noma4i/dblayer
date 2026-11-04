@@ -309,6 +309,7 @@ impl Feed {
                 let Some(source) = read.id_of.as_ref() else { continue };
                 if settled.get(&source.model) != Some(&true) {
                     locked(&self.status).rejected += 1;
+                    self.inner.publish_model_gap(model);
                     continue;
                 }
                 let after = match self.source_id(read, &row_id) {
@@ -444,6 +445,7 @@ impl Feed {
         if matches!(apply.action, SubscriptionAction::Ignore) { return true; }
         let Some(node) = response.data.as_ref().and_then(|data| root_value(data, &self.root_path)) else {
             locked(&self.status).rejected += 1;
+            self.inner.publish_model_gap(&self.def.model);
             return true;
         };
         if !self.matches(node) { return true; }

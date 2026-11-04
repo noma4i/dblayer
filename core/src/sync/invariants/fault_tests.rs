@@ -68,7 +68,9 @@ async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_
     };
     assert!(total > 100, "{total} steps counted");
     let (mut faulted, mut confirmed, mut unconfirmed) = (0, 0, 0);
-    for limit in (1..total).step_by((total / 150).max(1)) {
+    let tail = flushed.saturating_sub(16).max(1);
+    let limits: std::collections::BTreeSet<usize> = (1..tail).step_by((total / 150).max(1)).chain(tail..=total).collect();
+    for limit in limits {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("1.sqlite");
         let rig = prepare(&path);
