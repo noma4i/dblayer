@@ -94,6 +94,23 @@ class ClubTest {
         assertEquals(club.id, withTimeout(5000) { receipt.outcome() }.confirmedValue?.id)
     }
 
+    private suspend fun confirmedClub(): Club {
+        val receipt = withTimeout(5000) { Club.create(name = "friends") }
+        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        return Query("Club", Club).read().first()
+    }
+
+    private suspend fun removeMemberConfirmed(club: Club) {
+        val receipt = withTimeout(5000) { club.removeMember(userIds = listOf("u4")) }
+        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+    }
+
+    private suspend fun confirmedLetter(): Letter {
+        val receipt = withTimeout(5000) { Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1) }
+        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        return Query("Letter", Letter).read().first()
+    }
+
     @Test
     fun aRefusedDestroyRestoresTheRowAccordingToItsDeclaration() = bounded {
         for (business in listOf(false, true)) {
