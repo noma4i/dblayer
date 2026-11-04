@@ -612,7 +612,11 @@ impl Feed {
         status.stopped = lifecycle.stopped();
     }
 
-    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation) -> (SubscriptionFailureKind, Option<SubscriptionFailure>) {
+    fn drain(pending: Vec<(Arc<SubscriptionDef>, Duration, Vec<Pending>)>) -> Vec<Pending> {
+        pending.into_iter().flat_map(|(_, _, items)| items).collect()
+    }
+
+    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation) -> (SubscriptionFailureKind, Option<SubscriptionFailure>, Vec<Pending>) {
         let mut pending: Vec<(Arc<SubscriptionDef>, Duration, Vec<Pending>)> = Vec::new();
         loop {
             let deadline = pending.iter().map(|(_, deadline, _)| *deadline).min();
@@ -621,8 +625,7 @@ impl Feed {
                 event = connection.next() => match event {
                     None => {
                         self.opening(Err(SyncError::Event("subscription closed".into())));
-                        self.apply_active(std::mem::take(&mut pending).into_iter().flat_map(|(_, _, items)| items).collect()).await;
-                        return (SubscriptionFailureKind::Transport, None);
+                        return (SubscriptionFailureKind::Transport, None, Self::drain(pending));
                     }
                     Some(SubscriptionEvent::Ready) => {
                         if generation != self.inner.db.generation() { continue; }
@@ -664,10 +667,7 @@ impl Feed {
                         }
                         self.apply_active(items).await;
                     }
-                    Some(SubscriptionEvent::Failed(failure)) => {
-                        self.apply_active(std::mem::take(&mut pending).into_iter().flat_map(|(_, _, items)| items).collect()).await;
-                        return (failure.kind, Some(failure));
-                    }
+                    Some(SubscriptionEvent::Failed(failure)) => return (failure.kind, Some(failure), Self::drain(pending)),
                 },
                 _ = self.inner.clock.sleep(wait), if deadline.is_some() => {
                     let mut items = Vec::new();
@@ -706,7 +706,7 @@ impl Feed {
                 } => match attempt { Some(attempt) => attempt, None => { self.mark(|status| status.opening = false); return } },
             };
             self.epoch = epoch;
-            let (kind, failed) = match attempt {
+            let (kind, failed, leftover) = match attempt {
                 Ok(mut connection) => {
                     let reconnected = {
                         let mut status = locked(&self.status);
@@ -729,7 +729,10 @@ impl Feed {
                         tokio::select! {
                             biased;
                             change = invalidated(&mut resets) => match change {
-                                Some(crate::lifecycle::Invalidated::Rebound(snapshot)) => self.epoch = crate::lifecycle::Epoch::new(&self.inner.db.shared.store.lifecycle, snapshot.session_epoch),
+                                Some(crate::lifecycle::Invalidated::Rebound(snapshot)) => {
+                                    connection.discard_queued_responses();
+                                    self.epoch = crate::lifecycle::Epoch::new(&self.inner.db.shared.store.lifecycle, snapshot.session_epoch);
+                                }
                                 _ => { self.mark(|status| status.connected = false); lifecycle = Lifecycle::new(self.backoff); continue 'open; }
                             },
                             ended = self.pump(&mut connection, &mut lifecycle, generation) => break ended,
@@ -740,13 +743,14 @@ impl Feed {
                     self.mark(|status| status.opening = false);
                     let failure = SubscriptionFailure::from_error(error);
                     let announced = (failure.kind != SubscriptionFailureKind::Transport || self.inner.connectivity.is_online()).then(|| failure.clone());
-                    (failure.kind, announced)
+                    (failure.kind, announced, Vec::new())
                 }
             };
             self.mark(|status| status.connected = false);
             lifecycle.handle(Event::Lost { kind, online: self.inner.connectivity.is_online() });
             self.publish(&lifecycle);
             if let Some(failure) = failed { self.notify_failure(&failure); }
+            self.apply_active(leftover).await;
             match lifecycle.step() {
                 Step::Stop => return,
                 Step::Wait(delay) => tokio::select! {

@@ -97,6 +97,7 @@ impl SubscriptionEvent {
 
 pub struct ServerSubscription {
     events: UnboundedReceiver<SubscriptionEvent>,
+    kept: std::collections::VecDeque<SubscriptionEvent>,
     handle: ServerSubscriptionHandle,
     #[cfg(any(test, feature = "stress"))]
     on_next: Option<Box<dyn Fn(ConsumerSignal) + Send + Sync>>,
@@ -124,6 +125,7 @@ impl ServerSubscription {
     pub fn new(events: UnboundedReceiver<SubscriptionEvent>, handle: ServerSubscriptionHandle) -> Self {
         Self {
             events,
+            kept: std::collections::VecDeque::new(),
             handle,
             #[cfg(any(test, feature = "stress"))]
             on_next: None,
@@ -142,12 +144,26 @@ impl ServerSubscription {
             hook(ConsumerSignal::Waiting);
             Waiting(hook)
         });
-        let event = self.events.recv().await;
+        let event = match self.kept.pop_front() {
+            Some(event) => Some(event),
+            None => self.events.recv().await,
+        };
         #[cfg(any(test, feature = "stress"))]
         if let (Some(hook), Some(_)) = (&self.on_next, &event) {
             hook(ConsumerSignal::Received);
         }
         event
+    }
+
+    pub(crate) fn discard_queued_responses(&mut self) {
+        while let Ok(event) = self.events.try_recv() {
+            if !matches!(event, SubscriptionEvent::Next(_)) {
+                self.kept.push_back(event);
+                continue;
+            }
+            #[cfg(any(test, feature = "stress"))]
+            if let Some(hook) = &self.on_next { hook(ConsumerSignal::Received); }
+        }
     }
 
     #[cfg(test)]

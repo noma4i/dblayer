@@ -4,7 +4,6 @@ use tokio::sync::watch;
 
 #[derive(uniffi::Object)]
 pub struct Connectivity {
-    online: std::sync::atomic::AtomicBool,
     sender: watch::Sender<bool>,
     /// Counts the returns of the network, so a reader that polls late still sees a short loss.
     returns: watch::Sender<u64>,
@@ -14,28 +13,26 @@ pub struct Connectivity {
 impl Connectivity {
     #[uniffi::constructor]
     pub fn new(online: bool) -> Arc<Self> {
-        Arc::new(Self { online: std::sync::atomic::AtomicBool::new(online), sender: watch::channel(online).0, returns: watch::channel(0).0 })
+        Arc::new(Self { sender: watch::channel(online).0, returns: watch::channel(0).0 })
     }
 
     pub fn set_online(&self, online: bool) {
-        let was = self.set_state(online);
-        self.publish(online, was);
+        self.change(online);
     }
 }
 impl Connectivity {
-    pub(crate) fn set_state(&self, online: bool) -> bool { self.online.swap(online, std::sync::atomic::Ordering::SeqCst) }
-
-    pub(crate) fn publish(&self, online: bool, was: bool) {
+    pub(crate) fn change(&self, online: bool) -> bool {
         crate::db::lock::effect(|| {
-            self.sender.send_replace(online);
+            let was = self.sender.send_replace(online);
             if online && !was { self.returns.send_modify(|count| *count += 1); }
-        });
+            was
+        })
     }
 
     pub(crate) fn returns(&self) -> watch::Receiver<u64> { self.returns.subscribe() }
 
     pub fn is_online(&self) -> bool {
-        self.online.load(std::sync::atomic::Ordering::SeqCst)
+        *self.sender.borrow()
     }
 
     pub async fn offline(&self) {

@@ -52,23 +52,21 @@ fn rig_at(error: Option<Result<HttpReply, TransportError>>, code: Option<(&'stat
 #[tokio::test]
 async fn audit_offline_encrypted_http_makes_zero_attempts() {
     use std::{future::Future, task::{Context, Waker}};
-    use crate::transport::{Transport, MockTransport};
     for failed_first in [false, true] {
         let clock = Arc::new(crate::pacing::ManualClock::new(Duration::from_secs(1_800_000_000)));
         let error = failed_first.then(|| Err(TransportError::Network("unavailable".into())));
         let (client, http, db) = rig_at(error, None, clock.clone());
         let client = Arc::new(client);
-        let transport = EncryptedTransport::new(client.clone(), Arc::new(MockTransport::new()));
         let mut call = Box::pin(client.session_call("social", json!({})));
         if failed_first { assert!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending()); }
-        transport.set_online(false);
+        db.connectivity().set_online(false);
         for _ in 0..3 {
             assert!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
             clock.advance(Duration::from_secs(60));
             assert_eq!(http.seen.lock().unwrap().len(), usize::from(failed_first), "offline must not send HTTP");
         }
         assert!(super::state::pending(&db.shared.store.lock().connection).unwrap().is_some());
-        transport.set_online(true);
+        db.connectivity().set_online(true);
         assert!(call.await.is_ok());
         let seen = http.seen.lock().unwrap();
         assert_eq!(seen.len(), usize::from(failed_first) + 1);

@@ -11,7 +11,12 @@ impl Sync {
     pub fn set_online(&self, online: bool) {
         let was_online = {
             let _line = self.inner.network_line.enter();
-            let was_online = self.inner.connectivity.set_state(online);
+            let was_online = self.inner.connectivity.change(online);
+            #[cfg(test)]
+            {
+                let probe = locked(&self.inner.after_network_change).take();
+                if let Some(probe) = probe { probe(); }
+            }
             if !online {
                 let newest = self.inner.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
                 if let Some(newest) = newest {
@@ -21,7 +26,6 @@ impl Sync {
             }
             was_online
         };
-        self.inner.connectivity.publish(online, was_online);
         crate::db::lock::assert_no_library_lock("Transport::set_online");
         self.inner.transport.set_online(online);
         if !online {

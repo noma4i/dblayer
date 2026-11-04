@@ -409,6 +409,7 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
 }
 
 fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreError> {
+    let opening = store.lifecycle.opening().ok_or_else(|| StoreError::Constraint("the database was opened twice".into()))?;
     let rebuilt = {
         let inner = store.lock();
         let operations = open_operations(&inner.connection)?;
@@ -451,7 +452,6 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
     }
     let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, store.generation());
     envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
-    let opening = store.lifecycle.opening().ok_or_else(|| StoreError::Constraint("the database was opened twice".into()))?;
     store.commit_as(&crate::lifecycle::Authority::Internal(opening), envelope)?;
     Ok(())
 }

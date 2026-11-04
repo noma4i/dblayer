@@ -41,7 +41,6 @@ enum Command {
 pub struct CableSubscriptions {
     commands: mpsc::UnboundedSender<Command>,
     wakes: Arc<AtomicUsize>,
-    online: Arc<Connectivity>,
 }
 
 impl CableSubscriptions {
@@ -49,7 +48,7 @@ impl CableSubscriptions {
         let (commands, receiver) = mpsc::unbounded_channel();
         let wakes = Arc::new(AtomicUsize::new(0));
         crate::task::spawn(crate::task::Carry::Detached, run(config, credential, connect, online.clone(), receiver, wakes.clone(), clock));
-        Self { commands, wakes, online }
+        Self { commands, wakes }
     }
 
     pub async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
@@ -59,7 +58,6 @@ impl CableSubscriptions {
     }
 
     pub fn wake_count(&self) -> usize { self.wakes.load(Ordering::Relaxed) }
-    pub fn set_online(&self, online: bool) { self.online.set_online(online); }
 
     pub fn resume(&self) { crate::db::lock::effect(|| { let _ = self.commands.send(Command::Resume); }); }
 

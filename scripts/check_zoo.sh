@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+root="${CHECK_ZOO_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)}"
 python3 - "$root" <<'PY'
 import re
 import sys
@@ -155,20 +155,65 @@ for path in files:
             findings.append(f"Z19 a task boundary goes through crate::task, which carries the epoch: {path.relative_to(root)}:{number}: {match.group().strip()}")
 
 writer_files = ("store/write.rs", "store/apply.rs", "store/reset.rs", "store/boot.rs", "store/open.rs")
-write_verb = re.compile(r"\.connection\s*\.\s*(?:execute|execute_batch|unchecked_transaction|transaction)\b|\.connection\s*\.\s*prepare(?:_cached)?\([^;]*?\)\??\s*\.\s*execute\b")
+write_methods = r"(?:execute|execute_batch|unchecked_transaction|transaction)\b"
+connection_write = re.compile(r"\.connection\s*\.\s*" + write_methods + r"|\.connection\s*\.\s*prepare(?:_cached)?\([^;]*?\)\??\s*\.\s*execute\b")
+connection_alias = re.compile(r"\blet\s+(?:mut\s+)?(\w+)\s*=\s*&(?:mut\s+)?[\w.]*\.connection\b")
+read_callback = re.compile(r"\bread_locked\s*\(\s*(?:move\s*)?\|\s*(\w+)")
 through_authority = re.compile(r"\bwrite_store\(|\bstore\s*\.\s*write\(|\bself\s*\.\s*write\(|\bcommit_as\(")
+function_head = re.compile(r"\bfn\s+(\w+)\s*(?:<[^>]*>)?\(([^)]*)\)")
+connection_param = re.compile(r"(\w+)\s*:\s*&(?:mut\s+)?(?:rusqlite::)?(?:Connection|Transaction)\b")
+
+def chunks_of(code):
+    offset = 0
+    for chunk in re.split(r"(?=\bfn\s+\w+)", code):
+        yield offset, chunk
+        offset += len(chunk)
+
+def authority_spans(chunk):
+    spans = []
+    for match in through_authority.finditer(chunk):
+        spans.append((match.start(), end_of(chunk, match.end() - 1, "(", ")")))
+    return spans
+
+def receiver_write(name):
+    return re.compile(r"(?<![\w.])" + name + r"\s*\.\s*" + write_methods + r"|(?<![\w.])" + name + r"\s*\.\s*prepare(?:_cached)?\([^;]*?\)\??\s*\.\s*execute\b")
+
+z20_exempt = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs")
+writing_helpers = set()
+for path in files:
+    for _, chunk in chunks_of(code_only(contents[path])):
+        head = function_head.search(chunk)
+        if not head:
+            continue
+        for parameter in connection_param.findall(head.group(2)):
+            if receiver_write(parameter).search(chunk[head.end():]):
+                writing_helpers.add(head.group(1))
 for path in files:
     relative = str(path.relative_to(source))
-    if relative in writer_files:
+    if relative in writer_files or any(marker in "/" + relative for marker in z20_exempt):
         continue
     code = code_only(contents[path])
-    chunks = re.split(r"(?=\bfn\s+\w+)", code)
-    offset = 0
-    for chunk in chunks:
-        if write_verb.search(chunk) and not through_authority.search(chunk) and not any(marker in "/" + relative for marker in ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs")):
-            number = code.count("\n", 0, offset + write_verb.search(chunk).start()) + 1
-            findings.append(f"Z20 a SQL write goes through the Authority commit (Store::write or a commit envelope): {path.relative_to(root)}:{number}")
-        offset += len(chunk)
+    for offset, chunk in chunks_of(code):
+        head = function_head.search(chunk)
+        name = head.group(1) if head else ""
+        if f"z20:{relative}:{name}" in allowed:
+            continue
+        spans = authority_spans(chunk)
+        aliases = set(connection_alias.findall(chunk)) | set(read_callback.findall(chunk))
+        writes = [match.start() for match in connection_write.finditer(chunk)]
+        for alias in aliases:
+            writes.extend(match.start() for match in receiver_write(alias).finditer(chunk))
+        for helper in writing_helpers:
+            if helper == name:
+                continue
+            argument = r"&(?:mut\s+)?(?:[\w.]*\.connection|" + "|".join(sorted(aliases) or ["(?!)"]) + r")\b"
+            writes.extend(match.start() for match in re.finditer(r"(?<![\w.])" + helper + r"\s*\(\s*" + argument, chunk))
+        for position in sorted(writes):
+            if any(begin < position < finish for begin, finish in spans):
+                continue
+            number = code.count("\n", 0, offset + position) + 1
+            findings.append(f"Z20 a SQL write goes through the Authority commit (Store::write or a commit envelope), inside its call: {path.relative_to(root)}:{number}")
+            break
 
 for path in [root / "core" / "Cargo.toml", root / "gen" / "Cargo.toml"]:
     if re.search(r"test-support", path.read_text()):
@@ -178,18 +223,35 @@ for path in files:
         findings.append(f"Z22 a Cargo feature that changes who may write is not allowed: {path.relative_to(root)}:{contents[path].count(chr(10), 0, match.start()) + 1}")
 
 dedicated_threads = ("db/lock.rs", "db/reads.rs", "db/listeners.rs", "db/ephemeral.rs", "db/dispatch.rs")
-blocking_call = re.compile(r"\.(?:wait|wait_timeout|wait_while|wait_timeout_while|recv_timeout|blocking_recv)\(|\.recv\(\)(?!\s*\.await)|\bthread::sleep\(")
+blocking_call = re.compile(r"\.(?:wait|wait_timeout|wait_while|wait_timeout_while|recv_timeout|blocking_recv)\(|\.recv\(\)|\bthread::sleep\(")
+
+def spans_of(code, opener):
+    return [(match.start(), end_of(code, match.end() - 1, "(", ")")) for match in re.finditer(opener, code)]
+
+def test_regions(code):
+    regions = []
+    for match in re.finditer(r"#\[cfg\((?:any\()?test\b[^\]]*\]", code):
+        cursor = match.end()
+        while code[cursor:].lstrip().startswith("#["):
+            cursor = code.index("]", code.index("#[", cursor)) + 1
+        brace, semicolon = code.find("{", cursor), code.find(";", cursor)
+        regions.append((match.start(), end_of(code, brace, "{", "}") if brace != -1 and (semicolon == -1 or brace < semicolon) else semicolon))
+    return regions
+
 for path in files:
     relative = str(path.relative_to(source))
     if relative in dedicated_threads or any(marker in "/" + relative for marker in task_support):
         continue
-    lines = code_only(contents[path]).splitlines()
-    for number, line in enumerate(lines, 1):
-        if not blocking_call.search(line) or ".await" in line or re.search(r"\)\s*=>", line):
+    code = code_only(contents[path])
+    inside = spans_of(code, r"\bblocking_unit\s*\(") + test_regions(code)
+    for match in blocking_call.finditer(code):
+        if any(begin < match.start() < finish for begin, finish in inside):
             continue
-        if any("blocking_unit" in near for near in lines[max(0, number - 6):number]) or any("cfg(test)" in near for near in lines[max(0, number - 14):number]):
+        call_end = end_of(code, match.end() - 1, "(", ")") + 1 if match.group().endswith("(") else match.end()
+        if code[call_end:].lstrip().startswith((".await", "=>")):
             continue
-        findings.append(f"Z21 a blocking wait runs inside blocking_unit, so it never parks a worker of the shared executor: {path.relative_to(root)}:{number}: {line.strip()}")
+        number = code.count("\n", 0, match.start()) + 1
+        findings.append(f"Z21 a blocking wait runs inside blocking_unit, so it never parks a worker of the shared executor: {path.relative_to(root)}:{number}: {contents[path].splitlines()[number - 1].strip()}")
 
 test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")

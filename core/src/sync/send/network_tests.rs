@@ -221,3 +221,21 @@ async fn a_change_of_the_network_waits_for_the_commit_of_a_start_that_passed_its
     crate::test_wait::join_within(changing.lock().unwrap().take().unwrap());
     assert!(!connectivity.is_online());
 }
+
+#[tokio::test]
+async fn the_state_of_the_network_and_its_publication_change_in_one_step() {
+    use std::{future::Future, task::{Context, Waker}};
+    let rig = rig();
+    for online in [false, true] {
+        let connectivity = rig.sync.inner.connectivity.clone();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let slot = seen.clone();
+        *super::super::locked(&rig.sync.inner.after_network_change) = Some(Box::new(move || {
+            let mut wait = Box::pin(async { if online { connectivity.online().await } else { connectivity.offline().await } });
+            let published = wait.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_ready();
+            *slot.lock().unwrap() = Some((connectivity.is_online(), published));
+        }));
+        rig.sync.set_online(online);
+        assert_eq!(*seen.lock().unwrap(), Some((online, true)), "online={online}: the state read inside the change and the published state differ");
+    }
+}

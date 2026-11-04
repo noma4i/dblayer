@@ -240,12 +240,13 @@ async fn stopping_subscriptions_drops_pending_open() {
         let (stopped, mut stops) = mpsc::unbounded_channel();
         let connect = Arc::new(PendingOpen { started, stopped });
         let (_, config, _, _) = super::link_tests::inputs();
-        let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect, Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
+        let online = Connectivity::new(true);
+        let cable = CableSubscriptions::new(config, Arc::new(|| Ok("credential".into())), connect, online.clone(), Arc::new(crate::pacing::TestClock::default()));
         let subscription = cable.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({}))).await.unwrap();
         within(starts.recv()).await.unwrap();
         match action {
             "cancel" => subscription.cancel(),
-            "offline" => cable.set_online(false),
+            "offline" => online.set_online(false),
             _ => drop(cable),
         }
         if tokio::time::timeout(std::time::Duration::from_secs(1), stops.recv()).await.is_err() { failures.push(action); }

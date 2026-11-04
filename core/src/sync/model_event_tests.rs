@@ -365,7 +365,9 @@ async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_i
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));
     let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.set_session(Some("first"));
+    let reads = rig.transport.waits("Changes");
     rig.sync.commit_session_for_test();
+    rig.transport.await_waits("Changes", reads + 1).await;
     rig.transport.await_calls("Changes", 1).await;
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "one"}})));
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);

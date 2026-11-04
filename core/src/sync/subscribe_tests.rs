@@ -1005,6 +1005,48 @@ async fn an_event_that_waits_for_its_debounce_never_commits_in_the_epoch_a_sessi
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_event_queued_before_a_session_start_never_commits_in_the_epoch_that_start_opened() {
+    let rig = rig_with_subscription();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.await_consumed("MomentChanged").await;
+    rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
+    let life = rig.db.shared.store.lifecycle.clone();
+    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(text_of(&rig, "moments", "m1"), None);
+    rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
+    rig.transport.await_consumed("MomentChanged").await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
+    assert_eq!(rig.transport.call_count("MomentChanged"), 1, "the connection stayed");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() {
+    let directory = tempfile::tempdir().unwrap();
+    let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
+    rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
+    let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
+    rig.transport.enqueue("MomentsByUser", user_list(&["m1"]).after(Duration::from_secs(100)));
+    let key = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "by_user", &params).unwrap().window_key;
+    let _observed = rig.db.register_observed_read(crate::db::ObservedRead { model: "moments".into(), relation: "by_user".into(), params: params.clone(), key });
+    let debounced = SubscriptionDef::new(EventSpec::new("moment_changed").debounced(Duration::from_secs(60)).merged_by_row(), "MomentChanged", "moments", EventEffect::Upsert);
+    let updates = rig.sync.subscribe(debounced).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
+    rig.transport.await_consumed("MomentChanged").await;
+    let shared = rig.db.shared.clone();
+    *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.advance_generation_for_test()));
+    rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(SubscriptionFailure::new(SubscriptionFailureKind::Graphql, "refused")));
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let status = updates.status();
+    assert!(status.failure.is_some() && status.stopped, "the failure waited for the reload: {status:?}");
+    tokio::time::sleep(Duration::from_secs(200)).await;
+    assert_eq!(rig.transport.call_count("MomentsByUser"), 1, "the pending event was still applied");
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_subscription_that_was_opened_but_not_polled_is_opening_for_a_second_reader() {
     let rig = rig_with_subscription();
     let updates = rig.sync.subscribe(upsert_def()).await.unwrap();

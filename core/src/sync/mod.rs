@@ -160,6 +160,8 @@ pub(crate) struct Inner {
     /// The newest pending operation when the network was last lost: an action that is not a durable command and is not newer than it never goes out.
     pub(crate) network_lost: Arc<Mutex<i64>>,
     pub(crate) network_line: crate::commit::NetworkLine,
+    #[cfg(test)]
+    pub(crate) after_network_change: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// The operations that waited for a retry when the network came back. They do not wait for their backoff once: the first attempt after the return takes them out, and a second failure waits by the normal backoff.
     pub(crate) backoff_released: Mutex<std::collections::BTreeSet<i64>>,
     /// The row the answer of an operation carried at its root, by operation: the call that waits for the answer returns it.
@@ -305,6 +307,8 @@ impl Sync {
             account: Arc::new(Mutex::new((None, i64::MIN))),
             network_lost: Arc::new(Mutex::new(i64::MIN)),
             network_line: crate::commit::NetworkLine::default(),
+            #[cfg(test)]
+            after_network_change: Mutex::new(None),
             backoff_released: Mutex::new(std::collections::BTreeSet::new()),
             answers: Mutex::new(send::Answers::default()),
             uploads: Mutex::new(upload::UploadRuns::new(max_files)),
