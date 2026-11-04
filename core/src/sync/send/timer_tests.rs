@@ -45,7 +45,7 @@ async fn inv_wait_01_inv_wait_02_an_outcome_wait_wakes_only_when_its_operation_e
     let ticket = waited.clone();
     let waiting = tokio::spawn(Polled { work: Box::pin(async move { ticket.result().await.result }), polls: polls.clone() });
     let sync = rig.sync.clone();
-    let flushing = tokio::spawn(async move { sync.flush(&sync.inner.db.admit().unwrap()).await.map(drop) });
+    let flushing = tokio::spawn(async move { let admitted = sync.inner.db.admit().unwrap(); crate::sync::rig::app(&sync, sync.flush(&admitted)).await.map(drop) });
     put(&rig, "moments", moment("m2", "t"));
     rig.transport.enqueue("UpdateMoment", crate::transport::Reply::data(json!({"updateMoment": {"id": "m2", "text": "three", "userId": null}})));
     for text in ["one", "two", "three"] {

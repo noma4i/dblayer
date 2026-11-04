@@ -10,7 +10,7 @@ private let recordReacted = #"{"data":{"recordReact":{"__typename":"Record","id"
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func reversedReactionAnswersKeepTheOtherUsersReaction() async throws {
+  func reactThenUndoKeepsTheOtherUsersReaction() async throws {
     let created = #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","userId":"u2"}]}}}"#
     let transport = try await Self.openRecordSession(reacts: 0, recordReply: created)
     let record = try await Self.settledRecord()
@@ -28,15 +28,15 @@ extension BridgeProbeTests {
     let secondReceipt = try await valueBeforeDeadline(undoing) { first.release(); second.release() }
     let optimistic = try #require(secondReceipt.optimisticValue)
     #expect(optimistic.reactions.map(\.userId) == ["u2"])
-    try #require(await entered(second), "undo did not reach the transport while react was held")
-    second.release()
-    let later = Task { try await secondReceipt.outcome() }
-    let laterOutcome = try await valueBeforeDeadline(later) { first.release(); second.release() }
-    if case .confirmed = laterOutcome {} else { Issue.record("undo was not confirmed") }
     first.release()
     let earlier = Task { try await firstReceipt.outcome() }
     let earlierOutcome = try await valueBeforeDeadline(earlier) { first.release(); second.release() }
     if case .confirmed = earlierOutcome {} else { Issue.record("react was not confirmed") }
+    try #require(await entered(second), "undo did not reach the transport after react ended")
+    second.release()
+    let later = Task { try await secondReceipt.outcome() }
+    let laterOutcome = try await valueBeforeDeadline(later) { first.release(); second.release() }
+    if case .confirmed = laterOutcome {} else { Issue.record("undo was not confirmed") }
     let final = try #require(await Record.find(record.id).current())
     #expect(final.reactions.map(\.userId) == ["u2"])
     #expect(final.reactions.map(\.body) == ["B"])

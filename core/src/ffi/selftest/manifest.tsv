@@ -22,15 +22,15 @@ S304	A5	core	forward_returns_its_optimistic_value_before_the_server_answers	red-
 S304	A5	swift	BridgeProbeTests.forwardReturnsItsOptimisticValueBeforeTheServerAnswers	red-by-reading	forward returns optimistic value while answer is held	arch-audit/astra.md A5
 S304	A5	kotlin	com.noma4i.dblayer.ClubTest.forwardReturnsItsOptimisticValueBeforeTheServerAnswers	red-by-reading	forward returns optimistic value while answer is held	arch-audit/astra.md A5
 S305	K3	core	a_refused_membership_change_restores_both_public_lists	regression-by-reading	join and leave refusal restore both ordered lists	arch-audit/fable.md K3
-S306	A4	core	a_later_confirmed_membership_change_survives_an_earlier_refusal	red-by-reading	join and leave, later ACK before earlier refusal	arch-audit/astra.md A4
-S306	A4	swift	BridgeProbeTests.aLaterConfirmedMembershipChangeSurvivesAnEarlierRefusal	red-by-reading	join and leave, later ACK before earlier refusal	arch-audit/astra.md A4
-S306	A4	kotlin	com.noma4i.dblayer.ClubTest.aLaterConfirmedMembershipChangeSurvivesAnEarlierRefusal	red-by-reading	join and leave, later ACK before earlier refusal	arch-audit/astra.md A4
+S306	A4	core	a_later_confirmed_membership_change_survives_an_earlier_refusal	red-by-reading	join and leave, earlier refusal then later ACK, one operation of a row in flight	arch-audit/astra.md A4
+S306	A4	swift	BridgeProbeTests.aLaterConfirmedMembershipChangeSurvivesAnEarlierRefusal	red-by-reading	join and leave, earlier refusal then later ACK, one operation of a row in flight	arch-audit/astra.md A4
+S306	A4	kotlin	com.noma4i.dblayer.ClubTest.aLaterConfirmedMembershipChangeSurvivesAnEarlierRefusal	red-by-reading	join and leave, earlier refusal then later ACK, one operation of a row in flight	arch-audit/astra.md A4
 S307	K7	core	a_refused_durable_send_keeps_its_row_when_declared	regression-by-reading	durable send refusal with declared keep	arch-audit/fable.md K7
 S307	K7	swift	BridgeProbeTests.aRefusedDurableSendKeepsItsRowWhenDeclared	regression-by-reading	durable send refusal with declared keep	arch-audit/fable.md K7
 S307	K7	kotlin	com.noma4i.dblayer.ClubTest.aRefusedDurableSendKeepsItsRowWhenDeclared	regression-by-reading	durable send refusal with declared keep	arch-audit/fable.md K7
-S308	A5	core	reversed_reaction_answers_keep_the_other_users_reaction	red-by-reading	react then undo, reverse answers	arch-audit/astra.md A5
-S308	A5	swift	BridgeProbeTests.reversedReactionAnswersKeepTheOtherUsersReaction	red-by-reading	react then undo, reverse answers	arch-audit/astra.md A5
-S308	A5	kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.reversedReactionAnswersKeepTheOtherUsersReaction	red-by-reading	react then undo, reverse answers	arch-audit/astra.md A5
+S308	A5	core	react_then_undo_keeps_the_other_users_reaction	red-by-reading	react then undo, answers in the order of the row	arch-audit/astra.md A5
+S308	A5	swift	BridgeProbeTests.reactThenUndoKeepsTheOtherUsersReaction	red-by-reading	react then undo, answers in the order of the row	arch-audit/astra.md A5
+S308	A5	kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.reactThenUndoKeepsTheOtherUsersReaction	red-by-reading	react then undo, answers in the order of the row	arch-audit/astra.md A5
 S309	A5	core	an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_the_added_member	regression-by-reading	outcome before held list and automatic reread	arch-audit/astra.md A5
 S310	K3	core	a_member_event_keeps_the_open_join_in_the_list	regression-by-reading	subscription update while join is open	arch-audit/fable.md K3
 S310	K3	swift	BridgeProbeTests.aMemberEventKeepsTheOpenJoinInTheList	regression-by-reading	subscription update while join is open	arch-audit/fable.md K3

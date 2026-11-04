@@ -84,7 +84,7 @@ fn remove_sequence(rows: &mut BTreeMap<RowRef, BTreeSet<i64>>, row: &RowRef, seq
     }
 }
 
-fn row_keys(operation: &Operation) -> Vec<RowRef> {
+pub(crate) fn row_keys(operation: &Operation) -> Vec<RowRef> {
     let Some((model, _)) = Operation::split_action_key(&operation.action_key) else { return Vec::new() };
     operation.row_ids.iter().chain(&operation.temp_id).map(|id| RowRef::new(ModelKey::new(&model), id.clone())).collect()
 }

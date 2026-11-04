@@ -10,7 +10,7 @@ import kotlinx.coroutines.withTimeout
 @OptIn(DBlayerTestingApi::class)
 class OptimisticReactionChainTest {
     @Test
-    fun reversedReactionAnswersKeepTheOtherUsersReaction() = bounded {
+    fun reactThenUndoKeepsTheOtherUsersReaction() = bounded {
         val created = """{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"B","userId":"u2"}]}}}"""
         val transport = openRecordSession(reacts = 0, recordReply = created)
         val record = settledRecord()
@@ -25,11 +25,11 @@ class OptimisticReactionChainTest {
             val changed = firstReceipt.optimisticValue!!
             val secondReceipt = withTimeout(5000) { changed.react(reactionBody = "", userId = "u1") }
             assertEquals(listOf("u2" to "B"), secondReceipt.optimisticValue!!.reactions.map { it.userId to it.body })
+            first.release()
+            assertTrue(withTimeout(5000) { firstReceipt.outcome() } is OperationOutcome.Confirmed)
             withTimeout(5000) { second.entered() }
             second.release()
             assertTrue(withTimeout(5000) { secondReceipt.outcome() } is OperationOutcome.Confirmed)
-            first.release()
-            assertTrue(withTimeout(5000) { firstReceipt.outcome() } is OperationOutcome.Confirmed)
             val result = Query("Record", Record).readRow(record.id)!!
             assertEquals(listOf("u2" to "B"), result.reactions.map { it.userId to it.body })
         } finally {

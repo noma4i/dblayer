@@ -291,13 +291,13 @@ class ClubTest {
         try {
             withTimeout(5000) { first.entered() }
             val leaving = async { if (firstJoin) club.removeMember(userIds = listOf("u4")) else club.addMember(userIds = listOf("u4")) }
-            withTimeout(5000) { second.entered() }
             val firstReceipt = withTimeout(5000) { joining.await() }
             val secondReceipt = withTimeout(5000) { leaving.await() }
-            second.release()
-            assertTrue(withTimeout(5000) { secondReceipt.outcome() } is OperationOutcome.Confirmed)
             first.release()
             assertTrue(withTimeout(5000) { firstReceipt.outcome() } is OperationOutcome.Rejected)
+            withTimeout(5000) { second.entered() }
+            second.release()
+            assertTrue(withTimeout(5000) { secondReceipt.outcome() } is OperationOutcome.Confirmed)
             old.release()
             withTimeout(5000) { reading.await() }
             assertEquals(!firstJoin, joined.read().any { it.id == "u4" })

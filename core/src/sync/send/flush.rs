@@ -258,6 +258,7 @@ impl Inner {
         locked(self.operation_queue()?).begin_pass();
         let mut cursor = i64::MIN;
         let mut sends: Vec<SendFuture<'_>> = Vec::new();
+        let mut flying: std::collections::BTreeMap<i64, Vec<RowRef>> = std::collections::BTreeMap::new();
         let mut changes = self.db.outbox_changes();
         loop {
             if self.refusal_state() != checked {
@@ -276,16 +277,22 @@ impl Inner {
                 };
                 publish.release();
                 publish.acquire().await;
-                if let Some((entry, result)) = completed { self.record_send(&publish.effects, &mut report, &mut cursor, checked, entry, result?)?; }
+                if let Some((entry, result)) = completed {
+                    flying.remove(&entry.operation.id.0);
+                    self.record_send(&publish.effects, &mut report, &mut cursor, checked, entry, result?)?;
+                }
                 continue;
             };
             if !self.admitted(crate::lifecycle::Origin::Session) { break; }
-            if !sends.is_empty() && names_unconfirmed_record(&entry) {
+            let rows = crate::operation::row_keys(&entry.operation);
+            let row_in_flight = flying.values().flatten().any(|row| rows.contains(row));
+            if !sends.is_empty() && (row_in_flight || names_unconfirmed_record(&entry)) {
                 while !sends.is_empty() {
                     publish.release();
                     let (finished, result) = next_finished(&mut sends).await;
                     publish.release();
                     publish.acquire().await;
+                    flying.remove(&finished.operation.id.0);
                     self.record_send(&publish.effects, &mut report, &mut cursor, checked, finished, result?)?;
                 }
                 cursor = cursor.min(entry.operation.id.0 - 1);
@@ -301,6 +308,7 @@ impl Inner {
             locked(&self.backoff_released).remove(&entry.operation.id.0);
             let effects = publish.effects.clone();
             let Some(reserved) = self.reserve_send(admitted, entry.operation.id.0, self.db.generation(), effects.clone(), true) else { continue };
+            let sequence = entry.operation.id.0;
             let mut send: SendFuture<'_> = Box::pin(async move {
                 let result = self.send(admitted, &entry, None, Some(checked), effects, Some(reserved)).await;
                 (entry, result)
@@ -311,13 +319,17 @@ impl Inner {
             publish.acquire().await;
             match first {
                 Poll::Ready((entry, result)) => self.record_send(&publish.effects, &mut report, &mut cursor, checked, entry, result?)?,
-                Poll::Pending => sends.push(send),
+                Poll::Pending => {
+                    sends.push(send);
+                    flying.insert(sequence, rows);
+                }
             }
             if sends.len() >= MAX_IN_FLIGHT {
                 publish.release();
                 let (entry, result) = next_finished(&mut sends).await;
                 publish.release();
                 publish.acquire().await;
+                flying.remove(&entry.operation.id.0);
                 self.record_send(&publish.effects, &mut report, &mut cursor, checked, entry, result?)?;
             }
             publish.release();

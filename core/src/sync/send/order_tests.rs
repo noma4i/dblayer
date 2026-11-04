@@ -50,3 +50,21 @@ async fn inv_op_02_a_retry_during_a_flush_does_not_let_a_later_write_overtake_th
     let texts: Vec<_> = rig.transport.calls().into_iter().filter(|call| call.operation_name == "UpdateMoment").map(|call| call.variables["text"].clone()).collect();
     assert_eq!(texts, [json!("first"), json!("other")]);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_second_change_of_a_row_is_sent_only_after_the_first_one_ends() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.transport.enqueue("UpdateMoment", updated("one").after(std::time::Duration::from_secs(10)));
+    rig.transport.enqueue("UpdateMoment", updated("two"));
+    for text in ["one", "two"] {
+        rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": text}))).unwrap();
+    }
+    let sync = rig.sync.clone();
+    let flushing = tokio::spawn(async move { let admitted = sync.inner.db.admit().unwrap(); crate::sync::rig::app(&sync, sync.flush(&admitted)).await.map(drop) });
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 1, "the second change left while the first was in flight");
+    crate::test_wait::within(flushing).await.unwrap().unwrap();
+    let texts: Vec<_> = rig.transport.calls().iter().filter(|call| call.operation_name == "UpdateMoment").map(|call| call.variables["text"].clone()).collect();
+    assert_eq!(texts, [json!("one"), json!("two")]);
+}

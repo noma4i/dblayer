@@ -308,17 +308,17 @@ extension BridgeProbeTests {
     let joining = Task { firstJoin ? try await club.addMember(userIds: ["u4"]) : try await club.removeMember(userIds: ["u4"]) }
     try #require(await entered(first), "join did not reach the transport")
     let leaving = Task { firstJoin ? try await club.removeMember(userIds: ["u4"]) : try await club.addMember(userIds: ["u4"]) }
-    try #require(await entered(second), "leave did not reach the transport while join was held")
     let firstReceipt = try await valueBeforeDeadline(joining) { first.release(); second.release() }
     let secondReceipt = try await valueBeforeDeadline(leaving) { first.release(); second.release() }
-    second.release()
-    let later = Task { try await secondReceipt.outcome() }
-    let laterOutcome = try await valueBeforeDeadline(later) { first.release(); second.release() }
-    if case .confirmed = laterOutcome {} else { Issue.record("the later change was not confirmed") }
     first.release()
     let earlier = Task { try await firstReceipt.outcome() }
     let earlierOutcome = try await valueBeforeDeadline(earlier) { first.release(); second.release() }
     if case .rejected = earlierOutcome {} else { Issue.record("the earlier change was not rejected") }
+    try #require(await entered(second), "the later change did not reach the transport after the earlier one ended")
+    second.release()
+    let later = Task { try await secondReceipt.outcome() }
+    let laterOutcome = try await valueBeforeDeadline(later) { first.release(); second.release() }
+    if case .confirmed = laterOutcome {} else { Issue.record("the later change was not confirmed") }
     old.release()
     try await valueBeforeDeadline(reading) { old.release(); first.release(); second.release() }
     #expect(try await joined.read().map(\.id).contains("u4") == !firstJoin)
