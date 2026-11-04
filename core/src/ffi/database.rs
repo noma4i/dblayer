@@ -375,14 +375,14 @@ impl Database {
     }
     pub async fn refresh_preloads(&self, epoch: u64) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        let failures = self.serve_shared_in_epoch(epoch, "refresh preloads", async move { Ok::<_, DbError>(sync.refresh_preloads().await?) }).await?;
+        let failures = self.serve_in_epoch(epoch, "refresh preloads", async move { Ok::<_, DbError>(sync.refresh_preloads().await?) }).await?;
         if failures.is_empty() { return Ok(()); }
         let scopes: Vec<String> = failures.iter().map(|failure| format!("{}.{} {}: {}", failure.model, failure.relation, serde_json::Value::Object(failure.params.clone()), failure.error)).collect();
         Err(DbError::Sync { detail: format!("{} preload scopes failed to refresh: {}", scopes.len(), scopes.join("; ")) })
     }
     pub async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.serve_shared_in_epoch(epoch, "load all", async move {
+        self.serve_in_epoch(epoch, "load all", async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load_all(&model, &relation, &params, LoadOptions { force }).await?)
         }).await

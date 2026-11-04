@@ -171,5 +171,7 @@ mod write_calls_tests;
 #[cfg(test)]
 mod load_more_tests;
 #[cfg(test)]
+mod load_all_cancel_tests;
+#[cfg(test)]
 #[cfg(test)]
 mod follow_failures_tests;

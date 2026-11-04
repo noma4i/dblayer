@@ -48,7 +48,10 @@ public struct ValueStream: AsyncSequence, Sendable {
   public func loadMore() async throws -> LoadMoreResult { try await database.loadMoreStream(stream: id) }
 
   /// Returns when the first load of the stream settled.
-  public func loaded() async throws { try await database.streamLoaded(stream: id) }
+  public func loaded() async throws { _ = try await loadedAt() }
+
+  /// Returns when the first load of the stream settled, with the sequence number of the newest delivery the core made until then.
+  func loadedAt() async throws -> UInt64 { try await database.streamLoaded(stream: id) }
 
   /// Stops reading: the stream ends in the core and no new delivery is admitted after this returns. A delivery already admitted may still finish, and the call does not wait for it.
   public func cancel() { database.cancelStream(stream: id) }
@@ -235,6 +238,8 @@ public final class Projected<Model: DBModel> {
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored private var reading: Task<Void, Never>?
   @ObservationIgnored private var pending: [ListEdit<Model>]?
+  @ObservationIgnored private var appliedSeq: UInt64 = 0
+  @ObservationIgnored private var catchUps: [(seq: UInt64, resume: CheckedContinuation<Void, Never>)] = []
 
   public init(_ stream: ValueStream) {
     self.stream = stream
@@ -243,6 +248,7 @@ public final class Projected<Model: DBModel> {
         guard let self else { return }
         self.receive(delivery)
       }
+      self?.finishReading()
     }
   }
 
@@ -250,6 +256,17 @@ public final class Projected<Model: DBModel> {
     let applied = projection.apply(delivery)
     if applied == .resync { stream.resync() }
     if applied == .changed { pending = ListEdit.composing(pending, projection.lastEdits, within: projection.rows.count) }
+    appliedSeq = max(appliedSeq, delivery.seq)
+    let due = catchUps.filter { $0.seq <= appliedSeq }
+    catchUps.removeAll { $0.seq <= appliedSeq }
+    due.forEach { $0.resume.resume() }
+  }
+
+  private func finishReading() {
+    appliedSeq = .max
+    let all = catchUps
+    catchUps = []
+    all.forEach { $0.resume.resume() }
   }
 
   /// The steps since the last call, to apply to a list the screen keeps. `nil`: the screen reads `rows` again.
@@ -260,7 +277,12 @@ public final class Projected<Model: DBModel> {
 
   public func refresh() async throws { try await stream.refresh() }
   public func loadMore() async throws -> LoadMoreResult { try await stream.loadMore() }
-  public func loaded() async throws { try await stream.loaded() }
+  /// Returns when the first load settled and this projection shows every delivery the core made until then.
+  public func loaded() async throws {
+    let target = try await stream.loadedAt()
+    guard appliedSeq < target else { return }
+    await withCheckedContinuation { catchUps.append((target, $0)) }
+  }
 
   isolated deinit {
     reading?.cancel()

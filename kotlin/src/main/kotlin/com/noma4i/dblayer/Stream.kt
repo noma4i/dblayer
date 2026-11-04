@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -33,7 +34,10 @@ class ValueStream internal constructor(val id: ULong, val epoch: ULong, private 
     suspend fun loadMore(): LoadMoreResult = offCaller { database.loadMoreStream(id) }
 
     /** Returns when the first load of the stream settled. */
-    suspend fun loaded() = offCaller { database.streamLoaded(id) }
+    suspend fun loaded() { loadedAt() }
+
+    /** Returns when the first load settled, with the sequence number of the newest delivery the core made until then. */
+    internal suspend fun loadedAt(): ULong = offCaller { database.streamLoaded(id) }
 
     /** Stops reading: the stream ends in the core and no new delivery is admitted after this returns. A delivery already admitted may still finish. */
     fun close() {
@@ -207,14 +211,16 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
     private val held = MutableStateFlow(ListProjection<Model>())
     val projection: StateFlow<ListProjection<Model>> = held.asStateFlow()
     private val pending = java.util.concurrent.atomic.AtomicReference<List<ListEdit<Model>>?>(null)
+    private val appliedSeq = MutableStateFlow(0uL)
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
         stream.deliveries.collect { delivery ->
             val step = held.value.apply(delivery, decoder)
             held.value = step.projection
             if (step.applied == Applied.Resync) stream.resync()
             if (step.applied == Applied.Changed) pending.updateAndGet { ListEdit.composing(it, step.projection.lastEdits, step.projection.rows.size) }
+            appliedSeq.value = maxOf(appliedSeq.value, delivery.seq)
         }
-    }.also { it.invokeOnCompletion { stream.close() } }
+    }.also { job -> job.invokeOnCompletion { appliedSeq.value = ULong.MAX_VALUE; stream.close() } }
 
     val value: Model? get() = held.value.rows.firstOrNull()
 
@@ -225,7 +231,11 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
 
     suspend fun loadMore(): LoadMoreResult = stream.loadMore()
 
-    suspend fun loaded() = stream.loaded()
+    /** Returns when the first load settled and this projection shows every delivery the core handed over until then. */
+    suspend fun loaded() {
+        val target = stream.loadedAt()
+        appliedSeq.first { it >= target }
+    }
 
     fun close() {
         reading.cancel()

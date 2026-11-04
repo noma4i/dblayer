@@ -237,7 +237,7 @@ extension BridgeProbeTests {
     let reader = LossyReader()
     let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
     reader.stream = stream
-    try await DB.database.streamLoaded(stream: stream)
+    _ = try await DB.database.streamLoaded(stream: stream)
     await eventually("the first snapshot arrives") { reader.snapshots == 1 }
 
     try DB.database.setOnline(online: false)
@@ -403,7 +403,7 @@ extension BridgeProbeTests {
       reader.stream = stream
       return stream
     }
-    for stream in streams { try await DB.database.streamLoaded(stream: stream) }
+    for stream in streams { _ = try await DB.database.streamLoaded(stream: stream) }
     await eventually("both first snapshots arrive") { first.snapshots == 1 && second.snapshots == 1 }
 
     try DB.database.setOnline(online: false)

@@ -113,9 +113,10 @@ async fn a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_i
     let epoch = rig.database.session_epoch();
     let (reader, caller) = (Reader::open(), std::thread::current().id());
     let stream = rig.database.subscribe(epoch, profile(), reader.clone());
-    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    let newest = bound(rig.database.stream_loaded(stream)).await.unwrap();
     yield_until("the stream shows A", || reader.shows("A")).await;
     let log = reader.deliveries();
+    assert!(log.iter().any(|delivery| delivery.seq == newest), "loaded names {newest}, a sequence number the reader did not receive: {log:?}");
     assert!(matches!(log[0].value, StreamValue::Snapshot { .. }), "the first value is a snapshot: {:?}", log[0]);
     assert!(log.iter().all(|delivery| delivery.epoch == epoch && delivery.stream == stream), "every delivery names the stream and its epoch");
     assert!(log.iter().enumerate().all(|(index, delivery)| delivery.seq == index as u64 + 1), "the sequence counts from 1 with no gap");

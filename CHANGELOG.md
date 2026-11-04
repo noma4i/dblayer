@@ -73,6 +73,9 @@
 - `joins_scope` skips a row that is not cached instead of failing the call.
 - `commandStatus` right after the confirming commit reports delivered, not discarded.
 - An explicit load that restores an ended session returns its result, not `Interrupted`.
+- A cancelled `loadAll` or `refreshPreloads` call stops asking for pages.
+- `Projected.loaded()` returns after the projection shows the loaded rows.
+- `streamLoaded` returns the sequence number of the newest delivery.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

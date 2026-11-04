@@ -82,7 +82,7 @@ One owner in the core serves each stream. The wrappers keep no registry, no lock
 | --- | --- |
 | `refresh()` | Loads the relation again. |
 | `loadMore()` | Loads the next page. |
-| `loaded()` | Returns when the first load settled. |
+| `loaded()` | Returns when the first load settled. On `Projected` it also waits until the projection shows every delivery the core handed over until then. |
 
 A call that outlives its epoch ends as `Interrupted`.
 Its late answer changes nothing, and a request of the stream does not start in the next epoch.

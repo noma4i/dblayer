@@ -1450,9 +1450,9 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func streamCensus()  -> StreamCensus
     
     /**
-     * Returns when the first load of the stream settled. Fails when the epoch of the stream ended first.
+     * Returns when the first load of the stream settled, with the sequence number of the newest delivery the stream made until then. Fails when the epoch of the stream ended first.
      */
-    func streamLoaded(stream: UInt64) async throws 
+    func streamLoaded(stream: UInt64) async throws  -> UInt64
     
     /**
      * Opens a stream and returns its number at once. The first value arrives as a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
@@ -2495,9 +2495,9 @@ open func streamCensus() -> StreamCensus  {
 }
     
     /**
-     * Returns when the first load of the stream settled. Fails when the epoch of the stream ended first.
+     * Returns when the first load of the stream settled, with the sequence number of the newest delivery the stream made until then. Fails when the epoch of the stream ended first.
      */
-open func streamLoaded(stream: UInt64)async throws   {
+open func streamLoaded(stream: UInt64)async throws  -> UInt64  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -2505,10 +2505,10 @@ open func streamLoaded(stream: UInt64)async throws   {
                         self.uniffiCloneHandle(),FfiConverterUInt64.lower(stream)
                 )
             },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
+            pollFunc: ffi_dblayer_rust_future_poll_u64,
+            completeFunc: ffi_dblayer_rust_future_complete_u64,
+            freeFunc: ffi_dblayer_rust_future_free_u64,
+            liftFunc: FfiConverterUInt64.lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
 }
@@ -10942,7 +10942,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_stream_census() != 24018) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_stream_loaded() != 5168) {
+    if (uniffi_dblayer_checksum_method_database_stream_loaded() != 42461) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_subscribe() != 33600) {

@@ -277,8 +277,8 @@ impl Database {
         lease.run(work).await.map_err(|_| stale())??
     }
 
-    /// Returns when the first load of the stream settled. Fails when the epoch of the stream ended first.
-    pub async fn stream_loaded(&self, stream: u64) -> Result<(), DbError> {
+    /// Returns when the first load of the stream settled, with the sequence number of the newest delivery the stream made until then. Fails when the epoch of the stream ended first.
+    pub async fn stream_loaded(&self, stream: u64) -> Result<u64, DbError> {
         let open = self.stream_table.find(stream).ok_or_else(stale)?;
         open.loaded().await
     }

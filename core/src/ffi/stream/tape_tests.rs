@@ -140,7 +140,7 @@ pub(crate) struct Watched {
 }
 
 impl Watched {
-    pub(crate) async fn wait_for_initial_load(&self) -> Result<(), DbError> { self.database.stream_loaded(self.id).await }
+    pub(crate) async fn wait_for_initial_load(&self) -> Result<(), DbError> { self.database.stream_loaded(self.id).await.map(drop) }
 
     pub(crate) fn cancel(&self) { self.database.cancel_stream(self.id); }
 

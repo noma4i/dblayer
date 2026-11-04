@@ -171,3 +171,10 @@ C20	C4	core	the_explicit_load_that_restores_a_reset_session_returns_its_own_resu
 C20	C4	core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	green	-	consumer-reds 4
 C20	C4	swift	BridgeProbeTests.theLoadThatRestoresAResetSessionReturnsItsOwnResult	green	-	consumer-reds 4
 C20	C4	kotlin	com.noma4i.dblayer.SessionRestoreTest.theLoadThatRestoresAResetSessionReturnsItsOwnResult	green	-	consumer-reds 4
+C21	C4	core	a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages	green	-	android-reds 2
+C21	C4	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheCallerOfLoadAllStopsTheTransportCalls	green	-	android-reds 2
+C22		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.eachReactionOnTheRowOfThePreviousCallKeepsOtherUsersReactions	green	-	android-reds 1
+C22		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.aSendOnADatabaseWithoutATransportIsRefusedAsInterrupted	green	-	android-reds 1
+C23		kotlin	com.noma4i.dblayer.ProjectedLoadedTest.theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer	green	-	android-reds 3
+C23		swift	BridgeProbeTests.theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer	green	-	android-reds 3
+C24		kotlin	com.noma4i.dblayer.ServerModelWithoutTransportTest.aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsInvalid	green	-	android-reds 4

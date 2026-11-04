@@ -430,12 +430,15 @@ impl Stream {
         }
     }
 
-    pub(super) async fn loaded(&self) -> Result<(), DbError> {
+    pub(super) async fn loaded(&self) -> Result<u64, DbError> {
         let mut receiver = self.readiness.subscribe();
         let seen = *receiver.wait_for(|readiness| *readiness != Readiness::Waiting).await.map_err(|_| interrupted())?;
         match seen {
             Readiness::Ended => Err(interrupted()),
-            _ => locked(&self.state).load_error.clone().map_or(Ok(()), Err),
+            _ => {
+                let state = locked(&self.state);
+                state.load_error.clone().map_or(Ok(state.seq), Err)
+            }
         }
     }
 
