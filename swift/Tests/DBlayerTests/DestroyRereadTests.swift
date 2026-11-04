@@ -8,7 +8,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aMissingDestroyedRowCausesOneRereadOfTheOpenList() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     for (id, uuid) in [("1", "a"), ("2", "b")] {
       transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"\#(id)","uuid":"\#(uuid)","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)

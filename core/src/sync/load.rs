@@ -60,6 +60,14 @@ impl LoadOutcome {
     pub(super) fn of(status: LoadStatus) -> Self {
         Self { status, rows: 0, dropped: 0, has_next: false, attempts: 0, kept_error: None }
     }
+
+    /// A read that failed and kept the stored rows did not read the server: its error.
+    pub(crate) fn paid(self) -> Result<Self, SyncError> {
+        match self.kept_error {
+            Some(error) => Err(error),
+            None => Ok(self),
+        }
+    }
 }
 
 pub(crate) struct Resolved<'a> {

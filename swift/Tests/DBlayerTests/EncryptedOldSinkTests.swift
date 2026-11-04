@@ -22,7 +22,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func oldEncryptedCableCannotDeliverIntoTheNextAccount() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let server = try SealedServer { path, body in
       if path == "/api/auth/login_link" { return ["sessionId": body["account"] as? String ?? ""] }
       return ["data": [:]]

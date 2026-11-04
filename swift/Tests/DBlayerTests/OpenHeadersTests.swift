@@ -27,7 +27,6 @@ struct OpenHeadersTests {
     let origin = try await server.start()
     let token = Token()
     try await DB.open(endpoint: origin, headers: { ["X-Token": token.value] }, modelsJSON: modelsJSON, operations: [HeaderProbe.self])
-    defer { Task { @MainActor in try? await DB.close() } }
 
     _ = try? await DB.run("HeaderProbe", variables: [:])
     token.value = "second"

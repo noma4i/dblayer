@@ -8,7 +8,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func cancellingOnlyTheLoadWaitLeavesTheReaderRunning() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     let gate = transport.hold("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
@@ -56,7 +55,6 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aColdProfileSettlesWhenEmptyOrFailed() async throws {
-    defer { Task { @MainActor in try? await DB.close() } }
     for failed in [false, true] {
       try await DB.close()
       let transport = MockTransport()
@@ -82,7 +80,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func cancellingAReaderBeforeItsFirstLoadInterruptsTheWait() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     let gate = transport.hold("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
@@ -102,7 +99,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aHeldEntityEndsItsLoadWaitAfterSessionReset() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
@@ -140,7 +136,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aCachedEntityRemainsLoadedWhenItsInitialNetworkReadFails() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
     let down = transport.hold("ContainerNode", failure: .Network(detail: "down"))
@@ -162,7 +157,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     for _ in 0..<2 { transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"u1"}}}"#) }
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
@@ -183,7 +177,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func loadedNeverReturnsWithoutRowsWhenTheReaderIsCancelledBeforeThem() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"u1"}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
@@ -208,7 +201,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func theRowOfAnEntityStreamThatLoadsFromTheServerIsThereWhenLoadedReturns() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)

@@ -76,7 +76,8 @@ fn enrolling_a_stream_does_the_same_work_with_existing_streams() {
 
 #[tokio::test]
 async fn stream_close_terminates_waiters() {
-    let (database, _transport) = with_transport(Arc::new(crate::pacing::SystemClock));
+    let (database, transport) = with_transport(Arc::new(crate::pacing::SystemClock));
+    transport.script_subscription("Signal", vec![]);
     let rows = Arc::new(Rows::default());
     let live = database.watch_query(r#"{"model":"Notice"}"#, rows.clone());
     within(live.wait_for_initial_load()).await.unwrap();
@@ -84,7 +85,8 @@ async fn stream_close_terminates_waiters() {
     let waiting = { let pending = pending.clone(); tokio::spawn(within(async move { pending.wait_for_initial_load().await })) };
     tokio::task::yield_now().await;
     database.close_now();
-    assert!(matches!(within(waiting).await.unwrap(), Err(DbError::Interrupted { .. })), "a wait for a stream outlived the close");
+    let waited = within(waiting).await.unwrap();
+    assert!(matches!(waited, Err(DbError::Interrupted { .. })), "a wait for a stream outlived the close: {waited:?}");
     yield_until("the list ended", || !rows.ended().is_empty()).await;
     assert_eq!(rows.ended(), vec![StreamEnd::Closed]);
     let late = Arc::new(Rows::default());

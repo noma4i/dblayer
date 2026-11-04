@@ -234,13 +234,13 @@ impl Inner {
         let now_ms = self.now_ms();
         let stale_ms = i64::try_from(drain.stale_time.as_millis()).unwrap_or(i64::MAX);
         let mut stale = Vec::with_capacity(watched.len());
-        let mut unloaded = std::collections::BTreeSet::new();
+        let mut unforced = std::collections::BTreeSet::new();
         for key in watched.keys() {
             if cause == Cause::Event && self.owner.session_refused(key) { continue; }
             let (model, relation, _) = &watched[key];
             let on_foreground = cause == Cause::Event && self.db.spec(model).is_ok_and(|spec| spec.relations.iter().any(|declared| &declared.name == relation && declared.refresh_on_foreground));
             let freshness = self.db.shared.store.window_freshness(key)?;
-            if freshness.is_none() { unloaded.insert(key.clone()); }
+            if freshness.as_ref().is_none_or(|freshness| freshness.stale_since.is_some()) { unforced.insert(key.clone()); }
             if on_foreground || (cause == Cause::Explicit && self.owner.session_refused(key)) || !freshness.is_some_and(|freshness| freshness.is_fresh(now_ms, stale_ms)) {
                 stale.push(key.clone());
             }
@@ -253,7 +253,7 @@ impl Inner {
                 let Some((model, relation, params)) = watched.get(&key).cloned() else { continue };
                 let inner = self.clone();
                 let admitted = admitted.clone();
-                let force = !unloaded.contains(&key);
+                let force = !unforced.contains(&key);
                 loads.spawn(crate::task::Carry::here(), async move {
                     let resolved = inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params)?;
                     if resolved.members_complete || resolved.media.is_some() {

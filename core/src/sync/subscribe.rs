@@ -412,7 +412,7 @@ impl Feed {
         let mut failure = None;
         for (relation, params) in targets.into_values() {
             let outcome = match self.inner.resolve(crate::lifecycle::Origin::Session, model, &relation, &params) {
-                Ok(resolved) => self.inner.load_scope(&self.epoch, &resolved, true).await.map(|_| ()),
+                Ok(resolved) => self.inner.load_scope(&self.epoch, &resolved, true).await.and_then(super::LoadOutcome::paid).map(drop),
                 Err(error) => Err(error),
             };
             if let Err(error) = outcome { failure.get_or_insert(error); }
@@ -430,7 +430,7 @@ impl Feed {
         };
         let mut resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, name, &params)?;
         resolved.node_reread = relation.node == Some(crate::schema::NodeRead::One);
-        self.inner.load_scope(&self.epoch, &resolved, true).await.map(|_| ())
+        self.inner.load_scope(&self.epoch, &resolved, true).await.and_then(super::LoadOutcome::paid).map(drop)
     }
 
     fn now(&self) -> crate::lifecycle::Admitted { self.epoch.clone() }
@@ -542,6 +542,7 @@ impl Feed {
             }
             Err(_) => {
                 locked(&self.status).rejected += 1;
+                let models = if self.epoch.life().admits_epoch(self.epoch.value()) { models } else { BTreeSet::new() };
                 for model in models {
                     if self.reread_observed(&model).await.is_err() {
                         self.inner.publish_model_gap(&model);

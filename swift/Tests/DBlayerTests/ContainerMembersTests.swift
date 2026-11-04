@@ -48,7 +48,7 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     let hold = transport.mock.hold("ContainerMembers", reply: membersPage("a0", hasNext: false))
-    defer { hold.release(); signal.finish(); Task { @MainActor in try? await DB.close() } }
+    defer { hold.release(); signal.finish() }
     let request = try User.containerMembers("c1").beginLoad()
     defer { request.cancel() }
     let entered = Task { await hold.entered(); signal.yield(1) }
@@ -69,7 +69,7 @@ extension BridgeProbeTests {
     try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
     for number in 0..<5 { transport.mock.enqueue("ContainerMembers", reply: membersPage("a\(number)", hasNext: true)) }
     let sixth = transport.mock.hold("ContainerMembers", reply: membersPage("a5", hasNext: true))
-    defer { sixth.release(); signal.finish(); Task { @MainActor in try? await DB.close() } }
+    defer { sixth.release(); signal.finish() }
     let query = try User.containerMembers("c1")
     let loading = Task { try await query.loadAll() }
     let entered = Task { await sixth.entered(); signal.yield(1) }

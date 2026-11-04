@@ -14,7 +14,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func inv_api_07_aTestingForegroundEventReloadsOnlyAWindowWithAReader() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])
     let index = try #require(models.firstIndex { $0["key"] as? String == "Moment" })
     var relations = try #require(models[index]["relations"] as? [[String: Any]])

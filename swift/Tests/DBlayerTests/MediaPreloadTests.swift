@@ -20,7 +20,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aMediaRefetchAfterMutationReadsTheWholeStaleWindow() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])
     let momentIndex = try #require(models.firstIndex { $0["key"] as? String == "Moment" })
     let mediaIndex = try #require(models.firstIndex { $0["key"] as? String == "MediaMessage" })
@@ -78,7 +77,7 @@ extension BridgeProbeTests {
     try await DB.close()
     let transport = MockTransport()
     let preload = transport.hold("PresenceOnline", reply: #"{"data":{"presenceOnline":[]}}"#)
-    defer { preload.release(); Task { @MainActor in try? await DB.close() } }
+    defer { preload.release() }
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [MediaPresenceOnline.self, ChatMediaOperation.self], preload: true)
     let (signals, signal) = AsyncStream<Void>.makeStream()
     let entered = Task { await preload.entered(); signal.yield(()) }

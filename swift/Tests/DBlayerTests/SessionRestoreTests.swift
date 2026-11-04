@@ -33,7 +33,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = HeldProfileTransport()
     defer { transport.released.continuation.yield(()) }
     transport.base.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
@@ -65,7 +64,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func resetClearsEphemeralValuesBeforeTheNextAccountReadsTheSameId() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     for name in ["A", "B"] {
       transport.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"\#(name)"}}}"#)
@@ -88,7 +86,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func theLoadThatRestoresAResetSessionReturnsItsOwnResult() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     for (user, region) in [("u1", "r1"), ("u2", "r2")] {
       transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"\#(user)","name":"\#(user)"}}}"#)

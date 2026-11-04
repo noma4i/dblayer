@@ -8,7 +8,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func cancellingOneLoadInterestKeepsTheOtherCallAlive() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     let hold = transport.hold("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     defer { hold.release() }
@@ -36,7 +35,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aMutationDuringTheFirstPageKeepsTheWholeChainStale() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     let row1 = #"{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}"#
     let row2 = #"{"__typename":"Moment","id":"2","uuid":"b","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}"#
@@ -167,7 +165,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aTestClockMovesFreshForWithoutSleeping() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = MockTransport()
     for _ in 0 ..< 2 { transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#) }
     let down = transport.hold("MomentsFeed", failure: .Network(detail: "down"))

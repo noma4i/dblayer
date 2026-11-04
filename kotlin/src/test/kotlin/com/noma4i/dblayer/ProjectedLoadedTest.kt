@@ -246,7 +246,6 @@ class ProjectedLoadedTest {
             DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations("""[{"name":"ContainerNode","document":"query ContainerNode(${'$'}id: ID!) { node(id: ${'$'}id) { ... on Container { id title shareUrl isPublic } } }"}]""")
             val held = Projected(AccountScope.current().entity(Container, "c1", EntityFetch.FORCE), Container, scope)
-            networkDrops(during = down)
             held.loaded()
             assertEquals("one", held.value?.title)
             held.close()

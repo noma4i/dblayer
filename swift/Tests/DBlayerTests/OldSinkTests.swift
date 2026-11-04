@@ -30,7 +30,6 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func oldSubscriptionSinkIsClosedBeforeTheNextAccount() async throws {
     try await DB.close()
-    defer { Task { @MainActor in try? await DB.close() } }
     let transport = OldSinkTransport()
     transport.base.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
