@@ -121,7 +121,10 @@ lane_ios() {
     [ -f "$tree/ios/scripts/dblayer_path.sh" ] || { echo "the app ref $ios_ref lacks YUPI_DBLAYER_PATH support (ios/scripts/dblayer_path.sh)"; return 1; }
     [ ! -f "$YUPI_V3_REPO/ios/Configs/Secrets.xcconfig" ] || cp "$YUPI_V3_REPO/ios/Configs/Secrets.xcconfig" "$tree/ios/Configs/"
     (cd "$tree" && YUPI_DBLAYER_PATH="$package" bash ios/scripts/bootstrap.sh) || return 1
-    grep -Fq "$package" "$tree/ios/Yupi.xcodeproj/project.pbxproj" || { echo "the generated project does not name the local package $package"; return 1; }
+    local project_file
+    for project_file in "$tree/ios/Yupi.xcodeproj/project.xcproj" "$tree/ios/Yupi.xcodeproj/project.pbxproj"; do [ -f "$project_file" ] && break; done
+    [ -f "$project_file" ] || { echo "the bootstrap wrote no project.xcproj or project.pbxproj in $tree/ios/Yupi.xcodeproj"; return 1; }
+    grep -Fq "$package" "$project_file" || { echo "the generated project does not name the local package $package"; return 1; }
     (cd "$tree" && in_slot "$sim_run" "$CONSUMER_IOS_SIM" -- timeout --kill-after=10 "$ios_build_limit" xcodebuild build-for-testing -project ios/Yupi.xcodeproj -scheme YupiLogicTests -destination 'id=@UDID@' -derivedDataPath .orca-artifacts/DD.noindex) || return 1
     (cd "$tree" && in_slot "$sim_run" "$CONSUMER_IOS_SIM" -- env RUN_REASON="release check $version" timeout --kill-after=10 "$ios_test_limit" bash ios/scripts/run-unit-tests.sh --ios '@UDID@') || return 1
   } > "$log" 2>&1
