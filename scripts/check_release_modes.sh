@@ -300,7 +300,6 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         print(f"ok {mode} refuses the receipt, the package commit and the tag")
     package_cases = (
         ("extra", ("Package.swift", "swift/Sources/DBlayer/dblayer.swift", "core/src/extra.rs")),
-        ("only-package", ("Package.swift",)),
         ("only-binding", ("swift/Sources/DBlayer/dblayer.swift",)),
     )
     for case, files in package_cases:
@@ -312,15 +311,21 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
                 (bad / file).write_text("changed\n")
             subprocess.run([real_git, "-C", str(bad), "add", "-f", *files], check=True)
             subprocess.run([real_git, "-C", str(bad), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
-            run(["bash", "scripts/release.sh", version, *mode_args], bad, bad_env, expected=1, contains="must change exactly Package.swift and dblayer.swift")
+            run(["bash", "scripts/release.sh", version, *mode_args], bad, bad_env, expected=1, contains="must change")
             bad_events = (base / name / "events").read_text().splitlines() if (base / name / "events").exists() else []
             assert not any(line.startswith("gh ") or line.startswith("git push ") for line in bad_events), bad_events
             assert subprocess.check_output([real_git, "-C", str(bad), "tag", "--list", version], text=True).strip() == ""
             assert not (bad / "target/release-1.2.3").exists()
             assert not (bad / "target/release.lock").exists()
             print(f"ok a Package release commit with {case} files is refused in the {label}")
+    unchanged, unchanged_env = fixture(base / "package-unchanged-binding")
+    (unchanged / "Package.swift").write_text("changed\n")
+    subprocess.run([real_git, "-C", str(unchanged), "add", "Package.swift"], check=True)
+    subprocess.run([real_git, "-C", str(unchanged), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
+    run(["bash", "scripts/release.sh", version], unchanged, unchanged_env, contains="Package.swift to be written:")
+    print("ok a Package release commit with only Package.swift (binding unchanged) is accepted")
     own, own_env = fixture(base / "own-extra")
-    run(["bash", "scripts/release.sh", version, "--publish"], own, dict(own_env, STUB_COMMIT_EXTRA="core/extra.rs"), expected=1, contains="must change exactly Package.swift and dblayer.swift")
+    run(["bash", "scripts/release.sh", version, "--publish"], own, dict(own_env, STUB_COMMIT_EXTRA="core/extra.rs"), expected=1, contains="must change")
     assert subprocess.check_output([real_git, "-C", str(own), "tag", "--list", version], text=True).strip() == ""
     assert not any(line.startswith("gh ") or line.startswith("git push ") for line in (base / "own-extra/events").read_text().splitlines())
     print("ok an extra staged file in the own package commit refuses the tag")

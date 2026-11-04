@@ -35,13 +35,13 @@ lock_owned=1
 printf '%s %s\n' "$$" "$version" > "$lockdir/holder"
 [ -z "$(git status --porcelain -- . ':(exclude)swift/Sources/DBlayer/dblayer.swift')" ] || fail 'working tree is not clean'
 [ "$(git branch --show-current)" = master ] || fail 'branch must be master'
-package_files=$'Package.swift\nswift/Sources/DBlayer/dblayer.swift'
 check_package_commit() {
   local commit="$1" parent="$2"
   [ "$(git rev-parse "$commit^" 2>/dev/null)" = "$parent" ] || fail "package commit $commit is not directly on source commit $parent"
   local changed
   changed="$(git diff-tree --no-commit-id --name-only -r "$commit" | LC_ALL=C sort)"
-  [ "$changed" = "$(printf '%s\n' "$package_files" | LC_ALL=C sort)" ] || fail "package commit $commit must change exactly Package.swift and dblayer.swift"
+  printf '%s\n' "$changed" | grep -Fxq Package.swift || fail "package commit $commit must change Package.swift"
+  [ -z "$(printf '%s\n' "$changed" | grep -Fvx -e Package.swift -e swift/Sources/DBlayer/dblayer.swift || true)" ] || fail "package commit $commit must change only Package.swift and dblayer.swift"
 }
 package_sha=""
 source_sha="$(git rev-parse HEAD)"
