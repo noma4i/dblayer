@@ -10,7 +10,7 @@ extension BridgeProbeTests {
     try await DB.close()
     defer { Task { @MainActor in try? await DB.close() } }
     try await DB.openTesting(transport: nil, modelsJSON: modelsJSON)
-    let database = DB.database
+    let database = try DB.database
     let epoch = database.sessionEpoch()
     do {
       _ = try await database.create(epoch: epoch, model: "Club", valuesJson: #"{"name":"friends"}"#, argsJson: "{}")

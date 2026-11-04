@@ -39,8 +39,8 @@ extension BridgeProbeTests {
     transport.base.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
-    let oldEpoch = DB.database.sessionEpoch()
-    let oldScope = DB.account()
+    let oldEpoch = try DB.database.sessionEpoch()
+    let oldScope = try DB.account()
     let result = AsyncStream<Bool>.makeStream()
     Task {
       do { try await User.profile.load(in: oldScope); result.continuation.yield(false) }

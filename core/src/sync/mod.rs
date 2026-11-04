@@ -430,6 +430,8 @@ mod load_tests;
 #[cfg(test)]
 mod merge_tests;
 #[cfg(test)]
+mod list_merge_tests;
+#[cfg(test)]
 mod members_tests;
 #[cfg(test)]
 mod members_order_tests;
