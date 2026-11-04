@@ -194,17 +194,27 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
     Ok(parser::Parsed { models: nodes, operations: operation_nodes, scalars: scalar_nodes, blob_uploads })
 }
 
-fn build_declarations(models: &[decl::ModelDecl], calls: &[decl::CallDecl]) -> Result<Declarations, Vec<(usize, ParseError)>> {
+fn build_declarations(declared_models: &[decl::ModelDecl], calls: &[decl::CallDecl]) -> Result<Declarations, Vec<(usize, ParseError)>> {
     let mut errors = Vec::new();
     let operations = operation::build(calls, &mut errors);
-    let models = match check::check(models) {
+    let models = match check::check(declared_models) {
         Ok(models) => models,
         Err(found) => {
             errors.extend(found);
             return Err(errors);
         }
     };
+    for (subject, message) in emit::name_clashes(&models, &operations) {
+        let at = declaration_site(declared_models, calls, &subject);
+        errors.push((at.0, ParseError::new(at.1.line, at.1.column, message)));
+    }
     if errors.is_empty() { Ok(Declarations { models, operations, inputs: SchemaTypes::default(), scalars: Scalars::new(), notes: Vec::new(), blob_uploads: Vec::new() }) } else { Err(errors) }
+}
+
+fn declaration_site(models: &[decl::ModelDecl], calls: &[decl::CallDecl], subject: &str) -> (usize, decl::Pos) {
+    models.iter().find(|node| node.name == subject).map(|node| (node.file, node.pos))
+        .or_else(|| calls.iter().find(|call| call.name == subject).map(|call| (call.file, call.pos)))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

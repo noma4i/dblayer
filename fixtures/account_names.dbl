@@ -1,6 +1,5 @@
 model Ledger do
   attribute :scope, :string
-  attribute :account, :string, null: true
   index :scope
   operation :create, durable: true do
     mutation "CreateMoment"
@@ -11,8 +10,7 @@ model Ledger do
   operation :move do
     mutation "LikeMoment"
     parameter :scope, :string
-    parameter :account, :string
-    variables scope: :scope, account: :account
+    variables scope: :scope
     optimistic false
   end
 end
@@ -21,7 +19,6 @@ model LedgerFeed do
   attribute :title, :string
   scope :entries do
     parameter :scope, :string
-    parameter :account, :string
     query "MomentsFeed"
     paginate size: 20, direction: :forward
     edge do

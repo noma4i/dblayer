@@ -124,7 +124,7 @@ end
     assert!(swift.contains("@concurrent public func mute(mute: Bool, in scope_: AccountScope? = nil) async throws -> Self"));
     assert!(swift.contains("values_[\"muted\"] = try JSONValue.encode(mute)"));
     assert!(swift.contains("args: [\"mute\": try JSONValue.encode(mute)]"));
-    assert!(kotlin.contains("suspend fun mute(mute: Boolean, account_: AccountScope? = null): Container"));
+    assert!(kotlin.contains("suspend fun mute(mute: Boolean, account: AccountScope? = null): Container"));
     assert!(kotlin.contains("\"muted\" to jsonValue(mute)"));
 }
 
@@ -144,7 +144,7 @@ end
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("@concurrent public static func send(in scope_: AccountScope, name: String? = nil, unreadCount: Int) async throws -> Sent<Self>"));
-    assert!(kotlin.contains("suspend fun send(account_: AccountScope, name: String? = null, unreadCount: Long): Sent<Container>"));
+    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String? = null, unreadCount: Long): Sent<Container>"));
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn a_local_field_is_in_the_model_type_but_not_in_create_or_update() {
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("public let tone: String?") && kotlin.contains("val tone: String? = null"), "{swift}\n{kotlin}");
     assert!(swift.contains("@concurrent public static func create(text: String, in scope_: AccountScope? = nil)") && swift.contains("@concurrent public func update(text: String? = nil, in scope_: AccountScope? = nil)"), "{swift}");
-    assert!(kotlin.contains("suspend fun create(text: String, account_: AccountScope? = null)") && kotlin.contains("suspend fun update(text: String? = null, account_: AccountScope? = null)"), "{kotlin}");
+    assert!(kotlin.contains("suspend fun create(text: String, account: AccountScope? = null)") && kotlin.contains("suspend fun update(text: String? = null, account: AccountScope? = null)"), "{kotlin}");
 }
 
 #[test]
@@ -261,7 +261,7 @@ end
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
     assert!(swift.contains("static func send(in scope_: AccountScope, name: String, unreadCount: Int? = nil) async throws -> Sent<Self>"));
-    assert!(kotlin.contains("suspend fun send(account_: AccountScope, name: String, unreadCount: Long? = null): Sent<Container>"));
+    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String, unreadCount: Long? = null): Sent<Container>"));
     let map = r#"{"stance":{"$map":{"from":"shelf","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#;
     assert!(swift.contains(map), "Swift literal");
     assert!(kotlin.contains(&map.replace('$', "${'$'}")), "Kotlin literal");
@@ -332,22 +332,22 @@ end
         assert!(line.contains("in scope_: AccountScope? = nil") && line.contains("Self.feedEdge") || line.contains(".edgeValues(of: id, in: scope_)"), "{line}");
     }
     for line in kotlin.lines().filter(|line| line.contains("suspend fun feedEdge(") || line.contains("suspend fun vibeFeedEdge(")) {
-        assert!(line.contains("account_: AccountScope? = null") && line.contains(".edgeValues(id, account_)"), "{line}");
+        assert!(line.contains("account: AccountScope? = null") && line.contains(".edgeValues(id, account)"), "{line}");
     }
-    assert!(kotlin.lines().any(|line| line.contains("suspend fun vibeFeedEdge(vibeId: String, id: String, account_: AccountScope? = null)")));
+    assert!(kotlin.lines().any(|line| line.contains("suspend fun vibeFeedEdge(vibeId: String, id: String, account: AccountScope? = null)")));
     assert!(swift.contains("vibeFeedEdge(_ vibeId: String, of id: String, in scope_: AccountScope? = nil)"), "{swift}");
-    assert!(kotlin.lines().any(|line| line.contains("suspend fun setAvatar(photo: Blob, account_: AccountScope? = null)") && line.contains("Me.profile.read(account_)") && line.contains(".setAvatar(photo, account_)")), "{kotlin}");
-    assert!(swift.contains("like(in scope_: AccountScope? = nil)") && kotlin.contains("fun like(account_: AccountScope? = null)"));
+    assert!(kotlin.lines().any(|line| line.contains("suspend fun setAvatar(photo: Blob, account: AccountScope? = null)") && line.contains("Me.profile.read(account)") && line.contains(".setAvatar(photo, account)")), "{kotlin}");
+    assert!(swift.contains("like(in scope_: AccountScope? = nil)") && kotlin.contains("fun like(account: AccountScope? = null)"));
 }
 
 #[test]
-fn generated_names_end_with_an_underscore_and_never_meet_a_dbl_parameter() {
+fn generated_locals_end_with_an_underscore_and_never_meet_a_dbl_parameter() {
     let models = parse_models(include_str!("../../fixtures/account_names.dbl")).unwrap();
     let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
-    assert!(swift.contains("entriesEdge(_ scope: String, _ account: String, of id: String, in scope_: AccountScope? = nil)") && swift.contains("Self.entries(scope, account).edgeValues(of: id, in: scope_)"), "{swift}");
-    assert!(swift.contains("func move(account: String, scope: String, in scope_: AccountScope? = nil)") && swift.contains("func update(scope: String? = nil, account: String?? = nil, in scope_: AccountScope? = nil)"), "{swift}");
-    assert!(kotlin.contains("suspend fun entriesEdge(scope: String, account: String, id: String, account_: AccountScope? = null)") && kotlin.contains("LedgerFeed.entries(scope, account).edgeValues(id, account_)"), "{kotlin}");
-    assert!(kotlin.contains("suspend fun move(account: String, scope: String, account_: AccountScope? = null)") && kotlin.contains("onAccount(account_)"), "{kotlin}");
+    assert!(swift.contains("entriesEdge(_ scope: String, of id: String, in scope_: AccountScope? = nil)") && swift.contains("Self.entries(scope).edgeValues(of: id, in: scope_)"), "{swift}");
+    assert!(swift.contains("func move(scope: String, in scope_: AccountScope? = nil)") && swift.contains("func update(scope: String? = nil, in scope_: AccountScope? = nil)"), "{swift}");
+    assert!(kotlin.contains("suspend fun entriesEdge(scope: String, id: String, account: AccountScope? = null)") && kotlin.contains("LedgerFeed.entries(scope).edgeValues(id, account)"), "{kotlin}");
+    assert!(kotlin.contains("suspend fun move(scope: String, account: AccountScope? = null)") && kotlin.contains("onAccount(account) { database_, epoch_ ->"), "{kotlin}");
 }
 
 #[test]
@@ -357,24 +357,33 @@ fn a_query_named_like_a_parameter_is_called_through_its_owner() {
     for call in ["try await Self.scope.edgeValues(of: id, in: scope_)", "try await Self.account.edgeValues(of: id, in: scope_)"] {
         assert!(swift.contains(call), "swift lacks {call}\n{swift}");
     }
-    for call in ["Shadow.scope.edgeValues(id, account_)", "Shadow.account.edgeValues(id, account_)"] {
+    for call in ["Shadow.scope.edgeValues(id, account)", "Shadow.account.edgeValues(id, account)"] {
         assert!(kotlin.contains(call), "kotlin lacks {call}\n{kotlin}");
     }
     assert!(swift.contains("func create(title: String, in scope_: AccountScope? = nil)"), "{swift}");
     assert!(swift.contains("Self.singleton.read(in: scope_).first") && swift.contains("public static var singleton: Query<Self> { Self.account }"), "{swift}");
-    assert!(kotlin.contains("suspend fun setVideo(video: Blob, account_: AccountScope? = null) = requireNotNull(Holder.account.read(account_).firstOrNull())"), "{kotlin}");
-    assert!(kotlin.contains("onAccount(account_) { database_, epoch_ ->"), "{kotlin}");
+    assert!(kotlin.contains("suspend fun setVideo(video: Blob, account: AccountScope? = null) = requireNotNull(Holder.account.read(account).firstOrNull())"), "{kotlin}");
 }
 
 #[test]
-fn a_name_ending_with_an_underscore_is_refused_for_every_kind_of_name() {
-    for (case, source) in [
-        ("scope", "model Ledger do\n  scope :account_ do\n    query \"Feed\"\n  end\nend\n"),
-        ("field", "model Ledger do\n  attribute :scope_, :string\nend\n"),
-        ("parameter", "model Ledger do\n  scope :feed do\n    parameter :account_, :string\n    query \"Feed\"\n  end\nend\n"),
-        ("model", "model Ledger_ do\n  attribute :title, :string\nend\n"),
+fn a_dbl_input_that_would_collide_with_generated_names_is_refused_with_a_diagnostic() {
+    let edge = "    query \"Feed\"\n    paginate size: 20, direction: :forward\n    edge do\n      attribute :score, :int, null: true\n    end\n";
+    for (case, source, expected) in [
+        ("capitalised field", "model Page do\n  attribute :Shadow, :string\nend\n".to_string(), "`Shadow` must start with a lowercase letter"),
+        ("capitalised scope parameter", format!("model Page do\n  attribute :title, :string\n  scope :feed do\n    parameter :Shadow, :string\n{edge}  end\nend\n"), "`Shadow` must start with a lowercase letter"),
+        ("capitalised action argument", "model Holder do\n  attribute :label, :string\n  operation :set_label do\n    mutation \"SetLabel\"\n    parameter :Holder, :string\n    variables owner: :Holder\n    optimistic false\n  end\nend\n".to_string(), "`Holder` must start with a lowercase letter"),
+        ("capitalised operation parameter", "operation :load do\n  query \"Load\"\n  parameter :JSONValue, :string\nend\n".to_string(), "`JSONValue` must start with a lowercase letter"),
+        ("trailing underscore field", "model Page do\n  attribute :scope_, :string\nend\n".to_string(), "ends with `_`"),
+        ("trailing underscore parameter", format!("model Page do\n  scope :feed do\n    parameter :account_, :string\n{edge}  end\nend\n"), "ends with `_`"),
+        ("trailing underscore model", "model Page_ do\n  attribute :title, :string\nend\n".to_string(), "ends with `_`"),
+        ("scope parameter id on an edge scope", format!("model Page do\n  attribute :title, :string\n  scope :feed do\n    parameter :id, :id\n    where id: :id\n{edge}  end\nend\n"), "model `Page` scope `feed` edge accessor: parameter `id` has the name of the generated parameter `id`"),
+        ("field account", "model Ledger do\n  attribute :account, :string\nend\n".to_string(), "model `Ledger` create: parameter `account` has the name of the generated parameter `account`"),
+        ("action argument account", "model Ledger do\n  attribute :title, :string\n  operation :move do\n    mutation \"Move\"\n    parameter :account, :string\n    variables account: :account\n    optimistic false\n  end\nend\n".to_string(), "model `Ledger` action `move`: parameter `account` has the name of the generated parameter `account`"),
+        ("scope parameter account", format!("model Page do\n  attribute :title, :string\n  scope :feed do\n    parameter :account, :string\n{edge}  end\nend\n"), "scope `feed` edge accessor: parameter `account` has the name of the generated parameter `account`"),
+        ("ephemeral field account", "model Page do\n  attribute :title, :string\n  ephemeral do\n    attribute :account, :string, null: true\n  end\nend\n".to_string(), "model `Page` set: parameter `account` has the name of the generated parameter `account`"),
+        ("operation parameter account", "operation :load do\n  query \"Load\"\n  parameter :account, :string\nend\n".to_string(), "operation `load` call: parameter `account` has the name of the generated parameter `account`"),
     ] {
-        let errors = parse_models(source).unwrap_err();
-        assert!(errors[0].message.contains("ends with `_`"), "{case}: {}", errors[0].message);
+        let errors = parse_models(&source).unwrap_err();
+        assert!(errors.iter().any(|error| error.message.contains(expected)), "{case}: wanted `{expected}`, got {errors:?}");
     }
 }

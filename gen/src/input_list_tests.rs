@@ -49,7 +49,7 @@ fn an_operation_arg_takes_a_list_of_input_objects_in_every_nullability() {
         let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
         assert!(swift.contains(&format!("public static func widgetsSend({swift_param}, in scope_: AccountScope? = nil) async throws")), "{arg}\n{swift}");
         assert!(swift.contains(swift_put), "{arg}\n{swift}");
-        assert!(kotlin.contains(&format!("suspend fun widgetsSend({kotlin_param}, account_: AccountScope? = null)")), "{arg}\n{kotlin}");
+        assert!(kotlin.contains(&format!("suspend fun widgetsSend({kotlin_param}, account: AccountScope? = null)")), "{arg}\n{kotlin}");
         assert!(kotlin.contains(kotlin_put), "{arg}\n{kotlin}");
     }
 }
@@ -154,7 +154,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: List<WidgetInput>? = null",
-        "suspend fun decorate(widgets: List<WidgetInput>, account_: AccountScope? = null): Moment = act(\"decorate\"",
+        "suspend fun decorate(widgets: List<WidgetInput>, account: AccountScope? = null): Moment = act(\"decorate\"",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

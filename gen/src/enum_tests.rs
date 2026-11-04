@@ -120,7 +120,7 @@ fn schema_enums_become_typed_enums_in_inputs_args_and_results_and_scalars_follow
         "sealed class WidgetKind(override val raw: String) : RawEnum {\n    data object Emoji : WidgetKind(\"EMOJI\")\n",
         "val kind: WidgetKind,",
         "val size: Long",
-        "suspend fun widgetSend(input: WidgetInput, kind: WidgetKind, account_: AccountScope? = null): WidgetSendResult {",
+        "suspend fun widgetSend(input: WidgetInput, kind: WidgetKind, account: AccountScope? = null): WidgetSendResult {",
         "val kind: WidgetKind? = null",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");

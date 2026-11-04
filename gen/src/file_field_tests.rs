@@ -10,7 +10,7 @@ fn a_file_field_is_read_as_a_description_and_written_only_through_attach() {
     }
     assert!(!swift.contains("Column<Sample, FileInfo"), "a file field has no column");
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
-    for expected in ["val media: FileInfo? = null", "val media = FileField<Sample>(\"media\")", "r.fileOpt(", "suspend fun create(name: String, account_: AccountScope? = null): Sample"] {
+    for expected in ["val media: FileInfo? = null", "val media = FileField<Sample>(\"media\")", "r.fileOpt(", "suspend fun create(name: String, account: AccountScope? = null): Sample"] {
         assert!(kotlin.contains(expected), "kotlin lacks {expected}");
     }
     assert!(!kotlin.contains("Column<Sample, FileInfo"), "a file field has no column");

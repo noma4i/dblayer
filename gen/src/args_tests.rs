@@ -53,8 +53,8 @@ fn the_generated_calls_take_the_args_after_the_fields() {
     }
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     for expected in [
-        "suspend fun send(account_: AccountScope, name: String, momentId: String? = null, signedId: String): Sent<Sample>",
-        "suspend fun update(name: String? = null, ownerId: String? = null, signedId: String? = null, account_: AccountScope? = null): Sample",
+        "suspend fun send(account: AccountScope, name: String, momentId: String? = null, signedId: String): Sent<Sample>",
+        "suspend fun update(name: String? = null, ownerId: String? = null, signedId: String? = null, account: AccountScope? = null): Sample",
     ] {
         assert!(kotlin.contains(expected), "kotlin lacks {expected}");
     }
@@ -66,5 +66,5 @@ fn a_model_without_args_emits_no_args_variable() {
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     assert!(!swift.contains("var args") && !swift.contains("args: args"), "swift keeps an unused args variable");
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
-    assert!(kotlin.contains("account_.send(this, values_)") && kotlin.contains("update(epoch_, this.modelName, this.id, values_.jsonText(), \"{}\")"), "kotlin builds an empty args object");
+    assert!(kotlin.contains("account.send(this, values_)") && kotlin.contains("update(epoch_, this.modelName, this.id, values_.jsonText(), \"{}\")"), "kotlin builds an empty args object");
 }

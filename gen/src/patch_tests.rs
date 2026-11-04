@@ -12,10 +12,10 @@ fn a_nullable_field_has_three_states_in_update_and_set_on_both_platforms() {
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
-        "suspend fun update(title: String? = null, body: GraphQLNullable<String> = GraphQLNullable.Omitted, account_: AccountScope? = null)",
+        "suspend fun update(title: String? = null, body: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null)",
         "title?.let { put(\"title\", jsonValue(it)) }",
         "put(\"body\", body)",
-        "suspend fun set(typing: Boolean? = null, mood: GraphQLNullable<String> = GraphQLNullable.Omitted, account_: AccountScope? = null)",
+        "suspend fun set(typing: Boolean? = null, mood: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null)",
         "put(\"mood\", mood)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");

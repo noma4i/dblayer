@@ -941,12 +941,6 @@ public enum Operations {
         if let value = size { variables_["size"] = try JSONValue.encode(value) }
         return try await DB.run("QrCodeCreate", variables: ["input": JSONValue.object(variables_)], as: QrCodeCreateResult.self, in: scope_)
     }
-    @concurrent public static func accountNames(scope: String, account: String, in scope_: AccountScope? = nil) async throws {
-        var variables_: [String: JSONValue] = [:]
-        variables_["scope"] = try JSONValue.encode(scope)
-        variables_["account"] = try JSONValue.encode(account)
-        try await DB.run("AccountNames", variables: variables_, in: scope_)
-    }
     @concurrent public static func signOut(in scope_: AccountScope? = nil) async throws {
         let variables_: [String: JSONValue] = [:]
         try await DB.run("SignOut", variables: variables_, in: scope_)

@@ -3,7 +3,7 @@ use std::fmt::Write;
 use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, RelationSpec};
 use dblayer::value::ScalarKind;
 
-use super::{field_type, identifier, name, text_param};
+use super::{field_type, identifier, name, text_param, ACCOUNT, ROW_ID};
 use crate::EnumDecl;
 
 fn pascal(text: &str) -> String {
@@ -54,7 +54,7 @@ pub(super) fn swift_accessors(out: &mut String, types: &mut String, model: &Mode
     let (declared, passed) = parameters(model, relation, decls, true);
     let printed = identifier(&method, true);
     let query = if passed.is_empty() { format!("Self.{printed}") } else { format!("Self.{printed}({passed})") };
-    writeln!(out, "    @concurrent public static func {method}Edge({declared}of id: String, in scope_: AccountScope? = nil) async throws -> {class}? {{ try await {query}.edgeValues(of: id, in: scope_).map({class}.init) }}").unwrap();
+    writeln!(out, "    @concurrent public static func {method}Edge({declared}of {ROW_ID}: String, in scope_: AccountScope? = nil) async throws -> {class}? {{ try await {query}.edgeValues(of: {ROW_ID}, in: scope_).map({class}.init) }}").unwrap();
     writeln!(types, "public struct {class}: Sendable, Equatable {{").unwrap();
     for field in &relation.edge_fields {
         writeln!(types, "    public let {}: {}", identifier(&field.name, true), field_type(field, true)).unwrap();
@@ -74,7 +74,7 @@ pub(super) fn kotlin_accessors(out: &mut String, types: &mut String, model: &Mod
     let (declared, passed) = parameters(model, relation, decls, false);
     let printed = identifier(&method, false);
     let query = if passed.is_empty() { format!("{}.{printed}", model.key.as_str()) } else { format!("{}.{printed}({passed})", model.key.as_str()) };
-    writeln!(out, "        suspend fun {method}Edge({declared}id: String, account_: AccountScope? = null): {class}? = {query}.edgeValues(id, account_)?.let {{ {class}(it) }}").unwrap();
+    writeln!(out, "        suspend fun {method}Edge({declared}{ROW_ID}: String, {ACCOUNT}: AccountScope? = null): {class}? = {query}.edgeValues({ROW_ID}, {ACCOUNT})?.let {{ {class}(it) }}").unwrap();
     let fields: Vec<String> = relation.edge_fields.iter().map(|field| format!("    val {}: {} = null", identifier(&field.name, false), field_type(field, false))).collect();
     writeln!(types, "@Immutable\ndata class {class}(\n{}\n) {{", fields.join(",\n")).unwrap();
     let reads: Vec<String> = relation.edge_fields.iter().map(|field| read(field, false)).collect();

@@ -17,8 +17,8 @@ fn edge_values_are_a_typed_read_per_scope_and_not_a_property_of_the_row() {
         assert!(swift.contains(needle), "swift lacks {needle}");
     }
     for needle in [
-        "suspend fun feedEdge(id: String, account_: AccountScope? = null): MomentFeedEdge? = Moment.feed.edgeValues(id, account_)?.let { MomentFeedEdge(it) }",
-        "suspend fun vibeFeedEdge(vibeId: String, id: String, account_: AccountScope? = null): MomentVibeFeedEdge?",
+        "suspend fun feedEdge(id: String, account: AccountScope? = null): MomentFeedEdge? = Moment.feed.edgeValues(id, account)?.let { MomentFeedEdge(it) }",
+        "suspend fun vibeFeedEdge(vibeId: String, id: String, account: AccountScope? = null): MomentVibeFeedEdge?",
         "data class MomentFeedEdge(\n    val impressionUuid: String? = null,\n    val impressionScore: Long? = null\n)",
         "(values[\"impressionScore\"] as? JsonPrimitive)?.longOrNull",
     ] {

@@ -467,6 +467,8 @@ A `query "Operation"` line connects a scope to the server. A scope that depends 
 
 `parameter :afterSequence, :int` and `parameter :includeRewards, :bool` declare parameters that are sent as a JSON integer or boolean. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin: `:int` is `Long` in every Kotlin output, like the attribute), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :parameter`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
 
+Names of attributes and parameters start with a lowercase letter and do not end with `_`. A name that is also a parameter of the generated function is refused with the model and the function: `account` in every function that takes an account, and `id` in a `*Edge` read. Rename the attribute or parameter; the server name stays in `from:` or `variables`.
+
 ```ruby
 scope :since do
   parameter :groupId, :id

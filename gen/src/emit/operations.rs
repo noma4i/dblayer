@@ -66,7 +66,7 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
     for operation in operations {
         let method = identifier(&name(&operation.name), false);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
-        let account = "account_";
+        let account = super::ACCOUNT;
         let params = super::kotlin_scope(&params, account);
         let returns = if operation.result.is_none() { String::new() } else { format!(": {}", returned(operation, false)) };
         writeln!(out, "    suspend fun {method}({params}){returns} {{\n        val variables_ = mutableMapOf<String, JsonElement>()").unwrap();
@@ -76,7 +76,7 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
         }
         let sent = operation.wrap.as_ref().map_or("JsonObject(variables_)".to_string(), |wrap| format!("JsonObject(mapOf(\"{wrap}\" to JsonObject(variables_)))"));
         if operation.result.is_none() { writeln!(out, "        DBlayer.run(\"{}\", {sent}, {account})\n    }}", operation.operation).unwrap(); }
-        else if operation.list { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, kotlinx.serialization.builtins.ListSerializer({}.serializer()), {account})\n    }}", operation.operation, result_name(operation)).unwrap(); }
+        else if operation.list { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, ListSerializer({}.serializer()), {account})\n    }}", operation.operation, result_name(operation)).unwrap(); }
         else { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, {}.serializer(), {account})\n    }}", operation.operation, result_name(operation)).unwrap(); }
     }
     writeln!(out, "}}\n").unwrap();

@@ -22,11 +22,11 @@ fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "data class QrCodeCreateResult(\n    val url: String? = null,\n)",
-        "suspend fun qrCodeCreate(kind: String, size: Long? = null, account_: AccountScope? = null): QrCodeCreateResult {",
+        "suspend fun qrCodeCreate(kind: String, size: Long? = null, account: AccountScope? = null): QrCodeCreateResult {",
         "if (size != null) variables_[\"size\"] = jsonValue(size)",
-        "DBlayer.run(\"QrCodeCreate\", JsonObject(mapOf(\"input\" to JsonObject(variables_))), QrCodeCreateResult.serializer(), account_)",
-        "suspend fun signOut(account_: AccountScope? = null) {",
-        "DBlayer.run(\"SignOut\", JsonObject(variables_), account_)",
+        "DBlayer.run(\"QrCodeCreate\", JsonObject(mapOf(\"input\" to JsonObject(variables_))), QrCodeCreateResult.serializer(), account)",
+        "suspend fun signOut(account: AccountScope? = null) {",
+        "DBlayer.run(\"SignOut\", JsonObject(variables_), account)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }
@@ -73,8 +73,8 @@ fn a_list_operation_returns_one_result_type_per_element_on_both_platforms() {
     }
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
-        "suspend fun giphyLoad(type: String, limit: Long? = null, account_: AccountScope? = null): List<GiphyLoadResult> {",
-        "DBlayer.run(\"Giphy\", JsonObject(variables_), kotlinx.serialization.builtins.ListSerializer(GiphyLoadResult.serializer()), account_)",
+        "suspend fun giphyLoad(type: String, limit: Long? = null, account: AccountScope? = null): List<GiphyLoadResult> {",
+        "DBlayer.run(\"Giphy\", JsonObject(variables_), ListSerializer(GiphyLoadResult.serializer()), account)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

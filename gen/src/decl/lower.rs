@@ -89,6 +89,15 @@ fn symbol(cx: &mut Cx, node: &Node<Value>, what: &str) -> Option<String> {
     }
 }
 
+fn lowercase_symbol(cx: &mut Cx, node: &Node<Value>, what: &str) -> Option<String> {
+    let name = symbol(cx, node, what)?;
+    if name.chars().next().is_some_and(char::is_lowercase) {
+        return Some(name);
+    }
+    cx.fail(at(node), format!("{what} `{name}` must start with a lowercase letter: generated code uses capitalised names for types"));
+    None
+}
+
 fn string(cx: &mut Cx, node: &Node<Value>, what: &str) -> Option<String> {
     match &node.item {
         Value::Str(text) => Some(text.clone()),
@@ -293,7 +302,7 @@ fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> Option<Attr
         return None;
     }
     let name = match call.args.first() {
-        Some(node) => symbol(cx, node, "attribute name")?,
+        Some(node) => lowercase_symbol(cx, node, "attribute name")?,
         None => {
             cx.fail(line.pos, "attribute needs a name like `attribute :title, :string`");
             return None;
@@ -653,7 +662,7 @@ fn parameter(cx: &mut Cx, call: &Call) -> Option<ParameterDecl> {
     let mut line = Line::of(call);
     no_block(cx, call);
     let (name, ty) = match call.args.as_slice() {
-        [name, ty] => (symbol(cx, name, "parameter name")?, ty),
+        [name, ty] => (lowercase_symbol(cx, name, "parameter name")?, ty),
         _ => {
             cx.fail(line.pos, "`parameter` needs a name and a type like `parameter :limit, :int`");
             return None;

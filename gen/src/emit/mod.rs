@@ -10,6 +10,8 @@ mod operations;
 mod unions;
 mod nodes;
 mod edges;
+mod names;
+pub(crate) use names::name_clashes;
 use edges::{kotlin_accessors, swift_accessors};
 use nodes::{kotlin_node, swift_node};
 use unions::{emit_kotlin_union, emit_swift_union};
@@ -20,6 +22,9 @@ use operations::{emit_kotlin_operations, emit_swift_operations};
 use crate::operation::OperationCall;
 use crate::schema_check::SchemaTypes;
 use crate::enums::{declared_in, declared_in_field, identifier, merge_enums, EnumDecl};
+
+pub(crate) const ACCOUNT: &str = "account";
+pub(crate) const ROW_ID: &str = "id";
 
 /// The relation that holds the one row of a model: the only global relation answered as a single record.
 fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
@@ -151,6 +156,10 @@ fn is_id(field: &FieldSpec) -> bool {
 
 fn key_of(field: &FieldSpec) -> &str {
     field.from.as_deref().unwrap_or(&field.name)
+}
+
+fn writable_fields(model: &ModelSpec) -> Vec<&FieldSpec> {
+    model.fields.iter().filter(|field| field.name != "id" && !field.is_local() && !is_file(field)).collect()
 }
 
 fn create_fields<'a>(model: &ModelSpec, fields: &[&'a FieldSpec]) -> Vec<&'a FieldSpec> {
@@ -294,7 +303,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             }
             writeln!(out, "        return variables_\n    }}").unwrap();
         }
-        let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local() && !is_file(field)).collect();
+        let fields = writable_fields(model);
         let create_fields = create_fields(model, &fields);
         let args = "args_".to_string();
         let create_args = standard_args(model, "create");
@@ -398,13 +407,14 @@ fn kotlin_scope(params: &str, account: &str) -> String {
 pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> String {
     let decls = checked_enum_decls(models, operations, schema_types);
     let one_of = if schema_types.inputs.iter().any(|input| input.one_of) { "import kotlinx.serialization.KSerializer\nimport kotlinx.serialization.SerializationException\nimport kotlinx.serialization.descriptors.SerialDescriptor\nimport kotlinx.serialization.descriptors.buildClassSerialDescriptor\nimport kotlinx.serialization.encoding.Decoder\nimport kotlinx.serialization.encoding.Encoder\n" } else { "" };
+    let list_serializer = if operations.iter().any(|operation| operation.list) { "import kotlinx.serialization.builtins.ListSerializer\n" } else { "" };
     let encoding = if schema_types.inputs.is_empty() { String::new() } else { format!("import kotlinx.serialization.EncodeDefault\nimport kotlinx.serialization.ExperimentalSerializationApi\n{one_of}") };
-    let mut out = format!("package com.noma4i.dblayer.models\n\nimport androidx.compose.runtime.Immutable\nimport com.noma4i.dblayer.*\n{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
+    let mut out = format!("package com.noma4i.dblayer.models\n\nimport androidx.compose.runtime.Immutable\nimport com.noma4i.dblayer.*\n{list_serializer}{encoding}import kotlinx.serialization.SerialName\nimport kotlinx.serialization.Serializable\nimport kotlinx.serialization.json.*\n\n");
     let mut edge_types = String::new();
     for model in models {
         let class = model.key.as_str();
         let values = "values_".to_string();
-        let account = "account_".to_string();
+        let account = ACCOUNT.to_string();
         let built = "built_".to_string();
         writeln!(out, "@Immutable\ndata class {class}(").unwrap();
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
@@ -447,7 +457,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             }
             writeln!(out, "        }}").unwrap();
         }
-        let fields: Vec<_> = model.fields.iter().filter(|field| field.name != "id" && !field.is_local() && !is_file(field)).collect();
+        let fields = writable_fields(model);
         let create_fields = create_fields(model, &fields);
         let args = "args_".to_string();
         let create_args = standard_args(model, "create");
@@ -535,7 +545,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {
             let result = result_type(class, &action.name);
-            writeln!(out, "    suspend fun {}(account_: AccountScope, request: UploadRequest): ActionAnswer<{class}, {result}> = account_.upload(this, \"{}\", request, {result}.serializer())", identifier(&name(&action.name), false), action.name).unwrap();
+            writeln!(out, "    suspend fun {}({ACCOUNT}: AccountScope, request: UploadRequest): ActionAnswer<{class}, {result}> = {ACCOUNT}.upload(this, \"{}\", request, {result}.serializer())", identifier(&name(&action.name), false), action.name).unwrap();
         }
         if !model.associations.is_empty() {
             out.push_str("    object Relations {\n");

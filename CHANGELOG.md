@@ -44,10 +44,13 @@
 - A projection asks for a snapshot again when a jump in the delivery sequence shows that a delivery, also the recovery snapshot, was dropped.
 - A create the server answers has a generated typed `create` in Swift and Kotlin.
 - Operations declare `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`; the change shows before the answer and a refusal restores it.
+- The DSL refuses capitalised attribute and parameter names.
+- The DSL refuses a name that equals a generated parameter: `account`, or `id` in an edge read.
+- The DSL refuses a name that ends with `_`.
 
 ### Fixed
 - A window opened after a failed load of its query no longer shows that error.
-- Generated code can no longer capture or be captured by a `.dbl` name: its own parameters and locals end with `_` (the Swift `in scope_:` internal name, the Kotlin `account_` argument), its calls go through the owner (`Self.query`, `Model.query`), and a `.dbl` name that ends with `_` is refused.
+- A parameter named like a query no longer captures the generated call.
 - `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
 - Every terminal subscription failure reaches the query listener once.
 - A `create` with an id given by the caller returns the confirmed row.
