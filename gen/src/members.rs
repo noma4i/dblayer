@@ -37,6 +37,7 @@ struct Declaration {
     is_static: bool,
     function: bool,
     signature: String,
+    receiver: Option<String>,
 }
 
 fn strip_attributes(text: &str) -> &str {
@@ -155,7 +156,8 @@ fn declaration(lines: &[&str], platform: Platform) -> Option<Declaration> {
     } else {
         String::new()
     };
-    Some(Declaration { name, is_static, function, signature })
+    let receiver = tail[..identifier_end(tail)].rsplit_once('.').map(|(receiver, _)| receiver.replace('`', ""));
+    Some(Declaration { name, is_static, function, signature, receiver })
 }
 
 fn container(line: &str) -> Option<(String, bool)> {
@@ -203,15 +205,21 @@ pub(crate) fn redeclared(source: &str, platform: Platform) -> Vec<Redeclared> {
             stack.push(Container { indent, name: if anonymous { format!("{name} at line {}", at + 1) } else { name } });
             continue;
         }
-        let Some(top) = stack.last() else { continue };
-        if indent != top.indent + 4 { continue; }
+        let (outer, path) = match stack.last() {
+            Some(top) if indent == top.indent + 4 => (stack[0].name.clone(), stack.iter().map(|open| open.name.as_str()).collect::<Vec<_>>().join(" > ")),
+            Some(_) => continue,
+            None if indent == 0 => match declaration(&lines[at..], platform).and_then(|member| member.receiver) {
+                Some(receiver) => (receiver.clone(), receiver),
+                None => continue,
+            },
+            None => continue,
+        };
         let Some(member) = declaration(&lines[at..], platform) else { continue };
-        let path = stack.iter().map(|open| open.name.as_str()).collect::<Vec<_>>().join(" > ");
         let key = (path.clone(), member.is_static, member.function, member.name.clone(), member.signature.clone());
         if seen.insert(key) { continue; }
         let kind = describe(&member);
         let shown = if member.function { format!("{}({})", member.name, member.signature) } else { member.name.clone() };
-        found.push(Redeclared { outer: stack[0].name.clone(), path, member: member.name.clone(), shown, kind });
+        found.push(Redeclared { outer, path, member: member.name.clone(), shown, kind });
     }
     found
 }

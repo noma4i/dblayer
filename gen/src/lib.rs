@@ -171,11 +171,11 @@ fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>>
         return Err(call_errors);
     }
     let mut declared = build_declarations(&models, &calls)?;
+    declared.blob_uploads = blob_uploads;
     let clashes = name_clash_errors(&declared, &models, &calls);
     if !clashes.is_empty() { return Err(clashes); }
     let clashes = output_clash_errors(&declared, &models);
     if !clashes.is_empty() { return Err(clashes); }
-    declared.blob_uploads = blob_uploads;
     declared.scalars = scalars;
     Ok(declared)
 }
@@ -224,8 +224,8 @@ fn name_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDecl
 }
 
 fn output_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDecl]) -> Vec<(usize, ParseError)> {
-    let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
-    let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
+    let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs) + &emit_blob_swift(&declared.blob_uploads);
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs) + &emit_blob_kotlin(&declared.blob_uploads);
     let mut errors = Vec::new();
     for (platform, source) in [(members::Platform::Swift, swift), (members::Platform::Kotlin, kotlin)] {
         for again in members::redeclared(&source, platform) {

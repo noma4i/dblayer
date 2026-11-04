@@ -15,6 +15,8 @@ fn the_member_parser_flags_only_declarations_that_repeat_in_one_type() {
         "Swift rows: instance and static differ, labels and types make overloads, the same labels and types repeat, extensions share the type"
     );
     let kotlin = "data class Page(\n    override val id: String,\n    val title: String = \"\",\n) : DBModel {\n    override val modelName get() = \"Page\"\n    companion object : ModelDecoder<Page> {\n        override val modelName = \"Page\"\n        val modelName: Query<Page> get() = Query(\"Page\", this)\n        fun mark(note: String) = 1\n        fun mark(other: String) = 2\n        fun mark(note: Int) = 3\n        val mark = 4\n    }\n    fun title(): String = \"\"\n    val title: Int = 1\n}\n";
+    let extensions = "val BlobUpload.Companion.VideoIntro: BlobUpload get() = BlobUpload(\"a\", \"B\")\nval BlobUpload.Companion.VideoIntro: BlobUpload get() = BlobUpload(\"b\", \"B\")\nval BlobUpload.Companion.Other: BlobUpload get() = BlobUpload(\"c\", \"B\")\n";
+    assert_eq!(repeated(extensions, Platform::Kotlin), ["property VideoIntro in BlobUpload.Companion"], "Kotlin extension properties live under their receiver");
     assert_eq!(
         repeated(kotlin, Platform::Kotlin),
         ["property modelName in Page > companion", "function mark(String) in Page > companion", "property title in Page"],

@@ -29,6 +29,7 @@ fn a_relation_named_like_a_reserved_member_is_refused_naming_the_dbl_name() {
     let model = |scope: &str| format!("model Page do\n  attribute :title, :string\n  scope :{scope} do\n    order title: :asc\n  end\nend\n");
     let upload = "model Page do\n  attribute :title, :string\n  operation :upload_clip, upload: true do\n    mutation \"UploadClip\"\n    parameter :caption, :string\n    optimistic false\n  end\n  scope :uploadClipVariables do\n    query \"Pages\"\n    parameter :caption, :string\n    response shape: :list\n  end\nend\n";
     let singleton = "model Totals do\n  attribute :count, :int\n  scope :singleton do\n    query \"Totals\"\n  end\nend\n";
+    let blobs = "blob_upload :video_intro, create: \"BlobCreate\"\nblob_upload :videoIntro, create: \"BlobCreate\"\n";
     let mut rows: Vec<(String, String, String)> = reserved_member_names().into_iter().map(|name| (format!("scope {name}"), model(name), if name == "sync" { "relation name sync is reserved".to_string() } else { format!("model Page: name {name} collides with a model member") })).collect();
     rows.extend([
         ("scope singleton with a query", singleton.to_string(), "model Totals: name singleton collides with a model member"),
@@ -36,6 +37,8 @@ fn a_relation_named_like_a_reserved_member_is_refused_naming_the_dbl_name() {
         ("scope snake_case wireLayout", model("wire_layout"), "generated Swift declares static property `wireLayout` twice in `Page`. It comes from scope `wire_layout`"),
         ("scope with a trailing underscore", model("layout_"), "name `layout_` ends with `_`"),
         ("scope uploadClipVariables beside an upload operation", upload.to_string(), "generated Kotlin declares function `uploadClipVariables(String)` twice in `Page > companion`. It comes from scope `uploadClipVariables` and operation `upload_clip`"),
+        ("blob_upload video_intro beside videoIntro, Swift", blobs.to_string(), "generated Swift declares static property `videoIntro` twice in `BlobUpload`"),
+        ("blob_upload video_intro beside videoIntro, Kotlin", blobs.to_string(), "generated Kotlin declares property `VideoIntro` twice in `BlobUpload.Companion`"),
         ("scope starting with a capital", model("Recent"), "scope name `Recent` must start with a lowercase letter"),
     ].map(|(row, source, wanted)| (row.to_string(), source, wanted.to_string())));
     for (row, source, wanted) in rows {
