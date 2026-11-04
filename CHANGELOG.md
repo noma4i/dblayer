@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Operations of the previous account are not sent after an identity change without `sessionReset`.
+- A confirmed create keeps its row when another model is reset before its answer lands.
+
 ## 6.17.0 - 2026-11-04
 
 ### Added

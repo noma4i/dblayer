@@ -13,6 +13,7 @@ pub(crate) fn recv_within<T>(receiver: &Receiver<T>) -> T {
     receiver.recv_timeout(BLOCK_LIMIT).unwrap_or_else(|error| panic!("nothing arrived: {error}"))
 }
 
+#[cfg(feature = "stress")]
 #[track_caller]
 pub(crate) fn recv_or_closed<T>(receiver: &Receiver<T>) -> Option<T> {
     match receiver.recv_timeout(BLOCK_LIMIT) {
