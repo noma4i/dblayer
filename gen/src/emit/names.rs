@@ -1,4 +1,4 @@
-use dblayer::schema::{FieldSpec, ModelSpec, RelationSpec};
+use dblayer::schema::{generated_member_names, FieldSpec, ModelSpec, RelationSpec};
 
 use super::inputs::case_name;
 use super::{create_fields, declared_types, enum_decls, standard_args, writable_fields, ACCOUNT, ROW_ID};
@@ -7,15 +7,6 @@ use crate::schema_check::SchemaTypes;
 
 /// Kotlin `read`, `put`, `act` and `actAnswering` are not listed: the templates call them as `Model.read`, `this.put`, `this.act`.
 const BARE_CALLS: &[&str] = &["self", "this", "jsonValue", "mapOf", "mutableMapOf", "buildJsonObject", "parseJsonObject", "requireNotNull", "onAccount", "listOf", "emptyMap"];
-
-pub(super) const MODEL_NAME: &str = "modelName";
-pub(super) const WIRE_LAYOUT: &str = "wireLayout";
-pub(super) const LAYOUT: &str = "layout";
-pub(super) const SYNC: &str = "sync";
-pub(super) const UPLOADS: &str = "uploads";
-pub(super) const SINGLETON: &str = "singleton";
-
-pub const MODEL_MEMBERS: &[&str] = &[MODEL_NAME, WIRE_LAYOUT, LAYOUT, SYNC, UPLOADS, SINGLETON];
 
 const IMPORTED_TYPES: &[&str] = &[
     "Query", "Condition", "Order", "Column", "Association", "FileField", "FileInfo", "JSONValue", "JsonElement", "JsonObject", "JsonArray", "JsonPrimitive", "JsonNull", "JsonEncoder", "DB", "DBlayer", "DBModel", "DBSingleton",
@@ -75,7 +66,7 @@ fn sites(models: &[ModelSpec], operations: &[OperationCall], inputs: &SchemaType
             push(format!("{owner} set"), "parameter", model.ephemeral.iter().map(|field| field.field.name.clone()).collect(), vec![ACCOUNT]);
         }
         let constructor = model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).map(|field| field.name.clone()).collect();
-        push(format!("{owner} constructor"), "field", constructor, MODEL_MEMBERS.to_vec());
+        push(format!("{owner} constructor"), "field", constructor, generated_member_names());
         for action in model.actions.iter().filter(|action| !action.upload && !is_hidden_action(&action.name)) {
             push(format!("{owner} action `{}`", action.name), "parameter", action.args.keys().cloned().collect(), vec![ACCOUNT]);
             push(format!("{owner} action `{}` result", action.name), "field", action.result.keys().cloned().collect(), Vec::new());

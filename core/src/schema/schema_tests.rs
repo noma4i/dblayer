@@ -333,6 +333,20 @@ fn relation_host(relation: RelationSpec) -> ModelSpec {
 }
 
 #[test]
+fn every_reserved_member_is_refused_as_a_relation_and_an_association_name() {
+    let names = reserved_member_names();
+    assert_eq!(names.iter().collect::<HashSet<_>>().len(), names.len());
+    for name in &names {
+        let relation = relation_host(RelationSpec::new(name, &["chatId"])).validate(&names);
+        let association = ModelSpec { associations: vec![association(name, AssociationKind::References, "chats", "")], ..relation_host(RelationSpec::new("thread", &["chatId"])) }.validate(&names);
+        let wanted = if *name == "sync" { DeclarationError::ReservedRelationName(name.to_string()) } else { DeclarationError::NameCollision(name.to_string()) };
+        assert_eq!(relation, Err(wanted), "relation {name}");
+        assert_eq!(association, Err(DeclarationError::NameCollision(name.to_string())), "association {name}");
+    }
+    assert!(generated_member_names().iter().all(|name| names.contains(name)));
+}
+
+#[test]
 fn relation_name_by_columns_and_remote_faults_match_spec() {
     assert_eq!(relation_host(RelationSpec::new("thread", &["chatId"])).validate(&[]), Ok(()));
     assert_eq!(relation_host(RelationSpec::global("catalog")).validate(&[]), Ok(()));

@@ -50,6 +50,7 @@
 - The DSL refuses names of calls the generated code writes, such as `jsonValue` and `onAccount`.
 - The generator refuses a model or type named like a library type, such as `Query`.
 - The generator refuses clashing GraphQL input field names and repeated one-of cases.
+- The generator refuses scope and association names that repeat a generated member.
 - The DSL refuses a name that ends with `_`.
 
 ### Fixed

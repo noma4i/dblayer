@@ -80,7 +80,7 @@ fn a_search_line_marks_the_attribute_and_an_index_line_keeps_its_columns() {
 #[test]
 fn associations_and_composite_index() {
     let model = check_source(
-        "model Owner do\nend\n\nmodel Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  attribute :peers, [:id], default: []\n  index :ownerId, :createdAt\n  belongs_to :owner, class_name: Owner, foreign_key: :ownerId, touch: true\n  has_one :first, class_name: Sample, foreign_key: :ownerId, dependent: :destroy\n  references :peers, class_name: Owner\nend\n",
+        "model Owner do\nend\n\nmodel Sample do\n  attribute :ownerId, :id\n  attribute :createdAt, :date\n  attribute :peers, [:id], default: []\n  index :ownerId, :createdAt\n  belongs_to :owner, class_name: Owner, foreign_key: :ownerId, touch: true\n  has_one :latest, class_name: Sample, foreign_key: :ownerId, dependent: :destroy\n  references :peers, class_name: Owner\nend\n",
     )
     .unwrap()
     .remove(1);

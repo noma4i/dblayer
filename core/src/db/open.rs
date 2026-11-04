@@ -10,7 +10,7 @@ use crate::identity::ModelKey;
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
 use crate::syncstate::rebuild_sync_with;
 use crate::pacing::{Clock, Counters};
-use crate::schema::{resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
+use crate::schema::{reserved_member_names, resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
 use crate::store::{Reader, Store, StoreError, StoreEvent};
 
 use super::cache::RowCache;
@@ -25,8 +25,6 @@ use super::reads::ReadPool;
 
 #[cfg(test)]
 type RowBuildHook = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
-
-const RESERVED_MEMBERS: [&str; 12] = ["id", "find", "where", "save", "count", "exists", "first", "observe", "order", "sync", "retry", "discard"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DbConfig {
@@ -207,7 +205,7 @@ impl Db {
     ) -> Result<Db, DbError> {
         let mut models = models;
         resolve_types(&mut models);
-        let faults = validate_models(&models, &RESERVED_MEMBERS);
+        let faults = validate_models(&models, &reserved_member_names());
         if !faults.is_empty() {
             return Err(DbError::Invalid(faults));
         }

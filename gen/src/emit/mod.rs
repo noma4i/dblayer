@@ -12,8 +12,7 @@ mod nodes;
 mod edges;
 mod names;
 pub(crate) use names::name_clashes;
-use names::{LAYOUT, MODEL_NAME, SINGLETON, SYNC, UPLOADS, WIRE_LAYOUT};
-pub use names::MODEL_MEMBERS;
+use dblayer::schema::{LAYOUT, MODEL_NAME, SINGLETON, SYNC, UPLOADS, WIRE_LAYOUT};
 use edges::{kotlin_accessors, swift_accessors};
 use nodes::{kotlin_node, swift_node};
 use unions::{emit_kotlin_union, emit_swift_union};
@@ -35,7 +34,7 @@ fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
     found.next().is_none().then_some(relation)
 }
 
-fn name(text: &str) -> String {
+pub(crate) fn name(text: &str) -> String {
     let upper = crate::build::camel(text);
     let mut chars = upper.chars();
     chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()

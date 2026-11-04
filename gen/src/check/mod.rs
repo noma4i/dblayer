@@ -63,7 +63,7 @@ pub fn check(nodes: &[ModelDecl]) -> Result<Vec<ModelSpec>, Vec<Found>> {
     }
     let mut resolved = models.clone();
     dblayer::schema::resolve_types(&mut resolved);
-    let faults = validate_models(&resolved, &[]);
+    let faults = validate_models(&resolved, &dblayer::schema::reserved_member_names());
     if faults.is_empty() {
         return Ok(models);
     }

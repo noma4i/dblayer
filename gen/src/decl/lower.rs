@@ -621,7 +621,7 @@ fn association(cx: &mut Cx, call: &Call, kind: AssociationKind) -> Option<Associ
     let mut line = Line::of(call);
     no_block(cx, call);
     let name = match call.args.as_slice() {
-        [node] => symbol(cx, node, "association name")?,
+        [node] => lowercase_symbol(cx, node, "association name")?,
         _ => {
             cx.fail(line.pos, format!("`{}` needs a name like `:owner`", call.word));
             return None;
@@ -779,7 +779,7 @@ fn insert_on(cx: &mut Cx, pair: &Pair) -> Option<Spanned<Vec<InsertOn>>> {
 fn scope(cx: &mut Cx, call: &Call) -> Option<ScopeDecl> {
     let mut line = Line::of(call);
     let name = match call.args.as_slice() {
-        [node] => symbol(cx, node, "scope name")?,
+        [node] => lowercase_symbol(cx, node, "scope name")?,
         _ => {
             cx.fail(line.pos, "`scope` needs a name like `scope :recent do`");
             return None;
@@ -1405,7 +1405,7 @@ fn returns(cx: &mut Cx, call: &Call, scalars_only: bool) -> Option<Vec<Attribute
 fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     let mut line = Line::of(call);
     let name = match call.args.as_slice() {
-        [node] => symbol(cx, node, "operation name")?,
+        [node] => lowercase_symbol(cx, node, "operation name")?,
         _ => {
             cx.fail(line.pos, "operation needs a name like `operation :publish do`");
             return None;

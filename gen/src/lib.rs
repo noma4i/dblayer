@@ -6,6 +6,7 @@ mod operation;
 mod parser;
 mod schema_check;
 mod emit;
+mod members;
 mod enums;
 mod scalars;
 mod blob;
@@ -13,7 +14,7 @@ mod blob;
 mod blob_tests;
 pub use blob::{emit_blob_swift, emit_blob_kotlin};
 mod unions;
-pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access, MODEL_MEMBERS};
+pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
 pub use enums::EnumDecl;
 pub use scalars::Scalars;
 pub use operation::OperationCall;
@@ -117,6 +118,8 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     emit::enum_decls(&declared.models, &declared.operations, &declared.inputs).map_err(failed)?;
     let clashes = name_clash_errors(&declared, &models, &calls);
     if !clashes.is_empty() { return Err(locate(clashes)); }
+    let clashes = output_clash_errors(&declared, &models);
+    if !clashes.is_empty() { return Err(locate(clashes)); }
     declared.scalars = scalars;
     declared.notes = checked.map_or_else(Vec::new, |checked| checked.notes);
     Ok(declared)
@@ -170,6 +173,8 @@ fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>>
     let mut declared = build_declarations(&models, &calls)?;
     let clashes = name_clash_errors(&declared, &models, &calls);
     if !clashes.is_empty() { return Err(clashes); }
+    let clashes = output_clash_errors(&declared, &models);
+    if !clashes.is_empty() { return Err(clashes); }
     declared.blob_uploads = blob_uploads;
     declared.scalars = scalars;
     Ok(declared)
@@ -218,11 +223,33 @@ fn name_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDecl
     }).collect()
 }
 
+fn output_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDecl]) -> Vec<(usize, ParseError)> {
+    let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
+    let mut errors = Vec::new();
+    for (platform, source) in [(members::Platform::Swift, swift), (members::Platform::Kotlin, kotlin)] {
+        for again in members::redeclared(&source, platform) {
+            let model = declared.models.iter().filter(|model| again.outer.starts_with(model.key.as_str())).max_by_key(|model| model.key.as_str().len());
+            let subject = model.map_or_else(|| again.outer.clone(), |model| model.key.as_str().to_string());
+            let printed_by = model.map(|model| members::declared_names(model, &again.member)).unwrap_or_default();
+            let source_names = if printed_by.is_empty() { String::new() } else { format!(" It comes from {}.", printed_by.join(" and ")) };
+            let at = declaration_site(declared_models, &[], &subject);
+            errors.push((at.0, ParseError::new(at.1.line, at.1.column, format!(
+                "model `{subject}`: generated {} declares {} `{}` twice in `{}`.{source_names} Rename one of these in the .dbl", platform.label(), again.kind, again.shown, again.path
+            ))));
+        }
+    }
+    errors
+}
+
 fn declaration_site(models: &[decl::ModelDecl], calls: &[decl::CallDecl], subject: &str) -> (usize, decl::Pos) {
     models.iter().find(|node| node.name == subject).map(|node| (node.file, node.pos))
         .or_else(|| calls.iter().find(|call| call.name == subject).map(|call| (call.file, call.pos)))
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod members_tests;
 
 #[cfg(test)]
 mod lib_tests;

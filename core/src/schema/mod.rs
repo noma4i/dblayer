@@ -16,12 +16,14 @@ pub(crate) mod keyed;
 mod local;
 mod merge;
 mod newer;
+mod reserved;
 mod search;
 mod types;
 
 pub use effect::{EffectSource, SelectionKeyError};
 pub use ephemeral::{EphemeralSpec, Storage};
 pub use merge::MergeRule;
+pub use reserved::{generated_member_names, reserved_member_names, ReservedMember, LAYOUT, MODEL_NAME, RESERVED_MEMBERS, SINGLETON, SYNC, UPLOADS, WIRE_LAYOUT};
 pub use search::{search_text, SearchPath};
 pub use types::{resolve_types, ValueFault};
 
