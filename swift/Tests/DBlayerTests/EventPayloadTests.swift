@@ -25,7 +25,7 @@ extension BridgeProbeTests {
     try await list.load()
     var secondary: Query<Chat>?
     if eventsFirst {
-      transport.enqueue("ChatList", reply: #"{"data":{"chats":[]}}"#)
+      transport.enqueue("ChatList", reply: #"{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":9007199254740993,"lists":["SECONDARY"]}]}}"#)
       secondary = try Chat.list("SECONDARY")
       try await secondary?.load()
     }

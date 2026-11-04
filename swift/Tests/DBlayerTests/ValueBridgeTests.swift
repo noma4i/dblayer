@@ -359,7 +359,7 @@ private final class LossyReader: ValueSink, @unchecked Sendable {
   func available() {
     guard let stream = lock.withLock({ self.stream }) else { return }
     reading.withLock {
-      while let delivery = try? DB.database.readStream(stream: stream) { take(delivery, stream: stream) }
+      for delivery in AnyIterator({ try? DB.database.readStream(stream: stream) }) { take(delivery, stream: stream) }
     }
   }
 
@@ -440,9 +440,10 @@ extension BridgeProbeTests {
     let stream = try scope.stream(Moment.recent)
     let cursor = Cursor(stream)
     let seen = BufferedDeliveries()
-    while !seen.settled {
-      guard let delivery = await cursor.next("the first settled snapshot") else { break }
-      seen.apply(delivery, stream: stream)
+    await eventually("the first settled snapshot") {
+      if seen.settled { return true }
+      if let delivery = await cursor.next("the first settled snapshot") { seen.apply(delivery, stream: stream) }
+      return seen.settled
     }
     try DB.database.setOnline(online: false)
     for number in 1...300 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }

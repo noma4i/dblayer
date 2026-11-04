@@ -219,7 +219,8 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
         if (ended && projection.ended != StreamEnd.INVALID) throw DbException.Interrupted("the stream ended before its rows were shown")
         val state = projection.state
         if (state?.settled == true) {
-            if (state.phase == LivePhase.FAILED) state.error?.let { throw it }
+            val error = state.error ?: return
+            if (state.phase == LivePhase.FAILED || (state.errorKind != "subscription" && error !is DbException.Network)) throw error
             return
         }
         if (ended || projection.ended != null) throw DbException.Interrupted("the stream ended before its rows were shown")

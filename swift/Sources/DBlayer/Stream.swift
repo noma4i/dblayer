@@ -256,8 +256,11 @@ public final class Projected<Model: DBModel> {
   public func loaded() async throws {
     try await waitForProjection { projection in
       guard let state = projection.state, state.settled else { return false }
-      if state.phase == .failed, let error = state.error { throw error }
-      return true
+      guard let error = state.error else { return true }
+      if state.phase == .failed { throw error }
+      if state.errorKind == "subscription" { return true }
+      if case .Network = error { return true }
+      throw error
     }
   }
 

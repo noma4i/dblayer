@@ -4,7 +4,7 @@ import com.noma4i.dblayer.models.Moment
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** C09: a reader that fell behind reads a jump in the sequence of the deliveries. A jump means that deliveries were dropped, also the snapshot that was asked for. */
+/** C09: a reader learns of a gap from the base of a delta, not from the positions of the deliveries. A position counts entries of the core journal, and the core replaces dropped list values with one snapshot. */
 class ProjectionRecoveryTest {
     private val state = StreamState(LivePhase.LOADED, true, 0, false, false, false, false, true, null, null, null, null)
 
@@ -16,22 +16,21 @@ class ProjectionRecoveryTest {
     private fun ListProjection<Moment>.read(delivery: StreamDelivery): Pair<ListProjection<Moment>, Applied> = apply(delivery, Moment).let { it.projection to it.applied }
 
     @Test
-    fun aLostRecoverySnapshotAsksAgainAndTheNextSnapshotClosesTheGap() {
+    fun aDeltaOffTheShownRevisionAsksOnceForASnapshotAndTheSnapshotClosesTheGap() {
         var projection = ListProjection<Moment>()
         fun feed(delivery: StreamDelivery): Applied = projection.read(delivery).let { projection = it.first; it.second }
         assertEquals(Applied.Changed, feed(snapshot(1uL, 1)))
         assertEquals(Applied.Changed, feed(delta(2uL, 1, 2)))
-        assertEquals("a delta behind a gap must ask for a snapshot", Applied.Resync, feed(delta(4uL, 3, 4)))
-        assertEquals("the recovery snapshot was dropped: the projection must ask again", Applied.Resync, feed(delta(7uL, 6, 7)))
-        assertEquals("one request per gap: a delta without a jump waits for the snapshot", Applied.Ignored, feed(delta(8uL, 7, 8)))
-        assertEquals(Applied.Changed, feed(snapshot(9uL, 9)))
-        assertEquals(Applied.Changed, feed(delta(10uL, 9, 10)))
+        assertEquals("a delta off the shown revision must ask for a snapshot", Applied.Resync, feed(delta(3uL, 3, 4)))
+        assertEquals("one request per gap: the next delta waits for the snapshot", Applied.Ignored, feed(delta(4uL, 4, 5)))
+        assertEquals(Applied.Changed, feed(snapshot(5uL, 5)))
+        assertEquals(Applied.Changed, feed(delta(6uL, 5, 6)))
     }
 
     @Test
-    fun aJumpAtTheFirstDeliveryReadAsksForASnapshotAlthoughTheBaseMatches() {
+    fun aJumpOfThePositionWithTheShownBaseAppliesTheDelta() {
         var projection = ListProjection<Moment>()
         projection = projection.read(snapshot(1uL, 1)).first
-        assertEquals("deliveries before this one were dropped: the rows may be stale", Applied.Resync, projection.read(delta(300uL, 1, 2)).second)
+        assertEquals("a position counts journal entries: a jump with the shown base is no gap", Applied.Changed, projection.read(delta(300uL, 1, 2)).second)
     }
 }

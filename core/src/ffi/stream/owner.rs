@@ -215,12 +215,6 @@ impl Stream {
     /// Runs after a reset of the model cleared the row: the entity asks the server again.
     pub(super) fn on_cleared(&self, again: Arc<dyn Fn() + Send + Sync>) { self.configure(move |facts| facts.on_cleared = Some(again)); }
 
-    /// The lifecycle or the owner of the reads ended the stream: the reason is the one the lifecycle shows.
-    pub(super) fn ended_outside(&self) {
-        let snapshot = self.fixed.life.snapshot();
-        self.end(if snapshot.closed { StreamEnd::Closed } else { StreamEnd::SessionEnded });
-    }
-
     pub(super) fn expect_load(&self) { self.configure(|facts| facts.load_pending = true); }
 
     pub(super) fn load_of(&self, model: String) { self.configure(move |facts| facts.load_model = Some(model)); }

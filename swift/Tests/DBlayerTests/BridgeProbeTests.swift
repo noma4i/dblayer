@@ -237,9 +237,9 @@ struct BridgeProbeTests {
     #expect(local.id.hasPrefix("temp"))
     #expect(local.uploads["upload_clip"] != nil)
     #expect(try await sent.confirmed().id == "m77")
-    let sent = transport.calls.first { $0.operationName == "CreateMoment" }
-    #expect(sent?.variablesJson.contains("\"signedId\":\"sid\"") == true)
-    #expect(sent?.variablesJson.contains("blobId") == false)
+    let create = transport.calls.first { $0.operationName == "CreateMoment" }
+    #expect(create?.variablesJson.contains("\"signedId\":\"sid\"") == true)
+    #expect(create?.variablesJson.contains("blobId") == false)
     #expect(transport.calls.filter { $0.operationName == "CreateMoment" }.count == 1)
   }
 

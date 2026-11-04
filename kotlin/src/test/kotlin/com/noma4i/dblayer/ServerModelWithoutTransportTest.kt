@@ -17,7 +17,7 @@ class ServerModelWithoutTransportTest {
             }.exceptionOrNull()
             assertTrue("the create was not refused: $refused", refused is DbException.NoSession)
             val load = runCatching {
-                DBlayer.database.load(DBlayer.database.sessionEpoch(), "Club", "all", "{}")
+                DBlayer.database.beginLoad(DBlayer.database.sessionEpoch(), "Club", "all", "{}").result()
             }.exceptionOrNull()
             assertTrue("the load was not refused: $load", load is DbException.NoSession)
             val act = runCatching {

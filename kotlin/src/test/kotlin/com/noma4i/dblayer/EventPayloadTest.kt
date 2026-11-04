@@ -48,7 +48,7 @@ class EventPayloadTest {
         val list = Chat.list("PRIMARY")
         list.load()
         val secondary = if (eventsFirst) {
-            transport.enqueue("ChatList", """{"data":{"chats":[]}}""")
+            transport.enqueue("ChatList", """{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":9007199254740993,"lists":["SECONDARY"]}]}}""")
             Chat.list("SECONDARY").also { it.load() }
         } else null
         transport.enqueue("ChatNode", """{"data":{"node":{"__typename":"Chat","id":"c1","title":"before","revision":9007199254740993,"lists":["SECONDARY"]}}}""")

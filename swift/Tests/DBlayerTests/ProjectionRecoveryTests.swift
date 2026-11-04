@@ -1,7 +1,7 @@
 import Testing
 @testable import DBlayer
 
-/// C09: a reader that fell behind reads a jump in the sequence of the deliveries. A jump means that deliveries were dropped, also the snapshot that was asked for.
+/// C09: a reader learns of a gap from the base of a delta, not from the positions of the deliveries. A position counts entries of the core journal, and the core replaces dropped list values with one snapshot.
 struct ProjectionRecoveryTests {
   private let state = StreamState(phase: .loaded, settled: true, revision: 0, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
 
@@ -14,30 +14,28 @@ struct ProjectionRecoveryTests {
   }
 
   @Test
-  func aLostRecoverySnapshotAsksAgainAndTheNextSnapshotClosesTheGap() {
+  func aDeltaOffTheShownRevisionAsksOnceForASnapshotAndTheSnapshotClosesTheGap() {
     var projection = ListProjection<Moment>()
     var applied = projection.apply(snapshot(1, revision: 1))
     #expect(applied == .changed)
     applied = projection.apply(delta(2, base: 1, revision: 2))
     #expect(applied == .changed)
-    applied = projection.apply(delta(4, base: 3, revision: 4))
-    #expect(applied == .resync, "a delta behind a gap must ask for a snapshot")
-    applied = projection.apply(delta(7, base: 6, revision: 7))
-    #expect(applied == .resync, "the recovery snapshot was dropped: the projection must ask again")
-    applied = projection.apply(delta(8, base: 7, revision: 8))
-    #expect(applied == .ignored, "one request per gap: a delta without a jump waits for the snapshot")
-    applied = projection.apply(snapshot(9, revision: 9))
+    applied = projection.apply(delta(3, base: 3, revision: 4))
+    #expect(applied == .resync, "a delta off the shown revision must ask for a snapshot")
+    applied = projection.apply(delta(4, base: 4, revision: 5))
+    #expect(applied == .ignored, "one request per gap: the next delta waits for the snapshot")
+    applied = projection.apply(snapshot(5, revision: 5))
     #expect(applied == .changed)
-    applied = projection.apply(delta(10, base: 9, revision: 10))
+    applied = projection.apply(delta(6, base: 5, revision: 6))
     #expect(applied == .changed)
   }
 
   @Test
-  func aJumpAtTheFirstDeliveryReadAsksForASnapshotAlthoughTheBaseMatches() {
+  func aJumpOfThePositionWithTheShownBaseAppliesTheDelta() {
     var projection = ListProjection<Moment>()
     var applied = projection.apply(snapshot(1, revision: 1))
     #expect(applied == .changed)
     applied = projection.apply(delta(300, base: 1, revision: 2))
-    #expect(applied == .resync, "deliveries before this one were dropped: the rows may be stale")
+    #expect(applied == .changed, "a position counts journal entries: a jump with the shown base is no gap")
   }
 }

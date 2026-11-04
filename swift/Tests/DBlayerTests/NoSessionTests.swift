@@ -17,7 +17,7 @@ extension BridgeProbeTests {
       Issue.record("create accepted without a session")
     } catch DbError.NoSession {}
     do {
-      try await database.load(epoch: epoch, model: "Club", relation: "all", paramsJson: "{}")
+      try await database.beginLoad(epoch: epoch, model: "Club", relation: "all", paramsJson: "{}").result()
       Issue.record("load accepted without a session")
     } catch DbError.NoSession {}
     do {

@@ -53,8 +53,4 @@ impl ResumeMachine {
             _ => None,
         }
     }
-
-    pub(crate) fn is_idle(&self) -> bool {
-        matches!(self.machine.state(), State::Idle {})
-    }
 }

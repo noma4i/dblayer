@@ -647,13 +647,13 @@ fn chat_entry(index: usize) -> serde_json::Value {
 /// S209: a reader of events that reads nothing while 400 events arrive takes 255 events and one lost range, which add up to the 400 sent, then the end after the database closed, without the events it did not read before the end. Observed: the values `read_stream` returns. Breaks when `Journal::evict` drops an event without keeping its position, or when `Facts::finish` keeps the values of the old session.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end() {
-    let (database, transport) = chat_events().await;
+    let (database, transport, _) = chat_events().await;
     let (available, mut heard) = tokio::sync::mpsc::unbounded_channel();
     let stream = database.subscribe(database.session_epoch(), StreamRequest::Events { model: "Chat".into() }, Arc::new(Heard(available)));
     let opened = bound(async {
         loop {
             if let Some(delivery) = database.read_stream(stream) { return delivery; }
-            heard.recv().await;
+            crate::test_wait::within(heard.recv()).await;
         }
     }).await;
     assert!(matches!(&opened.value, StreamValue::State { state } if state.settled && state.error.is_none()), "the first value is the open source: {opened:?}");
@@ -678,7 +678,7 @@ async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_the
 }
 
 /// A database whose chats arrive through a change feed with the chat in its payload.
-async fn chat_events() -> (Database, Arc<Switchable>) {
+async fn chat_events() -> (Arc<Database>, Arc<Switchable>, Arc<World>) {
     use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
@@ -696,7 +696,9 @@ async fn chat_events() -> (Database, Arc<Switchable>) {
     list.membership.insert("list".into(), Membership::Contains("lists".into()));
     list.joins_node = true;
     list.joins_events = true;
-    list.remote = Some(crate::sync::rig::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    let mut listed = crate::sync::rig::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
+    listed.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
+    list.remote = Some(listed);
     chat.relations.extend([node, list]);
     chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat"})).unwrap());
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
@@ -704,16 +706,16 @@ async fn chat_events() -> (Database, Arc<Switchable>) {
     let transport = Switchable::new(Some(world.clone()), false);
     let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&vec![chat]).unwrap(), Some(transport.clone()), None, None, None, None, None)).await.unwrap();
     database.register_operations(json!([
-        {"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},
+        {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
         {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
     ]).to_string()).unwrap();
-    (database, transport)
+    (database, transport, world)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_event_opened_before_linked_lists_reports_the_committed_payload() {
-    let (database, transport) = chat_events().await;
+    let (database, transport, world) = chat_events().await;
     let epoch = database.session_epoch();
     let reader = Reader::open();
     let events = database.subscribe_reading(epoch, StreamRequest::Events { model: "Chat".into() }, reader.clone());

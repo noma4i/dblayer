@@ -199,10 +199,12 @@ extension BridgeProbeTests {
     defer { stream.cancel() }
     let cursor = Cursor(stream)
     var projection = ListProjection<Person>()
-    while projection.state?.settled != true {
-      guard let delivery = await cursor.next("the first settled list", timeout: .seconds(10)) else { Issue.record("the list did not settle"); return }
-      _ = projection.apply(delivery)
+    await eventually("the first settled list", timeout: .seconds(10)) {
+      if projection.state?.settled == true { return true }
+      if let delivery = await cursor.next("the first settled list", timeout: .seconds(10)) { _ = projection.apply(delivery) }
+      return projection.state?.settled == true
     }
+    try #require(projection.state?.settled == true, "the list did not settle")
     let opened = Cursor(transport.opened)
     try #require(await opened.next("member subscription", timeout: .seconds(10)) != nil)
     let hold = transport.base.hold("AddClubMember", reply: clubAnswer("addClubMember"))
@@ -399,7 +401,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("CreateClub", reply: clubCreated, delay: 0.3)
     try await Self.openClubSession(transport)
-    let club = try await confirmedClub()
+    let club = try await Self.confirmedClub()
     #expect(club.id == "g1" && club.name == "friends" && club.sync.state == .synced, "the call returned before the server answered")
     let creates = { transport.calls.filter { $0.operationName == "CreateClub" }.count }
     #expect(creates() == 1)
@@ -420,7 +422,7 @@ extension BridgeProbeTests {
     transport.enqueue("ClubMembers", reply: membersReply(["u1", "u2", "u3", "u4"]))
     transport.enqueue("ClubMembers", reply: membersReply(["u2", "u1", "u3", "u4"]))
     try await openClubSession(transport, models: models)
-    let club = try await confirmedClub()
+    let club = try await Self.confirmedClub()
     let joined = try Person.clubMembers(club.id, "JOINED")
     let owners = try Person.clubMembers(club.id, "OWNER_FIRST")
     try await joined.load()

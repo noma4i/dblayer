@@ -52,12 +52,14 @@ extension BridgeProbeTests {
     await eventually("the 400 notices are stored") { (try? await Query<ChatActivityNotice>().read().count) == 400 }
     var events: UInt64 = 0
     var lost: [(UInt64, UInt64)] = []
-    while events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) < 400 {
+    await eventually("the burst is accounted") {
+      if events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) >= 400 { return true }
       switch await collector.next("the next item of the burst") {
       case .event?: events += 1
       case let .lost(first, last)?: lost.append((first, last))
-      default: Issue.record("the burst ended before 400 events were accounted"); return
+      default: return true
       }
+      return events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) >= 400
     }
     #expect(events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) == 400, "kept events and lost positions add up to the events sent")
     #expect(events <= 256, "the journal kept \(events) events of a burst of 400")

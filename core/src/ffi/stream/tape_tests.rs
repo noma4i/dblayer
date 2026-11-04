@@ -64,9 +64,10 @@ impl Pull {
             _ => return,
         };
         if state.phase == LivePhase::Failed { self.failure.lock().unwrap().clone_from(&state.error); }
-        let outcome = state.settled.then(|| match (&state.phase, &state.error) {
-            (LivePhase::Failed, Some(error)) => Err(error.clone()),
-            _ => Ok(delivery.seq),
+        let outcome = state.settled.then(|| match (&state.phase, &state.error, state.error_kind.as_deref()) {
+            (LivePhase::Failed, Some(error), _) => Err(error.clone()),
+            (_, None | Some(DbError::Network { .. }), _) | (_, _, Some("subscription")) => Ok(delivery.seq),
+            (_, Some(error), _) => Err(error.clone()),
         });
         self.outcome.send_replace(outcome);
     }
@@ -168,6 +169,18 @@ impl Rows {
     pub(crate) fn len(&self) -> usize { self.0.lock().unwrap().len() }
 
     pub(crate) fn state(&self) -> Option<Seen> { self.last() }
+
+    /// Reads every value `stream` holds, the way a platform reads after `available`.
+    pub(in crate::ffi) fn read_all(&self, stream: &super::Stream) {
+        while let Some(delivery) = stream.read() { self.delivered(delivery); }
+    }
+}
+
+/// A sink that only hears that values wait: the test reads the stream itself.
+pub(crate) struct Silent;
+
+impl ValueSink for Silent {
+    fn available(&self) {}
 }
 
 /// Like `Rows`, for tests that only read the deliveries.

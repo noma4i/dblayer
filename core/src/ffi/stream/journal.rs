@@ -28,7 +28,6 @@ fn evictable(value: &StreamValue) -> bool { matches!(value, StreamValue::Event {
 impl Journal {
     pub(super) fn is_empty(&self) -> bool { self.entries.is_empty() && (self.end.is_none() || self.end_read) }
 
-    pub(super) fn has_end(&self) -> bool { self.end.is_some() }
 
     /// Keeps a value. A full journal makes room by turning its oldest events into lost positions; a value that is not an event drops every waiting value that a whole snapshot replaces.
     pub(super) fn append(&mut self, value: StreamValue) -> Appended {

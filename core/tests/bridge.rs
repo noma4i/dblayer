@@ -1,13 +1,13 @@
 #![recursion_limit = "256"]
 use std::sync::Arc;
-use dblayer::ffi::{Config, Database, LivePhase, StreamDelivery, StreamEnd, StreamRequest, StreamValue, Transport, ValueSink};
+use dblayer::ffi::{Config, Database, LivePhase, StreamEnd, StreamRequest, StreamValue, Transport, ValueSink};
 use dblayer::schema::{FieldSpec, ModelSpec};
 use dblayer::value::ScalarKind;
 
 #[derive(Default)]
-struct Listener(std::sync::Mutex<Vec<StreamValue>>);
+struct Listener(tokio::sync::Notify);
 impl ValueSink for Listener {
-    fn delivered(&self, delivery: StreamDelivery) { self.0.lock().unwrap().push(delivery.value); }
+    fn available(&self) { self.0.notify_one(); }
 }
 
 #[tokio::test]
@@ -37,12 +37,14 @@ async fn bridge_subscription_without_a_sync_tells_its_subscriber_in_the_state_an
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 },
         serde_json::to_string(&vec![model]).unwrap(), None::<Arc<dyn Transport>>, None, None, None, None, None).await.unwrap();
     let listener = Arc::new(Listener::default());
-    db.subscribe(db.session_epoch(), StreamRequest::Query { query_json: r#"{"model":"Moment","relation":"feed","params":{}}"#.into() }, listener.clone());
-    for _ in 0..200 {
-        if listener.0.lock().unwrap().len() >= 2 { break; }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let stream = db.subscribe(db.session_epoch(), StreamRequest::Query { query_json: r#"{"model":"Moment","relation":"feed","params":{}}"#.into() }, listener.clone());
+    let mut values = Vec::new();
+    loop {
+        let available = listener.0.notified();
+        while let Some(delivery) = db.read_stream(stream) { values.push(delivery.value); }
+        if values.len() >= 2 { break; }
+        tokio::time::timeout(std::time::Duration::from_secs(10), available).await.expect("the stream got no further value");
     }
-    let values = listener.0.lock().unwrap().clone();
     assert!(matches!(&values[0], StreamValue::State { state } if state.phase == LivePhase::Failed && state.error_kind.as_deref() == Some("invalid")), "first value {:?}", values[0]);
     assert!(matches!(values[1], StreamValue::Ended { reason: StreamEnd::Invalid }));
 }

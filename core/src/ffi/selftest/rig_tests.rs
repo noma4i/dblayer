@@ -174,6 +174,7 @@ impl World {
             "UserNode" => json!({"data":{"node":row}}),
             "MyProfile" => json!({"data":{"me":if state.profile_empty { Value::Null } else { row }}}),
             "Users" => json!({"data":{"users":[row]}}),
+            "ChatList" if body["variables"]["list"] == "SECONDARY" => json!({"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}]}}),
             "ChatList" => json!({"data":{"chats":[]}}),
             "ChatNode" => json!({"data":{"node":{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}}}),
             "UnregisterDevice" => json!({"data":{"unregisterDevice":{"ok":true}}}),

@@ -1299,6 +1299,11 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func batchOutcome(receipt: WireBatchReceipt) async throws  -> WireBatchOutcome
     
+    /**
+     * Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
+     */
+    func beginLoad(epoch: UInt64, model: String, relation: String, paramsJson: String) throws  -> LoadRequest
+    
     func cancelUpload(epoch: UInt64, model: String, rowId: String, action: String) async throws  -> Bool
     
     /**
@@ -1321,8 +1326,6 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func file(epoch: UInt64, model: String, rowId: String, field: String) async throws  -> String?
     
     func flush() async throws 
-    
-    func load(epoch: UInt64, model: String, relation: String, paramsJson: String) async throws 
     
     func loadAll(epoch: UInt64, model: String, relation: String, paramsJson: String, force: Bool) async throws 
     
@@ -1390,7 +1393,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func sessionResume() async throws  -> String?
     
     /**
-     * The reader stopped. The stream ends in the core and no new delivery is admitted after this call returns. A delivery already admitted may finish, and the call does not wait for the reader.
+     * The reader stopped. The stream ends in the core, its journal is dropped and no value is read after this call returns. The call does not wait for the reader.
      */
     func cancelStream(stream: UInt64) 
     
@@ -1405,6 +1408,11 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func peekQuery(epoch: UInt64, queryJson: String) async throws  -> CachedQuery?
     
     /**
+     * The reader waits until the stream shows a revision of the database, such as the revision of its own write. The stream delivers a state with that revision once its rows are read through it, also when the write changed none of them.
+     */
+    func reachStream(stream: UInt64, revision: Int64) 
+    
+    /**
      * The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.
      */
     func readQuery(epoch: UInt64, queryJson: String) async throws  -> [WireRow]
@@ -1413,6 +1421,11 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
      * One row read from SQLite once, off the calling thread.
      */
     func readRow(epoch: UInt64, model: String, rowId: String) async throws  -> WireRow?
+    
+    /**
+     * The next value of a stream, or nothing while none waits. The cursor moves past the value it returns. After the one `Ended` value the stream is gone and the call returns nothing.
+     */
+    func readStream(stream: UInt64)  -> StreamDelivery?
     
     /**
      * Loads the relation of the stream again from the server. The answer belongs to the epoch of the stream: it ends as `Interrupted` when the session changed.
@@ -1432,12 +1445,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func streamCensus()  -> StreamCensus
     
     /**
-     * Returns when the first load of the stream settled, with the sequence number of the newest delivery the stream made until then. Fails when the epoch of the stream ended first.
-     */
-    func streamLoaded(stream: UInt64) async throws  -> UInt64
-    
-    /**
-     * Opens a stream and returns its number at once. The first value arrives as a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
+     * Opens a stream and returns its number at once. The sink hears when values wait, and `read_stream` takes them: the first value is a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
      */
     func subscribe(epoch: UInt64, request: StreamRequest, sink: ValueSink)  -> UInt64
     
@@ -1656,6 +1664,22 @@ open func batchOutcome(receipt: WireBatchReceipt)async throws  -> WireBatchOutco
         )
 }
     
+    /**
+     * Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
+     */
+open func beginLoad(epoch: UInt64, model: String, relation: String, paramsJson: String)throws  -> LoadRequest  {
+    return try  FfiConverterTypeLoadRequest_lift(try rustCallWithError(FfiConverterTypeDbError_lift) {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_begin_load(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(epoch),
+        FfiConverterString.lower(model),
+        FfiConverterString.lower(relation),
+        FfiConverterString.lower(paramsJson),uniffiCallStatus
+    )
+})
+}
+    
 open func cancelUpload(epoch: UInt64, model: String, rowId: String, action: String)async throws  -> Bool  {
     return
         try  await uniffiRustCallAsync(
@@ -1801,22 +1825,6 @@ open func flush()async throws   {
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_flush(
                         self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-open func load(epoch: UInt64, model: String, relation: String, paramsJson: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_load(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -2283,7 +2291,7 @@ open func sessionResume()async throws  -> String?  {
 }
     
     /**
-     * The reader stopped. The stream ends in the core and no new delivery is admitted after this call returns. A delivery already admitted may finish, and the call does not wait for the reader.
+     * The reader stopped. The stream ends in the core, its journal is dropped and no value is read after this call returns. The call does not wait for the reader.
      */
 open func cancelStream(stream: UInt64)  {try! rustCall() {
         uniffiCallStatus in
@@ -2333,6 +2341,19 @@ open func peekQuery(epoch: UInt64, queryJson: String)async throws  -> CachedQuer
 }
     
     /**
+     * The reader waits until the stream shows a revision of the database, such as the revision of its own write. The stream delivers a state with that revision once its rows are read through it, also when the write changed none of them.
+     */
+open func reachStream(stream: UInt64, revision: Int64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_reach_stream(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(stream),
+        FfiConverterInt64.lower(revision),uniffiCallStatus
+    )
+}
+}
+    
+    /**
      * The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.
      */
 open func readQuery(epoch: UInt64, queryJson: String)async throws  -> [WireRow]  {
@@ -2368,6 +2389,19 @@ open func readRow(epoch: UInt64, model: String, rowId: String)async throws  -> W
             liftFunc: FfiConverterOptionTypeWireRow.lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
+}
+    
+    /**
+     * The next value of a stream, or nothing while none waits. The cursor moves past the value it returns. After the one `Ended` value the stream is gone and the call returns nothing.
+     */
+open func readStream(stream: UInt64) -> StreamDelivery?  {
+    return try!  FfiConverterOptionTypeStreamDelivery.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_read_stream(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(stream),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -2423,26 +2457,7 @@ open func streamCensus() -> StreamCensus  {
 }
     
     /**
-     * Returns when the first load of the stream settled, with the sequence number of the newest delivery the stream made until then. Fails when the epoch of the stream ended first.
-     */
-open func streamLoaded(stream: UInt64)async throws  -> UInt64  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_stream_loaded(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(stream)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_u64,
-            completeFunc: ffi_dblayer_rust_future_complete_u64,
-            freeFunc: ffi_dblayer_rust_future_free_u64,
-            liftFunc: FfiConverterUInt64.lift,
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-    /**
-     * Opens a stream and returns its number at once. The first value arrives as a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
+     * Opens a stream and returns its number at once. The sink hears when values wait, and `read_stream` takes them: the first value is a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
      */
 open func subscribe(epoch: UInt64, request: StreamRequest, sink: ValueSink) -> UInt64  {
     return try!  FfiConverterUInt64.lift(try! rustCall() {
@@ -2800,6 +2815,158 @@ public func FfiConverterTypeEncryptedHttp_lift(_ handle: UInt64) throws -> Encry
 #endif
 public func FfiConverterTypeEncryptedHttp_lower(_ value: EncryptedHttp) -> UInt64 {
     return FfiConverterTypeEncryptedHttp.lower(value)
+}
+
+
+
+
+
+
+/**
+ * The interest of one caller in a load that `Database::begin_load` started.
+ */
+public protocol LoadRequestProtocol: AnyObject, Sendable {
+    
+    /**
+     * Gives up this caller's interest. The request goes on while another caller waits for it.
+     */
+    func cancel() 
+    
+    /**
+     * Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
+     */
+    func result() async throws 
+    
+}
+/**
+ * The interest of one caller in a load that `Database::begin_load` started.
+ */
+open class LoadRequest: LoadRequestProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_dblayer_fn_clone_loadrequest(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_dblayer_fn_free_loadrequest(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Gives up this caller's interest. The request goes on while another caller waits for it.
+     */
+open func cancel()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_loadrequest_cancel(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
+}
+    
+    /**
+     * Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
+     */
+open func result()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_loadrequest_result(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_void,
+            completeFunc: ffi_dblayer_rust_future_complete_void,
+            freeFunc: ffi_dblayer_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLoadRequest: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = LoadRequest
+
+    public static func lift(_ handle: UInt64) throws -> LoadRequest {
+        return LoadRequest(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: LoadRequest) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LoadRequest {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: LoadRequest, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLoadRequest_lift(_ handle: UInt64) throws -> LoadRequest {
+    return try FfiConverterTypeLoadRequest.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLoadRequest_lower(_ value: LoadRequest) -> UInt64 {
+    return FfiConverterTypeLoadRequest.lower(value)
 }
 
 
@@ -4725,11 +4892,17 @@ public func FfiConverterTypeUploadAcceptedSink_lower(_ value: UploadAcceptedSink
 
 
 
+/**
+ * Hears that a stream has values to read. The reader reads them with `Database::read_stream`; the call carries no value.
+ */
 public protocol ValueSink: AnyObject, Sendable {
     
-    func delivered(delivery: StreamDelivery) 
+    func available() 
     
 }
+/**
+ * Hears that a stream has values to read. The reader reads them with `Database::read_stream`; the call carries no value.
+ */
 open class ValueSinkImpl: ValueSink, @unchecked Sendable {
     fileprivate let handle: UInt64
 
@@ -4783,11 +4956,10 @@ open class ValueSinkImpl: ValueSink, @unchecked Sendable {
     
 
     
-open func delivered(delivery: StreamDelivery)  {try! rustCall() {
+open func available()  {try! rustCall() {
         uniffiCallStatus in
-    uniffi_dblayer_fn_method_valuesink_delivered(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeStreamDelivery_lower(delivery),uniffiCallStatus
+    uniffi_dblayer_fn_method_valuesink_available(
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
 }
@@ -4820,9 +4992,8 @@ fileprivate struct UniffiCallbackInterfaceValueSink {
                 fatalError("Uniffi callback interface ValueSink: handle missing in uniffiClone")
             }
         },
-        delivered: { (
+        available: { (
             uniffiHandle: UInt64,
-            delivery: RustBuffer,
             uniffiOutReturn: UnsafeMutableRawPointer,
             uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
         ) in
@@ -4831,8 +5002,7 @@ fileprivate struct UniffiCallbackInterfaceValueSink {
                 guard let uniffiObj = try? FfiConverterTypeValueSink.handleMap.get(handle: uniffiHandle) else {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
-                return uniffiObj.delivered(
-                     delivery: try FfiConverterTypeStreamDelivery_lift(delivery)
+                return uniffiObj.available(
                 )
             }
 
@@ -6478,7 +6648,7 @@ public struct StreamDelivery: Equatable, Hashable {
      */
     public var epoch: UInt64
     /**
-     * Counts the events of this stream from 1, with no gap: a `Missed` advances it by its count, every other value by 1.
+     * The position of the value in the journal of the stream, from 1. A `Lost` value takes the place of the last position it names.
      */
     public var seq: UInt64
     public var value: StreamValue
@@ -6490,7 +6660,7 @@ public struct StreamDelivery: Equatable, Hashable {
          * The session epoch the stream was opened in. A delivery whose epoch the reader does not hold belongs to an account that has gone.
          */epoch: UInt64, 
         /**
-         * Counts the events of this stream from 1, with no gap: a `Missed` advances it by its count, every other value by 1.
+         * The position of the value in the journal of the stream, from 1. A `Lost` value takes the place of the last position it names.
          */seq: UInt64, value: StreamValue) {
         self.stream = stream
         self.epoch = epoch
@@ -6550,6 +6720,8 @@ public func FfiConverterTypeStreamDelivery_lower(_ value: StreamDelivery) -> Rus
  */
 public struct StreamState: Equatable, Hashable {
     public var phase: LivePhase
+    public var settled: Bool
+    public var revision: Int64
     public var initial: Bool
     public var refreshing: Bool
     public var fetchingMore: Bool
@@ -6562,8 +6734,10 @@ public struct StreamState: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(phase: LivePhase, initial: Bool, refreshing: Bool, fetchingMore: Bool, hasMore: Bool, complete: Bool, total: Int64?, loadedAt: Int64?, error: DbError?, errorKind: String?) {
+    public init(phase: LivePhase, settled: Bool, revision: Int64, initial: Bool, refreshing: Bool, fetchingMore: Bool, hasMore: Bool, complete: Bool, total: Int64?, loadedAt: Int64?, error: DbError?, errorKind: String?) {
         self.phase = phase
+        self.settled = settled
+        self.revision = revision
         self.initial = initial
         self.refreshing = refreshing
         self.fetchingMore = fetchingMore
@@ -6592,6 +6766,8 @@ public struct FfiConverterTypeStreamState: FfiConverterRustBuffer {
         return
             try StreamState(
                 phase: FfiConverterTypeLivePhase.read(from: &buf), 
+                settled: FfiConverterBool.read(from: &buf), 
+                revision: FfiConverterInt64.read(from: &buf), 
                 initial: FfiConverterBool.read(from: &buf), 
                 refreshing: FfiConverterBool.read(from: &buf), 
                 fetchingMore: FfiConverterBool.read(from: &buf), 
@@ -6606,6 +6782,8 @@ public struct FfiConverterTypeStreamState: FfiConverterRustBuffer {
 
     public static func write(_ value: StreamState, into buf: inout [UInt8]) {
         FfiConverterTypeLivePhase.write(value.phase, into: &buf)
+        FfiConverterBool.write(value.settled, into: &buf)
+        FfiConverterInt64.write(value.revision, into: &buf)
         FfiConverterBool.write(value.initial, into: &buf)
         FfiConverterBool.write(value.refreshing, into: &buf)
         FfiConverterBool.write(value.fetchingMore, into: &buf)
@@ -9365,9 +9543,9 @@ public enum StreamValue: Equatable, Hashable {
     case event(event: WireModelEvent
     )
     /**
-     * Events were dropped because the reader was slow.
+     * The events at these positions are lost: the reader was slow and the journal of the stream was full, or the event could not be read. `first` and `last` are included.
      */
-    case missed(count: UInt64
+    case lost(first: UInt64, last: UInt64
     )
     /**
      * The status of a media upload when it changed.
@@ -9415,7 +9593,7 @@ public struct FfiConverterTypeStreamValue: FfiConverterRustBuffer {
         case 5: return .event(event: try FfiConverterTypeWireModelEvent.read(from: &buf)
         )
         
-        case 6: return .missed(count: try FfiConverterUInt64.read(from: &buf)
+        case 6: return .lost(first: try FfiConverterUInt64.read(from: &buf), last: try FfiConverterUInt64.read(from: &buf)
         )
         
         case 7: return .status(blob: try FfiConverterTypeWireBlobSnapshot.read(from: &buf)
@@ -9470,9 +9648,10 @@ public struct FfiConverterTypeStreamValue: FfiConverterRustBuffer {
             FfiConverterTypeWireModelEvent.write(event, into: &buf)
             
         
-        case let .missed(count):
+        case let .lost(first,last):
             writeInt(&buf, Int32(6))
-            FfiConverterUInt64.write(count, into: &buf)
+            FfiConverterUInt64.write(first, into: &buf)
+            FfiConverterUInt64.write(last, into: &buf)
             
         
         case let .status(blob):
@@ -10413,6 +10592,30 @@ fileprivate struct FfiConverterOptionTypeRetryAttempt: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeStreamDelivery: FfiConverterRustBuffer {
+    typealias SwiftType = StreamDelivery?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeStreamDelivery.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeStreamDelivery.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeWireFailure: FfiConverterRustBuffer {
     typealias SwiftType = WireFailure?
 
@@ -11326,6 +11529,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_batch_outcome() != 45837) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_database_begin_load() != 23095) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_cancel_upload() != 27388) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11354,9 +11560,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_flush() != 20138) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_load() != 62537) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_load_all() != 16467) {
@@ -11452,7 +11655,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_session_resume() != 44692) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_cancel_stream() != 50948) {
+    if (uniffi_dblayer_checksum_method_database_cancel_stream() != 62832) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_load_more_stream() != 14132) {
@@ -11461,10 +11664,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_peek_query() != 8309) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_database_reach_stream() != 36011) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_read_query() != 32690) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_read_row() != 48488) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_read_stream() != 489) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_refresh_stream() != 53015) {
@@ -11479,10 +11688,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_stream_census() != 24018) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_stream_loaded() != 42461) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_subscribe() != 33600) {
+    if (uniffi_dblayer_checksum_method_database_subscribe() != 52360) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_background_refused() != 3906) {
@@ -11504,6 +11710,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_set_upload_accepted_sink() != 37563) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_loadrequest_cancel() != 21804) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_loadrequest_result() != 46283) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_testclock_advance() != 14087) {
@@ -11539,7 +11751,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 15298) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_valuesink_delivered() != 64848) {
+    if (uniffi_dblayer_checksum_method_valuesink_available() != 34732) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_byteprogress_is_cancelled() != 6714) {
