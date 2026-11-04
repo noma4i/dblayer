@@ -46,7 +46,7 @@
 - Operations declare `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`; the change shows before the answer and a refusal restores it.
 - The DSL refuses capitalised attribute and parameter names.
 - The DSL refuses an attribute or parameter named `account`, or `id` in an edge read.
-- The DSL refuses the field names `self`, `sync` and `uploads`.
+- The DSL refuses the field names `self`, `sync`, `uploads`, `modelName`, `layout` and `wireLayout`.
 - The DSL refuses names of calls the generated code writes, such as `jsonValue` and `onAccount`.
 - The generator refuses a model or type named like a library type, such as `Query`.
 - The generator refuses clashing GraphQL input field names and repeated one-of cases.

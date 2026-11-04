@@ -8,7 +8,14 @@ use crate::schema_check::SchemaTypes;
 /// Kotlin `read`, `put`, `act` and `actAnswering` are not listed: the templates call them as `Model.read`, `this.put`, `this.act`.
 const BARE_CALLS: &[&str] = &["self", "this", "jsonValue", "mapOf", "mutableMapOf", "buildJsonObject", "parseJsonObject", "requireNotNull", "onAccount", "listOf", "emptyMap"];
 
-const MODEL_MEMBERS: &[&str] = &["sync", "uploads"];
+pub(super) const MODEL_NAME: &str = "modelName";
+pub(super) const WIRE_LAYOUT: &str = "wireLayout";
+pub(super) const LAYOUT: &str = "layout";
+pub(super) const SYNC: &str = "sync";
+pub(super) const UPLOADS: &str = "uploads";
+pub(super) const SINGLETON: &str = "singleton";
+
+pub const MODEL_MEMBERS: &[&str] = &[MODEL_NAME, WIRE_LAYOUT, LAYOUT, SYNC, UPLOADS, SINGLETON];
 
 const IMPORTED_TYPES: &[&str] = &[
     "Query", "Condition", "Order", "Column", "Association", "FileField", "FileInfo", "JSONValue", "JsonElement", "JsonObject", "JsonArray", "JsonPrimitive", "JsonNull", "JsonEncoder", "DB", "DBlayer", "DBModel", "DBSingleton",

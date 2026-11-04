@@ -13,7 +13,7 @@ mod blob;
 mod blob_tests;
 pub use blob::{emit_blob_swift, emit_blob_kotlin};
 mod unions;
-pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
+pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access, MODEL_MEMBERS};
 pub use enums::EnumDecl;
 pub use scalars::Scalars;
 pub use operation::OperationCall;

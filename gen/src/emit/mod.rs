@@ -12,6 +12,8 @@ mod nodes;
 mod edges;
 mod names;
 pub(crate) use names::name_clashes;
+use names::{LAYOUT, MODEL_NAME, SINGLETON, SYNC, UPLOADS, WIRE_LAYOUT};
+pub use names::MODEL_MEMBERS;
 use edges::{kotlin_accessors, swift_accessors};
 use nodes::{kotlin_node, swift_node};
 use unions::{emit_kotlin_union, emit_swift_union};
@@ -250,22 +252,22 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         let values = "values_".to_string();
         let scope = "scope_".to_string();
         let built = "built_".to_string();
-        writeln!(out, "public struct {class}: {} {{\n    public static let modelName = \"{class}\"", if singleton_relation(model).is_some() { "DBSingleton" } else { "DBModel" }).unwrap();
+        writeln!(out, "public struct {class}: {} {{\n    public static let {MODEL_NAME} = \"{class}\"", if singleton_relation(model).is_some() { "DBSingleton" } else { "DBModel" }).unwrap();
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    public let {}: {}", identifier(&field.name, true), field_type(field, true)).unwrap();
         }
-        writeln!(out, "    public let sync: SyncInfo\n    public let uploads: [String: UploadInfo]\n").unwrap();
+        writeln!(out, "    public let {SYNC}: SyncInfo\n    public let {UPLOADS}: [String: UploadInfo]\n").unwrap();
         let fields: Vec<&FieldSpec> = model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).collect();
         let params: Vec<String> = fields.iter().map(|field| {
             let default = swift_default(field).map(|value| format!(" = {value}")).unwrap_or_default();
             format!("{}: {}{}", identifier(&field.name, true), field_type(field, true), default)
-        }).chain(["sync: SyncInfo = SyncInfo()".to_string(), "uploads: [String: UploadInfo] = [:]".to_string()]).collect();
+        }).chain([format!("{SYNC}: SyncInfo = SyncInfo()"), format!("{UPLOADS}: [String: UploadInfo] = [:]")]).collect();
         writeln!(out, "    public init({}) {{", params.join(", ")).unwrap();
-        for field in fields.iter().map(|field| field.name.as_str()).chain(["sync", "uploads"]) { let field = identifier(field, true); writeln!(out, "        self.{field} = {field}").unwrap(); }
+        for field in fields.iter().map(|field| field.name.as_str()).chain([SYNC, UPLOADS]) { let field = identifier(field, true); writeln!(out, "        self.{field} = {field}").unwrap(); }
         out.push_str("    }\n\n");
-        writeln!(out, "    public static let wireLayout = \"{}\"\n\n    public init(wire row: WireRow) throws {{\n        let r = CellReader(row.cells)\n        self.id = row.id", wire::layout_of(models, model)).unwrap();
+        writeln!(out, "    public static let {WIRE_LAYOUT} = \"{}\"\n\n    public init(wire row: WireRow) throws {{\n        let r = CellReader(row.cells)\n        self.id = row.id", wire::layout_of(models, model)).unwrap();
         for (at, field) in wire::wired(model).into_iter().enumerate() { writeln!(out, "        self.{} = {}", identifier(&field.name, true), wire::read_swift(field, at)).unwrap(); }
-        out.push_str("        self.sync = SyncInfo(wire: row.sync)\n        self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })\n    }\n\n");
+        out.push_str(&format!("        self.{SYNC} = SyncInfo(wire: row.sync)\n        self.{UPLOADS} = Dictionary(uniqueKeysWithValues: row.uploads.map {{ ($0.action, UploadInfo(wire: $0.upload)) }})\n    }}\n\n"));
         let files: Vec<&FieldSpec> = model.fields.iter().filter(|field| is_file(field)).collect();
         if !files.is_empty() { writeln!(out, "    public enum Files: String, Sendable {{ case {} }}", files.iter().map(|field| identifier(&field.name, true)).collect::<Vec<_>>().join(", ")).unwrap(); }
         for field in &model.fields {
@@ -291,7 +293,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             writeln!(out, "        return {built}\n    }}").unwrap();
             swift_accessors(&mut out, &mut edge_types, model, relation, &decls);
         }
-        if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var singleton: Query<Self> {{ Self.{} }}", identifier(&name(&relation.name), true)).unwrap(); }
+        if let Some(relation) = singleton_relation(model) { writeln!(out, "    public static var {SINGLETON}: Query<Self> {{ Self.{} }}", identifier(&name(&relation.name), true)).unwrap(); }
         for action in model.actions.iter().filter(|action| action.upload && !action.args.is_empty()) {
             let upload_args = standard_args(model, &action.name);
             let method = name(&action.name);
@@ -420,7 +422,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         for field in model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)) {
             writeln!(out, "    {}val {}: {}{},", if field.name == "id" { "override " } else { "" }, identifier(&field.name, false), field_type(field, false), if field.nullable || field.optional { " = null" } else { "" }).unwrap();
         }
-        writeln!(out, "    override val sync: SyncInfo = SyncInfo(),\n    override val uploads: Map<String, UploadInfo> = emptyMap()\n) : DBModel {{\n    override val modelName get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val layout = \"{}\"\n        override val modelName = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                uploads = row.uploads.associate {{ it.action to UploadInfo.of(it.upload) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", identifier(&field.name, false), wire::read_kotlin(field, at))).collect::<String>()).unwrap();
+        writeln!(out, "    override val {SYNC}: SyncInfo = SyncInfo(),\n    override val {UPLOADS}: Map<String, UploadInfo> = emptyMap()\n) : DBModel {{\n    override val {MODEL_NAME} get() = \"{class}\"\n    companion object : ModelDecoder<{class}> {{\n        override val {LAYOUT} = \"{}\"\n        override val {MODEL_NAME} = \"{class}\"\n        override fun decode(row: WireRow): {class} {{\n            val r = CellReader(row.cells)\n            return {class}(\n                id = row.id,\n{}                sync = SyncInfo.of(row.sync),\n                uploads = row.uploads.associate {{ it.action to UploadInfo.of(it.upload) }},\n            )\n        }}\n", wire::layout_of(models, model), wire::wired(model).into_iter().enumerate().map(|(at, field)| format!("                {} = {},\n", identifier(&field.name, false), wire::read_kotlin(field, at))).collect::<String>()).unwrap();
         for field in model.fields.iter().filter(|field| is_file(field)) { writeln!(out, "        val {} = FileField<{class}>(\"{}\")", identifier(&field.name, false), field.name).unwrap(); }
         for field in model.fields.iter().filter(|field| field.name != "id" && !is_file(field)) { writeln!(out, "        val {} = Column<{class}, {}>(\"{}\")", identifier(&field.name, false), column_type(field, false), field.name).unwrap(); }
         writeln!(out, "        fun where(condition: Condition) = Query(\"{class}\", this).where(condition)\n        fun ids(ids: List<String>) = idsQuery(\"{class}\", this, ids)").unwrap();
@@ -520,11 +522,11 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             for (name, _) in &update_args { writeln!(out, "            {printed}?.let {{ this.put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
             out.push_str("        }\n");
         }
-        writeln!(out, "        {class}.read(database_.update(epoch_, this.modelName, this.id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
+        writeln!(out, "        {class}.read(database_.update(epoch_, this.{MODEL_NAME}, this.id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         if !model.ephemeral.is_empty() {
             let params = model.ephemeral.iter().map(|field| kotlin_patch_param(&field.field)).collect::<Vec<_>>().join(", ");
             let params = kotlin_scope(&params, &account);
-            writeln!(out, "    suspend fun set({params}) {{\n        onAccount({account}) {{ database_, epoch_ -> database_.setEphemeral(epoch_, this.modelName, this.id, buildJsonObject {{").unwrap();
+            writeln!(out, "    suspend fun set({params}) {{\n        onAccount({account}) {{ database_, epoch_ -> database_.setEphemeral(epoch_, this.{MODEL_NAME}, this.id, buildJsonObject {{").unwrap();
             for field in &model.ephemeral { writeln!(out, "{}", kotlin_patch_put(&field.field)).unwrap(); }
             out.push_str("        }.jsonText()) }\n    }\n");
         }
