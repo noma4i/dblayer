@@ -27,6 +27,10 @@ let package = Package(
     .testTarget(
       name: "DBlayerTests",
       dependencies: ["DBlayer", "DBlayerTesting"]
+    ),
+    .testTarget(
+      name: "ConsumerCheckTests",
+      dependencies: ["DBlayer"]
     )
   ]
 )

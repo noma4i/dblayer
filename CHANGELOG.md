@@ -54,6 +54,7 @@
 - A subscription event lost at a session start reloads the windows that watch its model.
 - `sessionResume` writes in the session epoch of its call.
 - Generated `*Edge` reads and the Kotlin singleton blob actions take the account like every other generated accessor.
+- Generated Kotlin models compile in the module of an app: `onAccount` is public, and a module outside the library compiles the generated fixtures.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

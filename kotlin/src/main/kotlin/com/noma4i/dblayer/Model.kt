@@ -77,7 +77,7 @@ internal fun admit(account: AccountScope?): Admission =
     if (account != null) Admission(account.database, account.epoch) else DBlayer.database.let { Admission(it, it.sessionEpoch()) }
 
 /** Admits the call before the work leaves the caller, then runs it off the caller with the pair. */
-internal suspend fun <T> onAccount(account: AccountScope?, call: suspend (Database, ULong) -> T): T {
+suspend fun <T> onAccount(account: AccountScope?, call: suspend (Database, ULong) -> T): T {
     val admission = admit(account)
     return offCaller { call(admission.database, admission.epoch) }
 }

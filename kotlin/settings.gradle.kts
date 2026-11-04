@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "dblayer"
+
+include(":consumer-check")
