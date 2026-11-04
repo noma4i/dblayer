@@ -986,6 +986,8 @@ fn apply_transitions(
             }
             OperationTransition::RemoveUploadItem { seq, position, inputs } => {
                 synced.extend(op_keys_of(connection, *seq)?);
+                let key: Option<String> = connection.query_row("SELECT client_key FROM op_item WHERE seq = ?1 AND position = ?2", params![seq, position], |row| row.get(0)).optional()?;
+                result.discarded_items.extend(key.map(|key| (*seq, key)));
                 super::upload::remove_item(connection, *seq, *position)?;
                 for (item_position, input) in inputs {
                     let value = serde_json::to_value(input).map_err(|error| StoreError::Constraint(error.to_string()))?;

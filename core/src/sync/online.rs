@@ -66,37 +66,36 @@ impl Inner {
     }
 
     pub(crate) fn spawn_flush(self: &Arc<Self>, wait: Duration) -> Option<tokio::task::AbortHandle> {
-        if !self.admitted(crate::lifecycle::Origin::Session) { return None; }
+        let lifecycle = self.db.shared.store.lifecycle.clone();
+        let epoch = self.waking_epoch()?;
         let runtime = Handle::try_current().ok()?;
         let clock = self.clock.clone();
         let deadline = clock.now().saturating_add(wait);
         let inner = Arc::downgrade(self);
-        let lifecycle = self.db.shared.store.lifecycle.clone();
-        let reserved = if wait.is_zero() {
-            lifecycle.admit(crate::lifecycle::Origin::Session, "outbox flush")
-        } else {
-            lifecycle.admit_passive(crate::lifecycle::Origin::Session, "outbox wake", None)
-        }.ok()?;
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
             clock.sleep(deadline.saturating_sub(clock.now())).await;
-            if let Some(inner) = inner.upgrade() {
-                let reserved = if wait.is_zero() { reserved } else {
-                    let Ok(active) = lifecycle.admit_session_at(crate::lifecycle::Origin::Session, "outbox flush", reserved.value()) else { return };
-                    active
-                };
-                let _ = reserved.run(inner.flush_pending(&reserved)).await;
-            }
+            let Some(admitted) = lifecycle.admit_after_transition(crate::lifecycle::Origin::Session, "outbox flush", epoch).await else { return };
+            let Some(inner) = inner.upgrade() else { return };
+            let _ = admitted.run(inner.flush_pending(&admitted)).await;
         }));
         Some(task.abort_handle())
+    }
+
+    /// The session epoch a wake belongs to: none when no session is signed in or the database closed.
+    pub(crate) fn waking_epoch(&self) -> Option<u64> {
+        let snapshot = self.db.shared.store.lifecycle.snapshot();
+        (!snapshot.closed && snapshot.signed_in()).then_some(snapshot.session_epoch)
     }
 }
 
 impl Inner {
     fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind) {
         let Ok(runtime) = Handle::try_current() else { return };
-        let Ok(admitted) = self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "retry load") else { return };
+        let Some(epoch) = self.waking_epoch() else { return };
+        let lifecycle = self.db.shared.store.lifecycle.clone();
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
+            let Some(admitted) = lifecycle.admit_after_transition(crate::lifecycle::Origin::Session, "retry load", epoch).await else { return };
             let Some(inner) = inner.upgrade() else { return };
             let Ok(resolved) = inner.resolve(crate::lifecycle::Origin::Session, &target.model, &target.relation, &target.params) else { return };
             if resolved.members_complete || resolved.media.is_some() {

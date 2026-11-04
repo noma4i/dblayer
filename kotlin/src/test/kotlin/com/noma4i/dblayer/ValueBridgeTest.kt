@@ -166,13 +166,12 @@ class ValueBridgeTest {
 
             val sent = scope.send(Moment, text("hello"))
             eventually("the thread shows the queued message") { thread.projection.value.rows.size == 1 }
-            assertEquals(sent.row.id, thread.projection.value.rows[0].id)
+            assertEquals(sent.optimisticValue?.id, thread.projection.value.rows[0].id)
             assertEquals(SyncState.Pending, thread.projection.value.rows[0].sync.state)
-            assertEquals(CommandStatus.Queued, sent.status())
             assertEquals(0, server.operationRequests("CreateMoment"))
 
             DBlayer.database.setOnline(true)
-            assertEquals(CommandStatus.Delivered("m1"), sent.outcome())
+            assertEquals("m1", sent.confirmed().id)
             eventually("the thread shows the confirmed message") { thread.projection.value.rows.firstOrNull()?.id == "m1" }
 
             assertEquals("one message, not a temporary row and a confirmed row", 1, thread.projection.value.rows.size)
@@ -313,13 +312,12 @@ class ValueBridgeTest {
             DBlayer.database.setOnline(false)
             val sent = scope.send(Moment, text("queued"))
             val waiting = screen.async { sent.outcome() }
-            assertEquals(CommandStatus.Queued, sent.status())
 
             DBlayer.sessionReset()
-            assertEquals(CommandStatus.Ended, awaitWithin("the outcome ends with the session") { waiting.await() })
+            assertEquals(OperationOutcome.Interrupted, awaitWithin("the outcome ends with the session") { waiting.await() })
             DBlayer.database.setOnline(true)
             signIn("B")
-            assertEquals(CommandStatus.Ended, sent.status())
+            assertEquals("a receipt of A answered in the epoch of B", OperationOutcome.Interrupted, sent.outcome())
         } finally {
             screen.cancel()
             DBlayer.close()

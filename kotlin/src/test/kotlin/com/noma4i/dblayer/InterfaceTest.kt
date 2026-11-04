@@ -128,11 +128,11 @@ class InterfaceTest {
         val button = SampleElement.Button(SampleButton(id = "b1", children = emptyList(), press = SampleAction.OpenProfile(SampleOpenProfileAction(userId = "u1")), label = SampleTextValue.TextLiteral(SampleTextLiteral(text = "Go"))))
         val pressable = SampleElement.Pressable(SamplePressable(id = "p1", children = listOf("b1")))
         val elements = listOf(button, pressable, SampleElement.Unknown("SampleFuture"))
-        val created = InterfaceRecord.create(slug = "local", spec = SampleSpec(root = "b1", elements = elements, state = emptyList()))
+        val created = InterfaceRecord.create(slug = "local", spec = SampleSpec(root = "b1", elements = elements, state = emptyList())).optimisticValue!!
         assertEquals(elements, created.spec!!.elements)
 
         val spacer = SampleElement.Spacer(SampleSpacer(id = "b1", children = emptyList(), length = SampleNumberValue.NumberLiteral(SampleNumberLiteral(number = 2.0))))
-        val changed = created.update(spec = GraphQLNullable.Value(SampleSpec(root = "b1", elements = listOf(spacer), state = emptyList())))
+        val changed = created.update(spec = GraphQLNullable.Value(SampleSpec(root = "b1", elements = listOf(spacer), state = emptyList()))).optimisticValue!!
         assertEquals(listOf(spacer), changed.spec!!.elements)
         assertEquals(listOf(spacer), InterfaceRecord.find(created.id).current()!!.spec!!.elements)
     }

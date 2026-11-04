@@ -252,3 +252,20 @@ final class ListReader<Model: DBModel> {
   func waitForInitialLoad() async throws { try await projected.loaded() }
   func loadMore() async throws -> LoadMoreResult { try await projected.loadMore() }
 }
+
+extension MutationReceipt {
+  func confirmed() async throws -> Model {
+    guard case let .confirmed(value?, _) = try await outcome() else { throw WaitFailure.unexpectedOutcome }
+    return value
+  }
+
+  func answer<Answer: Decodable>(as _: Answer.Type) async throws -> Answer {
+    guard case let .confirmed(_, answerJSON?) = try await outcome() else { throw WaitFailure.unexpectedOutcome }
+    return try JSONDecoder().decode(Answer.self, from: Data(answerJSON.utf8))
+  }
+
+  func refusal() async throws -> WireFailure {
+    guard case let .rejected(failure) = try await outcome() else { throw WaitFailure.unexpectedOutcome }
+    return failure
+  }
+}

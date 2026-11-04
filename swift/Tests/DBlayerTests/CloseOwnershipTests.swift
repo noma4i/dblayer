@@ -39,7 +39,7 @@ extension BridgeProbeTests {
       Task { @MainActor in try? await DB.close() }
     }
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
-    _ = try await Moment.send(in: DB.account(), text: "kept").row
+    _ = try await Moment.send(in: DB.account(), text: "kept").optimisticValue!
     let cursor = Cursor(try await Moment.recent.live.stream())
     #expect(await cursor.next("the initial delivery") != nil)
     let waiting = Task { await cursor.next("the end of the stream after the close") }

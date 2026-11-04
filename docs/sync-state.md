@@ -85,7 +85,7 @@ Moment.failed          // records waiting for a decision
 
 Use them for an "unsent" banner, a retry-all button or a badge with the number of pending changes. `sync` is a reserved name: a model cannot have a field called `sync`.
 
-`retry(action)` and `DB.retryAll()` (`DBlayer.retryAll()` in Kotlin) suspend, return the number of reset operations or upload items, and throw errors to the caller.
+`retry(action)` resets the one failed operation and returns a new receipt; read its `outcome()` for the result of the retry. `DB.retryAll()` (`DBlayer.retryAll()` in Kotlin) returns the number of reset operations or upload items. Both throw errors to the caller.
 
 ## How a mutation is sent
 

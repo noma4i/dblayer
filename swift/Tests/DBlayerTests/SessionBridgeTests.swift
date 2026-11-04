@@ -21,9 +21,9 @@ private final class RecordingSession: Database, @unchecked Sendable {
   }
   override func sessionReset() async throws { record("reset") }
   override func sessionEpoch() -> UInt64 { 1 }
-  override func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws -> UInt64 {
+  override func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws -> WireOperationReceipt {
     record("retry \(model) \(rowId) \(action ?? "nil")")
-    return 3
+    throw DbError.Invalid(detail: "recorded")
   }
   override func retryAll(epoch: UInt64) async throws -> UInt64 {
     record("retryAll")
@@ -58,12 +58,11 @@ extension BridgeProbeTests {
     }
   }
 
-  @Test @MainActor func retryByIdAndRetryAllReachTheCoreWithTheirCounts() async throws {
+  @Test @MainActor func retryByIdAndRetryAllReachTheCore() async throws {
     try await withRecordingSession { recording in
-      let liked = try await Moment.retry(id: "42", action: "like")
-      let plain = try await Moment.retry(id: "43", action: nil)
-      let all = try await DB.retryAll()
-      #expect([liked, plain, all] == [3, 3, 7])
+      await #expect(throws: DbError.self) { try await Moment.retry(id: "42", action: "like") }
+      await #expect(throws: DbError.self) { try await Moment.retry(id: "43", action: nil) }
+      #expect(try await DB.retryAll() == 7)
       #expect(recording.calls == ["retry Moment 42 like", "retry Moment 43 nil", "retryAll"])
     }
   }

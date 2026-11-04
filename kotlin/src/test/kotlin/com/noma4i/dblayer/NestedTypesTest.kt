@@ -80,7 +80,7 @@ class CellDecoderTest {
             val fields = row.jsonObject
             if (fields["error"] == JsonPrimitive(true) || fields["input"] == null) continue
             val label = fields.getValue("name").toString()
-            val wire = database.create(database.sessionEpoch(), "NestedSample", buildJsonObject { put("value", withoutUnknownKeys(fields.getValue("input"))) }.toString(), "{}")
+            val wire = database.create(database.sessionEpoch(), "NestedSample", buildJsonObject { put("value", withoutUnknownKeys(fields.getValue("input"))) }.toString(), "{}").optimisticValue!!
             val expected = dbJson.decodeFromString(NestedValue.serializer(), fields.getValue("output").toString())
             assertEquals(label, expected, NestedSample.read(wire).value)
         }
@@ -88,7 +88,7 @@ class CellDecoderTest {
 
     @Test
     fun aRowWithAnotherLayoutIsRefused(): Unit = bounded {
-        val wire = open().let { it.create(it.sessionEpoch(), "NestedSample", "{}", "{}") }
+        val wire = open().let { it.create(it.sessionEpoch(), "NestedSample", "{}", "{}").optimisticValue!! }
         assertThrows(DbException::class.java) { NestedSample.read(wire.copy(layout = "other")) }
     }
 }

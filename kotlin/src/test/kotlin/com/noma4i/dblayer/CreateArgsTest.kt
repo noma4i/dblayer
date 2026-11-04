@@ -19,7 +19,7 @@ class CreateArgsTest {
         transport.enqueue("CurrentRegionQuery", """{"data":{"region":{"id":"r1","name":"Home"}}}""")
         CurrentUser.current.load()
         CurrentRegion.current.load()
-        val row = Record.send(AccountScope.current(), containerId = "c", text = "hi").row
+        val row = Record.send(AccountScope.current(), containerId = "c", text = "hi").optimisticValue!!
         assertEquals(listOf("u1", "r1"), listOf(row.authorId, row.regionId))
     }
 
@@ -30,10 +30,9 @@ class CreateArgsTest {
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt } }"}]""")
 
-        val local = Record.send(AccountScope.current(), containerId = "c", authorId = "u1", text = "hi", attachedUserId = "42", signedId = "blob-1").row
-        withTimeout(5000) { local.settled(null) }
+        val confirmed = withTimeout(5000) { Record.send(AccountScope.current(), containerId = "c", authorId = "u1", text = "hi", attachedUserId = "42", signedId = "blob-1").confirmed() }
         val sent = transport.calls.first { it.operationName == "CreateRecord" }.variablesJson
         assertTrue("variables sent: $sent", sent.contains("\"signedId\":\"blob-1\"") && sent.contains("\"attachedUserId\":42"))
-        assertEquals("hi", Record.find(withTimeout(5000) { local.confirmedId() }).current()?.text)
+        assertEquals("hi", Record.find(confirmed.id).current()?.text)
     }
 }

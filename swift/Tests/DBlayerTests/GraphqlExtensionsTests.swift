@@ -21,25 +21,29 @@ extension BridgeProbeTests {
     let response = #"{"errors":[{"message":"refused","extensions":{"code":"\#(code)"\#(extra),"detail":"refused","limit":3,"context":{"values":[true,null,2]}}},{"message":"secondary","extensions":{"code":"SECONDARY","transactionDisposition":"KEEP"}}]}"#
     for queued in [false, true] {
       transport.enqueue(operation, reply: response)
-      do {
-        if queued {
-          let receipt = try await database.send(request: CommandRequest(epoch: database.sessionEpoch(), model: "Moment", valuesJson: #"{"text":"hello","media":null}"#, argsJson: "{}", upload: nil))
-          try await database.settled(epoch: database.sessionEpoch(), model: "Moment", rowId: receipt.row.id, action: nil)
-        } else {
+      let extensions: GraphqlExtensions?
+      if queued {
+        let receipt = try await database.send(request: CommandRequest(epoch: database.sessionEpoch(), model: "Moment", valuesJson: #"{"text":"hello","media":null}"#, argsJson: "{}", upload: nil))
+        guard case let .rejected(failure) = try await database.outcome(receipt: receipt) else { Issue.record("the refused purchase was not rejected"); continue }
+        extensions = failure.extensions
+      } else {
+        do {
           _ = try await database.run(epoch: database.sessionEpoch(), operation: operation, variablesJson: "{}")
+          Issue.record("the refused purchase did not throw")
+          continue
+        } catch let DbError.Graphql(_, thrown) {
+          extensions = thrown
         }
-        Issue.record("the refused purchase did not throw")
-      } catch let DbError.Graphql(_, extensions) {
-        #expect(extensions?.code == code)
-        #expect(extensions?.transactionDisposition == disposition)
-        #expect(extensions?.fields == ["detail": "\"refused\"", "limit": "3", "context": #"{"values":[true,null,2]}"#])
-        let failure = OperationFailure(kind: "rejected", message: "refused", extensions: extensions)
-        let restored = try JSONDecoder().decode(OperationFailure.self, from: JSONEncoder().encode(failure))
-        #expect(restored.extensions?.code == code)
-        #expect(restored.extensions?.transactionDisposition == disposition)
-        let encoded = try JSONValue.decode(JSONEncoder().encode(restored.extensions))
-        #expect(encoded.objectValue["fields"] == .object(["detail": .string("\"refused\""), "limit": .string("3"), "context": .string(#"{"values":[true,null,2]}"#)]))
       }
+      #expect(extensions?.code == code)
+      #expect(extensions?.transactionDisposition == disposition)
+      #expect(extensions?.fields == ["detail": "\"refused\"", "limit": "3", "context": #"{"values":[true,null,2]}"#])
+      let failure = OperationFailure(kind: "rejected", message: "refused", extensions: extensions)
+      let restored = try JSONDecoder().decode(OperationFailure.self, from: JSONEncoder().encode(failure))
+      #expect(restored.extensions?.code == code)
+      #expect(restored.extensions?.transactionDisposition == disposition)
+      let encoded = try JSONValue.decode(JSONEncoder().encode(restored.extensions))
+      #expect(encoded.objectValue["fields"] == .object(["detail": .string("\"refused\""), "limit": .string("3"), "context": .string(#"{"values":[true,null,2]}"#)]))
     }
   }
 }

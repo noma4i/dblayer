@@ -1,6 +1,7 @@
 package com.noma4i.dblayer
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LandsTest {
@@ -11,8 +12,8 @@ class LandsTest {
         transport.enqueue("CreateRecord", """{"data":{"createRecord":{"record":{"id":"r1"},"extra":{"id":"r2"}}}}""")
         val database = openDatabase(Config(null, null, 64u), schema, transport)
         database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]""")
-        val row = database.send(CommandRequest(database.sessionEpoch(), "Record", "{}", "{}", null)).row
-        database.settled(database.sessionEpoch(), "Record", row.id, null)
+        val receipt = database.send(CommandRequest(database.sessionEpoch(), "Record", "{}", "{}", null))
+        assertTrue(database.outcome(receipt) is WireOperationOutcome.Confirmed)
         database.warm(database.sessionEpoch(), """{"model":"Record"}""")
         assertEquals("r2", database.peekRow(database.sessionEpoch(), "Record", "r2")?.id)
     }

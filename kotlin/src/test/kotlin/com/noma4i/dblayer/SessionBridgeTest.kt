@@ -4,6 +4,7 @@ import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.serialization.Serializable
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @Serializable private data class PhoneBody(val phone: String)
@@ -22,9 +23,9 @@ class SessionBridgeTest {
             return """{"ticket":"t-2"}"""
         }
         override suspend fun sessionReset() { calls.add("reset") }
-        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?): ULong {
+        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?): WireOperationReceipt {
             calls.add("retry $model $rowId ${action ?: "null"}")
-            return 3u
+            throw DbException.Invalid("recorded")
         }
         override fun sessionEpoch(): ULong = 1uL
         override suspend fun retryAll(epoch: ULong): ULong {
@@ -62,10 +63,10 @@ class SessionBridgeTest {
         }
     }
 
-    @Test fun retryByIdAndRetryAllReachTheCoreWithTheirCounts() = bounded {
+    @Test fun retryByIdAndRetryAllReachTheCore() = bounded {
         withRecordingSession { recording ->
-            assertEquals(3uL, Moment.retry("42", "like"))
-            assertEquals(3uL, Moment.retry("43", null))
+            assertTrue(runCatching { Moment.retry("42", "like") }.exceptionOrNull() is DbException.Invalid)
+            assertTrue(runCatching { Moment.retry("43", null) }.exceptionOrNull() is DbException.Invalid)
             assertEquals(7uL, DBlayer.retryAll())
             assertEquals(listOf("retry Moment 42 like", "retry Moment 43 null", "retryAll"), recording.calls)
         }

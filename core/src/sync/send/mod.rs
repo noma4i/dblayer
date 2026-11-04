@@ -37,11 +37,6 @@ impl Sync {
         locked(&self.inner.outcomes).claim(operation)
     }
 
-    pub(crate) fn discard_item_outcome(&self, operation: i64, item: String) {
-        let ticket = locked(&self.inner.outcomes).ticket(operation);
-        if let Some(ticket) = ticket { ticket.discard_item(item); }
-    }
-
     pub async fn flush(&self, admitted: &crate::lifecycle::Admitted) -> Result<FlushReport, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         self.inner.flush_pending(admitted).await

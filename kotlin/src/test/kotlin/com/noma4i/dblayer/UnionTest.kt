@@ -41,7 +41,7 @@ class UnionTest {
             val fields = row.jsonObject
             val label = fields.getValue("name").toString()
             val values = buildJsonObject { fields["attachment"]?.let { put("attachment", it) } }
-            val sample = UnionSample.read(database.create(database.sessionEpoch(), "UnionSample", values.toString(), "{}"))
+            val sample = UnionSample.read(database.create(database.sessionEpoch(), "UnionSample", values.toString(), "{}").optimisticValue!!)
             val encoded = sample.attachment?.let { jsonValue(it) } ?: JsonNull
             assertEquals(label, comparableJson(fields.getValue("output")), comparableJson(encoded))
             val input = fields["attachment"]
@@ -54,23 +54,23 @@ class UnionTest {
         open()
         val reward = RecordAttachment.Reward(RewardAttachment(id = "g2", tier = "silver", tags = listOf("x")))
         val props = MomentWidgetItemProps.Emoji(MomentEmojiProps(emoji = "fire"))
-        val created = UnionSample.create(attachment = reward, props = props)
+        val created = UnionSample.create(attachment = reward, props = props).optimisticValue!!
         assertEquals(reward, created.attachment)
         assertEquals(props, created.props)
 
         val reaction = RecordAttachment.Reaction(ReactionAttachment(body = "+1"))
-        val switched = created.update(attachment = GraphQLNullable.Value(reaction))
+        val switched = created.update(attachment = GraphQLNullable.Value(reaction)).optimisticValue!!
         assertEquals(reaction, switched.attachment)
         assertEquals(props, switched.props)
 
         val future = RecordAttachment.Unknown("FutureAttachment")
-        val kept = switched.update(attachment = GraphQLNullable.Value(future))
+        val kept = switched.update(attachment = GraphQLNullable.Value(future)).optimisticValue!!
         assertEquals(future, kept.attachment)
-        val again = kept.update(label = GraphQLNullable.Value("renamed"))
+        val again = kept.update(label = GraphQLNullable.Value("renamed")).optimisticValue!!
         assertEquals(future, again.attachment)
         assertEquals("renamed", again.label)
 
-        val none = UnionSample.create()
+        val none = UnionSample.create().optimisticValue!!
         assertNull(none.attachment)
         assertNull(none.props)
     }
@@ -148,9 +148,8 @@ class UnionTest {
         open(transport)
         DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]""")
 
-        val local = Record.send(AccountScope.current(), containerId = "c", authorId = "u1", text = "hi").row
-        assertNull(local.attachment)
-        withTimeout(5000) { local.settled(null) }
-        assertEquals(RecordAttachment.Moment(MomentAttachment(momentId = "m9", caption = "look")), attachmentOf(withTimeout(5000) { local.confirmedId() }))
+        val sent = Record.send(AccountScope.current(), containerId = "c", authorId = "u1", text = "hi")
+        assertNull(sent.optimisticValue!!.attachment)
+        assertEquals(RecordAttachment.Moment(MomentAttachment(momentId = "m9", caption = "look")), attachmentOf(withTimeout(5000) { sent.confirmed() }.id))
     }
 }

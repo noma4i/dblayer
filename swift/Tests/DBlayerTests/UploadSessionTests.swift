@@ -76,16 +76,16 @@ extension BridgeProbeTests {
     transport.base.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
     let database = try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#, uploads: UploadOperations(createBlob: UploadOperation("CreateBlob")))
     let epoch = database.sessionEpoch()
-    let row = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path))).row
+    let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path)))
+    let row = try #require(sent.optimisticValue)
     _ = try #require(await Cursor(transport.arrived.stream).next("the PUT starts"))
     let started = AsyncStream<Void>.makeStream()
     let result = AsyncStream<Bool>.makeStream()
     Task { @MainActor in
       started.continuation.yield(())
-      do { try await database.settled(epoch: epoch, model: "Moment", rowId: row.id, action: "upload_clip"); result.continuation.yield(false) }
-      catch DbError.Interrupted { result.continuation.yield(true) }
-      catch DbError.NoSession { result.continuation.yield(true) }
-      catch { result.continuation.yield(false) }
+      do {
+        if case .interrupted = try await sent.outcome() { result.continuation.yield(true) } else { result.continuation.yield(false) }
+      } catch { result.continuation.yield(false) }
     }
     _ = try #require(await Cursor(started.stream).next("the wait starts"))
     try await DB.sessionReset()

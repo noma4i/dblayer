@@ -14,7 +14,7 @@ class FileFieldTest {
     @Test
     fun aFileIsAttachedReadLocatedAndDetachedThroughTheRecord() = bounded {
         reopen(Config(null, null, 32u), modelsJSON, null)
-        val user = User.create(name = "ann")
+        val user = User.create(name = "ann").optimisticValue!!
         assertNull(user.file(User.avatar))
 
         val bytes = byteArrayOf(1, 2, 3, 4)

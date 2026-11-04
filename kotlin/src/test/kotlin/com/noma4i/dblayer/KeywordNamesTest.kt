@@ -13,8 +13,8 @@ class KeywordNamesTest {
         reopen(Config(null, null, 32u), modelsJSON, null)
         val input = """{"default":"nested","when":"now","class":"kind","container":"box","r":"reader"}"""
         val nested = dbJson.decodeFromString(KeywordValue.serializer(), input)
-        val created = KeywordRecord.create(default = "row", `class` = "selected", value = nested)
-        val updated = created.update(default = "changed")
+        val created = KeywordRecord.create(default = "row", `class` = "selected", value = nested).optimisticValue!!
+        val updated = created.update(default = "changed").optimisticValue!!
         val row = KeywordRecord.`when`("selected").live.current().single()
         assertEquals(Triple(updated.id, "changed", "selected"), Triple(row.id, row.default, row.`class`))
         assertEquals(nested, row.value)

@@ -10,14 +10,14 @@ import org.junit.Test
 
 class SealedErrorsTest {
     private class RefusedRetry : Database(NoHandle) {
-        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?): ULong = throw DbException.Invalid("retry refused")
+        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?): WireOperationReceipt = throw DbException.Invalid("retry refused")
         override fun sessionEpoch(): ULong = 1uL
         override suspend fun retryAll(epoch: ULong): ULong = throw DbException.Invalid("retry refused")
     }
 
     @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {
         reopenSigned(Config(null, null, 8u), modelsJSON)
-        val row = Moment.send(AccountScope.current(), text = "saved").row
+        val row = Moment.send(AccountScope.current(), text = "saved").optimisticValue!!
         val real = DBlayer.database
         DBlayer.database = RefusedRetry()
         try {
@@ -41,7 +41,7 @@ class SealedErrorsTest {
     }
 
     @Test
-    fun aSessionCodeArrivesTypedThroughALoadAnOperationCallAndASettledMutation() = bounded {
+    fun aSessionCodeArrivesTypedThroughALoadAnOperationCallAndAMutationOutcome() = bounded {
         for (code in codes) {
             val transport = MockTransport()
             reopen(Config(null, null, 32u), modelsJSON, transport)
@@ -55,8 +55,8 @@ class SealedErrorsTest {
             assertEquals(code, codeOf(runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull(), "call $code"))
 
             transport.enqueue("CreateMoment", failure)
-            val local = Moment.send(AccountScope.current(), text = "hello", media = null).row
-            assertEquals(code, codeOf(runCatching { withTimeout(5000) { local.settled(null) } }.exceptionOrNull(), "settled $code"))
+            val sent = Moment.send(AccountScope.current(), text = "hello", media = null)
+            assertEquals(code, withTimeout(5000) { sent.refusal() }.sessionCode)
         }
     }
 

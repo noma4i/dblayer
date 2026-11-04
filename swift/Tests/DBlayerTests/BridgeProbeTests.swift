@@ -8,8 +8,8 @@ struct BridgeProbeTests {
   @Test
   func aSearchPassesWholeWordsToTheCore() async throws {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
-    _ = try await Moment.send(in: DB.account(), text: "hello world").row
-    _ = try await Moment.send(in: DB.account(), text: "hel").row
+    _ = try await Moment.send(in: DB.account(), text: "hello world").optimisticValue!
+    _ = try await Moment.send(in: DB.account(), text: "hel").optimisticValue!
     let whole = Cursor(try await Query<Moment>().search("hel", wholeWords: true).live.stream())
     #expect(await whole.first("the row with the whole word") { $0.map(\.text) == ["hel"] } != nil)
   }
@@ -19,7 +19,7 @@ struct BridgeProbeTests {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     let changes = Cursor(try await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
-    let moment = try await Moment.send(in: DB.account(), text: "m").row
+    let moment = try await Moment.send(in: DB.account(), text: "m").optimisticValue!
     #expect(await changes.next()?.first?.text == "m")
     try await moment.setLocal("tone", .string("warm"))
     #expect(await changes.next()?.first?.tone == "warm")
@@ -49,7 +49,7 @@ struct BridgeProbeTests {
   func aWarmQueryAnswersFromMemoryAndAFinishedLiveReadLeavesNothingWarm() async throws {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     #expect(try await Moment.recent.cached() == nil)
-    let moment = try await Moment.send(in: DB.account(), text: "m").row
+    let moment = try await Moment.send(in: DB.account(), text: "m").optimisticValue!
     try await Moment.recent.warm()
     let cached = try await Moment.recent.cached()
     let warm = try #require(cached)
@@ -57,7 +57,7 @@ struct BridgeProbeTests {
     #expect(try await Moment.recent.cachedRow("ghost") == nil)
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     #expect(try await Moment.recent.cached() == nil)
-    _ = try await Moment.send(in: DB.account(), text: "n").row
+    _ = try await Moment.send(in: DB.account(), text: "n").optimisticValue!
     do {
       let list = Projected<Moment>(try AccountScope().stream(Moment.recent))
       await eventually("the stream shows the row") { list.rows.count == 1 }
@@ -152,29 +152,27 @@ struct BridgeProbeTests {
 
 
   @Test
-  func confirmedIdWaitsForTheServerIdOfALocalCreate() async throws {
+  func theOutcomeOfASentCreateCarriesTheServerId() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
-    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
-    #expect(local.id.hasPrefix("temp"))
-    try await local.settled(action: nil)
-    let real = try await local.confirmedId()
-    #expect(real == "m77")
+    let sent = try await Moment.send(in: DB.account(), text: "hello", media: nil)
+    #expect(sent.optimisticValue?.id.hasPrefix("temp") == true)
+    #expect(try await sent.confirmed().id == "m77")
   }
 
   @Test(.timeLimit(.minutes(1)))
-  func parallelConfirmedIdCallsOfOneCreateAllGetTheServerId() async throws {
+  func parallelOutcomeReadsOfOneReceiptAllGetTheServerId() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
-    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
+    let sent = try await Moment.send(in: DB.account(), text: "hello", media: nil)
     let ids = try await withThrowingTaskGroup(of: String.self) { group in
-      for _ in 0..<8 { group.addTask { try await local.confirmedId() } }
+      for _ in 0..<8 { group.addTask { try await sent.confirmed().id } }
       return try await group.reduce(into: [String]()) { $0.append($1) }
     }
 
@@ -188,11 +186,10 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"}]"#)
 
-    let local = try await Record.send(in: DB.account(), containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1").row
-    try await local.settled(action: nil)
+    let confirmed = try await Record.send(in: DB.account(), containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1").confirmed()
     let sent = transport.calls.first { $0.operationName == "CreateRecord" }?.variablesJson ?? ""
     #expect(sent.contains(#""signedId":"blob-1""#) && sent.contains(#""attachedUserId":42"#), "variables sent: \(sent)")
-    #expect(try await Record.find(local.confirmedId()).current()?.text == "hi")
+    #expect(try await Record.find(confirmed.id).current()?.text == "hi")
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -204,7 +201,7 @@ struct BridgeProbeTests {
     transport.enqueue("CurrentRegionQuery", reply: #"{"data":{"region":{"id":"r1","name":"Home"}}}"#)
     try await CurrentUser.current.load()
     try await CurrentRegion.current.load()
-    let row = try await Record.send(in: DB.account(), containerId: "c", text: "hi").row
+    let row = try await Record.send(in: DB.account(), containerId: "c", text: "hi").optimisticValue!
     #expect(row.authorId == "u1" && row.regionId == "r1")
   }
 
@@ -218,7 +215,7 @@ struct BridgeProbeTests {
     let list = Projected<Moment>(try AccountScope().stream(Moment.recent))
     try await list.loaded()
 
-    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
+    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).optimisticValue!
     await eventually("the list carries the replaced id") { list.projection.temporaryIds["m77"] != nil }
 
     #expect(list.projection.temporaryIds["m77"] == local.id)
@@ -234,11 +231,12 @@ struct BridgeProbeTests {
     let file = FileManager.default.temporaryDirectory.appending(path: "clip-\(UUID().uuidString).mp4")
     try Data("abcdef".utf8).write(to: file)
 
-    let local = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, variables: ["text": .string("hello")]))).row
+    let sent = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path, variables: ["text": .string("hello")])))
+    let local = try #require(sent.optimisticValue)
 
     #expect(local.id.hasPrefix("temp"))
     #expect(local.uploads["upload_clip"] != nil)
-    #expect(try await local.confirmedId() == "m77")
+    #expect(try await sent.confirmed().id == "m77")
     let sent = transport.calls.first { $0.operationName == "CreateMoment" }
     #expect(sent?.variablesJson.contains("\"signedId\":\"sid\"") == true)
     #expect(sent?.variablesJson.contains("blobId") == false)
@@ -250,8 +248,8 @@ struct BridgeProbeTests {
   func aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() async throws {
     _ = try await Self.openRecordSession()
     let record = try await Self.settledRecord()
-    let row = try await record.update(reactions: [RecordReactionNode(body: "A", userId: "u1")])
-    let changed = try await row.react(reactionBody: "C", userId: "u1")
+    let row = try await record.update(reactions: [RecordReactionNode(body: "A", userId: "u1")]).optimisticValue!
+    let changed = try await row.react(reactionBody: "C", userId: "u1").optimisticValue!
     #expect(changed.reactions.map(\.userId) == ["u1"])
     #expect(changed.reactions.map(\.body) == ["C"])
   }
@@ -260,11 +258,11 @@ struct BridgeProbeTests {
   @Test
   func anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() async throws {
     _ = try await Self.openRecordSession()
-    let ann = try await User.create(name: "Ann")
+    let ann = try await User.create(name: "Ann").optimisticValue!
     let record = try await Self.settledRecord()
-    let withUser = try await record.react(reactionBody: "A", userId: ann.id)
+    let withUser = try await record.react(reactionBody: "A", userId: ann.id).optimisticValue!
     #expect(withUser.reactions.first?.user?.name == "Ann")
-    let withoutUser = try await record.react(reactionBody: "B", userId: "nobody")
+    let withoutUser = try await record.react(reactionBody: "B", userId: "nobody").optimisticValue!
     #expect(withoutUser.reactions.first { $0.userId == "nobody" }?.user == nil)
   }
 
@@ -289,9 +287,8 @@ struct BridgeProbeTests {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]"#)
-    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
-    try await local.settled(action: nil)
-    return try #require(await Moment.find(try await local.confirmedId()).current())
+    let id = try await Moment.send(in: DB.account(), text: "hello", media: nil).confirmed().id
+    return try #require(await Moment.find(id).current())
   }
 
   @Test
@@ -301,16 +298,16 @@ struct BridgeProbeTests {
 
     transport.enqueue("ShareMoment", reply: #"{"data":{"shareMoment":{"moment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"},"successMessage":"Shared","copies":3,"other":"x"}}}"#)
     let shared = try await moment.share()
-    #expect(shared.model.id == "m77")
-    let answer = try await shared.answer()
+    #expect(shared.optimisticValue?.id == "m77")
+    let answer = try await shared.answer(as: MomentShareResult.self)
     #expect(answer.successMessage == "Shared")
     #expect(answer.copies == 3)
-    await #expect(throws: (any Error).self) { try await shared.answer() }
+    #expect(try await shared.answer(as: MomentShareResult.self).copies == 3)
 
     transport.enqueue("ShareMoment", reply: #"{"errors":[{"message":"not allowed","extensions":{"code":"FORBIDDEN"}}]}"#)
     let refused = try await moment.share()
     await eventually("the second ShareMoment call") { transport.calls.filter { $0.operationName == "ShareMoment" }.count >= 2 }
-    await #expect(throws: (any Error).self) { try await refused.answer() }
+    #expect(try await refused.refusal().message == "not allowed")
   }
 
   @Test
@@ -319,7 +316,7 @@ struct BridgeProbeTests {
     let moment = try await openWithAMoment(transport)
 
     transport.enqueue("ShareMoment", reply: #"{"data":{"shareMoment":{"moment":null,"successMessage":null,"copies":null}}}"#)
-    let answer = try await moment.share().answer()
+    let answer = try await moment.share().answer(as: MomentShareResult.self)
     #expect(answer.successMessage == nil)
     #expect(answer.copies == nil)
     #expect(try await Moment.find("m77").current() != nil)

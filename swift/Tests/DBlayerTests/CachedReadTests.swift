@@ -18,7 +18,7 @@ extension BridgeProbeTests {
     @Test
     func cachedReadsThrowWhenARowDoesNotDecode() async throws {
       try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
-      let moment = try await Moment.send(in: DB.account(), text: "m").row
+      let moment = try await Moment.send(in: DB.account(), text: "m").optimisticValue!
       let query = Query<UnreadableMoment>()
       try await query.warm()
       await #expect(throws: UnreadableMoment.Unreadable.self) { try await query.cached() }

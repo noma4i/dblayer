@@ -21,10 +21,10 @@ struct EnumTests {
   func aValueOutsideTheDeclaredOnesIsStoredReadBackAndKeptByAnEdit() async throws {
     let database = try await open()
     try await adopt(database)
-    let wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"phase":"archived"}"#, argsJson: "{}")
+    let wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"phase":"archived"}"#, argsJson: "{}").optimisticValue!
     let sample = try NestedSample.decode(wire)
     #expect(sample.phase == .unknown("archived"))
-    let edited = try await sample.update(values: [])
+    let edited = try await sample.update(values: []).optimisticValue!
     #expect(edited.phase == .unknown("archived"))
     let matching = Cursor(try await NestedSample.where(NestedSample.phase == .unknown("archived")).snapshots.stream())
     #expect(await matching.first("the row of the unknown value") { $0.rows.map(\.id) == [sample.id] } != nil)
@@ -35,11 +35,11 @@ struct EnumTests {
   @Test @MainActor
   func theTypedApiWritesADeclaredCaseAndQueriesCompareTypedValues() async throws {
     try await adopt(try await open())
-    let sample = try await NestedSample.create(phase: .live)
+    let sample = try await NestedSample.create(phase: .live).optimisticValue!
     #expect(sample.phase == .live)
     let live = Cursor(try await NestedSample.where(NestedSample.phase == .live).snapshots.stream())
     #expect(await live.first("the live row") { $0.rows.map(\.id) == [sample.id] } != nil)
-    let changed = try await sample.update(phase: .unknown("later"))
+    let changed = try await sample.update(phase: .unknown("later")).optimisticValue!
     #expect(changed.phase == .unknown("later"))
   }
 
@@ -48,7 +48,7 @@ struct EnumTests {
     let json = Data(#"{"title":"t","state":"mystery"}"#.utf8)
     #expect(try JSONDecoder().decode(NestedValue.self, from: json).state == .unknown("mystery"))
     let database = try await open()
-    let wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"value":{"title":"t","state":"mystery"}}"#, argsJson: "{}")
+    let wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"value":{"title":"t","state":"mystery"}}"#, argsJson: "{}").optimisticValue!
     let sample = try NestedSample.decode(wire)
     #expect(sample.value?.state == .unknown("mystery"))
     let encoded = String(decoding: try JSONEncoder().encode(sample.value), as: UTF8.self)

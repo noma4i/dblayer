@@ -199,21 +199,21 @@ impl Inner {
     }
 
     pub(crate) fn preload_start(self: &Arc<Self>) {
-        if !self.admitted(crate::lifecycle::Origin::Session) { return; }
+        let Some(epoch) = self.waking_epoch() else { return };
         if let Ok(runtime) = Handle::try_current() { let _ = self.preload.runtime.set(runtime); }
-        {
-            let state = locked(&self.preload.state);
-            if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
-        }
         let Some(runtime) = Handle::try_current().ok().or_else(|| self.preload.runtime.get().cloned()) else { return };
-        let Ok(admitted) = self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "preload") else { return };
         {
             let mut state = locked(&self.preload.state);
-            if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { drop(state); drop(admitted); return; }
+            if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
             state.running = true;
         }
+        let lifecycle = self.db.shared.store.lifecycle.clone();
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
+            let Some(admitted) = lifecycle.admit_after_transition(crate::lifecycle::Origin::Session, "preload", epoch).await else {
+                if let Some(inner) = inner.upgrade() { locked(&inner.preload.state).running = false; }
+                return;
+            };
             while let Some(inner) = inner.upgrade() {
                 if !inner.preload_take() { return; }
                 if admitted.run(inner.preload_windows_in_epoch(&admitted)).await.is_err() {

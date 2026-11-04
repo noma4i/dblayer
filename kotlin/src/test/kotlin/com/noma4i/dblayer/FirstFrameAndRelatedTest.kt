@@ -33,8 +33,8 @@ class FirstFrameAndRelatedTest {
     @Test
     fun theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows() = bounded {
         reopen(Config(null, null, 32u), modelsJSON, MockTransport())
-        val ann = User.create(name = "Ann")
-        val seats = listOf(Presence.create(userId = ann.id, room = "r"), Presence.create(userId = ann.id, room = "r"))
+        val ann = User.create(name = "Ann").optimisticValue!!
+        val seats = listOf(Presence.create(userId = ann.id, room = "r").optimisticValue!!, Presence.create(userId = ann.id, room = "r").optimisticValue!!)
         val scope = AccountScope.current()
         val sink = FirstFrameSink(Thread.currentThread())
         try {
@@ -61,9 +61,9 @@ class FirstFrameAndRelatedTest {
         reopen(Config(null, null, 32u), modelsJSON, MockTransport())
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            val ann = User.create(name = "Ann")
-            val bob = User.create(name = "Bob")
-            val seat = Presence.create(userId = ann.id, room = "r")
+            val ann = User.create(name = "Ann").optimisticValue!!
+            val bob = User.create(name = "Bob").optimisticValue!!
+            val seat = Presence.create(userId = ann.id, room = "r").optimisticValue!!
             val related = Projected(AccountScope.current().related(Presence.where(Condition.equal("room", jsonValue("r"))), Presence.Relations.user), User, screen)
             related.loaded()
 

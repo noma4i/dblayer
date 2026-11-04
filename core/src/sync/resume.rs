@@ -175,11 +175,14 @@ impl Sync {
 
 impl Inner {
     pub(crate) fn resume_on_event(self: &Arc<Self>) {
-        if self.connectivity.is_online() {
-            if let Ok(admitted) = self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "resume") {
-                let _ = self.request_resume(&admitted, Cause::Event, None);
-            }
-        }
+        if !self.connectivity.is_online() { return; }
+        let (Ok(runtime), Some(epoch)) = (Handle::try_current(), self.waking_epoch()) else { return };
+        let lifecycle = self.db.shared.store.lifecycle.clone();
+        let inner = Arc::downgrade(self);
+        crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
+            let Some(admitted) = lifecycle.admit_after_transition(crate::lifecycle::Origin::Session, "resume", epoch).await else { return };
+            if let Some(inner) = inner.upgrade() { let _ = inner.request_resume(&admitted, Cause::Event, None); }
+        }));
     }
 
     pub(crate) fn begin_resume(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<Runner> {

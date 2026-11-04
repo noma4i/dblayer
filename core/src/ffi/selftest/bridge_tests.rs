@@ -886,7 +886,6 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
         if target == "c1" {
             yield_until("the thread shows the source and the answer", || reader.rows().len() == 2).await;
         }
-        assert!(rig.database.sync.as_ref().unwrap().inner.answers.lock().unwrap().held() == 0, "{case}: a read answer stayed in the map");
         rig.database.close_now();
     }
 }

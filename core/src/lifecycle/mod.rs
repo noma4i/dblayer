@@ -484,6 +484,17 @@ impl Lifecycle {
         changes.wait_for(|published| published.closed || published.admits(origin)).await.is_ok_and(|published| !published.closed)
     }
 
+    /// Admits the work a wake starts in the session epoch it was woken in. A transition that keeps that epoch delays the work to its end instead of dropping it.
+    pub(crate) async fn admit_after_transition(self: &Arc<Self>, origin: Origin, target: &'static str, epoch: u64) -> Option<Admitted> {
+        let mut changes = self.changed.subscribe();
+        loop {
+            if let Ok(admitted) = self.admit_as(origin, target, false, Some(epoch)) { return Some(admitted); }
+            let waiting = { let published = changes.borrow_and_update(); !published.closed && published.transition.is_some() && published.session_epoch == epoch };
+            if !waiting { return None; }
+            changes.changed().await.ok()?;
+        }
+    }
+
     /// The work that holds a lease now, for a report that names what a wait is waiting for.
     pub(crate) fn held(&self) -> Vec<String> {
         let state = crate::db::locked(&self.state);

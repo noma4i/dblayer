@@ -28,7 +28,7 @@ extension BridgeProbeTests {
     for fields in try vectors() {
       let label = fields["name"]!.stringValue!
       let values = fields["attachment"].map { JSONValue.object(["attachment": $0]) } ?? .object([:])
-      let wire = try await database.create(epoch: database.sessionEpoch(), model: "UnionSample", valuesJson: values.text, argsJson: "{}")
+      let wire = try await database.create(epoch: database.sessionEpoch(), model: "UnionSample", valuesJson: values.text, argsJson: "{}").optimisticValue!
       let sample = try UnionSample.decode(wire)
       let encoded = try sample.attachment.map { try JSONValue.encode($0) } ?? .null
       #expect(withoutNullKeys(encoded) == withoutNullKeys(fields["output"]!), Comment(rawValue: label))
@@ -43,20 +43,20 @@ extension BridgeProbeTests {
   func typedVariantsAreWrittenReadSwitchedAndKeptWhenUnknown() async throws {
     _ = try await open()
     let reward = RecordAttachment.reward(RewardAttachment(id: "g2", tier: "silver", status: nil, tags: ["x"]))
-    let created = try await UnionSample.create(attachment: reward, props: .emoji(MomentEmojiProps(emoji: "fire")))
+    let created = try await UnionSample.create(attachment: reward, props: .emoji(MomentEmojiProps(emoji: "fire"))).optimisticValue!
     #expect(created.attachment == reward && created.props == .emoji(MomentEmojiProps(emoji: "fire")))
 
     let reaction = RecordAttachment.reaction(ReactionAttachment(body: "+1"))
-    let switched = try await created.update(attachment: reaction)
+    let switched = try await created.update(attachment: reaction).optimisticValue!
     #expect(switched.attachment == reaction && switched.props == created.props)
 
     let future = RecordAttachment.unknown(typename: "FutureAttachment")
-    let kept = try await switched.update(attachment: future)
+    let kept = try await switched.update(attachment: future).optimisticValue!
     #expect(kept.attachment == future)
-    let again = try await kept.update(label: "renamed")
+    let again = try await kept.update(label: "renamed").optimisticValue!
     #expect(again.attachment == future && again.label == "renamed")
 
-    let none = try await UnionSample.create()
+    let none = try await UnionSample.create().optimisticValue!
     #expect(none.attachment == nil && none.props == nil)
   }
 
@@ -130,9 +130,9 @@ extension BridgeProbeTests {
     _ = try await open(transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]"#)
 
-    let local = try await Record.send(in: DB.account(), containerId: "c", authorId: "u1", text: "hi").row
-    #expect(local.attachment == nil)
-    try await local.settled(action: nil)
-    #expect(try await Record.find(local.confirmedId()).current()?.attachment == .moment(MomentAttachment(momentId: "m9", caption: "look")))
+    let sent = try await Record.send(in: DB.account(), containerId: "c", authorId: "u1", text: "hi")
+    #expect(sent.optimisticValue?.attachment == nil)
+    let confirmed = try await sent.confirmed()
+    #expect(try await Record.find(confirmed.id).current()?.attachment == .moment(MomentAttachment(momentId: "m9", caption: "look")))
   }
 }

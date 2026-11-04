@@ -38,7 +38,7 @@ class ClockExpiryTest {
         val inbox = Channel<List<Presence>>(Channel.UNLIMITED)
         val collection = launch { Presence.where(Presence.room eq "lobby").live.flow.collect { inbox.send(it) } }
         assertTrue(inbox.receive().isEmpty())
-        val presence = Presence.create(userId = "u1", room = "lobby")
+        val presence = Presence.create(userId = "u1", room = "lobby").optimisticValue!!
         assertEquals(1, inbox.receive().size)
 
         clock.advance(40_000L)

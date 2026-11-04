@@ -64,3 +64,20 @@ async fn closing_the_database_ends_an_answer_wait_for_a_pending_operation() {
     rig.sync.close();
     assert!(crate::test_wait::within(waiting).await.unwrap().is_err(), "an answer wait outlived the close");
 }
+
+#[tokio::test]
+async fn a_flush_woken_during_a_model_reset_sends_the_queued_write_once_after_the_reset() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "t"));
+    rig.sync.set_online(false);
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &crate::identity::RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
+    rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
+    let lifecycle = rig.db.shared.store.lifecycle.clone();
+    let permit = lifecycle.begin_blocking(crate::lifecycle::Boundary::Models, None).unwrap();
+    rig.sync.set_online(true);
+    rig.db.reset_in(&permit, &["users"]).unwrap();
+    permit.finish();
+    crate::test_wait::within(rig.transport.await_calls("UpdateMoment", 1)).await;
+    crate::test_wait::yield_until("the update left the outbox", || rig.db.outbox().unwrap().is_empty()).await;
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
+}

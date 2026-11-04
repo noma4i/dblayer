@@ -5,6 +5,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.decodeFromString
 const val HANG_GUARD_MILLIS = 60_000L
 fun <T> bounded(timeoutMillis: Long = HANG_GUARD_MILLIS * 2, body: suspend CoroutineScope.() -> T): T = runBlocking {
     try {
@@ -29,3 +30,13 @@ suspend fun <T> awaitWithin(what: String, block: suspend () -> T): T = try {
 private fun threadStacks(): String = Thread.getAllStackTraces().entries
     .sortedBy { it.key.name }
     .joinToString("\n") { (thread, frames) -> "\"${thread.name}\" ${thread.state}\n" + frames.joinToString("\n") { "    at $it" } }
+
+suspend fun <Model : DBModel> MutationReceipt<Model>.confirmed(): Model =
+    requireNotNull(outcome().confirmedValue) { "the operation was not confirmed" }
+
+suspend inline fun <reified Answer> MutationReceipt<*>.answer(): Answer {
+    val confirmed = outcome() as? OperationOutcome.Confirmed<*> ?: error("the operation was not confirmed")
+    return dbJson.decodeFromString<Answer>(requireNotNull(confirmed.answerJson) { "the operation has no answer" })
+}
+
+suspend fun MutationReceipt<*>.refusal(): WireFailure = (outcome() as? OperationOutcome.Rejected)?.failure ?: error("the operation was not refused")

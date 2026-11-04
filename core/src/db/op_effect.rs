@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
@@ -100,34 +98,4 @@ pub(crate) fn read_prior(connection: &Connection, sequence: i64) -> Result<Optio
     let rows = crate::nodes::read_trees(connection, "op_effect_value", &["seq", "position"], "seq = ?1", &[SqlValue::Integer(sequence)])?;
     if rows.is_empty() { return Ok(None) }
     Ok(Some(serde_json::json!({ "rows": rows.into_iter().map(|(_, value)| value).collect::<Vec<_>>() })))
-}
-
-pub(crate) fn rebuild_operation_effects(connection: &Connection, models: &BTreeMap<String, crate::store::ModelInfo>) -> Result<(), StoreError> {
-    let operations = crate::operation::open_operations(connection)?;
-    for operation in operations {
-        let Some((model, action)) = crate::operation::Operation::split_action_key(&operation.action_key) else { continue };
-        let Some(info) = models.get(&model) else { continue };
-        let Some(receiver) = operation.row_ids.first() else { continue };
-        let reader = crate::store::Reader::new(connection, models);
-        if reader.point(&model, receiver.as_str())?.is_none() { continue; }
-        let Some(declaration) = info.spec.actions.iter().find(|declared| declared.name == action) else { continue };
-        let input = crate::operation::read_value(connection, operation.id.0, "input")?.unwrap_or(Value::Null);
-        let args = input.as_object().ok_or_else(|| StoreError::Constraint(format!("{} has no input object", operation.action_key)))?;
-        let own = crate::identity::RowRef::new(crate::identity::ModelKey::new(&model), receiver.clone());
-        let mut rows = Vec::new();
-        let mut scopes = Vec::new();
-        for effect in &declaration.scope_effects {
-            let target = models.get(&effect.model).ok_or_else(|| StoreError::UnknownModel(effect.model.clone()))?;
-            super::local_write::plan_scope_effect(&reader, &target.spec, effect, (&own, args), &mut rows, &mut scopes).map_err(|error| StoreError::Constraint(error.to_string()))?;
-        }
-        if rows.is_empty() { continue; }
-        let revision = reader.revision_seq()? + 1;
-        if !scopes.is_empty() {
-            let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Optimistic, crate::identity::Generation::INITIAL);
-            envelope.scope_ops = scopes;
-            crate::store::apply_envelope(connection, models, &envelope, operation.created_at)?;
-        }
-        write_prior(connection, operation.id.0, revision, Some(&Prior { rows }.to_value()))?;
-    }
-    Ok(())
 }

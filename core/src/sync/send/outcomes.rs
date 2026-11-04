@@ -83,6 +83,9 @@ impl Outcomes {
 
     /// Operations that a commit ended outside a send: the send settles its own operation with the answer it read.
     pub(crate) fn committed(&mut self, result: &crate::commit::CommitResult) -> Vec<(Arc<OutcomeTicket>, SendResult)> {
+        for (sequence, item) in &result.discarded_items {
+            if let Some(ticket) = self.ticket(*sequence) { ticket.discard_item(item.clone()); }
+        }
         let uploads = result.ended_uploads.iter().map(|(sequence, phase, error)| (*sequence, upload_result(*phase, error.as_ref())));
         let operations = result.queue_operations.iter().filter_map(|(sequence, entry)| ended_result(entry.as_ref()).map(|ended| (*sequence, ended)));
         let mut ended = Vec::new();

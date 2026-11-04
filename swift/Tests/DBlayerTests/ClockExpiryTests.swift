@@ -31,7 +31,7 @@ extension BridgeProbeTests {
     let clock = try await DB.openTesting(transport: MockTransport(), modelsJSON: modelsJSON)
     let lobby = Cursor(try await Presence.where(Presence.room == "lobby").live.stream())
     #expect(await lobby.next()?.isEmpty == true)
-    let presence = try await Presence.create(userId: "u1", room: "lobby")
+    let presence = try await Presence.create(userId: "u1", room: "lobby").optimisticValue!
     #expect(await lobby.first("the presence row") { !$0.isEmpty } != nil)
 
     clock.advance(by: 40)

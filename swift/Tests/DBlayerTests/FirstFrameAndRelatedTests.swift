@@ -28,8 +28,8 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
-    let ann = try await User.create(name: "Ann")
-    let seats = [try await Presence.create(userId: ann.id, room: "r"), try await Presence.create(userId: ann.id, room: "r")]
+    let ann = try await User.create(name: "Ann").optimisticValue!
+    let seats = [try await Presence.create(userId: ann.id, room: "r").optimisticValue!, try await Presence.create(userId: ann.id, room: "r").optimisticValue!]
     let scope = try DB.account()
     let sink = FirstFrameSink()
 
@@ -49,9 +49,9 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
-    let ann = try await User.create(name: "Ann")
-    let bob = try await User.create(name: "Bob")
-    let seat = try await Presence.create(userId: ann.id, room: "r")
+    let ann = try await User.create(name: "Ann").optimisticValue!
+    let bob = try await User.create(name: "Bob").optimisticValue!
+    let seat = try await Presence.create(userId: ann.id, room: "r").optimisticValue!
     let related = Projected<User>(try DB.account().related(Presence.where(.equal("room", .string("r"))), Presence.Relations.user))
     try await related.loaded()
 

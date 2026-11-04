@@ -96,7 +96,8 @@ A stream whose source cannot be connected ends once with the `invalid` outcome.
 It works without a network and after the app closed.
 The row shows in the stream with its sync state.
 The server confirms it and the temporary id becomes the real id at the same position.
-`status()` is the value now. `outcome()` waits for the one final value.
+The receipt carries the optimistic row and the revision of the local commit.
+`outcome()` waits for the one result of that operation: confirmed, rejected, delivery unknown or interrupted.
 
 ```swift
 let sent = try await scope.send(Message.self, values: ["text": .string("hi")])
@@ -119,15 +120,15 @@ Any other action needs the network: it fails at once while the network is away a
 Every command, one-off read and blob call carries the epoch of an account.
 Pass the scope of the account: a call of an account that left ends as `Interrupted` and changes nothing for the next account.
 Without the argument the call belongs to the account that is signed in when it is called.
-A create that the server answers, such as a new group, needs the network and returns the confirmed row.
+A create that the server answers, such as a new group, needs the network and returns a receipt with the optimistic row. Its `outcome()` carries the confirmed row.
 
 ```swift
-let group = try await Chat.create(name: "Friends", userIds: ids, in: scope)
+let group = try await Chat.create(name: "Friends", userIds: ids, in: scope).outcome().confirmedValue
 let rows = try await Chat.list.read(in: scope)
 ```
 
 ```kotlin
-val group = Chat.create(name = "Friends", userIds = ids, account = scope)
+val group = Chat.create(name = "Friends", userIds = ids, account = scope).outcome().confirmedValue
 val rows = Chat.list.read(scope)
 ```
 

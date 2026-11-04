@@ -12,7 +12,7 @@ private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed(
 
 private final class RefusedRetry: Database, @unchecked Sendable {
   override func sessionEpoch() -> UInt64 { 1 }
-  override func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
+  override func retry(epoch: UInt64, model: String, rowId: String, action: String?) async throws -> WireOperationReceipt { throw DbError.Invalid(detail: "retry refused") }
   override func retryAll(epoch: UInt64) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
 }
 
@@ -21,7 +21,7 @@ extension BridgeProbeTests {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
     let real = try DB.database
     defer { DB.current = real }
-    let row = try await Moment.send(in: DB.account(), text: "saved").row
+    let row = try await Moment.send(in: DB.account(), text: "saved").optimisticValue!
     DB.current = RefusedRetry(noHandle: .init())
     await #expect(throws: DbError.self) { try await row.retry(action: nil) }
     await #expect(throws: DbError.self) { try await DB.retryAll() }
@@ -42,7 +42,7 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)), arguments: sessionCodes)
-  func aSessionCodeArrivesTypedThroughALoadAnOperationCallAndASettledMutation(_ code: SessionCode) async throws {
+  func aSessionCodeArrivesTypedThroughALoadAnOperationCallAndAMutationOutcome(_ code: SessionCode) async throws {
     let transport = MockTransport()
     try await openSealedRig(transport)
     let failure = DbError.Session(code: code, detail: "\(code)")
@@ -64,12 +64,7 @@ extension BridgeProbeTests {
     }
 
     transport.enqueue("CreateMoment", failure: failure)
-    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).row
-    do {
-      try await local.settled(action: nil)
-      Issue.record("\(code): settled did not throw")
-    } catch {
-      #expect(sealedCode(error, "settled \(code)") == code)
-    }
+    let sent = try await Moment.send(in: DB.account(), text: "hello", media: nil)
+    #expect(try await sent.refusal().sessionCode == code, "outcome \(code)")
   }
 }

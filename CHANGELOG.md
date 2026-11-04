@@ -38,6 +38,10 @@
 - A blob reads its status stream while the scope of its reader lives (Kotlin).
 - A list stream no longer keeps a warm observer after its reader left; `retainedObservers` counts the observers of `warm`.
 - Projections, count streams and event streams report platform decode errors and source errors.
+- `create`, `update`, `act`, `destroy`, `send` and `upload` return a receipt with the optimistic value, revision and outcome.
+- `uploadBatch` returns one receipt whose items keep their client keys and confirmed rows.
+- `retry` of a record returns the receipt of the retried operation.
+- A rejected outcome carries the session code of a session refusal.
 - A durable send that failed on the network goes out at once when the network returns.
 - `refresh`, `loadMore` and a one-off load fail at once with the network error while offline, and the stream state shows it.
 - An action whose answer carries another row returns that row in its outcome and leaves the receiver unchanged.
@@ -60,6 +64,9 @@
 
 ### Fixed
 - `sessionResume` finishes a logout whose credential could not be cleared, and clears it.
+- An older list answer no longer undoes a newer join or leave.
+- An operation removed, discarded or failed outside its send ends the outcome of its receipt.
+- A flush, load retry, preload, resume or upload cleanup woken during a model reset runs once after it.
 - A stream reader receives the exact count of dropped deliveries, also when the stream ends.
 - A model event count the buffer dropped reaches the reader in full.
 - A window opened after a failed load of its query no longer shows that error.
@@ -87,6 +94,7 @@
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.
+- `settled`, `confirmedId`, `ActionAnswer`, `Sent`, `CommandStatus`, `commandStatus` and `commandOutcome`: use the receipt outcome.
 - `resetForTesting`, `settleForTesting` and `testing_busy`.
 - iCloud and Google Drive sync, the `cloud` model attribute and `CloudLink`.
 - `LiveWindow`, `Window`, `expand` and `Query.window`.

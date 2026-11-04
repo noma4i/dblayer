@@ -9,8 +9,8 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
     let input = #"{"default":"nested","when":"now","class":"kind","container":"box","r":"reader"}"#
     let nested = try JSONDecoder().decode(KeywordValue.self, from: Data(input.utf8))
-    let created = try await KeywordRecord.create(default: "row", class: "selected", value: nested)
-    let updated = try await created.update(default: "changed")
+    let created = try await KeywordRecord.create(default: "row", class: "selected", value: nested).optimisticValue!
+    let updated = try await created.update(default: "changed").optimisticValue!
     let rows = try await KeywordRecord.when("selected").live.current()
     let row = try #require(rows.first)
     #expect(rows.count == 1 && row.id == updated.id && row.default == "changed" && row.class == "selected")

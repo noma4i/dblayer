@@ -23,8 +23,8 @@ class BridgeProbeTest {
     fun aReactionUsesItsDeclaredKeyAcrossGeneratedValuesAndCells() = bounded {
         openRecordSession()
         val initial = settledRecord()
-        val row = initial.update(reactions = listOf(RecordReactionNode(body = "A", userId = "u1")))
-        val changed = row.react(reactionBody = "C", userId = "u1")
+        val row = initial.update(reactions = listOf(RecordReactionNode(body = "A", userId = "u1"))).optimisticValue!!
+        val changed = row.react(reactionBody = "C", userId = "u1").optimisticValue!!
         assertEquals(listOf("u1"), changed.reactions.map { it.userId })
         assertEquals(listOf("C"), changed.reactions.map { it.body })
     }
@@ -32,19 +32,19 @@ class BridgeProbeTest {
     @Test
     fun anOptimisticReactionCarriesTheNestedUserOfTheLocalRow() = bounded {
         openRecordSession()
-        val ann = User.create(name = "Ann")
+        val ann = User.create(name = "Ann").optimisticValue!!
         val record = settledRecord()
-        val withUser = record.react(reactionBody = "A", userId = ann.id)
+        val withUser = record.react(reactionBody = "A", userId = ann.id).optimisticValue!!
         assertEquals("Ann", withUser.reactions.first().user?.name)
-        val withoutUser = record.react(reactionBody = "B", userId = "nobody")
+        val withoutUser = record.react(reactionBody = "B", userId = "nobody").optimisticValue!!
         assertNull(withoutUser.reactions.first { it.userId == "nobody" }.user)
     }
 
     @Test
     fun aSearchPassesWholeWordsToTheCore() = bounded {
         reopenSigned(Config(null, null, 32u), modelsJSON)
-        Moment.send(AccountScope.current(), text = "hello world").row
-        Moment.send(AccountScope.current(), text = "hel").row
+        Moment.send(AccountScope.current(), text = "hello world").optimisticValue!!
+        Moment.send(AccountScope.current(), text = "hel").optimisticValue!!
         val whole = Query("Moment", Moment).search("hel", wholeWords = true)
         assertEquals(listOf("hel"), withTimeout(5000) { whole.live.flow.first { it.isNotEmpty() } }.map { it.text })
     }
@@ -53,7 +53,7 @@ class BridgeProbeTest {
     fun aWarmQueryAnswersFromMemoryAndAFinishedLiveReadLeavesNothingWarm() = bounded {
         reopenSigned(Config(null, null, 32u), modelsJSON)
         assertNull(Moment.recent.cached())
-        val moment = Moment.send(AccountScope.current(), text = "m").row
+        val moment = Moment.send(AccountScope.current(), text = "m").optimisticValue!!
         Moment.recent.warm()
         val warm = Moment.recent.cached()!!
         assertEquals(listOf(moment.id), warm.value.map { it.id })
@@ -61,7 +61,7 @@ class BridgeProbeTest {
         assertNull(Moment.recent.cachedRow("ghost"))
         reopenSigned(Config(null, null, 32u), modelsJSON)
         assertNull(Moment.recent.cached())
-        Moment.send(AccountScope.current(), text = "n").row
+        Moment.send(AccountScope.current(), text = "n").optimisticValue!!
         assertEquals(1, withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.size)
         eventually("a finished live read leaves nothing warm") { Moment.recent.cached() == null }
     }
@@ -96,7 +96,7 @@ class BridgeProbeTest {
         reopenSigned(Config(null, null, 32u), modelsJSON)
         val live = Moment.recent.live.flow
         assertEquals(emptyList<Moment>(), withTimeout(5000) { live.first() })
-        val moment = Moment.send(AccountScope.current(), text = "m").row
+        val moment = Moment.send(AccountScope.current(), text = "m").optimisticValue!!
         assertEquals("m", withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first().text)
         moment.setLocal("tone", kotlinx.serialization.json.JsonPrimitive("warm"))
         assertEquals("warm", withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.tone == "warm" } }.first().tone)
@@ -182,16 +182,15 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun confirmedIdWaitsForTheServerIdOfALocalCreate() = bounded {
+    fun theOutcomeOfASentCreateCarriesTheServerId() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
 
-        val local = Moment.send(AccountScope.current(), text = "hello", media = null).row
-        assertEquals(true, local.id.startsWith("temp"))
-        withTimeout(5000) { local.settled(null) }
-        assertEquals("m77", withTimeout(5000) { local.confirmedId() })
+        val sent = Moment.send(AccountScope.current(), text = "hello", media = null)
+        assertEquals(true, sent.optimisticValue?.id?.startsWith("temp"))
+        assertEquals("m77", withTimeout(5000) { sent.confirmed() }.id)
     }
 
     @Test
@@ -204,7 +203,7 @@ class BridgeProbeTest {
         val list = Projected(AccountScope.current().stream(Moment.recent), Moment, listScope)
         list.loaded()
 
-        val local = Moment.send(AccountScope.current(), text = "hello", media = null).row
+        val local = Moment.send(AccountScope.current(), text = "hello", media = null).optimisticValue!!
         val projection = withTimeout(5000) { list.projection.first { it.temporaryIds.containsKey("m77") } }
 
         assertEquals(local.id, projection.temporaryIds["m77"])
@@ -221,11 +220,12 @@ class BridgeProbeTest {
 
         val values = kotlinx.serialization.json.buildJsonObject { put("text", kotlinx.serialization.json.JsonPrimitive("hello")) }
         val request = UploadRequest(file.path, variables = values)
-        val local = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request)).row
+        val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request))
+        val local = receipt.optimisticValue!!
 
         assertEquals(true, local.id.startsWith("temp"))
         assertEquals(true, local.uploads["upload_clip"] != null)
-        assertEquals("m77", withTimeout(5000) { local.confirmedId() })
+        assertEquals("m77", withTimeout(5000) { receipt.confirmed() }.id)
         val sent = transport.calls.filter { it.operationName == "CreateMoment" }
         assertEquals(1, sent.size)
         assertEquals(true, sent.first().variablesJson.contains("\"signedId\":\"sid\""))

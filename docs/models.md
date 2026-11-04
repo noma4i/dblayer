@@ -78,7 +78,7 @@ Nullable fields with defaults retain an explicit null marker, so reopening prese
 
 ### GraphQL errors
 
-GraphQL failures expose `extensions` on Swift `DbError.Graphql` and Kotlin `DbException.Graphql`, including failures from `settled(action)`.
+GraphQL failures expose `extensions` on Swift `DbError.Graphql` and Kotlin `DbException.Graphql`. A refused mutation carries them in the `failure` of its rejected outcome.
 `GraphqlExtensions.code` is the optional server string, such as `REFUSED`.
 `transactionDisposition` is an optional `TransactionDisposition`: `finish` / `Finish`, `keep` / `Keep`, or `unknown(value:)` / `Unknown(value)`.
 Unknown values retain their original text, just like model enums.

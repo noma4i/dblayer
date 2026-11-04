@@ -32,18 +32,18 @@ class GraphqlExtensionsTest(private val queued: Boolean) {
             val extra = text?.let { """, "transactionDisposition":"$it"""" }.orEmpty()
             val response = """{"errors":[{"message":"refused","extensions":{"code":"$code"$extra,"detail":"refused","limit":3,"context":{"values":[true,null,2]}}},{"message":"secondary","extensions":{"code":"SECONDARY","transactionDisposition":"KEEP"}}]}"""
             transport.enqueue(operation, response)
-            val error = runCatching {
-                withTimeout(5000) {
-                    if (queued) {
-                        val row = database.send(CommandRequest(database.sessionEpoch(), "Moment", """{"text":"hello","media":null}""", "{}", null)).row
-                        database.settled(database.sessionEpoch(), "Moment", row.id, null)
-                    } else database.run(database.sessionEpoch(), operation, "{}")
+            val extensions = withTimeout(5000) {
+                if (queued) {
+                    val receipt = database.send(CommandRequest(database.sessionEpoch(), "Moment", """{"text":"hello","media":null}""", "{}", null))
+                    (database.outcome(receipt) as? WireOperationOutcome.Rejected ?: throw AssertionError("the refused purchase was not rejected")).failure.extensions
+                } else {
+                    (runCatching { database.run(database.sessionEpoch(), operation, "{}") }.exceptionOrNull() as? DbException.Graphql ?: throw AssertionError("the refused purchase did not throw Graphql")).extensions
                 }
-            }.exceptionOrNull() as? DbException.Graphql ?: throw AssertionError("the refused purchase did not throw Graphql")
-            assertEquals(code, error.extensions?.code)
-            assertEquals(disposition, error.extensions?.transactionDisposition)
-            assertEquals(mapOf("detail" to "\"refused\"", "limit" to "3", "context" to """{"values":[true,null,2]}"""), error.extensions?.fields)
-            val failure = OperationFailure("rejected", "refused", error.extensions)
+            }
+            assertEquals(code, extensions?.code)
+            assertEquals(disposition, extensions?.transactionDisposition)
+            assertEquals(mapOf("detail" to "\"refused\"", "limit" to "3", "context" to """{"values":[true,null,2]}"""), extensions?.fields)
+            val failure = OperationFailure("rejected", "refused", extensions)
             val restored = dbJson.decodeFromString(OperationFailure.serializer(), dbJson.encodeToString(OperationFailure.serializer(), failure))
             assertEquals(code, restored.extensions?.code)
             assertEquals(disposition, restored.extensions?.transactionDisposition)

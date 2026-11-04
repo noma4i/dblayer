@@ -84,11 +84,11 @@ extension BridgeProbeTests {
     let button = SampleElement.button(SampleButton(id: "b1", children: [], press: .openProfile(SampleOpenProfileAction(userId: "u1")), label: .textLiteral(SampleTextLiteral(text: "Go"))))
     let pressable = SampleElement.pressable(SamplePressable(id: "p1", children: ["b1"]))
     let spec = SampleSpec(root: "b1", elements: [button, pressable, .unknown(typename: "SampleFuture")], state: [])
-    let created = try await InterfaceRecord.create(slug: "local", spec: spec)
+    let created = try await InterfaceRecord.create(slug: "local", spec: spec).optimisticValue!
     #expect(created.spec?.elements == [button, pressable, .unknown(typename: "SampleFuture")])
 
     let spacer = SampleElement.spacer(SampleSpacer(id: "b1", children: [], length: .numberLiteral(SampleNumberLiteral(number: 2))))
-    let changed = try await created.update(spec: SampleSpec(root: "b1", elements: [spacer], state: []))
+    let changed = try await created.update(spec: SampleSpec(root: "b1", elements: [spacer], state: [])).optimisticValue!
     #expect(changed.spec?.elements == [spacer])
     #expect(try await InterfaceRecord.find(created.id).current()?.spec?.elements == [spacer])
   }

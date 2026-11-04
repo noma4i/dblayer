@@ -138,13 +138,11 @@ extension BridgeProbeTests {
 
     let sent = try await scope.send(Moment.self, values: ["text": .string("hello")])
     await eventually("the thread shows the queued message") { thread.rows.count == 1 }
-    #expect(thread.rows[0].id == sent.row.id && thread.rows[0].sync.state == .pending)
-    #expect(try sent.status() == .queued)
+    #expect(thread.rows[0].id == sent.optimisticValue?.id && thread.rows[0].sync.state == .pending)
     #expect(server.operationRequests("CreateMoment") == 0)
 
     try DB.database.setOnline(online: true)
-    let outcome = try await sent.outcome()
-    #expect(outcome == .delivered(id: "m1"))
+    #expect(try await sent.confirmed().id == "m1")
     await eventually("the thread shows the confirmed message") { thread.rows.first?.id == "m1" }
 
     #expect(thread.rows.count == 1, "one message, not a temporary row and a confirmed row")
@@ -208,7 +206,7 @@ extension BridgeProbeTests {
     let thread = Projected<Moment>(try scope.stream(Moment.recent))
     let profile = Projected<User>(try scope.stream(User.profile))
     try await thread.loaded()
-    var first: [Sent<Moment>] = []
+    var first: [MutationReceipt<Moment>] = []
     for number in 1...5 { first.append(try await scope.send(Moment.self, values: ["text": .string("m\(number)")])) }
     for sent in first { _ = try await sent.outcome() }
     await eventually("the thread holds five confirmed rows") { thread.rows.count == 5 && thread.rows.allSatisfy { $0.sync.state == .synced } }
@@ -260,13 +258,12 @@ extension BridgeProbeTests {
     try DB.database.setOnline(online: false)
     let sent = try await scope.send(Moment.self, values: ["text": .string("queued")])
     let waiting = Task { try await sent.outcome() }
-    #expect(try sent.status() == .queued)
 
     try await DB.sessionReset()
-    #expect(try await waiting.value == .ended)
+    guard case .interrupted = try await waiting.value else { Issue.record("the outcome did not end with the session"); return }
     try DB.database.setOnline(online: true)
     try await Self.signIn("B")
-    #expect(try sent.status() == .ended, "a receipt of A answered in the epoch of B")
+    guard case .interrupted = try await sent.outcome() else { Issue.record("a receipt of A answered in the epoch of B"); return }
   }
 
   /// B12: a stream whose source cannot be connected ends once with the invalid outcome and leaves nothing open.

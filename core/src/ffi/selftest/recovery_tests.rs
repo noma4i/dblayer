@@ -7,7 +7,7 @@ use serde_json::json;
 
 use super::rig_tests::{bound, named_bound, Gate};
 use crate::ffi::encrypted_tests::ThroughServer;
-use crate::ffi::sealed_errors_tests::{moment_spec, session, signed_in};
+use crate::ffi::sealed_errors_tests::{moment_spec, signed_in};
 use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, SessionCode, SubscriptionSink, Transport, TransportRequest};
@@ -74,8 +74,8 @@ async fn a_data_reset_between_a_refused_pending_request_and_the_session_reset_ke
     rig.server.reply_with(json!({ "makeMoment": { "id": "42", "text": "hello" } }));
     let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
     rig.server.refuse_next("UNAUTHENTICATED", false);
-    let refused = bound(database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None)).await.unwrap_err();
-    assert_eq!(session(refused).0, SessionCode::Unauthenticated);
+    let refused = bound(database.refusal_of(row)).await;
+    assert_eq!(refused.session_code, Some(SessionCode::Unauthenticated));
 
     database.db.reset_all().unwrap();
     let blocked = bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap_err();
@@ -199,17 +199,18 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         let epoch = database.session_epoch();
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));
+        let mut receipts = Vec::new();
         for id in ["42", "43"] {
             let source = directory.path().join(format!("{id}.mp4"));
             std::fs::write(&source, b"abc").unwrap();
-            named_bound(&format!("upload {id}"), database.upload(database.session_epoch(), "Moment".into(), id.into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())))).await.unwrap();
+            receipts.push(named_bound(&format!("upload {id}"), database.upload(database.session_epoch(), "Moment".into(), id.into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())))).await.unwrap());
         }
         gate.entered_for("the first PUT").await;
-        let waiters: Vec<_> = ["42", "43"].into_iter().map(|id| {
+        let waiters: Vec<_> = receipts.into_iter().map(|receipt| {
             let database = database.clone();
             let (started, ready) = tokio::sync::oneshot::channel();
             let task = tokio::spawn(async move {
-                let mut waiting = Box::pin(database.settled(database.session_epoch(), "Moment".into(), id.into(), None));
+                let mut waiting = Box::pin(database.outcome(receipt));
                 let mut started = Some(started);
                 std::future::poll_fn(|context| {
                     let result = waiting.as_mut().poll(context);
@@ -231,8 +232,8 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         assert!(matches!(refused, Err(DbError::NoSession { .. })));
 
         for (index, waiter) in tasks.into_iter().enumerate() {
-            let ended = named_bound(&format!("settled of upload {index}"), waiter).await.unwrap();
-            assert!(matches!(ended, Err(DbError::Interrupted { .. } | DbError::NoSession { .. })), "waiter {index} returned {ended:?}");
+            let ended = named_bound(&format!("outcome of upload {index}"), waiter).await.unwrap();
+            assert!(matches!(ended, Ok(crate::ffi::WireOperationOutcome::Interrupted)), "waiter {index} returned {ended:?}");
         }
         named_bound("second sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         for _ in 0..8 { gate.release(); }

@@ -42,12 +42,12 @@ class OptimisticReactionChainTest {
     @Test
     fun eachReactionOnTheRowOfThePreviousCallKeepsOtherUsersReactions() = bounded {
         openRecordSession(reactDelayMillis = 30_000, reacts = 4)
-        var reacted = settledRecord().react(reactionBody = "A", userId = "u1")
-        reacted = reacted.react(reactionBody = "B", userId = "u2")
-        reacted = reacted.react(reactionBody = "C", userId = "u1")
+        var reacted = settledRecord().react(reactionBody = "A", userId = "u1").optimisticValue!!
+        reacted = reacted.react(reactionBody = "B", userId = "u2").optimisticValue!!
+        reacted = reacted.react(reactionBody = "C", userId = "u1").optimisticValue!!
         assertEquals(listOf("u1" to "C", "u2" to "B"), reacted.reactions.map { it.userId to it.body })
 
-        reacted = reacted.react(reactionBody = "", userId = "u1")
+        reacted = reacted.react(reactionBody = "", userId = "u1").optimisticValue!!
         assertEquals(listOf("u2" to "B"), reacted.reactions.map { it.userId to it.body })
     }
 
