@@ -123,25 +123,56 @@ bash scripts/check_sequences.sh "$stage" --manifest "$manifest" || fail 'sequenc
 if [ "$consumers" = required ]; then
   bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" || fail 'app suites are red or incomplete: no tag'
 fi
-python3 -I - "$stage" "$version" "$manifest" "$consumers" "$(git rev-parse HEAD)" <<'RECEIPT'
+python3 -I - "$stage" "$version" "$manifest" "$consumers" "$(git rev-parse HEAD)" <<'RECEIPT' || fail 'lane reports are missing or incomplete: no tag'
 import hashlib, json, sys
 from pathlib import Path
 
 stage, version, manifest, consumers, commit = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
-def lanes(name):
+def refuse(message):
+    sys.exit(f"release: {message}")
+def rows(name):
     path = stage / name
-    rows = [line.split("\t") for line in path.read_text().splitlines()] if path.exists() else []
-    if name == "sequences.tsv":
-        return {row[0]: {"listed": int(row[1]), "passed": int(row[2]), "rc": row[3]} for row in rows}
-    return {row[0]: {"rc": row[1]} for row in rows}
+    if not path.is_file() or path.stat().st_size == 0:
+        refuse(f"{name} is missing or empty")
+    return [line.split("\t") for line in path.read_text().splitlines()]
+def lanes(name, required, width):
+    result = {}
+    for row in rows(name):
+        if len(row) < width or row[0] in result:
+            refuse(f"{name} has a malformed or repeated row: {row}")
+        result[row[0]] = row
+    if sorted(result) != sorted(required):
+        refuse(f"{name} lanes are {sorted(result)}, expected {sorted(required)}")
+    return result
+listed_by_lane = {}
+for line in Path(manifest).read_text().splitlines()[2:]:
+    cells = line.split("\t")
+    if len(cells) > 3:
+        listed_by_lane.setdefault(cells[2], set()).add(cells[3])
+sequences = {}
+for lane, row in lanes("sequences.tsv", ["core", "swift", "kotlin"], 4).items():
+    try:
+        listed, passed = int(row[1]), int(row[2])
+    except ValueError:
+        refuse(f"sequences.tsv lane {lane} has non-numeric counts: {row}")
+    expected = len(listed_by_lane.get(lane, ()))
+    if row[3] != "0" or listed == 0 or listed != expected or passed != listed:
+        refuse(f"sequences lane {lane} is incomplete: rc={row[3]} listed={listed} passed={passed} manifest={expected}")
+    sequences[lane] = {"listed": listed, "passed": passed, "rc": row[3]}
+consumer_lanes = {}
+if consumers == "required":
+    for lane, row in lanes("consumers.tsv", ["ios", "android"], 2).items():
+        if row[1] != "0":
+            refuse(f"consumers lane {lane} is red: rc={row[1]}")
+        consumer_lanes[lane] = {"rc": row[1]}
 receipt = {
     "version": version,
     "source_commit": commit,
     "manifest_sha256": hashlib.sha256(Path(manifest).read_bytes()).hexdigest(),
     "artifacts_sha256": {line.split("  ", 1)[1]: line.split("  ", 1)[0] for line in (stage / "SHA256SUMS").read_text().splitlines()},
-    "sequences": lanes("sequences.tsv"),
+    "sequences": sequences,
     "consumers": consumers,
-    "consumer_lanes": lanes("consumers.tsv"),
+    "consumer_lanes": consumer_lanes,
 }
 (stage / "RECEIPT.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
 RECEIPT

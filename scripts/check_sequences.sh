@@ -35,7 +35,7 @@ logs="$stage/sequence-logs"
 mkdir -p "$logs"
 tmp="$(mktemp -d)"
 trap '/bin/rm -rf "$tmp"' EXIT
-: > "$stage/sequences.tsv"
+: > "$stage/sequences.tsv" || fail 'cannot write sequences.tsv'
 
 # bounded <limit> <name> <command...>: the command runs in a build slot when the tool exists, with a step limit inside the slot.
 bounded() {
@@ -65,7 +65,7 @@ verify_stage_bytes() {
 # Manifest rows of one lane: unique test identifiers, one per line.
 lane_tests() { awk -F'\t' -v lane="$1" 'NR > 2 && $3 == lane {print $4}' "$manifest" | LC_ALL=C sort -u; }
 
-record() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$stage/sequences.tsv"; }
+record() { printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >> "$stage/sequences.tsv" || fail 'cannot write sequences.tsv'; }
 
 lane_core() {
   local log="$logs/core.log" filters=() name

@@ -38,17 +38,29 @@ def fixture(base, touch=None, manifest=True):
         (repo / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
     (repo / "scripts/check_sequences.sh").write_text("""#!/bin/sh
 echo "check_sequences $*" >> "$TEST_EVENTS"
-printf 'core\\t3\\t3\\t0\\tlog\\n' > "$1/sequences.tsv"
+case "${STUB_REPORT:-green}" in
+  missing-file) ;;
+  missing-lane) printf 'core\\t3\\t3\\t0\\tlog\\nswift\\t2\\t2\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
+  partial) printf 'core\\t3\\t3\\t0\\tlog\\nswift\\t2\\t1\\t0\\tlog\\nkotlin\\t2\\t2\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
+  zero) printf 'core\\t3\\t3\\t0\\tlog\\nswift\\t2\\t2\\t0\\tlog\\nkotlin\\t0\\t0\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
+  rc) printf 'core\\t3\\t3\\t1\\tlog\\nswift\\t2\\t2\\t0\\tlog\\nkotlin\\t2\\t2\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
+  *) printf 'core\\t3\\t3\\t0\\tlog\\nswift\\t2\\t2\\t0\\tlog\\nkotlin\\t2\\t2\\t0\\tlog\\n' > "$1/sequences.tsv" ;;
+esac
 [ "${STUB_SEQUENCES:-green}" = green ] || { echo "sequences: lane core red" >&2; exit 1; }
 """)
     (repo / "scripts/check_consumers.sh").write_text("""#!/bin/sh
 echo "check_consumers $*" >> "$TEST_EVENTS"
-printf 'ios\\t0\\tlog\\n' > "$1/consumers.tsv"
+case "${STUB_CONSUMER_REPORT:-green}" in
+  missing-file) ;;
+  missing-lane) printf 'ios\\t0\\tlog\\n' > "$1/consumers.tsv" ;;
+  rc) printf 'ios\\t0\\tlog\\nandroid\\t1\\tlog\\n' > "$1/consumers.tsv" ;;
+  *) printf 'ios\\t0\\tlog\\nandroid\\t0\\tlog\\n' > "$1/consumers.tsv" ;;
+esac
 [ "${STUB_CONSUMERS:-green}" = green ] || { echo "consumers: lane ios red" >&2; exit 1; }
 """)
     if manifest:
         (repo / "core/src/ffi/selftest").mkdir(parents=True)
-        (repo / "core/src/ffi/selftest/manifest.tsv").write_text("version\t1\nid\taliases\tlane\ttest\tstate\ts1\tprovenance\n")
+        (repo / "core/src/ffi/selftest/manifest.tsv").write_text("version\t1\nid\taliases\tlane\ttest\tstate\ts1\tprovenance\n" + "".join(f"{n}\t\t{lane}\tT.{lane}{n}\tx\tx\tx\n" for lane, count in (("core", 3), ("swift", 2), ("kotlin", 2)) for n in range(count)))
     (repo / "scripts/build_ios.sh").write_text("""#!/bin/bash
 mkdir -p swift/DBlayerFFI.xcframework/{macos-arm64_x86_64,ios-arm64_x86_64-simulator,ios-arm64} swift/Sources/DBlayer
 printf bindings > swift/Sources/DBlayer/dblayer.swift
@@ -165,7 +177,7 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     stage = repo / "target/release-1.2.3"
     assert sorted(path.name for path in stage.iterdir()) == sorted(attachments + ["SHA256SUMS", "NOTES.md", "RECEIPT.json", "sequences.tsv"])
     receipt = json.loads((stage / "RECEIPT.json").read_text())
-    assert receipt["sequences"] == {"core": {"listed": 3, "passed": 3, "rc": "0"}}, receipt
+    assert receipt["sequences"] == {"core": {"listed": 3, "passed": 3, "rc": "0"}, "swift": {"listed": 2, "passed": 2, "rc": "0"}, "kotlin": {"listed": 2, "passed": 2, "rc": "0"}}, receipt
     assert receipt["consumers"] == "not-required" and receipt["consumer_lanes"] == {}, receipt
     assert sorted(receipt["artifacts_sha256"]) == sorted(attachments), receipt
     assert len(receipt["manifest_sha256"]) == 64
@@ -248,11 +260,25 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     green, green_env = fixture(base / "green", touch=boundary)
     run(["bash", "scripts/release.sh", version, "--publish"], green, green_env)
     receipt = json.loads((green / "target/release-1.2.3/RECEIPT.json").read_text())
-    assert receipt["consumers"] == "required" and receipt["consumer_lanes"] == {"ios": {"rc": "0"}}, receipt
+    assert receipt["consumers"] == "required" and receipt["consumer_lanes"] == {"ios": {"rc": "0"}, "android": {"rc": "0"}}, receipt
     green_events = (base / "green/events").read_text().splitlines()
     assert any(line.startswith("check_consumers ") and "--maven " in line and "--package-swift " in line for line in green_events), green_events
     assert subprocess.check_output([real_git, "-C", str(green), "cat-file", "-t", version], text=True).strip() == "commit"
     print("ok green sequences and app suites tag the release and record the receipt")
+    for kind, variable, modes, touch in (
+        ("sequences", "STUB_REPORT", ("missing-file", "missing-lane", "partial", "zero", "rc"), None),
+        ("consumers", "STUB_CONSUMER_REPORT", ("missing-file", "missing-lane", "rc"), boundary),
+    ):
+        for mode in modes:
+            bad, bad_env = fixture(base / f"report-{kind}-{mode}", touch=touch)
+            run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **{variable: mode}), expected=1, contains="lane reports are missing or incomplete")
+            assert_no_release(bad, bad_env, base / f"report-{kind}-{mode}/events")
+            assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
+            print(f"ok {kind} report {mode} refuses the tag")
+    dry, dry_env = fixture(base / "report-dry")
+    run(["bash", "scripts/release.sh", version], dry, dict(dry_env, STUB_REPORT="partial"), expected=1, contains="lane reports are missing or incomplete")
+    assert not (dry / "target/release-1.2.3/RECEIPT.json").exists()
+    print("ok the dry run refuses an incomplete report")
     sequences_script = release_script.parent / "check_sequences.sh"
 
     def swift_lane(name, results):

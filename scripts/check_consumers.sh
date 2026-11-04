@@ -178,9 +178,10 @@ for lane in "${lanes[@]}"; do
 done
 wait "${pids[@]}"
 status=0
+: > "$stage/consumers.tsv" || fail 'cannot write consumers.tsv'
 for lane in "${lanes[@]}"; do
   rc="$(cat "$work/$lane.rc" 2> /dev/null || echo missing)"
-  printf '%s\t%s\t%s\n' "$lane" "$rc" "$logs/$lane.log" >> "$stage/consumers.tsv"
+  printf '%s\t%s\t%s\n' "$lane" "$rc" "$logs/$lane.log" >> "$stage/consumers.tsv" || fail 'cannot write consumers.tsv'
   if [ "$rc" = 0 ]; then
     printf 'consumers: lane %s green\n' "$lane"
   else
