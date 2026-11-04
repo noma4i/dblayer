@@ -724,7 +724,7 @@ pub(crate) fn apply_envelope(
                 OperationTransition::RetireBlob { .. } => None,
                 OperationTransition::Progress { seq, state, .. } if state.phase == crate::upload::UploadStatus::Queued => Some(*seq),
                 OperationTransition::Progress { .. } | OperationTransition::BackgroundRefused { .. } => None,
-                OperationTransition::RemoveUploadItem { seq, .. } | OperationTransition::SeparateUploads { seq, .. }
+                OperationTransition::RemoveUploadItem { seq, .. } | OperationTransition::ReplaceUploadSource { seq, .. } | OperationTransition::ConfirmUploadItem { seq, .. }
                 | OperationTransition::Close { seq, .. } | OperationTransition::Fail { seq, .. }
                 | OperationTransition::Start { seq } | OperationTransition::Postpone { seq, .. }
                 | OperationTransition::Retry { seq } | OperationTransition::Remove { seq, .. } => Some(*seq),
@@ -991,6 +991,17 @@ fn apply_transitions(
                 result.operations.insert(seq);
                 wrote = true;
             }
+            OperationTransition::ReplaceUploadSource { seq, position, item } => {
+                synced.extend(op_keys_of(connection, *seq)?);
+                crate::operation::record_transfer_aborts(connection, *seq, Some(*position))?;
+                connection.execute("DELETE FROM file WHERE id = (SELECT file_id FROM op_item WHERE seq = ?1 AND position = ?2) AND field LIKE 'op_item.%'", params![seq, position])?;
+                connection.execute("DELETE FROM op_part WHERE seq = ?1 AND item_position = ?2", params![seq, position])?;
+                connection.execute("DELETE FROM op_item_retry WHERE seq = ?1 AND position = ?2", params![seq, position])?;
+                crate::operation::write_upload(connection, *seq, *position, &item.state)?;
+                write_item_source(connection, *seq, *position, item)?;
+                result.operations.insert(*seq);
+                wrote = true;
+            }
             OperationTransition::RemoveUploadItem { seq, position, inputs } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let key: Option<String> = connection.query_row("SELECT client_key FROM op_item WHERE seq = ?1 AND position = ?2", params![seq, position], |row| row.get(0)).optional()?;
@@ -1007,13 +1018,11 @@ fn apply_transitions(
                 result.operations.insert(*seq);
                 wrote = true;
             }
-            OperationTransition::SeparateUploads { seq, single_action, single_mutation } => {
+            OperationTransition::ConfirmUploadItem { seq, position, item, temp, row } => {
                 synced.extend(op_keys_of(connection, *seq)?);
-                if connection.query_row("SELECT EXISTS (SELECT 1 FROM op WHERE seq = ?1 AND transport_started = 0 AND status = 'pending')", [seq], |row| row.get::<_, bool>(0))? {
-                    result.operations.extend(super::upload::separate_items(connection, *seq, single_action, single_mutation, now_ms)?);
-                    result.operations.insert(*seq);
-                    wrote = true;
-                }
+                super::upload::confirm_item(connection, *seq, *position, item, [temp.as_str(), row.as_str()])?;
+                result.operations.insert(*seq);
+                wrote = true;
             }
             OperationTransition::Begin(record) => {
                 if let Some(seq) = record.seq {

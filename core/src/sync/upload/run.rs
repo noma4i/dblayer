@@ -321,7 +321,8 @@ impl Runner {
 
     async fn mutation(self: &Arc<Self>) -> Result<(), Stop> {
         self.await_online().await?;
-        let items = self.inner.operation_uploads(self.seq).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+        fn fault(error: impl std::fmt::Display) -> Stop { Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())) }
+        let items = self.inner.operation_uploads(self.seq).map_err(fault)?;
         if items.iter().any(|(key, state)| key.0 == self.seq && !state.is_transferred()) {
             return Ok(());
         }
@@ -329,35 +330,46 @@ impl Runner {
         let (Some(_), Some(_)) = (&state.signed_id, &state.blob_id) else {
             return Err(Stop::failed(OperationFailure::new(FailureKind::Unrecognized, "the upload has no stored blob")));
         };
-        let Some(operation) = locked(&self.inner.operations).get(&self.input.steps.mutation).cloned() else {
-            return Err(Stop::failed(OperationFailure::new(FailureKind::Rejected, format!("operation {} is not registered", self.input.steps.mutation))));
-        };
-        if self.token.is_cancelled() {
-            return Err(Stop::Cancelled);
+        let mut resumed = locked(&self.resumed).take();
+        loop {
+            if self.token.is_cancelled() {
+                return Err(Stop::Cancelled);
+            }
+            let Some(entry) = self.inner.outbox_operation(self.seq).map_err(fault)? else {
+                return Err(Stop::Superseded);
+            };
+            let declared = crate::operation::Operation::upload_action(&entry.operation.action_key).ok_or_else(|| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, "the upload has no declared action")))?.1;
+            let spec = self.inner.db.spec(&self.model).map_err(fault)?;
+            let single = spec.actions.iter().find(|action| action.name == declared).and_then(|action| action.batch.as_ref()).filter(|batch| items.len() < batch.min).map(|batch| batch.single.clone());
+            let (action, mutation) = match &single {
+                Some(single) => (single.clone(), spec.actions.iter().find(|action| action.name == *single).and_then(|action| action.mutation.clone()).ok_or_else(|| Stop::failed(OperationFailure::new(FailureKind::Rejected, format!("{} declares no single upload {single}", self.model))))?),
+                None => (declared, self.input.steps.mutation.clone()),
+            };
+            let Some(operation) = locked(&self.inner.operations).get(&mutation).cloned() else {
+                return Err(Stop::failed(OperationFailure::new(FailureKind::Rejected, format!("operation {mutation} is not registered"))));
+            };
+            let sending = Sending {
+                admitted: &self.admitted,
+                effects: Arc::new(crate::sync::DeliveryEffects::new(Some(&self.inner))),
+                entry: &entry,
+                model: self.model.clone(),
+                action,
+                generation: self.inner.db.generation(),
+                base_revision: self.inner.db.revision_seq().map_err(fault)?,
+                checked: None,
+            };
+            let sent = self.inner.send_owned(&sending, &operation, resumed.take(), true).await;
+            if let Err(error) = &sent {
+                let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
+                self.commit(|envelope| {
+                    envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() })
+                })?;
+            }
+            sending.effects.run();
+            let next_step = single.is_some() && matches!(sent, Ok(crate::sync::SendResult::Committed)) && self.inner.outbox_operation(self.seq).map_err(fault)?.is_some();
+            if !next_step { break; }
         }
-        let Some(entry) = self.inner.outbox_operation(self.seq).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))? else {
-            return Err(Stop::Superseded);
-        };
-        let action = crate::operation::Operation::upload_action(&entry.operation.action_key).ok_or_else(|| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, "the upload has no declared action")))?.1;
-        let sending = Sending {
-            admitted: &self.admitted,
-            effects: Arc::new(crate::sync::DeliveryEffects::new(Some(&self.inner))),
-            entry: &entry,
-            model: self.model.clone(),
-            action,
-            generation: self.inner.db.generation(),
-            base_revision: self.inner.db.revision_seq().map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?,
-            checked: None,
-        };
-        let resumed = locked(&self.resumed).take();
-        if let Err(error) = self.inner.send_owned(&sending, &operation, resumed, true).await {
-            let failure = OperationFailure::new(FailureKind::Unrecognized, error.to_string());
-            self.commit(|envelope| {
-                envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() })
-            })?;
-        }
-        sending.effects.run();
-        self.inner.start_uploads().map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+        self.inner.start_uploads().map_err(fault)?;
         Ok(())
     }
 

@@ -333,7 +333,7 @@ async fn owning_an_item_cancels_its_running_upload_and_waits_for_its_end() {
 
     let rig = upload_rig(small());
     let source = file(b"abcdef");
-    let seq = rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
+    let (seq, _, _, _) = rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
     let (running, token) = rig.sync.inner.register(seq, 0).unwrap();
     let inner = rig.sync.inner.clone();
     let mut owning = Box::pin(async move { inner.own_upload(seq, 0).await });

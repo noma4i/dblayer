@@ -285,6 +285,42 @@ impl Inner {
         })
     }
 
+    fn replace_upload_source(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, id: &str, action: Option<&str>, file: &UploadFile) -> Result<(i64, i64, Option<crate::db::Row>, Arc<crate::sync::OutcomeTicket>), SyncError> {
+        let found: Vec<(i64, i64, String, String, String, String)> = self.db.shared.read(&[], |reader| {
+            let mut statement = reader.connection().prepare("SELECT op.seq, op_item.position, op_item.row_id, op_item.client_key, op.action_key, op.status FROM op JOIN op_item USING (seq) WHERE op_item.client_key = ?1 OR op_item.row_id = ?1 ORDER BY op.seq, op_item.position")?;
+            let rows = statement.query_map([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })?;
+        let mut found = found.into_iter().filter_map(|(seq, position, row, key, action_key, status)| {
+            let (owner, declared) = Operation::upload_action(&action_key)?;
+            (owner == model && action.is_none_or(|action| declared == action)).then_some((seq, position, row, key, declared, status))
+        });
+        let (seq, position, row, client_key, declared, status) = match (found.next(), found.next()) {
+            (Some(item), None) => item,
+            (None, _) => return Err(crate::db::DbError::NotFound { model: model.to_string(), id: id.to_string() }.into()),
+            (Some(_), Some(_)) => return Err(crate::db::DbError::InvalidUpload(format!("{model} {id} has more than one upload, name its action")).into()),
+        };
+        let item_failed = self.operation_uploads(seq)?.get(&(seq, position)).is_some_and(|state| state.phase == crate::upload::UploadStatus::Failed);
+        if status != "failed" && !item_failed { return Err(crate::db::DbError::InvalidUpload(format!("the upload of {model} {id} has not failed")).into()); }
+        let input = self.upload_input(model, &declared, file.clone())?;
+        let row = RowId::new(&row).map_err(|error| SyncError::Malformed(error.to_string()))?;
+        self.db.preparing_uploads(admitted, model, generation, |files, generation, pending| {
+            let item = files.prepare(model, row.clone(), client_key.clone(), input.clone(), UploadState::queued())?;
+            let committed = self.commit_deferred(admitted, generation, |_| {
+                let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+                envelope.snapshot = Some(crate::identity::RowRef::new(crate::identity::ModelKey::new(model), row.clone()));
+                envelope.operation_transitions.push(OperationTransition::ReplaceUploadSource { seq, position, item: Box::new(item.clone()) });
+                if status == "failed" { envelope.operation_transitions.push(OperationTransition::Retry { seq }); }
+                Ok::<_, SyncError>(Some(envelope))
+            })?;
+            *pending = committed;
+            let result = pending.as_ref().map(|result| result.result()).ok_or(SyncError::Cancelled)?;
+            let revision = result.revision.ok_or(SyncError::Cancelled)?;
+            let ticket = locked(&self.outcomes).claim(seq);
+            Ok((seq, revision, result.snapshot.clone(), ticket))
+        })
+    }
+
     pub(crate) fn is_current(&self, seq: i64, position: i64, run: u64) -> bool {
         locked(&self.uploads).active.get(&(seq, position)).is_some_and(|active| active.run == run)
     }
@@ -559,6 +595,20 @@ impl Sync {
             let row = row.map(|row| inner.db.shared.overlay_snapshot(&model, row)).transpose()?;
             inner.start_uploads()?;
             inner.db.report_upload_accepted(&admitted, &model, vec![crate::db::AcceptedUpload { seq, position: 0 }]);
+            Ok((seq, revision, row, ticket))
+        }).await.map_err(|error| SyncError::Store(error.to_string()))?
+    }
+
+    pub(crate) async fn retry_upload_source(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &str, action: Option<&str>, file: UploadFile) -> Result<(i64, i64, Option<crate::db::Row>, Arc<crate::sync::OutcomeTicket>), SyncError> {
+        self.inner.require_session(admitted)?;
+        let inner = self.inner.clone();
+        let admitted = admitted.clone();
+        let generation = inner.db.generation();
+        let (model, id, action) = (model.to_string(), id.to_string(), action.map(str::to_string));
+        crate::task::spawn_blocking(crate::task::Carry::here(), move || {
+            let (seq, revision, row, ticket) = inner.replace_upload_source(&admitted, generation, &model, &id, action.as_deref(), &file)?;
+            let row = row.map(|row| inner.db.shared.overlay_snapshot(&model, row)).transpose()?;
+            inner.start_uploads()?;
             Ok((seq, revision, row, ticket))
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }

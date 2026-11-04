@@ -46,7 +46,7 @@ async fn a_queued_create_refused_without_a_sequence_is_executed_once_by_resume_a
     let refused = database.refusal_of(row).await;
     let effects_when_refused = mutation_effects(&rig);
     database.session_resume().await.unwrap();
-    let retried = database.retry(database.session_epoch(), "Moment".into(), id, None).await.unwrap();
+    let retried = database.retry(database.session_epoch(), "Moment".into(), id, None, None).await.unwrap();
     let outcome = database.outcome(retried).await.unwrap();
 
     assert_eq!((refused.session_code, effects_when_refused), (Some(SessionCode::AccountUnavailable), 0));

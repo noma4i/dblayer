@@ -18,6 +18,54 @@ fn effects(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
     rig.server.executed().into_iter().filter(|body| body["operationName"] == operation).collect()
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pending_operation_survives_an_old_format_without_restoring_the_cached_row() {
+  for keep in [false, true] {
+    let rig = SessionRig::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("old-format.sqlite");
+    let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 };
+    let encrypted = || EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() };
+    let mut model = moment_spec();
+    model.actions.iter_mut().find(|action| action.name == "create").unwrap().on_failure = if keep { crate::schema::OnFailure::Keep } else { crate::schema::OnFailure::Rollback };
+    let models = serde_json::to_string(&vec![model]).unwrap();
+    let open = || Database::open(config(), models.clone(), Some(Arc::new(crate::ffi::encrypted_tests::SubscriptionsOnly)), Some(encrypted()), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), None, None);
+    let first = bound(open()).await.unwrap();
+    first.register_operations(crate::ffi::sealed_errors_tests::OPERATIONS.into()).unwrap();
+    bound(first.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+    rig.server.register("mutation MakeMoment { makeMoment { id text } }");
+    first.set_online(false).unwrap();
+    let receipt = bound(first.send(crate::ffi::CommandRequest { epoch: first.session_epoch(), model: "Moment".into(), values_json: r#"{"text":"held"}"#.into(), args_json: "{}".into(), upload: None })).await.unwrap();
+    let id = receipt.optimistic_value.unwrap().id;
+    bound(first.close_database()).await.unwrap();
+    drop(first);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let sequence: i64 = connection.query_row("SELECT seq FROM op LIMIT 1", [], |row| row.get(0)).unwrap();
+    crate::operation::write_value(&connection, sequence, "prior", Some(&json!({"rows":[{"kind":"member","model":"Moment","id":id.clone(),"scope_key":"old","before":null}]}))).unwrap();
+    connection.execute_batch("DROP TABLE IF EXISTS op_effect_value; DROP TABLE IF EXISTS op_effect; DROP TABLE IF EXISTS scope_revision; UPDATE manifest SET value = 'old' WHERE key = 'format_version'").unwrap();
+    drop(connection);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = calls.clone();
+    rig.server.on_request(move || { observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst); });
+    rig.server.status_next(422);
+    let reopened = bound(open()).await.unwrap();
+    reopened.register_operations(crate::ffi::sealed_errors_tests::OPERATIONS.into()).unwrap();
+    bound(reopened.flush()).await.unwrap();
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(bound(reopened.read_row(reopened.session_epoch(), "Moment".into(), id.clone())).await.unwrap().is_none());
+    assert!(bound(reopened.read_query(reopened.session_epoch(), r#"{"model":"Moment"}"#.into())).await.unwrap().is_empty());
+    if keep { rig.server.status_next(422); }
+    let retry = bound(reopened.retry(reopened.session_epoch(), "Moment".into(), id.clone(), None, None)).await;
+    if keep {
+        let outcome = bound(reopened.outcome(retry.unwrap())).await.unwrap();
+        assert!(matches!(outcome, crate::ffi::WireOperationOutcome::Rejected { .. }));
+        assert!(bound(reopened.read_row(reopened.session_epoch(), "Moment".into(), id)).await.unwrap().is_none());
+    }
+    else { assert!(matches!(retry, Err(DbError::Database { .. })), "rollback must remove the operation: {retry:?}"); }
+    bound(reopened.close_database()).await.unwrap();
+  }
+}
+
 /// C14, R-10: a queued mutation is refused without a confirmed sequence, the sign-in is blocked by the pending request, a data reset keeps that pending, the session reset frees it, and the next sign-in leaves the server with no effect from the refused request.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_data_reset_between_a_refused_pending_request_and_the_session_reset_keeps_the_pending() {

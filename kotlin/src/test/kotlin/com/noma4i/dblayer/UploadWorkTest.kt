@@ -148,7 +148,7 @@ class UploadWorkTest {
             database.roundEnd(database.sessionEpoch(), newOwner)
             val deliver = UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, items -> if (items == old.items) "old refusal" else null })
             late.forEach(deliver::accepted)
-            assertTrue(rows.all { Asset.find(it.id).current()?.uploads?.values?.singleOrNull()?.error == null })
+            assertTrue(rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error == null })
         } finally {
             DBlayer.close()
             directory.deleteRecursively()
@@ -250,7 +250,7 @@ class UploadWorkTest {
             old.await()
             assertTrue("the held scheduler was released by the test", !timedOut.get())
             assertEquals(2, starts.get())
-            assertTrue(rows.all { Asset.find(it.id).current()?.uploads?.values?.singleOrNull()?.error == null })
+            assertTrue(rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error == null })
         } finally {
             release.countDown()
             DBlayer.close()

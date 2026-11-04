@@ -8,7 +8,7 @@ pub(crate) enum WindowEvent {
 
 #[derive(Debug, Clone)]
 pub(crate) enum WindowTrigger {
-    Lost { model: String, subscription: u64, first: u64, last: u64 },
+    Lost { model: String },
     ParentMissing { model: String },
 }
 

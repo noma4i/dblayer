@@ -4,6 +4,8 @@ import com.noma4i.dblayer.models.Club
 import com.noma4i.dblayer.models.Letter
 import com.noma4i.dblayer.models.Person
 import com.noma4i.dblayer.models.modelsJSON
+import com.sun.jna.Native
+import com.sun.jna.ptr.PointerByReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.SupervisorJob
@@ -110,6 +112,46 @@ class ClubTest {
         val receipt = withTimeout(5000) { Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1) }
         check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
         return Query("Letter", Letter).read().first()
+    }
+
+    @Test
+    fun aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow() = bounded {
+        for (keep in listOf(false, true)) {
+            val directory = java.nio.file.Files.createTempDirectory("dblayer-old-format").toFile()
+            val config = Config(directory.resolve("old.sqlite").absolutePath, null, 32u)
+            val models = clubModels(keepLetter = keep)
+            try {
+                reopenSigned(config, models, CLUB_DEFS)
+                val receipt = Letter.send(AccountScope.current(), chatId = "c1", text = "held", at = 1)
+                val id = requireNotNull(receipt.optimisticValue).id
+                DBlayer.close()
+                val sqlite = Native.load("sqlite3", LegacySqlite::class.java)
+                val handle = PointerByReference()
+                check(sqlite.sqlite3_open(requireNotNull(config.path), handle) == 0)
+                val changed = sqlite.sqlite3_exec(handle.value, "DROP TABLE IF EXISTS op_effect_value; DROP TABLE IF EXISTS op_effect; DROP TABLE IF EXISTS scope_revision; UPDATE manifest SET value = 'old' WHERE key = 'format_version'", null, null, null)
+                sqlite.sqlite3_close(handle.value)
+                check(changed == 0)
+                val transport = MockTransport()
+                transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused"))
+                val database = reopen(config, models, transport, CLUB_DEFS)
+                withTimeout(5000) { database.flush() }
+                assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
+                assertTrue(Query("Letter", Letter).readRow(id) == null)
+                transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused again"))
+                try {
+                    val retried = withTimeout(5000) { Letter.retry(id, null) }
+                    assertTrue(keep)
+                    assertTrue(withTimeout(5000) { retried.outcome() } is OperationOutcome.Rejected)
+                    assertTrue(Query("Letter", Letter).readRow(id) == null)
+                } catch (_: DbException.Database) {
+                    assertTrue(!keep)
+                }
+                DBlayer.close()
+            } finally {
+                DBlayer.close()
+                directory.deleteRecursively()
+            }
+        }
     }
 
     @Test

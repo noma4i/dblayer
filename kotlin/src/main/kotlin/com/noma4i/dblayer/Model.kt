@@ -81,7 +81,7 @@ suspend fun <T> onAccount(account: AccountScope?, call: suspend (Database, ULong
     return offCaller { call(admission.database, admission.epoch) }
 }
 
-suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?, account: AccountScope? = null): MutationReceipt<Model> = onAccount(account) { database, epoch -> MutationReceipt(database, this, database.retry(epoch, modelName, id, action)) }
+suspend fun <Model : DBModel> ModelDecoder<Model>.retry(id: String, action: String?, source: UploadRequest? = null, account: AccountScope? = null): MutationReceipt<Model> = onAccount(account) { database, epoch -> MutationReceipt(database, this, database.retry(epoch, modelName, id, action, source?.wire())) }
 suspend fun DBModel.discard(action: String?, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.discard(epoch, modelName, id, action) }
 
 suspend fun <Model : DBModel> ModelDecoder<Model>.destroy(id: String, account: AccountScope? = null): MutationReceipt<Model> = onAccount(account) { database, epoch -> MutationReceipt(database, this, database.destroy(epoch, modelName, id)) }

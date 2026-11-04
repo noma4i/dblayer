@@ -1093,6 +1093,20 @@ async fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_noth
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_lost_event_range_reads_the_open_window_once() {
+    let rig = current_user_rig(None);
+    let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.await_consumed("MomentChanged").await;
+    rig.transport.emit("MomentChanged", SubscriptionEvent::Lost { first: 1, last: 300 });
+    rig.transport.await_calls("CurrentUser", 2).await;
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert_eq!((rig.transport.call_count("CurrentUser"), user_name(&rig)), (2, Some("after".to_string())));
+}
+
 fn current_user_rig(directory: Option<&std::path::Path>) -> Rig {
     let rig = match directory {
         Some(directory) => {

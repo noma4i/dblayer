@@ -706,6 +706,10 @@ impl Feed {
                     }
                     Some(SubscriptionEvent::Lost { .. }) => {
                         pending.clear();
+                        let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
+                        for model in models {
+                            if self.inner.window_event(&self.epoch, super::invalidate::WindowTrigger::Lost { model: model.clone() }).is_err() { self.inner.publish_model_gap(&model); }
+                        }
                         crate::db::locked(&self.lost).reload = true;
                         self.reload_lost().await;
                     }

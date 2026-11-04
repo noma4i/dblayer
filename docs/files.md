@@ -195,7 +195,7 @@ The response replaces temporary records by correlation key, including responses 
 An individual file failure leaves other transfers running and delays the final mutation until all remaining files finish.
 Retrying a failed file preserves completed transfers.
 Discarding a record removes it from the operation and recalculates the remaining count.
-Below the declared minimum, the remaining records use the declared single-record mutation.
+Below the declared minimum, the remaining records use the declared single-record mutation. They go one at a time as steps of the same operation, and the batch receipt reports each record.
 An optional `renumber:` option of `batch` rewrites the remaining records' position and size in that same commit after `discard(action)` or `cancelUpload(action)`.
 The same commit updates saved mutation variables declared by `batch input:`, including values used after reopening the cache.
 Positions follow the original item order, starting at the required `start: 0` or `start: 1`.
@@ -327,7 +327,7 @@ A finished upload closes its operation and removes its entry from `uploads`. The
 - Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts.
 - Each step and multipart part stores its retry count and next retry time. Restarting preserves both. A successful step removes its retry record.
 - An explicit `retry(action)` after failure clears saved retry counts and times, giving unfinished steps a fresh budget.
-- When an upgraded database has lost the item of a saved transfer, the error kind is `missing_file`. A retry without a file is refused.
+- When an upgraded database has lost the item of a saved transfer, the error kind is `missing_file`. A retry without a file is refused. `retry(id, action, source)` gives the item a new file: `id` is the item key of the batch receipt or the record id. The new transfer keeps the operation and the item key.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
 - A `403` renews the single-upload url or affected part url after backoff. The renewal uses that PUT step's retry budget. Urls older than the presign lifetime are requested again for unfinished parts.
 - The final content mutation uses the [outbox retry policy](server-sync.md#retries), including its saved budget and encrypted request identity.

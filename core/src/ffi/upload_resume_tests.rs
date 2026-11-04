@@ -106,7 +106,7 @@ async fn upload_resume_and_retry_execute_the_saved_step_once_after_reopen() {
         database.sync.as_ref().unwrap().wait_uploads().await;
         let database = if restart { drop(database); open(&rig, &path).await } else { database };
         database.session_resume().await.unwrap();
-        database.retry(database.session_epoch(), "Moment".into(), "42".into(), None).await.unwrap();
+        database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         let effects = rig.server.executed().into_iter().filter(|body| body["operationName"] == step).count();
         assert_eq!(effects, 1, "step={step} restart={restart}");
@@ -161,7 +161,7 @@ async fn opening_legacy_pending_keeps_the_encrypted_sequence_and_session() {
     let path = directory.path().join("db.sqlite");
     let database = open(&rig, &path).await;
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
-    let note = database.create(database.session_epoch(), "Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap();
+    let note = database.create(database.session_epoch(), "Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap().optimistic_value.unwrap();
     let bytes = vec![7; 300 * 1024];
     database.attach(database.session_epoch(), "Note".into(), note.id.clone(), "attachment".into(), bytes.clone(), "file".into(), "application/octet-stream".into()).await.unwrap();
     let feed = "query Feed { feed { id text } }";
@@ -206,14 +206,14 @@ async fn opening_a_legacy_pending_upload_keeps_its_owner_and_file() {
     legacy_format(&path);
     let database = open(&rig, &path).await;
     within(database.session_resume()).await.unwrap();
-    within(database.retry(database.session_epoch(), "Moment".into(), "42".into(), None)).await.unwrap();
+    within(database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None)).await.unwrap();
     within(database.sync.as_ref().unwrap().wait_uploads()).await;
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "CreateBlob").count(), 1);
     assert!(database.db.outbox().unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_missing_legacy_transfer_item_cannot_retry_a_mutation_without_a_file() {
+async fn a_missing_legacy_transfer_item_needs_a_new_file_before_its_mutation() {
     let rig = Rig::new();
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
@@ -237,7 +237,16 @@ async fn a_missing_legacy_transfer_item_cannot_retry_a_mutation_without_a_file()
     assert!(within(database.session_resume()).await.is_err());
     let after = within(database.retry_all(database.session_epoch())).await.unwrap_err();
     assert!(after.to_string().contains("select the file again"), "{after:?}");
+    let without = within(database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None)).await.unwrap_err();
+    assert!(without.to_string().contains("select the file again"), "{without:?}");
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "MakeMoment").count(), 0);
+    let replacement = directory.path().join("again.mp4");
+    std::fs::write(&replacement, b"abcd").unwrap();
+    rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid-2", "blobId": "bid-2"}, "makeMoment": {"id": "42"}}));
+    let receipt = within(database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, Some(crate::ffi::upload_wire::WireUploadRequest::of(&UploadFile::new(replacement.to_str().unwrap()))))).await.unwrap();
+    assert!(matches!(within(database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "MakeMoment").count(), 1);
+    assert!(database.db.outbox().unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -289,7 +298,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     drop(database);
     let database = open(&rig, &path).await;
     database.session_resume().await.unwrap();
-    database.retry(database.session_epoch(), "Moment".into(), "42".into(), None).await.unwrap();
+    database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "AbortMultipart").count(), 1);
     assert!(database.db.outbox().unwrap().is_empty());
@@ -315,7 +324,7 @@ async fn resume_consumes_a_lost_upload_answer_without_repeating_the_effect() {
     database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     database.session_resume().await.unwrap();
-    database.retry(database.session_epoch(), "Moment".into(), "42".into(), None).await.unwrap();
+    database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None).await.unwrap();
     database.sync.as_ref().unwrap().wait_uploads().await;
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "CreateBlob").count(), 1);
     assert!(database.db.outbox().unwrap().is_empty());

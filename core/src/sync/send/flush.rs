@@ -86,6 +86,15 @@ pub(crate) struct FinalAttempts {
     next_start: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
+struct BatchStep {
+    position: i64,
+    key: String,
+    row: RowId,
+    file: Option<String>,
+    last: bool,
+    confirmed: Vec<(String, String)>,
+}
+
 struct Bound {
     model: String,
     action: String,
@@ -553,8 +562,48 @@ impl Inner {
         settled
     }
 
+    /// The next item of a batch below its minimum: it goes through the single mutation as one step of the same operation.
+    fn batch_step(&self, sending: &Sending<'_>) -> Result<Option<BatchStep>, SyncError> {
+        let entry = sending.entry;
+        let Some((_, declared)) = Operation::upload_action(&entry.operation.action_key) else { return Ok(None) };
+        if declared == sending.action || !self.db.spec(&sending.model)?.actions.iter().any(|action| action.name == declared && action.batch.is_some()) { return Ok(None) }
+        let seq = entry.operation.id.0;
+        let read = crate::blocking::blocking_unit(|| self.db.shared.read(&[], |reader| {
+            let connection = reader.connection();
+            let mut statement = connection.prepare("SELECT position, client_key, row_id, file_id FROM op_item WHERE seq = ?1 ORDER BY position")?;
+            let items = statement.query_map([seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            let confirmed: Vec<(String, String)> = crate::operation::read_value(connection, seq, "confirmed")?.map(serde_json::from_value).transpose()?.unwrap_or_default();
+            Ok((items, confirmed))
+        }))?;
+        let (items, confirmed) = read;
+        let Some((position, key, row, file)) = items.first().cloned() else { return Ok(None) };
+        Ok(Some(BatchStep { position, key, row: RowId::new(&row).map_err(|error| SyncError::Malformed(error.to_string()))?, file, last: items.len() == 1, confirmed }))
+    }
+
     fn owned_request(&self, sending: &Sending<'_>, operation: &OperationDef) -> Result<GraphQLRequest, SyncError> {
         let entry = sending.entry;
+        if let Some(step) = self.batch_step(sending)? {
+            let seq = entry.operation.id.0;
+            let spec = self.db.spec(&sending.model)?;
+            let declaration = spec.actions.iter().find(|action| action.name == sending.action).ok_or_else(|| SyncError::Malformed("single upload declaration is missing".into()))?;
+            let (input, state) = self.db.shared.read(&[], |reader| Ok((crate::operation::read_item_value(reader.connection(), seq, step.position, "input")?, crate::operation::read_operation_uploads(reader.connection(), seq)?.remove(&(seq, step.position)))))?;
+            let input: crate::upload::UploadInput = serde_json::from_value(input.unwrap_or(Value::Null)).map_err(|error| SyncError::Malformed(error.to_string()))?;
+            let mut state = state.ok_or_else(|| SyncError::Malformed("an upload item has no state".into()))?;
+            let signed = state.signed_id.clone().filter(|_| state.is_transferred()).ok_or_else(|| SyncError::Malformed("an upload item is unfinished".into()))?;
+            let mut variables = entry.input.as_object().cloned().ok_or_else(|| SyncError::Malformed("upload variables must be an object".into()))?;
+            variables.extend(input.variables);
+            variables.insert(input.steps.signed_id_variable, Value::String(signed));
+            let variables = super::variables::upload_variables(declaration, Value::Object(variables), &format!("{}:{}", entry.operation.client_mutation_id, step.key));
+            let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
+            request.purpose = crate::transport::NetworkPurpose::Transfer;
+            state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
+            self.commit(sending.admitted, sending.generation, |_| {
+                let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
+                envelope.operation_transitions.push(OperationTransition::Progress { seq, item_position: step.position, state: Box::new(state.clone()) });
+                Ok::<_, SyncError>(Some(envelope))
+            })?;
+            return Ok(request);
+        }
         let spec = self.db.spec(&sending.model)?;
         let declaration = spec.actions.iter().find(|action| action.name == sending.action);
         if let Some((declaration, batch)) = declaration.and_then(|action| action.batch.as_ref().map(|batch| (action, batch))) {
@@ -748,15 +797,9 @@ impl Inner {
                 let (lost, account, connectivity) = (self.network_lost.clone(), self.account.clone(), self.connectivity.clone());
                 envelope.network = Some(crate::commit::NetworkAdmission::new(checked, std::sync::Arc::new(move || (*locked(&lost), locked(&account).1, connectivity.is_online())), self.network_line.clone()));
             }
-            if let Some(batch) = batch {
+            if batch.is_some() {
                 let items = crate::operation::read_operation_uploads(reader.connection(), seq).map_err(StoreError::from)?;
                 if items.iter().any(|(key, state)| key.0 == seq && !state.is_sendable()) { return Ok(None); }
-                if entry.operation.row_ids.len() < batch.min {
-                    let single = spec.actions.iter().find(|action| action.name == batch.single).ok_or_else(|| SyncError::Malformed("single upload declaration is missing".into()))?;
-                    let mutation = single.mutation.clone().ok_or_else(|| SyncError::Malformed("single upload mutation is missing".into()))?;
-                    envelope.operation_transitions.push(OperationTransition::SeparateUploads { seq, single_action: Operation::upload_action_key(&sending.model, &single.name), single_mutation: mutation });
-                    return Ok(Some(envelope));
-                }
             }
             frozen = Some((entry, reader.revision_seq()?));
             envelope.operation_transitions.push(OperationTransition::Start { seq });
@@ -845,6 +888,17 @@ impl Inner {
             }
             if replacements.len() != expected.len() { return self.quarantine(sending, &data); }
         }
+        let step = self.batch_step(sending)?;
+        let mut step_real = None;
+        if let Some(step) = &step {
+            let row = normalized.roots.first();
+            let matches_key = spec.actions.iter().find(|action| action.name == sending.action).and_then(|action| action.correlate.first()).is_none_or(|field| row.and_then(|row| row.get(field)).and_then(Value::as_str) == Some(step.key.as_str()));
+            let Some(real) = row.and_then(|row| row.get("id")).and_then(read_id).filter(|real| !real.is_temp() && normalized.roots.len() == 1 && matches_key) else { return self.quarantine(sending, &data) };
+            batch_items.extend(step.confirmed.iter().filter_map(|(item, row)| RowId::new(row).ok().map(|row| (item.clone(), row))));
+            batch_items.push((step.key.clone(), real.clone()));
+            replacements.push((step.row.clone(), real.clone()));
+            step_real = Some(real);
+        }
         let real = normalized.roots.first().and_then(|row| row.get("id")).and_then(read_id);
         let creatable = normalized.roots.first().is_some_and(|row| spec.normalize(row).is_ok());
         if temp.is_some() && (normalized.roots.len() != 1 || real.is_none() || real == temp || !creatable) {
@@ -876,9 +930,11 @@ impl Inner {
                         self.db.swap_temp(reader, &mut envelope, &outbox, TempReplacement { model: &sending.model, temp, real }, entry.operation.id.0)?;
                     }
                 }
-                envelope.file_ops.extend(held.iter().filter_map(|file| {
-                    Some(FileOp::Remove { model: ModelKey::new(&file.model), row_id: RowId::new(&file.row_id).ok()?, field: file.field.clone() })
-                }));
+                if step.as_ref().is_none_or(|step| step.last) {
+                    envelope.file_ops.extend(held.iter().filter_map(|file| {
+                        Some(FileOp::Remove { model: ModelKey::new(&file.model), row_id: RowId::new(&file.row_id).ok()?, field: file.field.clone() })
+                    }));
+                }
                 if !lands_rows {
                     envelope.entity_ops = temp.iter().map(|temp| EntityOp::Destroy { model: ModelKey::new(&sending.model), id: temp.clone(), reason: crate::commit::DestroyReason::Expired })
                         .chain(created.iter().map(|(model, temp)| EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: crate::commit::DestroyReason::Expired })).collect();
@@ -900,7 +956,10 @@ impl Inner {
                         }
                     }
                 }
-                envelope.operation_transitions.push(OperationTransition::Close { seq: entry.operation.id.0, status: OperationStatus::Committed });
+                match (&step, &step_real) {
+                    (Some(step), Some(real)) if !step.last => envelope.operation_transitions.push(OperationTransition::ConfirmUploadItem { seq: entry.operation.id.0, position: step.position, item: step.key.clone(), temp: step.row.to_string(), row: real.to_string() }),
+                    _ => envelope.operation_transitions.push(OperationTransition::Close { seq: entry.operation.id.0, status: OperationStatus::Committed }),
+                }
                 Ok(Some(envelope))
             })?;
             if committed.is_some() {
@@ -910,6 +969,10 @@ impl Inner {
         }
         let Some(committed) = committed else { return Ok(SendResult::Discarded) };
         self.queue_window_mark(sending.admitted, &sending.effects, mark);
+        if let Some(step) = step.filter(|step| !step.last) {
+            self.discard_files(sending.admitted, step.file.into_iter().collect()).await?;
+            return Ok(SendResult::Committed);
+        }
         let value = committed.snapshot.map(|row| self.db.shared.overlay_snapshot(&sending.model, row)).transpose()?;
         let items = committed.item_snapshots.into_iter().filter_map(|(item, row)| row.map(|row| (item, row))).map(|(item, row)| self.db.shared.overlay_snapshot(&sending.model, row).map(|row| (item, row))).collect::<Result<Vec<_>, _>>()?;
         self.finish_ticket(&sending.effects, entry.operation.id.0, SendResult::Committed, answer, value, items);

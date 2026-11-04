@@ -1,5 +1,6 @@
 import DBlayerTesting
 import Foundation
+import SQLite3
 import Testing
 @testable import DBlayer
 
@@ -105,6 +106,45 @@ extension BridgeProbeTests {
     guard case .confirmed = try await valueBeforeDeadline(left, release: {}) else { throw WaitFailure.unexpectedOutcome }
     let second = Task { try await receipt.outcome() }
     guard case let .confirmed(value, _) = try await valueBeforeDeadline(second, release: {}), value?.id == club.id else { throw WaitFailure.unexpectedOutcome }
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow(keep: Bool) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appendingPathComponent("old.sqlite").path
+    let config = Config(path: path, dataVersion: nil, cacheRows: 32)
+    let models = try clubModels(keepLetter: keep)
+    try await reopenSigned(config: config, modelsJson: models, operations: clubDefs)
+    let receipt = try await Letter.send(in: DB.account(), chatId: "c1", text: "held", at: 1)
+    let id = try #require(receipt.optimisticValue?.id)
+    try await DB.close()
+    var connection: OpaquePointer?
+    try #require(sqlite3_open(path, &connection) == SQLITE_OK)
+    let changed = sqlite3_exec(connection, "DROP TABLE IF EXISTS op_effect_value; DROP TABLE IF EXISTS op_effect; DROP TABLE IF EXISTS scope_revision; UPDATE manifest SET value = 'old' WHERE key = 'format_version'", nil, nil, nil)
+    sqlite3_close(connection)
+    try #require(changed == SQLITE_OK)
+    let transport = MockTransport()
+    transport.enqueue("SendLetter", failure: .Http(status: 422, detail: "refused"))
+    let database = try await reopen(config: config, modelsJson: models, transport: transport, operations: clubDefs)
+    let flushing = Task { try await database.flush() }
+    try await valueBeforeDeadline(flushing) {}
+    #expect(transport.calls.filter { $0.operationName == "SendLetter" }.count == 1)
+    #expect(try await Letter.ids([id]).read().isEmpty)
+    transport.enqueue("SendLetter", failure: .Http(status: 422, detail: "refused again"))
+    let retry = Task { try await Letter.retry(id: id, action: nil) }
+    do {
+      let retried = try await valueBeforeDeadline(retry) {}
+      #expect(keep)
+      let waiting = Task { try await retried.outcome() }
+      guard case .rejected = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
+      #expect(try await Letter.ids([id]).read().isEmpty)
+    } catch DbError.Database {
+      #expect(!keep)
+    }
+    try await DB.close()
   }
 
   @MainActor

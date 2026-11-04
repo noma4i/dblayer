@@ -165,7 +165,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         database.session_resume().await.unwrap();
         let before = graphql_posts(&rig);
 
-        let retried = database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap();
+        let retried = database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None, None).await.unwrap();
         let _ = database.outcome(retried).await;
 
         assert_eq!(graphql_posts(&rig) - before, 1, "{wire}");

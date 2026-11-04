@@ -6,6 +6,9 @@ S315	batch-receipt	kotlin	com.noma4i.dblayer.UploadBatchTest.batchOwnsSourcesAnd
 S314	multi-join	core	joining_multiple_members_keeps_each_once_in_order	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
 S314	multi-join	swift	BridgeProbeTests.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
 S314	multi-join	kotlin	com.noma4i.dblayer.ClubTest.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
+S312	format	core	a_pending_operation_survives_an_old_format_without_restoring_the_cached_row	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
+S312	format	swift	BridgeProbeTests.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
+S312	format	kotlin	com.noma4i.dblayer.ClubTest.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S313	outcome	core	an_operation_outcome_can_be_read_twice_from_its_receipt	red-by-reading	read the same outcome twice	operation receipt
 S313	outcome	swift	BridgeProbeTests.anOperationOutcomeCanBeReadTwiceFromItsReceipt	red-by-reading	read the same outcome twice	operation receipt
 S313	outcome	kotlin	com.noma4i.dblayer.ClubTest.anOperationOutcomeCanBeReadTwiceFromItsReceipt	red-by-reading	read the same outcome twice	operation receipt
@@ -358,6 +361,8 @@ T13		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsAfterTh
 T14		kotlin	com.noma4i.dblayer.UploadWorkTest.onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob	red-by-reading	-	late Android job must not clear a newer network route
 T15		kotlin	com.noma4i.dblayer.UploadWorkTest.aSchedulerRefusalReturningAfterResetDoesNotChangeTheNewUpload	red-by-reading	-	Android scheduler refusal crosses a session reset
 T16		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsWhenTheOldEndingRoundLostItsSession	regression	-	ending Android round after session reset
-T17		core	a_missing_legacy_transfer_item_cannot_retry_a_mutation_without_a_file	red-by-reading	-	legacy transfer without an item
+T17		core	a_missing_legacy_transfer_item_needs_a_new_file_before_its_mutation	red-by-reading	-	legacy transfer without an item
 T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	legacy transfer without an item
 T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	legacy transfer without an item
+S216	A3-lost	core	a_lost_event_range_reads_the_open_window_once	red-by-reading	lost subscription range marks the windows and reads the open one once	s2/design.md S216
+T18		core	records_below_the_minimum_go_as_single_steps_of_the_same_operation	red-by-reading	batch below minimum keeps one operation and receipt	coordinator S4 item 1

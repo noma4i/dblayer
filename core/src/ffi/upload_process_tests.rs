@@ -64,7 +64,7 @@ async fn child(mode: &str) {
         assert_eq!(database.db.outbox().unwrap().len(), 1);
     } else {
         database.session_resume().await.unwrap();
-        database.retry(database.session_epoch(), "Moment".into(), "42".into(), None).await.unwrap();
+        database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         assert!(database.db.outbox().unwrap().is_empty());
     }

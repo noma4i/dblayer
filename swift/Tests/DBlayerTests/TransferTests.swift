@@ -12,6 +12,17 @@ private func transferFixture(_ name: String) throws -> String {
   return try String(contentsOf: root.appendingPathComponent("fixtures/\(name)"), encoding: .utf8)
 }
 
+private func confirmedIds<Model: DBModel>(_ receipt: OperationReceipt<Model>) async throws -> [String?] {
+  let outcome = try await receipt.outcome()
+  guard case .confirmed = outcome.result else { throw DbError.Invalid(detail: "the batch did not confirm: \(outcome.result)") }
+  return outcome.items.map {
+    if case let .confirmed(_, value) = $0 { return value.id }
+    return nil
+  }
+}
+
+private func finishTransfers() async throws { try await DB.database.resumeUploads(epoch: DB.database.sessionEpoch()) }
+
 private func writeLegacyTransfer(_ path: String, dropPendingItem: Bool = false) throws {
   var database: OpaquePointer?
   guard legacyOpen(path, &database) == 0 else { throw DbError.Invalid(detail: "cannot open the legacy fixture") }
@@ -96,7 +107,7 @@ extension BridgeProbeTests {
     let database = try DB.database
     try database.registerOperations(defsJson: operations)
     _ = try await database.sessionCall(operation: "login_link", bodyJson: #"{"account":"A"}"#)
-    let note = try await database.create(epoch: database.sessionEpoch(), model: "Note", valuesJson: #"{"text":"kept"}"#, argsJson: "{}")
+    let note = try #require(try await database.create(epoch: database.sessionEpoch(), model: "Note", valuesJson: #"{"text":"kept"}"#, argsJson: "{}").optimisticValue)
     let bytes = Data(repeating: 7, count: 300 * 1024)
     _ = try await database.attach(epoch: database.sessionEpoch(), model: "Note", rowId: note.id, field: "attachment", bytes: bytes, name: "file", mime: "application/octet-stream")
     server.hold(operation: "CreateBlob")
@@ -155,9 +166,8 @@ extension BridgeProbeTests {
     let uploads = UploadOperations(multipart: .init(initiate: .init("InitMultipart"), presign: .init("PresignParts"), complete: .init("CompleteMultipart"), abort: .init("AbortMultipart")))
     try await reopen(config: Config(path: directory.appending(path: "db.sqlite").path, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport, operations: operations, uploads: uploads)
     let items = ["../../../outside", "other"].enumerated().map { index, key in UploadItem(values: ["clientKey": .string(key), "size": .integer(2), "position": .integer(Int64(index))], path: source.path) }
-    let rows = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
-    #expect(try await rows[0].confirmedId() == "a0")
-    #expect(try await rows[1].confirmedId() == "a1")
+    let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
+    #expect(try await confirmedIds(receipt) == ["a0", "a1"])
     #expect(transport.identities.filter { $0.itemId == "../../../outside" }.count == 3)
     let ranges = directory.appending(path: "db.sqlite.cache/ranges").resolvingSymlinksInPath().path + "/"
     #expect(transport.paths.filter { $0.0 == "../../../outside" }.allSatisfy { $0.1.hasPrefix(ranges) })
@@ -199,7 +209,8 @@ extension BridgeProbeTests {
         try Data("image-\(index)".utf8).write(to: file)
         return UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(3), "position": .integer(Int64(index))], path: file.path)
       }
-      let rows = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
+      let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
+      let rows = receipt.items.map(\.optimisticValue)
       await server.heldRequest()
       try await rows[0].discard(action: "create_files")
       if lose { try DB.database.setOnline(online: false); server.loseAnswer(filename: "1.jpg") }
@@ -221,13 +232,28 @@ extension BridgeProbeTests {
             Issue.record("retry accepted a missing file after resume")
           } catch { #expect("\(error)".localizedCaseInsensitiveContains("select the file again")) }
           #expect(server.operationRequests("CreateAssets") == 0)
+          let replacement = directory.appending(path: "again.jpg")
+          try Data("image-again".utf8).write(to: replacement)
+          _ = try await Asset.retry(id: receipt.items[1].item.value, action: "create_files", source: UploadRequest(path: replacement.path))
+          try await finishTransfers()
+          try await DB.database.flush()
+          #expect(server.operationRequests("CreateAssets") == 1)
+          let identities = transport.identities
+          let kept = identities.first(where: { $0.itemId == "key-2" })?.operationId
+          let replaced = identities.last(where: { $0.itemId == "key-1" })?.operationId
+          #expect(kept != nil && kept == replaced)
+          #expect(try await Asset.find("a1").current() != nil)
           try await DB.close()
           continue
         }
         _ = try await DB.database.sessionResume()
+        try await finishTransfers()
+        try await DB.database.flush()
+        #expect(try await Asset.find("a1").current() != nil)
+        #expect(try await Asset.find("a2").current() != nil)
+      } else {
+        #expect(try await confirmedIds(receipt) == [nil, "a1", "a2"])
       }
-      #expect(try await rows[1].confirmedId() == "a1")
-      #expect(try await rows[2].confirmedId() == "a2")
       let blobs = server.effects.filter { $0["operationName"] as? String == "CreateBlob" }
       #expect(blobs.filter { ($0["variables"] as? [String: Any])?["filename"] as? String == "1.jpg" }.count == 1)
       let attempts = server.requests.filter { $0.body["operationName"] as? String == "CreateBlob" && ($0.body["variables"] as? [String: Any])?["filename"] as? String == "1.jpg" }
@@ -290,8 +316,9 @@ extension BridgeProbeTests {
     transport.enqueue("CreateMoment", failure: .Http(status: 422, detail: "rejected"))
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"}]"#
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: operations, uploads: UploadOperations(createBlob: .init("CreateBlob")))
-    let row = try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path))).row
-    do { try await row.settled(action: nil); Issue.record("the refused photo reported success") } catch {}
+    let receipt = try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path)))
+    let row = try #require(receipt.optimisticValue)
+    guard case .rejected = try await receipt.outcome() else { throw DbError.Invalid(detail: "the refused photo reported success") }
     let failed = try #require(try await Moment.find(row.id).current())
     #expect(failed.sync.state == .failed)
     try await failed.discard(action: nil)
@@ -314,7 +341,7 @@ extension BridgeProbeTests {
     let held = transport.hold("PresignParts")
     let abort = transport.hold("AbortMultipart", reply: #"{"data":{"abortMultipart":{"ok":true}}}"#)
     let db = try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: operations, uploads: uploads)
-    let queued = try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path))).row
+    let queued = try #require(try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path))).optimisticValue)
     await held.entered()
     try db.setOnline(online: false)
     try await queued.discard(action: nil)
@@ -352,10 +379,12 @@ extension BridgeProbeTests {
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: operations, uploads: UploadOperations(createBlob: .init("CreateBlob")))
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(2), "position": .integer(Int64(index))], path: file.path) }
-    let rows = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
-    do { try await rows[0].settled(action: "create_files"); Issue.record("the refused file reported success") } catch {}
+    let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
+    let rows = receipt.items.map(\.optimisticValue)
+    try await finishTransfers()
+    #expect(try await Asset.find(rows[0].id).current()?.sync.state == .failed)
     try await rows[0].discard(action: "create_files")
-    #expect(try await rows[1].confirmedId() == "a1")
+    #expect(try await confirmedIds(receipt) == [nil, "a1"])
     #expect(transport.calls.filter { $0.operationName == "CreateBlob" }.count == 2)
     #expect(transport.calls.allSatisfy { $0.operationName != "CreateAssets" })
     #expect(transport.calls.filter { $0.operationName == "CreateAsset" }.count == 1)
@@ -384,10 +413,12 @@ extension BridgeProbeTests {
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: operations, uploads: UploadOperations(createBlob: .init("CreateBlob")))
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(3), "position": .integer(Int64(index))], path: file.path) }
-    let rows = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
-    do { try await rows[0].settled(action: "create_files"); Issue.record("the refused file reported success") } catch {}
-    #expect(try await rows[0].retry(action: "create_files") == 1)
-    for (index, row) in rows.enumerated() { #expect(try await row.confirmedId() == "a\(index)") }
+    let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
+    let rows = receipt.items.map(\.optimisticValue)
+    try await finishTransfers()
+    #expect(try await Asset.find(rows[0].id).current()?.sync.state == .failed)
+    #expect(try await rows[0].retry(action: "create_files").operation == receipt.operation)
+    #expect(try await confirmedIds(receipt) == ["a0", "a1", "a2"])
     let call = try #require(transport.calls.first { $0.operationName == "CreateAssets" })
     let variables = try JSONSerialization.jsonObject(with: Data(call.variablesJson.utf8)) as! [String: Any]
     let sent = variables["items"] as! [[String: Any]]
@@ -419,15 +450,15 @@ extension BridgeProbeTests {
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: operations, uploads: UploadOperations(createBlob: .init("CreateBlob")))
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(3), "position": .integer(Int64(index))], path: file.path) }
-    let rows = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
+    let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
+    let rows = receipt.items.map(\.optimisticValue)
     await held.entered()
     #expect(try await rows[1].cancelUpload(action: "create_files"))
     let first = try #require(try await Asset.find(rows[0].id).current())
     let last = try #require(try await Asset.find(rows[2].id).current())
     #expect(first.position == 0 && last.position == 1 && first.size == 2 && last.size == 2)
     held.release()
-    #expect(try await rows[0].confirmedId() == "a0")
-    #expect(try await rows[2].confirmedId() == "a2")
+    #expect(try await confirmedIds(receipt) == ["a0", nil, "a2"])
     let call = try #require(transport.calls.first { $0.operationName == "CreateAssets" })
     let variables = try JSONSerialization.jsonObject(with: Data(call.variablesJson.utf8)) as! [String: Any]
     let sent = variables["items"] as! [[String: Any]]
@@ -504,8 +535,8 @@ extension BridgeProbeTests {
     defer { try? FileManager.default.removeItem(at: directory) }
     let config = Config(path: directory.appending(path: "files.sqlite").path, dataVersion: nil, cacheRows: 32)
     try await reopen(config: config, modelsJson: modelsJSON, transport: nil)
-    let first = try await User.create(name: "first")
-    let second = try await User.create(name: "second")
+    let first = try #require(try await User.create(name: "first").optimisticValue)
+    let second = try #require(try await User.create(name: "second").optimisticValue)
     let large = Data(repeating: 9, count: 300 * 1024)
     _ = try await first.attach(.avatar, data: Data([1, 2, 3]), name: "small", mime: "image/png")
     _ = try await second.attach(.avatar, data: large, name: "large", mime: "image/png")

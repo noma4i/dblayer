@@ -28,7 +28,10 @@
 - Transport requests carry a network `purpose`; transfer steps and their cleanup use `transfer`.
 - `Transport.put` takes a `TransferIdentity` with the operation, item and step.
 - Android ties a refused background start to the epoch of the accepted upload.
-- A transfer whose item is missing after an upgrade fails with `missing_file` and refuses retry.
+- A transfer whose item is missing after an upgrade fails with `missing_file` and refuses a retry without a new file.
+- `retry` takes an optional upload `source`: the failed item gets the new file and keeps its operation and item key.
+- Records of a batch below its minimum go through the single mutation one at a time in the same operation. The batch receipt reports each record.
+- A range of subscription events lost to a full intake marks the lists of its models stale and reads each open list once.
 - Requests, loads, uploads and subscriptions hold a lease that a session end, reset or close ends.
 - `sessionReset` and `close` are async and return after clearing; `sessionReset` clears the data.
 - A session end replays after a crash between the credential and the data clear.
@@ -112,7 +115,7 @@
 - The stream of an entity that the library loads waits for the frame of the landed row before its first load settles.
 - A refused multipart abort waits for `sessionResume` and reaches the server once.
 - `cancelUpload` cancels an upload that starts while the call runs.
-- A format change keeps queued operations and uploads when their table layout is unchanged.
+- A format change keeps queued operations and uploads when their table layout is unchanged and builds their list effects again.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

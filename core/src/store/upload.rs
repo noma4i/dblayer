@@ -1,11 +1,6 @@
 use rusqlite::{params, Connection};
-use serde_json::Value;
 
-use crate::commit::{OperationRecord};
-use crate::operation::OperationStatus;
-use crate::identity::RowId;
-use crate::operation::{delete_operation, read_item_value, read_value, read_operation_uploads, write_item_value, write_upload};
-use crate::upload::UploadInput;
+use crate::operation::{read_value, write_value};
 
 use super::StoreError;
 
@@ -25,37 +20,20 @@ fn erase_item(connection: &Connection, seq: i64, position: i64) -> Result<(), St
     Ok(())
 }
 
-pub(super) fn separate_items(connection: &Connection, seq: i64, action: &str, mutation: &str, now: i64) -> Result<Vec<i64>, StoreError> {
-    let common = read_value(connection, seq, "input")?.unwrap_or(Value::Null);
-    let prior = crate::db::op_effect::read_prior(connection, seq)?.unwrap_or(Value::Null);
-    let states = read_operation_uploads(connection, seq)?;
-    let mut statement = connection.prepare("SELECT position, row_id, client_key, file_id, source_error, transfer_operation_id FROM op_item WHERE seq = ?1 ORDER BY position")?;
-    let items = statement.query_map([seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, i64>(5)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut sequences = Vec::new();
-    for (position, row, key, file, error, operation_id) in items {
-        let value = read_item_value(connection, seq, position, "input")?.unwrap_or(Value::Null);
-        let mut input: UploadInput = serde_json::from_value(value).map_err(|error| StoreError::from(std::io::Error::other(error)))?;
-        input.steps.mutation = mutation.to_string();
-        let mut variables = common.as_object().cloned().unwrap_or_default();
-        variables.extend(input.variables.clone());
-        let rollback = prior["rows"].as_array().map(|rows| serde_json::json!({"rows": rows.iter().filter(|item| item["id"].as_str() == Some(&row)).collect::<Vec<_>>() }));
-        let id = RowId::new(&row).map_err(|error| StoreError::from(std::io::Error::other(error)))?;
-        let record = OperationRecord {
-            seq: None, action_key: action.to_string(), status: OperationStatus::Pending, row_ids: vec![id.clone()], temp_id: Some(id),
-            input: Value::Object(variables), transport_started: false, base_revision: None, created_at: now, dedupe_key: None, rollback, upload: None,
-        };
-        let next = super::apply::begin_operation(connection, &record)?;
-        connection.execute("UPDATE scope_revision SET operation_seq = ?3 WHERE operation_seq = ?1 AND row_id = ?2", params![seq, row, next])?;
-        sequences.push(next);
-        let state = states.get(&(seq, position)).ok_or_else(|| StoreError::from(std::io::Error::other("upload state is missing")))?;
-        erase_item(connection, seq, position)?;
-        write_upload(connection, next, 0, state)?;
-        connection.execute("UPDATE op_item SET row_id = ?2, client_key = ?3, file_id = ?4, source_error = ?5, transfer_operation_id = ?6 WHERE seq = ?1 AND position = 0", params![next, row, key, file, error, operation_id])?;
-        let value = serde_json::to_value(input).map_err(|error| StoreError::from(std::io::Error::other(error)))?;
-        write_item_value(connection, next, 0, "input", Some(&value))?;
+pub(super) fn confirm_item(connection: &Connection, seq: i64, position: i64, item: &str, rows: [&str; 2]) -> Result<(), StoreError> {
+    let mut confirmed: Vec<(String, String)> = read_value(connection, seq, "confirmed")?.map(serde_json::from_value).transpose()?.unwrap_or_default();
+    confirmed.push((item.to_string(), rows[1].to_string()));
+    write_value(connection, seq, "confirmed", Some(&serde_json::to_value(&confirmed)?))?;
+    connection.execute("DELETE FROM file WHERE id = (SELECT file_id FROM op_item WHERE seq = ?1 AND position = ?2) AND field LIKE 'op_item.%'", params![seq, position])?;
+    for row in rows {
+        connection.execute("DELETE FROM op_row WHERE seq = ?1 AND row_id = ?2", params![seq, row])?;
+        connection.execute("DELETE FROM op_effect_value WHERE seq = ?1 AND position IN (SELECT position FROM op_effect WHERE seq = ?1 AND row_id = ?2)", params![seq, row])?;
+        connection.execute("DELETE FROM op_effect WHERE seq = ?1 AND row_id = ?2", params![seq, row])?;
+        connection.execute("UPDATE scope_revision SET operation_seq = NULL WHERE operation_seq = ?1 AND row_id = ?2", params![seq, row])?;
     }
-    delete_operation(connection, seq)?;
-    Ok(sequences)
+    erase_item(connection, seq, position)?;
+    connection.execute("UPDATE op SET transport_started = 0, attempts = 0 WHERE seq = ?1", [seq])?;
+    Ok(())
 }
 
 impl super::Store {

@@ -45,6 +45,19 @@ async fn open(path: &std::path::Path, transport: Arc<dyn Transport>) -> Arc<Data
     db
 }
 
+async fn batch_items(db: &Database, receipt: crate::ffi::WireBatchReceipt) -> (crate::ffi::WireBatchResult, Vec<(String, Option<String>)>) {
+    let outcome = named_bound("batch outcome", db.batch_outcome(receipt)).await.unwrap();
+    let items = outcome.items.into_iter().map(|item| match item {
+        crate::ffi::WireItemOutcome::Confirmed { item, value } => (item.value, Some(value.id)),
+        crate::ffi::WireItemOutcome::Discarded { item } => (item.value, None),
+    }).collect();
+    (outcome.result, items)
+}
+
+fn item_rows(receipt: &crate::ffi::WireBatchReceipt) -> Vec<String> {
+    receipt.items.iter().map(|item| item.optimistic_value.id.clone()).collect()
+}
+
 #[derive(Default)]
 struct MultipartTransport {
     calls: Mutex<Vec<String>>,
@@ -169,9 +182,10 @@ async fn shifting_a_batch_during_a_held_encrypted_request_keeps_the_file_owner()
             crate::ffi::upload_wire::WireUploadItem { values_json: serde_json::json!({"clientKey":format!("key-{index}"),"size":3,"position":index}).to_string(), path: file.to_string_lossy().into(), name: Some(format!("{index}.jpg")), mime: None, variables_json: "{}".into() }
         }).collect();
         let epoch = db.session_epoch();
-        let rows = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+        let receipt = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+        let rows = item_rows(&receipt);
         named_bound("second file request", http.entered.notified()).await;
-        named_bound("discard first file", db.discard(epoch, "Asset".into(), rows[0].id.clone(), Some("create_files".into()))).await.unwrap();
+        named_bound("discard first file", db.discard(epoch, "Asset".into(), rows[0].clone(), Some("create_files".into()))).await.unwrap();
         if lose { db.set_online(false).unwrap(); }
         http.release.add_permits(1);
         let db = if lose {
@@ -183,9 +197,17 @@ async fn shifting_a_batch_during_a_held_encrypted_request_keeps_the_file_owner()
             named_bound("resume session", reopened.session_resume()).await.unwrap();
             reopened
         } else { db };
-        let epoch = db.session_epoch();
-        assert_eq!(named_bound("second confirmation", db.confirmed(epoch, "Asset".into(), rows[1].id.clone())).await.unwrap(), "a1", "lose={lose}");
-        assert_eq!(named_bound("third confirmation", db.confirmed(epoch, "Asset".into(), rows[2].id.clone())).await.unwrap(), "a2", "lose={lose}");
+        if lose {
+            named_bound("finish transfers", db.resume_uploads(db.session_epoch())).await.unwrap();
+            named_bound("send batch", db.flush()).await.unwrap();
+            let mut stored: Vec<String> = db.read_query(db.session_epoch(), r#"{"model":"Asset"}"#.into()).await.unwrap().into_iter().map(|row| row.id).collect();
+            stored.sort();
+            assert_eq!(stored, vec!["a1", "a2"]);
+        } else {
+            let (result, items) = batch_items(&db, receipt).await;
+            assert_eq!(result, crate::ffi::WireBatchResult::Confirmed);
+            assert_eq!(items, vec![("key-0".to_string(), None), ("key-1".to_string(), Some("a1".to_string())), ("key-2".to_string(), Some("a2".to_string()))]);
+        }
         let calls = rig.server.executed();
         assert_eq!(calls.iter().filter(|call| call["operationName"] == "CreateBlob" && call["variables"]["filename"] == "1.jpg").count(), 1);
         let attempts = rig.server.seen();
@@ -216,8 +238,8 @@ async fn an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard() {
     db.register_operations(r#"[{"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text } }"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"}]"#.into()).unwrap();
     let epoch = db.session_epoch();
     let receipt = named_bound("queue photo", db.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"group"}"#.into(), args_json: "{}".into(), upload: Some(crate::ffi::command::CommandUpload { action: "upload".into(), request: WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())) }) })).await.unwrap();
-    let id = receipt.row.id;
-    assert!(named_bound("refused photo", db.settled(epoch, "Moment".into(), id.clone(), None)).await.is_err());
+    let id = receipt.optimistic_value.clone().unwrap().id;
+    assert!(matches!(named_bound("refused photo", db.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
     let failed = db.read_row(epoch, "Moment".into(), id.clone()).await.unwrap().unwrap();
     assert_eq!(failed.sync.state, crate::ffi::WireSyncState::Failed);
     named_bound("discard", db.discard(epoch, "Moment".into(), id.clone(), None)).await.unwrap();
@@ -248,6 +270,7 @@ impl Transport for AlbumTransport {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> {
         let name = request.operation_name.clone();
+        let variables: serde_json::Value = serde_json::from_str(&request.variables_json).unwrap_or_default();
         let count = {
             let mut calls = self.calls.lock().unwrap();
             calls.push(request);
@@ -260,7 +283,11 @@ impl Transport for AlbumTransport {
                 Ok(format!(r#"{{"data":{{"createBlob":{{"url":"https://storage/file","headers":{{}},"signedId":"signed-{count}","blobId":"b{count}"}}}}}}"#))
             }
             "CreateAssets" if self.fail_first => Ok(r#"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}"#.into()),
-            "CreateAsset" if self.single => Ok(r#"{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}"#.into()),
+            "CreateAsset" if self.single => {
+                let key = variables["clientKey"].as_str().unwrap_or_default().to_string();
+                let index = key.trim_start_matches("key-").to_string();
+                Ok(serde_json::json!({"data":{"createAsset":{"asset":{"id":format!("a{index}"),"clientKey":key,"size":2,"position":1}}}}).to_string())
+            }
             "CreateAssets" => Ok(r#"{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a0","clientKey":"key-0","size":2,"position":0}]}}}"#.into()),
             _ => panic!("unexpected operation {name}"),
         }
@@ -298,17 +325,19 @@ async fn cancelling_the_middle_file_keeps_the_other_files_in_order() {
         crate::ffi::upload_wire::WireUploadItem { values_json: serde_json::json!({"clientKey":format!("key-{index}"),"size":3,"position":index}).to_string(), path: file.to_string_lossy().into(), name: None, mime: None, variables_json: "{}".into() }
     }).collect();
     let epoch = db.session_epoch();
-    let rows = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    let receipt = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    let rows = item_rows(&receipt);
     named_bound("first file", transport.entered.notified()).await;
-    assert!(named_bound("cancel middle", db.cancel_upload(epoch, "Asset".into(), rows[1].id.clone(), "create_files".into())).await.unwrap());
+    assert!(named_bound("cancel middle", db.cancel_upload(epoch, "Asset".into(), rows[1].clone(), "create_files".into())).await.unwrap());
     for (index, position) in [(0, 0), (2, 1)] {
-        let row = db.read_row(epoch, "Asset".into(), rows[index].id.clone()).await.unwrap().unwrap();
+        let row = db.read_row(epoch, "Asset".into(), rows[index].clone()).await.unwrap().unwrap();
         assert_eq!(row.cells[1], crate::ffi::Cell::Int { value: 2 });
         assert_eq!(row.cells[2], crate::ffi::Cell::Int { value: position });
     }
     transport.release.add_permits(1);
-    assert_eq!(named_bound("first confirmation", db.confirmed(epoch, "Asset".into(), rows[0].id.clone())).await.unwrap(), "a0");
-    assert_eq!(named_bound("last confirmation", db.confirmed(epoch, "Asset".into(), rows[2].id.clone())).await.unwrap(), "a2");
+    let (result, outcomes) = batch_items(&db, receipt).await;
+    assert_eq!(result, crate::ffi::WireBatchResult::Confirmed);
+    assert_eq!(outcomes, vec![("key-0".to_string(), Some("a0".to_string())), ("key-1".to_string(), None), ("key-2".to_string(), Some("a2".to_string()))]);
     let calls = transport.calls.lock().unwrap();
     assert_eq!(calls.iter().filter(|call| call.operation_name == "CreateBlob").count(), 2);
     let mut filenames: Vec<String> = calls.iter().filter(|call| call.operation_name == "CreateBlob").map(|call| serde_json::from_str::<serde_json::Value>(&call.variables_json).unwrap()["filename"].as_str().unwrap().to_string()).collect();
@@ -334,12 +363,14 @@ async fn retrying_a_refused_file_keeps_the_other_album_files() {
         crate::ffi::upload_wire::WireUploadItem { values_json: serde_json::json!({"clientKey":format!("key-{index}"),"size":3,"position":index}).to_string(), path: file.to_string_lossy().into(), name: None, mime: None, variables_json: "{}".into() }
     }).collect();
     let epoch = db.session_epoch();
-    let rows = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
-    assert!(named_bound("refused file", db.settled(epoch, "Asset".into(), rows[0].id.clone(), Some("create_files".into()))).await.is_err());
-    assert_eq!(named_bound("retry file", db.retry(epoch, "Asset".into(), rows[0].id.clone(), Some("create_files".into()))).await.unwrap(), 1);
-    for (index, row) in rows.iter().enumerate() {
-        assert_eq!(named_bound("confirmed file", db.confirmed(epoch, "Asset".into(), row.id.clone())).await.unwrap(), format!("a{index}"));
-    }
+    let receipt = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    let rows = item_rows(&receipt);
+    named_bound("refused file", db.sync.as_ref().unwrap().wait_uploads()).await;
+    assert_eq!(db.read_row(epoch, "Asset".into(), rows[0].clone()).await.unwrap().unwrap().sync.state, crate::ffi::WireSyncState::Failed);
+    assert_eq!(named_bound("retry file", db.retry(epoch, "Asset".into(), rows[0].clone(), Some("create_files".into()), None)).await.unwrap().operation, Some(receipt.operation));
+    let (result, outcomes) = batch_items(&db, receipt).await;
+    assert_eq!(result, crate::ffi::WireBatchResult::Confirmed);
+    assert_eq!(outcomes, (0..3).map(|index| (format!("key-{index}"), Some(format!("a{index}")))).collect::<Vec<_>>());
     let calls = transport.calls.lock().unwrap();
     assert_eq!(calls.iter().filter(|call| call.operation_name == "CreateBlob").count(), 4);
     let mut filenames: Vec<String> = calls.iter().filter(|call| call.operation_name == "CreateBlob").map(|call| serde_json::from_str::<serde_json::Value>(&call.variables_json).unwrap()["filename"].as_str().unwrap().to_string()).collect();
@@ -365,10 +396,14 @@ async fn discarding_a_refused_file_sends_the_remaining_file_as_single() {
         crate::ffi::upload_wire::WireUploadItem { values_json: serde_json::json!({"clientKey":format!("key-{index}"),"size":2,"position":index}).to_string(), path: file.to_string_lossy().into(), name: None, mime: None, variables_json: "{}".into() }
     }).collect();
     let epoch = db.session_epoch();
-    let rows = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
-    assert!(named_bound("refused file", db.settled(epoch, "Asset".into(), rows[0].id.clone(), Some("create_files".into()))).await.is_err());
-    named_bound("discard file", db.discard(epoch, "Asset".into(), rows[0].id.clone(), Some("create_files".into()))).await.unwrap();
-    assert_eq!(named_bound("confirmed file", db.confirmed(epoch, "Asset".into(), rows[1].id.clone())).await.unwrap(), "a1");
+    let receipt = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    let rows = item_rows(&receipt);
+    named_bound("refused file", db.sync.as_ref().unwrap().wait_uploads()).await;
+    assert_eq!(db.read_row(epoch, "Asset".into(), rows[0].clone()).await.unwrap().unwrap().sync.state, crate::ffi::WireSyncState::Failed);
+    named_bound("discard file", db.discard(epoch, "Asset".into(), rows[0].clone(), Some("create_files".into()))).await.unwrap();
+    let (result, outcomes) = batch_items(&db, receipt).await;
+    assert_eq!(result, crate::ffi::WireBatchResult::Confirmed);
+    assert_eq!(outcomes, vec![("key-0".to_string(), None), ("key-1".to_string(), Some("a1".to_string()))]);
     let calls = transport.calls.lock().unwrap();
     assert_eq!(calls.iter().filter(|call| call.operation_name == "CreateBlob").count(), 2);
     assert!(calls.iter().all(|call| call.operation_name != "CreateAssets"));
@@ -377,6 +412,37 @@ async fn discarding_a_refused_file_sends_the_remaining_file_as_single() {
     let values: serde_json::Value = serde_json::from_str(&single.variables_json).unwrap();
     assert_eq!(values["clientKey"], "key-1");
     drop(calls);
+    named_bound("close database", db.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn records_below_the_minimum_go_as_single_steps_of_the_same_operation() {
+    let directory = tempfile::tempdir().unwrap();
+    let transport = Arc::new(AlbumTransport { fail_first: true, single: true, ..AlbumTransport::default() });
+    let mut model = album_model();
+    model.actions[1].batch.as_mut().unwrap().min = 3;
+    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, None, None, Some(UploadOperations::empty().create_blob("CreateBlob")), None).await.unwrap();
+    db.register_operations(r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }","rootPath":"createAssets.assets"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }","rootPath":"createAsset.asset"}]"#.into()).unwrap();
+    let items = (0..3).map(|index| {
+        let file = directory.path().join(format!("{index}.jpg"));
+        std::fs::write(&file, format!("image-{index}")).unwrap();
+        crate::ffi::upload_wire::WireUploadItem { values_json: serde_json::json!({"clientKey":format!("key-{index}"),"size":3,"position":index}).to_string(), path: file.to_string_lossy().into(), name: None, mime: None, variables_json: "{}".into() }
+    }).collect();
+    let epoch = db.session_epoch();
+    let receipt = named_bound("upload batch", db.upload_create_batch(epoch, "Asset".into(), items, crate::ffi::upload_wire::WireUploadBatch { operation: "create_files".into(), variables_json: "{}".into() })).await.unwrap();
+    let rows = item_rows(&receipt);
+    named_bound("refused file", db.sync.as_ref().unwrap().wait_uploads()).await;
+    named_bound("discard file", db.discard(epoch, "Asset".into(), rows[0].clone(), Some("create_files".into()))).await.unwrap();
+    let operation = receipt.operation;
+    let (result, outcomes) = batch_items(&db, receipt).await;
+    assert_eq!(result, crate::ffi::WireBatchResult::Confirmed);
+    assert_eq!(outcomes, vec![("key-0".to_string(), None), ("key-1".to_string(), Some("a1".to_string())), ("key-2".to_string(), Some("a2".to_string()))]);
+    let calls = transport.calls.lock().unwrap();
+    assert!(calls.iter().all(|call| call.operation_name != "CreateAssets"));
+    let keys: Vec<String> = calls.iter().filter(|call| call.operation_name == "CreateAsset").map(|call| serde_json::from_str::<serde_json::Value>(&call.variables_json).unwrap()["clientKey"].as_str().unwrap().to_string()).collect();
+    assert_eq!(keys, vec!["key-1", "key-2"]);
+    drop(calls);
+    assert!(db.db.outbox().unwrap().iter().all(|entry| entry.operation.id.0 != operation));
     named_bound("close database", db.close_database()).await.unwrap();
 }
 
@@ -557,8 +623,9 @@ async fn discarding_a_queued_photo_offline_routes_the_abort_after_reopen() {
     let receipt = named_bound("queue photo", db.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"group"}"#.into(), args_json: "{}".into(), upload: Some(crate::ffi::command::CommandUpload { action: "upload".into(), request: WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())) }) })).await.unwrap();
     named_bound("presign", transport.presign.notified()).await;
     db.set_online(false).unwrap();
-    named_bound("discard", db.discard(epoch, "Moment".into(), receipt.row.id.clone(), None)).await.unwrap();
-    assert!(db.read_row(epoch, "Moment".into(), receipt.row.id).await.unwrap().is_none());
+    let id = receipt.optimistic_value.unwrap().id;
+    named_bound("discard", db.discard(epoch, "Moment".into(), id.clone(), None)).await.unwrap();
+    assert!(db.read_row(epoch, "Moment".into(), id).await.unwrap().is_none());
     named_bound("close", db.close_database()).await.unwrap();
     drop(db);
     let db = make_db().await.unwrap();
@@ -587,8 +654,8 @@ async fn attached_files_survive_reopen_and_detaching_one_keeps_the_other() {
     let config = || Config { path: Some(path.to_string_lossy().into()), data_version: None, cache_rows: 8 };
     let db = Database::open(config(), models.clone(), None, None, None, None, None, None).await.unwrap();
     let epoch = db.session_epoch();
-    let first = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().id;
-    let second = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().id;
+    let first = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
+    let second = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
     let small = vec![1, 2, 3];
     let large = vec![9; 300 * 1024];
     db.attach(epoch, "Files".into(), first.clone(), "photo".into(), small.clone(), "small".into(), "image/png".into()).await.unwrap();

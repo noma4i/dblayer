@@ -15,7 +15,7 @@ impl Inner {
     pub(crate) fn window_event(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, event: WindowTrigger) -> Result<(), SyncError> {
         if !Arc::ptr_eq(admitted.life(), &self.db.shared.store.lifecycle) || !admitted.is_current() { return Err(SyncError::Cancelled); }
         let (model, joins_events) = match event {
-            WindowTrigger::Lost { model, .. } => (model, true),
+            WindowTrigger::Lost { model } => (model, true),
             WindowTrigger::ParentMissing { model } => (model, false),
         };
         let names = self.db.spec(&model)?.relations.iter().filter(|relation| relation.remote.is_some() && (joins_events || !relation.joins_events)).map(|relation| relation.name.clone()).collect();

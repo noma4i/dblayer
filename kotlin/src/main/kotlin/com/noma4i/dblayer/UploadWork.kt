@@ -130,6 +130,14 @@ private fun endUploadRound(context: Context, round: RunningUploadRound) {
     groups.forEach { UploadAcceptedStart(context, round.database).accepted(it) }
 }
 
+private fun abandonUploadRound(round: RunningUploadRound) {
+    try {
+        round.database.roundAbandon(round.epoch, round.owner)
+    } catch (_: DbException.Interrupted) {
+    } catch (_: DbException.NoSession) {
+    }
+}
+
 private suspend fun runUploadRound(round: RunningUploadRound) {
     while (true) {
         val step = try {
@@ -192,7 +200,7 @@ internal class UploadJobService : JobService() {
         scope?.cancel()
         scope = null
         round = null
-        endUploadRound(applicationContext, current)
+        abandonUploadRound(current)
         return true
     }
 
@@ -236,7 +244,7 @@ internal class UploadService : Service() {
         scope.cancel()
         val current = round ?: return
         round = null
-        endUploadRound(applicationContext, current)
+        abandonUploadRound(current)
     }
 
     companion object {

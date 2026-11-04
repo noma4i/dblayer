@@ -544,7 +544,17 @@ impl Database {
         on_executor(async move { sync.flush(&admitted).await }).await?;
         Ok(())
     }
-    pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<WireOperationReceipt, DbError> {
+    pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
+        if let Some(source) = source {
+            let sync = self.sync()?.clone();
+            let wire = self.wire(&model)?.clone();
+            let life = self.streams.clone();
+            return self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "retry", false, |admitted| on_executor(async move {
+                let file = source.into_file()?;
+                let (operation, revision, row, ticket) = sync.retry_upload_source(&admitted, &model, &row_id, action.as_deref(), file).await?;
+                Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, row.map(|row| wire.row(&row)), Some(ticket), life))
+            })).await;
+        }
         if self.sync.is_none() {
             let row = self.db.find(&model, &id(&row_id)?)?.map(|row| self.wire(&model).map(|wire| wire.row(&row))).transpose()?;
             return Ok(receipt(epoch, model, None, self.db.revision_seq()?, row, None, self.streams.clone()));

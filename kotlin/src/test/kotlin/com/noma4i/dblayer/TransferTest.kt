@@ -77,6 +77,14 @@ private class HoldSecondFile(private val server: SealedServer, private val mock:
     }
 }
 
+private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Model>): List<String?> {
+    val outcome = receipt.outcome()
+    assertEquals(BatchResult.Confirmed, outcome.result)
+    return outcome.items.map { (it as? ItemOutcome.Confirmed)?.value?.id }
+}
+
+private suspend fun finishTransfers() = DBlayer.database.resumeUploads(DBlayer.database.sessionEpoch())
+
 class TransferTest {
     @Test
     fun openingLegacyPendingKeepsTheSessionAndLocalFile() = bounded {
@@ -96,7 +104,7 @@ class TransferTest {
             val database = DBlayer.database
             database.registerOperations(operations)
             database.sessionCall("login_link", """{"account":"A"}""")
-            val note = database.create(database.sessionEpoch(), "Note", """{"text":"kept"}""", "{}")
+            val note = requireNotNull(database.create(database.sessionEpoch(), "Note", """{"text":"kept"}""", "{}").optimisticValue)
             val bytes = ByteArray(300 * 1024) { 7 }
             database.attach(database.sessionEpoch(), "Note", note.id, "attachment", bytes, "file", "application/octet-stream")
             server.hold("CreateBlob")
@@ -152,9 +160,8 @@ class TransferTest {
             val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
             reopen(Config(directory.resolve("db.sqlite").path, null, 8u), modelsJSON, transport, operations, uploads)
             val items = listOf("../../../outside", "other").mapIndexed { index, key -> UploadItem(values = buildJsonObject { put("clientKey", key); put("size", 2); put("position", index) }, path = source.path) }
-            val rows = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
-            assertEquals("a0", rows[0].confirmedId())
-            assertEquals("a1", rows[1].confirmedId())
+            val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+            assertEquals(listOf("a0", "a1"), confirmedIds(receipt))
             assertEquals(3, transport.identities.count { it.itemId == "../../../outside" })
             val ranges = directory.resolve("db.sqlite.cache/ranges").canonicalFile.toPath()
             assertTrue(transport.paths.filter { it.first == "../../../outside" }.all { it.second.startsWith(ranges) })
@@ -196,7 +203,8 @@ class TransferTest {
                     DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
                     val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
                     val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
-                    val rows = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+                    val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+                    val rows = receipt.items.map { it.optimisticValue }
                     server.heldRequest()
                     rows[0].discard("create_files")
                     if (lose) { DBlayer.database.setOnline(false); server.loseAnswer("1.jpg") }
@@ -214,13 +222,24 @@ class TransferTest {
                             val after = runCatching { DBlayer.database.retryAll(DBlayer.database.sessionEpoch()) }.exceptionOrNull()
                             assertTrue("missing file after resume: $after", after?.message?.contains("select the file again", ignoreCase = true) == true)
                             assertEquals(0, server.operationRequests("CreateAssets"))
+                            val replacement = directory.resolve("again.jpg").apply { writeText("image-again") }
+                            Asset.retry(receipt.items[1].item.value, "create_files", UploadRequest(replacement.path))
+                            finishTransfers()
+                            DBlayer.database.flush()
+                            assertEquals(1, server.operationRequests("CreateAssets"))
+                            val identities = synchronized(transport.identities) { transport.identities.toList() }
+                            assertEquals(identities.first { it.itemId == "key-2" }.operationId, identities.last { it.itemId == "key-1" }.operationId)
+                            assertTrue(Asset.find("a1").current() != null)
                             DBlayer.close()
                             continue
                         }
                         DBlayer.database.sessionResume()
+                        finishTransfers()
+                        DBlayer.database.flush()
+                        assertEquals(listOf("a1", "a2"), listOf("a1", "a2").filter { Asset.find(it).current() != null })
+                    } else {
+                        assertEquals(listOf(null, "a1", "a2"), confirmedIds(receipt))
                     }
-                    assertEquals("a1", rows[1].confirmedId())
-                    assertEquals("a2", rows[2].confirmedId())
                     val blobs = server.effects.filter { it["operationName"]?.jsonPrimitive?.content == "CreateBlob" }
                     assertEquals(1, blobs.count { it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "1.jpg" })
                     val attempts = server.requests.map { it.second }.count { it["operationName"]?.jsonPrimitive?.content == "CreateBlob" && it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "1.jpg" }
@@ -281,8 +300,9 @@ class TransferTest {
             transport.enqueue("CreateMoment", DbException.Http(422u, "rejected"))
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"}]"""
             reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            val row = AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path))).row
-            try { row.settled(null); fail("the refused photo reported success") } catch (_: DbException) {}
+            val receipt = AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
+            val row = requireNotNull(receipt.optimisticValue)
+            assertTrue(receipt.outcome() is OperationOutcome.Rejected)
             val failed = requireNotNull(Moment.find(row.id).current())
             assertEquals(SyncState.Failed, failed.sync.state)
             failed.discard(null)
@@ -304,7 +324,7 @@ class TransferTest {
             val held = transport.hold("PresignParts")
             val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
             val db = reopen(config, modelsJSON, transport, operations, uploads)
-            val queued = AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path))).row
+            val queued = requireNotNull(AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path))).optimisticValue)
             held.entered()
             db.setOnline(false)
             queued.discard(null)
@@ -339,10 +359,12 @@ class TransferTest {
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
             reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 2); put("position", index) }, path = file.path) }
-            val rows = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
-            try { rows[0].settled("create_files"); fail("the refused file reported success") } catch (_: DbException) {}
+            val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+            val rows = receipt.items.map { it.optimisticValue }
+            finishTransfers()
+            assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
             rows[0].discard("create_files")
-            assertEquals("a1", rows[1].confirmedId())
+            assertEquals(listOf(null, "a1"), confirmedIds(receipt))
             assertEquals(2, transport.calls.count { it.operationName == "CreateBlob" })
             assertTrue(transport.calls.none { it.operationName == "CreateAssets" })
             val call = transport.calls.single { it.operationName == "CreateAsset" }
@@ -363,10 +385,12 @@ class TransferTest {
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
             reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
-            val rows = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
-            try { rows[0].settled("create_files"); fail("the refused file reported success") } catch (_: DbException) {}
-            assertEquals(1uL, rows[0].retry("create_files"))
-            rows.forEachIndexed { index, row -> assertEquals("a$index", row.confirmedId()) }
+            val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+            val rows = receipt.items.map { it.optimisticValue }
+            finishTransfers()
+            assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
+            assertEquals(receipt.operation, rows[0].retry("create_files").operation)
+            assertEquals(listOf("a0", "a1", "a2"), confirmedIds(receipt))
             val call = transport.calls.single { it.operationName == "CreateAssets" }
             val sent = Json.parseToJsonElement(call.variablesJson).jsonObject.getValue("items").jsonArray
             assertEquals(listOf("key-0", "key-1", "key-2"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
@@ -389,7 +413,8 @@ class TransferTest {
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
             reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
-            val rows = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+            val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+            val rows = receipt.items.map { it.optimisticValue }
             held.entered()
             assertTrue(rows[1].cancelUpload("create_files"))
             val first = requireNotNull(Asset.find(rows[0].id).current())
@@ -397,8 +422,7 @@ class TransferTest {
             assertEquals(listOf(0L, 1L), listOf(first.position, last.position))
             assertEquals(listOf(2L, 2L), listOf(first.size, last.size))
             held.release()
-            assertEquals("a0", rows[0].confirmedId())
-            assertEquals("a2", rows[2].confirmedId())
+            assertEquals(listOf("a0", null, "a2"), confirmedIds(receipt))
             val call = transport.calls.single { it.operationName == "CreateAssets" }
             val sent = Json.parseToJsonElement(call.variablesJson).jsonObject.getValue("items").jsonArray
             assertEquals(listOf("key-0", "key-2"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
@@ -466,8 +490,8 @@ class TransferTest {
         try {
             val config = Config(directory.resolve("files.sqlite").path, null, 32u)
             reopen(config, modelsJSON, null)
-            val first = User.create(name = "first")
-            val second = User.create(name = "second")
+            val first = requireNotNull(User.create(name = "first").optimisticValue)
+            val second = requireNotNull(User.create(name = "second").optimisticValue)
             val large = ByteArray(300 * 1024) { 9 }
             first.attach(User.avatar, byteArrayOf(1, 2, 3), "small", "image/png")
             second.attach(User.avatar, large, "large", "image/png")

@@ -212,7 +212,7 @@ async fn a_refused_durable_send_keeps_its_row_when_declared() {
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
     assert!(bound(rig.database.read_row(epoch, "Message".into(), id.clone())).await.unwrap().is_some());
     if retry {
-        let retry_receipt = bound(rig.database.retry(epoch, "Message".into(), id.clone(), None)).await.unwrap();
+        let retry_receipt = bound(rig.database.retry(epoch, "Message".into(), id.clone(), None, None)).await.unwrap();
         assert!(matches!(bound(rig.database.outcome(retry_receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
     } else {
         bound(rig.database.discard(epoch, "Message".into(), id, None)).await.unwrap();

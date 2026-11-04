@@ -94,6 +94,31 @@ pub(crate) fn write_prior(connection: &Connection, sequence: i64, revision: i64,
     Ok(())
 }
 
+pub(crate) fn rebuild_open_effects(connection: &Connection, models: &std::collections::BTreeMap<String, crate::store::ModelInfo>) -> Result<(), StoreError> {
+    let reader = crate::store::Reader::new(connection, models);
+    let revision = reader.revision_seq()? + 1;
+    let operations: Vec<(i64, String)> = connection.prepare(&format!("SELECT seq, action_key FROM op WHERE status IN {} ORDER BY seq", crate::operation::OPEN_STATUSES))?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
+    let spec = |name: &str| models.get(name).map(|info| &info.spec);
+    let mut written = false;
+    for (seq, action_key) in operations {
+        let Some((model, action)) = crate::operation::Operation::split_action_key(&action_key) else { continue };
+        let Some(declared) = spec(&model).and_then(|owner| owner.actions.iter().find(|declared| declared.name == action)) else { continue };
+        if declared.scope_effects.is_empty() { continue }
+        let Some(Value::Object(args)) = crate::operation::read_value(connection, seq, "input")? else { continue };
+        let Some(id) = args.get("id").and_then(Value::as_str).and_then(|id| crate::identity::RowId::new(id).ok()) else { continue };
+        let own = crate::identity::RowRef::new(crate::identity::ModelKey::new(&model), id);
+        let mut rows = Vec::new();
+        for effect in &declared.scope_effects {
+            let target = spec(&effect.model).ok_or_else(|| StoreError::UnknownModel(effect.model.clone()))?;
+            super::local_write::plan_scope_effect(&reader, target, effect, (&own, &args), &mut rows, &mut Vec::new()).map_err(|error| StoreError::Constraint(error.to_string()))?;
+        }
+        write_prior(connection, seq, revision, Some(&Prior { rows }.to_value()))?;
+        written = true;
+    }
+    if written { crate::ddl::manifest_write(connection, crate::ddl::REVISION_SEQ_KEY, &revision.to_string())?; }
+    Ok(())
+}
+
 pub(crate) fn read_prior(connection: &Connection, sequence: i64) -> Result<Option<Value>, StoreError> {
     let rows = crate::nodes::read_trees(connection, "op_effect_value", &["seq", "position"], "seq = ?1", &[SqlValue::Integer(sequence)])?;
     if rows.is_empty() { return Ok(None) }
