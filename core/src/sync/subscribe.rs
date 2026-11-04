@@ -167,6 +167,13 @@ struct Feed {
     ready: Option<tokio::sync::watch::Sender<Option<Result<(), SyncError>>>>,
     received: crate::lifecycle::Stamp,
     epoch: crate::lifecycle::Epoch,
+    dropped: Arc<Mutex<DroppedEvents>>,
+}
+
+#[derive(Default)]
+struct DroppedEvents {
+    pending: bool,
+    reloaded: Option<u64>,
 }
 
 impl Feed {
@@ -175,8 +182,30 @@ impl Feed {
         definitions.into_iter().map(|def| Feed {
             inner: self.inner.clone(), root_path: def.root.clone().unwrap_or_else(|| self.operation_root.clone()),
             def: Arc::new(def), shared: false, operation_root: self.operation_root.clone(),
-            status: self.status.clone(), backoff: self.backoff, ready: None, received, epoch: self.epoch.clone(),
+            status: self.status.clone(), backoff: self.backoff, ready: None, received, epoch: self.epoch.clone(), dropped: self.dropped.clone(),
         }).collect()
+    }
+
+    async fn reload_dropped(&self) {
+        let published = self.inner.db.shared.store.lifecycle.published_epoch();
+        {
+            let mut state = locked(&self.dropped);
+            if !state.pending { return; }
+            if state.reloaded == Some(published) {
+                state.pending = false;
+                return;
+            }
+        }
+        let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
+        for model in models {
+            if self.inner.expire_and_reload_watched(&model).await.is_err() {
+                self.inner.publish_model_gap(&model);
+                locked(&self.status).rejected += 1;
+            }
+        }
+        let mut state = locked(&self.dropped);
+        state.pending = false;
+        state.reloaded = Some(published);
     }
 
     fn mark(&self, change: impl FnOnce(&mut SubscriptionStatus)) {
@@ -627,7 +656,10 @@ impl Feed {
                         self.opening(Err(SyncError::Event("subscription closed".into())));
                         return (SubscriptionFailureKind::Transport, None, Self::drain(pending));
                     }
-                    Some(EpochEvent { epoch, .. }) if epoch != Some(self.epoch.value()) => continue,
+                    Some(EpochEvent { epoch, .. }) if epoch != Some(self.epoch.value()) => {
+                        locked(&self.dropped).pending = true;
+                        self.reload_dropped().await;
+                    }
                     Some(EpochEvent { event: SubscriptionEvent::Ready, .. }) => {
                         if generation != self.inner.db.generation() { continue; }
                         self.opening(Ok(()));
@@ -707,6 +739,7 @@ impl Feed {
                 } => match attempt { Some(attempt) => attempt, None => { self.mark(|status| status.opening = false); return } },
             };
             self.epoch = epoch;
+            locked(&self.dropped).pending = false;
             let (kind, failed, leftover) = match attempt {
                 Ok(mut connection) => {
                     let reconnected = {
@@ -732,6 +765,7 @@ impl Feed {
                             change = invalidated(&mut resets) => match change {
                                 Some(crate::lifecycle::Invalidated::Rebound(snapshot)) => {
                                     self.epoch = crate::lifecycle::Epoch::new(&self.inner.db.shared.store.lifecycle, snapshot.session_epoch);
+                                    self.reload_dropped().await;
                                 }
                                 _ => { self.mark(|status| status.connected = false); lifecycle = Lifecycle::new(self.backoff); continue 'open; }
                             },
@@ -821,7 +855,7 @@ impl Inner {
         let def_root = def.root.clone();
         let backoff = RetryPolicy::Subscription.backoff().randomized();
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
-        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp(), epoch: first.as_ref().map_or_else(|| self.db.shared.store.lifecycle.epoch_now(), |(_, epoch, _)| epoch.clone()) };
+        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp(), dropped: Arc::default(), epoch: first.as_ref().map_or_else(|| self.db.shared.store.lifecycle.epoch_now(), |(_, epoch, _)| epoch.clone()) };
         let task = crate::task::spawn(crate::task::Carry::Detached, self.until_closed(feed.run(request, first, resets)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }

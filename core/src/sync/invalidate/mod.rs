@@ -34,6 +34,14 @@ impl Inner {
     }
 }
 
+impl Inner {
+    pub(crate) async fn expire_and_reload_watched(&self, model: &str) -> Result<usize, SyncError> {
+        let keys: Vec<String> = self.db.observed_reads().into_iter().filter(|entry| entry.model == model).map(|entry| entry.key).collect();
+        self.db.shared.store.invalidate_windows(&self.db.authority()?, &keys)?;
+        self.reload_watched(model, None, true).await
+    }
+}
+
 impl Sync {
     pub async fn refresh(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
         self.load(model, relation, params, LoadOptions { force: true }).await

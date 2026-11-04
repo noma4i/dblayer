@@ -1054,6 +1054,31 @@ async fn an_event_enqueued_right_after_a_session_start_is_applied() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn an_event_dropped_at_a_rebound_reloads_the_fresh_window_once_and_a_rebound_that_drops_nothing_reloads_nothing() {
+    for dropped in [true, false] {
+        let rig = rig_with_subscription();
+        rig.transport.script_subscription("MomentChanged", vec![]);
+        for name in ["before", "after"] {
+            rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":name}})));
+        }
+        let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
+        rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+        let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
+        rig.transport.await_calls("MomentChanged", 1).await;
+        rig.transport.await_consumed("MomentChanged").await;
+        assert_eq!(rig.transport.call_count("CurrentUser"), 1);
+        if dropped {
+            rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
+        }
+        let life = rig.db.shared.store.lifecycle.clone();
+        assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
+        assert_eq!((rig.transport.call_count("CurrentUser"), user.text("name")), if dropped { (2, Some("after")) } else { (1, Some("before")) }, "dropped: {dropped}");
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() {
     let directory = tempfile::tempdir().unwrap();
     let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());

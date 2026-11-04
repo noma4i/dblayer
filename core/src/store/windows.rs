@@ -144,6 +144,16 @@ impl Store {
         self.write_store(authority, |inner| Ok(inner.connection.execute("UPDATE query_window SET invalidated = 1 WHERE key LIKE ?1 ESCAPE '\\'", params![pattern])?))
     }
 
+    pub(crate) fn invalidate_windows(&self, authority: &crate::lifecycle::Authority, keys: &[String]) -> Result<usize, StoreError> {
+        self.write_store(authority, |inner| {
+            let mut marked = 0;
+            for key in keys {
+                marked += inner.connection.execute("UPDATE query_window SET invalidated = 1 WHERE key = ?1", params![key])?;
+            }
+            Ok(marked)
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
         self.invalidate_family(&crate::lifecycle::Authority::Epoch(self.lifecycle.epoch_now()), model, relation)
