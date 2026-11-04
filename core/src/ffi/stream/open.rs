@@ -86,11 +86,14 @@ impl Database {
 
     fn connect_entity(&self, stream: &Arc<Stream>, model: &str, id: &str, fetch: crate::sync::EntityFetch) -> Result<Handles, DbError> {
         let row = RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+        let sync = if fetch == crate::sync::EntityFetch::None { None } else {
+            let sync = self.sync().map_err(|_| DbError::Invalid { detail: "entity fetch needs a network session".into() })?.clone();
+            stream.fetches_entity();
+            stream.expect_load();
+            Some(sync)
+        };
         let mut handles = self.connect(Query::new(model).filtered(Where::equal("id", serde_json::json!(row))), None, false, None, LoadOptions::default(), stream)?;
-        if fetch == crate::sync::EntityFetch::None { return Ok(handles); }
-        let sync = self.sync().map_err(|_| DbError::Invalid { detail: "entity fetch needs a network session".into() })?.clone();
-        stream.fetches_entity();
-        stream.expect_load();
+        let Some(sync) = sync else { return Ok(handles) };
         if let Some(control) = handles.observer.as_ref().map(ObserverHandle::control) { stream.on_ahead(Arc::new(move |revision| control.want_reach(revision))); }
         let token: Arc<Mutex<Option<CancelToken>>> = Arc::default();
         let start = {

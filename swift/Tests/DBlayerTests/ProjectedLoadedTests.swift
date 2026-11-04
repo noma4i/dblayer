@@ -48,6 +48,24 @@ extension BridgeProbeTests {
     }
   }
 
+  /// Requirement: when the first deliveries are a count of missed events and a state (the snapshot was dropped), nothing is shown and the recovery snapshot is asked once; the snapshot then shows its rows.
+  @Test
+  func aMissedThenAStateBeforeAnySnapshotShowsNothingAndAsksTheRecoverySnapshot() {
+    let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
+    let steps: [(seq: UInt64, value: StreamValue, applied: ListProjection<Moment>.Applied, shown: UInt64?)] = [
+      (0, .missed(count: 5), .ignored, nil),
+      (6, .state(state: state), .resync, nil),
+      (7, .state(state: state), .changed, nil),
+      (8, .snapshot(revision: 2, rows: [], state: state), .changed, 8),
+    ]
+    var projection = ListProjection<Moment>()
+    for step in steps {
+      let applied = projection.apply(StreamDelivery(stream: 1, epoch: 1, seq: step.seq, value: step.value))
+      #expect(applied == step.applied, "applied after \(step.value)")
+      #expect(projection.shownSeq == step.shown, "shown after \(step.value)")
+    }
+  }
+
   /// Requirement: `loaded()` returns normally only when the projection shows the rows of the loaded revision, and throws when the reading ends first.
   @MainActor
   @Test(.timeLimit(.minutes(1)))

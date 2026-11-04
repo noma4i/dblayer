@@ -97,7 +97,7 @@ class ListProjection<Model : DBModel> private constructor(
     /** Server id to the temporary id the row had when the screen first showed it. */
     val temporaryIds: Map<String, String>,
     private val awaitingSnapshot: Boolean,
-    /** The sequence number of the newest delivery whose rows the projection shows: a snapshot, an applied delta, or a state while no snapshot is awaited. A delivery that applied no rows does not move it. */
+    /** The sequence number of the newest delivery whose rows the projection shows: a snapshot, an applied delta, or a state once a snapshot was applied and none is awaited. A delivery that applied no rows does not move it. */
     val shownSeq: ULong?,
     /** The sequence number of the last delivery read. A jump means that deliveries were dropped before the reader. */
     private val lastSeq: ULong?,
@@ -138,7 +138,7 @@ class ListProjection<Model : DBModel> private constructor(
                 val whole = decode(value.rows).filterNotNull()
                 Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false, shownSeq = delivery.seq, lastSeq = delivery.seq), Applied.Changed)
             }
-            is StreamValue.State -> if (jumped) Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync) else Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), shownSeq = if (awaitingSnapshot) shownSeq else delivery.seq, lastSeq = delivery.seq), Applied.Changed)
+            is StreamValue.State -> if (jumped || (revision == null && !awaitingSnapshot)) Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync) else Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), shownSeq = if (awaitingSnapshot) shownSeq else delivery.seq, lastSeq = delivery.seq), Applied.Changed)
             is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList(), lastSeq = delivery.seq), Applied.Changed)
             is StreamValue.Delta -> {
                 if (awaitingSnapshot) return Step(copy(epoch = held, lastSeq = delivery.seq), if (jumped) Applied.Resync else Applied.Ignored)

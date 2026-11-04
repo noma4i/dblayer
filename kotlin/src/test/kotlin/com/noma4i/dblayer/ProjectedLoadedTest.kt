@@ -67,6 +67,27 @@ class ProjectedLoadedTest {
         }
     }
 
+    /** Requirement: when the first deliveries are a count of missed events and a state (the snapshot was dropped), nothing is shown and the recovery snapshot is asked once; the snapshot then shows its rows. */
+    @Test
+    fun aMissedThenAStateBeforeAnySnapshotShowsNothingAndAsksTheRecoverySnapshot() {
+        val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
+        val steps = listOf(
+            Triple(StreamValue.Missed(5uL) as StreamValue, 0uL, Applied.Ignored),
+            Triple(StreamValue.State(state) as StreamValue, 6uL, Applied.Resync),
+            Triple(StreamValue.State(state) as StreamValue, 7uL, Applied.Changed),
+            Triple(StreamValue.Snapshot(2, emptyList(), state) as StreamValue, 8uL, Applied.Changed),
+        )
+        val shown = listOf(null, null, null, 8uL)
+        var projection = ListProjection<Moment>()
+        for ((index, step) in steps.withIndex()) {
+            val (value, seq, applied) = step
+            val result = projection.apply(StreamDelivery(1uL, 1uL, seq, value), Moment)
+            projection = result.projection
+            assertEquals("applied after $value", applied, result.applied)
+            assertEquals("shown after $value", shown[index], projection.shownSeq)
+        }
+    }
+
     /** Requirement: `loaded()` throws `Interrupted` when the reader ends before the projection showed the rows of the loaded revision. The reader cannot run until the stream is closed. */
     @Test
     fun loadedThrowsWhenTheReaderEndsBeforeItShowedTheRows() = bounded {

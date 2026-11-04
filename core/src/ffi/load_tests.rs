@@ -427,3 +427,33 @@ async fn a_failure_after_a_confirmed_reset_reaches_the_query_opened_after_it_onc
     assert!(received.try_recv().is_err(), "the failure was delivered more than once");
     live.cancel();
 }
+
+/// Requirement: an entity stream is not loaded while its fetch is in flight, even when the first empty snapshot reached the listener before the transport answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_before_the_transport_answers() {
+    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    let mut node = RelationSpec::new("node", &[]);
+    node.text_params = vec![crate::schema::NODE_PARAM.to_string()];
+    node.node = Some(crate::schema::NodeRead::One);
+    let mut remote = relation("node", "5.minutes").remote.unwrap();
+    remote.operation = "Node".into();
+    remote.shape = RemoteShape::Single;
+    remote.variables.insert("id".into(), crate::schema::VariableSource::Param { name: crate::schema::NODE_PARAM.into() });
+    node.remote = Some(remote);
+    model.relations.push(node);
+    let hold = Arc::new(tokio::sync::Semaphore::new(0));
+    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None, subscriptions: None });
+    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, None, None, None, None).await.unwrap();
+    db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
+    let listener = Arc::new(Tape::default());
+    let entity = db.watch(StreamRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::EntityFetch::Force }, listener.clone());
+    within(transport.started.notified()).await;
+    crate::test_wait::yield_until("the empty first snapshot", || listener.last().is_some()).await;
+    let mut loaded = std::pin::pin!(db.stream_loaded(entity.id));
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    for _ in 0..50 { tokio::task::yield_now().await; }
+    assert!(std::future::Future::poll(loaded.as_mut(), &mut cx).is_pending(), "loaded() returned before the transport answered");
+    hold.add_permits(1);
+    within(loaded).await.unwrap();
+    assert_eq!(listener.last().map(|seen| seen.size), Some(1), "loaded() returned without the row: {:?}", listener.heard().len());
+}
