@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 6.17.0 - 2026-11-04
 
 ### Added
 - Value bridge: `AccountScope`, `ValueStream`, `Projected`, snapshots and keyed deltas with the session epoch.
@@ -45,6 +45,15 @@
 - A create the server answers has a generated typed `create` in Swift and Kotlin.
 - Operations declare `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`; the change shows before the answer and a refusal restores it.
 
+### Fixed
+- A window opened after a failed load of its query no longer shows that error.
+- `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
+- Every terminal subscription failure reaches the query listener once.
+- A `create` with an id given by the caller returns the confirmed row.
+- A network change waits for the start of an action that already passed its check.
+- A subscription event lost at a session start reloads the windows that watch its model.
+- `sessionResume` writes in the session epoch of its call.
+
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.
 - `resetForTesting`, `settleForTesting` and `testing_busy`.
@@ -54,15 +63,6 @@
 - The `add_to`, `remove_from`, `create_row` and `change_row` lines of `.dbl`.
 - Wrapper registries, flushers and value caches for entities, lists and events.
 - The iOS background upload session: `handleBackgroundSession`, `BackgroundPuts`, `BackgroundUploadSession`.
-
-### Fixed
-- A window opened after a failed load of its query no longer shows that error.
-- `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
-- Every terminal subscription failure reaches the query listener once.
-- A `create` with an id given by the caller returns the confirmed row.
-- A network change waits for the start of an action that already passed its check.
-- A subscription event lost at a session start reloads the windows that watch its model.
-- `sessionResume` writes in the session epoch of its call.
 
 ## 6.16.1 - 2026-11-03
 
