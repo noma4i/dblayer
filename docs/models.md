@@ -467,7 +467,7 @@ A `query "Operation"` line connects a scope to the server. A scope that depends 
 
 `parameter :afterSequence, :int` and `parameter :includeRewards, :bool` declare parameters that are sent as a JSON integer or boolean. The call takes `Int` and `Bool` (`Long` and `Boolean` in Kotlin: `:int` is `Long` in every Kotlin output, like the attribute), and the core refuses a text value. Each value has its own window and its own members. The document variable of the same name (or the name on the left of `variables name: :parameter`) must be `Int` or `Boolean`. A scope that pages in ascending order and one that pages in descending order are two scopes: a window key holds the scope, its params and the direction, so their cursors never meet.
 
-Names of attributes and parameters start with a lowercase letter and do not end with `_`. A name that is also a parameter of the generated function is refused with the model and the function: `account` in every function that takes an account, and `id` in a `*Edge` read. Rename the attribute or parameter; the server name stays in `from:` or `variables`.
+Names of attributes and parameters start with a lowercase letter and do not end with `_`. The generator refuses, with the model and the function, a name that clashes with generated code: `account` in every function that takes an account, `id` in a `*Edge` read, `self`, `sync` and `uploads` as fields, and the names of calls the generated code writes bare (`jsonValue`, `mapOf`, `onAccount` and the like). A model, type or enum named like a type the generated code imports (`Query`, `Condition`, `Order`, `Column`) and a GraphQL input field with such a name are refused too; `read`, `put` and `act` stay free names. Rename the attribute or parameter; the server name stays in `from:` or `variables`.
 
 ```ruby
 scope :since do
@@ -630,7 +630,7 @@ end
 
 ```swift
 let edge = try await Moment.feedEdge(of: moment.id)      // MomentFeedEdge?
-let vibe = try await Moment.vibeFeedEdge(vibeId, of: moment.id, in: scope)   // `in scope: AccountScope? = nil`
+let vibe = try await Moment.vibeFeedEdge(vibeId, of: moment.id, in: scope)   // `in scope_: AccountScope? = nil`
 edge?.impressionUuid                                      // String?
 ```
 

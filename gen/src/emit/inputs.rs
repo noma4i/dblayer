@@ -40,7 +40,7 @@ fn payload(field: &InputField, swift: bool) -> String {
     type_name(&Ty { nullable: false, has_default: false, ..field.ty.clone() }, swift)
 }
 
-fn case_name(field: &InputField) -> String {
+pub(super) fn case_name(field: &InputField) -> String {
     let mut letters = field.name.chars();
     letters.next().map(|first| first.to_uppercase().chain(letters).collect()).unwrap_or_default()
 }

@@ -365,6 +365,18 @@ fn a_query_named_like_a_parameter_is_called_through_its_owner() {
     assert!(kotlin.contains("suspend fun setVideo(video: Blob, account: AccountScope? = null) = requireNotNull(Holder.account.read(account).firstOrNull())"), "{kotlin}");
 }
 
+fn refusal_from_schema(source: &str, schema: &str, mutation: &str) -> String {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    std::fs::write(root.join("schema.graphql"), schema).unwrap();
+    std::fs::create_dir(root.join("mutations")).unwrap();
+    std::fs::write(root.join("mutations/search.graphql"), mutation).unwrap();
+    std::fs::write(root.join("search.dbl"), source).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_dblayer-gen")).args(["--schema", "schema.graphql", "swift", "search.dbl"]).current_dir(root).output().unwrap();
+    assert!(!output.status.success(), "generation succeeded");
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
 #[test]
 fn a_dbl_input_that_would_collide_with_generated_names_is_refused_with_a_diagnostic() {
     let edge = "    query \"Feed\"\n    paginate size: 20, direction: :forward\n    edge do\n      attribute :score, :int, null: true\n    end\n";
@@ -382,8 +394,24 @@ fn a_dbl_input_that_would_collide_with_generated_names_is_refused_with_a_diagnos
         ("scope parameter account", format!("model Page do\n  attribute :title, :string\n  scope :feed do\n    parameter :account, :string\n{edge}  end\nend\n"), "scope `feed` edge accessor: parameter `account` has the name of the generated parameter `account`"),
         ("ephemeral field account", "model Page do\n  attribute :title, :string\n  ephemeral do\n    attribute :account, :string, null: true\n  end\nend\n".to_string(), "model `Page` set: parameter `account` has the name of the generated parameter `account`"),
         ("operation parameter account", "operation :load do\n  query \"Load\"\n  parameter :account, :string\nend\n".to_string(), "operation `load` call: parameter `account` has the name of the generated parameter `account`"),
+        ("constructor field uploads", "model Page do\n  attribute :uploads, :string\nend\n".to_string(), "model `Page` constructor: field `uploads` has the name of the generated parameter `uploads`"),
+        ("constructor field self", "model Page do\n  attribute :self, :string\nend\n".to_string(), "model `Page` constructor: field `self` has the name of a call or receiver that generated code writes bare"),
+        ("operation parameter self", "operation :load do\n  query \"Load\"\n  parameter :self, :string\nend\n".to_string(), "operation `load` call: parameter `self` has the name of a call or receiver that generated code writes bare"),
+        ("action argument jsonValue", "model Ledger do\n  attribute :title, :string\n  operation :move do\n    mutation \"Move\"\n    parameter :jsonValue, :string\n    variables value: :jsonValue\n    optimistic false\n  end\nend\n".to_string(), "model `Ledger` action `move`: parameter `jsonValue` has the name of a call or receiver that generated code writes bare"),
+        ("model named like an imported type", "model Query do\n  attribute :title, :string\nend\n".to_string(), "type `Query` has the name of a type that generated code imports"),
     ] {
         let errors = parse_models(&source).unwrap_err();
         assert!(errors.iter().any(|error| error.message.contains(expected)), "{case}: wanted `{expected}`, got {errors:?}");
+    }
+    for (case, input, schema, expected) in [
+        ("input field named like an imported type", "SearchInput", "type Query { a: Int }\ntype Mutation { search(input: SearchInput!): Int }\ninput SearchInput { GraphQLNullable: String!, term: String }\n", "input `SearchInput`: field `GraphQLNullable` has the name of a type that generated code imports"),
+        ("input field self", "SearchInput", "type Query { a: Int }\ntype Mutation { search(input: SearchInput!): Int }\ninput SearchInput { self: String! }\n", "input `SearchInput`: field `self` has the name of a call or receiver that generated code writes bare"),
+        ("one-of fields with the same case", "SearchInput", "type Query { a: Int }\ntype Mutation { search(input: SearchInput!): Int }\ninput SearchInput @oneOf { value: String, Value: String }\ndirective @oneOf on INPUT_OBJECT\n", "input `SearchInput`: fields `value` and `Value` print the same case `Value`"),
+        ("input named like an imported type", "Condition", "type Query { a: Int }\ntype Mutation { search(input: Condition!): Int }\ninput Condition { term: String }\n", "type `Condition` has the name of a type that generated code imports"),
+    ] {
+        let operation = format!("operation :search do\n  mutation \"Search\"\n  parameter :input, {input}\nend\n");
+        let document = format!("mutation Search($input: {input}!) {{ search(input: $input) }}");
+        let errors = refusal_from_schema(&operation, schema, &document);
+        assert!(errors.contains(expected), "{case}: wanted `{expected}`, got {errors}");
     }
 }

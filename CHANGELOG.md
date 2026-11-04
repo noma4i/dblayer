@@ -45,12 +45,17 @@
 - A create the server answers has a generated typed `create` in Swift and Kotlin.
 - Operations declare `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`; the change shows before the answer and a refusal restores it.
 - The DSL refuses capitalised attribute and parameter names.
-- The DSL refuses a name that equals a generated parameter: `account`, or `id` in an edge read.
+- The DSL refuses an attribute or parameter named `account`, or `id` in an edge read.
+- The DSL refuses the field names `self`, `sync` and `uploads`.
+- The DSL refuses names of calls the generated code writes, such as `jsonValue` and `onAccount`.
+- The generator refuses a model or type named like a library type, such as `Query`.
+- The generator refuses clashing GraphQL input field names and repeated one-of cases.
 - The DSL refuses a name that ends with `_`.
 
 ### Fixed
 - A window opened after a failed load of its query no longer shows that error.
 - A parameter named like a query no longer captures the generated call.
+- A Kotlin parameter named `read`, `put` or `act` no longer captures a generated call.
 - `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
 - Every terminal subscription failure reaches the query listener once.
 - A `create` with an id given by the caller returns the confirmed row.

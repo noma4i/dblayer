@@ -115,6 +115,8 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.models, &declared.operations).map_err(failed)?;
     operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(failed)?;
     emit::enum_decls(&declared.models, &declared.operations, &declared.inputs).map_err(failed)?;
+    let clashes = name_clash_errors(&declared, &models, &calls);
+    if !clashes.is_empty() { return Err(locate(clashes)); }
     declared.scalars = scalars;
     declared.notes = checked.map_or_else(Vec::new, |checked| checked.notes);
     Ok(declared)
@@ -166,6 +168,8 @@ fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>>
         return Err(call_errors);
     }
     let mut declared = build_declarations(&models, &calls)?;
+    let clashes = name_clash_errors(&declared, &models, &calls);
+    if !clashes.is_empty() { return Err(clashes); }
     declared.blob_uploads = blob_uploads;
     declared.scalars = scalars;
     Ok(declared)
@@ -204,11 +208,14 @@ fn build_declarations(declared_models: &[decl::ModelDecl], calls: &[decl::CallDe
             return Err(errors);
         }
     };
-    for (subject, message) in emit::name_clashes(&models, &operations) {
-        let at = declaration_site(declared_models, calls, &subject);
-        errors.push((at.0, ParseError::new(at.1.line, at.1.column, message)));
-    }
     if errors.is_empty() { Ok(Declarations { models, operations, inputs: SchemaTypes::default(), scalars: Scalars::new(), notes: Vec::new(), blob_uploads: Vec::new() }) } else { Err(errors) }
+}
+
+fn name_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDecl], calls: &[decl::CallDecl]) -> Vec<(usize, ParseError)> {
+    emit::name_clashes(&declared.models, &declared.operations, &declared.inputs).into_iter().map(|(subject, message)| {
+        let at = declaration_site(declared_models, calls, &subject);
+        (at.0, ParseError::new(at.1.line, at.1.column, message))
+    }).collect()
 }
 
 fn declaration_site(models: &[decl::ModelDecl], calls: &[decl::CallDecl], subject: &str) -> (usize, decl::Pos) {

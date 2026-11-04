@@ -95,7 +95,7 @@ fn the_upload_args_of_a_model_become_a_typed_variables_builder_and_not_an_action
     assert!(!swift.contains("func upload(") && !swift.contains("act(\"upload\""), "{swift}");
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     assert!(kotlin.contains("fun createFileVariables(widgets: List<WidgetInput>? = null): JsonObject = buildJsonObject {"), "{kotlin}");
-    assert!(kotlin.contains("if (widgets != null) put(\"widgets\", jsonValue(widgets))"), "{kotlin}");
+    assert!(kotlin.contains("if (widgets != null) this.put(\"widgets\", jsonValue(widgets))"), "{kotlin}");
     assert!(!kotlin.contains("suspend fun upload(") && !kotlin.contains("act(\"upload\""), "{kotlin}");
 }
 
@@ -154,7 +154,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: List<WidgetInput>? = null",
-        "suspend fun decorate(widgets: List<WidgetInput>, account: AccountScope? = null): Moment = act(\"decorate\"",
+        "suspend fun decorate(widgets: List<WidgetInput>, account: AccountScope? = null): Moment = this.act(\"decorate\"",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

@@ -203,8 +203,8 @@ fn kotlin_patch_param(field: &FieldSpec) -> String {
 
 fn kotlin_patch_put(field: &FieldSpec) -> String {
     let printed = identifier(&field.name, false);
-    if field.nullable || field.optional { format!("            put(\"{}\", {printed})", field.name) }
-    else { format!("            {printed}?.let {{ put(\"{}\", jsonValue(it)) }}", field.name) }
+    if field.nullable || field.optional { format!("            this.put(\"{}\", {printed})", field.name) }
+    else { format!("            {printed}?.let {{ this.put(\"{}\", jsonValue(it)) }}", field.name) }
 }
 
 fn swift_default(field: &FieldSpec) -> Option<String> {
@@ -430,7 +430,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             let params = relation.by_columns.iter().map(|key| format!("{}: {}", identifier(key, false), model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, false))).collect::<Vec<_>>().join(", ");
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }
-            writeln!(out, "            var {built} = Query(\"{class}\", this, relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("put(\"{key}\", jsonValue({}))", identifier(key, false))).collect::<Vec<_>>().join("; ")).unwrap();
+            writeln!(out, "            var {built} = Query(\"{class}\", this, relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("this.put(\"{key}\", jsonValue({}))", identifier(key, false))).collect::<Vec<_>>().join("; ")).unwrap();
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "            {built} = {built}.where(Condition.equal(\"{key}\", jsonValue({})))", identifier(key, false)).unwrap(); }
                 if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            {built} = {built}.order(Order(\"{}\", \"{}\"))", field.column, field.direction.name()).unwrap(); } }
@@ -452,8 +452,8 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             let params = upload_args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
             writeln!(out, "        fun {method}Variables({params}): JsonObject = buildJsonObject {{").unwrap();
             for (arg, kind) in &upload_args {
-                if kind.ends_with('?') { writeln!(out, "            if ({printed} != null) put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)).unwrap(); }
-                else { writeln!(out, "            put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)).unwrap(); }
+                if kind.ends_with('?') { writeln!(out, "            if ({printed} != null) this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)).unwrap(); }
+                else { writeln!(out, "            this.put(\"{arg}\", jsonValue({printed}))", printed = identifier(arg, false)).unwrap(); }
             }
             writeln!(out, "        }}").unwrap();
         }
@@ -471,15 +471,15 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         let params = if params.is_empty() { format!("{account}: AccountScope") } else { format!("{account}: AccountScope, {params}") };
         writeln!(out, "        suspend fun send({params}): Sent<{class}> {{\n            val {values} = buildJsonObject {{").unwrap();
         for field in &create_fields {
-            if create_optional(model, field) { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
-            else { writeln!(out, "                put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
+            if create_optional(model, field) { writeln!(out, "                {}?.let {{ this.put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
+            else { writeln!(out, "                this.put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
         }
         out.push_str("            }\n");
         if !create_args.is_empty() {
             writeln!(out, "            val {args} = buildJsonObject {{").unwrap();
             for (name, kind) in &create_args {
-                if kind.ends_with('?') { writeln!(out, "                {printed}?.let {{ put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
-                else { writeln!(out, "                put(\"{name}\", jsonValue({printed}))", printed = identifier(name, false)).unwrap(); }
+                if kind.ends_with('?') { writeln!(out, "                {printed}?.let {{ this.put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
+                else { writeln!(out, "                this.put(\"{name}\", jsonValue({printed}))", printed = identifier(name, false)).unwrap(); }
             }
             out.push_str("            }\n");
         }
@@ -494,19 +494,19 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             let params = kotlin_scope(&params, &account);
             writeln!(out, "        suspend fun create({params}): {class} = onAccount({account}) {{ database_, epoch_ ->\n            val {values} = buildJsonObject {{").unwrap();
             for field in &create_fields {
-                if create_optional(model, field) { writeln!(out, "                {}?.let {{ put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
-                else { writeln!(out, "                put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
+                if create_optional(model, field) { writeln!(out, "                {}?.let {{ this.put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
+                else { writeln!(out, "                this.put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
             }
             out.push_str("            }\n");
             if !create_args.is_empty() {
                 writeln!(out, "            val {args} = buildJsonObject {{").unwrap();
                 for (name, kind) in &create_args {
-                    if kind.ends_with('?') { writeln!(out, "                {printed}?.let {{ put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
-                    else { writeln!(out, "                put(\"{name}\", jsonValue({printed}))", printed = identifier(name, false)).unwrap(); }
+                    if kind.ends_with('?') { writeln!(out, "                {printed}?.let {{ this.put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
+                    else { writeln!(out, "                this.put(\"{name}\", jsonValue({printed}))", printed = identifier(name, false)).unwrap(); }
                 }
                 out.push_str("            }\n");
             }
-            writeln!(out, "            read(database_.create(epoch_, \"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
+            writeln!(out, "            {class}.read(database_.create(epoch_, \"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         }
         out.push_str("    }\n");
         let update_args = standard_args(model, "update");
@@ -517,7 +517,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         out.push_str("        }\n");
         if !update_args.is_empty() {
             writeln!(out, "        val {args} = buildJsonObject {{").unwrap();
-            for (name, _) in &update_args { writeln!(out, "            {printed}?.let {{ put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
+            for (name, _) in &update_args { writeln!(out, "            {printed}?.let {{ this.put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
             out.push_str("        }\n");
         }
         writeln!(out, "        {class}.read(database_.update(epoch_, this.modelName, this.id, {values}.jsonText(), {}))\n    }}", if update_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
@@ -536,11 +536,11 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), {class}", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
             if action.result.is_empty() {
                 let params = kotlin_scope(&params, &account);
-                writeln!(out, "    suspend fun {}({params}): {class} = act({call}, {account})", identifier(&name(&action.name), false)).unwrap();
+                writeln!(out, "    suspend fun {}({params}): {class} = this.act({call}, {account})", identifier(&name(&action.name), false)).unwrap();
             } else {
                 let result = result_type(class, &action.name);
                 let params = kotlin_scope(&params, &account);
-                writeln!(out, "    suspend fun {}({params}): ActionAnswer<{class}, {result}> = actAnswering({call}, {result}.serializer(), {account})", identifier(&name(&action.name), false)).unwrap();
+                writeln!(out, "    suspend fun {}({params}): ActionAnswer<{class}, {result}> = this.actAnswering({call}, {result}.serializer(), {account})", identifier(&name(&action.name), false)).unwrap();
             }
         }
         for action in model.actions.iter().filter(|action| action.upload && action.batch.is_none()) {

@@ -61,3 +61,22 @@ model Holder do
     variables video: :video
   end
 end
+
+model Mailbox do
+  attribute :read, :bool
+  attribute :put, :string, null: true
+  operation :mark do
+    mutation "LikeMoment"
+    parameter :put, :string
+    variables put: :put
+    optimistic false
+  end
+  scope :entries do
+    parameter :act, :string
+    query "MomentsFeed"
+    paginate size: 20, direction: :forward
+    edge do
+      attribute :score, :int, null: true
+    end
+  end
+end
