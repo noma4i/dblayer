@@ -226,7 +226,7 @@ impl Db {
         };
         let reset_models = boot.reset_models;
         let opened = OpenReport { recreated: if unreadable { Some(RecreateReason::UnreadableFile) } else { boot.recreated }, changed_models, reset_models };
-        recover_operations(&store, &models)?;
+        recover_operations(&store, &models, opened.recreated.is_none())?;
         store.mark_ready();
         let ephemeral = Ephemerals::new(&models);
         let pointer_guards = pointer_guards(&models);
@@ -411,7 +411,7 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
     })
 }
 
-fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreError> {
+fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -> Result<(), StoreError> {
     let opening = store.lifecycle.opening().ok_or_else(|| StoreError::Constraint("the database was opened twice".into()))?;
     let rebuilt = {
         let inner = store.lock();
@@ -448,7 +448,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec]) -> Result<(), StoreEr
         }
         apply_fsck(&inner.connection, &plan, &orphans)?;
         rebuild_sync_with(&inner.connection, &|key| crate::operation::Operation::upload_action(key).is_some_and(|(model, action)| inner.models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some()))))?;
-        rebuilt_rows(&inner.connection, &plan, &operations, &known)?
+        if restore_rows { rebuilt_rows(&inner.connection, &plan, &operations, &known)? } else { Vec::new() }
     };
     if rebuilt.is_empty() {
         return Ok(());

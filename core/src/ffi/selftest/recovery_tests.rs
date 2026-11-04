@@ -52,8 +52,7 @@ async fn a_pending_operation_survives_an_old_format_without_restoring_the_cached
     reopened.register_operations(crate::ffi::sealed_errors_tests::OPERATIONS.into()).unwrap();
     bound(reopened.flush()).await.unwrap();
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    let shown = bound(reopened.read_row(reopened.session_epoch(), "Moment".into(), id.clone())).await.unwrap();
-    assert!(shown.is_none(), "keep={keep} recreated={:?} outbox={:?} row={shown:?}", reopened.db.open_report().recreated, reopened.db.outbox().unwrap().iter().map(|entry| (entry.operation.id.0, entry.operation.status)).collect::<Vec<_>>());
+    assert!(bound(reopened.read_row(reopened.session_epoch(), "Moment".into(), id.clone())).await.unwrap().is_none());
     assert!(bound(reopened.read_query(reopened.session_epoch(), r#"{"model":"Moment"}"#.into())).await.unwrap().is_empty());
     if keep { rig.server.status_next(422); }
     let retry = bound(reopened.retry(reopened.session_epoch(), "Moment".into(), id.clone(), None, None)).await;
@@ -62,7 +61,7 @@ async fn a_pending_operation_survives_an_old_format_without_restoring_the_cached
         assert!(matches!(outcome, crate::ffi::WireOperationOutcome::Rejected { .. }));
         assert!(bound(reopened.read_row(reopened.session_epoch(), "Moment".into(), id)).await.unwrap().is_none());
     }
-    else { assert!(matches!(retry, Err(DbError::Database { .. })), "rollback must remove the operation: {retry:?}"); }
+    else { assert_eq!(retry.unwrap().operation, None, "rollback removed the operation"); }
     bound(reopened.close_database()).await.unwrap();
   }
 }

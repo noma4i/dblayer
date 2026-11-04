@@ -135,15 +135,13 @@ extension BridgeProbeTests {
     #expect(try await Letter.ids([id]).read().isEmpty)
     transport.enqueue("SendLetter", failure: .Http(status: 422, detail: "refused again"))
     let retry = Task { try await Letter.retry(id: id, action: nil) }
-    do {
-      let retried = try await valueBeforeDeadline(retry) {}
-      #expect(keep)
+    let retried = try await valueBeforeDeadline(retry) {}
+    #expect((retried.operation != nil) == keep)
+    if keep {
       let waiting = Task { try await retried.outcome() }
       guard case .rejected = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
-      #expect(try await Letter.ids([id]).read().isEmpty)
-    } catch DbError.Database {
-      #expect(!keep)
     }
+    #expect(try await Letter.ids([id]).read().isEmpty)
     try await DB.close()
   }
 

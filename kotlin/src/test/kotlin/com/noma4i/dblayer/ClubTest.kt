@@ -138,14 +138,10 @@ class ClubTest {
                 assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
                 assertTrue(Query("Letter", Letter).readRow(id) == null)
                 transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused again"))
-                try {
-                    val retried = withTimeout(5000) { Letter.retry(id, null) }
-                    assertTrue(keep)
-                    assertTrue(withTimeout(5000) { retried.outcome() } is OperationOutcome.Rejected)
-                    assertTrue(Query("Letter", Letter).readRow(id) == null)
-                } catch (_: DbException.Database) {
-                    assertTrue(!keep)
-                }
+                val retried = withTimeout(5000) { Letter.retry(id, null) }
+                assertEquals(keep, retried.operation != null)
+                if (keep) assertTrue(withTimeout(5000) { retried.outcome() } is OperationOutcome.Rejected)
+                assertTrue(Query("Letter", Letter).readRow(id) == null)
                 DBlayer.close()
             } finally {
                 DBlayer.close()
