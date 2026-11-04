@@ -78,7 +78,7 @@ impl Transport for CountingFeed {
     async fn mutate(&self, _: super::super::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn subscribe(&self, _: super::super::TransportRequest, _: Arc<super::super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) { unreachable!() }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::super::ByteProgress>) -> Result<super::super::PutReply, DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::super::ByteProgress>) -> Result<super::super::PutReply, DbError> { unreachable!() }
 }
 
 #[tokio::test]

@@ -4,6 +4,16 @@ use super::cancel::CancelToken;
 
 pub type ByteSink = Arc<dyn Fn(u64) + Send + Sync>;
 
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum TransferStep { Put, Part { number: u32 } }
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TransferIdentity {
+    pub operation_id: i64,
+    pub item_id: String,
+    pub step: TransferStep,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PutFile {
     pub path: String,
@@ -16,7 +26,7 @@ pub struct PutRequest {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub file: PutFile,
-    pub tag: String,
+    pub identity: TransferIdentity,
     pub cancel: CancelToken,
     pub sent: ByteSink,
 }

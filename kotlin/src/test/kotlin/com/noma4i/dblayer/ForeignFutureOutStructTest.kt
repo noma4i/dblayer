@@ -24,7 +24,7 @@ class ForeignFutureOutStructTest {
         override suspend fun mutate(request: TransportRequest): String = "{}"
         override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {}
         override fun unsubscribe(token: String) {}
-        override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, tag: String, progress: ByteProgress): PutReply = PutReply(200u, null)
+        override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = PutReply(200u, null)
     }
 
     @Test
@@ -47,7 +47,7 @@ class ForeignFutureOutStructTest {
                             completed.countDown()
                         }
                     }
-                    function.invoke(Void.TYPE, arrayOf(handle, FfiConverterTypeTransportRequest.lower(TransportRequest("", "", "", false)), complete, 0L, owned))
+                    function.invoke(Void.TYPE, arrayOf(handle, FfiConverterTypeTransportRequest.lower(TransportRequest("", "", "", NetworkPurpose.STANDARD)), complete, 0L, owned))
                     if (!completed.await(10, TimeUnit.SECONDS)) {
                         unanswered.incrementAndGet()
                         break

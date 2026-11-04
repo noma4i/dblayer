@@ -41,7 +41,7 @@ impl Transport for Counting {
         Ok(())
     }
     fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
 #[tokio::test]
@@ -370,7 +370,7 @@ impl Transport for Interrupting {
         Ok(())
     }
     fn unsubscribe(&self, token: String) { self.inner.unsubscribe(token) }
-    async fn put(&self, url: String, headers: std::collections::HashMap<String, String>, file: crate::transport::PutFile, tag: String, progress: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { self.inner.put(url, headers, file, tag, progress).await }
+    async fn put(&self, url: String, headers: std::collections::HashMap<String, String>, file: crate::transport::PutFile, identity: crate::transport::TransferIdentity, progress: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { self.inner.put(url, headers, file, identity, progress).await }
 }
 
 #[tokio::test(flavor = "multi_thread")]

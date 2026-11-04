@@ -3,11 +3,17 @@ use serde_json::{Map, Value};
 
 use super::response::ResponseShape;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum NetworkPurpose {
+    Standard,
+    Transfer,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RequestOwner {
-    pub seq: i64,
-    pub item_position: i64,
-    pub stage: String,
+pub enum RequestOwner {
+    Operation { seq: i64 },
+    Transfer { operation_id: i64, item_id: String, step: crate::upload::UploadStage },
+    Unmatched { operation_id: i64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,13 +22,14 @@ pub struct GraphQLRequest {
     pub operation_name: String,
     pub variables: Value,
     pub owner: Option<RequestOwner>,
-    pub upload: bool,
+    pub purpose: NetworkPurpose,
 }
 
 impl GraphQLRequest {
     pub fn new(document: impl Into<String>, operation_name: impl Into<String>, variables: Value) -> Self {
-        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, upload: false }
+        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, purpose: NetworkPurpose::Standard }
     }
+
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

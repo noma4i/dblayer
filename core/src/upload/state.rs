@@ -95,12 +95,6 @@ pub struct UploadRequest {
     pub variables: serde_json::Value,
 }
 
-impl UploadRequest {
-    pub fn graphql(&self) -> crate::transport::GraphQLRequest {
-        crate::transport::GraphQLRequest::new(&self.document, &self.name, self.variables.clone())
-    }
-}
-
 impl UploadState {
     pub fn queued() -> Self {
         Self {

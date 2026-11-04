@@ -99,7 +99,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     lock.withLock { sockets.removeValue(forKey: token) }?.cancel(with: .normalClosure, reason: nil)
   }
 
-  public func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
+  public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     guard let target = URL(string: url) else { throw DbError.Invalid(detail: "bad upload url") }
     guard file.offset == 0 else { throw DbError.Invalid(detail: "an upload sends a whole file") }
     var request = URLRequest(url: target)

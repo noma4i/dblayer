@@ -2,14 +2,13 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 use super::SubscriptionSink;
 use crate::transport::{SubscriptionEvent, SubscriptionFailureKind};
 use crate::test_wait::{recv_within, within};
 
-fn sink() -> (SubscriptionSink, mpsc::UnboundedReceiver<SubscriptionEvent>) {
-    let (sender, receiver) = mpsc::unbounded_channel();
+fn sink() -> (SubscriptionSink, crate::transport::SubscriptionReceiver) {
+    let (sender, receiver) = crate::transport::subscription_channel();
     (SubscriptionSink::new(crate::ffi::database::executor().unwrap().handle().clone(), sender, |_| Box::pin(async {})), receiver)
 }
 
@@ -37,27 +36,66 @@ fn subscription_sink_wakes_its_receiver_with_the_sender_lock_free() {
     });
     let waker = Waker::from(probe.clone());
     let mut context = Context::from_waker(&waker);
-    assert!(receiver.poll_recv(&mut context).is_pending());
+    let mut next = Box::pin(receiver.recv());
+    assert!(next.as_mut().poll(&mut context).is_pending());
     sink.ready();
     assert_eq!((probe.wakes(), probe.violations()), (1, 0), "an event wakes the receiver with the sender lock free");
-    assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(Some(SubscriptionEvent::Ready))));
-    assert!(receiver.poll_recv(&mut context).is_pending());
+    assert!(matches!(next.as_mut().poll(&mut context), std::task::Poll::Ready(Some(SubscriptionEvent::Ready))));
+    drop(next);
+    let mut next = Box::pin(receiver.recv());
+    assert!(next.as_mut().poll(&mut context).is_pending());
     sink.closed();
     assert_eq!((probe.wakes(), probe.violations()), (2, 0), "closing wakes the receiver with the sender lock free");
-    assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(None)), "the receiver sees the end once");
+    assert!(matches!(next.as_mut().poll(&mut context), std::task::Poll::Ready(None)), "the receiver sees the end once");
     sink.ready();
     assert_eq!(probe.wakes(), 2, "an event after the close reaches nobody");
 
     let (sender_owner, mut receiver) = self::sink();
     let probe = ProbeWaker::new(|| true);
     let waker = Waker::from(probe.clone());
-    assert!(receiver.poll_recv(&mut Context::from_waker(&waker)).is_pending());
+    let mut next = Box::pin(receiver.recv());
+    assert!(next.as_mut().poll(&mut Context::from_waker(&waker)).is_pending());
     drop(sender_owner);
     assert_eq!((probe.wakes(), probe.violations()), (1, 0), "sender drop wakes without tracked guards");
-    assert!(matches!(receiver.poll_recv(&mut Context::from_waker(&waker)), std::task::Poll::Ready(None)));
+    assert!(matches!(next.as_mut().poll(&mut Context::from_waker(&waker)), std::task::Poll::Ready(None)));
 }
 
 struct FakeSocket;
+
+struct FloodSubscription;
+
+#[async_trait::async_trait]
+impl super::Transport for FloodSubscription {
+    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), super::DbError> { unreachable!() }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), super::DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) { unreachable!() }
+    async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
+    async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
+    async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), super::DbError> {
+        sink.opened("flood".into())?;
+        sink.ready();
+        for number in 1..=300 { sink.event(format!(r#"{{"data":{{"value":{number}}}}}"#))?; }
+        sink.failed(super::DbError::Network { detail: "closed".into() });
+        Ok(())
+    }
+    fn unsubscribe(&self, _: String) {}
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+}
+
+#[tokio::test]
+async fn subscription_overflow_reports_the_lost_range_before_failure() {
+    use crate::transport::Transport;
+    let transport = super::ForeignTransport(Arc::new(FloodSubscription));
+    let mut subscription = within(transport.subscribe(request())).await.unwrap();
+    assert_eq!(within(subscription.next()).await, Some(SubscriptionEvent::Ready));
+    for number in 1..=255 {
+        let Some(SubscriptionEvent::Next(response)) = within(subscription.next()).await else { panic!("missing event {number}") };
+        assert_eq!(response.data.unwrap()["value"], number);
+    }
+    assert_eq!(within(subscription.next()).await, Some(SubscriptionEvent::Lost { first: 256, last: 300 }));
+    assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Failed(_))));
+}
 
 #[async_trait::async_trait]
 impl super::Transport for FakeSocket {
@@ -76,7 +114,7 @@ impl super::Transport for FakeSocket {
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn subscribe(&self, _: super::TransportRequest, _: std::sync::Arc<super::SubscriptionSink>) -> Result<(), super::DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) { unreachable!() }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: std::sync::Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: std::sync::Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
 }
 
 #[tokio::test]
@@ -130,7 +168,7 @@ impl super::Transport for EarlyFailure {
         Ok(())
     }
     fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
 }
 
 #[tokio::test]
@@ -177,7 +215,7 @@ impl super::Transport for Ordered {
         script(sink).await
     }
     fn unsubscribe(&self, token: String) { self.say(format!("unsubscribe:{token}")); }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
 }
 
 fn boxed(work: impl Future<Output = Result<(), super::DbError>> + Send + 'static) -> Pin<Box<dyn Future<Output = Result<(), super::DbError>> + Send>> { Box::pin(work) }

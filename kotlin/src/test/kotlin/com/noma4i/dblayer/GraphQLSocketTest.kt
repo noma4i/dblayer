@@ -53,7 +53,7 @@ class GraphQLSocketTest {
             val client = OkHttpClient()
             val transport = OkHttpTransport(server.url("/graphql").toString(), { mapOf("Authorization" to "Bearer probe") }, client)
             val sink = Signals()
-            transport.subscribe(TransportRequest("subscription Probe(\$id: ID!) { node(id: \$id) { id } }", "Probe", """{"id":"7"}""", false), sink)
+            transport.subscribe(TransportRequest("subscription Probe(\$id: ID!) { node(id: \$id) { id } }", "Probe", """{"id":"7"}""", NetworkPurpose.STANDARD), sink)
             try {
                 val initial = received.receive()
                 assertEquals(parseJson("""{"Authorization":"Bearer probe"}"""), initial["payload"])
@@ -91,7 +91,7 @@ class GraphQLSocketTest {
             }))
             val transport = OkHttpTransport(server.url("/graphql").toString())
             val sink = Signals()
-            transport.subscribe(TransportRequest("subscription Probe { id }", "Probe", "{}", false), sink)
+            transport.subscribe(TransportRequest("subscription Probe { id }", "Probe", "{}", NetworkPurpose.STANDARD), sink)
             try {
                 sink.readySignal.await()
                 assertTrue(closeSent.await())

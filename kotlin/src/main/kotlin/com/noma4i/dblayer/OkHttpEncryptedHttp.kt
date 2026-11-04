@@ -26,12 +26,12 @@ class OkHttpEncryptedHttp(
         .cache(null)
         .apply { interceptors().clear(); networkInterceptors().clear() }
         .build()
-    override suspend fun post(path: String, body: String, upload: Boolean): EncryptedReply =
-        send(Request.Builder().url(origin.trimEnd('/') + path).post(body.toByteArray().toRequestBody("application/jose".toMediaType())).build().withUserAgent(), upload)
+    override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply =
+        send(Request.Builder().url(origin.trimEnd('/') + path).post(body.toByteArray().toRequestBody("application/jose".toMediaType())).build().withUserAgent(), purpose)
 
 
-    private suspend fun send(request: Request, upload: Boolean): EncryptedReply = try {
-        (if (upload) UploadNetwork.route(client) else client).newCall(request).exchange { EncryptedReply(it.code.toUShort(), it.body.string()) }
+    private suspend fun send(request: Request, purpose: NetworkPurpose): EncryptedReply = try {
+        (if (purpose == NetworkPurpose.TRANSFER) UploadNetwork.route(client) else client).newCall(request).exchange { EncryptedReply(it.code.toUShort(), it.body.string()) }
     } catch (error: IOException) {
         throw classifyEncryptedHttpFailure(error)
     }

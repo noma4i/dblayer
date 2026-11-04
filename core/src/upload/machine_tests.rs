@@ -67,9 +67,9 @@ fn the_run_follows_the_operation_and_the_stored_upload() {
     let cancelled = UploadState { phase: UploadStatus::Cancelled, ..UploadState::queued() };
     assert_eq!(pending(&cancelled, true, true), Some(RunMode::Cancel));
     let orphan = UploadState { phase: UploadStatus::Failed, upload_id: Some("u".into()), key: Some("k".into()), ..UploadState::queued() };
-    assert_eq!(pending(&orphan, false, false), Some(RunMode::Orphan));
+    assert_eq!(pending(&orphan, false, false), Some(RunMode::Abort));
     let confirmed = UploadState { scenario: Some(UploadScenario::Multipart), total_bytes: 5, parts: vec![UploadPart { number: 1, etag: "e".into(), confirmed_bytes: 5 }], ..orphan.clone() };
     assert_eq!(pending(&confirmed, false, false), None);
     assert_eq!(orphan.run_mode(OperationStatus::Failed, false, false, || true), None);
-    assert_eq!(orphan.run_mode(OperationStatus::DeliveryUnknown, true, false, || false), Some(RunMode::Orphan));
+    assert_eq!(orphan.run_mode(OperationStatus::DeliveryUnknown, true, false, || false), Some(RunMode::Abort));
 }

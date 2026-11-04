@@ -24,7 +24,7 @@ public final class UrlSessionEncryptedHttp: EncryptedHttp, @unchecked Sendable {
 
   deinit { session.invalidateAndCancel() }
 
-  public func post(path: String, body: String, upload: Bool) async throws -> EncryptedReply {
+  public func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     guard let base = URL(string: origin), let url = URL(string: path, relativeTo: base)?.absoluteURL,
           url.scheme == base.scheme, url.host == base.host, url.port == base.port,
           url.query == nil, url.fragment == nil else { throw DbError.Config(code: .invalidRequest, detail: "bad request path") }

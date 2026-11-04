@@ -505,7 +505,7 @@ async fn discarding_one_batch_member_keeps_its_multipart_abort_after_the_item_is
     db.shared.store.lock().connection.execute("UPDATE op_item SET upload_id = 'u1', storage_key = 'k1' WHERE row_id = ?1", [ids[0].as_str()]).unwrap();
     assert_eq!(db.discard(&db.admit().unwrap(), "Asset", &ids[0], None).unwrap(), 1);
     let orphans = db.shared.store.upload_orphans().unwrap();
-    assert_eq!(orphans.iter().map(|(_, key, upload, abort)| (key.as_str(), upload.as_str(), abort.as_str())).collect::<Vec<_>>(), [("k1", "u1", "Abort")]);
+    assert_eq!(orphans.iter().map(|abort| (abort.key.as_str(), abort.upload_id.as_str(), abort.operation.as_str())).collect::<Vec<_>>(), [("k1", "u1", "Abort")]);
 }
 
 async fn failed_batch(whole_operation: bool) -> (Db, Sync, Arc<ManualClock>, Vec<crate::identity::RowId>) {
@@ -597,7 +597,8 @@ async fn a_batch_item_that_fails_while_its_request_is_pending_is_aborted_once_th
     assert_eq!(transport.call_count("Abort"), 0, "the pending request may still complete");
     transport.enqueue("Abort", crate::transport::Reply::data(json!({"abortMultipart": {"ok": true}})));
     db.shared.store.lock().connection.execute("DELETE FROM encrypted_pending", []).unwrap();
-    let owner = crate::transport::RequestOwner { seq, item_position: position, stage: "presign".into() };
+    let (operation_id, item_id) = sync.inner.transfer_identity(seq, position).unwrap();
+    let owner = crate::transport::RequestOwner::Transfer { operation_id, item_id, step: crate::upload::UploadStage::Presign };
     let claim = sync.inner.claim_upload_resume(&sync.inner.db.admit().unwrap(), &owner).await.unwrap().expect("the failed item is still the owner of the stored step");
     sync.inner.resume_upload(claim, Err(crate::transport::TransportError::Graphql { messages: vec!["denied".into()], extensions: None })).await;
     sync.wait_uploads().await;

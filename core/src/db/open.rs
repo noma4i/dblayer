@@ -208,9 +208,16 @@ impl Db {
         if !faults.is_empty() {
             return Err(DbError::Invalid(faults));
         }
-        let store = match path {
-            Some(path) => Store::open(path)?,
-            None => Store::open_in_memory()?,
+        let (store, unreadable) = match path {
+            Some(path) => match Store::open(path) {
+                Ok(store) => (store, false),
+                Err(error) if crate::store::is_unreadable(&error) => {
+                    crate::store::remove_database(path)?;
+                    (Store::open(path)?, true)
+                }
+                Err(error) => return Err(error.into()),
+            },
+            None => (Store::open_in_memory()?, false),
         };
         let boot = store.boot(&models, data_version)?;
         let changed_models = match &boot.verdict {
@@ -218,7 +225,7 @@ impl Db {
             _ => Vec::new(),
         };
         let reset_models = boot.reset_models;
-        let opened = OpenReport { recreated: store.recreated(), changed_models, reset_models };
+        let opened = OpenReport { recreated: if unreadable { Some(RecreateReason::UnreadableFile) } else { boot.recreated }, changed_models, reset_models };
         recover_operations(&store, &models)?;
         store.mark_ready();
         let ephemeral = Ephemerals::new(&models);

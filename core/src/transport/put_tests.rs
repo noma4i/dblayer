@@ -11,7 +11,7 @@ fn request(url: &str, body: &[u8], cancel: &CancelToken, ticks: &Arc<Mutex<Vec<u
         url: url.to_string(),
         headers: vec![("content-type".to_string(), "video/mp4".to_string())],
         file: PutFile { path: path.to_string_lossy().into_owned(), offset: 0, length: body.len() as u64 },
-        tag: "1.0.1".to_string(),
+        identity: TransferIdentity { operation_id: 1, item_id: "item".into(), step: TransferStep::Part { number: 1 } },
         cancel: cancel.clone(),
         sent: Arc::new(move |bytes| sink.lock().unwrap().push(bytes)),
     }

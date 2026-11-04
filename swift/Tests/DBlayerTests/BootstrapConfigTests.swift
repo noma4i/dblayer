@@ -66,7 +66,7 @@ private final class BootstrapHttp: EncryptedHttp, @unchecked Sendable {
   private var count = 0
   var calls: Int { lock.withLock { count } }
   init(_ peer: BootstrapPeer, _ kind: String) { self.peer = peer; self.kind = kind }
-  func post(path: String, body: String, upload: Bool) async throws -> EncryptedReply {
+  func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     lock.withLock { count += 1 }
     #expect(path == peer.encrypted.endpoints.bootstrap)
     if kind == "timeout" { throw TransportFailure.classifyEncryptedHttp(URLError(.timedOut)) }
@@ -77,7 +77,7 @@ private final class BootstrapHttp: EncryptedHttp, @unchecked Sendable {
 private final class HeldBootstrapHttp: EncryptedHttp, @unchecked Sendable {
   let signal: AsyncStream<String>.Continuation
   init(_ signal: AsyncStream<String>.Continuation) { self.signal = signal }
-  func post(path: String, body: String, upload: Bool) async throws -> EncryptedReply {
+  func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     signal.yield("started")
     do {
       try await parkUntilCancelled()
@@ -223,7 +223,7 @@ struct BootstrapConfigTests {
     config.httpAdditionalHeaders = ["Authorization": "secret", "Cookie": "secret", "X-Payload-Encryption": "old", "X-Request-Signature": "old"]
     let session = URLSession(configuration: config)
     defer { session.invalidateAndCancel() }
-    let reply = try await UrlSessionEncryptedHttp(origin: origin, session: customSession ? session : nil).post(path: "/api/bootstrap", body: "jwe", upload: false)
+    let reply = try await UrlSessionEncryptedHttp(origin: origin, session: customSession ? session : nil).post(path: "/api/bootstrap", body: "jwe", purpose: .standard)
     #expect(reply.status == 302 && reply.body == "busy")
     #expect(server.requests.count == 1)
     let request = try #require(server.requests.first)

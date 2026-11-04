@@ -130,8 +130,8 @@ impl FileDirectories {
         fs::read(path)
     }
 
-    pub(crate) fn range_path(&self, tag: &str) -> PathBuf {
-        self.cache.join("ranges").join(tag)
+    pub(crate) fn range_path(&self, name: &str) -> PathBuf {
+        self.cache.join("ranges").join(name)
     }
 
     pub(crate) fn cache_target(&self, id: &str, name: &str) -> PathBuf {

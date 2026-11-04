@@ -99,7 +99,7 @@ async fn blob_action_ownership() {
         }
         let calls: Vec<_> = rig.transport.calls().into_iter().filter(|call| call.operation_name == "SetVideo").collect();
         assert_eq!(calls.len(), 1, "{mode}");
-        assert!(calls[0].upload, "{mode}: the consumer uses the upload network");
+        assert_eq!(calls[0].purpose, crate::transport::NetworkPurpose::Transfer, "{mode}: the consumer uses the upload network");
         assert_eq!(calls[0].variables["signedId"], "sid");
         assert_eq!(rig.transport.put_calls().len(), 1, "{mode}: no second PUT");
     }

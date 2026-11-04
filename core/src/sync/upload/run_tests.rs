@@ -72,7 +72,7 @@ async fn durable_upload_failures_reach_the_waiting_operation() {
             runner.report(1, 1);
             assert_eq!(runner.snapshot(), before, "failed progress must not change the saved snapshot");
         } else {
-            let mode = match case { "cancel" => RunMode::Cancel, "abort" => RunMode::Orphan, _ => RunMode::Transfer };
+            let mode = match case { "cancel" => RunMode::Cancel, "abort" => RunMode::Abort, _ => RunMode::Transfer };
             crate::sync::rig::app(&rig.sync, run::drive(rig.sync.inner.clone(), rig.db.admit().unwrap(), seq, 0, run, token, mode, None)).await;
         }
         rig.sync.inner.finish_run(&rig.db.admit().unwrap(), seq, 0, run);

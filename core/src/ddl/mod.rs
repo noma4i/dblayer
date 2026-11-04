@@ -112,7 +112,7 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 41] = [
+const CORE_STATEMENTS: [&str; 42] = [
     "CREATE TABLE IF NOT EXISTS blob_upload (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
@@ -183,6 +183,7 @@ const CORE_STATEMENTS: [&str; 41] = [
     "CREATE TABLE IF NOT EXISTS op_item (
   seq INTEGER NOT NULL REFERENCES op(seq) ON DELETE CASCADE,
   position INTEGER NOT NULL,
+  transfer_operation_id INTEGER NOT NULL,
   client_key TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(16)))),
   row_id TEXT,
   file_id TEXT,
@@ -239,10 +240,13 @@ const CORE_STATEMENTS: [&str; 41] = [
     "CREATE INDEX IF NOT EXISTS op_row_id ON op_row (row_id)",
     "CREATE TABLE IF NOT EXISTS upload_orphan (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  operation_id INTEGER NOT NULL,
+  item_id TEXT NOT NULL,
   storage_key TEXT NOT NULL,
   upload_id TEXT NOT NULL,
   abort_operation TEXT NOT NULL
 ) STRICT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS upload_orphan_identity ON upload_orphan (operation_id, item_id)",
     "CREATE TABLE IF NOT EXISTS op_part (
   seq INTEGER NOT NULL,
   item_position INTEGER NOT NULL,
@@ -390,10 +394,11 @@ const CORE_STATEMENTS: [&str; 41] = [
   sequence INTEGER NOT NULL,
   path TEXT NOT NULL,
   body TEXT NOT NULL,
-  owner_seq INTEGER,
-  item_position INTEGER,
-  stage TEXT,
-  upload INTEGER NOT NULL DEFAULT 0
+  owner_kind TEXT,
+  owner_operation_id INTEGER,
+  owner_item_id TEXT,
+  owner_step TEXT,
+  purpose INTEGER NOT NULL CHECK (purpose IN (0, 1))
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS file (
   id TEXT PRIMARY KEY NOT NULL,
@@ -622,6 +627,20 @@ pub(crate) fn create_core_tables(connection: &Connection) -> Result<(), DdlError
     Ok(())
 }
 
+pub(crate) fn rebuild_transfer_tables(connection: &Connection) -> Result<(), DdlError> {
+    for name in ["op_item", "upload_orphan"] {
+        let prefix = format!("CREATE TABLE IF NOT EXISTS {name} (");
+        let statement = CORE_STATEMENTS.iter().find(|statement| statement.starts_with(&prefix)).ok_or(rusqlite::Error::InvalidQuery)?;
+        let next = format!("{name}_next");
+        let create = statement.replacen(&prefix, &format!("CREATE TABLE {} (", sql_ident(&next)), 1);
+        connection.execute_batch(&create)?;
+        let columns: Vec<String> = connection.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")?.query_map([&next], |row| row.get::<_, String>(0))?.collect::<Result<_, _>>()?;
+        let columns = columns.iter().map(|name| sql_ident(name)).collect::<Vec<_>>().join(", ");
+        connection.execute_batch(&format!("INSERT INTO {} ({columns}) SELECT {columns} FROM {}; DROP TABLE {}; ALTER TABLE {} RENAME TO {};", sql_ident(&next), sql_ident(name), sql_ident(name), sql_ident(&next), sql_ident(name)))?;
+    }
+    Ok(())
+}
+
 pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>, DdlError> {
     let version: i64 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
     if version != 0 && version != SCHEMA_VERSION {
@@ -735,11 +754,11 @@ pub fn manifest_stamp(
     data_version: Option<&str>,
     fingerprints: &BTreeMap<String, String>,
 ) -> Result<(), DdlError> {
-    manifest_write(connection, FORMAT_VERSION_KEY, &format_version())?;
     manifest_write(connection, DATA_VERSION_KEY, data_version.unwrap_or(""))?;
     for (model, fingerprint) in fingerprints {
         manifest_write(connection, &fingerprint_key(model), fingerprint)?;
     }
+    manifest_write(connection, FORMAT_VERSION_KEY, &format_version())?;
     Ok(())
 }
 

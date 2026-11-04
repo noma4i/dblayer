@@ -273,7 +273,7 @@ fn a_stale_core_table_shape_is_replaced_by_a_recreated_file() {
         );
     }
     let (store, report) = reopen(&path, &models, None);
-    assert_eq!(store.recreated(), Some(crate::ddl::RecreateReason::CoreFormat));
+    assert_eq!(report.recreated, Some(crate::ddl::RecreateReason::CoreFormat));
     assert_eq!(report.verdict, ManifestVerdict::Fresh);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('query_window') WHERE name = 'total'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync"), 0);

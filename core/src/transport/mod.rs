@@ -26,14 +26,14 @@ pub use fetch::{FetchAttempt, FetchError, FetchReport};
 #[cfg(any(test, feature = "stress"))]
 pub use mock::{CallKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
-pub use put::{ByteSink, PutFile, PutRequest, PutResponse};
-pub use request::{GraphQLError, GraphQLRequest, RequestOwner, Response};
+pub use put::{ByteSink, PutFile, PutRequest, PutResponse, TransferIdentity, TransferStep};
+pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetrySnapshot};
 pub use session_code::SessionCode;
 pub use subscription::{
     ServerSubscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind,
-    ServerSubscriptionHandle,
+    ServerSubscriptionHandle, SubscriptionSender, SubscriptionReceiver, subscription_channel,
 };
 
 #[async_trait]

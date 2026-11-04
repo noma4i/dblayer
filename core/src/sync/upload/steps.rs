@@ -2,6 +2,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::syncstate::{FailureKind, OperationFailure};
 use crate::transport::{GraphQLRequest, PutFile, PutRequest, PutResponse, ResponseOutcome, RetryClass, TransportError};
@@ -10,6 +11,22 @@ use crate::upload::{copy_range, UploadEvent, UploadStage};
 use super::super::extract::root_value;
 use super::super::locked;
 use super::run::Runner;
+
+impl super::super::Inner {
+    pub(super) fn transfer_request(&self, name: &str, variables: Value, transfer: &crate::upload::Transfer, stage: UploadStage) -> Result<(crate::sync::OperationDef, GraphQLRequest), super::super::SyncError> {
+        let operation = locked(&self.operations).get(name).cloned().ok_or_else(|| super::super::SyncError::Malformed(format!("operation {name} is not registered")))?;
+        let request = transfer.request(&operation.document, &operation.name, variables, stage);
+        Ok((operation, request))
+    }
+
+    pub(super) async fn send_transfer(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<crate::transport::Response, TransportError> {
+        let name = request.operation_name.clone();
+        locked(&self.counters).record_transport_call();
+        crate::db::lock::assert_no_library_lock("Transport::mutate");
+        crate::pacing::timeout(self.clock.as_ref(), self.config.upload.step_timeout, self.mutate_scoped(admitted, request)).await
+            .map_err(|_| TransportError::Network(format!("{name} timed out")))?
+    }
+}
 
 pub(super) enum StepError {
     Retry(Box<OperationFailure>),
@@ -33,6 +50,29 @@ impl Stop {
 
 pub(super) fn fatal(kind: FailureKind, message: impl Into<String>) -> StepError {
     StepError::Fatal(Box::new(OperationFailure::new(kind, message)))
+}
+
+pub(super) fn transfer_response(name: &str, operation: &crate::sync::OperationDef, response: crate::transport::Response) -> Result<Value, StepError> {
+    if response.shape().outcome() != ResponseOutcome::Commit {
+        let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
+        let message = response.errors.first().map_or("empty response".to_string(), |error| error.message.clone());
+        let retryable = response.errors.iter().any(|error| error.extensions.as_ref().and_then(|fields| fields.get("retryable")).and_then(Value::as_bool) == Some(true));
+        return Err(if retryable || RetryClass::classify(false, None, &codes) == RetryClass::Retriable {
+            StepError::Retry(Box::new(OperationFailure { kind: FailureKind::Server, message, extensions: response.extensions() }))
+        } else {
+            StepError::Fatal(Box::new(OperationFailure { kind: FailureKind::Rejected, message, extensions: response.extensions() }))
+        });
+    }
+    response.data.and_then(|data| root_value(&data, &operation.root_path).cloned()).filter(|root| !root.is_null())
+        .ok_or_else(|| fatal(FailureKind::Unrecognized, format!("{name} answered without {}", operation.root_path)))
+}
+
+pub(crate) fn transfer_abort_settled(name: &str, operation: &crate::sync::OperationDef, response: crate::transport::Response) -> bool {
+    match transfer_response(name, operation, response) {
+        Ok(_) => true,
+        Err(StepError::Fatal(failure)) => failure.kind == FailureKind::Rejected,
+        _ => false,
+    }
 }
 
 fn step_error(error: TransportError, cancelled: bool) -> StepError {
@@ -65,26 +105,22 @@ impl Runner {
     }
 
     pub(super) fn has_pending_request(&self) -> Result<bool, Stop> {
-        crate::transport::encrypted::pending_matches(&self.inner.db, self.seq, self.position, &crate::operation::enum_text(&self.snapshot().stage).unwrap_or_default())
+        let stage = self.snapshot().stage;
+        let owner = if stage == UploadStage::Mutation { crate::transport::RequestOwner::Operation { seq: self.seq } } else { self.transfer.owner(stage) };
+        crate::transport::encrypted::pending_matches(&self.inner.db, &owner)
             .map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))
     }
 
     pub(super) async fn graphql(&self, name: &str, variables: Value, interruptible: bool) -> Result<Value, StepError> {
-        let Some(operation) = locked(&self.inner.operations).get(name).cloned() else {
-            return Err(fatal(FailureKind::Rejected, format!("operation {name} is not registered")));
-        };
-        locked(&self.inner.counters).record_transport_call();
-        let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
-        request.upload = true;
-        request.owner = Some(crate::transport::RequestOwner { seq: self.seq, item_position: self.position, stage: crate::operation::enum_text(&self.snapshot().stage).unwrap_or_default() });
+        let (operation, request) = self.inner.transfer_request(name, variables, &self.transfer, self.snapshot().stage).map_err(|error| fatal(FailureKind::Rejected, error.to_string()))?;
         self.remember(&request)?;
         let resumed = locked(&self.resumed).take();
-        let call = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.step_timeout, async {
+        let call = async {
             match resumed {
                 Some(result) => result,
-                None => { crate::db::lock::assert_no_library_lock("Transport::mutate"); self.inner.mutate_scoped(&self.admitted, request).await },
+                None => self.inner.send_transfer(&self.admitted, request).await,
             }
-        });
+        };
         let outcome = if interruptible {
             tokio::select! {
                 result = call => result,
@@ -94,30 +130,15 @@ impl Runner {
             call.await
         };
         let response = match outcome {
-            Err(_) => return Err(StepError::Retry(Box::new(OperationFailure::new(FailureKind::Network, format!("{name} timed out"))))),
-            Ok(Err(error)) => {
+            Err(error) => {
                 return Err(match step_error(error, false) {
                     StepError::Expired => fatal(FailureKind::Rejected, format!("{name} was forbidden")),
                     other => other,
                 })
             }
-            Ok(Ok(response)) => response,
+            Ok(response) => response,
         };
-        if response.shape().outcome() != ResponseOutcome::Commit {
-            let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
-            let message = response.errors.first().map_or("empty response".to_string(), |error| error.message.clone());
-            let retryable = response.errors.iter().any(|error| error.extensions.as_ref().and_then(|fields| fields.get("retryable")).and_then(Value::as_bool) == Some(true));
-            return Err(if retryable || RetryClass::classify(false, None, &codes) == RetryClass::Retriable {
-                StepError::Retry(Box::new(OperationFailure { kind: FailureKind::Server, message, extensions: response.extensions() }))
-            } else {
-                StepError::Fatal(Box::new(OperationFailure { kind: FailureKind::Rejected, message, extensions: response.extensions() }))
-            });
-        }
-        response
-            .data
-            .and_then(|data| root_value(&data, &operation.root_path).cloned())
-            .filter(|root| !root.is_null())
-            .ok_or_else(|| fatal(FailureKind::Unrecognized, format!("{name} answered without {}", operation.root_path)))
+        transfer_response(name, &operation, response)
     }
 
     pub(super) async fn put_once(
@@ -127,9 +148,10 @@ impl Runner {
         offset: u64,
         length: u64,
         part: u32,
+        step: crate::transport::TransferStep,
     ) -> Result<Option<String>, StepError> {
-        let tag = format!("{}.{}.{}", self.seq, self.position, part);
-        let response = self.send_put(url, headers, offset, length, part, tag).await;
+        let identity = self.transfer.put(step);
+        let response = self.send_put(url, headers, offset, length, part, identity).await;
         match response {
             Err(error) => Err(error),
             Ok(response) if !(200..300).contains(&response.status) => {
@@ -139,12 +161,13 @@ impl Runner {
         }
     }
 
-    async fn send_put(self: &Arc<Self>, url: &str, headers: &[(String, String)], offset: u64, length: u64, part: u32, tag: String) -> Result<PutResponse, StepError> {
+    async fn send_put(self: &Arc<Self>, url: &str, headers: &[(String, String)], offset: u64, length: u64, part: u32, identity: crate::transport::TransferIdentity) -> Result<PutResponse, StepError> {
         let whole = offset == 0 && length == self.snapshot().total_bytes;
         let file = if whole {
             PutFile { path: self.input.path.clone(), offset, length }
         } else {
-            let target = self.inner.db.shared.files.range_path(&tag);
+            let item_digest: String = Sha256::digest(identity.item_id.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
+            let target = self.inner.db.shared.files.range_path(&format!("{}.{}.{}", identity.operation_id, item_digest, part));
             copy_range(std::path::Path::new(&self.input.path), offset, length, &target, &self.token).await
                 .map_err(|error| fatal(FailureKind::Rejected, format!("source file is unreadable: {error}")))?;
             PutFile { path: target.to_string_lossy().into_owned(), offset: 0, length }
@@ -155,7 +178,7 @@ impl Runner {
             url: url.to_string(),
             headers: headers.to_vec(),
             file: file.clone(),
-            tag,
+            identity,
             cancel: self.token.clone(),
             sent: Arc::new(crate::task::bind(crate::task::Carry::here(), move |bytes| runner.report(part, bytes))),
         };

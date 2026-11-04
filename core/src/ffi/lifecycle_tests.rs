@@ -47,7 +47,7 @@ impl Server {
 
 #[async_trait]
 impl EncryptedHttp for Server {
-    async fn post(&self, path: String, body: String, _: bool) -> Result<EncryptedReply, DbError> {
+    async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let answer = {
             let mut state = self.state.lock().unwrap();

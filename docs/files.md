@@ -157,6 +157,9 @@ On Android the app gives the text and the small icon of the notification to `DBl
 
 API 34 and later run one user-initiated job with a network requirement. API 33 runs a sticky `dataSync` foreground task that starts its notification before `open` finishes. The library does not use WorkManager. A job or foreground task never repeats a transfer: retries follow the upload `Backoff` of the core. When the system refuses the start, the reason appears in the `error` of the accepted upload and nothing else changes. Upload requests (the file `PUT`, the steps and the content mutation) use the network of the job, all other requests use the default route. A restart or a force stop continues at the next `open`.
 
+Запрос очистки multipart использует сеть передачи. Собственный `Transport.put` получает `TransferIdentity` с операцией, элементом и шагом. При изменении batch идентичность элемента сохраняется. Ключ элемента - непрозрачное значение, а не имя файла.
+Фоновая задача сохраняет epoch приёма. Поздний отказ системы относится только к этой эпохе.
+
 `retry` and `discard` take an `action`. Pass `null` for the whole record, or a declared action. `retry` returns a new receipt. Preparing the request and calling the library run off the caller thread.
 
 ### Create with an upload

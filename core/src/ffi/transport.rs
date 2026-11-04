@@ -4,7 +4,6 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 use crate::transport as core;
 use super::lease::TokenLease;
 use super::DbError;
@@ -14,12 +13,12 @@ pub struct TransportRequest {
     pub document: String,
     pub operation_name: String,
     pub variables_json: String,
-    pub upload: bool,
+    pub purpose: core::NetworkPurpose,
 }
 
 impl From<core::GraphQLRequest> for TransportRequest {
     fn from(request: core::GraphQLRequest) -> Self {
-        Self { document: request.document, operation_name: request.operation_name, variables_json: request.variables.to_string(), upload: request.upload }
+        Self { document: request.document, operation_name: request.operation_name, variables_json: request.variables.to_string(), purpose: request.purpose }
     }
 }
 
@@ -34,7 +33,7 @@ pub trait Transport: Send + Sync {
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError>;
     async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError>;
     fn unsubscribe(&self, token: String);
-    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, tag: String, progress: Arc<ByteProgress>) -> Result<PutReply, DbError>;
+    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> Result<PutReply, DbError>;
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -88,7 +87,7 @@ impl core::CableSocket for ForeignSocket {
 }
 
 #[derive(uniffi::Object)]
-pub struct SubscriptionSink { sender: Mutex<Option<mpsc::UnboundedSender<core::SubscriptionEvent>>>, lease: TokenLease }
+pub struct SubscriptionSink { sender: Mutex<Option<core::SubscriptionSender>>, lease: TokenLease }
 
 #[uniffi::export]
 impl SubscriptionSink {
@@ -111,7 +110,7 @@ impl SubscriptionSink {
 }
 
 impl SubscriptionSink {
-    fn new(handle: tokio::runtime::Handle, sender: mpsc::UnboundedSender<core::SubscriptionEvent>, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
+    fn new(handle: tokio::runtime::Handle, sender: core::SubscriptionSender, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
         Self { sender: Mutex::new(Some(sender)), lease: TokenLease::new(handle, release) }
     }
     fn abandon(&self) {
@@ -259,7 +258,7 @@ impl core::Transport for ForeignTransport {
     }
     async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::subscribe");
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = core::subscription_channel();
         let transport = self.0.clone();
         let handle = super::database::executor().map_err(transport_error)?.handle().clone();
         let sink = Arc::new(SubscriptionSink::new(handle, sender, move |token| {
@@ -277,7 +276,7 @@ impl core::Transport for ForeignTransport {
     async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::put");
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
-        let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.tag, progress).await.map_err(transport_error)?;
+        let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.identity, progress).await.map_err(transport_error)?;
         Ok(core::PutResponse { status: reply.status, etag: reply.etag })
     }
 }

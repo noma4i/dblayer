@@ -59,7 +59,7 @@ class TransportThreadTest {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"7"}}"""))
         val transport = OkHttpTransport(server.url("/graphql").toString(), client = client)
 
-        val request = TransportRequest(if (mutation) "mutation Probe { probe { id } }" else "query Probe { probe { id } }", "Probe", """{"id":"7"}""", false)
+        val request = TransportRequest(if (mutation) "mutation Probe { probe { id } }" else "query Probe { probe { id } }", "Probe", """{"id":"7"}""", NetworkPurpose.STANDARD)
         val text = withContext(caller) { if (mutation) transport.mutate(request) else transport.query(request) }
 
         assertEquals("""{"data":{"id":"7"}}""", text)
@@ -88,7 +88,7 @@ class TransportThreadTest {
         for ((operation, cancelled, expected) in cases) {
             server.enqueue(MockResponse().setSocketPolicy(if (operation == "put" && cancelled) SocketPolicy.NO_RESPONSE else SocketPolicy.DISCONNECT_AT_START))
             val transport = OkHttpTransport(server.url("/graphql").toString(), client = OkHttpClient.Builder().retryOnConnectionFailure(false).build())
-            val request = TransportRequest("query Probe { probe { id } }", "Probe", "{}", false)
+            val request = TransportRequest("query Probe { probe { id } }", "Probe", "{}", NetworkPurpose.STANDARD)
             val error = runCatching {
                 when (operation) {
                     "query" -> transport.query(request)

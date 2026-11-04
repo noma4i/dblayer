@@ -55,9 +55,9 @@ pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: 
     path == config.endpoints.graphql && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
 }
 
-pub(crate) fn pending_matches(db: &crate::db::Db, seq: i64, position: i64, stage: &str) -> Result<bool, crate::store::StoreError> {
+pub(crate) fn pending_matches(db: &crate::db::Db, owner: &crate::transport::RequestOwner) -> Result<bool, crate::store::StoreError> {
     Ok(db.shared.store.read_locked(super::state::pending)?.is_some_and(|pending| {
-        pending.owner.is_some_and(|owner| owner.seq == seq && owner.stage == stage && (owner.item_position == position || owner.item_position == -1 && stage == "mutation"))
+        pending.owner.as_ref() == Some(owner)
     }))
 }
 
@@ -93,13 +93,13 @@ impl Transport for EncryptedTransport {
     async fn mutate(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
         let stored = graphql_body(&request, true);
         if self.client.pending_call()?.is_some_and(|(path, body)| path == self.client.config.endpoints.graphql && body == stored) {
-            return response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, stored, request.owner, request.upload).await?);
+            return response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, stored, request.owner, request.purpose).await?);
         }
-        let response = response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, false), request.owner.clone(), request.upload).await?)?;
+        let response = response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, false), request.owner.clone(), request.purpose).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone(), request.upload).await?)
+        response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone(), request.purpose).await?)
     }
 
     async fn subscribe(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {

@@ -30,7 +30,7 @@ impl Remote {
 
 #[async_trait::async_trait]
 impl EncryptedHttp for Remote {
-    async fn post(&self, path: String, body: String, _: bool) -> Result<EncryptedReply, DbError> {
+    async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let reply = self.call(json!({"post": path, "body": body}))?;
         Ok(EncryptedReply { status: reply["status"].as_u64().unwrap() as u16, body: reply["body"].as_str().unwrap().into() })
     }
@@ -93,7 +93,7 @@ fn upload_resume_survives_the_exit_of_the_sending_process() {
             BufReader::new(&stream).read_line(&mut line).unwrap();
             let call: Value = serde_json::from_str(&line).unwrap();
             let reply = if let Some(path) = call["post"].as_str() {
-                let reply = runtime.block_on(peer.post(path, call["body"].as_str().unwrap().into(), false)).unwrap();
+                let reply = runtime.block_on(peer.post(path, call["body"].as_str().unwrap().into(), crate::transport::NetworkPurpose::Standard)).unwrap();
                 json!({"status": reply.status, "body": reply.body})
             } else if call["get"] == true {
                 json!(*credential.lock().unwrap())

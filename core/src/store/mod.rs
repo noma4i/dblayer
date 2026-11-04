@@ -5,7 +5,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 use rusqlite::Connection;
 
 use crate::commit::CommitResult;
-use crate::ddl::{layout, table_name, Layout, RecreateReason};
+use crate::ddl::{layout, table_name, Layout};
 use crate::identity::{Generation, RowRef};
 use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::{ModelSpec, SearchPath};
@@ -19,6 +19,7 @@ mod error;
 mod file_ops;
 mod maintenance;
 mod open;
+pub(crate) use open::{is_unreadable, remove_database};
 mod readers;
 mod reset;
 mod rows;
@@ -198,7 +199,6 @@ pub struct Store {
     failing_entity_reads: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     pub(crate) read_threads: Mutex<Vec<std::thread::ThreadId>>,
-    recreated: Option<RecreateReason>,
     #[cfg(test)]
     pub(crate) require_unlocked_responses: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -256,7 +256,6 @@ impl Store {
             #[cfg(test)]
             writes_waiting: std::sync::atomic::AtomicUsize::new(0),
             session_end_replay: std::sync::atomic::AtomicBool::new(false),
-            recreated: None,
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
         }

@@ -68,45 +68,92 @@ internal object SystemUploadScheduler : UploadScheduler {
 
 internal class UploadAcceptedStart(private val context: Context, private val database: Database, private val scheduler: UploadScheduler = SystemUploadScheduler) : UploadAcceptedSink {
     override fun accepted(event: WireUploadAccepted) {
+        if (event.epoch != database.sessionEpoch()) return
         val refused = try {
             scheduler.start(context, event.items)
         } catch (error: RuntimeException) {
             error.message ?: error.javaClass.simpleName
         }
-        if (refused != null) database.backgroundRefused(event.epoch, event.items, refused)
+        if (refused != null) {
+            try {
+                database.backgroundRefused(event.epoch, event.items, refused)
+            } catch (_: DbException.Interrupted) {
+                return
+            } catch (_: DbException.NoSession) {
+                return
+            }
+        }
     }
 }
 
-internal object UploadNetwork {
-    @Volatile private var active = false
-    @Volatile private var network: Network? = null
-    @Volatile private var owner = 0u
+internal class UploadJobToken
 
-    @Synchronized fun started(network: Network?, owner: UInt) { this.owner = owner; this.network = network; active = true }
-    @Synchronized fun changed(network: Network?) { this.network = network }
-    @Synchronized fun ended(owner: UInt) { if (owner == this.owner) { active = false; network = null } }
+internal object UploadNetwork {
+    private class Route(val owner: UploadJobToken, val network: Network?)
+    @Volatile private var current: Route? = null
+
+    @Synchronized fun started(network: Network?, owner: UploadJobToken) { current = Route(owner, network) }
+    @Synchronized fun changed(network: Network?, owner: UploadJobToken) { if (owner === current?.owner) current = Route(owner, network) }
+    @Synchronized fun ended(owner: UploadJobToken) { if (owner === current?.owner) current = null }
 
     fun route(client: OkHttpClient): OkHttpClient {
-        if (!active) return client
-        val bound = network ?: throw java.io.IOException("the upload job has no network")
+        val route = current ?: return client
+        val bound = route.network ?: throw java.io.IOException("the upload job has no network")
         return client.newBuilder().socketFactory(bound.socketFactory).dns(Dns { host -> bound.getAllByName(host).toList() }).build()
     }
 }
 
-internal suspend fun runUploadRound(database: Database, epoch: ULong, owner: UInt): Boolean {
+private class RunningUploadRound(val database: Database, val epoch: ULong, val owner: UInt) {
+    val networkToken = UploadJobToken()
+}
+
+private fun beginUploadRound(database: Database): RunningUploadRound? {
+    val epoch = database.sessionEpoch()
+    val owner = try {
+        database.roundBegin(epoch)
+    } catch (_: DbException.Interrupted) {
+        return null
+    } catch (_: DbException.NoSession) {
+        return null
+    } ?: return null
+    return RunningUploadRound(database, epoch, owner)
+}
+
+private fun endUploadRound(context: Context, round: RunningUploadRound) {
+    val groups = try {
+        round.database.roundEnd(round.database.sessionEpoch(), round.owner).orEmpty()
+    } catch (_: DbException.Interrupted) {
+        return
+    } catch (_: DbException.NoSession) {
+        return
+    }
+    groups.forEach { UploadAcceptedStart(context, round.database).accepted(it) }
+}
+
+private suspend fun runUploadRound(round: RunningUploadRound) {
     while (true) {
         val step = try {
-            database.resumeUploads(epoch)
-            database.roundNext(epoch, owner)
+            round.database.resumeUploads(round.epoch)
+            round.database.roundNext(round.epoch, round.owner)
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (failure: Exception) {
-            database.roundLeave(epoch, owner)
+        } catch (_: DbException.Interrupted) {
+            return
+        } catch (_: DbException.NoSession) {
+            return
+        } catch (_: Exception) {
+            try {
+                round.database.roundLeave(round.epoch, round.owner)
+            } catch (_: DbException.Interrupted) {
+                return
+            } catch (_: DbException.NoSession) {
+                return
+            }
         }
         when (step) {
-            WireRoundStep.STALE -> return false
+            WireRoundStep.STALE -> return
             WireRoundStep.MORE -> continue
-            WireRoundStep.DONE -> return true
+            WireRoundStep.DONE -> return
         }
     }
 }
@@ -114,37 +161,38 @@ internal suspend fun runUploadRound(database: Database, epoch: ULong, owner: UIn
 @RequiresApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 internal class UploadJobService : JobService() {
     private var scope: CoroutineScope? = null
-    private var round: Pair<ULong, UInt>? = null
+    @Volatile private var round: RunningUploadRound? = null
 
     override fun onStartJob(params: JobParameters): Boolean {
         setNotification(params, UploadNotifications.ID, UploadNotifications.build(this), JOB_END_NOTIFICATION_POLICY_REMOVE)
         val database = DBlayer.openedDatabase()
-        val epoch = database?.sessionEpoch()
-        val owner = if (database != null && epoch != null) database.roundBegin(epoch) else null
-        if (database == null || epoch == null || owner == null) { jobFinished(params, false); return false }
-        round = epoch to owner
-        UploadNetwork.started(params.network, owner)
+        val current = database?.let(::beginUploadRound)
+        if (current == null) { jobFinished(params, false); return false }
+        round = current
+        UploadNetwork.started(params.network, current.networkToken)
         val work = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         scope = work
         work.launch {
-            if (!runUploadRound(database, epoch, owner)) return@launch
-            UploadNetwork.ended(owner)
+            runUploadRound(current)
+            UploadNetwork.ended(current.networkToken)
             jobFinished(params, false)
-            database.roundEnd(epoch, owner).orEmpty().forEach { UploadAcceptedStart(applicationContext, database).accepted(it) }
+            endUploadRound(applicationContext, current)
         }
         return true
     }
 
     override fun onNetworkChanged(params: JobParameters) {
-        UploadNetwork.changed(params.network)
+        val current = round ?: return
+        UploadNetwork.changed(params.network, current.networkToken)
     }
 
     override fun onStopJob(params: JobParameters): Boolean {
-        val (epoch, owner) = round ?: return true
-        UploadNetwork.ended(owner)
+        val current = round ?: return true
+        UploadNetwork.ended(current.networkToken)
         scope?.cancel()
         scope = null
-        DBlayer.openedDatabase()?.roundAbandon(epoch, owner)
+        round = null
+        endUploadRound(applicationContext, current)
         return true
     }
 
@@ -165,8 +213,8 @@ internal class UploadJobService : JobService() {
 
 internal class UploadService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var lastStart = 0
-    private var round: Pair<ULong, UInt>? = null
+    @Volatile private var lastStart = 0
+    @Volatile private var round: RunningUploadRound? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -175,20 +223,20 @@ internal class UploadService : Service() {
         lastStart = startId
         scope.launch {
             val database = DBlayer.awaitDatabase()
-            val epoch = database.sessionEpoch()
-            val owner = database.roundBegin(epoch) ?: return@launch
-            round = epoch to owner
-            if (!runUploadRound(database, epoch, owner)) return@launch
+            val current = beginUploadRound(database) ?: return@launch
+            round = current
+            runUploadRound(current)
             stopSelf(lastStart)
-            database.roundEnd(epoch, owner).orEmpty().forEach { UploadAcceptedStart(applicationContext, database).accepted(it) }
+            endUploadRound(applicationContext, current)
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
         scope.cancel()
-        val (epoch, owner) = round ?: return
-        DBlayer.openedDatabase()?.roundAbandon(epoch, owner)
+        val current = round ?: return
+        round = null
+        endUploadRound(applicationContext, current)
     }
 
     companion object {

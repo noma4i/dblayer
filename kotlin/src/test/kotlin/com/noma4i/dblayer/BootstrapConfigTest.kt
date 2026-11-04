@@ -48,7 +48,7 @@ class BootstrapConfigTest {
         server.enqueue(MockResponse().setBody("pending").throttleBody(1, 60, java.util.concurrent.TimeUnit.SECONDS))
         server.start()
         val http = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), client)
-        val task = launch { runCatching { http.post("/probe", "x", false) } }
+        val task = launch { runCatching { http.post("/probe", "x", NetworkPurpose.STANDARD) } }
         try {
             kotlinx.coroutines.withTimeout(5000) { reading.await() }
             task.cancel()
@@ -66,7 +66,7 @@ class BootstrapConfigTest {
         val started = CompletableDeferred<Unit>()
         val stopped = CompletableDeferred<Throwable>()
         val http = object : EncryptedHttp {
-            override suspend fun post(path: String, body: String, upload: Boolean): EncryptedReply {
+            override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
                 started.complete(Unit)
                 try {
                     awaitCancellation()
@@ -87,7 +87,7 @@ class BootstrapConfigTest {
         val calls = AtomicInteger()
         val retries = RetryProgress()
         val http = object : EncryptedHttp {
-            override suspend fun post(path: String, body: String, upload: Boolean): EncryptedReply {
+            override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
                 calls.incrementAndGet()
                 throw classifyEncryptedHttpFailure(SocketTimeoutException("timeout"))
             }
@@ -164,7 +164,7 @@ class BootstrapConfigTest {
             for (kind in listOf("ok", "http", "pin")) {
                 var calls = 0
                 val http = object : EncryptedHttp {
-                    override suspend fun post(path: String, body: String, upload: Boolean): EncryptedReply {
+                    override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
                         calls++
                         assertEquals(kat.text("path"), path)
                         return if (kind == "http") EncryptedReply(400u, "") else EncryptedReply(200u, answer(body))
@@ -201,7 +201,7 @@ class BootstrapConfigTest {
             val polluted = OkHttpClient.Builder().addInterceptor { chain ->
                 chain.proceed(chain.request().newBuilder().header("Authorization", "secret").header("Cookie", "secret").header("X-Payload-Encryption", "old").header("X-Request-Signature", "old").build())
             }.build()
-            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), polluted).post("/api/bootstrap", "jwe", false)
+            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), polluted).post("/api/bootstrap", "jwe", NetworkPurpose.STANDARD)
             assertEquals(302.toUShort(), reply.status)
             assertEquals(1, server.requestCount)
             val request = server.takeRequest()

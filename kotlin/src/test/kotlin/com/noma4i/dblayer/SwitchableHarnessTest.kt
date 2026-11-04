@@ -18,7 +18,7 @@ class SwitchableTransport(@Volatile var target: MockTransport?, private val unse
     override suspend fun mutate(request: TransportRequest): String = resolve().mutate(request)
     override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) = resolve().subscribe(request, sink)
     override fun unsubscribe(token: String) { target?.unsubscribe(token) }
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, tag: String, progress: ByteProgress): PutReply = resolve().put(url, headers, file, tag, progress)
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = resolve().put(url, headers, file, identity, progress)
 }
 
 @OptIn(DBlayerTestingApi::class)

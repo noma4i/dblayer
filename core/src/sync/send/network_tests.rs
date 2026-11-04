@@ -116,7 +116,7 @@ async fn forty_unreached_attempts_keep_the_edit_failed_and_own_pending() {
     let failed = info(&rig, "m1");
     assert_eq!((failed.state, failed.attempts), (SyncState::Failed, 40));
     assert_eq!(rig.db.outbox().unwrap()[0].operation.id.0, seq);
-    assert!(crate::transport::encrypted::pending_matches(&rig.db, seq, -1, "mutation").unwrap());
+    assert!(crate::transport::encrypted::pending_matches(&rig.db, &crate::transport::RequestOwner::Operation { seq }).unwrap());
 }
 
 #[tokio::test(start_paused = true)]

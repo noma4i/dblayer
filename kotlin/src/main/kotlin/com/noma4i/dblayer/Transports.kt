@@ -34,7 +34,7 @@ class OkHttpTransport(
             headers().forEach { (field, value) -> header(field, value) }
         }.build().withUserAgent()
         return try {
-            (if (request.upload) UploadNetwork.route(client) else client).newCall(http).exchange { response ->
+            (if (request.purpose == NetworkPurpose.TRANSFER) UploadNetwork.route(client) else client).newCall(http).exchange { response ->
                 val text = response.body.string()
                 if (response.code !in 200..299) throw DbException.Http(response.code.toUShort(), text)
                 text
@@ -104,7 +104,7 @@ class OkHttpTransport(
         sockets.remove(token)?.close(1000, null)
     }
 
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, tag: String, progress: ByteProgress): PutReply =
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply =
         putFile(client, url, headers, file, progress, routed = true)
 }
 

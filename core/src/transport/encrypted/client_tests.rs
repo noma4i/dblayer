@@ -58,13 +58,13 @@ fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
                 state::store_pending(&stored.connection, &state::Pending {
                     credential_digest: "digest".into(), request_id: "request".into(), response_key: "response".into(), sequence: 1,
                     path: "/graphql".into(), body: if case == "corrupt" { "{".into() } else { "{}".into() },
-                    owner: Some(crate::transport::RequestOwner { seq: 7, item_position: 0, stage: "put".into() }), upload: true,
+                    owner: Some(crate::transport::RequestOwner::Transfer { operation_id: 7, item_id: "item".into(), step: crate::upload::UploadStage::Put }), purpose: crate::transport::NetworkPurpose::Transfer,
                 }).unwrap();
-                if case == "partial_owner" { stored.connection.execute_batch("UPDATE encrypted_pending SET stage = NULL").unwrap(); }
+                if case == "partial_owner" { stored.connection.execute_batch("UPDATE encrypted_pending SET owner_step = NULL").unwrap(); }
             }
         }
         let call = client.pending_call();
-        let matching = super::graphql::pending_matches(&db, 7, 0, "put");
+        let matching = super::graphql::pending_matches(&db, &crate::transport::RequestOwner::Transfer { operation_id: 7, item_id: "item".into(), step: crate::upload::UploadStage::Put });
         match case {
             "missing" => { assert_eq!(call.unwrap(), None); assert!(!matching.unwrap()); }
             "valid" => { assert_eq!(call.unwrap(), Some(("/graphql".into(), json!({})))); assert!(matching.unwrap()); }
@@ -149,7 +149,7 @@ async fn a_sessionless_call_does_not_wait_for_an_inflight_mutation() {
     struct Waiting;
     #[async_trait::async_trait]
     impl HttpExchange for Waiting {
-        async fn post(&self, path: &str, _: String, _: bool) -> Result<HttpReply, TransportError> {
+        async fn post(&self, path: &str, _: String, _: crate::transport::NetworkPurpose) -> Result<HttpReply, TransportError> {
             if path == "/api/ticket" { return Ok(HttpReply { status: 400, body: String::new() }); }
             std::future::pending().await
         }

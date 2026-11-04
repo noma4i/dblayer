@@ -23,10 +23,10 @@ struct UserAgentTests {
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
     let transport = UrlSessionTransport(endpoint: origin, headers: { headers }, session: session, cablePath: "/api/cable")
-    let operation = TransportRequest(document: "query Probe { id }", operationName: "Probe", variablesJson: "{}", upload: false)
+    let operation = TransportRequest(document: "query Probe { id }", operationName: "Probe", variablesJson: "{}", purpose: .standard)
     switch path {
     case "encrypted":
-      _ = try await UrlSessionEncryptedHttp(origin: origin, session: session).post(path: "/api/session", body: "jwe", upload: false)
+      _ = try await UrlSessionEncryptedHttp(origin: origin, session: session).post(path: "/api/session", body: "jwe", purpose: .standard)
     case "graphql":
       _ = try? await transport.query(request: operation)
     case "encryptedSocket":

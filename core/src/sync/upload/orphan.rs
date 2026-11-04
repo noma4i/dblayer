@@ -1,11 +1,8 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use serde_json::json;
-
-use crate::transport::{GraphQLRequest, ResponseOutcome, RetryClass};
-
 use super::super::{locked, Inner, SyncError};
+use super::steps::transfer_abort_settled;
 
 impl Inner {
     pub(crate) fn spawn_upload_housekeeping(self: &Arc<Self>, expire: bool) {
@@ -51,25 +48,17 @@ impl Inner {
         if !self.connectivity.is_online() { return Ok(()); }
         let shared = self.db.shared.clone();
         let orphans = crate::task::spawn_blocking(crate::task::Carry::here(), move || shared.store.upload_orphans()).await.map_err(|error| SyncError::Store(error.to_string()))??;
-        for (id, key, upload_id, name) in orphans {
-            let Some(operation) = locked(&self.operations).get(&name).cloned() else {
-                return Err(SyncError::Store(format!("operation {name} is not registered")));
-            };
-            let request = GraphQLRequest::new(&operation.document, &operation.name, json!({"key": key, "uploadId": upload_id}));
-            locked(&self.counters).record_transport_call();
-            crate::db::lock::assert_no_library_lock("Transport::mutate");
-            let call = crate::pacing::timeout(self.clock.as_ref(), self.config.upload.step_timeout, self.transport.mutate(admitted, request)).await;
+        for abort in orphans {
+            let (operation, request) = self.transfer_request(&abort.operation, abort.variables(), &abort.transfer, crate::upload::UploadStage::Abort)?;
+            let call = self.send_transfer(admitted, request).await;
             let settled = match call {
-                Ok(Ok(response)) => {
-                    let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
-                    response.shape().outcome() == ResponseOutcome::Commit || RetryClass::classify(false, None, &codes) != RetryClass::Retriable
-                }
+                Ok(response) => transfer_abort_settled(&abort.operation, &operation, response),
                 _ => false,
             };
             if !settled { continue; }
             let shared = self.db.shared.clone();
             let authority = admitted.authority();
-            crate::task::spawn_blocking(crate::task::Carry::here(), move || shared.store.settle_upload_orphan(&authority, id)).await.map_err(|error| SyncError::Store(error.to_string()))??;
+            crate::task::spawn_blocking(crate::task::Carry::here(), move || shared.store.settle_upload_orphan(&authority, abort.id)).await.map_err(|error| SyncError::Store(error.to_string()))??;
         }
         Ok(())
     }

@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Notify;
 
 use super::error::TransportError;
@@ -25,7 +24,7 @@ pub struct RecordedCall {
     pub kind: CallKind,
     pub operation_name: String,
     pub variables: Value,
-    pub upload: bool,
+    pub purpose: super::NetworkPurpose,
 }
 
 #[derive(Debug, Clone)]
@@ -73,7 +72,7 @@ pub struct RecordedPut {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
-    pub tag: String,
+    pub identity: super::TransferIdentity,
 }
 
 #[derive(Debug, Clone)]
@@ -113,7 +112,7 @@ struct MockState {
     puts_peak: usize,
     replies: HashMap<String, VecDeque<Reply>>,
     scripts: HashMap<String, Vec<SubscriptionEvent>>,
-    senders: HashMap<String, Vec<(usize, UnboundedSender<SubscriptionEvent>)>>,
+    senders: HashMap<String, Vec<(usize, super::SubscriptionSender)>>,
     streams: Vec<Stream>,
     cancellations: HashMap<String, usize>,
     calls: Vec<RecordedCall>,
@@ -281,7 +280,7 @@ impl MockTransport {
             kind,
             operation_name: request.operation_name.clone(),
             variables: request.variables.clone(),
-            upload: request.upload,
+            purpose: request.purpose,
         });
         self.wake.notify_waiters();
     }
@@ -319,7 +318,7 @@ impl MockTransport {
         }).map_err(|error| TransportError::Network(error.to_string()))?;
         let reply = {
             let mut state = self.lock();
-            state.put_calls.push(RecordedPut { url: request.url.clone(), headers: request.headers.clone(), body, tag: request.tag.clone() });
+            state.put_calls.push(RecordedPut { url: request.url.clone(), headers: request.headers.clone(), body, identity: request.identity.clone() });
             state.puts_running += 1;
             state.puts_peak = state.puts_peak.max(state.puts_running);
             self.wake.notify_waiters();
@@ -370,7 +369,7 @@ impl Transport for MockTransport {
 
     async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         self.record(CallKind::Subscription, &request);
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = super::subscription_channel();
         let name = request.operation_name;
         let mut state = self.lock();
         let index = state.streams.len();

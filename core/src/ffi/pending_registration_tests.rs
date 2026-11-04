@@ -24,7 +24,7 @@ impl Transport for Recorder {
     }
     async fn subscribe(&self, _: crate::ffi::TransportRequest, _: Arc<crate::ffi::SubscriptionSink>) -> Result<(), crate::ffi::DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::ffi::PutFile, _: String, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, crate::ffi::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::ffi::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, crate::ffi::DbError> { unreachable!() }
 }
 
 #[tokio::test]

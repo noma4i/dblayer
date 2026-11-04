@@ -83,6 +83,8 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 The database uses encrypted JWE for queries and mutations, and encrypted Cable for subscriptions.
 The passed transport offers a text WebSocket and file upload. The shared subscription interface is described in [Cable protocol](cable-protocol.md).
 
+`TransportRequest.purpose` и аргумент `purpose` у `EncryptedHttp.post` задают назначение сети. `transfer` включает шаги, итоговую мутацию и очистку передачи. `standard` обозначает остальные запросы.
+
 The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin for encrypted hello and encrypted frames.
 
 ```swift

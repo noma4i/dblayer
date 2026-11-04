@@ -22,7 +22,7 @@ import javax.crypto.spec.PSource
 import javax.crypto.spec.SecretKeySpec
 
 /** An encrypted server that opens every sealed request with the fixture key and seals the answer, so tests run the real encrypted session path and fake only the HTTP exchange. */
-class SealedServer(private val answer: (path: String, body: JsonObject) -> JsonObject) : EncryptedHttp {
+class SealedServer(private val deduplicate: Boolean = false, private val answer: (path: String, body: JsonObject) -> JsonObject) : EncryptedHttp {
     companion object {
         const val SERVER_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzb67l/cXul2uArFqeZXsMf4tImrLcaHb3uiVNp8mjjJrFK/zwUEEazm3pmriAbj1nBzSxQLuq3jNUeFHXoQxjwWmTdv+PoAypz4ZII6Dz6rknk290/ddmimc1Z4Mx0AkT4ffAA9WHiDtLPF6tKZWNsWF/SpJps9PWrIKNOKY78ZfCgfegrWfKwoNYExyZ0IuUUgG0lsRjEEE/U59GpbNBqdKtw7KaIGK47QRk6HWOkCQtyqqjsseOJLwdI0k6jDNmcH6DulPNmar9AbwsmpngD55P8y4JdH49Eq3Nr040gmg0Y1p1FZm5PbKeC4WgZZdmg1bxjKAa+MYP0fROi4dFz05/81fqFb6DWaXencb0p/Iz+IUfQiI/0EYNv1SfdTUHzGyHFAmQHeCUIKLSkNNg3uF/jqKthFecCnWEfTUWRWFsN/8/Nb65a1UI/L1hP/qd+T6xKfchqVBEf767yeHdgsy3GeuqTsgXUPkuA1DO9HPP1xWqa6orUNWkimSwxDAgMBAAE="
         const val SERVER_PIN = "fab4f816eb33917161942684230405ae47ad4df5b456bd973085599b1364342a"
@@ -30,9 +30,15 @@ class SealedServer(private val answer: (path: String, body: JsonObject) -> JsonO
 
     private val privateKey: PrivateKey
     val requests = CopyOnWriteArrayList<Pair<String, JsonObject>>()
+    val routes = CopyOnWriteArrayList<Pair<String?, NetworkPurpose>>()
     private val refusing = AtomicBoolean(false)
     private val holding = java.util.concurrent.atomic.AtomicReference<String?>(null)
     private val parked = CopyOnWriteArrayList<kotlinx.coroutines.CompletableDeferred<Unit>>()
+    private val arrivals = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val lostAnswers = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val cached = java.util.concurrent.ConcurrentHashMap<String, Pair<JsonObject, String>>()
+    private val lostFile = java.util.concurrent.atomic.AtomicReference<String?>(null)
+    val effects = CopyOnWriteArrayList<JsonObject>()
 
     init {
         val fixture = Json.parseToJsonElement(File("../fixtures/encrypted-http/kat.json").readText()).jsonObject
@@ -62,20 +68,41 @@ class SealedServer(private val answer: (path: String, body: JsonObject) -> JsonO
     /** How many requests wait in the hold. */
     val parkedCount: Int get() = parked.size
 
-    override suspend fun post(path: String, body: String, upload: Boolean): EncryptedReply {
+    suspend fun heldRequest() { arrivals.receive() }
+    fun loseAnswer(filename: String) { lostFile.set(filename) }
+    suspend fun lostAnswer() { lostAnswers.receive() }
+
+    override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
         val request = open(body)
         val sent = request.getValue("body").jsonObject
         requests.add(path to sent)
+        routes.add(sent["operationName"]?.jsonPrimitive?.content to purpose)
         if (refusing.get()) return EncryptedReply(500u, "")
+        val requestId = request.getValue("requestId").jsonPrimitive.content
+        val stable = JsonObject(request.filterKeys { it != "issuedAt" })
+        if (deduplicate) cached[requestId]?.let {
+            if (it.first != stable) throw DbException.Invalid("request ID reused with different content")
+            return EncryptedReply(200u, it.second)
+        }
         val reply = answer(path, sent)
+        effects.add(sent)
         val operation = sent["operationName"]?.jsonPrimitive?.content
         if (operation != null && holding.get() == operation) {
             val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
             parked.add(gate)
+            arrivals.trySend(Unit)
             if (holding.get() != operation) gate.complete(Unit)
             gate.await()
         }
-        return EncryptedReply(200u, seal(request, reply))
+        val sealed = seal(request, reply)
+        if (deduplicate) cached[requestId] = stable to sealed
+        val filename = sent["variables"]?.jsonObject?.get("filename")?.jsonPrimitive?.content
+        val wanted = lostFile.get()
+        if (filename != null && filename == wanted && lostFile.compareAndSet(wanted, null)) {
+            lostAnswers.trySend(Unit)
+            throw DbException.Network("lost answer")
+        }
+        return EncryptedReply(200u, sealed)
     }
 
     fun open(token: String): JsonObject {

@@ -244,7 +244,7 @@ impl World {
 
 #[async_trait]
 impl EncryptedHttp for World {
-    async fn post(&self, path: String, body: String, _: bool) -> Result<EncryptedReply, DbError> {
+    async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let sequence = request["sequence"].as_i64();
         let operation = match path.as_str() {
@@ -348,7 +348,7 @@ impl Transport for Switchable {
         result
     }
     fn unsubscribe(&self, token: String) { self.unsubscribed.lock().unwrap().push(token); self.sink_closed.notify_one(); }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         self.current()?.plain("PUT", &Value::Null).await?;
         Ok(PutReply { status: 200, etag: Some("etag".into()) })
     }

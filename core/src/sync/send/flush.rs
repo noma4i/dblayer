@@ -525,7 +525,7 @@ impl Inner {
                 return self.refuse(&sending, failure, keep).await;
             }
         };
-        request.owner = Some(crate::transport::RequestOwner { seq, item_position: -1, stage: "mutation".into() });
+        request.owner = Some(crate::transport::RequestOwner::Operation { seq });
         let admitted = sending.admitted;
         let mut delivery: Pin<Box<dyn Future<Output = Delivery> + Send + '_>> = if sending.entry.operation.upload.is_some() {
             Box::pin(async move {
@@ -573,7 +573,7 @@ impl Inner {
             variables.insert(batch.items.clone(), Value::Array(items));
             let variables = super::variables::upload_variables(declaration, Value::Object(variables), &entry.operation.client_mutation_id);
             let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
-            request.upload = true;
+            request.purpose = crate::transport::NetworkPurpose::Transfer;
             self.commit(sending.admitted, sending.generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
                 for ((seq, position), state) in &states {
@@ -603,7 +603,9 @@ impl Inner {
             }
         };
         let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
-        request.upload = entry.operation.upload.is_some() || self.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM blob_use WHERE consumer_seq = ?1)", [entry.operation.id.0], |row| row.get::<_, bool>(0))?))?;
+        if entry.operation.upload.is_some() || self.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM blob_use WHERE consumer_seq = ?1)", [entry.operation.id.0], |row| row.get::<_, bool>(0))?))? {
+            request.purpose = crate::transport::NetworkPurpose::Transfer;
+        }
         if let Some(mut state) = entry.operation.upload.clone() {
             state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
             self.commit(sending.admitted, sending.generation, |_| {
@@ -616,18 +618,49 @@ impl Inner {
     }
 
     pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, admitted: &crate::lifecycle::Admitted, effects: std::sync::Arc<DeliveryEffects>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
+        let seq = match &request_owner {
+            crate::transport::RequestOwner::Operation { seq } => *seq,
+            crate::transport::RequestOwner::Transfer { operation_id, item_id, step } => {
+                use rusqlite::OptionalExtension;
+                let location: Option<i64> = self.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT seq FROM op_item WHERE client_key = ?1 AND transfer_operation_id = ?2", rusqlite::params![item_id, operation_id], |row| row.get(0)).optional()?))?;
+                match location {
+                    Some(seq) => seq,
+                    None if *step == crate::upload::UploadStage::Abort => {
+                        let name = self.db.shared.store.upload_orphan_name(*operation_id, item_id)?;
+                        let settled = match (name, result) {
+                            (Some(name), Ok(response)) => {
+                                let operation = locked(&self.operations).get(&name).cloned().ok_or_else(|| SyncError::Malformed(format!("operation {name} is not registered")))?;
+                                super::super::upload::transfer_abort_settled(&name, &operation, response)
+                            }
+                            _ => false,
+                        };
+                        if settled {
+                            let authority = admitted.authority();
+                            self.db.shared.store.settle_upload_orphan_identity(&authority, *operation_id, item_id)?;
+                        }
+                        return Ok(());
+                    }
+                    None => return Err(SyncError::Store("the resumed transfer no longer has an item".into())),
+                }
+            }
+            crate::transport::RequestOwner::Unmatched { operation_id } => {
+                self.fail_upload(admitted, *operation_id, SyncError::Store("the saved transfer no longer has an item".into()));
+                return Err(SyncError::Store("the saved transfer no longer has an item".into()));
+            }
+        };
         let settled = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
-            let Some(owner) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, request_owner.seq)?))? else { return Ok(None) };
+            let Some(owner) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, seq)?))? else { return Ok(None) };
             if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
                 self.db.retry_operations(admitted, vec![owner.clone()])?;
             }
             Ok(self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, owner.operation.id.0)?))?)
         })?;
         let Some(entry) = settled else { return Ok(()) };
-        if entry.operation.upload.is_some() {
-            if let Some(upload) = upload { self.resume_upload(upload, result).await; }
+        if let Some(upload) = upload {
+            self.resume_upload(upload, result).await;
             return Ok(());
         }
+        if matches!(request_owner, crate::transport::RequestOwner::Transfer { .. }) { return Err(SyncError::Store("the resumed transfer is not available".into())); }
         self.send(admitted, &entry, Some(result), None, effects, None).await?;
         Ok(())
     }
@@ -743,7 +776,7 @@ impl Inner {
         let owner = request.owner.clone();
         crate::db::lock::assert_no_library_lock("Transport::mutate");
         let result = self.mutate_scoped(admitted, request).await;
-        let replayable = match owner.map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage)).transpose() {
+        let replayable = match owner.as_ref().map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner)).transpose() {
             Ok(pending) => pending.unwrap_or(false),
             Err(error) => return Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
         };
@@ -753,7 +786,7 @@ impl Inner {
     async fn deliver_or_resume(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest, resumed: Option<Result<Response, TransportError>>) -> Delivery {
         match resumed {
             Some(result) => {
-                let replayable = match request.owner.map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner.seq, owner.item_position, &owner.stage)).transpose() {
+                let replayable = match request.owner.as_ref().map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner)).transpose() {
                     Ok(pending) => pending.unwrap_or(false),
                     Err(error) => return Delivery::Unknown(OperationFailure::new(FailureKind::Unrecognized, error.to_string())),
                 };

@@ -229,7 +229,7 @@ pub fn write_upload(connection: &Connection, seq: i64, position: i64, state: &Up
     let assignments = columns.iter().map(|name| format!("{name} = excluded.{name}")).collect::<Vec<_>>().join(", ");
     let mut values = vec![SqlValue::Integer(seq), SqlValue::Integer(position)];
     values.extend(upload_cells(Some(state))?);
-    let saved = connection.execute(&format!("INSERT INTO op_item (seq, position, {UPLOAD_COLUMNS}) SELECT ?1, ?2, {marks} WHERE EXISTS (SELECT 1 FROM op WHERE seq = ?1) ON CONFLICT (seq, position) DO UPDATE SET {assignments}"), rusqlite::params_from_iter(values))?;
+    let saved = connection.execute(&format!("INSERT INTO op_item (seq, position, transfer_operation_id, {UPLOAD_COLUMNS}) SELECT ?1, ?2, ?1, {marks} WHERE EXISTS (SELECT 1 FROM op WHERE seq = ?1) ON CONFLICT (seq, position) DO UPDATE SET {assignments}"), rusqlite::params_from_iter(values))?;
     if saved > 0 {
         connection.execute("DELETE FROM op_item_retry WHERE seq = ?1 AND position = ?2", params![seq, position])?;
         for retry in &state.retries {
@@ -350,12 +350,12 @@ pub(crate) fn read_fields(connection: &Connection, seq: i64) -> Result<Vec<Strin
 }
 
 pub(crate) fn record_orphan_uploads(connection: &Connection, seq: i64, position: Option<i64>) -> Result<()> {
-    let mut statement = connection.prepare_cached("SELECT position, storage_key, upload_id FROM op_item WHERE seq = ?1 AND upload_id IS NOT NULL AND storage_key IS NOT NULL AND (?2 IS NULL OR position = ?2)")?;
-    let pending = statement.query_map(params![seq, position], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))?.collect::<Result<Vec<_>>>()?;
-    for (item, key, upload_id) in pending {
+    let mut statement = connection.prepare_cached("SELECT position, storage_key, upload_id, transfer_operation_id, client_key FROM op_item WHERE seq = ?1 AND upload_id IS NOT NULL AND storage_key IS NOT NULL AND (?2 IS NULL OR position = ?2)")?;
+    let pending = statement.query_map(params![seq, position], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?)))?.collect::<Result<Vec<_>>>()?;
+    for (item, key, upload_id, operation_id, item_id) in pending {
         let input = read_item_value(connection, seq, item, "input")?.map(serde_json::from_value::<crate::upload::UploadInput>).transpose().map_err(from_sql_error)?;
         let Some(steps) = input.and_then(|input| input.steps.multipart) else { continue };
-        connection.prepare_cached("INSERT INTO upload_orphan (storage_key, upload_id, abort_operation) VALUES (?1, ?2, ?3)")?.execute(params![key, upload_id, steps.abort])?;
+        connection.prepare_cached("INSERT INTO upload_orphan (operation_id, item_id, storage_key, upload_id, abort_operation) VALUES (?1, ?2, ?3, ?4, ?5)")?.execute(params![operation_id, item_id, key, upload_id, steps.abort])?;
     }
     Ok(())
 }

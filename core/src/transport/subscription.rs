@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-use tokio::sync::mpsc::UnboundedReceiver;
+use std::sync::Mutex;
+use std::collections::VecDeque;
+use tokio::sync::Notify;
 
 use super::request::Response;
 
@@ -83,7 +84,106 @@ impl SubscriptionFailure {
 pub enum SubscriptionEvent {
     Ready,
     Next(Response),
+    Lost { first: u64, last: u64 },
     Failed(SubscriptionFailure),
+}
+
+const CAPACITY: usize = 256;
+
+struct Queue {
+    events: VecDeque<SubscriptionEvent>,
+    ordinal: u64,
+    lost: Option<(u64, u64)>,
+    after_ready: Option<(u64, u64)>,
+    ready: bool,
+    failure: Option<SubscriptionFailure>,
+    senders: usize,
+    receiving: bool,
+}
+
+struct Channel { queue: Mutex<Queue>, wake: Notify }
+
+pub struct SubscriptionSender(Arc<Channel>);
+pub struct SubscriptionReceiver(Arc<Channel>);
+
+pub fn subscription_channel() -> (SubscriptionSender, SubscriptionReceiver) {
+    let channel = Arc::new(Channel { queue: Mutex::new(Queue { events: VecDeque::new(), ordinal: 0, lost: None, after_ready: None, ready: false, failure: None, senders: 1, receiving: true }), wake: Notify::new() });
+    (SubscriptionSender(channel.clone()), SubscriptionReceiver(channel))
+}
+
+impl Clone for SubscriptionSender {
+    fn clone(&self) -> Self {
+        self.0.queue.lock().expect("subscription queue").senders += 1;
+        Self(self.0.clone())
+    }
+}
+
+impl Drop for SubscriptionSender {
+    fn drop(&mut self) {
+        let ended = {
+            let mut queue = self.0.queue.lock().expect("subscription queue");
+            queue.senders -= 1;
+            queue.senders == 0
+        };
+        if ended { self.0.wake.notify_one(); }
+    }
+}
+
+impl SubscriptionSender {
+    pub fn send(&self, event: SubscriptionEvent) -> Result<(), ()> {
+        let mut queue = self.0.queue.lock().expect("subscription queue");
+        if !queue.receiving { return Err(()); }
+        if queue.failure.is_some() { return Ok(()); }
+        if matches!(event, SubscriptionEvent::Next(_)) { queue.ordinal += 1; }
+        if queue.events.len() < CAPACITY && queue.lost.is_none() && queue.after_ready.is_none() && !queue.ready {
+            queue.events.push_back(event);
+        } else {
+            match event {
+                SubscriptionEvent::Next(_) => {
+                    let ordinal = queue.ordinal;
+                    let lost = if queue.ready { &mut queue.after_ready } else { &mut queue.lost };
+                    if let Some((_, last)) = lost { *last = ordinal; } else { *lost = Some((ordinal, ordinal)); }
+                }
+                SubscriptionEvent::Ready => queue.ready = true,
+                SubscriptionEvent::Failed(failure) => { queue.failure.get_or_insert(failure); }
+                SubscriptionEvent::Lost { first, last } => {
+                    let lost = if queue.ready { &mut queue.after_ready } else { &mut queue.lost };
+                    if let Some((_, end)) = lost { *end = last; } else { *lost = Some((first, last)); }
+                }
+            }
+        }
+        drop(queue);
+        self.0.wake.notify_one();
+        Ok(())
+    }
+}
+
+impl SubscriptionReceiver {
+    pub(crate) fn try_recv(&mut self) -> Result<SubscriptionEvent, ()> {
+        let mut queue = self.0.queue.lock().expect("subscription queue");
+        if let Some(event) = queue.events.pop_front() { return Ok(event); }
+        if let Some((first, last)) = queue.lost.take() { return Ok(SubscriptionEvent::Lost { first, last }); }
+        if std::mem::take(&mut queue.ready) {
+            queue.lost = queue.after_ready.take();
+            return Ok(SubscriptionEvent::Ready);
+        }
+        if let Some(failure) = queue.failure.take() { return Ok(SubscriptionEvent::Failed(failure)); }
+        Err(())
+    }
+
+    pub(crate) async fn recv(&mut self) -> Option<SubscriptionEvent> {
+        loop {
+            let channel = self.0.clone();
+            let notified = channel.wake.notified();
+            if let Ok(event) = self.try_recv() { return Some(event); }
+            if self.0.queue.lock().expect("subscription queue").senders == 0 { return None; }
+            notified.await;
+        }
+    }
+}
+
+impl Drop for SubscriptionReceiver {
+    fn drop(&mut self) { self.0.queue.lock().expect("subscription queue").receiving = false; }
 }
 
 impl SubscriptionEvent {
@@ -97,7 +197,7 @@ impl SubscriptionEvent {
 }
 
 pub struct ServerSubscription {
-    events: UnboundedReceiver<SubscriptionEvent>,
+    events: SubscriptionReceiver,
     handle: ServerSubscriptionHandle,
     #[cfg(any(test, feature = "stress"))]
     on_next: Option<Box<dyn Fn(ConsumerSignal) + Send + Sync>>,
@@ -122,7 +222,7 @@ impl Drop for Waiting<'_> {
 }
 
 impl ServerSubscription {
-    pub fn new(events: UnboundedReceiver<SubscriptionEvent>, handle: ServerSubscriptionHandle) -> Self {
+    pub fn new(events: SubscriptionReceiver, handle: ServerSubscriptionHandle) -> Self {
         Self {
             events,
             handle,
@@ -154,7 +254,7 @@ impl ServerSubscription {
     pub(crate) fn take_queued_responses(&mut self) -> bool {
         let mut taken = false;
         while let Ok(event) = self.events.try_recv() {
-            taken |= matches!(event, SubscriptionEvent::Next(_));
+            taken |= matches!(event, SubscriptionEvent::Next(_) | SubscriptionEvent::Lost { .. });
         }
         taken
     }

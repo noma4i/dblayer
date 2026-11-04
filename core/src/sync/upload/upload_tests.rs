@@ -281,7 +281,8 @@ async fn wait_uploads_parks_while_resume_owns_the_upload() {
     let rig = upload_rig(small());
     let source = file(b"abcdef");
     let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
-    let owner = crate::transport::RequestOwner { seq, item_position: 0, stage: "prepare".into() };
+    let (operation_id, item_id) = rig.sync.inner.transfer_identity(seq, 0).unwrap();
+    let owner = crate::transport::RequestOwner::Transfer { operation_id, item_id, step: UploadStage::Prepare };
     let resume = rig.sync.inner.claim_upload_resume(&rig.db.admit().unwrap(), &owner).await.unwrap().unwrap();
     let wakes = Arc::new(Wakes(std::sync::atomic::AtomicUsize::new(0)));
     let waker = Waker::from(wakes.clone());

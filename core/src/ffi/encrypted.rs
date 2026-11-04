@@ -13,7 +13,7 @@ pub struct EncryptedReply { pub status: u16, pub body: String }
 #[uniffi::export(rust, foreign)]
 #[async_trait]
 pub trait EncryptedHttp: Send + Sync {
-    async fn post(&self, path: String, body: String, upload: bool) -> Result<EncryptedReply, DbError>;
+    async fn post(&self, path: String, body: String, purpose: core::NetworkPurpose) -> Result<EncryptedReply, DbError>;
 }
 
 #[uniffi::export(rust, foreign)]
@@ -31,9 +31,9 @@ impl Drop for ForeignHttp {
 
 #[async_trait]
 impl core::HttpExchange for ForeignHttp {
-    async fn post(&self, path: &str, body: String, upload: bool) -> Result<core::HttpReply, core::TransportError> {
+    async fn post(&self, path: &str, body: String, purpose: core::NetworkPurpose) -> Result<core::HttpReply, core::TransportError> {
         crate::db::lock::assert_no_library_lock("EncryptedHttp::post");
-        let reply = self.0.post(path.to_string(), body, upload).await.map_err(transport_error)?;
+        let reply = self.0.post(path.to_string(), body, purpose).await.map_err(transport_error)?;
         Ok(core::HttpReply { status: reply.status, body: reply.body })
     }
 

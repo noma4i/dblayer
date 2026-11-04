@@ -24,7 +24,8 @@ async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts
     rig.transport.enqueue("CreateMoment", upload_tests::created("m9"));
     let resumed = Response::data(json!({"presignParts": {"parts": [{"partNumber": 2, "url": "https://s3/p2"}]}}));
     let serial = rig.sync.inner.outbox_gate.lock().await;
-    let owner = crate::transport::RequestOwner { seq, item_position: 0, stage: "presign".into() };
+    let (operation_id, item_id) = rig.sync.inner.transfer_identity(seq, 0).unwrap();
+    let owner = crate::transport::RequestOwner::Transfer { operation_id, item_id, step: UploadStage::Presign };
     let admitted = rig.db.admit().unwrap();
     let upload = rig.sync.inner.claim_upload_resume(&admitted, &owner).await.unwrap();
     let effects = std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&rig.sync.inner)));

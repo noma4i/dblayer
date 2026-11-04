@@ -311,3 +311,47 @@ S222	window-chain	kotlin	com.noma4i.dblayer.TestClockTest.aMutationDuringTheFirs
 S223	media-debt	core	a_media_refetch_after_mutation_reads_the_whole_stale_window	red-by-reading	-	window media marker and mutation
 S223	media-debt	swift	BridgeProbeTests.aMediaRefetchAfterMutationReadsTheWholeStaleWindow	red-by-reading	-	window media marker and mutation
 S223	media-debt	kotlin	com.noma4i.dblayer.MediaPreloadTest.aMediaRefetchAfterMutationReadsTheWholeStaleWindow	red-by-reading	-	window media marker and mutation
+T01	H6	core	an_offline_discard_routes_its_reopened_abort_as_a_transfer	red-by-reading	-	arch-audit/astra.md A6
+T01	H6	swift	BridgeProbeTests.anOfflineDiscardRoutesItsReopenedAbortAsATransfer	red-by-reading	-	arch-audit/astra.md A6
+T01	H6	kotlin	com.noma4i.dblayer.TransferTest.anOfflineDiscardRoutesItsReopenedAbortAsATransfer	red-by-reading	-	arch-audit/astra.md A6
+T04		core	attached_files_survive_reopen_and_detaching_one_keeps_the_other	regression	-	arch-audit/astra.md A6
+T04		swift	BridgeProbeTests.attachedFilesSurviveReopenAndDetachingOneKeepsTheOther	regression	-	arch-audit/astra.md A6
+T04		kotlin	com.noma4i.dblayer.TransferTest.attachedFilesSurviveReopenAndDetachingOneKeepsTheOther	regression	-	arch-audit/astra.md A6
+T02		core	complete_failure_then_retry_keeps_the_confirmed_parts	regression	-	arch-audit/astra.md A6
+T02		swift	BridgeProbeTests.completeFailureThenRetryKeepsTheConfirmedParts	regression	-	arch-audit/astra.md A6
+T02		kotlin	com.noma4i.dblayer.TransferTest.completeFailureThenRetryKeepsTheConfirmedParts	regression	-	arch-audit/astra.md A6
+T05		core	a_failed_blob_expires_when_the_network_returns_after_seven_days	regression	-	arch-audit/astra.md A6
+T05		swift	BridgeProbeTests.aFailedBlobExpiresWhenTheNetworkReturnsAfterSevenDays	regression	-	arch-audit/astra.md A6
+T05		kotlin	com.noma4i.dblayer.TransferTest.aFailedBlobExpiresWhenTheNetworkReturnsAfterSevenDays	regression	-	arch-audit/astra.md A6
+T03		core	cancelling_the_middle_file_keeps_the_other_files_in_order	regression	-	ChatAlbumSendTest.kt cancellingATileRenumbersTheRemainingTilesAndTheAnswerStillReplacesThem
+T03		swift	BridgeProbeTests.cancellingTheMiddleFileKeepsTheOtherFilesInOrder	regression	-	ChatAlbumSendTest.kt cancellingATileRenumbersTheRemainingTilesAndTheAnswerStillReplacesThem
+T03		kotlin	com.noma4i.dblayer.TransferTest.cancellingTheMiddleFileKeepsTheOtherFilesInOrder	regression	-	ChatAlbumSendTest.kt cancellingATileRenumbersTheRemainingTilesAndTheAnswerStillReplacesThem
+T03R		core	retrying_a_refused_file_keeps_the_other_album_files	regression	-	ChatAlbumSendTest.kt aRefusedFileFailsOnlyItsTileAndRetryLetsTheWholeAlbumGoInOrder
+T03R		swift	BridgeProbeTests.retryingARefusedFileKeepsTheOtherAlbumFiles	regression	-	ChatAlbumSendTest.kt aRefusedFileFailsOnlyItsTileAndRetryLetsTheWholeAlbumGoInOrder
+T03R		kotlin	com.noma4i.dblayer.TransferTest.retryingARefusedFileKeepsTheOtherAlbumFiles	regression	-	ChatAlbumSendTest.kt aRefusedFileFailsOnlyItsTileAndRetryLetsTheWholeAlbumGoInOrder
+T03S		core	discarding_a_refused_file_sends_the_remaining_file_as_single	regression	-	ChatAlbumSendTest.kt discardingDownToOneTileSendsItAsASingleMessageWithItsClientKey
+T03S		swift	BridgeProbeTests.discardingARefusedFileSendsTheRemainingFileAsSingle	regression	-	ChatAlbumSendTest.kt discardingDownToOneTileSendsItAsASingleMessageWithItsClientKey
+T03S		kotlin	com.noma4i.dblayer.TransferTest.discardingARefusedFileSendsTheRemainingFileAsSingle	regression	-	ChatAlbumSendTest.kt discardingDownToOneTileSendsItAsASingleMessageWithItsClientKey
+T01G	H6	core	discarding_a_queued_photo_offline_routes_the_abort_after_reopen	red-by-reading	-	GroupPhotoSend.swift queueCreate and dismiss
+T01G	H6	swift	BridgeProbeTests.discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen	red-by-reading	-	GroupPhotoSend.swift queueCreate and dismiss
+T01G	H6	kotlin	com.noma4i.dblayer.TransferTest.discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen	red-by-reading	-	GroupPhotoSend.swift queueCreate and dismiss
+T02G	C5	core	an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard	regression	-	UploadMultipartTests.swift HTTP 422
+T02G	C5	swift	BridgeProbeTests.anHttpRefusalOfAPhotoKeepsTheFailedRecordUntilDiscard	regression	-	UploadMultipartTests.swift HTTP 422
+T02G	C5	kotlin	com.noma4i.dblayer.TransferTest.anHttpRefusalOfAPhotoKeepsTheFailedRecordUntilDiscard	regression	-	UploadMultipartTests.swift HTTP 422
+T05S		core	reopening_after_seven_days_expires_a_failed_blob	hypothesis	-	arch-audit/astra.md A6 startup expiry
+T05S		swift	BridgeProbeTests.reopeningAfterSevenDaysExpiresAFailedBlob	hypothesis	-	arch-audit/astra.md A6 startup expiry
+T05S		kotlin	com.noma4i.dblayer.TransferTest.reopeningAfterSevenDaysExpiresAFailedBlob	hypothesis	-	arch-audit/astra.md A6 startup expiry
+T06		core	shifting_a_batch_during_a_held_encrypted_request_keeps_the_file_owner	hypothesis	-	arch-audit/astra.md A6 transfer identity
+T06		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
+T06		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
+T07		core	opening_legacy_pending_keeps_the_encrypted_sequence_and_session	regression	-	legacy encrypted_pending conversion
+T08		core	opening_a_legacy_pending_upload_keeps_its_owner_and_file	regression	-	legacy transfer owner conversion
+T09		kotlin	com.noma4i.dblayer.UploadWorkTest.aLateBackgroundRefusalDoesNotChangeTheNextSession	red-by-reading	-	late Android scheduler refusal after session reset
+T10		core	multipart_batch_accepts_a_correlation_key_with_path_characters	regression	-	multipart transfer identity range file
+T10		swift	BridgeProbeTests.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
+T10		kotlin	com.noma4i.dblayer.TransferTest.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
+T11		core	subscription_overflow_reports_the_lost_range_before_failure	red-by-reading	-	bounded subscription intake
+T12		core	opening_a_legacy_pending_abort_does_not_repeat_the_remote_cleanup	regression	-	legacy orphan abort replay
+T13		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsAfterTheOldRoundWasRunning	red-by-reading	-	new Android upload after old running round
+T14		kotlin	com.noma4i.dblayer.UploadWorkTest.onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob	red-by-reading	-	late Android job must not clear a newer network route
+T15		kotlin	com.noma4i.dblayer.UploadWorkTest.aSchedulerRefusalReturningAfterResetDoesNotChangeTheNewUpload	red-by-reading	-	Android scheduler refusal crosses a session reset

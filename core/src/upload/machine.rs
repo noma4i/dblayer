@@ -55,7 +55,7 @@ impl std::fmt::Display for Refused {
 pub(crate) enum RunMode {
     Transfer,
     Mutation,
-    Orphan,
+    Abort,
     Cancel,
 }
 
@@ -368,10 +368,10 @@ impl UploadState {
         let cancelled = self.phase == UploadStatus::Cancelled;
         match status {
             OperationStatus::Pending if cancelled => Some(RunMode::Cancel),
-            OperationStatus::Pending if self.phase == UploadStatus::Failed && self.upload_id.is_some() && !self.all_parts_confirmed() => Some(RunMode::Orphan),
+            OperationStatus::Pending if self.phase == UploadStatus::Failed && self.upload_id.is_some() && !self.all_parts_confirmed() => Some(RunMode::Abort),
             OperationStatus::Pending if !transport_started && !waiting && self.awaits_run() => Some(if self.is_transferred() { RunMode::Mutation } else { RunMode::Transfer }),
             OperationStatus::Failed | OperationStatus::DeliveryUnknown if self.upload_id.is_some() && (cancelled || !self.all_parts_confirmed()) && !request_pending() => {
-                Some(if cancelled { RunMode::Cancel } else { RunMode::Orphan })
+                Some(if cancelled { RunMode::Cancel } else { RunMode::Abort })
             }
             _ => None,
         }
@@ -380,7 +380,7 @@ impl UploadState {
     pub(crate) fn resume_mode(&self) -> RunMode {
         match (self.stage, self.phase) {
             (UploadStage::Abort, UploadStatus::Cancelled) => RunMode::Cancel,
-            (UploadStage::Abort, _) => RunMode::Orphan,
+            (UploadStage::Abort, _) => RunMode::Abort,
             _ if self.is_transferred() => RunMode::Mutation,
             _ => RunMode::Transfer,
         }

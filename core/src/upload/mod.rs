@@ -6,6 +6,7 @@ mod plan;
 mod progress;
 mod source;
 mod state;
+mod transfer;
 mod blob;
 pub use blob::{BlobSnapshot, BlobState, BlobUploadDeclaration, UploadOwner};
 pub(crate) use blob::BLOB_LIFETIME_MS;
@@ -17,6 +18,7 @@ pub use operations::{MultipartOperations, UploadOperation, UploadOperations};
 pub use plan::{mime_of, parse_headers, part_count, part_range, scenario_for};
 pub use progress::TransferProgress;
 pub(crate) use machine::{RunMode, UploadEvent};
+pub(crate) use transfer::{AbortTransfer, Transfer};
 #[cfg(test)]
 pub(crate) use machine::Refused;
 pub use source::{copy_range, file_len, md5_base64};

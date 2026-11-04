@@ -117,7 +117,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
         sinks.remove(token)
     }
 
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, tag: String, progress: ByteProgress): PutReply {
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         progress.sent(file.length)
         return PutReply(200u, null)
     }

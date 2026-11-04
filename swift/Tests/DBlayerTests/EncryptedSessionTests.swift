@@ -15,7 +15,7 @@ private final class RecordedHttp: EncryptedHttp, @unchecked Sendable {
 
   var posts: [(path: String, body: String)] { lock.withLock { recorded } }
 
-  func post(path: String, body: String, upload: Bool) async throws -> EncryptedReply {
+  func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     lock.withLock { recorded.append((path, body)) }
     return EncryptedReply(status: status, body: "")
   }
@@ -76,7 +76,7 @@ struct EncryptedSessionTests {
     configuration.protocolClasses = [PlainResponseProtocol.self]
     let http = UrlSessionEncryptedHttp(origin: Self.origin, session: URLSession(configuration: configuration))
 
-    #expect(try await http.post(path: "/api/bootstrap", body: "x", upload: false).status == 0)
+    #expect(try await http.post(path: "/api/bootstrap", body: "x", purpose: .standard).status == 0)
   }
 
   @Test
@@ -85,7 +85,7 @@ struct EncryptedSessionTests {
     let http = UrlSessionEncryptedHttp(origin: Self.origin, session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
 
     do {
-      _ = try await http.post(path: "/api/logout", body: "x", upload: false)
+      _ = try await http.post(path: "/api/logout", body: "x", purpose: .standard)
       Issue.record("the failed transport did not throw")
     } catch DbError.Network {
     } catch {

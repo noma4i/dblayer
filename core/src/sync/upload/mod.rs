@@ -4,6 +4,7 @@ mod run;
 #[cfg(test)]
 mod run_tests;
 mod steps;
+pub(crate) use steps::transfer_abort_settled;
 mod blob;
 #[cfg(test)]
 mod blob_tests;
@@ -191,7 +192,13 @@ impl Inner {
         if let Some(operation) = operation {
             for ((_, position), state) in items {
                 let waiting = self.is_waiting(&operation);
-                let pending = crate::transport::encrypted::pending_matches(&self.db, seq, position, &crate::operation::enum_text(&state.stage).unwrap_or_default())?;
+                let owner = if state.stage == crate::upload::UploadStage::Mutation {
+                    crate::transport::RequestOwner::Operation { seq }
+                } else {
+                    let (operation_id, item_id) = self.transfer_identity(seq, position)?;
+                    crate::transport::RequestOwner::Transfer { operation_id, item_id, step: state.stage }
+                };
+                let pending = crate::transport::encrypted::pending_matches(&self.db, &owner)?;
                 let mode = state.run_mode(operation.status, operation.transport_started, waiting, || pending);
                 if let Some(mode) = mode { ready.push((position, mode)); }
             }
@@ -219,6 +226,10 @@ impl Inner {
 
     pub(crate) fn operation_uploads(&self, seq: i64) -> Result<HashMap<(i64, i64), UploadState>, SyncError> {
         Ok(self.db.shared.read(&[], |reader| Ok(crate::operation::read_operation_uploads(reader.connection(), seq)?))?)
+    }
+
+    pub(crate) fn transfer_identity(&self, seq: i64, position: i64) -> Result<(i64, String), SyncError> {
+        Ok(self.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT transfer_operation_id, client_key FROM op_item WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position], |row| Ok((row.get(0)?, row.get(1)?)))?))?)
     }
 
     pub(crate) fn upload_operations(&self) -> Result<&UploadOperations, crate::db::DbError> {
@@ -386,7 +397,7 @@ impl Inner {
         received.await.map_err(|_| SyncError::Cancelled)?.map_err(|error| crate::store::StoreError::from(error).into())
     }
 
-    fn fail_upload(&self, admitted: &crate::lifecycle::Admitted, seq: i64, error: SyncError) {
+    pub(crate) fn fail_upload(&self, admitted: &crate::lifecycle::Admitted, seq: i64, error: SyncError) {
         let generation = self.db.generation();
         if let Err(failed) = self.commit(admitted, generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
@@ -419,10 +430,20 @@ impl Inner {
 
     pub(crate) async fn claim_upload_resume(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, owner: &crate::transport::RequestOwner) -> Result<Option<UploadResume>, SyncError> {
         loop {
-            let mut items: Vec<_> = self.operation_uploads(owner.seq)?.into_iter().filter(|(key, state)| key.1 == owner.item_position || owner.item_position == -1 && state.stage == crate::upload::UploadStage::Mutation).collect();
-            items.sort_by_key(|(key, _)| *key);
-            let Some(((seq, position), state)) = items.into_iter().next() else { return Ok(None) };
-            if crate::operation::enum_text(&state.stage).as_deref() != Some(&owner.stage) { return Ok(None); }
+            use rusqlite::OptionalExtension;
+            let location: Option<(i64, i64)> = self.db.shared.read(&[], |reader| {
+                let connection = reader.connection();
+                Ok(match owner {
+                    crate::transport::RequestOwner::Transfer { operation_id, item_id, .. } => connection.query_row("SELECT seq, position FROM op_item WHERE client_key = ?1 AND transfer_operation_id = ?2", rusqlite::params![item_id, operation_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?,
+                    crate::transport::RequestOwner::Operation { seq } => connection.query_row("SELECT seq, position FROM op_item WHERE seq = ?1 AND stage = 'mutation' ORDER BY position LIMIT 1", [seq], |row| Ok((row.get(0)?, row.get(1)?))).optional()?,
+                    crate::transport::RequestOwner::Unmatched { .. } => None,
+                })
+            })?;
+            let Some((seq, position)) = location else { return Ok(None) };
+            let Some(state) = self.operation_uploads(seq)?.remove(&(seq, position)) else { return Ok(None) };
+            if let crate::transport::RequestOwner::Transfer { step, .. } = owner {
+                if state.stage != *step { return Ok(None); }
+            }
             if let Some((run, _)) = self.register(seq, position) {
                 return Ok(Some(UploadResume { inner: self.clone(), admitted: admitted.clone(), seq, position, run }));
             }

@@ -23,7 +23,7 @@ impl Transport for Refusing {
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn subscribe(&self, _: super::TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
 pub(super) async fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<Database>, Arc<Refusing>) {

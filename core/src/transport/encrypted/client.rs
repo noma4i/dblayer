@@ -221,7 +221,7 @@ impl EncryptedClient {
             let request_id = uuid::Uuid::new_v4().to_string();
             let response_key = random_token();
             let token = self.request_token(None, &request_id, &response_key, &operation.path, &body)?;
-            let result = self.post(&operation.path, token, &request_id, &response_key, false).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
+            let result = self.post(&operation.path, token, &request_id, &response_key, crate::transport::NetworkPurpose::Standard).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
             match result {
                 Ok(answer) => {
                     return Ok((answer, After::Nothing));
@@ -266,25 +266,25 @@ impl EncryptedClient {
     pub async fn mutate(&self, admitted: &Admitted, path: &str, body: Value) -> Result<Answer, TransportError> {
         self.validate(admitted)?;
         let epoch = admitted.value();
-        let (answer, after) = admitted.run(self.mutate_in(admitted, path, body, None, false)).await??;
+        let (answer, after) = admitted.run(self.mutate_in(admitted, path, body, None, crate::transport::NetworkPurpose::Standard)).await??;
         self.conclude(epoch, after).await?;
         Ok(answer)
     }
 
-    pub(crate) async fn mutate_owned(&self, admitted: &Admitted, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, upload: bool) -> Result<Answer, TransportError> {
+    pub(crate) async fn mutate_owned(&self, admitted: &Admitted, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
         self.validate(admitted)?;
         let epoch = admitted.value();
-        let (answer, after) = admitted.run(self.mutate_in(admitted, path, body, owner, upload)).await??;
+        let (answer, after) = admitted.run(self.mutate_in(admitted, path, body, owner, purpose)).await??;
         if matches!(after, After::Revoked) { self.conclude(epoch, after).await?; }
         Ok(answer)
     }
 
-    async fn mutate_in(&self, admitted: &Admitted, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, upload: bool) -> Result<(Answer, After), TransportError> {
+    async fn mutate_in(&self, admitted: &Admitted, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, purpose: crate::transport::NetworkPurpose) -> Result<(Answer, After), TransportError> {
         check_path(path)?;
         let _turn = self.mutations.lock().await;
         let credential = self.credential(admitted)?;
         let pending = match self.read_connection(state::pending)? {
-            Some(pending) if pending.owner == owner && pending.path == path && serde_json::from_str::<Value>(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))? == body => {
+            Some(pending) if pending.owner == owner && pending.purpose == purpose && pending.path == path && serde_json::from_str::<Value>(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))? == body => {
                 self.pending_token(&credential, &pending)?;
                 pending
             }
@@ -299,7 +299,7 @@ impl EncryptedClient {
                     path: path.to_string(),
                     body: body.to_string(),
                     owner,
-                    upload,
+                    purpose,
                 };
                 self.pending_token(&credential, &pending)?;
                 self.write_in(admitted, |connection| state::store_pending(connection, &pending))?;
@@ -407,7 +407,7 @@ impl EncryptedClient {
       loop {
         self.online.online().await;
         let token = self.pending_token(&self.credential(admitted)?, &pending)?;
-        let answer = match self.post(&pending.path, token, &pending.request_id, &pending.response_key, pending.upload).await {
+        let answer = match self.post(&pending.path, token, &pending.request_id, &pending.response_key, pending.purpose).await {
             Err(error) if permanently_refused(&error) => {
                 self.write_in(admitted, state::drop_pending)?;
                 return Err(error);
@@ -457,7 +457,7 @@ impl EncryptedClient {
         loop {
             self.online.online().await;
             let token = self.request_token(Some(RequestSession { credential: credential.into(), sequence }), request_id, response_key, path, body)?;
-            let result = self.post(path, token, request_id, response_key, false).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
+            let result = self.post(path, token, request_id, response_key, crate::transport::NetworkPurpose::Standard).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
             match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }
         }
     }
@@ -480,9 +480,9 @@ impl EncryptedClient {
         Ok(token)
     }
 
-    async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, upload: bool) -> Result<Answer, TransportError> {
+    async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
         crate::db::lock::assert_no_library_lock("HttpExchange::post");
-        let reply = self.http.post(path, token, upload).await?;
+        let reply = self.http.post(path, token, purpose).await?;
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });
         }

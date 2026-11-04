@@ -8,5 +8,6 @@ mod machine_tests;
 mod manifest_tests;
 mod media_preload_tests;
 mod recovery_tests;
+mod transfer_tests;
 mod rig_tests;
 mod windows_tests;

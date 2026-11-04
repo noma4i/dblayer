@@ -19,7 +19,7 @@ async fn offline_bootstrap_waits_without_http_and_starts_online() {
     struct Calls(AtomicUsize);
     #[async_trait::async_trait]
     impl HttpExchange for Calls {
-        async fn post(&self, _: &str, _: String, _: bool) -> Result<HttpReply, TransportError> {
+        async fn post(&self, _: &str, _: String, _: crate::transport::NetworkPurpose) -> Result<HttpReply, TransportError> {
             self.0.fetch_add(1, Ordering::SeqCst);
             Ok(HttpReply { status: 400, body: String::new() })
         }
@@ -44,7 +44,7 @@ async fn offline_bootstrap_waits_without_http_and_starts_online() {
 
 #[async_trait::async_trait]
 impl HttpExchange for ConfiguredPath {
-    async fn post(&self, path: &str, _: String, _: bool) -> Result<HttpReply, TransportError> {
+    async fn post(&self, path: &str, _: String, _: crate::transport::NetworkPurpose) -> Result<HttpReply, TransportError> {
         assert_eq!(path, "/custom/bootstrap");
         Ok(HttpReply { status: 400, body: String::new() })
     }
@@ -147,7 +147,7 @@ struct Http { calls: AtomicUsize, status: u16 }
 struct Reconnecting { calls: AtomicUsize, ids: std::sync::Mutex<Vec<String>>, fault: &'static str }
 #[async_trait::async_trait]
 impl HttpExchange for Reconnecting {
-    async fn post(&self, path: &str, token: String, _: bool) -> Result<HttpReply, TransportError> {
+    async fn post(&self, path: &str, token: String, _: crate::transport::NetworkPurpose) -> Result<HttpReply, TransportError> {
         let plain: Value = serde_json::from_str(&decrypt_request(&token)).unwrap();
         self.ids.lock().unwrap().push(text(&plain, "requestId").into());
         if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -156,7 +156,7 @@ impl HttpExchange for Reconnecting {
             let response = json!({"requestId": plain["requestId"], "requestDigest": request_digest(&plain), "sequence": null, "body": {"error": self.fault}});
             return Ok(HttpReply { status: 200, body: seal(&response, text(&plain, "responseKey")) });
         }
-        Http { calls: AtomicUsize::new(0), status: 200 }.post(path, token, false).await
+        Http { calls: AtomicUsize::new(0), status: 200 }.post(path, token, crate::transport::NetworkPurpose::Standard).await
     }
 }
 
@@ -173,7 +173,7 @@ async fn bootstrap_retries_with_a_new_request_id() {
 }
 #[async_trait::async_trait]
 impl HttpExchange for Http {
-    async fn post(&self, path: &str, token: String, _: bool) -> Result<HttpReply, TransportError> {
+    async fn post(&self, path: &str, token: String, _: crate::transport::NetworkPurpose) -> Result<HttpReply, TransportError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         assert_eq!(path, text(&kat(), "path"));
         let plain: Value = serde_json::from_str(&decrypt_request(&token)).unwrap();

@@ -32,8 +32,8 @@ private final class HeldSubscribe: Transport, @unchecked Sendable {
     lock.withLock { revoked.append(token) }
     mock.unsubscribe(token: token)
   }
-  func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
-    try await mock.put(url: url, headers: headers, file: file, tag: tag, progress: progress)
+  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    try await mock.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }
 }
 

@@ -84,7 +84,7 @@ impl Transport for HeldPut {
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
+    async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         let _ended = PutEnd(self.ended.clone());
         self.gate.pass().await;
         Ok(PutReply { status: 200, etag: Some("part".into()) })

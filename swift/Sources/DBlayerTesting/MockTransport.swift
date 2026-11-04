@@ -93,7 +93,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
     }
   }
 
-  public func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
+  public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     progress.sent(bytes: file.length)
     return PutReply(status: 200, etag: nil)
   }

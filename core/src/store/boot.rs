@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use rusqlite::params;
 
-use crate::ddl::{create_model_tables, fingerprint_key, manifest_stamp, manifest_verify, rebuild_cache_tables, table_name, ManifestVerdict};
+use crate::ddl::{create_model_tables, fingerprint_key, manifest_read, manifest_stamp, manifest_verify, models_statements, rebuild_cache_tables, table_name, ManifestVerdict};
 use crate::operation::QuarantineReason;
 use crate::schema::ModelSpec;
 
@@ -15,6 +15,7 @@ use super::{ModelInfo, Store, StoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootReport {
+    pub recreated: Option<crate::ddl::RecreateReason>,
     pub verdict: ManifestVerdict,
     pub finished_interrupted_reset: bool,
     pub tombstone_drops: usize,
@@ -29,15 +30,71 @@ impl Store {
         inner.data_version = data_version.map(str::to_string);
         inner.models = std::sync::Arc::new(models.iter().map(|spec| (spec.key.as_str().to_string(), ModelInfo::new(spec))).collect());
         *reading_models = inner.models.clone();
+        let mut removed_files = None;
+        let mut remove_all_files = None;
+        let mut migrated_reset = None;
+        let mut recreated = None;
+        let mut rebuilt = false;
+
+        if super::open::legacy_format(&inner.connection)? {
+            recreated = Some(crate::ddl::RecreateReason::CoreFormat);
+            let fingerprints = current_fingerprints(&inner);
+            let transaction = inner.connection.unchecked_transaction()?;
+            super::open::migrate_transfer_identity(&transaction)?;
+            let before: Vec<String> = transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+            let changed: Vec<String> = fingerprints.iter().filter_map(|(model, fingerprint)| {
+                match manifest_read(&transaction, &fingerprint_key(model)) {
+                    Ok(Some(stored)) if stored == *fingerprint => None,
+                    Ok(_) => Some(Ok(model.clone())),
+                    Err(error) => Some(Err(error)),
+                }
+            }).collect::<Result<_, _>>()?;
+            let mut reset: Vec<String> = inner.models.iter().filter(|(model, info)| !info.spec.is_memory() && (!info.spec.is_local() || changed.contains(model))).map(|(model, _)| model.clone()).collect();
+            let stored_models: Vec<String> = transaction.prepare("SELECT substr(key, 13) FROM manifest WHERE key LIKE 'fingerprint:%'")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+            reset.extend(stored_models.into_iter().filter(|model| !inner.models.contains_key(model)));
+            let stash = stash_local_values(&transaction, &inner.models, &reset, &changed)?;
+            transaction.execute_batch("CREATE TEMP TABLE retained_transfer_files AS SELECT * FROM file WHERE field LIKE 'op_item.%' OR id IN (SELECT file_id FROM op_item WHERE file_id IS NOT NULL);")?;
+            for (model, info) in inner.models.iter().filter(|(_, info)| !info.spec.is_local()) {
+                for field in info.spec.fields.iter().filter(|field| matches!(&field.merge, Some(crate::schema::MergeRule::Local)) && field.kind == crate::schema::FieldKind::File) {
+                    transaction.execute("INSERT INTO retained_transfer_files SELECT * FROM file WHERE model = ?1 AND field = ?2", params![model, field.name])?;
+                }
+            }
+            for model in &reset { wipe_model_cache(&transaction, model, &table_name(model), true)?; }
+            restore_local_values(&transaction, &stash)?;
+            transaction.execute_batch("INSERT OR IGNORE INTO file SELECT * FROM retained_transfer_files; DROP TABLE retained_transfer_files;")?;
+            for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
+            let after: std::collections::HashSet<String> = transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+            let database: String = transaction.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
+            if !database.is_empty() { removed_files = Some((database, before.into_iter().filter(|id| !after.contains(id)).collect::<Vec<_>>())); }
+            transaction.execute("DELETE FROM manifest WHERE key LIKE 'fingerprint:%'", [])?;
+            manifest_stamp(&transaction, data_version, &fingerprints)?;
+            transaction.commit()?;
+            migrated_reset = Some(reset);
+        } else if let Some(reason) = crate::ddl::recreate_reason(&inner.connection)? {
+            let fingerprints = current_fingerprints(&inner);
+            let transaction = inner.connection.unchecked_transaction()?;
+            let database: String = transaction.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
+            super::open::recreate(&transaction)?;
+            for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
+            manifest_stamp(&transaction, data_version, &fingerprints)?;
+            transaction.commit()?;
+            if !database.is_empty() { remove_all_files = Some(database); }
+            recreated = Some(reason);
+            rebuilt = true;
+            migrated_reset = Some(models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect());
+        } else {
+            crate::ddl::migrate_core(&inner.connection)?;
+        }
 
         self.session_end_replay.store(super::reset::pending_intent(&inner.connection)?.as_deref() == Some("session_end"), std::sync::atomic::Ordering::SeqCst);
         let finished_interrupted_reset = finish_interrupted_reset(&mut inner)?;
         let fingerprints: BTreeMap<String, String> = current_fingerprints(&inner);
-        let verdict = manifest_verify(&inner.connection, data_version, &fingerprints)?;
+        let verdict = if rebuilt { ManifestVerdict::Fresh } else { manifest_verify(&inner.connection, data_version, &fingerprints)? };
         let now = inner.now_ms();
 
-        let mut reset_models: Vec<String> = Vec::new();
-        match &verdict {
+        let migrated = migrated_reset.is_some();
+        let mut reset_models = migrated_reset.unwrap_or_default();
+        if !migrated { match &verdict {
             ManifestVerdict::Fresh | ManifestVerdict::Compatible => {
                 create_model_tables(&inner.connection, models)?;
                 let transaction = inner.connection.unchecked_transaction()?;
@@ -78,7 +135,7 @@ impl Store {
                 clear_intent(&transaction)?;
                 transaction.commit()?;
             }
-        }
+        } }
 
         let memory: Vec<(String, String)> =
             inner.models.iter().filter(|(_, info)| info.spec.is_memory()).map(|(key, info)| (key.clone(), info.table.clone())).collect();
@@ -91,6 +148,10 @@ impl Store {
         }
 
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT)?;
-        Ok(BootReport { verdict, finished_interrupted_reset, tombstone_drops, reset_models })
+        drop(inner);
+        drop(reading_models);
+        if let Some((database, files)) = removed_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).discard(&files)?; }
+        if let Some(database) = remove_all_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).remove_all()?; }
+        Ok(BootReport { recreated, verdict, finished_interrupted_reset, tombstone_drops, reset_models })
     }
 }

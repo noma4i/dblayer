@@ -19,7 +19,7 @@ fn cancel_calls_on_cancel_once() {
 async fn dropping_subscription_cancels_and_closed_stream_ends() {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();
-    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let (sender, receiver) = super::subscription_channel();
     let mut subscription = ServerSubscription::new(
         receiver,
         ServerSubscriptionHandle::new(move || {

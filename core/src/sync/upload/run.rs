@@ -21,6 +21,7 @@ pub(super) struct Runner {
     pub(super) admitted: crate::lifecycle::Admitted,
     pub(super) seq: i64,
     pub(super) position: i64,
+    pub(super) transfer: crate::upload::Transfer,
     pub(super) run: u64,
     pub(super) token: CancelToken,
     runtime: tokio::runtime::Handle,
@@ -76,7 +77,7 @@ async fn drive_pass(inner: Arc<Inner>, admitted: crate::lifecycle::Admitted, seq
     *locked(&runner.resumed) = resumed;
     let result = match mode {
         RunMode::Transfer | RunMode::Mutation => runner.transfer().await,
-        RunMode::Orphan => runner.abort_remote().await,
+        RunMode::Abort => runner.abort_remote().await,
         RunMode::Cancel => runner.cancelled().await,
     };
     if let Err(Stop::Failed(failure)) = result {
@@ -93,6 +94,7 @@ impl Runner {
         };
         let model = match &owner { crate::upload::UploadOwner::Action { model } => model.clone(), crate::upload::UploadOwner::Blob { .. } => String::new() };
         let Some(state) = inner.operation_uploads(seq)?.remove(&(seq, position)) else { return Ok(None) };
+        let (operation_id, item_id) = inner.transfer_identity(seq, position)?;
         let needs_file = transfer && !state.is_transferred();
         let (mut input, file, source_error, file_id) = inner.db.shared.read(&[], |reader| {
             let connection = reader.connection();
@@ -126,7 +128,7 @@ impl Runner {
         }
         let batch = match &owner { crate::upload::UploadOwner::Action { model } => inner.db.spec(model)?.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&input.steps.mutation)), crate::upload::UploadOwner::Blob { .. } => false };
         let progress = TransferProgress::new(state.total_bytes, inner.config.upload.tick);
-        Ok(Some(Self { inner, admitted, seq, position, run, token, batch, owner, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
+        Ok(Some(Self { inner, admitted, seq, position, transfer: crate::upload::Transfer { operation_id, item_id }, run, token, batch, owner, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
     }
 
     pub(super) fn snapshot(&self) -> UploadState {
@@ -302,7 +304,7 @@ impl Runner {
             let headers = grant.headers;
             self.save(UploadEvent::PutStarted)?;
             self.progress().begin_phase([]);
-            match self.retrying(UploadStage::Put, 0, || self.put_once(&url, &headers, 0, total, 1)).await {
+            match self.retrying(UploadStage::Put, 0, || self.put_once(&url, &headers, 0, total, 1, crate::transport::TransferStep::Put)).await {
                 Ok(_) => {
                     self.progress().finish(1, total);
                     self.save(UploadEvent::PutDone { total })?;

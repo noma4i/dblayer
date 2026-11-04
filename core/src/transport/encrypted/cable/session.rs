@@ -23,7 +23,7 @@ impl CableSession {
     pub fn subscribe(&mut self, admitted: crate::lifecycle::Admitted, request: GraphQLRequest) -> (String, ServerSubscription) {
         self.next_id += 1;
         let id = self.next_id.to_string();
-        let (events, receiver) = mpsc::unbounded_channel();
+        let (events, receiver) = crate::transport::subscription_channel();
         if let Some(failure) = self.lifecycle.refusal() {
             crate::db::lock::effect(|| { let _ = events.send(SubscriptionEvent::Failed(failure.clone())); });
         } else {

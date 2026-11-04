@@ -12,13 +12,21 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   private let lock = NSLock()
   private let privateKey: SecKey
   private var received: [(path: String, body: [String: Any])] = []
+  private var routed: [(operation: String?, purpose: NetworkPurpose)] = []
   private var refusing = false
   private var holding: String?
   private var parked: [CheckedContinuation<Void, Never>] = []
+  private let arrivals = AsyncStream<Void>.makeStream()
+  private let lostAnswers = AsyncStream<Void>.makeStream()
+  private let deduplicate: Bool
+  private var cached: [String: (Data, String)] = [:]
+  private var executed: [[String: Any]] = []
+  private var lostFile: String?
   private let answer: @Sendable (String, [String: Any]) -> [String: Any]
 
   /// `answer` maps the path and the request body of a signed-in request to the answer body.
-  init(answer: @escaping @Sendable (String, [String: Any]) -> [String: Any]) throws {
+  init(deduplicate: Bool = false, answer: @escaping @Sendable (String, [String: Any]) -> [String: Any]) throws {
+    self.deduplicate = deduplicate
     self.answer = answer
     let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("fixtures/encrypted-http/kat.json")
     let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as! [String: Any]
@@ -29,6 +37,10 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   }
 
   var requests: [(path: String, body: [String: Any])] { lock.withLock { received } }
+  var routes: [(operation: String?, purpose: NetworkPurpose)] { lock.withLock { routed } }
+  var effects: [[String: Any]] { lock.withLock { executed } }
+  func loseAnswer(filename: String) { lock.withLock { lostFile = filename } }
+  func lostAnswer() async { var iterator = lostAnswers.stream.makeAsyncIterator(); _ = await iterator.next() }
 
   func pathRequests(_ path: String) -> Int { requests.filter { $0.path == path }.count }
 
@@ -51,12 +63,26 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   /// How many requests wait in the hold.
   var parkedCount: Int { lock.withLock { parked.count } }
 
-  func post(path: String, body: String, upload: Bool) async throws -> EncryptedReply {
+  func heldRequest() async {
+    var iterator = arrivals.stream.makeAsyncIterator()
+    _ = await iterator.next()
+  }
+
+  func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     let request = try open(body)
     let sent = request["body"] as! [String: Any]
-    lock.withLock { received.append((path, sent)) }
+    lock.withLock { received.append((path, sent)); routed.append((sent["operationName"] as? String, purpose)) }
     if lock.withLock({ refusing }) { return EncryptedReply(status: 500, body: "") }
+    let requestId = request["requestId"] as! String
+    var stable = request
+    stable.removeValue(forKey: "issuedAt")
+    let digest = try JSONSerialization.data(withJSONObject: stable, options: [.sortedKeys])
+    if deduplicate, let prior = lock.withLock({ cached[requestId] }) {
+      guard prior.0 == digest else { throw DbError.Invalid(detail: "request ID reused with different content") }
+      return EncryptedReply(status: 200, body: prior.1)
+    }
     let reply = answer(path, sent)
+    lock.withLock { executed.append(sent) }
     if let operation = sent["operationName"] as? String, lock.withLock({ holding == operation }) {
       await withCheckedContinuation { continuation in
         let wait = lock.withLock { () -> Bool in
@@ -64,10 +90,20 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
           parked.append(continuation)
           return true
         }
+        if wait { arrivals.continuation.yield(()) }
         if !wait { continuation.resume() }
       }
     }
-    return EncryptedReply(status: 200, body: try seal(request, reply))
+    let sealed = try seal(request, reply)
+    let lose = lock.withLock { () -> Bool in
+      if deduplicate { cached[requestId] = (digest, sealed) }
+      let filename = (sent["variables"] as? [String: Any])?["filename"] as? String
+      guard filename != nil && filename == lostFile else { return false }
+      lostFile = nil
+      return true
+    }
+    if lose { lostAnswers.continuation.yield(()); throw DbError.Network(detail: "lost answer") }
+    return EncryptedReply(status: 200, body: sealed)
   }
 
   func open(_ token: String) throws -> [String: Any] {
