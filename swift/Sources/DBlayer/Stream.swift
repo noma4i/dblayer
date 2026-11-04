@@ -105,6 +105,8 @@ public struct ListProjection<Model: DBModel>: Sendable {
   /// Server id to the temporary id the row had when the screen first showed it, so a screen keeps the identity of a row that the server confirmed.
   public private(set) var temporaryIds: [String: String] = [:]
   private var awaitingSnapshot = false
+  /// The sequence number of the newest delivery whose rows the projection shows: a snapshot, an applied delta, or a state while no snapshot is awaited. A delivery that applied no rows does not move it.
+  public private(set) var shownSeq: UInt64?
   /// The sequence number of the last delivery read. A jump means that deliveries were dropped before the reader.
   private var lastSeq: UInt64?
 
@@ -129,11 +131,14 @@ public struct ListProjection<Model: DBModel>: Sendable {
       self.state = state
       awaitingSnapshot = false
       lastEdits = nil
+      shownSeq = delivery.seq
       return .changed
     case let .state(state):
       self.state = state
       lastEdits = []
-      return jumped ? gap() : .changed
+      if jumped { return gap() }
+      if !awaitingSnapshot { shownSeq = delivery.seq }
+      return .changed
     case let .ended(reason):
       ended = reason
       lastEdits = []
@@ -149,6 +154,7 @@ public struct ListProjection<Model: DBModel>: Sendable {
       deltas += 1
       self.revision = revision
       self.state = state
+      shownSeq = delivery.seq
       return .changed
     default:
       return .ignored
@@ -236,10 +242,10 @@ public final class Projected<Model: DBModel> {
   public var error: DbError? { projection.error }
   public var isEnded: Bool { projection.ended != nil }
   @ObservationIgnored public let stream: ValueStream
-  @ObservationIgnored private var reading: Task<Void, Never>?
+  @ObservationIgnored var reading: Task<Void, Never>?
   @ObservationIgnored private var pending: [ListEdit<Model>]?
-  @ObservationIgnored private var appliedSeq: UInt64 = 0
-  @ObservationIgnored private var catchUps: [(seq: UInt64, resume: CheckedContinuation<Void, Never>)] = []
+  @ObservationIgnored private var readerEnded = false
+  @ObservationIgnored private var catchUps: [(seq: UInt64, resume: CheckedContinuation<Void, Error>)] = []
 
   public init(_ stream: ValueStream) {
     self.stream = stream
@@ -256,17 +262,17 @@ public final class Projected<Model: DBModel> {
     let applied = projection.apply(delivery)
     if applied == .resync { stream.resync() }
     if applied == .changed { pending = ListEdit.composing(pending, projection.lastEdits, within: projection.rows.count) }
-    appliedSeq = max(appliedSeq, delivery.seq)
-    let due = catchUps.filter { $0.seq <= appliedSeq }
-    catchUps.removeAll { $0.seq <= appliedSeq }
+    let shown = projection.shownSeq ?? 0
+    let due = catchUps.filter { $0.seq <= shown }
+    catchUps.removeAll { $0.seq <= shown }
     due.forEach { $0.resume.resume() }
   }
 
   private func finishReading() {
-    appliedSeq = .max
+    readerEnded = true
     let all = catchUps
     catchUps = []
-    all.forEach { $0.resume.resume() }
+    all.forEach { $0.resume.resume(throwing: DbError.Interrupted(detail: "the stream ended before its rows were shown")) }
   }
 
   /// The steps since the last call, to apply to a list the screen keeps. `nil`: the screen reads `rows` again.
@@ -277,11 +283,12 @@ public final class Projected<Model: DBModel> {
 
   public func refresh() async throws { try await stream.refresh() }
   public func loadMore() async throws -> LoadMoreResult { try await stream.loadMore() }
-  /// Returns when the first load settled and this projection shows every delivery the core made until then.
+  /// Returns when the first load settled and this projection shows the rows of every delivery the core made until then, also after a gap in the deliveries. Throws `Interrupted` when the reading ends first.
   public func loaded() async throws {
     let target = try await stream.loadedAt()
-    guard appliedSeq < target else { return }
-    await withCheckedContinuation { catchUps.append((target, $0)) }
+    guard (projection.shownSeq ?? 0) < target else { return }
+    if readerEnded { throw DbError.Interrupted(detail: "the stream ended before its rows were shown") }
+    try await withCheckedThrowingContinuation { catchUps.append((target, $0)) }
   }
 
   isolated deinit {

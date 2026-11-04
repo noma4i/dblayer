@@ -76,6 +76,8 @@
 - A cancelled `loadAll` or `refreshPreloads` call stops asking for pages.
 - `Projected.loaded()` returns after the projection shows the loaded rows.
 - `streamLoaded` returns the sequence number of the newest delivery.
+- `Projected.loaded()` returns only when the projection shows the rows of the loaded revision: after a gap only the recovery snapshot counts, and it throws `Interrupted` when the reader ends first.
+- The stream of an entity that the library loads waits for the frame of the landed row before its first load settles.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

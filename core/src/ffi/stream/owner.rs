@@ -34,6 +34,7 @@ struct State {
     sink: Option<Arc<dyn ValueSink>>,
     opened: bool,
     rows_at: i64,
+    rows_due: i64,
     size: u32,
     count: Option<i64>,
     read_error: Option<String>,
@@ -106,7 +107,7 @@ fn interrupted() -> DbError { DbError::Interrupted { detail: "initial load cance
 impl Stream {
     pub(in crate::ffi) fn new(id: u64, epoch: u64, life: Arc<Lifecycle>, table: &Arc<StreamTable>, sink: Arc<dyn ValueSink>, request: Request) -> Arc<Self> {
         let state = State {
-            seq: 0, revision: None, ended: false, sink: Some(sink), opened: false, rows_at: -1, size: 0, count: None, read_error: None, relation: None, applied: None, subscription_error: None,
+            seq: 0, revision: None, ended: false, sink: Some(sink), opened: false, rows_at: -1, rows_due: -1, size: 0, count: None, read_error: None, relation: None, applied: None, subscription_error: None,
             load_pending: false, load_error: None, reach_request: None, ready_pending: false, shown: None, targets_only: false, rejoin: None, awaiting_whole: false, resyncs_in_row: 0, unreported: 0,
             load_model: None, entity: false, on_cleared: None,
         };
@@ -398,6 +399,20 @@ impl Stream {
         });
     }
 
+    /// The load of an entity landed its row at `revision`: readiness waits until the reader of the row has queued the frame of that revision.
+    pub(super) fn entity_loaded(&self, error: Option<DbError>, revision: i64) {
+        if !self.live() { return; }
+        let ask = self.change(|state, effects| {
+            state.rows_due = state.rows_due.max(revision);
+            state.load_pending = false;
+            state.load_error = error;
+            let ask = state.reach_request.clone().filter(|_| revision > state.rows_at);
+            self.compose(state, effects, None);
+            ask
+        });
+        if let Some(ask) = ask { ask(revision); }
+    }
+
     pub(super) fn subscription_failed(&self, error: Option<DbError>) {
         if !self.live() { return; }
         self.change(|state, effects| {
@@ -448,7 +463,7 @@ impl Stream {
         if !state.opened || state.ended { return; }
         let rows_at = state.rows_at;
         if let Some(relation) = state.relation.clone().filter(|relation| relation.revision <= rows_at) { state.applied = Some(relation); }
-        let gated = state.relation.as_ref().is_some_and(|relation| relation.revision > rows_at);
+        let gated = state.relation.as_ref().is_some_and(|relation| relation.revision > rows_at) || state.rows_due > rows_at;
         let mut effective = state.applied.clone().unwrap_or_else(|| RelationState { complete: false, phase: if state.relation.is_some() { LoadPhase::NotLoaded } else { LoadPhase::Loaded }, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 });
         if effective.error.is_none() && state.subscription_error.is_some() { effective.error = Some(LoadError::new("subscription", "")); }
         let size = state.size as usize;

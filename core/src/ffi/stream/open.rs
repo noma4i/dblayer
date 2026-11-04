@@ -91,17 +91,22 @@ impl Database {
         let sync = self.sync().map_err(|_| DbError::Invalid { detail: "entity fetch needs a network session".into() })?.clone();
         stream.fetches_entity();
         stream.expect_load();
+        if let Some(control) = handles.observer.as_ref().map(ObserverHandle::control) { stream.on_ahead(Arc::new(move |revision| control.want_reach(revision))); }
         let token: Arc<Mutex<Option<CancelToken>>> = Arc::default();
         let start = {
-            let (sync, stream, token, model, id) = (sync.clone(), Arc::downgrade(stream), token.clone(), model.to_string(), id.to_string());
+            let (sync, stream, token, model, id, db) = (sync.clone(), Arc::downgrade(stream), token.clone(), model.to_string(), id.to_string(), self.db.clone());
             move || -> Result<(), DbError> {
-                let waiting = stream.clone();
+                let (waiting, db) = (stream.clone(), db.clone());
                 let sink: crate::sync::RefreshSink = Arc::new(move |_, error| {
                     if let Some(stream) = waiting.upgrade() {
-                        stream.load_finished(error.map(|error| match error {
+                        let error = error.map(|error| match error {
                             RefreshError::Offline => DbError::Network { detail: "offline".into() },
                             RefreshError::Failed(message) => DbError::Sync { detail: message },
-                        }));
+                        });
+                        match db.revision_seq() {
+                            Ok(revision) => stream.entity_loaded(error, revision),
+                            Err(failure) => stream.load_finished(Some(failure.into())),
+                        }
                     }
                 });
                 let _entered = executor()?.enter();

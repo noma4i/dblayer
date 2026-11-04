@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -96,10 +97,12 @@ class ListProjection<Model : DBModel> private constructor(
     /** Server id to the temporary id the row had when the screen first showed it. */
     val temporaryIds: Map<String, String>,
     private val awaitingSnapshot: Boolean,
+    /** The sequence number of the newest delivery whose rows the projection shows: a snapshot, an applied delta, or a state while no snapshot is awaited. A delivery that applied no rows does not move it. */
+    val shownSeq: ULong?,
     /** The sequence number of the last delivery read. A jump means that deliveries were dropped before the reader. */
     private val lastSeq: ULong?,
 ) {
-    constructor() : this(emptyList(), null, null, null, null, null, 0, 0, emptyList(), emptyMap(), false, null)
+    constructor() : this(emptyList(), null, null, null, null, null, 0, 0, emptyList(), emptyMap(), false, null, null)
 
     val phase: LivePhase? get() = state?.phase
 
@@ -110,8 +113,8 @@ class ListProjection<Model : DBModel> private constructor(
 
     private fun copy(
         rows: List<Model> = this.rows, state: StreamState? = this.state, revision: Long? = this.revision, epoch: ULong? = this.epoch, ended: StreamEnd? = this.ended, failure: String? = this.failure,
-        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds, awaitingSnapshot: Boolean = this.awaitingSnapshot, lastSeq: ULong? = this.lastSeq,
-    ) = ListProjection(rows, state, revision, epoch, ended, failure, decoded, deltas, lastEdits, temporaryIds, awaitingSnapshot, lastSeq)
+        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds, awaitingSnapshot: Boolean = this.awaitingSnapshot, shownSeq: ULong? = this.shownSeq, lastSeq: ULong? = this.lastSeq,
+    ) = ListProjection(rows, state, revision, epoch, ended, failure, decoded, deltas, lastEdits, temporaryIds, awaitingSnapshot, shownSeq, lastSeq)
 
     fun apply(delivery: StreamDelivery, decoder: ModelDecoder<Model>): Step<Model> {
         if (epoch != null && delivery.epoch != epoch) return Step(this, Applied.Ignored)
@@ -133,9 +136,9 @@ class ListProjection<Model : DBModel> private constructor(
             is StreamValue.Snapshot -> {
                 failure = null
                 val whole = decode(value.rows).filterNotNull()
-                Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false, lastSeq = delivery.seq), Applied.Changed)
+                Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false, shownSeq = delivery.seq, lastSeq = delivery.seq), Applied.Changed)
             }
-            is StreamValue.State -> if (jumped) Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync) else Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), lastSeq = delivery.seq), Applied.Changed)
+            is StreamValue.State -> if (jumped) Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync) else Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), shownSeq = if (awaitingSnapshot) shownSeq else delivery.seq, lastSeq = delivery.seq), Applied.Changed)
             is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList(), lastSeq = delivery.seq), Applied.Changed)
             is StreamValue.Delta -> {
                 if (awaitingSnapshot) return Step(copy(epoch = held, lastSeq = delivery.seq), if (jumped) Applied.Resync else Applied.Ignored)
@@ -146,7 +149,7 @@ class ListProjection<Model : DBModel> private constructor(
                 val result = rebuild(carried.filterNotNull().zip(value.rowIndexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap()
                 val ids = HashMap(temporaryIds)
                 for (pair in value.renamed) { ids[pair.to] = ids[pair.from] ?: pair.from; ids.remove(pair.from) }
-                Step(copy(rows = result.first, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, deltas = deltas + 1, lastSeq = delivery.seq, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
+                Step(copy(rows = result.first, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, deltas = deltas + 1, shownSeq = delivery.seq, lastSeq = delivery.seq, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
             }
             else -> Step(this, Applied.Ignored)
         }
@@ -211,16 +214,15 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
     private val held = MutableStateFlow(ListProjection<Model>())
     val projection: StateFlow<ListProjection<Model>> = held.asStateFlow()
     private val pending = java.util.concurrent.atomic.AtomicReference<List<ListEdit<Model>>?>(null)
-    private val appliedSeq = MutableStateFlow(0uL)
+    private val readerEnded = MutableStateFlow(false)
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
         stream.deliveries.collect { delivery ->
             val step = held.value.apply(delivery, decoder)
             held.value = step.projection
             if (step.applied == Applied.Resync) stream.resync()
             if (step.applied == Applied.Changed) pending.updateAndGet { ListEdit.composing(it, step.projection.lastEdits, step.projection.rows.size) }
-            appliedSeq.value = maxOf(appliedSeq.value, delivery.seq)
         }
-    }.also { job -> job.invokeOnCompletion { appliedSeq.value = ULong.MAX_VALUE; stream.close() } }
+    }.also { job -> job.invokeOnCompletion { readerEnded.value = true; stream.close() } }
 
     val value: Model? get() = held.value.rows.firstOrNull()
 
@@ -231,10 +233,11 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
 
     suspend fun loadMore(): LoadMoreResult = stream.loadMore()
 
-    /** Returns when the first load settled and this projection shows every delivery the core handed over until then. */
+    /** Returns when the first load settled and this projection shows the rows of every delivery the core handed over until then, also after a gap in the deliveries. Throws `Interrupted` when the reading ends first. */
     suspend fun loaded() {
         val target = stream.loadedAt()
-        appliedSeq.first { it >= target }
+        combine(held, readerEnded) { projection, ended -> ended || (projection.shownSeq ?: 0uL) >= target }.first { it }
+        if ((held.value.shownSeq ?: 0uL) < target) throw DbException.Interrupted("the stream ended before its rows were shown")
     }
 
     fun close() {
