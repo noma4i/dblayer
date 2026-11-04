@@ -1840,6 +1840,63 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     rig.database.close_now();
 }
 
+/// Fable review 1 (old lines lifecycle/mod.rs finish_transition, sync/mod.rs changed): a message of A queued offline never goes out when another identity takes the session without a session reset, also when a flush of the new epoch runs at the first moment the epoch admits work. The app waiting for its outcome hears Interrupted.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queued_message_of_a_never_goes_out_when_another_identity_takes_the_session_without_a_reset() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    rig.database.set_online(false).unwrap();
+    let receipt = bound(rig.database.send(message(epoch, "of A", 9))).await.unwrap();
+    assert_eq!(rig.world.count("SendMessage"), 0, "the offline send reached the server");
+    let waiting = { let database = rig.database.clone(); tokio::spawn(async move { database.outcome(receipt).await }) };
+    let (opened, opened_rx) = std::sync::mpsc::channel();
+    let (release_tx, release) = std::sync::mpsc::channel::<()>();
+    let expired = Arc::new(AtomicBool::new(false));
+    let release_expired = expired.clone();
+    *rig.database.db.shared.store.lifecycle.after_publish.lock().unwrap() = Some(Box::new(move || { opened.send(()).unwrap(); if release.recv_timeout(std::time::Duration::from_secs(20)).is_err() { release_expired.store(true, Ordering::SeqCst); } }));
+    let switched = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || { let lifecycle = &database.db.shared.store.lifecycle; lifecycle.session_from(Some("another-account".into()), lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok() }) };
+    tokio::task::spawn_blocking(move || opened_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
+    assert_ne!(rig.database.session_epoch(), epoch, "the new epoch was not published");
+    rig.database.set_online(true).unwrap();
+    bound(rig.database.flush()).await.unwrap();
+    release_tx.send(()).unwrap();
+    assert!(bound(switched).await.unwrap(), "the session start of the other identity did not finish");
+    assert!(!expired.load(Ordering::SeqCst), "the held session start ran out of time and was not released by the test");
+    let outcome = bound(waiting).await.unwrap().unwrap();
+    assert!(matches!(outcome, WireOperationOutcome::Interrupted), "the outcome of the message of A was {outcome:?}");
+    settle(&rig).await;
+    bound(rig.database.flush()).await.unwrap();
+    settle(&rig).await;
+    assert_eq!(rig.world.count("SendMessage"), 0, "the message of the account that left went out for the next one");
+    assert!(rig.database.db.outbox().unwrap().is_empty(), "an operation of the account that left is still queued");
+    rig.database.close_now();
+}
+
+/// Fable review 3 (old lines sync/send/flush.rs land_response): a create the server confirmed keeps its row when the cache of another model clears between the answer and its landing. The epoch stays, only the generation moves.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_lands() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let gate = rig.world.hold_next("SendMessage");
+    let receipt = bound(rig.database.send(message(epoch, "kept", 9))).await.unwrap();
+    gate.entered_for("the send").await;
+    let generation = rig.database.db.generation();
+    let reset = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.reset(&["User"])) };
+    bound(reset).await.unwrap().unwrap();
+    assert_ne!(rig.database.db.generation(), generation, "the reset of another model did not move the generation");
+    assert_eq!(rig.database.session_epoch(), epoch, "the reset of another model ended the epoch");
+    gate.release();
+    let outcome = bound(rig.database.outcome(receipt)).await.unwrap();
+    let WireOperationOutcome::Confirmed { value: Some(row), .. } = outcome else { panic!("the confirmed create ended with {outcome:?}") };
+    settle(&rig).await;
+    let found = rig.database.db.find("Message", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
+    assert!(found.is_some(), "the row {} the server confirmed is gone", row.id);
+    assert!(rig.database.db.outbox().unwrap().is_empty(), "the confirmed create is still queued");
+    rig.database.close_now();
+}
+
 /// K24 (D03, old lines sync/send/flush.rs flush and next_ready): a flush that is already running does not send an action that is not a durable command after the network dropped and returned between two of its sends.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_running_flush_does_not_send_a_plain_action_after_the_network_dropped_between_two_sends() {

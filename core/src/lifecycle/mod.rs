@@ -183,6 +183,8 @@ pub(crate) trait Holder: Send + Sync {
     fn close(&self);
     fn registration(&self) -> &OnceLock<Registration>;
     fn changed(&self, _snapshot: &Snapshot) {}
+    /// Runs inside the session start, before any work of the new epoch is admitted.
+    fn session_starting(&self, _session: Option<&str>) {}
 }
 
 pub(crate) struct Registration { owner: Weak<Lifecycle>, id: usize }
@@ -277,6 +279,8 @@ pub(crate) struct Lifecycle {
     work: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     pub(crate) writes_entered: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    pub(crate) after_publish: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Default for Lifecycle {
@@ -295,6 +299,8 @@ impl Default for Lifecycle {
             work: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             writes_entered: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            after_publish: Mutex::new(None),
         }
     }
 }
@@ -598,6 +604,8 @@ impl Lifecycle {
         drop(admitted);
         match self.try_begin(Boundary::SessionStart, Some(expected)) {
             Ok(Ok(permit)) => {
+                let holders = crate::db::locked(&self.state).holders.open();
+                for holder in holders.into_iter().filter_map(|holder| holder.upgrade()) { holder.session_starting(session.as_deref()); }
                 permit.defer(Change::SessionStarted(session));
                 permit.finish();
                 self.admit_as(origin, target, passive, Some(expected + 1))
@@ -659,6 +667,11 @@ impl Lifecycle {
         self.idle.notify_all();
         self.publish_activity(activity);
         self.publish(finished);
+        #[cfg(test)]
+        {
+            let hook = crate::db::locked(&self.after_publish).take();
+            if let Some(hook) = hook { hook(); }
+        }
         let last = tickets.into_iter().map(|(snapshot, holders)| self.notify(snapshot, holders)).last();
         if let Some(ticket) = last { self.effects.run_until(ticket); }
     }

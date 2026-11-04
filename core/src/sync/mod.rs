@@ -412,6 +412,10 @@ impl crate::lifecycle::Holder for Inner {
 
     fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
 
+    fn session_starting(&self, session: Option<&str>) {
+        if let Some(inner) = self.this.get().and_then(std::sync::Weak::upgrade) { inner.account_changed(session); }
+    }
+
     fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
         let Some(inner) = self.this.get().and_then(std::sync::Weak::upgrade) else { return };
         match &snapshot.change {
@@ -426,7 +430,6 @@ impl crate::lifecycle::Holder for Inner {
             crate::lifecycle::Change::SessionStarted(_) | crate::lifecycle::Change::SessionEnded => {
                 if matches!(snapshot.change, crate::lifecycle::Change::SessionEnded) { inner.cancel_uploads(); }
                 inner.preload_session();
-                inner.account_changed(snapshot.session.as_deref());
                 if snapshot.session.is_some() {
                     inner.refresh_due_entities(true);
                     inner.preload_on_event();

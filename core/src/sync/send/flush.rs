@@ -382,7 +382,7 @@ impl Inner {
         published.into_iter().chain((committed > 0).then_some(committed)).max()
     }
 
-    /// Marks every pending operation as belonging to the account that left when another identity takes the session. They are all committed before the session start: the commit line orders them.
+    /// Marks every pending operation as belonging to the account that left when another identity takes the session. The session start calls it before the new epoch admits work, and every operation of the old epoch committed before the start: the commit line orders them.
     pub(crate) fn account_changed(&self, session: Option<&str>) {
         let _line = self.network_line.enter();
         let newest = self.newest_operation();
@@ -928,8 +928,8 @@ impl Inner {
         let mut generation = sending.generation;
         let mut committed = None;
         for _ in 0..SETTLE_ATTEMPTS {
-            let lands_rows = generation == sending.generation;
             committed = self.commit(sending.admitted, generation, |reader| {
+                let lands_rows = generation == sending.generation || OutboxOperation::read(reader, entry.operation.id.0)?.is_some();
                 let ids: BTreeSet<_> = temp.iter().chain(replacements.iter().map(|(temp, _)| temp)).chain(created.iter().map(|(_, temp)| temp)).map(ToString::to_string).collect();
                 let outbox = crate::operation::referencing_sequences(reader.connection(), &ids).map_err(StoreError::from)?.into_iter().filter_map(|seq| OutboxOperation::read(reader, seq).transpose()).collect::<Result<Vec<_>, _>>()?;
                 let mut drops = 0;
