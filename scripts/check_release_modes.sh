@@ -52,7 +52,7 @@ esac
     (repo / "scripts/check_consumers.sh").write_text("""#!/bin/sh
 echo "check_consumers $*" >> "$TEST_EVENTS"
 S="${STUB_SHA:-$RELEASE_SOURCE_SHA}"; R="${STUB_RUN:-$RELEASE_RUN_ID}"
-[ -z "${STUB_MOVE_HEAD:-}" ] || git commit -q --allow-empty -m "Moved during the run"
+[ -z "${STUB_MOVE_HEAD:-}" ] || git commit -q --allow-empty -m "${STUB_MOVE_SUBJECT:-Moved during the run}"
 case "${STUB_CONSUMER_REPORT:-green}" in
   missing-file) ;;
   missing-lane) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
@@ -119,7 +119,13 @@ if command and command[0] == "commit" and os.environ.get("STUB_COMMIT_EXTRA"):
 if command and command[0] in ("clone", "fetch", "pull", "push"): sys.exit(0)
 if a[:2] == ["ls-remote", "--heads"]: sys.exit(0)
 if a[:2] == ["remote", "get-url"]: print("https://example.invalid/dblayer.git"); sys.exit(0)
-sys.exit(subprocess.run([os.environ["REAL_GIT"], *a]).returncode)
+rc = subprocess.run([os.environ["REAL_GIT"], *a]).returncode
+if rc == 0 and command and command[0] == "commit" and os.environ.get("STUB_REPARENT"):
+    g = [os.environ["REAL_GIT"]] + (a[:2] if a[0] == "-C" else [])
+    out = lambda *x: subprocess.check_output([*g, *x], text=True).strip()
+    new = out("commit-tree", "HEAD^{tree}", "-p", out("rev-list", "--max-parents=0", "HEAD"), "-m", out("log", "-1", "--format=%s"))
+    subprocess.run([*g, "update-ref", "HEAD", new], check=True)
+sys.exit(rc)
 ''',
         "cargo": '''#!/usr/bin/env python3
 import pathlib, sys
@@ -241,13 +247,13 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     run(["bash", "scripts/release.sh", version], incomplete, incomplete_env, expected=1, contains="incomplete existing output")
     print("ok incomplete stage is rejected")
 
-    def assert_no_release(repo, env, events_file):
+    def assert_no_release(repo, env, events_file, foreign=0):
         events = events_file.read_text().splitlines() if events_file.exists() else []
         assert not any(line.startswith("gh ") or line.startswith("git push ") for line in events), events
         tags = subprocess.check_output([real_git, "-C", str(repo), "tag", "--list", version], text=True).strip()
         assert tags == "", f"tag {version} exists after a refusal"
         subjects = subprocess.check_output([real_git, "-C", str(repo), "log", "--format=%s"], text=True).splitlines()
-        assert f"Package release {version}" not in subjects, subjects
+        assert subjects.count(f"Package release {version}") == foreign, subjects
 
     red, red_env = fixture(base / "red")
     run(["bash", "scripts/release.sh", version, "--publish"], red, dict(red_env, STUB_SEQUENCES="red"), expected=1, contains="sequence suites are red")
@@ -292,10 +298,11 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         ("another-sha", {"STUB_SHA": "0" * 40}, "lane reports are missing or incomplete"),
         ("another-run", {"STUB_RUN": "another-run"}, "lane reports are missing or incomplete"),
         ("head-moved", {"STUB_MOVE_HEAD": "1"}, "source commit changed during the run"),
+        ("foreign-package-commit", {"STUB_MOVE_HEAD": "1", "STUB_MOVE_SUBJECT": f"Package release {version}"}, "source commit changed during the run"),
     ):
         bad, bad_env = fixture(base / f"identity-{mode}", touch=boundary)
         run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **variables), expected=1, contains=text)
-        assert_no_release(bad, bad_env, base / f"identity-{mode}/events")
+        assert_no_release(bad, bad_env, base / f"identity-{mode}/events", foreign=int(mode == "foreign-package-commit"))
         assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
         print(f"ok {mode} refuses the receipt, the package commit and the tag")
     package_cases = (
@@ -329,6 +336,11 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     assert subprocess.check_output([real_git, "-C", str(own), "tag", "--list", version], text=True).strip() == ""
     assert not any(line.startswith("gh ") or line.startswith("git push ") for line in (base / "own-extra/events").read_text().splitlines())
     print("ok an extra staged file in the own package commit refuses the tag")
+    wrong, wrong_env = fixture(base / "own-wrong-parent")
+    run(["bash", "scripts/release.sh", version, "--publish"], wrong, dict(wrong_env, STUB_REPARENT="1"), expected=1, contains="is not directly on source commit")
+    assert subprocess.check_output([real_git, "-C", str(wrong), "tag", "--list", version], text=True).strip() == ""
+    assert not any(line.startswith("gh ") or line.startswith("git push ") for line in (base / "own-wrong-parent/events").read_text().splitlines())
+    print("ok the own package commit with a wrong parent refuses the tag")
 
     def lock_fixture(name):
         repo, env = fixture(base / name)
