@@ -112,6 +112,7 @@
 - The stream of an entity that the library loads waits for the frame of the landed row before its first load settles.
 - A refused multipart abort waits for `sessionResume` and reaches the server once.
 - `cancelUpload` cancels an upload that starts while the call runs.
+- A format change keeps queued operations and uploads when their table layout is unchanged.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

@@ -75,11 +75,16 @@ impl Store {
             let fingerprints = current_fingerprints(&inner);
             let transaction = inner.connection.unchecked_transaction()?;
             let database: String = transaction.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
-            super::open::recreate(&transaction)?;
+            let has_files: bool = transaction.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file')", [], |row| row.get(0))?;
+            let before: Vec<String> = if has_files { transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()? } else { Vec::new() };
+            let outbox = super::open::recreate(&transaction)?;
             for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
+            let after: std::collections::HashSet<String> = transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
             manifest_stamp(&transaction, data_version, &fingerprints)?;
             transaction.commit()?;
-            if !database.is_empty() { remove_all_files = Some(database); }
+            if !database.is_empty() {
+                if outbox { removed_files = Some((database, before.into_iter().filter(|id| !after.contains(id)).collect())); } else { remove_all_files = Some(database); }
+            }
             recreated = Some(reason);
             rebuilt = true;
             migrated_reset = Some(models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect());

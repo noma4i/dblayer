@@ -15,6 +15,8 @@ pub const SCHEMA_VERSION: i64 = 2;
 pub const FORMAT_VERSION_KEY: &str = "format_version";
 pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
+pub const OUTBOX_FORMAT_KEY: &str = "outbox_format";
+pub(crate) const OUTBOX_TABLES: [&str; 12] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "file"];
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
@@ -655,6 +657,13 @@ pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>
 
 const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds; rows are typed columns with rev__ columns; free values are node trees; relation parameters are type-tagged JSON values";
 
+pub fn outbox_format() -> String {
+    let tables = OUTBOX_TABLES.map(|table| format!("CREATE TABLE IF NOT EXISTS {table} ("));
+    let statements: Vec<&str> = CORE_STATEMENTS.iter().copied().filter(|statement| tables.iter().any(|table| statement.starts_with(table.as_str()))).collect();
+    let text = [statements.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");
+    Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 pub fn format_version() -> String {
     let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");
     Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
@@ -759,6 +768,7 @@ pub fn manifest_stamp(
         manifest_write(connection, &fingerprint_key(model), fingerprint)?;
     }
     manifest_write(connection, FORMAT_VERSION_KEY, &format_version())?;
+    manifest_write(connection, OUTBOX_FORMAT_KEY, &outbox_format())?;
     Ok(())
 }
 

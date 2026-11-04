@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, ErrorCode, OptionalExtension};
 
-use crate::ddl::{create_core_tables, manifest_read, prepare_connection, sql_ident, DdlError, FORMAT_VERSION_KEY};
+use crate::ddl::{create_core_tables, manifest_read, outbox_format, prepare_connection, sql_ident, DdlError, FORMAT_VERSION_KEY, OUTBOX_FORMAT_KEY, OUTBOX_TABLES};
 use crate::files::FileDirectories;
 use crate::transport::encrypted::state;
 
@@ -58,17 +58,24 @@ pub(super) fn migrate_transfer_identity(connection: &Connection, models: &BTreeM
     Ok(())
 }
 
-pub(super) fn recreate(connection: &Connection) -> Result<(), StoreError> {
+pub(super) fn recreate(connection: &Connection) -> Result<bool, StoreError> {
     let tables: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")?
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let session = if tables.iter().any(|table| table == "encrypted_session") { state::session(connection)? } else { None };
     let pending = if tables.iter().any(|table| table == "encrypted_pending") { legacy_pending(connection, false)?.0 } else { None };
-    for table in &tables {
+    let outbox = tables.iter().any(|table| table == "manifest") && manifest_read(connection, OUTBOX_FORMAT_KEY)?.as_deref() == Some(outbox_format().as_str());
+    if outbox {
+        connection.execute_batch("CREATE TEMP TABLE retained_transfer_files AS SELECT * FROM file WHERE field LIKE 'op_item.%';")?;
+    }
+    for table in tables.iter().filter(|table| !(outbox && table.as_str() != "file" && OUTBOX_TABLES.contains(&table.as_str()))) {
         connection.execute_batch(&format!("DROP TABLE IF EXISTS {}", sql_ident(table)))?;
     }
     create_core_tables(connection)?;
+    if outbox {
+        connection.execute_batch("INSERT INTO file SELECT * FROM retained_transfer_files; DROP TABLE retained_transfer_files; DELETE FROM op_value WHERE part = 'prior';")?;
+    }
     if let Some(session) = session {
         state::restore_session(connection, &session)?;
     }
@@ -76,10 +83,11 @@ pub(super) fn recreate(connection: &Connection) -> Result<(), StoreError> {
         state::store_pending(connection, &pending)?;
         if let Some(owner) = pending.owner {
             let seq = match owner { crate::transport::RequestOwner::Operation { seq } => seq, crate::transport::RequestOwner::Transfer { operation_id, .. } | crate::transport::RequestOwner::Unmatched { operation_id } => operation_id };
-            connection.execute("INSERT INTO sqlite_sequence (name, seq) VALUES ('op', ?1)", [seq])?;
+            connection.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?1) WHERE name = 'op'", [seq])?;
+            connection.execute("INSERT INTO sqlite_sequence (name, seq) SELECT 'op', ?1 WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'op')", [seq])?;
         }
     }
-    Ok(())
+    Ok(outbox)
 }
 
 struct LostItem { position: i64, row: String, key: String }
