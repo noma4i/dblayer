@@ -1023,6 +1023,37 @@ async fn an_event_queued_before_a_session_start_never_commits_in_the_epoch_that_
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_late_callback_stamped_before_a_session_start_changes_nothing() {
+    let rig = rig_with_subscription();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.await_consumed("MomentChanged").await;
+    let life = rig.db.shared.store.lifecycle.clone();
+    let old = life.epoch_now().value();
+    assert!(life.start_session(Some("another-account".into()), old));
+    rig.transport.emit_from_epoch("MomentChanged", Some(old), next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
+    rig.transport.emit_from_epoch("MomentChanged", None, next(json!({"id": "m3", "text": "of no epoch", "userId": null})));
+    rig.transport.await_consumed("MomentChanged").await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!((text_of(&rig, "moments", "m1"), text_of(&rig, "moments", "m3")), (None, None));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_event_enqueued_right_after_a_session_start_is_applied() {
+    let rig = rig_with_subscription();
+    let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
+    rig.transport.await_calls("MomentChanged", 1).await;
+    rig.transport.await_consumed("MomentChanged").await;
+    let life = rig.db.shared.store.lifecycle.clone();
+    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
+    rig.transport.await_consumed("MomentChanged").await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
+    assert_eq!(rig.transport.call_count("MomentChanged"), 1, "the connection stayed");
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() {
     let directory = tempfile::tempdir().unwrap();
     let rig = rig_on(Db::open(&directory.path().join("db.sqlite"), specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());

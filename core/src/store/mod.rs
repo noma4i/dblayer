@@ -196,6 +196,7 @@ pub struct Store {
     readers: Option<readers::Readers>,
     hook: OnceLock<StoreHook>,
     commit_log: OnceLock<CommitLog>,
+    newest_operation: std::sync::atomic::AtomicI64,
     line: AnnounceLine,
     session_end_replay: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -239,6 +240,7 @@ impl Store {
             readers: None,
             hook: OnceLock::new(),
             commit_log: OnceLock::new(),
+            newest_operation: std::sync::atomic::AtomicI64::new(0),
             line: AnnounceLine::default(),
             #[cfg(test)]
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
@@ -285,6 +287,11 @@ impl Store {
 
     pub(crate) fn set_commit_log(&self, log: CommitLog) {
         let _ = self.commit_log.set(log);
+    }
+
+    /// The newest operation any commit of this process wrote. It moves inside the commit, before the commit line is released, so a transition that waited for the line sees every operation committed before it.
+    pub(crate) fn newest_committed_operation(&self) -> i64 {
+        self.newest_operation.load(Ordering::SeqCst)
     }
 
     pub(crate) fn announce(&self, event: StoreEvent<'_>) {

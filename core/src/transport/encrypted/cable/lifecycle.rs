@@ -3,16 +3,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use serde_json::{json, Value};
 use statig::prelude::*;
-use tokio::sync::mpsc;
 use crate::pacing::{Backoff, Clock, RetryPolicy};
-use crate::transport::{Connectivity, GraphQLRequest, SessionCode, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, TransportError};
+use crate::transport::{Connectivity, GraphQLRequest, SessionCode, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionSender, TransportError};
 
 const SILENCE: Duration = Duration::from_secs(25);
 const PONG_WAIT: Duration = Duration::from_secs(20);
 
 pub(super) struct Entry {
     pub(super) request: GraphQLRequest,
-    pub(super) events: mpsc::UnboundedSender<SubscriptionEvent>,
+    pub(super) events: SubscriptionSender,
 }
 
 pub(super) struct Core {

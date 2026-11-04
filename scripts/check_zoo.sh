@@ -200,6 +200,11 @@ for path in files:
             continue
         spans = authority_spans(chunk)
         aliases = set(connection_alias.findall(chunk)) | set(read_callback.findall(chunk))
+        while True:
+            copies = {copy for alias in aliases for copy in re.findall(r"\blet\s+(?:mut\s+)?(\w+)\s*=\s*&?(?:mut\s+)?(?:\*\s*)?" + alias + r"\s*;", chunk)} - aliases
+            if not copies:
+                break
+            aliases |= copies
         writes = [match.start() for match in connection_write.finditer(chunk)]
         for alias in aliases:
             writes.extend(match.start() for match in receiver_write(alias).finditer(chunk))
@@ -207,7 +212,7 @@ for path in files:
             if helper == name:
                 continue
             argument = r"&(?:mut\s+)?(?:[\w.]*\.connection|" + "|".join(sorted(aliases) or ["(?!)"]) + r")\b"
-            writes.extend(match.start() for match in re.finditer(r"(?<![\w.])" + helper + r"\s*\(\s*" + argument, chunk))
+            writes.extend(match.start() for match in re.finditer(r"(?<![\w.])" + helper + r"\s*\([^;]*?" + argument, chunk))
         for position in sorted(writes):
             if any(begin < position < finish for begin, finish in spans):
                 continue

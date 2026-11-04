@@ -39,7 +39,6 @@ tokio::task_local! {
     static ORIGIN: Epoch;
 }
 
-#[derive(Clone, Copy)]
 pub(crate) struct Internal(());
 
 impl Internal {
@@ -50,7 +49,6 @@ impl Internal {
 }
 
 /// What lets a SQL commit run: the epoch of admitted work, or the proof of a lifecycle transition. A commit has no third form.
-#[derive(Clone)]
 pub(crate) enum Authority {
     Epoch(Epoch),
     Internal(Internal),

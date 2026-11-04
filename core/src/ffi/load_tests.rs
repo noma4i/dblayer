@@ -17,7 +17,7 @@ pub(super) struct Counting {
     started: Notify,
     hold: Option<Arc<tokio::sync::Semaphore>>,
     gate: Option<Arc<tokio::sync::Semaphore>>,
-    subscriptions: Option<std::sync::mpsc::Sender<Arc<super::SubscriptionSink>>>,
+    subscriptions: Option<tokio::sync::mpsc::UnboundedSender<Arc<super::SubscriptionSink>>>,
 }
 
 #[async_trait::async_trait]
@@ -62,16 +62,16 @@ async fn a_data_reset_ends_the_held_stream_with_its_epoch_and_a_new_stream_reloa
 
 #[tokio::test]
 async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without_http() {
-    struct Listener(std::sync::mpsc::Sender<DbError>);
+    struct Listener(tokio::sync::mpsc::UnboundedSender<DbError>);
     impl ValueSink for Listener {
         fn delivered(&self, delivery: StreamDelivery) {
             if let StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } = delivery.value {
-                if let Some(error) = state.error { self.0.send(error).unwrap(); }
+                if let Some(error) = state.error { let _ = self.0.send(error); }
             }
         }
     }
     for shared_changes in [false, true] {
-    let (opened, subscriptions) = std::sync::mpsc::channel();
+    let (opened, mut subscriptions) = tokio::sync::mpsc::unbounded_channel();
     let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: None, gate: None, subscriptions: Some(opened) });
     let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     model.storage = crate::schema::Storage::Memory;
@@ -89,20 +89,22 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     }
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), Some(transport.clone()), None, None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"},{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).unwrap();
-    let (failures, received) = std::sync::mpsc::channel();
+    let (failures, mut received) = tokio::sync::mpsc::unbounded_channel();
     let live = database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, Arc::new(Listener(failures)));
     live.wait_for_initial_load().await.unwrap();
     let initial_reads = transport.queries.load(Ordering::SeqCst);
-    let sink = subscriptions.recv_timeout(Duration::from_secs(2)).unwrap();
+    let sink = within(subscriptions.recv()).await.unwrap();
     sink.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "session_unknown".into() });
-    let error = received.recv_timeout(Duration::from_secs(2)).expect("query listener receives terminal subscription failure");
+    let error = within(received.recv()).await.expect("query listener receives terminal subscription failure");
     assert!(matches!(error, DbError::Session { code: super::SessionCode::Unauthenticated, detail } if detail == "session_unknown"));
+    crate::ffi::settled(&database).await.unwrap();
+    assert!(received.try_recv().is_err(), "the failure reached the listener more than once");
     assert!(subscriptions.try_recv().is_err());
     assert_eq!(transport.queries.load(Ordering::SeqCst), initial_reads);
     database.resume().await.unwrap();
-    let resumed = subscriptions.recv_timeout(Duration::from_secs(2)).expect("resume restarts the stopped subscription");
+    let resumed = within(subscriptions.recv()).await.expect("resume restarts the stopped subscription");
     resumed.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "second_session".into() });
-    assert!(matches!(received.recv_timeout(Duration::from_secs(2)).expect("observer receives the next session failure"), DbError::Session { detail, .. } if detail == "second_session"));
+    assert!(matches!(within(received.recv()).await.expect("observer receives the next session failure"), DbError::Session { detail, .. } if detail == "second_session"));
     live.cancel();
     }
 }
@@ -346,9 +348,11 @@ async fn inv_fresh_15_a_test_clock_moves_fresh_for_without_sleeping() {
     }
 }
 
+type OpenHook = Box<dyn FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send>;
+
 struct Interrupting {
     inner: Counting,
-    on_open: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    on_open: std::sync::Mutex<Option<OpenHook>>,
 }
 
 #[async_trait::async_trait]
@@ -362,7 +366,7 @@ impl Transport for Interrupting {
     async fn subscribe(&self, request: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), DbError> {
         self.inner.subscribe(request, sink).await?;
         let hook = self.on_open.lock().unwrap().take();
-        if let Some(hook) = hook { hook(); }
+        if let Some(hook) = hook { hook().await; }
         Ok(())
     }
     fn unsubscribe(&self, token: String) { self.inner.unsubscribe(token) }
@@ -370,49 +374,56 @@ impl Transport for Interrupting {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_connection_that_a_reset_ends_between_its_open_and_its_delivery_hands_the_failure_to_the_connection_that_replaced_it() {
-    let (opened, subscriptions) = std::sync::mpsc::channel();
+async fn a_failure_after_a_confirmed_reset_reaches_the_query_opened_after_it_once() {
+    let (opened, mut subscriptions) = tokio::sync::mpsc::unbounded_channel();
     let counting = Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: None, gate: None, subscriptions: Some(opened) };
-    let database_slot: Arc<std::sync::Mutex<Option<Arc<Database>>>> = Arc::default();
-    let hook_slot = database_slot.clone();
-    let transport = Arc::new(Interrupting { inner: counting, on_open: std::sync::Mutex::new(Some(Box::new(move || {
-        let database = hook_slot.lock().unwrap().clone().unwrap();
-        let life = database.db.shared.store.lifecycle.clone();
-        let before = life.snapshot().notice;
-        let resetting = std::thread::spawn(move || database.db.reset_all());
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        while life.snapshot().notice == before && std::time::Instant::now() < deadline { std::thread::yield_now(); }
-        drop(resetting);
-    }))) });
+    let (entered, entered_rx) = tokio::sync::oneshot::channel::<()>();
+    let transport = Arc::new(Interrupting { inner: counting, on_open: std::sync::Mutex::new(Some(Box::new(move || Box::pin(async move {
+        let _ = entered.send(());
+        std::future::pending::<()>().await;
+    })))) });
     let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     model.storage = crate::schema::Storage::Memory;
     let mut relation = RelationSpec::global("recent");
     relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() });
     model.relations.push(relation);
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
-    *database_slot.lock().unwrap() = Some(database.clone());
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).unwrap();
-    let (failures, mut received) = tokio::sync::mpsc::unbounded_channel();
-    struct Async(tokio::sync::mpsc::UnboundedSender<DbError>);
+    enum Heard { Failure(DbError), Ended }
+    struct Async(tokio::sync::mpsc::UnboundedSender<Heard>);
     impl ValueSink for Async {
         fn delivered(&self, delivery: StreamDelivery) {
-            if let StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } = delivery.value {
-                if let Some(error) = state.error { let _ = self.0.send(error); }
+            match delivery.value {
+                StreamValue::Ended { .. } => { let _ = self.0.send(Heard::Ended); }
+                StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } => {
+                    if let Some(error) = state.error { let _ = self.0.send(Heard::Failure(error)); }
+                }
+                _ => {}
             }
         }
     }
+    let (heard, mut received) = tokio::sync::mpsc::unbounded_channel();
     let query = r#"{"model":"Notice","relation":"recent","params":{}}"#;
-    let ended = database.watch_query(query, Arc::new(Async(failures.clone())));
-    let _ = within(ended.wait_for_initial_load()).await;
-    let live = database.watch_query(query, Arc::new(Async(failures)));
+    let first = database.watch_query(query, Arc::new(Async(heard.clone())));
+    within(entered_rx).await.unwrap();
+    let held = within(subscriptions.recv()).await.unwrap();
+    let resetting = database.clone();
+    within(tokio::task::spawn_blocking(move || resetting.db.reset_all())).await.unwrap().unwrap();
+    match within(received.recv()).await.expect("the first query ends with the reset") {
+        Heard::Ended => {}
+        Heard::Failure(error) => panic!("the first query heard {error:?} before its end"),
+    }
+    drop(first);
+    let live = database.watch_query(query, Arc::new(Async(heard)));
     within(live.wait_for_initial_load()).await.unwrap();
-    let mut sinks = Vec::new();
-    crate::test_wait::yield_until("the replacing connection opened", || { sinks.extend(subscriptions.try_iter()); sinks.len() >= 2 }).await;
-    for sink in &sinks {
+    let mut replacements = vec![within(subscriptions.recv()).await.unwrap()];
+    while let Ok(sink) = subscriptions.try_recv() { replacements.push(sink); }
+    for sink in replacements.iter().chain([&held]) {
         sink.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "session_unknown".into() });
     }
-    let first = within(received.recv()).await.expect("the connection that replaced the ended one delivers the failure");
-    assert!(matches!(first, DbError::Session { detail, .. } if detail == "session_unknown"));
-    assert!(within(async { tokio::time::sleep(Duration::from_millis(200)).await; received.try_recv().ok() }).await.is_none(), "the failure was delivered more than once");
+    let Heard::Failure(error) = within(received.recv()).await.expect("the query opened after the reset hears the failure") else { panic!("the query ended") };
+    assert!(matches!(error, DbError::Session { detail, .. } if detail == "session_unknown"));
+    crate::ffi::settled(&database).await.unwrap();
+    assert!(received.try_recv().is_err(), "the failure was delivered more than once");
     live.cancel();
 }

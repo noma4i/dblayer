@@ -57,11 +57,11 @@ async fn inv_wait_05_frames_postpone_the_single_deadline_without_timer_wakes() {
     peer.handshake(&kat, &config, challenge).await;
     let subscribed = within(peer.next()).await;
     peer.emit(json!({"t":"subscribed", "id":subscribed["id"]}));
-    assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Ready)));
+    assert!(matches!(within(subscription.next_event()).await, Some(SubscriptionEvent::Ready)));
     for number in 0..10 {
         tokio::time::advance(Duration::from_secs(3)).await;
         peer.emit(json!({"t":"next", "id":subscribed["id"], "result":{"data":{"sample":{"id":number}}}}));
-        assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Next(_))));
+        assert!(matches!(within(subscription.next_event()).await, Some(SubscriptionEvent::Next(_))));
         assert_eq!(cable.wake_count(), 0, "traffic caused a timer wake at frame {number}");
     }
     tokio::time::advance(Duration::from_secs(25)).await;
@@ -80,7 +80,7 @@ async fn invalid_frames_preserve_failure_history() {
         json!({"t":"pong", "ts":999}),
     ] {
         let mut session = new_session();
-        let _subscription = session.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({})));
+        let _subscription = session.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({})), None);
         for _ in 0..3 { ready_then_close(&mut session).await; }
         ready(&mut session);
         tokio::time::advance(Duration::from_secs(25)).await;
@@ -101,7 +101,7 @@ async fn invalid_frames_preserve_failure_history() {
 async fn independent_cable_sessions_do_not_retry_in_lockstep() {
     let mut sessions: Vec<_> = (0..3).map(|_| {
         let mut session = new_session();
-        let subscription = session.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({})));
+        let subscription = session.subscribe(GraphQLRequest::new("subscription { x }", "X", json!({})), None);
         (session, subscription)
     }).collect();
     let delays: Vec<_> = sessions.iter_mut().map(|(session, _)| { session.open_failed(); backoff_delay(session) }).collect();
@@ -115,7 +115,7 @@ async fn multiplexes_registered_subscriptions_and_cancels_only_the_selected_id()
     let fixtures: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../../../fixtures/change-events/subscriptions.json")).unwrap();
     for fixture in &fixtures {
         let request = GraphQLRequest::new(fixture["query"].as_str().unwrap(), fixture["operationName"].as_str().unwrap(), fixture["variables"].clone());
-        let (id, subscription) = session.subscribe(request);
+        let (id, subscription) = session.subscribe(request, None);
         subscriptions.push((id, subscription));
     }
     let frames = ready(&mut session);
@@ -124,9 +124,9 @@ async fn multiplexes_registered_subscriptions_and_cancels_only_the_selected_id()
         assert_eq!(frame["t"], "subscribe");
         assert_eq!(frame["id"], *id);
         session.receive(json!({"t":"subscribed", "id":id})).unwrap();
-        assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Ready)));
+        assert!(matches!(within(subscription.next_event()).await, Some(SubscriptionEvent::Ready)));
         session.receive(json!({"t":"next", "id":id, "result":fixture["result"]})).unwrap();
-        let Some(SubscriptionEvent::Next(response)) = within(subscription.next()).await else { panic!("missing next") };
+        let Some(SubscriptionEvent::Next(response)) = within(subscription.next_event()).await else { panic!("missing next") };
         assert_eq!(response.data.unwrap(), fixture["result"]["data"]);
     }
     let id = subscriptions[0].0.clone();
@@ -145,7 +145,7 @@ async fn ping_deadline_exists_only_for_live_subscriptions_and_expires_without_po
         tokio::time::advance(Duration::from_secs(25)).await;
         assert!(session.deadline().is_none());
     }
-    let (id, _subscription) = session.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({})));
+    let (id, _subscription) = session.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({})), None);
     ready(&mut session);
     let deadline = session.deadline().unwrap();
     assert_eq!(deadline - session.now(), Duration::from_secs(25));
@@ -164,22 +164,22 @@ async fn ping_deadline_exists_only_for_live_subscriptions_and_expires_without_po
 async fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry() {
     for (code, reason, terminal) in [(1000, "LOGGED_OUT", true), (4403, "ACCOUNT_LOCKED", true), (4503, "SERVER_RESTART", false)] {
         let mut session = new_session();
-        let (_, mut subscription) = session.subscribe(request());
+        let (_, mut subscription) = session.subscribe(request(), None);
         session.closed(code, reason);
         assert_eq!(session.deadline().is_none(), terminal, "{code} {reason}");
         if terminal {
-            let next = tokio::time::timeout(Duration::from_secs(1), subscription.next()).await.expect("terminal failure delivered");
+            let next = tokio::time::timeout(Duration::from_secs(1), subscription.next_event()).await.expect("terminal failure delivered");
             let Some(SubscriptionEvent::Failed(failure)) = next else { panic!("terminal failure") };
             let close = failure.close.clone().unwrap();
             assert_eq!((close.code, close.terminal), (code, true));
             assert!(matches!(failure.error, crate::transport::TransportError::Session { .. }));
-            assert!(tokio::time::timeout(Duration::from_secs(1), subscription.next()).await.expect("subscription ends").is_none());
+            assert!(tokio::time::timeout(Duration::from_secs(1), subscription.next_event()).await.expect("subscription ends").is_none());
             assert!(ready(&mut session).is_empty());
-            let (_, mut late) = session.subscribe(request());
-            assert!(matches!(tokio::time::timeout(Duration::from_secs(1), late.next()).await.expect("late failure delivered"), Some(SubscriptionEvent::Failed(_))));
+            let (_, mut late) = session.subscribe(request(), None);
+            assert!(matches!(tokio::time::timeout(Duration::from_secs(1), late.next_event()).await.expect("late failure delivered"), Some(SubscriptionEvent::Failed(_))));
             assert!(!session.is_connecting());
             session.resume();
-            let _signed_in = session.subscribe(request());
+            let _signed_in = session.subscribe(request(), None);
             assert!(session.is_connecting());
         } else {
             reopen(&mut session).await;
@@ -192,7 +192,7 @@ async fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry
 async fn offline_creates_no_work_and_online_resumes_the_demanded_connection() {
     let online = Connectivity::new(false);
     let mut session = CableSession::new(Arc::new(crate::pacing::TestClock::default()), online.clone());
-    let _subscription = session.subscribe(request());
+    let _subscription = session.subscribe(request(), None);
     assert!(!session.is_connecting() && session.deadline().is_none());
     online.set_online(true);
     session.connectivity();
@@ -212,7 +212,7 @@ async fn failed_openings_increase_backoff_only_with_online_subscribers() {
     let mut retry = CableSession::new(Arc::new(crate::pacing::TestClock::default()), online.clone());
     retry.open_failed();
     assert_eq!(retry.deadline(), None);
-    let (_, subscription) = retry.subscribe(request());
+    let (_, subscription) = retry.subscribe(request(), None);
     retry.open_failed();
     assert!(within_jitter(backoff_delay(&retry), 1));
     reopen(&mut retry).await;
@@ -237,7 +237,7 @@ async fn failed_openings_increase_backoff_only_with_online_subscribers() {
     retry.cancelled().await;
     retry.open_failed();
     assert_eq!(retry.deadline(), None);
-    let (_, _subscription) = retry.subscribe(request());
+    let (_, _subscription) = retry.subscribe(request(), None);
     retry.open_failed();
     assert!(within_jitter(backoff_delay(&retry), 2));
     reopen(&mut retry).await;
@@ -249,7 +249,7 @@ async fn failed_openings_increase_backoff_only_with_online_subscribers() {
 #[tokio::test(start_paused = true)]
 async fn closes_right_after_ready_grow_jittered_delays_up_to_the_cap() {
     let mut session = new_session();
-    let _subscription = session.subscribe(request());
+    let _subscription = session.subscribe(request(), None);
     let mut previous = Duration::ZERO;
     let mut below_ceiling = false;
     for ceiling in [1u64, 2, 4, 8, 16, 30, 30, 30] {
@@ -271,7 +271,7 @@ async fn first_server_frame_after_ready_resets_attempts_and_other_frames_do_not(
         (None, false),
     ] {
         let mut session = new_session();
-        let _subscription = session.subscribe(request());
+        let _subscription = session.subscribe(request(), None);
         for _ in 0..3 { ready_then_close(&mut session).await; }
         ready(&mut session);
         if frame.as_ref().is_some_and(|body| body["t"] == "pong") {

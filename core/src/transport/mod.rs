@@ -32,9 +32,10 @@ pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetrySnapshot};
 pub use session_code::SessionCode;
 pub use subscription::{
-    ServerSubscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind,
+    ServerSubscription, SubscriptionClose, SubscriptionEvent, EpochEvent, SubscriptionSender, SubscriptionFailure, SubscriptionFailureKind,
     ServerSubscriptionHandle,
 };
+pub(crate) use subscription::{connection_lifecycle, subscription_channel};
 
 #[async_trait]
 pub trait Transport: Send + Sync {

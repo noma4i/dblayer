@@ -519,7 +519,7 @@ async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitt
 
 fn group(name: &str) -> (String, String) { (json!({"name": name}).to_string(), "{}".into()) }
 
-/// K01 (B1, old lines store/mod.rs ensure_pinned_epoch and lifecycle/mod.rs try_begin): a send that passed its epoch check and waits before its SQL commit lands before the next sign-in changes the epoch, and the operation of the account that left never goes out for the account that came.
+/// K01 (B1, J02): a send that passed its epoch check and waits before its SQL commit lands before the next sign-in changes the epoch, and its announcement is held until the session start finished: the operation of the account that left is in the cutoff and never goes out for the account that came.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_next_account() {
     let rig = Rig::encrypted().await;
@@ -532,6 +532,14 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     let (entered, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release) = std::sync::mpsc::channel::<()>();
     *store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { entered.send(()).unwrap(); let _ = release.recv_timeout(std::time::Duration::from_secs(20)); }));
+    let (committed, committed_rx) = std::sync::mpsc::channel();
+    let (publish_tx, publish_release) = std::sync::mpsc::channel::<()>();
+    let (committed, publish_release, held) = (Mutex::new(committed), Mutex::new(publish_release), AtomicBool::new(true));
+    *store.after_commit.lock().unwrap() = Some(Box::new(move |result| {
+        if result.queue_operations.is_empty() || !held.swap(false, Ordering::SeqCst) { return; }
+        committed.lock().unwrap().send(()).unwrap();
+        let _ = publish_release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(20));
+    }));
     let sender = { let database = rig.database.clone(); tokio::spawn(async move { database.send(message(epoch, "late", 9)).await }) };
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
     let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
@@ -540,9 +548,11 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while the commit of the send was held");
     release_tx.send(()).unwrap();
+    tokio::task::spawn_blocking(move || committed_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
+    assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
+    publish_tx.send(()).unwrap();
     let sent = bound(sender).await.unwrap();
     assert!(sent.is_ok() || matches!(sent, Err(DbError::Interrupted { .. })), "the send ended with {:?}", sent.as_ref().err());
-    assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
     assert_ne!(rig.database.session_epoch(), epoch);
     assert!(operations_begun(&rig) > begun_before, "the send did not commit before the epoch changed");
     settle(&rig).await;

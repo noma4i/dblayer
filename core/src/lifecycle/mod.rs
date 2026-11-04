@@ -416,6 +416,8 @@ impl Lifecycle {
 
     pub(crate) fn snapshot(&self) -> Snapshot { crate::db::locked(&self.state).snapshot().clone() }
 
+    pub(crate) fn published_epoch(&self) -> u64 { self.changed.borrow().session_epoch }
+
     /// Whether the epoch is the one now and the database is open. It reads the published snapshot and takes no library lock, so the writer may call it.
     pub(crate) fn admits_epoch(&self, epoch: u64) -> bool {
         let published = self.changed.borrow();

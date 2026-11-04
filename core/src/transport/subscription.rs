@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use super::request::Response;
 
@@ -95,9 +95,41 @@ impl SubscriptionEvent {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct EpochEvent {
+    pub epoch: Option<u64>,
+    pub event: SubscriptionEvent,
+}
+
+pub(crate) fn connection_lifecycle() -> Option<Arc<crate::lifecycle::Lifecycle>> {
+    crate::lifecycle::Epoch::ambient().map(|epoch| epoch.life().clone())
+}
+
+#[derive(Clone)]
+pub struct SubscriptionSender {
+    events: UnboundedSender<EpochEvent>,
+    life: Option<Arc<crate::lifecycle::Lifecycle>>,
+}
+
+impl SubscriptionSender {
+    pub fn send(&self, event: SubscriptionEvent) -> bool {
+        let epoch = self.life.as_ref().map(|life| life.published_epoch());
+        crate::db::lock::effect(|| self.events.send(EpochEvent { epoch, event }).is_ok())
+    }
+
+    #[cfg(any(test, feature = "stress"))]
+    pub(crate) fn send_from(&self, epoch: Option<u64>, event: SubscriptionEvent) -> bool {
+        crate::db::lock::effect(|| self.events.send(EpochEvent { epoch, event }).is_ok())
+    }
+}
+
+pub(crate) fn subscription_channel(life: Option<Arc<crate::lifecycle::Lifecycle>>) -> (SubscriptionSender, UnboundedReceiver<EpochEvent>) {
+    let (events, receiver) = mpsc::unbounded_channel();
+    (SubscriptionSender { events, life }, receiver)
+}
+
 pub struct ServerSubscription {
-    events: UnboundedReceiver<SubscriptionEvent>,
-    kept: std::collections::VecDeque<SubscriptionEvent>,
+    events: UnboundedReceiver<EpochEvent>,
     handle: ServerSubscriptionHandle,
     #[cfg(any(test, feature = "stress"))]
     on_next: Option<Box<dyn Fn(ConsumerSignal) + Send + Sync>>,
@@ -122,10 +154,9 @@ impl Drop for Waiting<'_> {
 }
 
 impl ServerSubscription {
-    pub fn new(events: UnboundedReceiver<SubscriptionEvent>, handle: ServerSubscriptionHandle) -> Self {
+    pub fn new(events: UnboundedReceiver<EpochEvent>, handle: ServerSubscriptionHandle) -> Self {
         Self {
             events,
-            kept: std::collections::VecDeque::new(),
             handle,
             #[cfg(any(test, feature = "stress"))]
             on_next: None,
@@ -138,16 +169,13 @@ impl ServerSubscription {
         self
     }
 
-    pub async fn next(&mut self) -> Option<SubscriptionEvent> {
+    pub async fn next(&mut self) -> Option<EpochEvent> {
         #[cfg(any(test, feature = "stress"))]
         let _waiting = self.on_next.as_deref().map(|hook| {
             hook(ConsumerSignal::Waiting);
             Waiting(hook)
         });
-        let event = match self.kept.pop_front() {
-            Some(event) => Some(event),
-            None => self.events.recv().await,
-        };
+        let event = self.events.recv().await;
         #[cfg(any(test, feature = "stress"))]
         if let (Some(hook), Some(_)) = (&self.on_next, &event) {
             hook(ConsumerSignal::Received);
@@ -155,15 +183,9 @@ impl ServerSubscription {
         event
     }
 
-    pub(crate) fn discard_queued_responses(&mut self) {
-        while let Ok(event) = self.events.try_recv() {
-            if !matches!(event, SubscriptionEvent::Next(_)) {
-                self.kept.push_back(event);
-                continue;
-            }
-            #[cfg(any(test, feature = "stress"))]
-            if let Some(hook) = &self.on_next { hook(ConsumerSignal::Received); }
-        }
+    #[cfg(test)]
+    pub async fn next_event(&mut self) -> Option<SubscriptionEvent> {
+        self.next().await.map(|frame| frame.event)
     }
 
     #[cfg(test)]

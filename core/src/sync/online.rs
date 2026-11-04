@@ -18,7 +18,7 @@ impl Sync {
                 if let Some(probe) = probe { probe(); }
             }
             if !online {
-                let newest = self.inner.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
+                let newest = self.inner.newest_operation();
                 if let Some(newest) = newest {
                     let mut lost = locked(&self.inner.network_lost);
                     *lost = (*lost).max(newest);

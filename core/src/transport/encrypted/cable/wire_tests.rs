@@ -273,7 +273,7 @@ async fn terminal_open_refusals_are_not_retried() {
         tokio::time::advance(std::time::Duration::from_secs(2)).await;
         cable.settled().await.unwrap();
         assert_eq!(connect.1.load(Ordering::SeqCst), 1, "HTTP {status} opened the socket again");
-        let Some(SubscriptionEvent::Failed(failure)) = within(subscription.next()).await else { panic!("terminal refusal") };
+        let Some(SubscriptionEvent::Failed(failure)) = within(subscription.next_event()).await else { panic!("terminal refusal") };
         assert!(matches!(failure.error, TransportError::Session { .. }));
         assert_eq!(cable.wake_count(), 0);
     }
@@ -289,7 +289,7 @@ async fn terminal_open_refusals_are_not_retried() {
     tokio::time::advance(std::time::Duration::from_secs(2)).await;
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 1, "rejected channel opened again");
-    let Some(SubscriptionEvent::Failed(failure)) = within(subscription.next()).await else { panic!("terminal channel refusal") };
+    let Some(SubscriptionEvent::Failed(failure)) = within(subscription.next_event()).await else { panic!("terminal channel refusal") };
     assert!(matches!(failure.error, TransportError::Session { .. }));
     assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
     assert_eq!(cable.wake_count(), 0);
@@ -375,7 +375,7 @@ async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retri
         peer.handshake(&kat, &config, challenge).await;
         let subscribe = within(peer.next()).await;
         peer.emit(json!({"t":"subscribed", "id":subscribe["id"]}));
-        assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Ready)));
+        assert!(matches!(within(subscription.next_event()).await, Some(SubscriptionEvent::Ready)));
         if reason == "LOGGED_OUT" { peer.emit(json!({"t":"closing", "code":code, "reason":reason})); }
         else { peer.incoming.send(SocketEvent::Closed { code, reason:reason.into() }).unwrap(); }
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
@@ -384,10 +384,10 @@ async fn every_close_keeps_credentials_and_revoke_stops_while_redis_outage_retri
         assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
         assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
         if terminal {
-            let Some(SubscriptionEvent::Failed(failure)) = tokio::time::timeout(std::time::Duration::from_secs(1), subscription.next()).await.unwrap() else { panic!("terminal {code}") };
+            let Some(SubscriptionEvent::Failed(failure)) = tokio::time::timeout(std::time::Duration::from_secs(1), subscription.next_event()).await.unwrap() else { panic!("terminal {code}") };
             assert_eq!(failure.close.unwrap().code, code);
             assert!(matches!(failure.error, TransportError::Session { .. }));
-            assert!(within(subscription.next()).await.is_none());
+            assert!(within(subscription.next_event()).await.is_none());
             tokio::time::advance(std::time::Duration::from_secs(2)).await;
             cable.settled().await.unwrap();
             assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
@@ -409,14 +409,14 @@ async fn authentication_refusal_before_ready_stops_without_reopening() {
     let cable = CableSubscriptions::new(config, Arc::new(move || Ok(credential.clone())), connect.clone(), Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
     let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "Changes", json!({}))).await.unwrap();
     incoming.send(SocketEvent::Closed { code:4401, reason:"UNAUTHENTICATED".into() }).unwrap();
-    let event = tokio::time::timeout(std::time::Duration::from_secs(1), subscription.next()).await.expect("terminal refusal");
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), subscription.next_event()).await.expect("terminal refusal");
     assert!(matches!(event, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error:TransportError::Session { .. }, .. }))));
     tokio::time::advance(std::time::Duration::from_secs(120)).await;
     cable.settled().await.unwrap();
     let mut late = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "LateChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
-    assert!(matches!(within(late.next()).await, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error: TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }, .. }))));
+    assert!(matches!(within(late.next_event()).await, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error: TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }, .. }))));
     cable.resume();
     let _signed_in = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "SignedInChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
@@ -556,7 +556,7 @@ async fn encrypted_subscription_sends_one_ping_then_closes_on_missing_pong() {
     assert_eq!(subscribe["t"], "subscribe");
     let id = subscribe["id"].clone();
     peer.emit(json!({"t":"subscribed", "id":id}));
-    assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Ready)));
+    assert!(matches!(within(subscription.next_event()).await, Some(SubscriptionEvent::Ready)));
     tokio::time::advance(std::time::Duration::from_secs(25)).await;
     assert_eq!(within(peer.next()).await["t"], "ping");
     assert_eq!(cable.wake_count(), 1);

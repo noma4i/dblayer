@@ -157,7 +157,11 @@ impl Store {
             let hook = self.after_network_check.lock().unwrap_or_else(|error| error.into_inner()).take();
             if let Some(hook) = hook { hook(); }
         }
-        attempt(inner, envelope, now_ms)
+        let committed = attempt(inner, envelope, now_ms)?;
+        if let Some(newest) = committed.0.queue_operations.iter().filter(|(_, entry)| entry.is_some()).map(|(seq, _)| *seq).max() {
+            self.newest_operation.fetch_max(newest, std::sync::atomic::Ordering::SeqCst);
+        }
+        Ok(committed)
     }
 
     fn finish<'a>(&'a self, mut inner: std::sync::MutexGuard<'_, Inner>, result: (CommitResult, u32)) -> Committed<'a> {

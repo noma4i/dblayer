@@ -179,10 +179,16 @@ impl Inner {
         Ok(report)
     }
 
+    pub(crate) fn newest_operation(&self) -> Option<i64> {
+        let published = self.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
+        let committed = self.db.shared.store.newest_committed_operation();
+        published.into_iter().chain((committed > 0).then_some(committed)).max()
+    }
+
     /// Marks every pending operation as belonging to the account that left when another identity takes the session. They are all committed before the session start: the commit line orders them.
     pub(crate) fn account_changed(&self, session: Option<&str>) {
         let _line = self.network_line.enter();
-        let newest = self.operation_queue().ok().and_then(|queue| locked(queue).pending.iter().next_back().copied());
+        let newest = self.newest_operation();
         let mut account = locked(&self.account);
         let leaving = account.0.is_some() && session.is_some() && account.0.as_deref() != session;
         if session.is_some() { account.0 = session.map(str::to_string); }

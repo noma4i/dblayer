@@ -20,10 +20,10 @@ impl CableSession {
         Self { lifecycle: Lifecycle::new(clock, online), next_id: 0, cancellations, cancel }
     }
 
-    pub fn subscribe(&mut self, request: GraphQLRequest) -> (String, ServerSubscription) {
+    pub fn subscribe(&mut self, request: GraphQLRequest, life: Option<Arc<crate::lifecycle::Lifecycle>>) -> (String, ServerSubscription) {
         self.next_id += 1;
         let id = self.next_id.to_string();
-        let (events, receiver) = mpsc::unbounded_channel();
+        let (events, receiver) = crate::transport::subscription_channel(life);
         if let Some(failure) = self.lifecycle.refusal() {
             crate::db::lock::effect(|| { let _ = events.send(SubscriptionEvent::Failed(failure.clone())); });
         } else {

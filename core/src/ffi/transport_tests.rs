@@ -2,14 +2,12 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::mpsc;
-
 use super::SubscriptionSink;
-use crate::transport::{SubscriptionEvent, SubscriptionFailureKind};
+use crate::transport::{EpochEvent, SubscriptionEvent, SubscriptionFailureKind};
 use crate::test_wait::{recv_within, within};
 
-fn sink() -> (SubscriptionSink, mpsc::UnboundedReceiver<SubscriptionEvent>) {
-    let (sender, receiver) = mpsc::unbounded_channel();
+fn sink() -> (SubscriptionSink, tokio::sync::mpsc::UnboundedReceiver<EpochEvent>) {
+    let (sender, receiver) = crate::transport::subscription_channel(None);
     (SubscriptionSink::new(crate::ffi::database::executor().unwrap().handle().clone(), sender, |_| Box::pin(async {})), receiver)
 }
 
@@ -18,10 +16,10 @@ fn subscription_failures_keep_graphql_extensions() {
     let (sink, mut receiver) = sink();
     let extensions = crate::transport::GraphqlExtensions { code: Some("NOT_FOUND".into()), transaction_disposition: Some(crate::transport::TransactionDisposition::Keep), fields: Default::default() };
     sink.failed(super::DbError::Graphql { messages: vec!["missing".into()], extensions: Some(extensions.clone()) });
-    let Ok(SubscriptionEvent::Failed(failure)) = receiver.try_recv() else { panic!("missing failure") };
+    let Ok(EpochEvent { event: SubscriptionEvent::Failed(failure), .. }) = receiver.try_recv() else { panic!("missing failure") };
     assert!(matches!(failure.error, crate::transport::TransportError::Graphql { extensions: Some(found), .. } if found == extensions));
     sink.event(r#"{"errors":[{"message":"missing","extensions":{"code":"NOT_FOUND","transactionDisposition":"KEEP"}}]}"#.into()).unwrap();
-    let Ok(SubscriptionEvent::Failed(failure)) = receiver.try_recv() else { panic!("missing frame failure") };
+    let Ok(EpochEvent { event: SubscriptionEvent::Failed(failure), .. }) = receiver.try_recv() else { panic!("missing frame failure") };
     assert!(matches!(failure.error, crate::transport::TransportError::Graphql { extensions: Some(found), .. } if found == extensions));
 }
 
@@ -40,7 +38,7 @@ fn subscription_sink_wakes_its_receiver_with_the_sender_lock_free() {
     assert!(receiver.poll_recv(&mut context).is_pending());
     sink.ready();
     assert_eq!((probe.wakes(), probe.violations()), (1, 0), "an event wakes the receiver with the sender lock free");
-    assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(Some(SubscriptionEvent::Ready))));
+    assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(Some(EpochEvent { event: SubscriptionEvent::Ready, .. }))));
     assert!(receiver.poll_recv(&mut context).is_pending());
     sink.closed();
     assert_eq!((probe.wakes(), probe.violations()), (2, 0), "closing wakes the receiver with the sender lock free");
@@ -95,14 +93,14 @@ fn a_frame_without_data_fails_the_subscription_as_internal_and_an_enveloped_fram
 
     let rejected = sink.event(r#"{"messageCreated":{"message":{"id":"9"}}}"#.to_string());
     let failure = match receiver.try_recv() {
-        Ok(SubscriptionEvent::Failed(failure)) => Some(failure),
+        Ok(EpochEvent { event: SubscriptionEvent::Failed(failure), .. }) => Some(failure),
         _ => None,
     };
     assert!(rejected.is_err());
     assert_eq!(failure.map(|failure| failure.kind), Some(SubscriptionFailureKind::Internal));
 
     sink.event(r#"{"data":{"messageCreated":{"message":{"id":"9"}}}}"#.to_string()).unwrap();
-    assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Next(_))));
+    assert!(matches!(receiver.try_recv(), Ok(EpochEvent { event: SubscriptionEvent::Next(_), .. })));
 }
 
 #[test]
@@ -110,7 +108,7 @@ fn inv_panic_01_a_subscription_sink_survives_a_poisoned_lock() {
     let (sink, mut receiver) = sink();
     crate::db::fixtures::poison(&sink.sender);
     sink.ready();
-    assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Ready)));
+    assert!(matches!(receiver.try_recv(), Ok(EpochEvent { event: SubscriptionEvent::Ready, .. })));
     sink.closed();
 }
 

@@ -4,13 +4,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tokio::sync::mpsc::{self, UnboundedSender};
 use tokio::sync::Notify;
 
 use super::error::TransportError;
 use super::put::{PutRequest, PutResponse};
 use super::request::{GraphQLError, GraphQLRequest, Response};
-use super::subscription::{ConsumerSignal, ServerSubscription, SubscriptionEvent, ServerSubscriptionHandle};
+use super::subscription::{ConsumerSignal, ServerSubscription, SubscriptionEvent, SubscriptionSender, ServerSubscriptionHandle};
 use super::Transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,7 +112,7 @@ struct MockState {
     puts_peak: usize,
     replies: HashMap<String, VecDeque<Reply>>,
     scripts: HashMap<String, Vec<SubscriptionEvent>>,
-    senders: HashMap<String, Vec<(usize, UnboundedSender<SubscriptionEvent>)>>,
+    senders: HashMap<String, Vec<(usize, SubscriptionSender)>>,
     streams: Vec<Stream>,
     cancellations: HashMap<String, usize>,
     calls: Vec<RecordedCall>,
@@ -167,12 +166,27 @@ impl MockTransport {
     }
 
     pub fn emit(&self, operation_name: &str, event: SubscriptionEvent) {
+        self.deliver(operation_name, None, None, event);
+    }
+
+    pub fn emit_on(&self, operation_name: &str, connection: usize, event: SubscriptionEvent) {
+        self.deliver(operation_name, Some(connection), None, event);
+    }
+
+    pub fn emit_from_epoch(&self, operation_name: &str, epoch: Option<u64>, event: SubscriptionEvent) {
+        self.deliver(operation_name, None, Some(epoch), event);
+    }
+
+    fn deliver(&self, operation_name: &str, connection: Option<usize>, epoch: Option<Option<u64>>, event: SubscriptionEvent) {
         let mut state = self.lock();
         let senders = state.senders.get(operation_name).cloned().unwrap_or_default();
-        for (index, sender) in senders {
-            if sender.send(event.clone()).is_ok() {
-                state.streams[index].sent += 1;
-            }
+        for (position, (index, sender)) in senders.into_iter().enumerate() {
+            if connection.is_some_and(|wanted| wanted != position) { continue; }
+            let sent = match epoch {
+                Some(epoch) => sender.send_from(epoch, event.clone()),
+                None => sender.send(event.clone()),
+            };
+            if sent { state.streams[index].sent += 1; }
         }
         drop(state);
         self.wake.notify_waiters();
@@ -361,7 +375,7 @@ impl Transport for MockTransport {
 
     async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         self.record(CallKind::Subscription, &request);
-        let (sender, receiver) = mpsc::unbounded_channel();
+        let (sender, receiver) = super::subscription_channel(super::connection_lifecycle());
         let name = request.operation_name;
         let mut state = self.lock();
         let index = state.streams.len();

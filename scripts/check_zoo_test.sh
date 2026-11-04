@@ -36,6 +36,9 @@ expect_red 'fn bypass(inner: &Inner) { inner.connection.execute("DELETE FROM t",
 expect_red 'fn bypass(inner: &Inner) { let connection = &inner.connection; connection.execute("DELETE FROM t", []); }'
 expect_red 'fn prune(connection: &Connection) { connection.execute("DELETE FROM t", []); }
 fn bypass(inner: &Inner) { prune(&inner.connection); }'
+expect_red 'fn prune(now: i64, connection: &Connection) { connection.execute("DELETE FROM t", []); }
+fn bypass(inner: &Inner) { prune(5, &inner.connection); }'
+expect_red 'fn bypass(inner: &Inner) { let first = &inner.connection; let second = first; second.execute("DELETE FROM t", []); }'
 expect_red 'fn bypass(store: &Store, inner: &Inner) { inner.connection.execute("DELETE FROM t", []); store.write(&epoch, |connection| { connection.execute("DELETE FROM u", []) }); }'
 expect_red 'fn bypass(store: &Store) { store.read_locked(|connection| { connection.execute("DELETE FROM t", []) }); }'
 

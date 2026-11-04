@@ -12,7 +12,7 @@ use crate::pacing::{Backoff, Debounce, RetryPolicy};
 use crate::store::PlanCommitError;
 use crate::syncstate::operation_keys;
 use crate::transport::{
-    EventSpec, GraphQLRequest, Response, ServerSubscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFailure,
+    EpochEvent, EventSpec, GraphQLRequest, Response, ServerSubscription, SubscriptionEvent, SubscriptionFailureKind, SubscriptionFailure,
     TransportError,
 };
 use crate::value::read_id;
@@ -627,7 +627,8 @@ impl Feed {
                         self.opening(Err(SyncError::Event("subscription closed".into())));
                         return (SubscriptionFailureKind::Transport, None, Self::drain(pending));
                     }
-                    Some(SubscriptionEvent::Ready) => {
+                    Some(EpochEvent { epoch, .. }) if epoch != Some(self.epoch.value()) => continue,
+                    Some(EpochEvent { event: SubscriptionEvent::Ready, .. }) => {
                         if generation != self.inner.db.generation() { continue; }
                         self.opening(Ok(()));
                         lifecycle.handle(Event::Ready);
@@ -641,11 +642,11 @@ impl Feed {
                             }
                         }
                     }
-                    Some(SubscriptionEvent::Next(response)) => {
+                    Some(EpochEvent { event: SubscriptionEvent::Next(response), .. }) => {
                         if generation != self.inner.db.generation() { continue; }
                         lifecycle.handle(Event::Next);
                         self.publish(lifecycle);
-                        let received = self.inner.db.shared.store.lifecycle.snapshot().stamp();
+                        let received = crate::lifecycle::Stamp { generation, session_epoch: self.epoch.value() };
                         let invalidation = self.invalidation(&response, generation, received).await;
                         let mut items = Vec::new();
                         for feed in self.recipients(received) {
@@ -667,7 +668,7 @@ impl Feed {
                         }
                         self.apply_active(items).await;
                     }
-                    Some(SubscriptionEvent::Failed(failure)) => return (failure.kind, Some(failure), Self::drain(pending)),
+                    Some(EpochEvent { event: SubscriptionEvent::Failed(failure), .. }) => return (failure.kind, Some(failure), Self::drain(pending)),
                 },
                 _ = self.inner.clock.sleep(wait), if deadline.is_some() => {
                     let mut items = Vec::new();
@@ -730,7 +731,6 @@ impl Feed {
                             biased;
                             change = invalidated(&mut resets) => match change {
                                 Some(crate::lifecycle::Invalidated::Rebound(snapshot)) => {
-                                    connection.discard_queued_responses();
                                     self.epoch = crate::lifecycle::Epoch::new(&self.inner.db.shared.store.lifecycle, snapshot.session_epoch);
                                 }
                                 _ => { self.mark(|status| status.connected = false); lifecycle = Lifecycle::new(self.backoff); continue 'open; }
