@@ -186,7 +186,8 @@ impl Database {
         let sync = self.sync.clone();
         let epoch = self.streams.snapshot().session_epoch;
         let resume_client = client.clone();
-        let (answer, after) = self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "session resume", true, |admitted| async move {
+        let restore = !client.logout_pending().map_err(typed)?;
+        let (answer, after) = self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "session resume", restore, |admitted| async move {
             cancellable(async move { resume(&admitted, resume_client, sync).await }).await?
         }).await?;
         client.conclude(epoch, after).await.map_err(typed)?;

@@ -30,6 +30,8 @@
 - A send needs a signed-in session.
 - An action that is not a durable command is refused and rolled back while the network is away, after a reopen and when another account signs in.
 - A pinned write checks its epoch and commits while the lifecycle holds its commit line.
+- A session end, a reset and a close end the work of the old epoch at once and do not wait for it. A late write of the old epoch is refused at its commit.
+- A load, `loadMore` or node read whose answer arrives after a reset of model caches ends with `Interrupted` and stores nothing. A send of another model goes on.
 - `cancel` of a stream does not wait for the reader; no delivery is admitted after it.
 - A task started by a call of one session epoch commits and sends in that epoch only.
 - A stream reader keeps the newest 256 deliveries; the dropped ones arrive as `missed` and a list asks for a new snapshot.
@@ -57,6 +59,7 @@
 - The DSL refuses a name that ends with `_`.
 
 ### Fixed
+- `sessionResume` finishes a logout whose credential could not be cleared, and clears it.
 - A stream reader receives the exact count of dropped deliveries, also when the stream ends.
 - A model event count the buffer dropped reaches the reader in full.
 - A window opened after a failed load of its query no longer shows that error.

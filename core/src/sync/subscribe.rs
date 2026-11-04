@@ -834,7 +834,7 @@ impl Inner {
                 self.connectivity.online().await;
                 let lifecycle = &self.db.shared.store.lifecycle;
                 let admitted = loop {
-                    match self.db.shared.store.lifecycle.admit_for_session(crate::lifecycle::Origin::Session, "subscription open") {
+                    match self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "subscription open") {
                         Ok(admitted) => break admitted,
                         Err(_) if !lifecycle.admission(crate::lifecycle::Origin::Session).await => return None,
                         Err(_) => {}

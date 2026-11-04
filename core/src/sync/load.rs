@@ -227,7 +227,10 @@ impl Inner {
     }
 
     pub(crate) async fn fetch(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
-        self.fetch_in(resolved, cursor, force, admitted).await
+        match self.fetch_in(resolved, cursor, force, admitted).await {
+            Ok(outcome) if resolved.origin == crate::lifecycle::Origin::Explicit && outcome.status == LoadStatus::Discarded(DiscardReason::StaleGeneration) => Err(crate::lifecycle::Ended.into()),
+            result => result,
+        }
     }
 
     async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted) -> FlightResult {

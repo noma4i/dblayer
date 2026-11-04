@@ -176,7 +176,7 @@ impl Sync {
 impl Inner {
     pub(crate) fn resume_on_event(self: &Arc<Self>) {
         if self.connectivity.is_online() {
-            if let Ok(admitted) = self.db.shared.store.lifecycle.admit_for_session(crate::lifecycle::Origin::Session, "resume") {
+            if let Ok(admitted) = self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "resume") {
                 let _ = self.request_resume(&admitted, Cause::Event, None);
             }
         }

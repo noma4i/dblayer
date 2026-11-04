@@ -32,7 +32,7 @@ impl Sync {
         let extracted = extract(&data, root, &RemoteShape::List { coverage: Coverage::Complete }, None)?;
         let normalized = normalize_nodes(&self.inner.db, model, &extracted.nodes)?;
         if let Landed::Discarded(_) = self.inner.land_rows(admitted, model, &normalized, &attempt)? {
-            return Ok(Vec::new());
+            return Err(crate::lifecycle::Ended.into());
         }
         let mut rows: Vec<Row> = Vec::new();
         for id in &normalized.order {

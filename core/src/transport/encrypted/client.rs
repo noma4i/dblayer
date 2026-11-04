@@ -174,7 +174,7 @@ pub(crate) enum After {
 
 impl EncryptedClient {
     pub(super) fn admit(&self, target: &'static str) -> Result<Admitted, TransportError> {
-        Ok(self.db.shared.store.lifecycle.admit_for_session(Origin::Explicit, target)?)
+        Ok(self.db.shared.store.lifecycle.admit(Origin::Explicit, target)?)
     }
 
     pub(super) fn validate(&self, admitted: &Admitted) -> Result<(), TransportError> {
@@ -314,6 +314,10 @@ impl EncryptedClient {
             let body = serde_json::from_str(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))?;
             Ok((pending.path, body))
         }).transpose()
+    }
+
+    pub(crate) fn logout_pending(&self) -> Result<bool, TransportError> {
+        Ok(self.read_connection(state::pending)?.is_some_and(|pending| pending.path == self.config.endpoints.logout))
     }
 
     pub(crate) fn pending_owner(&self) -> Result<Option<crate::transport::RequestOwner>, TransportError> {

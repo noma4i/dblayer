@@ -411,10 +411,6 @@ impl Lifecycle {
         self.admit_as(origin, target, true, expected)
     }
 
-    pub(crate) fn admit_for_session(self: &Arc<Self>, origin: Origin, target: &'static str) -> Result<Admitted, Ended> {
-        self.admit_as(origin, target, false, None)
-    }
-
     pub(crate) fn admit_session_at(self: &Arc<Self>, origin: Origin, target: &'static str, expected: u64) -> Result<Admitted, Ended> {
         self.admit_as(origin, target, false, Some(expected))
     }

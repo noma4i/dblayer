@@ -6,7 +6,7 @@ use crate::read::{LoadMoreVerdict, PageChain};
 use crate::schema::RemoteShape;
 
 use super::error::SyncError;
-use super::load::{DiscardReason, LoadOptions, LoadStatus, Resolved};
+use super::load::{LoadOptions, LoadStatus, Resolved};
 use super::{Inner, Sync};
 use super::load_machine::LoadError;
 use super::load_owner::FlightTicket;
@@ -48,15 +48,11 @@ impl Inner {
         if let Some(error) = first.kept_error {
             return Err(error);
         }
-        match first.status {
-            LoadStatus::Discarded(DiscardReason::StaleGeneration) => return Err(Self::incomplete(resolved, "the database was reset")),
-            LoadStatus::Discarded(_) => {
-                self.flights_settled(resolved).await;
-                if self.db.shared.store.window(&resolved.window_key)?.is_none() {
-                    return Err(Self::incomplete(resolved, "the first page was discarded and no window is stored"));
-                }
+        if let LoadStatus::Discarded(_) = first.status {
+            self.flights_settled(resolved).await;
+            if self.db.shared.store.window(&resolved.window_key)?.is_none() {
+                return Err(Self::incomplete(resolved, "the first page was discarded and no window is stored"));
             }
-            _ => {}
         }
         let RemoteShape::Connection { max_pages, .. } = resolved.remote.shape else { return Ok(()) };
         let mut cursors = HashSet::new();
@@ -78,11 +74,7 @@ impl Inner {
             if let Some(error) = outcome.kept_error {
                 return Err(error);
             }
-            match outcome.status {
-                LoadStatus::Discarded(DiscardReason::StaleGeneration) => return Err(Self::incomplete(resolved, "the database was reset")),
-                LoadStatus::Discarded(_) => continue,
-                _ => {}
-            }
+            if let LoadStatus::Discarded(_) = outcome.status { continue; }
             let after = self.db.shared.store.window(&resolved.window_key)?;
             if after.is_some_and(|after| after.has_next && after.cursor == window.cursor) {
                 return Err(Self::incomplete(resolved, "the cursor did not advance"));
