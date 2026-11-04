@@ -714,16 +714,17 @@ model WalletTransaction do
 end
 ```
 
-Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `event`, `missed` or `failed`.
+Every applied event reaches the app as a typed model event: `area`, `kind`, `id`, the row before and the row after. The row after is the one the same reread stored, with no second request. A removal has no row after. Events of one model arrive in the order the core applied them. `ModelEvent` holds these fields and `ModelEventItem` is `ready`, `event`, `lost` or `failed`.
 
-Any model with `changed_by` has an events stream (`scope.events(Model)`), whichever model declares the `changes` source. Opening it prepares the first reader. Opening offline waits for connectivity without an app retry or a timer. Other opening failures throw their original `DbError` kind. Events published after the call returns reach the prepared reader, including before iteration or collection starts. Every later iteration or collection opens an independent reader and waits for readiness. Concurrent readers receive their own events. A later opening failure arrives as the final `failed` item with its original error kind. An earlier event is not replayed, because rows before and after are read only while the model has a reader. Another model's reader or an observed read does not prove that your reader exists.
+Any model with `changed_by` has an events stream (`scope.events(Model)`), whichever model declares the `changes` source. Opening it prepares the reader. Opening offline waits for connectivity without an app retry or a timer. Other opening failures throw their original `DbError` kind. The first item is `ready` once the source is open: every event after it reaches the stream, also before iteration or collection reads it. Concurrent readers receive their own events. A later opening failure arrives as the final `failed` item with its original error kind. An earlier event is not replayed, because rows before and after are read only while the model has a reader. Another model's reader or an observed read does not prove that your reader exists.
 
 ```swift
 let events = try scope.events(Message.self)
 for await item in events {
   switch item {
+  case .ready: startWork()
   case .event(let event): show(event.before, event.after)
-  case .missed(let count): resync(count)
+  case .lost(let first, let last): resync(last - first + 1)
   case .failed(let error): report(error)
   }
 }
@@ -731,10 +732,10 @@ for await item in events {
 
 ```kotlin
 val events = scope.events(Message).events(Message)
-events.collect { item -> when (item) { is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Missed -> resync(item.count); is ModelEventItem.Failed -> report(item.error) } }
+events.collect { item -> when (item) { ModelEventItem.Ready -> startWork(); is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Lost -> resync(item.last - item.first + 1uL); is ModelEventItem.Failed -> report(item.error) } }
 ```
 
-The queue of a reader holds 256 events. A reader that is slower reads `missed` with the number of dropped events, and never delays the next event of other readers. A failed row read publishes `missed` in place of the event and raises the rejected count of the subscription. A failure of the stream itself arrives as the last item `failed`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription after `live_linger`, without app cleanup. The stream needs no notice model.
+The journal of a reader in the core holds 256 values. A slower reader reads one `lost` range with the positions of the dropped events before the events that were kept, and never delays the next event of other readers. The kept events and the lost positions add up to the events sent. A failed row read publishes a `lost` position in place of the event and raises the rejected count of the subscription. A failure of the stream itself arrives as the last item `failed`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription after `live_linger`, without app cleanup. The stream needs no notice model.
 Area and removal values are strings that belong to the application.
 An area can repeat on several models, for `via: :observed`, node reads and named reads. One event rereads the read of each of those models and gives each model its own item on `events`. A model declares an area once per form: `via: :node` (or a named read) and `via: :observed` may both name the same area, and the event does one reread for each form and gives the model one item. A repeat of the same form inside one model is rejected.
 

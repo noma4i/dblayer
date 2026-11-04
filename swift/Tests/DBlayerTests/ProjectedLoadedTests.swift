@@ -6,6 +6,158 @@ import Testing
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func cancellingOnlyTheLoadWaitLeavesTheReaderRunning() async throws {
+    try await DB.close()
+    defer { Task { @MainActor in try? await DB.close() } }
+    let transport = MockTransport()
+    let gate = transport.hold("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
+    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
+    try DB.database.registerOperations(defsJson: #"[{"name":"ContainerNode","document":"query ContainerNode($id: ID!) { node(id: $id) { ... on Container { id title shareUrl isPublic } } }"}]"#)
+    let held = Projected<Container>(try DB.account().entity(Container.self, "c1", fetch: .force))
+    let (events, signal) = AsyncStream<Int>.makeStream()
+    let cursor = Cursor(events)
+    defer { signal.finish(); gate.release() }
+    let entered = Task { await gate.entered(); signal.yield(0) }
+    defer { entered.cancel() }
+    guard await cursor.next("the request reaches the transport") == 0 else { Issue.record("the request did not start"); return }
+    let waiting = Task { @MainActor in
+      signal.yield(1)
+      do { try await held.loaded(); signal.yield(2) }
+      catch is CancellationError { signal.yield(3) }
+      catch { signal.yield(4) }
+    }
+    guard await cursor.next("the wait starts") == 1 else { Issue.record("the wait did not start"); return }
+    waiting.cancel()
+    guard await cursor.next("the wait ends after cancellation") == 3 else { Issue.record("the wait did not end with cancellation"); return }
+    gate.release()
+    let continued = Task { @MainActor in
+      do { try await held.loaded(); signal.yield(5) }
+      catch { signal.yield(6) }
+    }
+    defer { continued.cancel() }
+    guard await cursor.next("the reader continues") == 5 else { Issue.record("the reader did not continue"); return }
+    #expect(held.value?.title == "one")
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aReceiptRevisionWaitsUntilTheUpdatedRowIsShown() async throws {
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
+    let created = try await Presence.create(userId: "u1", room: "old")
+    let row = try #require(created.optimisticValue)
+    let held = Projected<Presence>(try DB.account().stream(Presence.where(.equal("userId", .string("u1")))))
+    try await held.loaded()
+    let receipt = try await row.update(room: "new")
+
+    try await held.shown(receipt.revision)
+    #expect(held.rows.first(where: { $0.id == row.id })?.room == "new")
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aColdProfileSettlesWhenEmptyOrFailed() async throws {
+    defer { Task { @MainActor in try? await DB.close() } }
+    for failed in [false, true] {
+      try await DB.close()
+      let transport = MockTransport()
+      if failed { transport.enqueue("CurrentUserQuery", failure: .Network(detail: "down")) }
+      else { transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":null}}"#) }
+      try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
+      try DB.database.registerOperations(defsJson: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]"#)
+      let held = Projected<CurrentUser>(try DB.account().stream(CurrentUser.current))
+      do {
+        try await held.loaded()
+        #expect(!failed, "the failed load returned successfully")
+      } catch DbError.Network {
+        #expect(failed, "the empty load returned an error")
+      } catch { Issue.record("unexpected error: \(error)") }
+      #expect(held.value == nil)
+      #expect(held.phase == (failed ? .failed : .empty))
+      if failed { if case .Network? = held.error {} else { Issue.record("the network error is missing") } }
+    }
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func cancellingAReaderBeforeItsFirstLoadInterruptsTheWait() async throws {
+    try await DB.close()
+    defer { Task { @MainActor in try? await DB.close() } }
+    let transport = MockTransport()
+    let gate = transport.hold("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
+    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
+    try DB.database.registerOperations(defsJson: #"[{"name":"ContainerNode","document":"query ContainerNode($id: ID!) { node(id: $id) { ... on Container { id title shareUrl isPublic } } }"}]"#)
+    let held = Projected<Container>(try DB.account().entity(Container.self, "c1", fetch: .force))
+    await gate.entered()
+    held.stream.cancel()
+    gate.release()
+    do {
+      try await held.loaded()
+      Issue.record("the cancelled stream reported a load")
+    } catch DbError.Interrupted {} catch { Issue.record("unexpected error: \(error)") }
+    #expect(held.value == nil)
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aHeldEntityEndsItsLoadWaitAfterSessionReset() async throws {
+    try await DB.close()
+    defer { Task { @MainActor in try? await DB.close() } }
+    let transport = MockTransport()
+    transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
+    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
+    try DB.database.registerOperations(defsJson: #"[{"name":"ContainerNode","document":"query ContainerNode($id: ID!) { node(id: $id) { ... on Container { id title shareUrl isPublic } } }"}]"#)
+    let held = Projected<Container>(try DB.account().entity(Container.self, "c1", fetch: .force))
+    try await held.loaded()
+    try await DB.sessionReset()
+    guard await observe("the stream ends", { held.isEnded }) else { return }
+    #expect(held.projection.ended == .sessionEnded)
+    do {
+      try await held.loaded()
+      Issue.record("the ended stream reported a load")
+    } catch DbError.Interrupted {} catch { Issue.record("unexpected error: \(error)") }
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func anUnknownAssociationReportsItsErrorAfterTheStreamEnds() async throws {
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
+    let association = Association<Presence, User>("missing")
+    let held = Projected<User>(try DB.account().related(Presence.where(.equal("room", .string("r"))), association))
+    guard await observe("the stream ends", { held.isEnded }) else { return }
+    #expect(held.projection.ended == .invalid)
+    do {
+      try await held.loaded()
+      Issue.record("the unknown association was accepted")
+    } catch DbError.Invalid(let detail) {
+      #expect(detail.contains("missing"))
+    } catch {
+      Issue.record("unexpected error: \(error)")
+    }
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aCachedEntityRemainsLoadedWhenItsInitialNetworkReadFails() async throws {
+    try await DB.close()
+    defer { Task { @MainActor in try? await DB.close() } }
+    let transport = MockTransport()
+    transport.enqueue("ContainerNode", reply: #"{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}"#)
+    transport.enqueue("ContainerNode", failure: .Network(detail: "down"))
+    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
+    try DB.database.registerOperations(defsJson: #"[{"name":"ContainerNode","document":"query ContainerNode($id: ID!) { node(id: $id) { ... on Container { id title shareUrl isPublic } } }"}]"#)
+    let first = Projected<Container>(try DB.account().entity(Container.self, "c1", fetch: .force))
+    try await first.loaded()
+    first.stream.cancel()
+    let held = Projected<Container>(try DB.account().entity(Container.self, "c1", fetch: .force))
+
+    try await held.loaded()
+    #expect(held.value?.title == "one")
+    #expect(held.phase == .loaded)
+    if case .Network? = held.error {} else { Issue.record("the network error is missing") }
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer() async throws {
     try await DB.close()
     defer { Task { @MainActor in try? await DB.close() } }
@@ -24,59 +176,6 @@ extension BridgeProbeTests {
     #expect(transport.calls.filter { $0.operationName == "CurrentUserQuery" }.count == 2)
   }
 
-  /// Requirement: a delivery that applied no rows (a count of missed events, a delta that waits for the snapshot, a state after a gap) does not make the rows of its number visible: after a gap only the recovery snapshot does.
-  @Test
-  func aProjectionShowsTheRowsOfADeliveryOnlyWhenItAppliedThem() {
-    let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
-    func delta(_ base: Int64, _ revision: Int64) -> StreamValue {
-      .delta(base: base, revision: revision, size: 0, rows: [], rowIndexes: [], removed: [], placed: [], replaced: [], renamed: [], state: state)
-    }
-    let steps: [(seq: UInt64, value: StreamValue, shown: UInt64)] = [
-      (1, .snapshot(revision: 1, rows: [], state: state), 1),
-      (2, delta(1, 2), 2),
-      (9, .missed(count: 6), 2),
-      (9, delta(2, 3), 2),
-      (10, delta(3, 4), 2),
-      (11, .state(state: state), 2),
-      (12, .snapshot(revision: 5, rows: [], state: state), 12),
-      (13, .ended(reason: .closed), 12),
-    ]
-    var projection = ListProjection<Moment>()
-    for step in steps {
-      _ = projection.apply(StreamDelivery(stream: 1, epoch: 1, seq: step.seq, value: step.value))
-      #expect(projection.shownSeq == step.shown, "after \(step.value) at \(step.seq)")
-    }
-  }
-
-  /// Requirement: when the first deliveries are a count of missed events and a state (the snapshot was dropped), nothing is shown and the recovery snapshot is asked once; the snapshot then shows its rows.
-  @Test
-  func aMissedThenAStateBeforeAnySnapshotShowsNothingAndAsksTheRecoverySnapshot() {
-    let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
-    let steps: [(seq: UInt64, value: StreamValue, applied: ListProjection<Moment>.Applied, shown: UInt64?)] = [
-      (0, .missed(count: 5), .ignored, nil),
-      (6, .state(state: state), .resync, nil),
-      (7, .state(state: state), .changed, nil),
-      (8, .snapshot(revision: 2, rows: [], state: state), .changed, 8),
-    ]
-    var projection = ListProjection<Moment>()
-    for step in steps {
-      let applied = projection.apply(StreamDelivery(stream: 1, epoch: 1, seq: step.seq, value: step.value))
-      #expect(applied == step.applied, "applied after \(step.value)")
-      #expect(projection.shownSeq == step.shown, "shown after \(step.value)")
-    }
-  }
-
-  /// Requirement: a first delivery that carries a failed load is shown, so `loaded()` ends and the error is visible; no recovery snapshot is asked.
-  @Test
-  func aFirstStateWithAFailedLoadIsShownAndAsksNoResync() {
-    let failed = StreamState(phase: .failed, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: DbError.Invalid(detail: "read"), errorKind: nil)
-    var projection = ListProjection<Moment>()
-    let applied = projection.apply(StreamDelivery(stream: 1, epoch: 1, seq: 1, value: .state(state: failed)))
-    #expect(applied == .changed)
-    #expect(projection.shownSeq == 1)
-    #expect(projection.state?.error != nil)
-  }
-
   /// Requirement: `loaded()` returns normally only when the projection shows the rows of the loaded revision, and throws when the reading ends first.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
@@ -87,9 +186,7 @@ extension BridgeProbeTests {
     transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"u1"}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]"#)
-    let stream = try DB.account().stream(CurrentUser.current)
-    try await stream.loaded()
-    let held = Projected<CurrentUser>(stream)
+    let held = Projected<CurrentUser>(try DB.account().stream(CurrentUser.current))
     let waiting = Task { @MainActor in try await held.loaded() }
     held.reading?.cancel()
 

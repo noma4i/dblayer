@@ -268,7 +268,7 @@ fn a_stale_core_table_shape_is_replaced_by_a_recreated_file() {
             "DROP TABLE query_window; \
              CREATE TABLE query_window (key TEXT PRIMARY KEY NOT NULL, cursor TEXT, has_next INTEGER NOT NULL, ids BLOB NOT NULL, \
              issued INTEGER NOT NULL, applied INTEGER NOT NULL, generation INTEGER NOT NULL, count INTEGER NOT NULL, \
-             landed_at INTEGER NOT NULL, invalidated INTEGER NOT NULL DEFAULT 0) STRICT; \
+             landed_at INTEGER NOT NULL, stale_since INTEGER) STRICT; \
              UPDATE manifest SET value = '1' WHERE key = 'format_version'",
         );
     }

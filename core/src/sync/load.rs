@@ -88,10 +88,54 @@ impl Resolved<'_> {
     }
 }
 
+/// What a flight task needs to read its scope again.
+struct Flight {
+    key: String,
+    token: u64,
+    origin: crate::lifecycle::Origin,
+    model: String,
+    relation: String,
+    params: Map<String, Value>,
+    node_reread: bool,
+    cursor: Option<String>,
+    force: bool,
+}
+
 pub(super) enum Executed {
     Landed(LoadOutcome, i64),
     Kept(SyncError),
     Failed(SyncError),
+}
+
+/// One caller that waits for the flight of a key. The flight stops when the last interest in its key is gone, and a caller that leaves does not stop the flight of the others.
+pub(crate) struct Interest {
+    inner: std::sync::Weak<Inner>,
+    key: String,
+}
+
+impl Interest {
+    pub(crate) fn new(inner: &Arc<Inner>, key: &str) -> Self {
+        *locked(&inner.flights).interest.entry(key.to_string()).or_default() += 1;
+        Self { inner: Arc::downgrade(inner), key: key.to_string() }
+    }
+}
+
+impl Drop for Interest {
+    fn drop(&mut self) {
+        let Some(inner) = self.inner.upgrade() else { return };
+        let task = {
+            let mut flights = locked(&inner.flights);
+            let left = flights.interest.get_mut(&self.key).map(|count| { *count -= 1; *count });
+            if left == Some(0) {
+                flights.interest.remove(&self.key);
+                flights.tasks.remove(&self.key)
+            } else {
+                None
+            }
+        };
+        if let Some((_, task)) = task { crate::db::lock::effect(|| task.abort()); }
+        drop(inner);
+    }
 }
 
 struct FlightGuard<'a> {
@@ -110,6 +154,7 @@ impl FlightGuard<'_> {
         let Some(sender) = self.sender.take() else { return };
         let waiting = {
             let mut flights = locked(&self.inner.flights);
+            if flights.tasks.get(&self.key).is_some_and(|(token, _)| *token == self.token) { flights.tasks.remove(&self.key); }
             if flights.owners.get(&self.key).is_some_and(|(token, _)| *token == self.token) {
                 flights.owners.remove(&self.key);
                 flights.coalescing.finish(&self.key);
@@ -209,11 +254,6 @@ impl Inner {
         locked(&self.flights).coalescing.in_flight().iter().any(|key| key.starts_with(&prefix))
     }
 
-    pub(super) fn flight_pending(&self, resolved: &Resolved<'_>) -> bool {
-        let paged = format!("{}|", resolved.window_key);
-        locked(&self.flights).waiting.keys().any(|key| *key == resolved.window_key || key.starts_with(&paged))
-    }
-
     pub(super) async fn flights_settled(&self, resolved: &Resolved<'_>) {
         let paged = format!("{}|", resolved.window_key);
         loop {
@@ -235,13 +275,16 @@ impl Inner {
         }
     }
 
+    /// Joins the flight of the key or starts it. The flight runs as its own task with its own lease and ends with one result for every caller that waits; it stops when the last caller left.
     async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted) -> FlightResult {
+        let Some(this) = self.this.get().and_then(std::sync::Weak::upgrade) else { return Err(SyncError::Cancelled) };
         let generation = self.db.generation();
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
             None => resolved.window_key.clone(),
         };
         let forced = force || cursor.is_some();
+        let _interest = Interest::new(&this, &flight_key);
         loop {
             if !self.connectivity.is_online() {
                 FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), self.stored(resolved)?).failed(LoadError::of(&SyncError::Offline));
@@ -284,60 +327,68 @@ impl Inner {
                         flights.owners.insert(flight_key.clone(), (token, current));
                         Ok((sender, token))
                     }
-                    FetchVerdict::AwaitInFlight => match flights.waiting.get(&flight_key) {
-                        Some(receiver) => {
-                            Err(Some(receiver.subscribe()))
-                        }
-                        None => Err(None),
-                    },
+                    FetchVerdict::AwaitInFlight => Err(flights.waiting.get(&flight_key).map(watch::Sender::subscribe)),
                     FetchVerdict::SkipFresh => Err(None),
                 }
             };
-            match verdict {
+            let mut receiver = match verdict {
                 Ok((sender, token)) => {
-                    let mut guard = FlightGuard { inner: self, key: flight_key, sender: Some(sender), token };
-                    let seed = match self.stored(resolved) { Ok(seed) => seed, Err(error) => { guard.finish(Err(error.clone())); return Err(error); } };
-                    let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), cursor.is_some(), seed);
-                    let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
-                    let executed = Box::pin(self.execute_bound(resolved, cursor, force, lease)).await;
-                    let result = match executed {
-                        Executed::Landed(outcome, revision) => {
-                            match outcome.status {
-                                LoadStatus::Discarded(_) => ticket.discarded(),
-                                _ => match self.stored(resolved) {
-                                    Ok(seed) => ticket.landed(seed.map(|stored| Stored { revision, ..stored })),
-                                    Err(error) => { ticket.failed(LoadError::of(&error)); guard.finish(Err(error.clone())); return Err(error); }
-                                },
-                            }
-                            Ok(outcome)
-                        }
-                        Executed::Kept(error) => {
-                            ticket.failed(LoadError::of(&error));
-                            Ok(LoadOutcome { kept_error: Some(error), ..LoadOutcome::of(LoadStatus::KeptStale) })
-                        }
-                        Executed::Failed(error) => {
-                            ticket.failed(LoadError::of(&error));
-                            Err(error)
-                        }
-                    };
-                    guard.finish(result.clone());
-                    return result;
+                    let receiver = sender.subscribe();
+                    let flight = Flight { key: flight_key.clone(), token, origin: resolved.origin, model: resolved.model.clone(), relation: resolved.relation.clone(), params: resolved.params.clone(), node_reread: resolved.node_reread, cursor: cursor.clone(), force };
+                    let task = crate::task::spawn(lease.clone().into(), this.clone().fly(flight, sender, lease.clone()));
+                    locked(&self.flights).tasks.insert(flight_key.clone(), (token, task.abort_handle()));
+                    receiver
                 }
-                Err(Some(mut receiver)) => {
+                Err(Some(receiver)) => {
                     #[cfg(test)]
                     {
                         let joined = locked(&self.flights).joined.0.clone();
                         crate::db::lock::effect(|| joined.send_modify(|joined| *joined += 1));
                     }
-                    let end = lease.run(async { receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone()) }).await?;
-                    if let Some(FlightEnd::Settled(result)) = end {
-                        if generation == self.db.generation() && matches!(&result, Ok(outcome) if outcome.status == LoadStatus::Discarded(DiscardReason::StaleGeneration)) { continue; }
-                        return result;
-                    }
+                    receiver
                 }
                 Err(None) => return Ok(LoadOutcome::of(LoadStatus::SkippedFresh)),
+            };
+            let end = lease.run(async { receiver.wait_for(Option::is_some).await.ok().and_then(|end| end.clone()) }).await?;
+            if let Some(FlightEnd::Settled(result)) = end {
+                if generation == self.db.generation() && matches!(&result, Ok(outcome) if outcome.status == LoadStatus::Discarded(DiscardReason::StaleGeneration)) { continue; }
+                return result;
             }
         }
+    }
+
+    /// The one run of a flight. Its guard ends the flight with the result, or as abandoned when the task stops before.
+    async fn fly(self: Arc<Self>, flight: Flight, sender: watch::Sender<Option<FlightEnd>>, lease: crate::lifecycle::Admitted) {
+        let mut guard = FlightGuard { inner: &self, key: flight.key.clone(), sender: Some(sender), token: flight.token };
+        let resolved = match self.resolve(flight.origin, &flight.model, &flight.relation, &flight.params) {
+            Ok(mut resolved) => { resolved.node_reread = flight.node_reread; resolved }
+            Err(error) => return guard.finish(Err(error)),
+        };
+        let seed = match self.stored(&resolved) { Ok(seed) => seed, Err(error) => return guard.finish(Err(error)) };
+        let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), flight.cursor.is_some(), seed);
+        let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
+        let executed = Box::pin(self.execute_bound(&resolved, flight.cursor, flight.force, &lease)).await;
+        let result = match executed {
+            Executed::Landed(outcome, revision) => {
+                match outcome.status {
+                    LoadStatus::Discarded(_) => ticket.discarded(),
+                    _ => match self.stored(&resolved) {
+                        Ok(seed) => ticket.landed(seed.map(|stored| Stored { revision, ..stored })),
+                        Err(error) => { ticket.failed(LoadError::of(&error)); return guard.finish(Err(error)); }
+                    },
+                }
+                Ok(outcome)
+            }
+            Executed::Kept(error) => {
+                ticket.failed(LoadError::of(&error));
+                Ok(LoadOutcome { kept_error: Some(error), ..LoadOutcome::of(LoadStatus::KeptStale) })
+            }
+            Executed::Failed(error) => {
+                ticket.failed(LoadError::of(&error));
+                Err(error)
+            }
+        };
+        guard.finish(result);
     }
 
     async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted) -> Executed {
@@ -490,6 +541,12 @@ impl Sync {
     pub(crate) async fn wait_joined(&self, at_least: usize) {
         let mut joined = locked(&self.inner.flights).joined.0.subscribe();
         let _ = joined.wait_for(|joined| *joined >= at_least).await;
+    }
+
+    /// The interest of one caller in the load of a scope, taken before the load starts.
+    pub(crate) fn interest(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Interest, SyncError> {
+        let key = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?.window_key;
+        Ok(Interest::new(&self.inner, &key))
     }
 
     pub async fn load(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {

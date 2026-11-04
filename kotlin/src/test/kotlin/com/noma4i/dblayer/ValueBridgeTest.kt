@@ -284,9 +284,8 @@ class ValueBridgeTest {
             val scope = AccountScope.current()
             val reader = LossyReader()
             val stream = DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Moment.recent.json), reader)
-            reader.stream = stream
-            DBlayer.database.streamLoaded(stream)
-            eventually("the first snapshot arrives") { reader.snapshots.get() == 1 }
+            reader.bind(stream)
+            eventually("the first snapshot is settled") { reader.snapshots.get() == 1 && reader.settled() }
 
             DBlayer.database.setOnline(false)
             reader.dropNext()
@@ -331,12 +330,12 @@ class ValueBridgeTest {
             openSession()
             signIn("A")
             val reader = LossyReader()
-            val stream = DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Entity("Nope", "x", EntityFetch.NONE), reader)
+            reader.bind(DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Entity("Nope", "x", EntityFetch.NONE), reader))
             eventually("the failed stream ended") { reader.ended().isNotEmpty() }
 
             assertEquals(listOf(StreamEnd.INVALID), reader.ended())
+            assertTrue("the failed stream did not show its error", reader.failure() != null)
             assertEquals(0uL, streamCensus().open)
-            assertTrue(runCatching { DBlayer.database.streamLoaded(stream) }.isFailure)
         } finally {
             DBlayer.close()
         }
@@ -442,10 +441,9 @@ class ValueBridgeTest {
 
             val readers = listOf(LossyReader(), LossyReader())
             val streams = readers.map { reader ->
-                DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Moment.recent.json), reader).also { reader.stream = it }
+                DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Moment.recent.json), reader).also { reader.bind(it) }
             }
-            streams.forEach { DBlayer.database.streamLoaded(it) }
-            eventually("both first snapshots arrive") { readers.all { it.snapshots.get() == 1 } }
+            eventually("both first snapshots are settled") { readers.all { it.snapshots.get() == 1 && it.settled() } }
 
             DBlayer.database.setOnline(false)
             readers.forEach { it.dropNext() }
@@ -460,7 +458,7 @@ class ValueBridgeTest {
         }
     }
 
-    /** K16 (B8): a reader that falls behind keeps at most 256 deliveries, learns that it missed some, and ends with the whole list after one new snapshot. */
+    /** K16 (B8): a reader that falls behind reads at most 256 values of a burst from the journal of the core and ends with the whole list from one new snapshot. */
     @Test
     fun aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList() = bounded {
         try {
@@ -468,24 +466,28 @@ class ValueBridgeTest {
             signIn("A")
             val scope = AccountScope.current()
             val stream = scope.stream(Moment.recent)
-            stream.loaded()
-            DBlayer.database.setOnline(false)
-            for (number in 1..300) scope.send(Moment, text("m$number"))
             var projection = ListProjection<Moment>()
             val received = AtomicInteger(0)
-            val missed = java.util.concurrent.atomic.AtomicLong(0)
             val rowCount = AtomicInteger(0)
+            val settled = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val sending = kotlinx.coroutines.CompletableDeferred<Unit>()
             val reading = CoroutineScope(Dispatchers.Default).launch {
                 stream.deliveries.collect { delivery ->
+                    if (settled.isCompleted) sending.await() else received.set(0)
                     received.incrementAndGet()
-                    (delivery.value as? StreamValue.Missed)?.let { missed.addAndGet(it.count.toLong()) }
                     val step = projection.apply(delivery, Moment)
                     projection = step.projection
                     rowCount.set(projection.rows.size)
                     if (step.applied == Applied.Resync) stream.resync()
+                    if (projection.state?.settled == true) settled.complete(Unit)
                 }
             }
             try {
+                awaitWithin("the first settled snapshot") { settled.await() }
+                received.set(0)
+                DBlayer.database.setOnline(false)
+                for (number in 1..300) scope.send(Moment, text("m$number"))
+                sending.complete(Unit)
                 eventually("the reader holds the 300 rows") { rowCount.get() == 300 }
                 assertTrue("the reader received ${received.get()} deliveries of a burst of 300: the buffer bounded nothing", received.get() <= 260)
             } finally {
@@ -496,90 +498,37 @@ class ValueBridgeTest {
             DBlayer.close()
         }
     }
-
-    /** K16b: the missed counts plus the deliveries a reader receives equal the deliveries the core sent, for a full buffer that ends with `Ended` and for a burst with no delivery after it. */
-    @Test
-    fun missedCountsPlusReceivedDeliveriesEqualTheDeliveriesSent() = bounded {
-        val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
-        for (endsWithEnded in listOf(true, false)) {
-            val channel = streamChannel()
-            val sink = Forward(channel)
-            val received = AtomicInteger(0)
-            val missed = java.util.concurrent.atomic.AtomicLong(0)
-            suspend fun read() = channel.read().collect { delivery -> (delivery.value as? StreamValue.Missed)?.let { missed.addAndGet(it.count.toLong()) } ?: received.incrementAndGet() }
-            fun send(seq: Long, value: StreamValue = StreamValue.State(state)) = sink.delivered(StreamDelivery(1uL, 1uL, seq.toULong(), value))
-            val sent: Long
-            if (endsWithEnded) {
-                sent = 257
-                for (seq in 1L..256L) send(seq)
-                send(257, StreamValue.Ended(StreamEnd.CLOSED))
-                withTimeout(5000) { read() }
-            } else {
-                sent = 701
-                val paused = kotlinx.coroutines.CompletableDeferred<Unit>()
-                val reading = launch {
-                    channel.read().collect { delivery ->
-                        (delivery.value as? StreamValue.Missed)?.let { missed.addAndGet(it.count.toLong()) } ?: received.incrementAndGet()
-                        if (delivery.seq == 1uL) paused.await()
-                    }
-                }
-                send(1)
-                eventually("the reader holds the first delivery") { received.get() == 1 }
-                for (seq in 2L..701L) send(seq)
-                paused.complete(Unit)
-                try {
-                    eventually("the missed count of a burst with no later delivery") { received.get() + missed.get() == sent }
-                } finally {
-                    reading.cancel()
-                }
-            }
-            assertEquals("the core sent $sent deliveries, the reader received ${received.get()} and was told about ${missed.get()} missed ones", sent, received.get() + missed.get())
-        }
-    }
-
-    /** M1c: a `Missed` the core made and the buffer evicted still counts its events: received plus missed equals the events the core sent. */
-    @Test
-    fun anEvictedCoreMissedCountsItsEvents() = bounded {
-        val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
-        val channel = streamChannel()
-        val sink = Forward(channel)
-        val received = AtomicInteger(0)
-        val missed = java.util.concurrent.atomic.AtomicLong(0)
-        val paused = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val reading = launch {
-            channel.read().collect { delivery ->
-                (delivery.value as? StreamValue.Missed)?.let { missed.addAndGet(it.count.toLong()) } ?: received.incrementAndGet()
-                if (delivery.seq == 256uL) paused.await()
-            }
-        }
-        fun send(seq: Long, value: StreamValue = StreamValue.State(state)) = sink.delivered(StreamDelivery(1uL, 1uL, seq.toULong(), value))
-        for (seq in 1L..256L) send(seq)
-        eventually("the reader holds the 256th event") { received.get() == 256 }
-        send(300, StreamValue.Missed(44uL))
-        for (seq in 301L..556L) send(seq)
-        paused.complete(Unit)
-        try {
-            eventually("the missed count and the kept events after the evicted marker") { received.get() + missed.get() == 556L }
-        } finally {
-            reading.cancel()
-        }
-        assertEquals("the core sent 556 events, the reader received ${received.get()} and was told about ${missed.get()} missed ones", 556L, received.get() + missed.get())
-    }
 }
 
+/** Reads a stream the way a platform does and can drop one value it read, so the projection meets a delta it cannot apply. */
 private class LossyReader : ValueSink {
     private var projection = ListProjection<Moment>()
     private var dropping = false
     private val endings = java.util.concurrent.CopyOnWriteArrayList<StreamEnd>()
+    private val reading = Any()
     val snapshots = AtomicInteger(0)
     val resyncs = AtomicInteger(0)
-    @Volatile var stream: ULong = 0uL
+    @Volatile private var stream: ULong? = null
 
     fun rows(): Int = synchronized(this) { projection.rows.size }
+    fun settled(): Boolean = synchronized(this) { projection.state?.settled == true }
+    fun failure(): DbException? = synchronized(this) { projection.state?.error }
     fun ended(): List<StreamEnd> = endings.toList()
     fun dropNext() = synchronized(this) { dropping = true }
 
-    override fun delivered(delivery: StreamDelivery) {
+    fun bind(stream: ULong) {
+        this.stream = stream
+        available()
+    }
+
+    override fun available() {
+        val stream = stream ?: return
+        synchronized(reading) {
+            while (true) take(DBlayer.database.readStream(stream) ?: break, stream)
+        }
+    }
+
+    private fun take(delivery: StreamDelivery, stream: ULong) {
         val ask = synchronized(this) {
             if (dropping) { dropping = false; return@synchronized false }
             if (delivery.value is StreamValue.Snapshot) snapshots.incrementAndGet()

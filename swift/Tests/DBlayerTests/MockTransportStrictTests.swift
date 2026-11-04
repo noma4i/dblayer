@@ -4,7 +4,7 @@ import Testing
 @testable import DBlayer
 
 private final class SilentListener: ValueSink, @unchecked Sendable {
-  func delivered(delivery: StreamDelivery) {}
+  func available() {}
 }
 
 struct MockTransportStrictTests {

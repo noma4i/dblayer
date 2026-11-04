@@ -6,7 +6,7 @@ import org.junit.Test
 
 /** C09: a reader that fell behind reads a jump in the sequence of the deliveries. A jump means that deliveries were dropped, also the snapshot that was asked for. */
 class ProjectionRecoveryTest {
-    private val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
+    private val state = StreamState(LivePhase.LOADED, true, 0, false, false, false, false, true, null, null, null, null)
 
     private fun snapshot(seq: ULong, revision: Long) = StreamDelivery(1uL, 1uL, seq, StreamValue.Snapshot(revision, emptyList(), state))
 

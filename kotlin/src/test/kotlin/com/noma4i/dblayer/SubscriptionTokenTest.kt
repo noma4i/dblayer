@@ -36,7 +36,7 @@ class SubscriptionTokenTest {
         }
         val database = openDatabase(Config(null, null, 8u), modelsJSON, transport)
         database.registerOperations("""[{"name":"documentBySlug","document":"query documentBySlug(${'$'}slug: String!, ${'$'}source: String!) { documentBySlug(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated(${'$'}slug: String!, ${'$'}source: String!) { documentUpdated(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentUpdated"}]""")
-        val listener = object : ValueSink { override fun delivered(delivery: StreamDelivery) {} }
+        val listener = object : ValueSink { override fun available() {} }
         val lives = (0 until count).map { database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Document","relation":"bySlug","params":{"slug":"s$it","source":"web"}}"""), listener) }
         eventually("every subscription reaches the transport") { issued.size == count }
         var collected = 0

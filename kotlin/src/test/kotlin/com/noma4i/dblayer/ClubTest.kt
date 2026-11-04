@@ -9,6 +9,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
@@ -455,32 +456,36 @@ class ClubTest {
     fun aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld() = bounded {
         val transport = MockTransport()
         val (created, joined, _) = openClubWithMembers(transport)
-        val scope = CoroutineScope(SupervisorJob())
+        val scope = CoroutineScope(SupervisorJob(coroutineContext[kotlinx.coroutines.Job]))
         val list = ListReader(joined, scope)
         list.waitForInitialLoad()
         val current = listOf("u1", "u2", "u3", "u4")
+        val before = transport.calls.count { it.operationName == "ClubMembers" }
         val loadHold = transport.hold("ClubMembers", membersReply(current))
-        val addHold = transport.hold("AddClubMember", clubAnswer("addClubMember"))
-        val rereadHold = transport.hold("ClubMembers", membersReply(current + "u9"))
-        val refreshing = async { list.refresh() }
-        withTimeout(5000) { loadHold.entered() }
-        val adding = async { created.addMember(userIds = listOf("u9")) }
-        withTimeout(5000) { addHold.entered() }
+        val mutationHold = transport.hold("RemoveClubMember", clubAnswer("removeClubMember"))
+        val rereadHold = transport.hold("ClubMembers", membersReply(current.dropLast(1) + "u9"))
         try {
-            val receipt = withTimeout(5000) { adding.await() }
-            addHold.release()
-            assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+            val refreshing = async { list.refresh() }
+            withTimeout(5000) { loadHold.entered() }
+            val removing = async { created.removeMember(userIds = listOf("u4")) }
+            withTimeout(5000) { mutationHold.entered() }
+            mutationHold.release()
+            val receipt = awaitWithin("the mutation receipt") { removing.await() }
+            assertTrue(awaitWithin("the mutation outcome while the list load is held") { receipt.outcome() } is OperationOutcome.Confirmed)
+            assertEquals(before + 1, transport.calls.count { it.operationName == "ClubMembers" })
             loadHold.release()
-            withTimeout(5000) { refreshing.await() }
-            withTimeout(5000) { rereadHold.entered() }
+            awaitWithin("the reread begins") { rereadHold.entered() }
+            assertEquals(before + 2, transport.calls.count { it.operationName == "ClubMembers" })
             rereadHold.release()
-            assertEquals(current + "u9", withTimeout(5000) { list.rows.first { rows -> rows.map { it.id } == current + "u9" } }.map { it.id })
+            awaitWithin("the refresh to end once the holds are released") { refreshing.await() }
+            awaitWithin("the list shows the reread") { list.rows.first { rows -> rows.map { it.id } == current.dropLast(1) + "u9" } }
+            assertEquals(before + 2, transport.calls.count { it.operationName == "ClubMembers" })
         } finally {
             loadHold.release()
-            addHold.release()
+            mutationHold.release()
             rereadHold.release()
+            scope.cancel()
         }
-        scope.cancel()
     }
 
     /** K13 (B6, C05): leave removes the club from its list before the answer. The answer keeps it away, a refusal puts it back. */

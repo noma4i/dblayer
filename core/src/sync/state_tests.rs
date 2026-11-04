@@ -42,7 +42,7 @@ async fn stored_seed_read_failures_remain_visible_with_and_without_rows() {
 async fn a_relation_never_loaded_is_idle_with_nothing_more() {
     let rig = rig();
     let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
-    assert_eq!(*state.borrow(), RelationState { complete: false, phase: LoadPhase::NotLoaded, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 });
+    assert_eq!(*state.borrow(), RelationState { complete: false, phase: LoadPhase::NotLoaded, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0, needs_reload: None });
 }
 
 #[tokio::test(start_paused = true)]

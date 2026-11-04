@@ -2,16 +2,19 @@ package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.Container
 import com.noma4i.dblayer.models.CurrentUser
-import com.noma4i.dblayer.models.Moment
+import com.noma4i.dblayer.models.Presence
+import com.noma4i.dblayer.models.User
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,7 +23,165 @@ import java.util.concurrent.Executors
 
 @OptIn(DBlayerTestingApi::class)
 class ProjectedLoadedTest {
-    /** The order of the app: a plain transport, no sign-in call, a held stream, `loaded()`, then the value at once. */
+    @Test
+    fun cancellingOnlyTheLoadWaitLeavesTheReaderRunning() = bounded {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            DBlayer.close()
+            val transport = MockTransport()
+            val gate = transport.hold("ContainerNode", """{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}""")
+            DBlayer.openTesting(transport, modelsJSON)
+            DBlayer.database.registerOperations("""[{"name":"ContainerNode","document":"query ContainerNode(${'$'}id: ID!) { node(id: ${'$'}id) { ... on Container { id title shareUrl isPublic } } }"}]""")
+            val held = Projected(AccountScope.current().entity(Container, "c1", EntityFetch.FORCE), Container, scope)
+            try {
+                gate.entered()
+                val waiting = async(start = CoroutineStart.UNDISPATCHED) { held.loaded() }
+                assertTrue(waiting.isActive)
+                waiting.cancelAndJoin()
+                gate.release()
+                held.loaded()
+                assertEquals("one", held.value?.title)
+            } finally {
+                gate.release()
+                held.close()
+            }
+        } finally {
+            scope.cancel()
+            DBlayer.close()
+        }
+    }
+
+    @Test
+    fun aReceiptRevisionWaitsUntilTheUpdatedRowIsShown() = bounded {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            reopen(Config(null, null, 32u), modelsJSON, MockTransport())
+            val created = Presence.create(userId = "u1", room = "old")
+            val row = requireNotNull(created.optimisticValue)
+            val held = Projected(AccountScope.current().stream(Presence.where(Condition.equal("userId", jsonValue("u1")))), Presence, scope)
+            held.loaded()
+            val receipt = row.update(room = "new")
+
+            held.shown(receipt.revision)
+            assertEquals("new", held.projection.value.rows.first { it.id == row.id }.room)
+            held.close()
+        } finally {
+            scope.cancel()
+            DBlayer.close()
+        }
+    }
+
+    @Test
+    fun aColdProfileSettlesWhenEmptyOrFailed() = bounded {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            for (failed in listOf(false, true)) {
+                DBlayer.close()
+                val transport = MockTransport()
+                if (failed) transport.enqueue("CurrentUserQuery", DbException.Network("down"))
+                else transport.enqueue("CurrentUserQuery", """{"data":{"user":null}}""")
+                DBlayer.openTesting(transport, modelsJSON)
+                DBlayer.database.registerOperations("""[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]""")
+                val held = Projected(AccountScope.current().stream(CurrentUser.current), CurrentUser, scope)
+                val error = runCatching { held.loaded() }.exceptionOrNull()
+                if (failed) assertTrue(error is DbException.Network) else assertNull(error)
+                assertNull(held.value)
+                assertEquals(if (failed) LivePhase.FAILED else LivePhase.EMPTY, held.projection.value.phase)
+                if (failed) assertTrue(held.projection.value.error is DbException.Network)
+                held.close()
+            }
+        } finally {
+            scope.cancel()
+            DBlayer.close()
+        }
+    }
+
+    @Test
+    fun cancellingAReaderBeforeItsFirstLoadInterruptsTheWait() = bounded {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            DBlayer.close()
+            val transport = MockTransport()
+            val gate = transport.hold("ContainerNode", """{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}""")
+            DBlayer.openTesting(transport, modelsJSON)
+            DBlayer.database.registerOperations("""[{"name":"ContainerNode","document":"query ContainerNode(${'$'}id: ID!) { node(id: ${'$'}id) { ... on Container { id title shareUrl isPublic } } }"}]""")
+            val held = Projected(AccountScope.current().entity(Container, "c1", EntityFetch.FORCE), Container, scope)
+            gate.entered()
+            held.close()
+            gate.release()
+            assertTrue(runCatching { held.loaded() }.exceptionOrNull() is DbException.Interrupted)
+            assertNull(held.value)
+        } finally {
+            scope.cancel()
+            DBlayer.close()
+        }
+    }
+
+    @Test
+    fun aHeldEntityEndsItsLoadWaitAfterSessionReset() = bounded {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            DBlayer.close()
+            val transport = MockTransport()
+            transport.enqueue("ContainerNode", """{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}""")
+            DBlayer.openTesting(transport, modelsJSON)
+            DBlayer.database.registerOperations("""[{"name":"ContainerNode","document":"query ContainerNode(${'$'}id: ID!) { node(id: ${'$'}id) { ... on Container { id title shareUrl isPublic } } }"}]""")
+            val held = Projected(AccountScope.current().entity(Container, "c1", EntityFetch.FORCE), Container, scope)
+            held.loaded()
+            DBlayer.sessionReset()
+            assertEquals(StreamEnd.SESSION_ENDED, held.projection.first { it.ended != null }.ended)
+            assertTrue(runCatching { held.loaded() }.exceptionOrNull() is DbException.Interrupted)
+            held.close()
+        } finally {
+            scope.cancel()
+            DBlayer.close()
+        }
+    }
+
+    @Test
+    fun anUnknownAssociationReportsItsErrorAfterTheStreamEnds() = bounded {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            reopen(Config(null, null, 32u), modelsJSON, MockTransport())
+            val association = Association<Presence, User>("missing", User)
+            val held = Projected(AccountScope.current().related(Presence.where(Condition.equal("room", jsonValue("r"))), association), User, scope)
+            val ended = held.projection.first { it.ended != null }
+            assertEquals(StreamEnd.INVALID, ended.ended)
+            val error = runCatching { held.loaded() }.exceptionOrNull()
+            assertTrue("unexpected error: $error", error is DbException.Invalid && error.message.orEmpty().contains("missing"))
+            held.close()
+        } finally {
+            scope.cancel()
+            DBlayer.close()
+        }
+    }
+
+    @Test
+    fun aCachedEntityRemainsLoadedWhenItsInitialNetworkReadFails() = bounded {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            DBlayer.close()
+            val transport = MockTransport()
+            transport.enqueue("ContainerNode", """{"data":{"node":{"id":"c1","title":"one","shareUrl":"u","isPublic":true}}}""")
+            transport.enqueue("ContainerNode", DbException.Network("down"))
+            DBlayer.openTesting(transport, modelsJSON)
+            DBlayer.database.registerOperations("""[{"name":"ContainerNode","document":"query ContainerNode(${'$'}id: ID!) { node(id: ${'$'}id) { ... on Container { id title shareUrl isPublic } } }"}]""")
+            val first = Projected(AccountScope.current().entity(Container, "c1", EntityFetch.FORCE), Container, scope)
+            first.loaded()
+            first.close()
+            val held = Projected(AccountScope.current().entity(Container, "c1", EntityFetch.FORCE), Container, scope)
+
+            held.loaded()
+            assertEquals("one", held.value?.title)
+            assertEquals(LivePhase.LOADED, held.projection.value.phase)
+            assertTrue(held.projection.value.error is DbException.Network)
+            held.close()
+        } finally {
+            scope.cancel()
+            DBlayer.close()
+        }
+    }
+
     @Test
     fun theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer() = bounded {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -46,59 +207,6 @@ class ProjectedLoadedTest {
         }
     }
 
-    /** Requirement: a delivery that applied no rows (a count of missed events, a delta that waits for the snapshot, a state after a gap) does not make the rows of its number visible: after a gap only the recovery snapshot does. */
-    @Test
-    fun aProjectionShowsTheRowsOfADeliveryOnlyWhenItAppliedThem() {
-        val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
-        fun delta(base: Long, revision: Long) = StreamValue.Delta(base, revision, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), state)
-        val steps = listOf(
-            Triple(1uL, StreamValue.Snapshot(1, emptyList(), state), 1uL),
-            Triple(2uL, delta(1, 2), 2uL),
-            Triple(9uL, StreamValue.Missed(6uL), 2uL),
-            Triple(9uL, delta(2, 3), 2uL),
-            Triple(10uL, delta(3, 4), 2uL),
-            Triple(11uL, StreamValue.State(state), 2uL),
-            Triple(12uL, StreamValue.Snapshot(5, emptyList(), state), 12uL),
-            Triple(13uL, StreamValue.Ended(StreamEnd.CLOSED), 12uL),
-        )
-        var projection = ListProjection<Moment>()
-        for ((seq, value, shown) in steps) {
-            projection = projection.apply(StreamDelivery(1uL, 1uL, seq, value), Moment).projection
-            assertEquals("after $value at $seq", shown, projection.shownSeq)
-        }
-    }
-
-    /** Requirement: when the first deliveries are a count of missed events and a state (the snapshot was dropped), nothing is shown and the recovery snapshot is asked once; the snapshot then shows its rows. */
-    @Test
-    fun aMissedThenAStateBeforeAnySnapshotShowsNothingAndAsksTheRecoverySnapshot() {
-        val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
-        val steps = listOf(
-            Triple(StreamValue.Missed(5uL) as StreamValue, 0uL, Applied.Ignored),
-            Triple(StreamValue.State(state) as StreamValue, 6uL, Applied.Resync),
-            Triple(StreamValue.State(state) as StreamValue, 7uL, Applied.Changed),
-            Triple(StreamValue.Snapshot(2, emptyList(), state) as StreamValue, 8uL, Applied.Changed),
-        )
-        val shown = listOf(null, null, null, 8uL)
-        var projection = ListProjection<Moment>()
-        for ((index, step) in steps.withIndex()) {
-            val (value, seq, applied) = step
-            val result = projection.apply(StreamDelivery(1uL, 1uL, seq, value), Moment)
-            projection = result.projection
-            assertEquals("applied after $value", applied, result.applied)
-            assertEquals("shown after $value", shown[index], projection.shownSeq)
-        }
-    }
-
-    /** Requirement: a first delivery that carries a failed load is shown, so `loaded()` ends and the error is visible; no recovery snapshot is asked. */
-    @Test
-    fun aFirstStateWithAFailedLoadIsShownAndAsksNoResync() {
-        val failed = StreamState(LivePhase.FAILED, false, false, false, false, true, null, null, DbException.Invalid("read"), null)
-        val result = ListProjection<Moment>().apply(StreamDelivery(1uL, 1uL, 1uL, StreamValue.State(failed)), Moment)
-        assertEquals(Applied.Changed, result.applied)
-        assertEquals(1uL, result.projection.shownSeq)
-        assertNotNull(result.projection.state?.error)
-    }
-
     /** Requirement: `loaded()` throws `Interrupted` when the reader ends before the projection showed the rows of the loaded revision. The reader cannot run until the stream is closed. */
     @Test
     fun loadedThrowsWhenTheReaderEndsBeforeItShowedTheRows() = bounded {
@@ -113,7 +221,6 @@ class ProjectedLoadedTest {
             DBlayer.database.registerOperations("""[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]""")
             executor.execute { gate.await() }
             val held = Projected(AccountScope.current().stream(CurrentUser.current), CurrentUser, blocked)
-            held.stream.loaded()
             val waiting = async(Dispatchers.Default) { runCatching { held.loaded() }.exceptionOrNull() }
             held.close()
             gate.countDown()

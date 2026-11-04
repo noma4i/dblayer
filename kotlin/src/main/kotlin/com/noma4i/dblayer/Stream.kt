@@ -3,7 +3,6 @@ package com.noma4i.dblayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,11 +15,19 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
-/** The deliveries of one stream in order. Collecting it reads the stream, and a collector that stops or is cancelled ends the stream in the core. A stream that ends by itself delivers one `StreamValue.Ended` last. */
-class ValueStream internal constructor(val id: ULong, val epoch: ULong, private val database: Database, private val channel: Channel<StreamDelivery>) {
+/** The deliveries of one stream in order, read from the journal of the stream in the core. Collecting it reads the stream, and a collector that stops or is cancelled ends the stream in the core. A stream that ends by itself delivers one `StreamValue.Ended` last. Values the core could not keep for a slow reader reach it as `StreamValue.Lost`. */
+class ValueStream internal constructor(val id: ULong, val epoch: ULong, private val database: Database, private val signal: Channel<Unit>) {
     val deliveries: Flow<StreamDelivery> = flow {
         try {
-            emitAll(channel.read())
+            while (true) {
+                val delivery = database.readStream(id)
+                if (delivery != null) {
+                    emit(delivery)
+                    if (delivery.value is StreamValue.Ended) break
+                    continue
+                }
+                if (signal.receiveCatching().isClosed) break
+            }
         } finally {
             close()
         }
@@ -29,53 +36,32 @@ class ValueStream internal constructor(val id: ULong, val epoch: ULong, private 
     /** The projection could not apply a delta. The core sends one new snapshot. */
     fun resync() = database.resyncStream(id)
 
+    /** Asks the stream to deliver a state of this revision of the database once its rows are read through it. */
+    fun reach(revision: Long) = database.reachStream(id, revision)
+
     /** Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended. */
     suspend fun refresh() = offCaller { database.refreshStream(id) }
 
     suspend fun loadMore(): LoadMoreResult = offCaller { database.loadMoreStream(id) }
 
-    /** Returns when the first load of the stream settled. */
-    suspend fun loaded() { loadedAt() }
-
-    /** Returns when the first load settled, with the sequence number of the newest delivery the core made until then. */
-    internal suspend fun loadedAt(): ULong = offCaller { database.streamLoaded(id) }
-
-    /** Stops reading: the stream ends in the core and no new delivery is admitted after this returns. A delivery already admitted may still finish. */
+    /** Stops reading: the stream ends in the core and nothing is read after this returns. */
     fun close() {
-        channel.close()
+        signal.close()
         database.cancelStream(id)
     }
 }
 
-/** A reader that falls behind keeps the newest deliveries only. The count of the dropped ones reaches the reader as `Missed`, and a list projection that misses a delta asks the core for a new snapshot. */
-private const val STREAM_BUFFER = 256
-
-internal fun streamChannel(): Channel<StreamDelivery> = Channel(STREAM_BUFFER, BufferOverflow.DROP_OLDEST)
-
-internal class Forward(private val channel: Channel<StreamDelivery>) : ValueSink {
-    override fun delivered(delivery: StreamDelivery) {
-        channel.trySend(delivery)
-        if (delivery.value is StreamValue.Ended) channel.close()
-    }
-}
-
-/** How many events the delivery stands for: the count of a `Missed`, else 1. The sequence number counts events. */
-private fun StreamDelivery.weight(): ULong = (value as? StreamValue.Missed)?.count ?: 1uL
-
-internal fun Channel<StreamDelivery>.read(): Flow<StreamDelivery> = flow {
-    var last = 0uL
-    for (delivery in this@read) {
-        if (delivery.seq > last + delivery.weight()) emit(StreamDelivery(delivery.stream, delivery.epoch, delivery.seq, StreamValue.Missed(delivery.seq - last - delivery.weight())))
-        last = maxOf(last, delivery.seq)
-        emit(delivery)
-        if (delivery.value is StreamValue.Ended) break
+/** Hears that the journal of a stream holds values. It carries no value: the reader takes them with `readStream`. */
+internal class Forward(private val signal: Channel<Unit>) : ValueSink {
+    override fun available() {
+        signal.trySend(Unit)
     }
 }
 
 internal fun Database.openValueStream(epoch: ULong, request: StreamRequest): ValueStream {
-    val channel = streamChannel()
-    val id = subscribe(epoch, request, Forward(channel))
-    return ValueStream(id, epoch, this, channel)
+    val signal = Channel<Unit>(Channel.CONFLATED)
+    val id = subscribe(epoch, request, Forward(signal))
+    return ValueStream(id, epoch, this, signal)
 }
 
 enum class Applied { Changed, Resync, Ignored }
@@ -97,12 +83,8 @@ class ListProjection<Model : DBModel> private constructor(
     /** Server id to the temporary id the row had when the screen first showed it. */
     val temporaryIds: Map<String, String>,
     private val awaitingSnapshot: Boolean,
-    /** The sequence number of the newest delivery whose rows the projection shows: a snapshot, an applied delta, or a state once a snapshot was applied and none is awaited. A delivery that applied no rows does not move it. */
-    val shownSeq: ULong?,
-    /** The sequence number of the last delivery read. A jump means that deliveries were dropped before the reader. */
-    private val lastSeq: ULong?,
 ) {
-    constructor() : this(emptyList(), null, null, null, null, null, 0, 0, emptyList(), emptyMap(), false, null, null)
+    constructor() : this(emptyList(), null, null, null, null, null, 0, 0, emptyList(), emptyMap(), false)
 
     val phase: LivePhase? get() = state?.phase
 
@@ -113,15 +95,12 @@ class ListProjection<Model : DBModel> private constructor(
 
     private fun copy(
         rows: List<Model> = this.rows, state: StreamState? = this.state, revision: Long? = this.revision, epoch: ULong? = this.epoch, ended: StreamEnd? = this.ended, failure: String? = this.failure,
-        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds, awaitingSnapshot: Boolean = this.awaitingSnapshot, shownSeq: ULong? = this.shownSeq, lastSeq: ULong? = this.lastSeq,
-    ) = ListProjection(rows, state, revision, epoch, ended, failure, decoded, deltas, lastEdits, temporaryIds, awaitingSnapshot, shownSeq, lastSeq)
+        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds, awaitingSnapshot: Boolean = this.awaitingSnapshot,
+    ) = ListProjection(rows, state, revision, epoch, ended, failure, decoded, deltas, lastEdits, temporaryIds, awaitingSnapshot)
 
     fun apply(delivery: StreamDelivery, decoder: ModelDecoder<Model>): Step<Model> {
         if (epoch != null && delivery.epoch != epoch) return Step(this, Applied.Ignored)
-        if (delivery.value is StreamValue.Missed) return Step(this, Applied.Ignored)
         val held = delivery.epoch
-        val last = lastSeq
-        val jumped = last != null && delivery.seq > last + delivery.weight()
         var decoded = this.decoded
         var failure = this.failure
         fun decode(wire: List<WireRow>): List<Model?> = wire.map { row ->
@@ -136,20 +115,20 @@ class ListProjection<Model : DBModel> private constructor(
             is StreamValue.Snapshot -> {
                 failure = null
                 val whole = decode(value.rows).filterNotNull()
-                Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false, shownSeq = delivery.seq, lastSeq = delivery.seq), Applied.Changed)
+                Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false), Applied.Changed)
             }
-            is StreamValue.State -> if (jumped || (revision == null && !awaitingSnapshot && value.state.error == null)) Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync) else Step(copy(state = value.state, epoch = held, lastEdits = emptyList(), shownSeq = if (awaitingSnapshot) shownSeq else delivery.seq, lastSeq = delivery.seq), Applied.Changed)
-            is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList(), lastSeq = delivery.seq), Applied.Changed)
+            is StreamValue.State -> Step(copy(state = value.state, epoch = held, lastEdits = emptyList()), Applied.Changed)
+            is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList()), Applied.Changed)
             is StreamValue.Delta -> {
-                if (awaitingSnapshot) return Step(copy(epoch = held, lastSeq = delivery.seq), if (jumped) Applied.Resync else Applied.Ignored)
-                fun gap() = Step(copy(epoch = held, failure = failure, decoded = decoded, awaitingSnapshot = true, lastSeq = delivery.seq), Applied.Resync)
-                if (jumped || value.base != revision) return gap()
+                if (awaitingSnapshot) return Step(copy(epoch = held), Applied.Ignored)
+                fun gap() = Step(copy(epoch = held, failure = failure, decoded = decoded, awaitingSnapshot = true), Applied.Resync)
+                if (value.base != revision) return gap()
                 val carried = decode(value.rows)
                 if (carried.any { it == null }) return gap()
                 val result = rebuild(carried.filterNotNull().zip(value.rowIndexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap()
                 val ids = HashMap(temporaryIds)
                 for (pair in value.renamed) { ids[pair.to] = ids[pair.from] ?: pair.from; ids.remove(pair.from) }
-                Step(copy(rows = result.first, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, deltas = deltas + 1, shownSeq = delivery.seq, lastSeq = delivery.seq, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
+                Step(copy(rows = result.first, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
             }
             else -> Step(this, Applied.Ignored)
         }
@@ -233,11 +212,26 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
 
     suspend fun loadMore(): LoadMoreResult = stream.loadMore()
 
-    /** Returns when the first load settled and this projection shows the rows of every delivery the core handed over until then, also after a gap in the deliveries. Throws `Interrupted` when the reading ends first. */
     suspend fun loaded() {
-        val target = stream.loadedAt()
-        combine(held, readerEnded) { projection, ended -> ended || (projection.shownSeq ?: 0uL) >= target }.first { it }
-        if ((held.value.shownSeq ?: 0uL) < target) throw DbException.Interrupted("the stream ended before its rows were shown")
+        val (projection, ended) = combine(held, readerEnded) { projection, ended -> projection to ended }
+            .first { (projection, ended) -> projection.state?.settled == true || projection.ended != null || ended }
+        if (projection.ended != null && projection.ended != StreamEnd.INVALID) throw DbException.Interrupted("the stream ended before its rows were shown")
+        if (ended && projection.ended != StreamEnd.INVALID) throw DbException.Interrupted("the stream ended before its rows were shown")
+        val state = projection.state
+        if (state?.settled == true) {
+            if (state.phase == LivePhase.FAILED) state.error?.let { throw it }
+            return
+        }
+        if (ended || projection.ended != null) throw DbException.Interrupted("the stream ended before its rows were shown")
+    }
+
+    /** Returns when the projection shows the database at [revision] or later, such as the revision in the receipt of a write. */
+    suspend fun shown(revision: Long) {
+        stream.reach(revision)
+        val (projection, ended) = combine(held, readerEnded) { projection, ended -> projection to ended }
+            .first { (projection, ended) -> (projection.state?.revision ?: -1) >= revision || projection.failure != null || projection.ended != null || ended }
+        if (ended || projection.ended != null) throw DbException.Interrupted("the stream ended before its rows were shown")
+        projection.failure?.let { throw DbException.Invalid(it) }
     }
 
     fun close() {
@@ -276,16 +270,20 @@ class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
 /** The events of a model after the stream opened. The flow ends when the collector stops or the session of the account ends. */
 fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<ModelEventItem<Model>> = flow {
     var failed = false
+    var opened = false
     deliveries.collect { delivery ->
         when (val value = delivery.value) {
-            is StreamValue.Missed -> emit(ModelEventItem.Missed(value.count))
+            is StreamValue.Lost -> emit(ModelEventItem.Lost(value.first, value.last))
             is StreamValue.Event -> try {
                 emit(ModelEventItem.Event(ModelEvent(value.event.area, value.event.kind, value.event.id, value.event.before?.let(decoder::read), value.event.after?.let(decoder::read))))
             } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Throwable) {
                 emit(ModelEventItem.Failed(error))
                 close()
             }
-            is StreamValue.State -> value.state.error?.let { if (!failed) { failed = true; emit(ModelEventItem.Failed(it)) } }
+            is StreamValue.State -> when (val error = value.state.error) {
+                null -> if (value.state.settled && !opened) { opened = true; emit(ModelEventItem.Ready) }
+                else -> if (!failed) { failed = true; emit(ModelEventItem.Failed(error)) }
+            }
             is StreamValue.Ended -> if (value.reason == StreamEnd.INVALID && !failed) { failed = true; emit(ModelEventItem.Failed(DbException.Invalid("the events stream could not open"))) }
             else -> {}
         }

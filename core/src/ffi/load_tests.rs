@@ -6,7 +6,7 @@ use serde_json::Map;
 use tokio::sync::Notify;
 
 use super::stream::tape::{Rows, Tape};
-use super::{Config, Database, DbError, StreamDelivery, StreamRequest, StreamValue, TestClock, Transport, ValueSink};
+use super::{Config, Database, DbError, StreamDelivery, StreamRequest, StreamValue, TestClock, Transport};
 use crate::identity::RowId;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
@@ -63,7 +63,7 @@ async fn a_data_reset_ends_the_held_stream_with_its_epoch_and_a_new_stream_reloa
 #[tokio::test]
 async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without_http() {
     struct Listener(tokio::sync::mpsc::UnboundedSender<DbError>);
-    impl ValueSink for Listener {
+    impl crate::ffi::stream::tape::Reader for Listener {
         fn delivered(&self, delivery: StreamDelivery) {
             if let StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } = delivery.value {
                 if let Some(error) = state.error { let _ = self.0.send(error); }
@@ -241,7 +241,7 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
 
     db.db.shared.store.invalidate_family_now("Moment", "feed").unwrap();
     load(&db, "feed").await.unwrap();
-    assert_eq!(queries(&transport), 4, "invalidated");
+    assert_eq!(queries(&transport), 4, "marked stale");
 }
 
 #[tokio::test]
@@ -391,7 +391,7 @@ async fn a_failure_after_a_confirmed_reset_reaches_the_query_opened_after_it_onc
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).unwrap();
     enum Heard { Failure(DbError), Ended }
     struct Async(tokio::sync::mpsc::UnboundedSender<Heard>);
-    impl ValueSink for Async {
+    impl crate::ffi::stream::tape::Reader for Async {
         fn delivered(&self, delivery: StreamDelivery) {
             match delivery.value {
                 StreamValue::Ended { .. } => { let _ = self.0.send(Heard::Ended); }
@@ -449,7 +449,7 @@ async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_be
     let entity = db.watch(StreamRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::EntityFetch::Force }, listener.clone());
     within(transport.started.notified()).await;
     crate::test_wait::yield_until("the empty first snapshot", || listener.last().is_some()).await;
-    let mut loaded = std::pin::pin!(db.stream_loaded(entity.id));
+    let mut loaded = std::pin::pin!(db.loaded(entity.id));
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     for _ in 0..50 { tokio::task::yield_now().await; }
     assert!(std::future::Future::poll(loaded.as_mut(), &mut cx).is_pending(), "loaded() returned before the transport answered");

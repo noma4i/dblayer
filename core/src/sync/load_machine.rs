@@ -54,11 +54,12 @@ pub struct RelationState {
     pub error: Option<LoadError>,
     pub loaded_at: Option<i64>,
     pub revision: i64,
+    pub(crate) needs_reload: Option<i64>,
 }
 
 impl RelationState {
     pub(crate) fn closed() -> Self {
-        Self { complete: false, phase: LoadPhase::Closed, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0 }
+        Self { complete: false, phase: LoadPhase::Closed, initial: false, refreshing: false, fetching_more: false, has_more: false, total: None, error: None, loaded_at: None, revision: 0, needs_reload: None }
     }
 }
 
@@ -97,6 +98,7 @@ pub(crate) struct Stored {
     pub data: Data,
     pub has_rows: bool,
     pub revision: i64,
+    pub stale_since: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +117,7 @@ struct WindowFacts {
     has_rows: bool,
     order: Order,
     needs: i64,
+    stale_since: Option<i64>,
     last_end: LastEnd,
     retry_on_online: Option<LoadKind>,
     read_error: Option<LoadError>,
@@ -150,6 +153,7 @@ impl WindowFacts {
             has_rows: false,
             order: Order::NONE,
             needs: 0,
+            stale_since: None,
             last_end: LastEnd::None,
             retry_on_online: None,
             read_error: None,
@@ -196,6 +200,7 @@ impl WindowFacts {
             error,
             loaded_at,
             revision: self.needs,
+            needs_reload: self.stale_since,
         }
     }
 
@@ -225,6 +230,11 @@ impl WindowFacts {
         if stored.order < self.order {
             return;
         }
+        self.stale_since = match (self.stale_since, stored.stale_since) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        if stored.stale_since.is_none() && self.stale_since.is_some_and(|since| stored.order.applied >= since) { self.stale_since = None; }
         self.order = stored.order;
         self.data = stored.data;
         self.has_rows = stored.has_rows;
@@ -275,6 +285,7 @@ impl WindowFacts {
                     self.retry_on_online = None;
                     self.needs = self.needs.max(stored.as_ref().map_or(0, |stored| stored.revision));
                     self.accept(stored);
+                    if self.stale_since.is_some() && self.flights.is_empty() { context.effects.push(Effect::Reload { window: self.window.clone() }); }
                 }
             }
             Event::Discarded { flight, .. } | Event::Abandoned { flight, .. } => {
@@ -300,6 +311,7 @@ impl WindowFacts {
                     self.last_end = LastEnd::None;
                     self.read_error = None;
                     self.retry_on_online = None;
+                    self.stale_since = None;
                 }
             }
             Event::Offline => {}
@@ -316,6 +328,13 @@ impl WindowFacts {
                 self.read_error = None;
             }
             Event::ReadFailed { error, .. } => self.read_error = Some(error.clone()),
+            Event::Stale { since, .. } => {
+                if self.order.applied < *since {
+                    self.stale_since = Some(self.stale_since.map_or(*since, |old| old.max(*since)));
+                    if self.flights.is_empty() { context.effects.push(Effect::Reload { window: self.window.clone() }); }
+                }
+            }
+            Event::StaleFamily { .. } => {}
         }
         Transition(self.rest())
     }
@@ -408,6 +427,8 @@ pub(crate) enum Event {
     #[allow(dead_code)]
     ReadOk { window: String, has_rows: bool },
     ReadFailed { window: String, error: LoadError },
+    Stale { window: String, model: String, since: i64 },
+    StaleFamily { model: String, relation: String, since: i64, epoch: u64 },
 }
 
 impl Event {
@@ -426,7 +447,8 @@ impl Event {
             | Event::Panicked { window, .. }
             | Event::ReadOk { window, .. }
             | Event::ReadFailed { window, .. } => Some(window),
-            Event::Reset { .. } | Event::Online { .. } | Event::Close | Event::Offline => None,
+            Event::Stale { window, .. } => Some(window),
+            Event::Reset { .. } | Event::Online { .. } | Event::Close | Event::Offline | Event::StaleFamily { .. } => None,
         }
     }
 }
@@ -435,6 +457,8 @@ impl Event {
 pub(crate) enum Effect {
     Publish { window: String, state: Box<RelationState> },
     Retry { window: String, kind: LoadKind },
+    /// The window owes a read that only a request issued after its debt pays. The owner starts it while the window is observed.
+    Reload { window: String },
 }
 
 #[derive(Default)]
@@ -488,10 +512,19 @@ impl Machine {
             }
         }
         let mut context = Context { epochs: Epochs { all: self.all_epoch, by_model: Some(&self.model_epochs) }, effects, orphan_ends: 0, quiet: false };
-        if let Event::Observe { window, model, .. } | Event::Start { window, model, .. } = event {
+        if let Event::StaleFamily { model, relation, since, epoch } = event {
+            if *epoch < context.epochs.of(model) { return; }
+            let prefix = crate::store::family_prefix(model, relation);
+            for (window, machine) in self.windows.range_mut(prefix.clone()..).take_while(|(window, _)| window.starts_with(&prefix)) {
+                machine.handle_with_context(&Event::Stale { window: window.clone(), model: model.clone(), since: *since }, &mut context);
+            }
+            return;
+        }
+        if let Event::Observe { window, model, .. } | Event::Start { window, model, .. } | Event::Stale { window, model, .. } = event {
             self.windows.entry(window.clone()).or_insert_with(|| {
                 context.quiet = true;
-                let machine = WindowFacts::new(window, model).uninitialized_state_machine().init_with_context(&mut context);
+                let facts = WindowFacts::new(window, model);
+                let machine = facts.uninitialized_state_machine().init_with_context(&mut context);
                 context.quiet = false;
                 machine
             });

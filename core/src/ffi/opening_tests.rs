@@ -117,15 +117,12 @@ async fn the_power_and_memory_facts_given_to_open_hold_the_first_preload() {
 #[tokio::test]
 async fn the_preload_waits_until_the_listener_has_taken_its_first_snapshot() {
     use crate::sync::rig::{moments_spec, users_spec};
-    use crate::test_wait::{recv_or_closed, yield_until};
-    use super::super::{StreamDelivery, ValueSink};
+    use crate::test_wait::yield_until;
+    use super::super::{StreamRequest, ValueSink};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    struct Taking { entered: std::sync::mpsc::Sender<()>, release: std::sync::Mutex<std::sync::mpsc::Receiver<()>> }
-    impl ValueSink for Taking {
-        fn delivered(&self, _: StreamDelivery) {
-            let _ = self.entered.send(());
-            let _ = recv_or_closed(&self.release.lock().unwrap());
-        }
+    struct Waiting(std::sync::mpsc::Sender<()>);
+    impl ValueSink for Waiting {
+        fn available(&self) { let _ = self.0.send(()); }
     }
     let mut moments = moments_spec();
     moments.relations.iter_mut().find(|relation| relation.name == "feed").unwrap().preload = Some(Default::default());
@@ -134,18 +131,17 @@ async fn the_preload_waits_until_the_listener_has_taken_its_first_snapshot() {
     let requests = Arc::new(AtomicUsize::new(0));
     let options = OpenOptions { operations: operations.into(), uploads: None, power_saving: true, low_ram: false, preload: true, listening: true };
     let database = OpenDatabase::new().open(config(), models, options, Some(Arc::new(CountingFeed(requests.clone()))), None, None, None, None).await.unwrap();
-    let (entered, inside) = std::sync::mpsc::channel();
-    let (release, waiting) = std::sync::mpsc::channel();
-    let live = database.watch_query(r#"{"model":"users"}"#, Arc::new(Taking { entered, release: std::sync::Mutex::new(waiting) }));
-    inside.recv_timeout(std::time::Duration::from_secs(5)).expect("the listener takes its first snapshot");
+    let (available, waiting) = std::sync::mpsc::channel();
+    let stream = database.subscribe(database.session_epoch(), StreamRequest::Query { query_json: r#"{"model":"users"}"#.into() }, Arc::new(Waiting(available)));
+    waiting.recv_timeout(std::time::Duration::from_secs(5)).expect("the first snapshot waits in the journal");
     let sync = database.sync().unwrap();
     let _entered = super::super::database::executor().unwrap().enter();
     sync.set_power_saving(false);
     for _ in 0..200 { tokio::task::yield_now().await; }
-    assert!(requests.load(Ordering::SeqCst) == 0 && !sync.preload_running(), "the preload started while the first snapshot was still being taken");
-    drop(release);
+    assert!(requests.load(Ordering::SeqCst) == 0 && !sync.preload_running(), "the preload started before the reader took its first snapshot");
+    assert!(database.read_stream(stream).is_some_and(|delivery| matches!(delivery.value, super::super::StreamValue::Snapshot { .. })));
     yield_until("the preload after the first snapshot", || requests.load(Ordering::SeqCst) == 1).await;
-    live.cancel();
+    database.cancel_stream(stream);
     database.close_now();
 }
 

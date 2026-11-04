@@ -531,7 +531,7 @@ Declare `payload: "message"` on Message too for zero node requests when both row
 All payload targets commit before any declared HTTP target, including targets derived through `id_of`.
 The core indexes targets by area when the models are registered, without scanning unrelated models for each event.
 Missing or incomplete payloads are rejected as application errors. They never trigger an HTTP fallback.
-An active model event reader receives a missed-event notice when its payload cannot be applied.
+An active model event reader receives a `lost` position when its payload cannot be applied.
 `removes_on` handles terminal kinds before reading their payload, so a deleted Message can carry null while its Chat still updates.
 Declare `server_revision :serverRevision` with a required integer attribute on a versioned model.
 The core drops a server row whose revision is lower than its stored revision. Equal or higher revisions apply.

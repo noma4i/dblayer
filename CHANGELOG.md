@@ -15,6 +15,10 @@
 - `Query.read` and `Query.readRow` read storage once without a stream.
 - `AccountScope.stream` takes `refreshOnConnect`; a list stream opened with it loads again when the network returns.
 - A projection keeps the edits of its deltas and the temporary id of a row.
+- `Query.beginLoad` returns the interest of one caller with `result()` and `cancel()`.
+- `Projected.shown(revision)` returns when the projection shows that revision of the database.
+- `ModelEventItem.ready` tells that the source of an events stream is open.
+- `Database.readStream` takes the next value of a stream from its journal in the core.
 
 ### Changed
 - Core writes and transport calls carry one `Admitted` value from the calling database.
@@ -34,7 +38,14 @@
 - A load, `loadMore` or node read whose answer arrives after a reset of model caches ends with `Interrupted` and stores nothing. A send of another model goes on.
 - `cancel` of a stream does not wait for the reader; no delivery is admitted after it.
 - A task started by a call of one session epoch commits and sends in that epoch only.
-- A stream reader keeps the newest 256 deliveries; the dropped ones arrive as `missed` and a list asks for a new snapshot.
+- A stream keeps at most 256 values in one journal in the core; platforms keep no buffer.
+- A full list journal gets one new snapshot; a full events journal reports one lost range.
+- `ValueSink.available` only tells that values wait; `readStream` moves the cursor of the reader.
+- The end of a stream comes once after its values; a session end drops unread values.
+- A shared load stops only when its last caller cancelled its interest.
+- A window that owes a read after a mutation is read again once while observed.
+- A media window that owes a read after a mutation reads all its pages again.
+- `DB.resume` and `DBlayer.resume` pass the epoch of the session; each epoch resumes apart.
 - A blob reads its status stream while the scope of its reader lives (Kotlin).
 - A list stream no longer keeps a warm observer after its reader left; `retainedObservers` counts the observers of `warm`.
 - Projections, count streams and event streams report platform decode errors and source errors.
@@ -67,8 +78,7 @@
 - An older list answer no longer undoes a newer join or leave.
 - An operation removed, discarded or failed outside its send ends the outcome of its receipt.
 - A flush, load retry, preload, resume or upload cleanup woken during a model reset runs once after it.
-- A stream reader receives the exact count of dropped deliveries, also when the stream ends.
-- A model event count the buffer dropped reaches the reader in full.
+- An events reader receives the exact range of lost positions, then one end.
 - A window opened after a failed load of its query no longer shows that error.
 - A parameter named like a query no longer captures the generated call.
 - A Kotlin parameter named `read`, `put` or `act` no longer captures a generated call.
@@ -87,9 +97,8 @@
 - `commandStatus` right after the confirming commit reports delivered, not discarded.
 - An explicit load that restores an ended session returns its result, not `Interrupted`.
 - A cancelled `loadAll` or `refreshPreloads` call stops asking for pages.
-- `Projected.loaded()` returns after the projection shows the loaded rows.
-- `streamLoaded` returns the sequence number of the newest delivery.
-- `Projected.loaded()` returns only when the projection shows the rows of the loaded revision: after a gap only the recovery snapshot counts, and it throws `Interrupted` when the reader ends first.
+- `Projected.loaded()` returns with the settled state that comes with the rows of the first load.
+- A cached entity whose load failed on the network stays loaded and shows the network error.
 - The stream of an entity that the library loads waits for the frame of the landed row before its first load settles.
 
 ### Removed
@@ -102,6 +111,9 @@
 - The `add_to`, `remove_from`, `create_row` and `change_row` lines of `.dbl`.
 - Wrapper registries, flushers and value caches for entities, lists and events.
 - The iOS background upload session: `handleBackgroundSession`, `BackgroundPuts`, `BackgroundUploadSession`.
+- `streamLoaded`, `ValueStream.loaded()` and `ValueSink.delivered`: read the state and `readStream`.
+- `StreamValue.missed` and `ModelEventItem.missed`: use `lost` with its range.
+- `Database.load`: use `beginLoad` or `Query.load`.
 
 ## 6.16.1 - 2026-11-03
 

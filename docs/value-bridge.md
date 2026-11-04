@@ -33,9 +33,15 @@ val thread = Projected(scope.stream(Message.thread(id)), Message, screenScope)
 | `snapshot` | The whole result at a revision. It is the first value. |
 | `delta` | Rows changed since `base`: upserts, removals, positions, replaced ids. |
 | `state` | The load state changed and the rows did not. |
+| `event` | One event of a model. |
+| `lost` | The events at the positions `first` to `last` are gone: the reader was slow or the event could not be read. |
 | `ended` | The stream ended by itself: session ended, database closed, query invalid. |
 
-Every value names its stream, its epoch and a sequence number. The number counts events: a `missed` value advances it by its count, every other value by 1.
+The core keeps the values of a stream in one journal of at most 256 values. The sink of a stream only hears that values wait, and the reader takes them one by one with `readStream`. Swift and Kotlin do this and keep no buffer of their own.
+Every value names its stream, its epoch and its position in the journal. A `lost` value takes the place of the positions it names.
+A full journal of a list drops the values that a new snapshot replaces and sends that snapshot. A full journal of events keeps the newest events and one `lost` range for the oldest ones.
+The end of a stream is kept apart from the journal and comes once, after every other value. When the session ends or the database closes, the values of the old account that were not read are dropped and only the end follows.
+Each state says whether the first load `settled` and up to which `revision` of the database its rows are read.
 A projection ignores a value of another epoch.
 A delta whose `base` is not the held revision asks for one new snapshot.
 `Projected` does that for you: it calls `resync`.
@@ -44,8 +50,7 @@ A delta whose `base` is not the held revision asks for one new snapshot.
 
 The first delivery of a stream is a snapshot. It carries no list of edits: `takeEdits()` returns `nil` and the screen reads `rows` again.
 Edits come only with deltas, as the steps from the rows before to the rows after.
-One missed revision gives one new snapshot per stream, also when a screen follows several streams.
-A reader that fell behind reads a jump in the sequence numbers of the deliveries. A jump means that deliveries were dropped, also a snapshot that was asked for, so the projection asks again.
+A delta that a projection cannot apply gives one new snapshot per stream, also when a screen follows several streams.
 
 On iOS 17 a SwiftUI view reads `Projected` through `@Observable`: it tracks the properties it reads, and `withObservationTracking` reports the next change.
 `Observations { }` needs iOS 26. Code that targets iOS 17 does not use it.
@@ -82,7 +87,8 @@ One owner in the core serves each stream. The wrappers keep no registry, no lock
 | --- | --- |
 | `refresh()` | Loads the relation again. |
 | `loadMore()` | Loads the next page. |
-| `loaded()` | Returns when the first load settled. On `Projected` it also waits until the projection shows every delivery the core handed over until then. |
+| `loaded()` | On `Projected`: returns when the projection shows the settled state of the first load. With rows and a failed load it returns and the state keeps the error. Without rows it throws the error. |
+| `shown(revision)` | On `Projected`: returns when the projection shows the database at that revision or later, also when the write of that revision changed none of its rows. |
 
 A call that outlives its epoch ends as `Interrupted`.
 Server work without a session or transport fails with `NoSession`.
@@ -136,6 +142,6 @@ val rows = Chat.list.read(scope)
 
 An idle stream sends no request and wakes nothing.
 A stream that ended leaves no observer: a write after its last reader left reads nothing. `retainedObservers` counts only the observers of an explicit `warm`.
-A reader that falls behind keeps the newest 256 deliveries. The count of the dropped ones arrives as `missed` before the delivery that follows the loss, also before `ended`, and a list asks for a new snapshot.
+A reader that falls behind finds at most 256 values in the journal. A list reader then gets one new snapshot, an events reader gets one `lost` range before the events that were kept.
 A change of one row sends one row and decodes one row.
 The number of subscriptions is the number of readers.

@@ -1,8 +1,76 @@
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::ffi::wire::WireRow;
 use crate::ffi::{Database, DbError};
-use super::{LivePhase, Placement, Replacement, StreamDelivery, StreamEnd, StreamRequest, StreamValue, ValueSink};
+use super::{LivePhase, Placement, Replacement, StreamDelivery, StreamEnd, StreamRequest, StreamTable, StreamValue, ValueSink};
+
+/// A test reader of a stream: it hears every value the way a platform reads them, through `read_stream`.
+pub(crate) trait Reader: Send + Sync {
+    fn delivered(&self, delivery: StreamDelivery);
+}
+
+/// Reads the journal of a stream each time the core says values wait, and keeps what `loaded()` of a platform would return: the first settled state, its error when it failed without rows, `Interrupted` after an end that is not `Invalid`.
+pub(crate) struct Pull {
+    table: Weak<StreamTable>,
+    id: OnceLock<u64>,
+    reader: Arc<dyn Reader>,
+    again: AtomicBool,
+    reading: Mutex<()>,
+    outcome: tokio::sync::watch::Sender<Option<Result<u64, DbError>>>,
+    failure: Mutex<Option<DbError>>,
+}
+
+type Pulls = Mutex<HashMap<(usize, u64), tokio::sync::watch::Receiver<Option<Result<u64, DbError>>>>>;
+
+fn pulls() -> &'static Pulls {
+    static PULLS: OnceLock<Pulls> = OnceLock::new();
+    PULLS.get_or_init(Pulls::default)
+}
+
+fn key(table: &Arc<StreamTable>, id: u64) -> (usize, u64) { (Arc::as_ptr(table) as usize, id) }
+
+impl ValueSink for Pull {
+    fn available(&self) { self.drain(); }
+}
+
+impl Pull {
+    fn drain(&self) {
+        self.again.store(true, Ordering::SeqCst);
+        let Some(id) = self.id.get().copied() else { return };
+        while self.again.load(Ordering::SeqCst) {
+            let Ok(_reading) = self.reading.try_lock() else { return };
+            self.again.store(false, Ordering::SeqCst);
+            while let Some(delivery) = self.table.upgrade().and_then(|table| table.find(id)).and_then(|stream| stream.read()) {
+                self.observe(&delivery);
+                self.reader.delivered(delivery);
+            }
+        }
+    }
+
+    fn observe(&self, delivery: &StreamDelivery) {
+        let state = match &delivery.value {
+            StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::Count { state, .. } | StreamValue::State { state } => state,
+            StreamValue::Ended { reason } => {
+                let failure = self.failure.lock().unwrap().clone();
+                let outcome = match reason {
+                    StreamEnd::Invalid => Err(failure.unwrap_or(DbError::Invalid { detail: "the stream could not open".into() })),
+                    _ => Err(DbError::Interrupted { detail: "the stream ended before its rows were shown".into() }),
+                };
+                self.outcome.send_replace(Some(outcome));
+                return;
+            }
+            _ => return,
+        };
+        if state.phase == LivePhase::Failed { self.failure.lock().unwrap().clone_from(&state.error); }
+        let outcome = state.settled.then(|| match (&state.phase, &state.error) {
+            (LivePhase::Failed, Some(error)) => Err(error.clone()),
+            _ => Ok(delivery.seq),
+        });
+        self.outcome.send_replace(outcome);
+    }
+}
 
 /// One delivery as a test reads it: the rows part and the state side by side.
 #[allow(dead_code)]
@@ -77,7 +145,7 @@ fn apply(rows: &mut Vec<WireRow>, value: &StreamValue) {
 #[derive(Default)]
 pub(crate) struct Rows(pub(crate) Mutex<Vec<WireRow>>, pub(crate) Mutex<Vec<Seen>>, pub(crate) Mutex<Vec<StreamEnd>>, Mutex<(u32, Vec<StreamValue>)>);
 
-impl ValueSink for Rows {
+impl Reader for Rows {
     fn delivered(&self, delivery: StreamDelivery) {
         apply(&mut self.0.lock().unwrap(), &delivery.value);
         let mut kept = self.3.lock().unwrap();
@@ -106,7 +174,7 @@ impl Rows {
 #[derive(Default)]
 pub(crate) struct Tape(Rows);
 
-impl ValueSink for Tape {
+impl Reader for Tape {
     fn delivered(&self, delivery: StreamDelivery) { self.0.delivered(delivery); }
 }
 
@@ -140,7 +208,7 @@ pub(crate) struct Watched {
 }
 
 impl Watched {
-    pub(crate) async fn wait_for_initial_load(&self) -> Result<(), DbError> { self.database.stream_loaded(self.id).await.map(drop) }
+    pub(crate) async fn wait_for_initial_load(&self) -> Result<(), DbError> { self.database.loaded(self.id).await.map(drop) }
 
     pub(crate) fn cancel(&self) { self.database.cancel_stream(self.id); }
 
@@ -148,16 +216,39 @@ impl Watched {
 }
 
 impl Database {
-    pub(crate) fn watch(&self, request: StreamRequest, sink: Arc<dyn ValueSink>) -> Arc<Watched> {
+    /// Opens a stream whose values reach `reader` as a platform reads them.
+    pub(crate) fn subscribe_reading(&self, epoch: u64, request: StreamRequest, reader: Arc<dyn Reader>) -> u64 {
+        let pull = Arc::new(Pull { table: Arc::downgrade(&self.stream_table), id: OnceLock::new(), reader, again: AtomicBool::new(false), reading: Mutex::new(()), outcome: tokio::sync::watch::channel(None).0, failure: Mutex::new(None) });
+        let id = self.stream_table.next.load(Ordering::SeqCst) + 1;
+        let _ = pull.id.set(id);
+        pulls().lock().unwrap().insert(key(&self.stream_table, id), pull.outcome.subscribe());
+        assert_eq!(self.subscribe(epoch, request, pull), id, "a test opened streams of one database from two threads at once");
+        id
+    }
+
+    /// What `loaded()` of a platform returns for the stream: the position of the first settled value, or the error it fails with.
+    pub(crate) async fn loaded(&self, stream: u64) -> Result<u64, DbError> {
+        let outcome = pulls().lock().unwrap().get(&key(&self.stream_table, stream)).cloned();
+        let Some(mut outcome) = outcome else { return Err(DbError::Interrupted { detail: "the stream is not read".into() }) };
+        let seen = outcome.wait_for(Option::is_some).await.map_err(|_| DbError::Interrupted { detail: "the stream is gone".into() })?.clone();
+        seen.unwrap_or_else(|| Err(DbError::Interrupted { detail: "the stream is gone".into() }))
+    }
+
+    pub(crate) fn watch(&self, request: StreamRequest, reader: Arc<dyn Reader>) -> Arc<Watched> {
         let epoch = self.session_epoch();
-        let id = self.subscribe(epoch, request, sink);
+        let id = self.subscribe_reading(epoch, request, reader);
         Arc::new(Watched { database: self.clone(), id, epoch })
     }
 
-    pub(crate) fn watch_query(&self, query_json: &str, sink: Arc<dyn ValueSink>) -> Arc<Watched> { self.watch(StreamRequest::Query { query_json: query_json.into() }, sink) }
+    pub(crate) fn watch_query(&self, query_json: &str, reader: Arc<dyn Reader>) -> Arc<Watched> { self.watch(StreamRequest::Query { query_json: query_json.into() }, reader) }
 }
 
 impl Database {
+    /// What `load()` of a platform does: begin the load, wait for its result, give up the interest when the wait is dropped.
+    pub(crate) async fn load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
+        self.begin_load(epoch, model, relation, params_json)?.result().await
+    }
+
     pub(crate) async fn create_durable(&self, model: &str, values_json: &str) -> super::super::WireOperationReceipt {
         let request = crate::ffi::CommandRequest { epoch: self.session_epoch(), model: model.into(), values_json: values_json.into(), args_json: "{}".into(), upload: None };
         self.send(request).await.unwrap()

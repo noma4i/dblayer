@@ -40,7 +40,7 @@ async fn a_refused_reread_leaves_the_call_of_the_mutation_successful() {
         assert_eq!(rig.transport.call_count("MomentsFeed"), if case == "read" { 1 } else { 2 }, "{case}");
         assert_eq!(rig.transport.call_count("MomentsHistory"), if case == "read" { 1 } else { 2 }, "{case}");
         if case == "reload" {
-            assert!(invalidated(&rig, "feed") && invalidated(&rig, "history"), "the refused reread left the lists fresh");
+            assert!(is_stale(&rig, "feed") && is_stale(&rig, "history"), "the refused reread left the lists fresh");
         }
     }
 }
@@ -53,9 +53,9 @@ fn created() -> Reply {
     Reply::data(json!({"createMoment": {"id": "m9", "text": "t", "userId": null}}))
 }
 
-fn invalidated(rig: &Rig, relation: &str) -> bool {
+fn is_stale(rig: &Rig, relation: &str) -> bool {
     let key = rig.sync.window_key("moments", relation, &none()).unwrap();
-    rig.db.shared.store.window_freshness(&key).unwrap().is_some_and(|freshness| freshness.invalidated)
+    rig.db.shared.store.window_freshness(&key).unwrap().is_some_and(|freshness| freshness.stale_since.is_some())
 }
 
 async fn load(rig: &Rig, relation: &str) {
@@ -74,11 +74,11 @@ async fn inv_fresh_10_created_moment_marks_the_open_feed_stale_and_the_next_load
     rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "t"}))).unwrap();
     rig.transport.enqueue("CreateMoment", created());
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    assert!(invalidated(&rig, "feed"));
+    assert!(is_stale(&rig, "feed"));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-    assert!(!invalidated(&rig, "feed"));
+    assert!(!is_stale(&rig, "feed"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -93,7 +93,7 @@ async fn watched_feed_is_reread_right_after_create() {
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     rereads_finished(&rig, "MomentsFeed", 2).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
-    assert!(!invalidated(&rig, "feed"));
+    assert!(!is_stale(&rig, "feed"));
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m9", "m1"]);
 }
 
@@ -118,8 +118,8 @@ async fn inv_fresh_10_refetch_marks_only_the_named_relations() {
     rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
     rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    assert!(invalidated(&rig, "history"));
-    assert!(!invalidated(&rig, "feed"));
+    assert!(is_stale(&rig, "history"));
+    assert!(!is_stale(&rig, "feed"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -129,7 +129,7 @@ async fn refetch_of_a_relation_of_another_model_marks_that_relation() {
     rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &none(), LoadOptions::default()).await.unwrap();
     let key = rig.sync.window_key("users", "current", &none()).unwrap();
-    let stale = || rig.db.shared.store.window_freshness(&key).unwrap().is_some_and(|freshness| freshness.invalidated);
+    let stale = || rig.db.shared.store.window_freshness(&key).unwrap().is_some_and(|freshness| freshness.stale_since.is_some());
     assert!(!stale());
     rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
     rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
@@ -146,7 +146,7 @@ async fn update_without_refetch_marks_nothing() {
     rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
-    assert!(!invalidated(&rig, "feed"));
+    assert!(!is_stale(&rig, "feed"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -158,7 +158,7 @@ async fn destroy_success_marks_the_feed_stale() {
     rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
     rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"ok": true}})));
     assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap().committed(), 1);
-    assert!(invalidated(&rig, "feed"));
+    assert!(is_stale(&rig, "feed"));
 }
 
 #[tokio::test(start_paused = true)]
@@ -277,9 +277,9 @@ async fn a_mutation_returns_with_its_own_answer_while_its_reread_is_held() {
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async { flushed(&rig).await; liked.result().await.result }).await;
     assert_eq!(outcome.expect("the call of the mutation waited for its reread"), crate::sync::SendResult::Committed);
     rig.transport.await_calls("MomentsHistory", 2).await;
-    assert!(invalidated(&rig, "history"), "the reread has not been answered yet");
+    assert!(is_stale(&rig, "history"), "the reread has not been answered yet");
     tokio::time::sleep(std::time::Duration::from_secs(3601)).await;
-    assert!(!invalidated(&rig, "history"));
+    assert!(!is_stale(&rig, "history"));
     assert_eq!(member_ids(&rig, "moments", "history", &none()), ["m1", "m2"]);
 }
 
@@ -366,7 +366,7 @@ async fn a_reread_queued_before_a_session_change_writes_nothing_in_the_next_sess
     let sync = rig.sync.clone();
     let flushing = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await });
     rig.transport.await_calls("LikeMoment", 2).await;
-    assert!(invalidated(&rig, "history"), "the first commit left the list fresh");
+    assert!(is_stale(&rig, "history"), "the first commit left the list fresh");
     rig.sync.end_session_for_test();
     assert!(matches!(crate::test_wait::within(flushing).await.unwrap(), Err(crate::sync::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))));
     rig.sync.commit_session_for_test();
@@ -379,5 +379,5 @@ async fn a_reread_queued_before_a_session_change_writes_nothing_in_the_next_sess
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     rereads_finished(&rig, "MomentsHistory", before).await;
     assert_eq!(rig.transport.call_count("MomentsHistory"), before, "the reread of the ended epoch ran in the next session");
-    assert!(invalidated(&rig, "history"));
+    assert!(is_stale(&rig, "history"));
 }

@@ -27,6 +27,6 @@ async fn inv_fresh_02_an_invalidation_during_a_flight_gets_exactly_one_repeat_th
     tokio::time::sleep(Duration::from_secs(10)).await;
     let key = rig.sync.window_key("moments", "feed", &none()).unwrap();
     assert_eq!(rig.transport.call_count("MomentsFeed"), 3);
-    assert!(!rig.db.shared.store.window_freshness(&key).unwrap().unwrap().invalidated);
+    assert!(rig.db.shared.store.window_freshness(&key).unwrap().unwrap().stale_since.is_none());
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m1", "m2"]);
 }

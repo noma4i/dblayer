@@ -159,8 +159,12 @@ class OperationReceipt<Model : DBModel>(private val database: Database, private 
 class ModelEvent<Model : DBModel>(val area: String, val kind: String, val id: String, val before: Model?, val after: Model?)
 
 sealed interface ModelEventItem<out Model : DBModel> {
+    /** The source of the events is open: every event after this item reaches the stream. */
+    data object Ready : ModelEventItem<Nothing>
+
     class Event<Model : DBModel>(val event: ModelEvent<Model>) : ModelEventItem<Model>
-    class Missed(val count: ULong) : ModelEventItem<Nothing>
+    /** The events at these positions of the stream are lost. [first] and [last] are included. */
+    class Lost(val first: ULong, val last: ULong) : ModelEventItem<Nothing>
 
     class Failed(val error: Throwable) : ModelEventItem<Nothing>
 }

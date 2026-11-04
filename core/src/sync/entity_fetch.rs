@@ -10,7 +10,7 @@ use super::{locked, Inner, Sync};
 pub enum EntityFetch { None, Stale, Force, IfMissing }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RefreshError { Offline, Failed(String) }
+pub enum RefreshError { Offline, Failed(SyncError) }
 
 pub type RefreshSink = Arc<dyn Fn(&str, Option<RefreshError>) + Send + std::marker::Sync>;
 
@@ -68,9 +68,9 @@ impl Sync {
             Err(error @ (SyncError::Offline | SyncError::Transport(crate::transport::TransportError::Session { .. }))) => {
                 due.session = error != SyncError::Offline;
                 locked(&inner.entity_due).push(due.clone());
-                Some(if error == SyncError::Offline { RefreshError::Offline } else { RefreshError::Failed(error.to_string()) })
+                Some(if error == SyncError::Offline { RefreshError::Offline } else { RefreshError::Failed(error) })
             }
-            Err(error) => Some(RefreshError::Failed(error.to_string())),
+            Err(error) => Some(RefreshError::Failed(error)),
         };
         (due.sink)(&due.id, outcome);
     }

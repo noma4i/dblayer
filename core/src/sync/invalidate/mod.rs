@@ -1,5 +1,24 @@
 mod mark;
 
+#[derive(Debug, Clone)]
+pub(crate) enum WindowEvent {
+    Mutation { model: String, action: String },
+    DestroyRefused { model: String },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum WindowTrigger {
+    Lost { model: String, subscription: u64, first: u64, last: u64 },
+    ParentMissing { model: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WindowMark {
+    pub(crate) since: i64,
+    pub(crate) epoch: u64,
+    pub(crate) families: Vec<(String, String)>,
+}
+
 use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
@@ -19,49 +38,9 @@ impl Inner {
         let mut errors = Vec::new();
         for (key, (relation, params)) in targets {
             let result = async {
-                if only_stale && !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.invalidated) { return Ok(false); }
+                if only_stale && !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.stale_since.is_some()) { return Ok(false); }
                 let resolved = self.resolve(crate::lifecycle::Origin::Session, model, &relation, &params)?;
                 let outcome = if only_stale { self.fetch_after_flights(admitted, &resolved).await? } else { self.fetch(admitted, &resolved, None, false).await? };
-                if let Some(error) = outcome.kept_error { return Err(error); }
-                Ok(true)
-            }.await;
-            match result {
-                Ok(loaded) => reloaded += usize::from(loaded),
-                Err(error) => errors.push(format!("{model}.{relation}: {error}")),
-            }
-        }
-        if errors.is_empty() { Ok(reloaded) } else { Err(SyncError::Event(errors.join("\n"))) }
-    }
-}
-
-/// A reread owed after one commit: the lists of `names` of `model`, the epoch of the work that queued it, and the stamp (`next_issued`) taken at the mark. A load that began before the stamp does not settle it.
-pub(crate) struct StaleMark {
-    model: String,
-    names: std::collections::BTreeSet<String>,
-    since: i64,
-    admitted: crate::lifecycle::Admitted,
-}
-
-impl Inner {
-    pub(crate) async fn reload_stale(self: &std::sync::Arc<Self>, mark: &StaleMark) -> Result<usize, SyncError> {
-        if !mark.admitted.is_current() { return Ok(0); }
-        let model = mark.model.as_str();
-        let targets: BTreeMap<String, (String, Map<String, Value>)> = self.db.observed_reads()
-            .into_iter()
-            .filter(|entry| entry.model == model && mark.names.contains(&entry.relation))
-            .map(|entry| (entry.key, (entry.relation, entry.params)))
-            .collect();
-        let mut reloaded = 0;
-        let mut errors = Vec::new();
-        for (key, (relation, params)) in targets {
-            let result = async {
-                let store = &self.db.shared.store;
-                let invalidated = store.window_freshness(&key)?.is_some_and(|freshness| freshness.invalidated);
-                let resolved = self.resolve(crate::lifecycle::Origin::Session, model, &relation, &params)?;
-                let pending = self.flight_pending(&resolved);
-                let predates_mark = store.window(&key)?.map_or(pending, |window| window.applied < mark.since);
-                if !invalidated && !predates_mark { return Ok(false); }
-                let outcome = self.fetch_after_flights(&mark.admitted, &resolved).await?;
                 if let Some(error) = outcome.kept_error { return Err(error); }
                 Ok(true)
             }.await;

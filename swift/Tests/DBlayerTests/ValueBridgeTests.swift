@@ -234,9 +234,8 @@ extension BridgeProbeTests {
     let scope = try DB.account()
     let reader = LossyReader()
     let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
-    reader.stream = stream
-    _ = try await DB.database.streamLoaded(stream: stream)
-    await eventually("the first snapshot arrives") { reader.snapshots == 1 }
+    reader.bind(stream)
+    await eventually("the first snapshot is settled") { reader.snapshots == 1 && reader.settled }
 
     try DB.database.setOnline(online: false)
     reader.dropNext()
@@ -274,11 +273,12 @@ extension BridgeProbeTests {
     try await Self.signIn("A")
     let reader = LossyReader()
     let stream = try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .none), sink: reader)
+    reader.bind(stream)
     await eventually("the failed stream ended") { !reader.ended.isEmpty }
 
     #expect(reader.ended == [.invalid])
+    #expect(reader.failure != nil, "the failed stream did not show its error")
     #expect(try DB.streamCensus().open == 0)
-    await #expect(throws: DbError.self) { try await DB.database.streamLoaded(stream: stream) }
   }
 
   /// K02: a command and a one-off read that carry the scope of A are refused after the next sign-in and change nothing for B.
@@ -330,24 +330,40 @@ extension BridgeProbeTests {
   }
 }
 
+/// Reads a stream the way a platform does and can drop one value it read, so the projection meets a delta it cannot apply.
 private final class LossyReader: ValueSink, @unchecked Sendable {
   private let lock = NSLock()
+  private let reading = NSLock()
   private var projection = ListProjection<Moment>()
   private var dropping = false
   private var endings: [StreamEnd] = []
   private var snapshotCount = 0
   private var resyncCount = 0
-  var stream: UInt64 = 0
+  private var stream: UInt64?
 
   var snapshots: Int { lock.withLock { snapshotCount } }
   var resyncs: Int { lock.withLock { resyncCount } }
+  var settled: Bool { lock.withLock { projection.state?.settled ?? false } }
+  var failure: DbError? { lock.withLock { projection.state?.error } }
 
   var rows: Int { lock.withLock { projection.rows.count } }
   var ended: [StreamEnd] { lock.withLock { endings } }
 
   func dropNext() { lock.withLock { dropping = true } }
 
-  func delivered(delivery: StreamDelivery) {
+  func bind(_ stream: UInt64) {
+    lock.withLock { self.stream = stream }
+    available()
+  }
+
+  func available() {
+    guard let stream = lock.withLock({ self.stream }) else { return }
+    reading.withLock {
+      while let delivery = try? DB.database.readStream(stream: stream) { take(delivery, stream: stream) }
+    }
+  }
+
+  private func take(_ delivery: StreamDelivery, stream: UInt64) {
     let ask = lock.withLock { () -> Bool in
       if dropping { dropping = false; return false }
       if case .snapshot = delivery.value { snapshotCount += 1 }
@@ -397,11 +413,10 @@ extension BridgeProbeTests {
     let second = LossyReader()
     let streams = try [first, second].map { reader -> UInt64 in
       let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
-      reader.stream = stream
+      reader.bind(stream)
       return stream
     }
-    for stream in streams { _ = try await DB.database.streamLoaded(stream: stream) }
-    await eventually("both first snapshots arrive") { first.snapshots == 1 && second.snapshots == 1 }
+    await eventually("both first snapshots are settled") { first.snapshots == 1 && second.snapshots == 1 && first.settled && second.settled }
 
     try DB.database.setOnline(online: false)
     first.dropNext()
@@ -415,7 +430,7 @@ extension BridgeProbeTests {
     withExtendedLifetime(thread) {}
   }
 
-  /// K16 (B8): a reader that falls behind keeps at most 256 deliveries, is told about the loss, and ends with the whole list after one new snapshot. The core merges commits that its delivery has not yet run for, so the loss is read from the numbering of the deliveries, not from the count of commands.
+  /// K16 (B8): a reader that falls behind reads at most 256 values of a burst from the journal of the core and ends with the whole list from one new snapshot.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList() async throws {
@@ -423,11 +438,14 @@ extension BridgeProbeTests {
     try await Self.signIn("A")
     let scope = try DB.account()
     let stream = try scope.stream(Moment.recent)
-    try await stream.loaded()
+    let cursor = Cursor(stream)
+    let seen = BufferedDeliveries()
+    while !seen.settled {
+      guard let delivery = await cursor.next("the first settled snapshot") else { break }
+      seen.apply(delivery, stream: stream)
+    }
     try DB.database.setOnline(online: false)
     for number in 1...300 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
-    let seen = BufferedDeliveries()
-    let cursor = Cursor(stream)
     for _ in 0..<400 {
       if seen.rows == 300 { break }
       guard let delivery = await cursor.next("a delivery of the burst") else { break }
@@ -439,52 +457,6 @@ extension BridgeProbeTests {
     stream.cancel()
   }
 
-  /// K16b: the missed counts plus the deliveries a reader receives equal the deliveries the core sent, for a full buffer that ends with `Ended` and for a burst with no delivery after it.
-  @Test(.timeLimit(.minutes(1)), arguments: [true, false])
-  func missedCountsPlusReceivedDeliveriesEqualTheDeliveriesSent(endsWithEnded: Bool) async {
-    let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
-    let (deliveries, continuation) = AsyncStream<StreamDelivery>.makeStream(bufferingPolicy: .bufferingNewest(256))
-    let sink = Forward(continuation)
-    let cursor = Cursor(DeliveryFeed(deliveries: deliveries))
-    func send(_ seq: UInt64) { sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: seq, value: .state(state: state))) }
-    let sent: UInt64
-    let read: [StreamDelivery]
-    if endsWithEnded {
-      for seq in 1...256 { send(UInt64(seq)) }
-      sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: 257, value: .ended(reason: .closed)))
-      sent = 257
-      read = await cursor.collect(257, "a missed count and the kept deliveries of a full buffer that ended")
-    } else {
-      send(1)
-      let first = await cursor.collect(1, "the first delivery")
-      for seq in 2...701 { send(UInt64(seq)) }
-      sent = 701
-      let rest = await cursor.collect(257, "the missed count and the kept deliveries of a burst with no later delivery", timeout: .seconds(5))
-      read = first + rest
-    }
-    var received: UInt64 = 0
-    var missed: UInt64 = 0
-    for delivery in read { if case let .missed(count) = delivery.value { missed += count } else { received += 1 } }
-    #expect(received + missed == sent, "the core sent \(sent) deliveries, the reader received \(received) and was told about \(missed) missed ones")
-  }
-
-  /// M1c: a `missed` the core made and the buffer evicted still counts its events: received plus missed equals the events the core sent.
-  @Test(.timeLimit(.minutes(1)))
-  func anEvictedCoreMissedCountsItsEvents() async {
-    let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
-    let (deliveries, continuation) = AsyncStream<StreamDelivery>.makeStream(bufferingPolicy: .bufferingNewest(256))
-    let sink = Forward(continuation)
-    let cursor = Cursor(DeliveryFeed(deliveries: deliveries))
-    for seq in 1...256 { sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: UInt64(seq), value: .state(state: state))) }
-    let first = await cursor.collect(256, "the first events")
-    sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: 300, value: .missed(count: 44)))
-    for seq in 301...556 { sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: UInt64(seq), value: .state(state: state))) }
-    let rest = await cursor.collect(257, "the missed count and the kept events after the evicted marker", timeout: .seconds(5))
-    var received: UInt64 = 0
-    var missed: UInt64 = 0
-    for delivery in first + rest { if case let .missed(count) = delivery.value { missed += count } else { received += 1 } }
-    #expect(received + missed == 556, "the core sent 556 events, the reader received \(received) and was told about \(missed) missed ones")
-  }
 }
 
 private final class BufferedDeliveries: @unchecked Sendable {
@@ -494,18 +466,16 @@ private final class BufferedDeliveries: @unchecked Sendable {
   private(set) var kept: UInt64 = 0
   private(set) var lastSeq: UInt64 = 0
   private(set) var inOrder = true
-  private(set) var missed: UInt64 = 0
 
   var rows: Int { lock.withLock { projection.rows.count } }
+  var settled: Bool { lock.withLock { projection.state?.settled ?? false } }
 
   func apply(_ delivery: StreamDelivery, stream: ValueStream) {
     let ask = lock.withLock { () -> Bool in
       received += 1
-      if case let .missed(count) = delivery.value { missed += count } else {
-        kept += 1
-        if delivery.seq <= lastSeq { inOrder = false }
-        lastSeq = max(lastSeq, delivery.seq)
-      }
+      kept += 1
+      if delivery.seq <= lastSeq { inOrder = false }
+      lastSeq = max(lastSeq, delivery.seq)
       return projection.apply(delivery) == .resync
     }
     if ask { stream.resync() }

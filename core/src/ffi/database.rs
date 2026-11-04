@@ -185,6 +185,37 @@ pub enum WireBatchResult {
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WireBatchOutcome { pub result: WireBatchResult, pub items: Vec<WireItemOutcome> }
 
+/// The interest of one caller in a load that `Database::begin_load` started.
+#[derive(uniffi::Object)]
+pub struct LoadRequest {
+    outcome: tokio::sync::watch::Receiver<Option<Result<(), DbError>>>,
+    held: Mutex<Option<(crate::sync::Interest, tokio::task::AbortHandle)>>,
+}
+
+fn load_cancelled() -> DbError { DbError::Interrupted { detail: "the load was cancelled".into() } }
+
+#[uniffi::export]
+impl LoadRequest {
+    /// Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
+    pub async fn result(&self) -> Result<(), DbError> {
+        let mut outcome = self.outcome.clone();
+        let seen = outcome.wait_for(Option::is_some).await.map_err(|_| load_cancelled())?.clone();
+        seen.unwrap_or_else(|| Err(load_cancelled()))
+    }
+
+    /// Gives up this caller's interest. The request goes on while another caller waits for it.
+    pub fn cancel(&self) {
+        let held = crate::db::locked(&self.held).take();
+        let Some((interest, task)) = held else { return };
+        crate::db::lock::effect(|| task.abort());
+        drop(interest);
+    }
+}
+
+impl Drop for LoadRequest {
+    fn drop(&mut self) { self.cancel(); }
+}
+
 #[derive(uniffi::Object)]
 pub struct TestClock { clock: Arc<ManualClock> }
 
@@ -434,17 +465,26 @@ impl Database {
         }).await?;
         Ok(answer.to_string())
     }
-    pub async fn load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
+    /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
+    pub fn begin_load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
         let sync = self.sync()?.clone();
-        self.serve_shared_in_epoch(epoch, "load", |admitted| async move {
-            let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.load(&admitted, &model, &relation, &params, LoadOptions::default()).await?)
-        }).await.map(drop)
+        drop(self.acquire(crate::lifecycle::Origin::Explicit, epoch, "load")?);
+        let params: Map<String, Value> = serde_json::from_str(&params_json)?;
+        let interest = sync.interest(&model, &relation, &params)?;
+        let (sender, outcome) = tokio::sync::watch::channel(None);
+        let this = self.clone();
+        let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
+            let result = this.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "load", true, |admitted| async move {
+                Ok::<_, DbError>(sync.load(&admitted, &model, &relation, &params, LoadOptions::default()).await.map(drop)?)
+            }).await;
+            crate::db::lock::effect(|| sender.send_replace(Some(result)));
+        });
+        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some((interest, task.abort_handle()))) }))
     }
     pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         self.require_online(&format!("{model}.{relation} refresh"))?;
         let sync = self.sync()?.clone();
-        self.serve_shared_in_epoch(epoch, "refresh", |admitted| async move {
+        self.serve_in_epoch(epoch, "refresh", move |admitted| async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.refresh(&admitted, &model, &relation, &params).await?)
         }).await.map(drop)
@@ -466,7 +506,7 @@ impl Database {
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.require_online(&format!("{model}.{relation} load more"))?;
         let sync = self.sync()?.clone();
-        let outcome = self.serve_shared_in_epoch(epoch, "load more", |admitted| async move {
+        let outcome = self.serve_in_epoch(epoch, "load more", move |admitted| async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
             Ok::<_, DbError>(sync.load_more(&admitted, &model, &relation, &params).await?)
         }).await?;
@@ -479,13 +519,13 @@ impl Database {
     pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?;
-        let row = self.serve_shared_in_epoch(epoch, "node", |admitted| async move { sync.node(&admitted, &model, &relation, &row_id, force).await }).await?;
+        let row = self.serve_in_epoch(epoch, "node", move |admitted| async move { sync.node(&admitted, &model, &relation, &row_id, force).await }).await?;
         Ok(row.map(|row| wire.row(&row)))
     }
     pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?;
-        let rows = self.serve_shared_in_epoch(epoch, "nodes", |admitted| async move { sync.nodes(&admitted, &model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
+        let rows = self.serve_in_epoch(epoch, "nodes", move |admitted| async move { sync.nodes(&admitted, &model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
         Ok(rows.iter().map(|row| wire.row(row)).collect())
     }
     pub async fn flush(&self) -> Result<(), DbError> {

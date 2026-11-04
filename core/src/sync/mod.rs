@@ -8,6 +8,7 @@ mod error;
 mod extract;
 mod freshness;
 mod invalidate;
+pub(crate) use invalidate::{WindowEvent, WindowMark};
 mod land;
 mod live;
 mod load;
@@ -59,13 +60,15 @@ mod variables;
 pub use entity_fetch::{EntityFetch, RefreshError, RefreshSink};
 pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
+pub(crate) use load::Interest;
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
 pub use load_machine::{LoadError, LoadPhase, RelationState};
 pub use load_owner::RelationWatch;
 pub use preload::PreloadFailure;
 pub(crate) use preload::FirstScreenHold;
 pub(crate) use load_machine::snapshot_phase;
-pub use model_event::{ModelEvent, ModelEventItem, ModelEvents};
+pub use model_event::{ModelEvent, ModelEvents};
+pub(crate) use model_event::EventReader;
 pub use resume::{ResumeReport, Watch};
 pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
@@ -118,6 +121,8 @@ pub(crate) struct Flights {
     pub waiting: HashMap<String, watch::Sender<Option<FlightEnd>>>,
     pub node_rereads: std::collections::HashSet<String>,
     pub owners: HashMap<String, (u64, crate::identity::Generation)>,
+    pub interest: HashMap<String, usize>,
+    pub tasks: HashMap<String, (u64, tokio::task::AbortHandle)>,
     #[cfg(test)]
     pub joined: JoinedLoads,
 }
@@ -152,7 +157,7 @@ pub(crate) struct Inner {
     pub lives: Mutex<HashMap<String, live::Live>>,
     pub(crate) live_effects: crate::db::dispatch::OrderedEffects,
     pub subscription_failures: tokio::sync::broadcast::Sender<SubscriptionFailureNotice>,
-    pub(crate) model_events: Mutex<Vec<std::sync::Weak<model_event::EventQueue>>>,
+    pub(crate) model_events: Mutex<Vec<(u64, std::sync::Weak<dyn model_event::EventReader>)>>,
     pub owner: Arc<load_owner::LoadOwner>,
     pub outbox_gate: tokio::sync::Mutex<()>,
     pub queue: Result<Arc<Mutex<crate::operation::OperationQueue>>, String>,
@@ -341,7 +346,8 @@ impl Sync {
         let this = Self { inner: Arc::new(inner), _lifetime: Arc::new(lifetime) };
         let preloads = Arc::downgrade(&this.inner);
         this.inner.preload.attach(preloads.clone());
-        let _ = this.inner.this.set(preloads);
+        let _ = this.inner.this.set(preloads.clone());
+        this.inner.owner.on_reload(Arc::new(move |target| { if let Some(inner) = preloads.upgrade() { inner.spawn_retry(target, load_machine::LoadKind::Refresh, false); } }));
         if let Ok(session) = this.inner.transport.session() {
             if let Ok(admitted) = this.inner.db.admit() {
                 let _ = this.inner.db.shared.store.lifecycle.session_from(session, admitted);

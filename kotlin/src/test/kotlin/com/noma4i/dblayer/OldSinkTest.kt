@@ -30,7 +30,7 @@ class OldSinkTest {
             transport.base.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
             DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
-            val sink = object : ValueSink { override fun delivered(delivery: StreamDelivery) {} }
+            val sink = object : ValueSink { override fun available() {} }
             val stream = DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Query("""{"model":"Notice","relation":"recent","params":{}}"""), sink)
             val old = transport.opened.await()
             DBlayer.sessionReset()

@@ -15,7 +15,7 @@ struct Window {
     name: &'static str,
     loaded_before: bool,
     watched: bool,
-    invalidated: bool,
+    marked_stale: bool,
     idle_secs: u64,
     chunks: usize,
     loaded: usize,
@@ -23,13 +23,13 @@ struct Window {
 }
 
 #[tokio::test(start_paused = true)]
-async fn inv_fresh_07_resume_reloads_a_watched_window_that_is_stale_invalidated_or_never_loaded() {
+async fn inv_fresh_07_resume_reloads_a_watched_window_that_is_expired_marked_stale_or_never_loaded() {
     let cases = [
-        Window { name: "stale", loaded_before: true, watched: true, invalidated: false, idle_secs: 120, chunks: 1, loaded: 1, calls: 2 },
-        Window { name: "recent", loaded_before: true, watched: true, invalidated: false, idle_secs: 30, chunks: 0, loaded: 0, calls: 1 },
-        Window { name: "no readers", loaded_before: true, watched: false, invalidated: false, idle_secs: 120, chunks: 0, loaded: 0, calls: 1 },
-        Window { name: "invalidated while recent", loaded_before: true, watched: true, invalidated: true, idle_secs: 0, chunks: 1, loaded: 1, calls: 2 },
-        Window { name: "never loaded", loaded_before: false, watched: true, invalidated: false, idle_secs: 0, chunks: 1, loaded: 1, calls: 1 },
+        Window { name: "stale", loaded_before: true, watched: true, marked_stale: false, idle_secs: 120, chunks: 1, loaded: 1, calls: 2 },
+        Window { name: "recent", loaded_before: true, watched: true, marked_stale: false, idle_secs: 30, chunks: 0, loaded: 0, calls: 1 },
+        Window { name: "no readers", loaded_before: true, watched: false, marked_stale: false, idle_secs: 120, chunks: 0, loaded: 0, calls: 1 },
+        Window { name: "marked stale while recent", loaded_before: true, watched: true, marked_stale: true, idle_secs: 0, chunks: 1, loaded: 1, calls: 2 },
+        Window { name: "never loaded", loaded_before: false, watched: true, marked_stale: false, idle_secs: 0, chunks: 1, loaded: 1, calls: 1 },
     ];
     for case in cases {
         for by_event in [false, true] {
@@ -42,7 +42,7 @@ async fn inv_fresh_07_resume_reloads_a_watched_window_that_is_stale_invalidated_
             if !case.watched {
                 drop(watch);
             }
-            if case.invalidated {
+            if case.marked_stale {
                 rig.db.shared.store.invalidate_family_now("moments", "feed").unwrap();
             }
             rig.clock.advance(Duration::from_secs(case.idle_secs));

@@ -22,7 +22,7 @@ private final class OldSinkTransport: Transport, @unchecked Sendable {
 }
 
 private final class IgnoredSink: ValueSink {
-  func delivered(delivery: StreamDelivery) {}
+  func available() {}
 }
 
 extension BridgeProbeTests {

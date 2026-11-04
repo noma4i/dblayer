@@ -198,7 +198,11 @@ extension BridgeProbeTests {
     let stream = try DB.account().stream(joined)
     defer { stream.cancel() }
     let cursor = Cursor(stream)
-    try await stream.loaded()
+    var projection = ListProjection<Person>()
+    while projection.state?.settled != true {
+      guard let delivery = await cursor.next("the first settled list", timeout: .seconds(10)) else { Issue.record("the list did not settle"); return }
+      _ = projection.apply(delivery)
+    }
     let opened = Cursor(transport.opened)
     try #require(await opened.next("member subscription", timeout: .seconds(10)) != nil)
     let hold = transport.base.hold("AddClubMember", reply: clubAnswer("addClubMember"))
@@ -206,7 +210,6 @@ extension BridgeProbeTests {
     let adding = Task { try await club.addMember(userIds: ["u4"]) }
     try #require(await entered(hold), "join did not reach the transport")
     try transport.base.emit("MemberChanged", json: #"{"data":{"memberChanged":{"id":"u1","name":"updated"}}}"#)
-    var projection = ListProjection<Person>()
     await eventually("the member event", timeout: .seconds(10)) {
       if projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" }) { return true }
       if let delivery = await cursor.next("the member event", timeout: .seconds(10)) { _ = projection.apply(delivery) }

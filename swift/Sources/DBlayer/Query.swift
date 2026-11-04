@@ -110,9 +110,15 @@ public struct Query<Model: DBModel>: Sendable {
     return try JSONValue.read(try await database.edgeValues(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
   }
 
-  @concurrent public func load(in scope: AccountScope? = nil) async throws {
+  /// Starts loading the relation and returns this caller's interest at once. Callers of the same scope share one request, and the request stops when every caller cancelled its interest.
+  public func beginLoad(in scope: AccountScope? = nil) throws -> LoadRequest {
     let (database, epoch) = try DB.admitted(scope)
-    try await database.load(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text)
+    return try database.beginLoad(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text)
+  }
+  /// Loads the relation. Cancelling the task gives up its interest in the shared request.
+  @concurrent public func load(in scope: AccountScope? = nil) async throws {
+    let request = try beginLoad(in: scope)
+    try await withTaskCancellationHandler { try await request.result() } onCancel: { request.cancel() }
   }
   @concurrent public func refresh(in scope: AccountScope? = nil) async throws {
     let (database, epoch) = try DB.admitted(scope)

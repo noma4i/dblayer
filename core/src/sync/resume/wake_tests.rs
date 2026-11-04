@@ -40,8 +40,8 @@ fn resume_wakes_follow_the_state_order_while_one_wake_is_blocked() {
     let owner = Arc::new(ResumeOwner::new());
     let (first_sender, first_receiver) = oneshot::channel();
     let (second_sender, second_receiver) = oneshot::channel();
-    let (runner, _) = owner.request(Cause::Explicit, Some(first_sender)).expect("the first request starts a runner");
-    assert!(owner.request(Cause::Explicit, Some(second_sender)).is_none(), "the second request queues behind the runner");
+    let (runner, _) = owner.request(1, Cause::Explicit, Some(first_sender)).expect("the first request starts a runner");
+    assert!(owner.request(1, Cause::Explicit, Some(second_sender)).is_none(), "the second request queues behind the runner");
     let log = Arc::new(Mutex::new(Vec::new()));
     let gate = Arc::new(Mutex::new(()));
     let first = Logged::new("first", &log, Some(&gate));
@@ -52,12 +52,12 @@ fn resume_wakes_follow_the_state_order_while_one_wake_is_blocked() {
     let blocked = gate.lock().unwrap();
     let first_pass = std::thread::spawn({
         let owner = owner.clone();
-        move || owner.finish(runner, Ok(ResumeReport::default()))
+        move || owner.finish(1, runner, Ok(ResumeReport::default()))
     });
     spin_until("the first answer reached its blocked wake", || first.entered.load(Ordering::SeqCst));
     let second_pass = std::thread::spawn({
         let owner = owner.clone();
-        move || owner.finish(runner, Ok(ResumeReport::default()))
+        move || owner.finish(1, runner, Ok(ResumeReport::default()))
     });
     join_within(second_pass);
     assert!(locked(&log).is_empty(), "the later answer waits for the earlier wake instead of overtaking it");

@@ -12,7 +12,7 @@ private final class CableCredentials: CredentialStore, @unchecked Sendable {
 }
 
 private final class CableRows: ValueSink {
-  func delivered(delivery: StreamDelivery) {}
+  func available() {}
 }
 
 private struct CableLogin: Encodable, Sendable { let account: String }

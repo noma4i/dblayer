@@ -78,7 +78,7 @@ async fn force_reloads_a_fresh_window() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn invalidated_window_loads_again() {
+async fn stale_window_loads_again() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();

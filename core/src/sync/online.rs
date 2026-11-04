@@ -40,7 +40,7 @@ impl Sync {
             self.inner.spawn_upload_housekeeping(true);
             self.inner.spawn_flush(Duration::ZERO);
             for (target, kind) in self.inner.owner.online() {
-                self.inner.spawn_retry(target, kind);
+                self.inner.spawn_retry(target, kind, true);
             }
             self.inner.resume_on_event();
             self.inner.preload_start();
@@ -107,7 +107,8 @@ impl Inner {
 }
 
 impl Inner {
-    fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind) {
+    /// Loads a window again in the session now. `force` loads also a fresh window; without it a window that another read already paid is skipped.
+    pub(super) fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind, force: bool) {
         let Ok(runtime) = Handle::try_current() else { return };
         let Some(epoch) = self.waking_epoch() else { return };
         let admission = self.db.shared.store.lifecycle.admit_woken(crate::lifecycle::Origin::Session, "retry load", epoch);
@@ -125,7 +126,7 @@ impl Inner {
             }
             let _ = match kind {
                 LoadKind::More => inner.load_more(&admitted, &resolved).await,
-                _ => inner.fetch(&admitted, &resolved, None, true).await,
+                _ => inner.fetch(&admitted, &resolved, None, force).await,
             };
         }));
     }

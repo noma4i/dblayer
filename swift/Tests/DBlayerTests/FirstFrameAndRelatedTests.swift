@@ -3,19 +3,33 @@ import Foundation
 import Testing
 @testable import DBlayer
 
+/// Keeps the first value of a stream with the thread that first heard values wait: the main thread means the core produced the value inside the opening call.
 private final class FirstFrameSink: ValueSink, @unchecked Sendable {
   struct Frame { let onMain: Bool; let seq: UInt64; let ids: [String]?; let revision: Int64? }
 
   private let lock = NSLock()
   private var frame: Frame?
+  private var heardOnMain: Bool?
+  private var bound: (stream: UInt64, database: Database)?
 
   var first: Frame? { lock.withLock { frame } }
 
-  func delivered(delivery: StreamDelivery) {
+  func bind(_ stream: UInt64, _ database: Database) {
+    lock.withLock { bound = (stream, database) }
+    read()
+  }
+
+  func available() {
+    lock.withLock { if heardOnMain == nil { heardOnMain = Thread.isMainThread } }
+    read()
+  }
+
+  private func read() {
+    guard let bound = lock.withLock({ frame == nil ? bound : nil }), let delivery = bound.database.readStream(stream: bound.stream) else { return }
     var ids: [String]?
     var revision: Int64?
     if case let .snapshot(rev, rows, _) = delivery.value { ids = rows.map(\.id); revision = rev }
-    lock.withLock { if frame == nil { frame = Frame(onMain: Thread.isMainThread, seq: delivery.seq, ids: ids, revision: revision) } }
+    lock.withLock { if frame == nil { frame = Frame(onMain: heardOnMain ?? true, seq: delivery.seq, ids: ids, revision: revision) } }
   }
 }
 
@@ -35,11 +49,12 @@ extension BridgeProbeTests {
 
     let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Presence.where(.equal("room", .string("r"))).json), sink: sink)
     defer { try? DB.database.cancelStream(stream: stream) }
+    sink.bind(stream, try DB.database)
 
     await eventually("the first frame arrives") { sink.first != nil }
     let frame = try #require(sink.first)
     #expect(frame.seq == 1)
-    #expect(!frame.onMain, "the first delivery came on the calling thread, inside the opening call")
+    #expect(!frame.onMain, "the core produced the first value on the calling thread, inside the opening call")
     #expect(frame.revision != nil, "the first delivery was not a snapshot with a revision")
     #expect(Set(frame.ids ?? []) == Set(seats.map(\.id)), "the first delivery lacked the cached rows: \(String(describing: frame.ids))")
   }

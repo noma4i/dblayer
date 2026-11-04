@@ -43,8 +43,9 @@ impl Inner {
         let attempt = self.begin_attempt(&resolved.window_key)?;
         let stored = self.db.shared.store.marker(&resolved.window_key, attempt.generation.value() as i64)?;
         let prefix = stored.as_ref().map_or(0, |marker| marker.sequence);
+        let owes = self.db.shared.store.window_freshness(&resolved.window_key)?.is_some_and(|freshness| freshness.stale_since.is_some());
         let before = self.media_marker(admitted, resolved, media, prefix).await?;
-        let tail = stored.as_ref().is_some_and(|stored| stored.values == before.values);
+        let tail = !owes && stored.as_ref().is_some_and(|stored| stored.values == before.values);
         let window = self.db.shared.store.window(&resolved.window_key)?;
         let mut nodes = Vec::new();
         let mut page_info = PageInfo { has_next_page: false, end_cursor: window.as_ref().and_then(|window| window.cursor.clone()), total: window.as_ref().and_then(|window| window.total) };

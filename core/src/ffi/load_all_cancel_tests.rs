@@ -1,14 +1,21 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::{Config, Database, DbError, TestClock, Transport};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec};
-use crate::test_wait::within;
+use crate::test_wait::within_secs;
 use crate::value::ScalarKind;
 
 struct Endless {
     queries: AtomicUsize,
+    sixth_started: tokio::sync::Notify,
+    sixth_cancelled: tokio::sync::Notify,
+}
+
+struct OnCancel<'a>(&'a tokio::sync::Notify);
+
+impl Drop for OnCancel<'_> {
+    fn drop(&mut self) { self.0.notify_one(); }
 }
 
 #[async_trait::async_trait]
@@ -19,7 +26,11 @@ impl Transport for Endless {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
         let number = self.queries.fetch_add(1, Ordering::SeqCst);
-        tokio::time::sleep(Duration::from_millis(2)).await;
+        if number == 5 {
+            let _cancelled = OnCancel(&self.sixth_cancelled);
+            self.sixth_started.notify_one();
+            std::future::pending::<()>().await;
+        }
         Ok(format!(r#"{{"data":{{"feed":{{"nodes":[{{"id":"m{number}","text":"t"}}],"pageInfo":{{"hasNextPage":true,"endCursor":"c{number}"}}}}}}}}"#))
     }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
@@ -36,7 +47,7 @@ async fn open() -> (Arc<Database>, Arc<Endless>) {
         stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: true, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
-    let transport = Arc::new(Endless { queries: AtomicUsize::new(0) });
+    let transport = Arc::new(Endless { queries: AtomicUsize::new(0), sixth_started: tokio::sync::Notify::new(), sixth_cancelled: tokio::sync::Notify::new() });
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
     (db, transport)
@@ -46,14 +57,11 @@ async fn open() -> (Arc<Database>, Arc<Endless>) {
 async fn a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages() {
     let (db, transport) = open().await;
     let caller = tokio::spawn({ let db = db.clone(); async move { db.load_all(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into(), false).await } });
-    within(async { while transport.queries.load(Ordering::SeqCst) < 6 { tokio::time::sleep(Duration::from_millis(1)).await; } }).await;
+    within_secs(20, transport.sixth_started.notified()).await;
 
     caller.abort();
     let _ = caller.await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let stopped = transport.queries.load(Ordering::SeqCst);
-    tokio::time::sleep(Duration::from_millis(200)).await;
-
-    assert_eq!(transport.queries.load(Ordering::SeqCst), stopped, "the chain went on asking for pages after its caller went away");
-    db.close_database().await.unwrap();
+    within_secs(20, transport.sixth_cancelled.notified()).await;
+    assert_eq!(transport.queries.load(Ordering::SeqCst), 6, "the chain went on asking for pages after its caller went away");
+    within_secs(20, db.close_database()).await.unwrap();
 }

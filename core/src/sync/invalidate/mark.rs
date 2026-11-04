@@ -2,70 +2,81 @@ use std::collections::BTreeSet;
 
 use super::super::error::SyncError;
 use super::super::{locked, Inner};
-use super::StaleMark;
-use crate::task::Carry;
+use super::{WindowEvent, WindowMark, WindowTrigger};
 use std::sync::Arc;
 
+impl WindowMark {
+    pub(crate) fn debts(&self) -> Vec<crate::commit::WindowDebt> {
+        self.families.iter().map(|(model, relation)| crate::commit::WindowDebt { model: model.clone(), relation: relation.clone(), since: self.since }).collect()
+    }
+}
+
 impl Inner {
-    pub(crate) fn mutation_debts(&self, model: &str, action: &str) -> Result<Vec<crate::commit::WindowDebt>, SyncError> {
-        let spec = self.db.spec(model)?;
-        let mut names: BTreeSet<String> = spec.actions.iter().find(|declared| declared.name == action)
-            .map(|declared| declared.refetch.iter().cloned().collect()).unwrap_or_default();
-        if matches!(action, "create" | "destroy") {
-            names.extend(spec.relations.iter().filter(|relation| relation.remote.is_some() && !(action == "create" && relation.joins_events)).map(|relation| relation.name.clone()));
+    pub(crate) fn window_event(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, event: WindowTrigger) -> Result<(), SyncError> {
+        if !Arc::ptr_eq(admitted.life(), &self.db.shared.store.lifecycle) || !admitted.is_current() { return Err(SyncError::Cancelled); }
+        let (model, joins_events) = match event {
+            WindowTrigger::Lost { model, .. } => (model, true),
+            WindowTrigger::ParentMissing { model } => (model, false),
+        };
+        let names = self.db.spec(&model)?.relations.iter().filter(|relation| relation.remote.is_some() && (joins_events || !relation.joins_events)).map(|relation| relation.name.clone()).collect();
+        let Some(mark) = self.prepare_window_families(model, names)? else { return Ok(()) };
+        for (model, relation) in &mark.families {
+            self.db.shared.store.invalidate_family(&admitted.authority(), model, relation, mark.since)?;
         }
-        self.debts_for(model, names)
+        self.window_mark_committed(admitted, mark)
     }
 
-    pub(crate) fn refused_destroy_debts(&self, model: &str) -> Result<Vec<crate::commit::WindowDebt>, SyncError> {
-        let names = self.db.spec(model)?.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
-        self.debts_for(model, names)
+    pub(crate) fn prepare_window_event(&self, event: WindowEvent) -> Result<Option<WindowMark>, SyncError> {
+        let (model, names) = match event {
+            WindowEvent::Mutation { model, action } => {
+                let spec = self.db.spec(&model)?;
+                let mut names: BTreeSet<String> = spec.actions.iter().find(|declared| declared.name == action)
+                    .map(|declared| declared.refetch.iter().cloned().collect()).unwrap_or_default();
+                if matches!(action.as_str(), "create" | "destroy") {
+                    names.extend(spec.relations.iter().filter(|relation| relation.remote.is_some() && !(action == "create" && relation.joins_events)).map(|relation| relation.name.clone()));
+                }
+                (model, names)
+            }
+            WindowEvent::DestroyRefused { model } => {
+                let names = self.db.spec(&model)?.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
+                (model, names)
+            }
+        };
+        self.prepare_window_families(model, names)
     }
 
-    fn debts_for(&self, model: &str, names: BTreeSet<String>) -> Result<Vec<crate::commit::WindowDebt>, SyncError> {
-        if names.is_empty() { return Ok(Vec::new()); }
+    fn prepare_window_families(&self, model: String, names: BTreeSet<String>) -> Result<Option<WindowMark>, SyncError> {
+        if names.is_empty() { return Ok(None); }
         let since = self.next_issued()?;
-        Ok(names.into_iter().map(|name| {
-            let (target, relation) = name.split_once('.').unwrap_or((model, &name));
-            crate::commit::WindowDebt { model: target.to_string(), relation: relation.to_string(), since }
-        }).collect())
+        let epoch = self.owner.epoch();
+        let families = names.into_iter().map(|name| {
+            let (target, relation) = name.split_once('.').unwrap_or((&model, &name));
+            (target.to_string(), relation.to_string())
+        }).collect();
+        Ok(Some(WindowMark { since, epoch, families }))
     }
 
-    pub(crate) fn queue_committed_debts(&self, admitted: &crate::lifecycle::Admitted, effects: &super::super::send::DeliveryEffects, debts: &[crate::commit::WindowDebt]) -> Result<(), SyncError> {
-        let retained = admitted.life().admit_passive(crate::lifecycle::Origin::Explicit, "reload", Some(admitted.value()))?;
-        for debt in debts {
-            let mark = StaleMark { model: debt.model.clone(), names: BTreeSet::from([debt.relation.clone()]), since: debt.since, admitted: retained.clone() };
-            let inner = effects.inner.clone();
-            locked(&effects.pending).push(move || {
-                let Some(inner) = inner.upgrade() else { return };
-                let carry = Carry::from(mark.admitted.clone());
-                crate::task::spawn(carry, async move { let _ = inner.reload_stale(&mark).await; });
-            });
+    /// Hands the debt that the commit of an outcome wrote to the window machine once the effects of that commit run.
+    pub(crate) fn queue_window_mark(&self, admitted: &crate::lifecycle::Admitted, effects: &super::super::send::DeliveryEffects, mark: Option<WindowMark>) {
+        let Some(mark) = mark else { return };
+        let (inner, admitted) = (effects.inner.clone(), admitted.clone());
+        locked(&effects.pending).push(move || {
+            let Some(inner) = inner.upgrade() else { return };
+            let _ = inner.window_mark_committed(&admitted, mark);
+        });
+    }
+
+    pub(crate) fn window_mark_committed(&self, admitted: &crate::lifecycle::Admitted, mark: WindowMark) -> Result<(), SyncError> {
+        if !Arc::ptr_eq(admitted.life(), &self.db.shared.store.lifecycle) || !admitted.is_current() { return Err(SyncError::Cancelled); }
+        for (model, relation) in mark.families {
+            self.owner.submit(super::super::load_machine::Event::StaleFamily { model, relation, since: mark.since, epoch: mark.epoch });
         }
         Ok(())
     }
 
-    fn mark_stale(&self, admitted: &crate::lifecycle::Admitted, model: &str, names: BTreeSet<String>) -> Result<StaleMark, SyncError> {
-        let since = self.next_issued()?;
-        for name in &names {
-            self.db.shared.store.invalidate_family(&admitted.authority(), model, name, since)?;
-        }
-        let admitted = admitted.life().admit_passive(crate::lifecycle::Origin::Explicit, "reload", Some(admitted.value()))?;
-        Ok(StaleMark { model: model.to_string(), names, since, admitted })
-    }
-
+    /// Marks the lists of a model whose parent row is absent and returns once every observed list of it was read again. The read of the window machine and this one share one request.
     pub(crate) async fn reload_lists_of_absent_parent(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {
-        self.invalidate_model(admitted, model).await
-    }
-
-    async fn invalidate_model(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {
-        let mark = self.mark_model_stale(admitted, model)?;
-        self.reload_stale(&mark).await.map(|_| ())
-    }
-
-    fn mark_model_stale(&self, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<StaleMark, SyncError> {
-        let spec = self.db.spec(model)?;
-        let names: BTreeSet<String> = spec.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
-        self.mark_stale(admitted, model, names)
+        self.window_event(admitted, WindowTrigger::ParentMissing { model: model.to_string() })?;
+        self.reload_watched(admitted, model, None, false).await.map(drop)
     }
 }

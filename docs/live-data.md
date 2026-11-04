@@ -180,13 +180,19 @@ Opening a stream on a scope that has a `query` declaration loads it when its dat
 | `refresh()` | always | no | a user gesture (pull to refresh) |
 
 `load()` makes the same decision as opening a stream: no request when the window is fresh, exactly 1 request when it is stale or never loaded. N parallel loads of one relation make 1 request.
+`beginLoad()` starts the same load and returns the interest of the caller at once: `result()` waits for the end, `cancel()` gives up the interest. Callers of one relation share the request. It stops only when every caller cancelled, and the others get its result. `load()` is `beginLoad()` whose interest ends with the task or coroutine that waits.
+A window that owes a read after a mutation is read again once while a stream observes it. Without a reader the debt stays until the next read, also after the database is opened again.
 
 ```swift
 try await Moment.byUser(userId: 5).load()
+let request = try Moment.feed.beginLoad()
+request.cancel()
 ```
 
 ```kotlin
 Moment.byUser(userId = 5).load()
+val request = Moment.feed.beginLoad()
+request.cancel()
 ```
 
 A row that does not fit the generated model is skipped and logged as `Row of <Model> failed to decode`. An empty list with this line in the log means the model and the server schema disagree.

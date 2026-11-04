@@ -78,6 +78,7 @@ pub(super) struct Entry {
 struct State {
     account: String,
     signed: bool,
+    profile_empty: bool,
     forbidden: bool,
     calls: BTreeMap<String, usize>,
     violations: Vec<String>,
@@ -108,6 +109,7 @@ impl World {
     }
     pub(super) fn set_account(&self, account: &str) { self.state.lock().unwrap().account = account.into(); }
     pub(super) fn signed(&self) -> bool { self.state.lock().unwrap().signed }
+    pub(super) fn empty_profile(&self) { self.state.lock().unwrap().profile_empty = true; }
     pub(super) fn forbid(&self, forbidden: bool) { self.state.lock().unwrap().forbidden = forbidden; }
     pub(super) fn violations(&self) -> Vec<String> { self.state.lock().unwrap().violations.clone() }
     pub(super) fn count(&self, operation: &str) -> usize { self.state.lock().unwrap().calls.get(operation).copied().unwrap_or(0) }
@@ -170,8 +172,10 @@ impl World {
             _ if !state.signed => json!({"error": "UNAUTHENTICATED"}),
             "SessionProfile" => json!({"data":{"sessionProfile":{"id":account}}}),
             "UserNode" => json!({"data":{"node":row}}),
-            "MyProfile" => json!({"data":{"me":row}}),
+            "MyProfile" => json!({"data":{"me":if state.profile_empty { Value::Null } else { row }}}),
             "Users" => json!({"data":{"users":[row]}}),
+            "ChatList" => json!({"data":{"chats":[]}}),
+            "ChatNode" => json!({"data":{"node":{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}}}),
             "UnregisterDevice" => json!({"data":{"unregisterDevice":{"ok":true}}}),
             "Thread" => json!({"data":{"thread": state.messages.iter().filter(|(owner, _)| *owner == account).map(|(_, message)| message.clone()).collect::<Vec<_>>()}}),
             "SendMessage" => {
@@ -305,9 +309,9 @@ impl Switchable {
         }
     }
     pub(super) async fn subscription_opened(&self) { within_secs(BOUND, self.subscription_opened.notified()).await }
-    pub(super) fn emit(&self, json: String) {
-        let sink = self.sinks.lock().unwrap().first().map(|(_, sink)| sink.clone()).expect("the subscription is open");
-        sink.event(json).unwrap();
+    pub(super) fn emit(&self, json: String) -> Result<(), DbError> {
+        let sink = self.sinks.lock().unwrap().first().map(|(_, sink)| sink.clone()).expect("a subscription is open");
+        sink.event(json)
     }
     fn current(&self) -> Result<Arc<World>, DbError> {
         self.target.lock().unwrap().clone().ok_or_else(|| match self.invalid {
@@ -476,7 +480,7 @@ fn member_spec() -> crate::schema::ModelSpec {
     member
 }
 
-fn plain_operations() -> String {
+pub(super) fn plain_operations() -> String {
     let mut operations: Vec<Value> = serde_json::from_str(OPERATIONS).unwrap();
     operations.push(json!({"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}));
     json!(operations).to_string()

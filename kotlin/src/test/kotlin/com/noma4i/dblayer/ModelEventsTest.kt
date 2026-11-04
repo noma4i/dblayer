@@ -44,13 +44,13 @@ class ModelEventsTest {
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val early = screen.hear(AccountScope.current().events(ChatActivityNotice))
+            assertEquals(ModelEventItem.Ready, awaitWithin("the source of the early collector opens") { early.receive() })
             eventually("the signal subscription opens") { transport.calls.size == 1 }
             transport.emit("ChatActionSignal", screenshot("c1"))
             assertEquals("c1", chat(awaitWithin("the first event") { early.receive() }))
 
-            val lateStream = AccountScope.current().events(ChatActivityNotice)
-            lateStream.loaded()
-            val late = screen.hear(lateStream)
+            val late = screen.hear(AccountScope.current().events(ChatActivityNotice))
+            assertEquals(ModelEventItem.Ready, awaitWithin("the source of the late collector opens") { late.receive() })
             transport.emit("ChatActionSignal", screenshot("c2"))
             transport.emit("ChatActionSignal", screenshot("c3"))
 
@@ -64,6 +64,40 @@ class ModelEventsTest {
         }
     }
 
+    /** S209: a collector that reads nothing while 400 events arrive takes the events the journal kept and lost ranges that add up to the 400 sent. Observed: the items of the collector. Breaks when the journal drops an event without keeping its position. */
+    @Test
+    fun aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent() = bounded {
+        val transport = openNoticeRig()
+        val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val items = Channel<ModelEventItem<ChatActivityNotice>>(Channel.UNLIMITED)
+            val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+            val stream = AccountScope.current().events(ChatActivityNotice)
+            screen.launch { stream.events(ChatActivityNotice).collect { item -> items.send(item); if (item is ModelEventItem.Ready) gate.await() } }
+            assertEquals(ModelEventItem.Ready, awaitWithin("the source opens") { items.receive() })
+            eventually("the signal subscription opens") { transport.calls.size == 1 }
+            for (index in 0 until 400) transport.emit("ChatActionSignal", screenshot("c$index"))
+            eventually("the 400 notices are stored") { Query(ChatActivityNotice.modelName, ChatActivityNotice).read().size == 400 }
+            gate.complete(Unit)
+            var events = 0L
+            val lost = mutableListOf<Pair<ULong, ULong>>()
+            fun accounted() = events + lost.sumOf { (first, last) -> (last - first + 1uL).toLong() }
+            while (accounted() < 400) {
+                when (val item = awaitWithin("the next item of the burst") { items.receive() }) {
+                    is ModelEventItem.Event -> events += 1
+                    is ModelEventItem.Lost -> lost.add(item.first to item.last)
+                    else -> throw AssertionError("the burst ended before 400 events were accounted: $item")
+                }
+            }
+            assertEquals("kept events and lost positions add up to the events sent", 400L, accounted())
+            org.junit.Assert.assertTrue("the journal kept $events events of a burst of 400", events <= 256)
+            org.junit.Assert.assertTrue("a reader that read nothing during the burst lost no position", lost.isNotEmpty())
+        } finally {
+            screen.cancel()
+            DBlayer.close()
+        }
+    }
+
     /** Requirement: a session reset ends the old events stream and nothing of the old session follows. A stream of the next session needs a real session with a model-event subscription, which the wrapper rigs cannot start: the core covers it at Sync level. Observable: the end of the old stream. */
     @Test
     fun aSessionResetEndsTheOldEventsStream() = bounded {
@@ -71,6 +105,7 @@ class ModelEventsTest {
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val first = screen.hear(AccountScope.current().events(ChatActivityNotice))
+            assertEquals(ModelEventItem.Ready, awaitWithin("the source opens") { first.receive() })
             eventually("the signal subscription opens") { transport.calls.size == 1 }
             transport.emit("ChatActionSignal", screenshot("a1"))
             assertEquals("a1", chat(awaitWithin("the event of the first session") { first.receive() }))

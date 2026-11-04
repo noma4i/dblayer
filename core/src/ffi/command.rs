@@ -107,11 +107,6 @@ impl Database {
         }).await
     }
 
-    /// One request whose flight other callers may join: a caller that goes away does not stop it. A chain of requests (`load_all`, `refresh_preloads`) goes through `serve_in_epoch`, which stops it with its caller. The epoch still bounds the lease, the origin and the SQL commit.
-    pub(super) async fn serve_shared_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static, F: Future<Output = Result<T, E>> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl FnOnce(crate::lifecycle::Admitted) -> F) -> Result<T, DbError> {
-        self.in_epoch_as(Origin::Explicit, epoch, target, true, |admitted| super::database::on_executor(work(admitted))).await
-    }
-
     fn admit_command(&self, request: &CommandRequest) -> Result<(), DbError> {
         let spec = self.db.spec(&request.model)?;
         let allowed = match &request.upload {

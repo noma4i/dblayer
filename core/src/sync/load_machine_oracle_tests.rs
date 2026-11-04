@@ -43,9 +43,9 @@ impl Script {
         let applied = self.random.below(20) as i64;
         let revision = self.random.below(30) as i64;
         Some(match self.random.below(3) {
-            0 => Stored { epoch, order: Order::NONE, data: Data::NotLoaded, has_rows: false, revision },
-            1 => Stored { epoch, order: Order::NONE, data: Data::Local, has_rows: true, revision },
-            _ => Stored { epoch, order: Order { applied, pages: 1 + self.random.below(3) as i64 }, data: Data::Landed { has_more: has_rows, total: Some(applied), loaded_at: applied }, has_rows, revision },
+            0 => Stored { epoch, order: Order::NONE, data: Data::NotLoaded, has_rows: false, revision, stale_since: None },
+            1 => Stored { epoch, order: Order::NONE, data: Data::Local, has_rows: true, revision, stale_since: None },
+            _ => Stored { epoch, order: Order { applied, pages: 1 + self.random.below(3) as i64 }, data: Data::Landed { has_more: has_rows, total: Some(applied), loaded_at: applied }, has_rows, revision, stale_since: None },
         })
     }
 
@@ -248,6 +248,7 @@ pub(super) fn replay(history: &[Event]) -> Replay {
                     seen.read_error = Some(error.clone());
                 }
             }
+            Event::Stale { .. } | Event::StaleFamily { .. } => unreachable!("the generated histories do not include stale events"),
         }
     }
     run
@@ -287,6 +288,7 @@ pub(super) fn expected(run: &Replay, window: &str) -> Option<RelationState> {
         error: seen.read_error.clone().or(last_failure),
         loaded_at,
         revision: seen.needs,
+        needs_reload: None,
     })
 }
 

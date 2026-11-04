@@ -34,7 +34,7 @@ class SubscriptionInFlightTest {
         }
         val database = openDatabase(Config(null, null, 8u), modelsJSON, transport)
         database.registerOperations(operations)
-        val listener = object : ValueSink { override fun delivered(delivery: StreamDelivery) {} }
+        val listener = object : ValueSink { override fun available() {} }
         val live = database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"""), listener)
         withTimeout(HANG_GUARD_MILLIS) { entered.await() }
         database.cancelStream(live)

@@ -10,34 +10,48 @@ extension BridgeProbeTests {
   func aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld() async throws {
     let transport = MockTransport()
     let (club, joined, _) = try await Self.openClubWithMembers(transport)
-    let stream = try DB.account().stream(joined)
-    defer { stream.cancel() }
-    let cursor = Cursor(stream)
-    try await stream.loaded()
+    let list = ListReader(joined)
+    try await list.waitForInitialLoad()
     let current = ["u1", "u2", "u3", "u4"]
+    let before = transport.calls.filter { $0.operationName == "ClubMembers" }.count
     let loadHold = transport.hold("ClubMembers", reply: membersReply(current))
-    let addHold = transport.hold("AddClubMember", reply: clubAnswer("addClubMember"))
-    let rereadHold = transport.hold("ClubMembers", reply: membersReply(current + ["u9"]))
-    defer { loadHold.release(); addHold.release(); rereadHold.release() }
-    let refreshing = Task { try await stream.refresh() }
-    try #require(await entered(loadHold), "the old list did not reach the transport")
-    let adding = Task { try await club.addMember(userIds: ["u9"]) }
-    try #require(await entered(addHold), "the add did not reach the transport")
-    let receipt = try await valueBeforeDeadline(adding) { loadHold.release(); addHold.release(); rereadHold.release() }
-    addHold.release()
-    let outcome = Task { try await receipt.outcome() }
-    let result = try await valueBeforeDeadline(outcome) { loadHold.release(); rereadHold.release() }
-    if case .confirmed = result {} else { Issue.record("the add was not confirmed") }
-    loadHold.release()
-    try await valueBeforeDeadline(refreshing) { loadHold.release(); rereadHold.release() }
-    try #require(await entered(rereadHold), "the automatic reread did not reach the transport")
-    rereadHold.release()
-    var projection = ListProjection<Person>()
-    await eventually("the reread delivery", timeout: .seconds(10)) {
-      if projection.rows.map(\.id) == current + ["u9"] { return true }
-      if let delivery = await cursor.next("the reread delivery", timeout: .seconds(10)) { _ = projection.apply(delivery) }
-      return projection.rows.map(\.id) == current + ["u9"]
+    let mutationHold = transport.hold("RemoveClubMember", reply: clubAnswer("removeClubMember"))
+    let rereadHold = transport.hold("ClubMembers", reply: membersReply(Array(current.dropLast()) + ["u9"]))
+    let (signals, signal) = AsyncStream<Int>.makeStream()
+    let cursor = Cursor(signals)
+    defer { signal.finish(); loadHold.release(); mutationHold.release(); rereadHold.release() }
+    let refreshing = Task { try await list.refresh() }
+    defer { refreshing.cancel() }
+    let oldEntered = Task { await loadHold.entered(); signal.yield(1) }
+    defer { oldEntered.cancel() }
+    guard await cursor.next("the old load", timeout: .seconds(20)) == 1 else { Issue.record("the old load did not start"); return }
+    let removing = Task { try await club.removeMember(userIds: ["u4"]) }
+    defer { removing.cancel() }
+    let mutationEntered = Task { await mutationHold.entered(); signal.yield(2) }
+    defer { mutationEntered.cancel() }
+    guard await cursor.next("the mutation", timeout: .seconds(20)) == 2 else { Issue.record("the mutation did not start"); return }
+    mutationHold.release()
+    let mutationFinished = Task {
+      do {
+        let receipt = try await removing.value
+        if case .confirmed = try await receipt.outcome() { signal.yield(3) }
+        else { signal.yield(8) }
+      } catch { signal.yield(8) }
     }
-    #expect(projection.rows.map(\.id) == current + ["u9"])
+    defer { mutationFinished.cancel() }
+    guard await cursor.next("the mutation outcome", timeout: .seconds(20)) == 3 else { Issue.record("the mutation was not confirmed"); return }
+    #expect(transport.calls.filter { $0.operationName == "ClubMembers" }.count == before + 1)
+    loadHold.release()
+    let rereadEntered = Task { await rereadHold.entered(); signal.yield(4) }
+    defer { rereadEntered.cancel() }
+    guard await cursor.next("the reread", timeout: .seconds(20)) == 4 else { Issue.record("the reread did not start"); return }
+    #expect(transport.calls.filter { $0.operationName == "ClubMembers" }.count == before + 2)
+    rereadHold.release()
+    let refreshFinished = Task { _ = await refreshing.result; signal.yield(5) }
+    defer { refreshFinished.cancel() }
+    guard await cursor.next("the old load ends", timeout: .seconds(20)) == 5 else { Issue.record("the old load did not end"); return }
+    try await refreshing.value
+    guard await observe("the list shows the reread", { list.ids == Array(current.dropLast()) + ["u9"] }) else { return }
+    #expect(transport.calls.filter { $0.operationName == "ClubMembers" }.count == before + 2)
   }
 }

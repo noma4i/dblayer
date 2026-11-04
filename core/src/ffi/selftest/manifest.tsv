@@ -248,3 +248,66 @@ S111		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannot
 S112		core	an_admission_from_another_database_cannot_start_a_server_call	red-by-reading	core-only: Admitted is not exposed through FFI	arch-audit Astra A1
 S113		core	a_foreign_admission_cannot_start_an_encrypted_call	red-by-reading	core-only: Admitted is not exposed through FFI	arch-audit Astra A1
 S114		core	an_old_subscription_cannot_read_the_next_accounts_cable_credential	red-by-reading	core-only: Admitted is not exposed through FFI	coordinator msg_bdf329f95a8b
+S201	K1-b	core	a_cached_entity_remains_loaded_when_its_initial_network_read_fails	red-by-reading	-	arch-audit fable K1-b
+S201	K1-b	swift	BridgeProbeTests.aCachedEntityRemainsLoadedWhenItsInitialNetworkReadFails	red-by-reading	-	arch-audit fable K1-b
+S201	K1-b	kotlin	com.noma4i.dblayer.ProjectedLoadedTest.aCachedEntityRemainsLoadedWhenItsInitialNetworkReadFails	red-by-reading	-	arch-audit fable K1-b
+S202	K1-a	core	an_unknown_association_reports_its_error_after_the_stream_ends	red-by-reading	-	arch-audit fable K1-a
+S202	K1-a	swift	BridgeProbeTests.anUnknownAssociationReportsItsErrorAfterTheStreamEnds	red-by-reading	-	arch-audit fable K1-a
+S202	K1-a	kotlin	com.noma4i.dblayer.ProjectedLoadedTest.anUnknownAssociationReportsItsErrorAfterTheStreamEnds	red-by-reading	-	arch-audit fable K1-a
+S203	C23	core	a_profile_delivery_is_ready_with_its_rows_before_an_explicit_refresh	red-by-reading	-	arch-audit fable K1
+S203	C23	swift	BridgeProbeTests.theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer	unrun	-	arch-audit fable K1
+S203	C23	kotlin	com.noma4i.dblayer.ProjectedLoadedTest.theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer	unrun	-	arch-audit fable K1
+S204	K1-reset	core	a_held_entity_ends_its_load_wait_after_session_reset	unrun	-	arch-audit fable K1
+S204	K1-reset	swift	BridgeProbeTests.aHeldEntityEndsItsLoadWaitAfterSessionReset	unrun	-	arch-audit fable K1
+S204	K1-reset	kotlin	com.noma4i.dblayer.ProjectedLoadedTest.aHeldEntityEndsItsLoadWaitAfterSessionReset	unrun	-	arch-audit fable K1
+S205	K1-cancel	core	cancelling_a_reader_before_its_first_load_interrupts_the_wait	unrun	-	arch-audit fable K1
+S205	K1-cancel	swift	BridgeProbeTests.cancellingAReaderBeforeItsFirstLoadInterruptsTheWait	unrun	-	arch-audit fable K1
+S205	K1-cancel	kotlin	com.noma4i.dblayer.ProjectedLoadedTest.cancellingAReaderBeforeItsFirstLoadInterruptsTheWait	unrun	-	arch-audit fable K1
+S207	N1r	core	a_mutation_answer_requires_one_reread_after_an_older_load	unrun	-	arch-audit fable K4
+S207	N1r	swift	BridgeProbeTests.aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld	unrun	-	arch-audit fable K4
+S207	N1r	kotlin	com.noma4i.dblayer.ClubTest.aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld	unrun	-	arch-audit fable K4
+S208	K4-destroy	core	a_missing_destroyed_row_causes_one_reread_of_the_open_list	unrun	-	arch-audit fable K4
+S208	K4-destroy	swift	BridgeProbeTests.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
+S208	K4-destroy	kotlin	com.noma4i.dblayer.DestroyRereadTest.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
+S209	A3-journal	core	a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end	unrun	-	arch-audit astra A3, one core journal
+S209	A3-journal	swift	BridgeProbeTests.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
+S209	A3-journal	kotlin	com.noma4i.dblayer.ModelEventsTest.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
+S210	C21	core	a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages	unrun	-	arch-audit fable K6
+S210	C21	swift	BridgeProbeTests.cancellingTheCallerOfLoadAllStopsTheTransportCalls	unrun	-	arch-audit fable K6
+S210	C21	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheCallerOfLoadAllStopsTheTransportCalls	unrun	-	arch-audit fable K6
+S211	shared-load	core	cancelling_one_load_interest_keeps_the_other_call_alive	unrun	-	arch-audit astra A2 cancellation
+S211	shared-load	swift	BridgeProbeTests.cancellingOneLoadInterestKeepsTheOtherCallAlive	unrun	-	arch-audit astra A2 cancellation
+S211	shared-load	kotlin	com.noma4i.dblayer.TestClockTest.cancellingOneLoadInterestKeepsTheOtherCallAlive	unrun	-	arch-audit astra A2 cancellation
+S211b	last-interest	core	cancelling_the_last_load_interest_cancels_the_request	red-by-reading	-	arch-audit fable K6 cancellation
+S211b	last-interest	swift	BridgeProbeTests.cancellingTheLastLoadInterestCancelsTheRequest	red-by-reading	-	arch-audit fable K6 cancellation
+S211b	last-interest	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheLastLoadInterestCancelsTheRequest	red-by-reading	-	arch-audit fable K6 cancellation
+S212	K9	core	a_receipt_revision_arrives_with_the_updated_row	unrun	-	arch-audit fable K9
+S212	K9	swift	BridgeProbeTests.aReceiptRevisionWaitsUntilTheUpdatedRowIsShown	red-by-reading	-	arch-audit fable K9
+S212	K9	kotlin	com.noma4i.dblayer.ProjectedLoadedTest.aReceiptRevisionWaitsUntilTheUpdatedRowIsShown	red-by-reading	-	arch-audit fable K9
+S213	H3	core	cancelling_a_delivery_wait_leaves_the_stream_running	unrun	-	arch-audit astra H3, server response held
+S213	H3	swift	BridgeProbeTests.cancellingOnlyTheLoadWaitLeavesTheReaderRunning	unrun	-	arch-audit astra H3, server response held
+S213	H3	kotlin	com.noma4i.dblayer.ProjectedLoadedTest.cancellingOnlyTheLoadWaitLeavesTheReaderRunning	unrun	-	arch-audit astra H3, server response held
+S214	A2-cold	core	a_cold_profile_delivers_a_complete_first_frame_when_empty_or_failed	red-by-reading	-	arch-audit astra A2
+S214	A2-cold	swift	BridgeProbeTests.aColdProfileSettlesWhenEmptyOrFailed	unrun	-	arch-audit astra A2
+S214	A2-cold	kotlin	com.noma4i.dblayer.ProjectedLoadedTest.aColdProfileSettlesWhenEmptyOrFailed	unrun	-	arch-audit astra A2
+S217	A2-ttl	core	a_fresh_profile_is_read_again_after_expiry_and_keeps_rows_on_error	unrun	-	arch-audit astra A2
+S217	A2-ttl	swift	BridgeProbeTests.aTestClockMovesFreshForWithoutSleeping	unrun	-	arch-audit astra A2
+S217	A2-ttl	kotlin	com.noma4i.dblayer.TestClockTest.aTestClockMovesFreshForWithoutSleeping	unrun	-	arch-audit astra A2
+S218	A2-media	core	preloads_and_three_media_loads_finish_on_empty_pages	unrun	-	arch-audit astra A2
+S218	A2-media	swift	BridgeProbeTests.preloadsAndThreeMediaLoadsFinishOnEmptyPages	unrun	-	arch-audit astra A2
+S218	A2-media	kotlin	com.noma4i.dblayer.MediaPreloadTest.preloadsAndThreeMediaLoadsFinishOnEmptyPages	unrun	-	arch-audit astra A2
+S219	A3-events	core	an_event_opened_before_linked_lists_reports_the_committed_payload	unrun	-	arch-audit astra A3
+S219	A3-events	swift	BridgeProbeTests.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
+S219	A3-events	kotlin	com.noma4i.dblayer.EventPayloadTest.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
+S220	window-reopen	core	a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response	red-by-reading	-	coordinator persisted issuance sequence
+S220	window-reopen	swift	BridgeProbeTests.aRefreshAfterReopenAndClockRollbackKeepsTheNewResponse	red-by-reading	-	coordinator persisted issuance sequence
+S220	window-reopen	kotlin	com.noma4i.dblayer.TestClockTest.aRefreshAfterReopenAndClockRollbackKeepsTheNewResponse	red-by-reading	-	coordinator persisted issuance sequence
+S221	window-debt	core	a_refetch_owed_without_a_reader_survives_reopen	unrun	-	coordinator persisted stale debt
+S221	window-debt	swift	BridgeProbeTests.aRefetchOwedWithoutAReaderSurvivesReopen	unrun	-	coordinator persisted stale debt
+S221	window-debt	kotlin	com.noma4i.dblayer.TestClockTest.aRefetchOwedWithoutAReaderSurvivesReopen	unrun	-	coordinator persisted stale debt
+S222	window-chain	core	a_mutation_during_the_first_page_keeps_the_whole_chain_stale	red-by-reading	-	coordinator first page issuance
+S222	window-chain	swift	BridgeProbeTests.aMutationDuringTheFirstPageKeepsTheWholeChainStale	red-by-reading	-	coordinator first page issuance
+S222	window-chain	kotlin	com.noma4i.dblayer.TestClockTest.aMutationDuringTheFirstPageKeepsTheWholeChainStale	red-by-reading	-	coordinator first page issuance
+S223	media-debt	core	a_media_refetch_after_mutation_reads_the_whole_stale_window	red-by-reading	-	window media marker and mutation
+S223	media-debt	swift	BridgeProbeTests.aMediaRefetchAfterMutationReadsTheWholeStaleWindow	red-by-reading	-	window media marker and mutation
+S223	media-debt	kotlin	com.noma4i.dblayer.MediaPreloadTest.aMediaRefetchAfterMutationReadsTheWholeStaleWindow	red-by-reading	-	window media marker and mutation

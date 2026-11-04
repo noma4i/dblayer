@@ -110,7 +110,7 @@ async fn an_event_joins_a_manual_node_flight_and_keeps_its_membership_intent() {
     rig.transport.enqueue("Chats", data(json!({"chats":[]})));
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", &values, Default::default()).await.unwrap();
     put(&rig, "chats", json!({"id":"c1", "title":"before"}));
-    let events = rig.sync.open_model_events("chats").await.unwrap();
+    let events = super::model_event_tests::open_heard(&rig.sync, "chats").await.unwrap();
     rig.transport.enqueue("ChatNode", data(json!({"node":{"id":"c1", "title":"same"}})).after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
     let manual = tokio::spawn(async move { sync.node(&sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await });
@@ -120,7 +120,7 @@ async fn an_event_joins_a_manual_node_flight_and_keeps_its_membership_intent() {
     let row = tokio::time::timeout(Duration::from_secs(10), manual).await.expect("the manual request must complete").unwrap().unwrap().unwrap();
     assert_eq!(row.text("title"), Some("same"));
     let item = tokio::time::timeout(Duration::from_secs(5), events.next()).await.expect("the event must be served by the shared request");
-    let Some(super::ModelEventItem::Event(event)) = item else { panic!("expected a model event: {item:?}") };
+    let Some(super::model_event_tests::HeardItem::Event(event)) = item else { panic!("expected a model event: {item:?}") };
     assert_eq!(event.before.unwrap().text("title"), Some("before"));
     assert_eq!(event.after.unwrap().text("title"), Some("same"));
     assert_eq!(member_ids(&rig, "chats", "list", &values), ["c1"]);

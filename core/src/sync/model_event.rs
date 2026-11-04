@@ -1,12 +1,9 @@
-use std::collections::VecDeque;
 use std::sync::{Arc, Weak};
 
 use crate::db::Row;
 
 use super::error::SyncError;
 use super::{locked, Inner, Sync};
-
-pub(crate) const EVENT_QUEUE_LIMIT: usize = 256;
 
 /// A source event as it was received: the database state at that moment, its area and its kind.
 #[derive(Clone, Copy)]
@@ -26,96 +23,20 @@ pub struct ModelEvent {
     pub after: Option<Row>,
 }
 
-#[derive(Debug, Clone)]
-pub enum ModelEventItem {
-    Event(ModelEvent),
-    Missed(u64),
+/// A reader of the events of one model. The source hands it each event with the database state at the moment the event was received, and each event it could not read.
+pub(crate) trait EventReader: Send + std::marker::Sync {
+    fn model(&self) -> &str;
+    fn heard(&self, event: &ModelEvent, stamp: crate::lifecycle::Stamp);
+    fn unread(&self);
 }
 
-enum Slot {
-    Event(ModelEvent),
-    Missed(u64),
-}
-
-#[derive(Default)]
-struct Queue {
-    slots: VecDeque<Slot>,
-    events: usize,
-    closed: bool,
-}
-
-impl Queue {
-    fn gap(&mut self, count: u64) {
-        match self.slots.back_mut() {
-            Some(Slot::Missed(missed)) => *missed += count,
-            _ => self.slots.push_back(Slot::Missed(count)),
-        }
-    }
-}
-
-pub(crate) struct EventQueue {
-    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
-    lifecycle: Arc<crate::lifecycle::Lifecycle>,
-    model: String,
-    state: std::sync::Mutex<Queue>,
-    ready: tokio::sync::Notify,
-}
-
-impl crate::lifecycle::Holder for EventQueue {
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
-
-    fn close(&self) {
-        if let Some(registration) = self.registration.get() { registration.remove(); }
-        let mut state = locked(&self.state);
-        state.closed = true;
-        state.slots.clear();
-        state.events = 0;
-        drop(state);
-        crate::db::lock::effect(|| self.ready.notify_waiters());
-    }
-
-    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
-        if matches!(snapshot.change, crate::lifecycle::Change::SessionEnded) || matches!(snapshot.change, crate::lifecycle::Change::Cleared(_)) && snapshot.rereads(&self.model) {
-            let mut state = locked(&self.state);
-            state.slots.clear();
-            state.events = 0;
-        }
-    }
-}
-
-#[cfg(test)]
-impl EventQueue {
-    pub(super) fn state_free(&self) -> bool { crate::test_wait::mutex_free(&self.state) }
-    pub(super) fn ready(&self) -> &tokio::sync::Notify { &self.ready }
-}
-
-impl EventQueue {
-    /// An event of an ended session never enters the queue, and one of an older generation leaves a gap, since the reader cannot know what it covered. The check shares the queue lock with the clearing that follows each transition.
-    fn push(&self, event: &ModelEvent, stamp: crate::lifecycle::Stamp) {
-        let mut state = locked(&self.state);
-        let now = self.lifecycle.snapshot().stamp();
-        if now.session_epoch != stamp.session_epoch { return; }
-        if now.generation != stamp.generation || state.events >= EVENT_QUEUE_LIMIT {
-            state.gap(1);
-        } else {
-            state.slots.push_back(Slot::Event(event.clone()));
-            state.events += 1;
-        }
-        drop(state);
-        crate::db::lock::effect(|| self.ready.notify_one());
-    }
-
-    fn push_gap(&self) {
-        locked(&self.state).gap(1);
-        crate::db::lock::effect(|| self.ready.notify_one());
-    }
-}
+static READERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl Inner {
-    fn readers_of(&self, model: &str) -> Vec<Arc<EventQueue>> {
-        let mut queues = locked(&self.model_events);
-        queues.retain(|queue| queue.strong_count() > 0);
-        queues.iter().filter_map(Weak::upgrade).filter(|queue| queue.model == model && !locked(&queue.state).closed).collect()
+    fn readers_of(&self, model: &str) -> Vec<Arc<dyn EventReader>> {
+        let mut readers = locked(&self.model_events);
+        readers.retain(|(_, reader)| reader.strong_count() > 0);
+        readers.iter().filter_map(|(_, reader)| reader.upgrade()).filter(|reader| reader.model() == model).collect()
     }
 
     pub(crate) fn has_event_readers(&self, model: &str) -> bool {
@@ -124,11 +45,11 @@ impl Inner {
 
     /// `stamp` is the database state at the moment the source event was received, never the one at publication.
     pub(crate) fn publish_model_event(&self, stamp: crate::lifecycle::Stamp, event: ModelEvent) {
-        for queue in self.readers_of(&event.model) { queue.push(&event, stamp); }
+        for reader in self.readers_of(&event.model) { reader.heard(&event, stamp); }
     }
 
     pub(crate) fn publish_model_gap(&self, model: &str) {
-        for queue in self.readers_of(model) { queue.push_gap(); }
+        for reader in self.readers_of(model) { reader.unread(); }
     }
 
     /// A failed read is published as a gap in the queue, never as a row that was not there.
@@ -142,39 +63,16 @@ impl Inner {
     }
 }
 
+/// The sources a reader of model events holds. Dropping it stops the reader hearing events and releases the sources.
 pub struct ModelEvents {
     inner: Arc<Inner>,
-    queue: Arc<EventQueue>,
+    reader: u64,
     keys: std::sync::Mutex<Vec<String>>,
 }
 
-#[cfg(test)]
 impl ModelEvents {
-    pub(super) fn queue(&self) -> Arc<EventQueue> { self.queue.clone() }
-}
-
-impl ModelEvents {
-    pub async fn next(&self) -> Option<ModelEventItem> {
-        loop {
-            let notified = self.queue.ready.notified();
-            {
-                let mut state = locked(&self.queue.state);
-                match state.slots.pop_front() {
-                    Some(Slot::Event(event)) => {
-                        state.events -= 1;
-                        return Some(ModelEventItem::Event(event));
-                    }
-                    Some(Slot::Missed(count)) => return Some(ModelEventItem::Missed(count)),
-                    None => {}
-                }
-                if state.closed { return None; }
-            }
-            notified.await;
-        }
-    }
-
     pub fn close(&self) {
-        crate::lifecycle::Holder::close(&*self.queue);
+        locked(&self.inner.model_events).retain(|(id, _)| *id != self.reader);
         let keys = std::mem::take(&mut *locked(&self.keys));
         for key in keys { self.inner.release_live(&key); }
     }
@@ -187,16 +85,17 @@ impl Drop for ModelEvents {
 }
 
 impl Sync {
-    pub async fn open_model_events(&self, model: &str) -> Result<ModelEvents, SyncError> {
+    /// Registers the reader, then opens the sources of the events of the model and returns once they are ready or one failed.
+    pub(crate) async fn open_model_events(&self, model: &str, reader: Weak<dyn EventReader>) -> Result<ModelEvents, SyncError> {
         let spec = self.inner.db.spec(model)?;
         if spec.changes.is_empty() && spec.listens.is_empty() { return Err(SyncError::Event(format!("{model} declares no event source"))); }
-        let queue = Arc::new(EventQueue { registration: Default::default(), lifecycle: self.inner.db.shared.store.lifecycle.clone(), model: model.to_string(), state: Default::default(), ready: tokio::sync::Notify::new() });
-        self.inner.db.shared.store.lifecycle.enroll(&queue);
-        locked(&self.inner.model_events).push(Arc::downgrade(&queue));
+        let id = READERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        locked(&self.inner.model_events).push((id, reader));
+        let events = ModelEvents { inner: self.inner.clone(), reader: id, keys: std::sync::Mutex::new(Vec::new()) };
         let mut keys = Vec::new();
         if !spec.changes.is_empty() { keys.push(self.inner.acquire_changes().ok_or_else(|| SyncError::Event("no changes source declared".into()))?); }
         for updates in &spec.listens { keys.push(self.inner.acquire_one(model, updates.clone(), None)); }
-        let events = ModelEvents { inner: self.inner.clone(), queue, keys: std::sync::Mutex::new(keys.clone()) };
+        locked(&events.keys).clone_from(&keys);
         for key in keys { self.inner.changes_ready(&key).await?; }
         Ok(events)
     }

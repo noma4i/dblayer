@@ -16,7 +16,7 @@ fn saving_a_page_has_constant_sql_work() {
         let members = (0..size).map(|n| append(&target, &format!("m{n:05}"), &format!("{n:05}"))).collect();
         store.commit(envelope(&store, rows, members)).unwrap();
         let mut page = envelope(&store, vec![upsert("messages", message("new", "1"))], vec![append(&target, "new", "z")]);
-        page.window = Some(WindowSave { marker: None, invalidated: false, key: "page".into(), scope: target, cursor: Some("new".into()), has_next: false, total: None, pages: 1,
+        page.window = Some(WindowSave { marker: None, stale_since: None, key: "page".into(), scope: target, cursor: Some("new".into()), has_next: false, total: None, pages: 1,
             tail: Some(WindowTail { anchor: "m00000".into(), cursor: Some("kept".into()), has_next: true }), issued: 1, applied: 1, cleared_at: None });
         let steps = Arc::new(AtomicUsize::new(0));
         let counter = steps.clone();
@@ -83,16 +83,16 @@ fn save_keeps_landed_at_and_invalidation_of_existing_window() {
     store.invalidate_family_now("messages", "thread").unwrap();
     clock.advance(std::time::Duration::from_millis(5_000));
     store.save_window(&WindowRecord { issued: 2, ..window(&thread) }).unwrap();
-    assert_eq!(store.window_freshness(&thread).unwrap(), Some(WindowFreshness { landed_at: landed, invalidated: true }));
+    assert_eq!(store.window_freshness(&thread).unwrap(), Some(WindowFreshness { landed_at: landed, stale_since: Some(1) }));
     assert!(store.stale_window_keys().unwrap().contains(&thread));
     assert_eq!(store.window(&thread).unwrap().unwrap().issued, 2);
 }
 
 #[test]
 fn freshness_needs_landing_inside_window_and_no_invalidation() {
-    let fresh = WindowFreshness { landed_at: 100, invalidated: false };
+    let fresh = WindowFreshness { landed_at: 100, stale_since: None };
     assert!(fresh.is_fresh(110, 30));
-    assert!(!WindowFreshness { invalidated: true, ..fresh }.is_fresh(110, 30));
+    assert!(!WindowFreshness { stale_since: Some(1), ..fresh }.is_fresh(110, 30));
     assert!(!fresh.is_fresh(140, 30));
 }
 

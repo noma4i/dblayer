@@ -21,7 +21,7 @@ private final class SignedAccount: @unchecked Sendable {
   func signOut() { lock.withLock { name = nil } }
 }
 
-private final class RowHistory: ValueSink, @unchecked Sendable {
+private final class RowHistory: @unchecked Sendable {
   private let lock = NSLock()
   private var projection = ListProjection<User>()
   private var stream: UInt64?
@@ -29,7 +29,7 @@ private final class RowHistory: ValueSink, @unchecked Sendable {
 
   var states: [[String]] { lock.withLock { history } }
 
-  func delivered(delivery: StreamDelivery) {
+  func take(_ delivery: StreamDelivery) {
     lock.withLock {
       if stream != delivery.stream { stream = delivery.stream; projection = ListProjection<User>() }
       if projection.apply(delivery) == .changed { history.append(projection.rows.map(\.name)) }
@@ -89,7 +89,11 @@ extension BridgeProbeTests {
   }
 
   fileprivate static func holdList(_ history: RowHistory) throws -> UInt64 {
-    try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .query(queryJson: #"{"model":"User"}"#), sink: history)
+    let database = try DB.database
+    let pulled = PulledStream { history.take($0) }
+    let stream = database.subscribe(epoch: database.sessionEpoch(), request: .query(queryJson: #"{"model":"User"}"#), sink: pulled)
+    pulled.bind(stream, database)
+    return stream
   }
 
   /// The order of the app: sign-in call, session profile, profile refresh.

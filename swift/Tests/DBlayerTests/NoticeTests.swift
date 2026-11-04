@@ -15,7 +15,7 @@ extension BridgeProbeTests {
     try transport.emit("ChatActionSignal", json: #"{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":true}}}"#)
     #expect(await actions.first("typing") { !$0.isEmpty }?.first?.kind == "TYPING")
     try transport.emit("ChatActionSignal", json: #"{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"SCREENSHOT","active":true}}}"#)
-    guard case .event(let notice)? = await events.next("screenshot") else {
+    guard case .event(let notice)? = await events.first("screenshot", where: { if case .event = $0 { true } else { false } }) else {
       Issue.record("screenshot did not arrive")
       return
     }

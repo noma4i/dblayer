@@ -32,7 +32,7 @@ class MockTransportStrictTest {
             val transport = MockTransport()
             val database = openDatabase(Config(null, null, 8u), modelsJSON, transport)
             database.registerOperations("""[{"name":"documentBySlug","document":"query documentBySlug(${'$'}slug: String!, ${'$'}source: String!) { documentBySlug(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated(${'$'}slug: String!, ${'$'}source: String!) { documentUpdated(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentUpdated"}]""")
-            val live = database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"""), object : ValueSink { override fun delivered(delivery: StreamDelivery) {} })
+            val live = database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"""), object : ValueSink { override fun available() {} })
             try { eventually("the load reaches the mock", 5000) { transport.unscripted.isNotEmpty() } } finally { database.cancelStream(live) }
         }
     }

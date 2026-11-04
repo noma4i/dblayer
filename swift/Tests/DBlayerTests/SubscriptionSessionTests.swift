@@ -25,19 +25,12 @@ private final class SessionSubscriptions: Transport, @unchecked Sendable {
   }
 }
 
-private final class SessionChanges: ValueSink, @unchecked Sendable {
+private final class SessionChanges: @unchecked Sendable {
   private let lock = NSLock()
   private var errors: [DbError] = []
   var failures: [DbError] { lock.withLock { errors } }
-  func delivered(delivery: StreamDelivery) {
-    let state: StreamState?
-    switch delivery.value {
-    case let .snapshot(_, _, current): state = current
-    case let .delta(_, _, _, _, _, _, _, _, _, current): state = current
-    case let .state(current): state = current
-    default: state = nil
-    }
-    if let error = state?.error { lock.withLock { errors.append(error) } }
+  func take(_ delivery: StreamDelivery) {
+    if let error = stateOf(delivery)?.error { lock.withLock { errors.append(error) } }
   }
 }
 
@@ -47,7 +40,9 @@ struct SubscriptionSessionTests {
     let database = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
     try database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     let listener = SessionChanges()
-    let live = database.subscribe(epoch: database.sessionEpoch(), request: .query(queryJson: #"{"model":"Notice","relation":"recent","params":{}}"#), sink: listener)
+    let pulled = PulledStream { listener.take($0) }
+    let live = database.subscribe(epoch: database.sessionEpoch(), request: .query(queryJson: #"{"model":"Notice","relation":"recent","params":{}}"#), sink: pulled)
+    pulled.bind(live, database)
     defer { database.cancelStream(stream: live) }
     await eventually("notice subscription", timeout: .seconds(2)) { transport.subscribed }
     transport.fail()

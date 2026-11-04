@@ -1,14 +1,15 @@
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use serde_json::{Map, Value};
 
 use crate::db::{Feed, ObserverHandle};
 use crate::identity::RowId;
 use crate::query::{Query, Where};
-use crate::sync::{LoadOptions, ModelEvents, RefreshError, Sync};
+use crate::sync::{EventReader, LoadOptions, ModelEvent, ModelEvents, RefreshError, Sync};
 use crate::transport::CancelToken;
 use super::super::database::executor;
 use super::super::related::RelatedProjection;
+use super::super::wire::WireModel;
 use super::super::{Database, DbError, WireBlobSnapshot, WireModelEvent};
 use super::{Frame, Stream, StreamRequest, StreamValue};
 
@@ -19,7 +20,7 @@ pub(in crate::ffi) struct Handles {
     watch: Option<crate::sync::Watch>,
     tasks: Vec<tokio::task::AbortHandle>,
     fetch: Option<(Sync, Arc<Mutex<Option<CancelToken>>>)>,
-    events: Option<Arc<OnceLock<Arc<ModelEvents>>>>,
+    events: Option<(Arc<dyn EventReader>, Arc<OnceLock<ModelEvents>>)>,
     loading: bool,
 }
 
@@ -37,8 +38,29 @@ impl Drop for Handles {
             let token = crate::db::locked(&token).take();
             if let Some(token) = token { sync.cancel_entity_refresh(&token); }
         }
-        if let Some(events) = self.events.take().and_then(|cell| cell.get().cloned()) { events.close(); }
+        if let Some((_, events)) = self.events.take() { if let Some(events) = events.get() { events.close(); } }
         drop((self.observer.take(), self.watch.take()));
+    }
+}
+
+/// Hands the events of a model to the journal of a stream.
+struct EventFeed {
+    stream: Weak<Stream>,
+    model: String,
+    wire: Arc<WireModel>,
+}
+
+impl EventReader for EventFeed {
+    fn model(&self) -> &str { &self.model }
+
+    fn heard(&self, event: &ModelEvent, stamp: crate::lifecycle::Stamp) {
+        let Some(stream) = self.stream.upgrade() else { return };
+        let wire = WireModelEvent { area: event.area.clone(), kind: event.kind.clone(), id: event.id.clone(), before: event.before.as_ref().map(|row| self.wire.row(row)), after: event.after.as_ref().map(|row| self.wire.row(row)) };
+        stream.heard(wire, stamp);
+    }
+
+    fn unread(&self) {
+        if let Some(stream) = self.stream.upgrade() { stream.unread(); }
     }
 }
 
@@ -97,7 +119,6 @@ impl Database {
         let mut handles = self.connect(Query::new(model).filtered(Where::equal("id", serde_json::json!(row))), None, false, None, LoadOptions::default(), stream)?;
         let Some(sync) = sync else { return Ok(handles) };
         let admitted = stream.admitted()?;
-        if let Some(control) = handles.observer.as_ref().map(ObserverHandle::control) { stream.on_ahead(Arc::new(move |revision| control.want_reach(revision))); }
         let token: Arc<Mutex<Option<CancelToken>>> = Arc::default();
         let start = {
             let (sync, stream, token, model, id, db) = (sync.clone(), Arc::downgrade(stream), token.clone(), model.to_string(), id.to_string(), self.db.clone());
@@ -107,7 +128,7 @@ impl Database {
                     if let Some(stream) = waiting.upgrade() {
                         let error = error.map(|error| match error {
                             RefreshError::Offline => DbError::Network { detail: "offline".into() },
-                            RefreshError::Failed(message) => DbError::Sync { detail: message },
+                            RefreshError::Failed(error) => DbError::from(error),
                         });
                         match db.revision_seq() {
                             Ok(revision) => stream.entity_loaded(error, revision),
@@ -149,31 +170,21 @@ impl Database {
 
     fn connect_events(&self, stream: &Arc<Stream>, model: &str) -> Result<Handles, DbError> {
         let sync = self.sync()?.clone();
-        let wire = self.wire_of(model)?;
-        let cell: Arc<OnceLock<Arc<ModelEvents>>> = Arc::default();
-        let (opened, weak, model) = (cell.clone(), Arc::downgrade(stream), model.to_string());
+        let feed: Arc<dyn EventReader> = Arc::new(EventFeed { stream: Arc::downgrade(stream), model: model.to_string(), wire: self.wire_of(model)? });
+        let cell: Arc<OnceLock<ModelEvents>> = Arc::default();
+        let (opened, weak, reader, model) = (cell.clone(), Arc::downgrade(stream), Arc::downgrade(&feed), model.to_string());
         let task = crate::task::spawn_on(stream.admitted()?.into(), executor()?.handle(), async move {
-            let events = match sync.open_model_events(&model).await {
-                Ok(events) => Arc::new(events),
-                Err(error) => {
-                    if let Some(stream) = weak.upgrade() { stream.invalid(DbError::from(error)); }
-                    return;
+            match sync.open_model_events(&model, reader).await {
+                Ok(events) => {
+                    let _ = opened.set(events);
+                    if let Some(stream) = weak.upgrade() { stream.ready(); }
                 }
-            };
-            let _ = opened.set(events.clone());
-            if let Some(stream) = weak.upgrade() { stream.ready(); }
-            while let Some(item) = events.next().await {
-                let Some(stream) = weak.upgrade() else { return };
-                stream.push(match item {
-                    crate::sync::ModelEventItem::Missed(count) => StreamValue::Missed { count },
-                    crate::sync::ModelEventItem::Event(event) => StreamValue::Event { event: WireModelEvent { area: event.area, kind: event.kind, id: event.id, before: event.before.as_ref().map(|row| wire.row(row)), after: event.after.as_ref().map(|row| wire.row(row)) } },
-                });
+                Err(error) => if let Some(stream) = weak.upgrade() { stream.invalid(DbError::from(error)); },
             }
-            if let Some(stream) = weak.upgrade() { stream.ended_outside(); }
         });
         let mut handles = Handles::default();
         handles.tasks.push(task.abort_handle());
-        handles.events = Some(cell);
+        handles.events = Some((feed, cell));
         Ok(handles)
     }
 
@@ -255,6 +266,8 @@ impl Database {
             }
         })?;
         stream.on_rejoin(Arc::new(observer.rejoiner()));
+        let reach = observer.control();
+        stream.on_ahead(Arc::new(move |revision| reach.want_reach(revision)));
         let mut handles = Handles::default();
         if let (true, Some((sync, relation, params))) = (options.force, tracked.clone()) {
             handles.tasks.push(self.reload_on_reconnect(stream.epoch, sync, model.clone(), relation, params)?);
@@ -273,8 +286,6 @@ impl Database {
         let Some((sync, relation, params)) = tracked else { return Ok((None, None)) };
         let mut transitions = self.streams.watch();
         stream.load_of(model.clone());
-        let ask = control.clone();
-        stream.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
         let (follower, loader) = (stream.clone(), stream.clone());
         let (ready, seeded) = tokio::sync::oneshot::channel();
         let state = crate::task::spawn_on(stream.admitted()?.into(), executor()?.handle(), async move {
@@ -296,7 +307,7 @@ impl Database {
         }).abort_handle();
         let admitted = stream.admitted()?;
         let load = crate::task::spawn_on(admitted.clone().into(), executor()?.handle(), async move {
-            let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
+            let Ok((sync, model, relation, params, mut receiver)) = seeded.await else { return };
             let mut force = options.force;
             loop {
                 let snapshot = transitions.current();
@@ -335,9 +346,14 @@ impl Database {
                 loader.load_finished(result.err().map(DbError::from));
                 drop(app_load);
                 loop {
-                    let Some(next) = transitions.changed().await else { return };
-                    if next.closed { return; }
-                    if next.concerns(&model) { break; }
+                    tokio::select! {
+                        changed = receiver.changed() => if changed.is_err() { return; },
+                        changed = transitions.changed() => {
+                            let Some(next) = changed else { return };
+                            if next.closed { return; }
+                            if next.concerns(&model) { break; }
+                        }
+                    }
                 }
             }
         }).abort_handle();

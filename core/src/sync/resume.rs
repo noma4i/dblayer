@@ -21,14 +21,25 @@ pub struct ResumeReport {
 
 type Outcome = Result<ResumeReport, SyncError>;
 
-struct OwnerState {
+/// The resume requests of one session epoch: a runner, the callers it answers and the callers queued behind it.
+struct EpochState {
     machine: ResumeMachine,
     current: Vec<oneshot::Sender<Outcome>>,
     queued: Vec<oneshot::Sender<Outcome>>,
     runner: Option<u64>,
+}
+
+impl EpochState {
+    fn new() -> Self { Self { machine: ResumeMachine::new(), current: Vec::new(), queued: Vec::new(), runner: None } }
+}
+
+#[derive(Default)]
+struct OwnerState {
+    epochs: std::collections::HashMap<u64, EpochState>,
     runners: u64,
 }
 
+/// Owns the resume of each session epoch apart: the end of the runner of an old epoch answers only the callers of that epoch.
 pub(crate) struct ResumeOwner {
     state: std::sync::Mutex<OwnerState>,
     effects: OrderedEffects,
@@ -36,30 +47,32 @@ pub(crate) struct ResumeOwner {
 
 impl ResumeOwner {
     pub(crate) fn new() -> Self {
-        Self { state: std::sync::Mutex::new(OwnerState { machine: ResumeMachine::new(), current: Vec::new(), queued: Vec::new(), runner: None, runners: 0 }), effects: OrderedEffects::default() }
+        Self { state: std::sync::Mutex::new(OwnerState::default()), effects: OrderedEffects::default() }
     }
 
-    fn request(&self, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<(u64, Cause)> {
+    fn request(&self, epoch: u64, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<(u64, Cause)> {
         let mut state = locked(&self.state);
-        let start = state.machine.handle(&ResumeEvent::Request(cause));
+        let next = state.runners + 1;
+        let slot = state.epochs.entry(epoch).or_insert_with(EpochState::new);
+        let start = slot.machine.handle(&ResumeEvent::Request(cause));
         if let Some(waiter) = waiter {
-            if start.is_some() { state.current.push(waiter) } else { state.queued.push(waiter) }
+            if start.is_some() { slot.current.push(waiter) } else { slot.queued.push(waiter) }
         }
         let first = start?;
-        state.runners += 1;
-        state.runner = Some(state.runners);
-        Some((state.runners, first))
+        slot.runner = Some(next);
+        state.runners = next;
+        Some((next, first))
     }
 
-    fn finish(&self, runner: u64, outcome: Outcome) -> Option<Cause> {
+    fn finish(&self, epoch: u64, runner: u64, outcome: Outcome) -> Option<Cause> {
         self.effects.under(&self.state, |state, effects| {
-            if state.runner != Some(runner) { return None; }
-            let answered = std::mem::take(&mut state.current);
-            let next = state.machine.handle(&ResumeEvent::Finished);
+            let slot = state.epochs.get_mut(&epoch).filter(|slot| slot.runner == Some(runner))?;
+            let answered = std::mem::take(&mut slot.current);
+            let next = slot.machine.handle(&ResumeEvent::Finished);
             if next.is_some() {
-                state.current = std::mem::take(&mut state.queued);
-            } else {
-                state.runner = None;
+                slot.current = std::mem::take(&mut slot.queued);
+            } else if let Some(done) = state.epochs.remove(&epoch) {
+                effects.release(done);
             }
             effects.push(move || {
                 for waiter in answered { crate::db::lock::effect(|| { let _ = waiter.send(outcome.clone()); }); }
@@ -68,13 +81,13 @@ impl ResumeOwner {
         })
     }
 
-    fn abort(&self, runner: u64, error: SyncError) {
+    fn abort(&self, epoch: u64, runner: u64, error: SyncError) {
         self.effects.under(&self.state, |state, effects| {
-            if state.runner != Some(runner) { return; }
-            let mut waiters = std::mem::take(&mut state.current);
-            waiters.append(&mut state.queued);
-            while !state.machine.is_idle() { state.machine.handle(&ResumeEvent::Finished); }
-            state.runner = None;
+            if !state.epochs.get(&epoch).is_some_and(|slot| slot.runner == Some(runner)) { return; }
+            let Some(mut slot) = state.epochs.remove(&epoch) else { return };
+            let mut waiters = std::mem::take(&mut slot.current);
+            waiters.append(&mut slot.queued);
+            effects.release(slot);
             effects.push(move || {
                 for waiter in waiters { crate::db::lock::effect(|| { let _ = waiter.send(Err(error.clone())); }); }
             });
@@ -85,6 +98,7 @@ impl ResumeOwner {
 /// The right to run the passes of one accepted request chain. Dropping it before the chain ends, even unpolled, fails every waiter.
 pub(crate) struct Runner {
     inner: std::sync::Weak<Inner>,
+    epoch: u64,
     id: u64,
     first: Cause,
     admitted: crate::lifecycle::Admitted,
@@ -101,20 +115,21 @@ impl Runner {
         while let Some(current) = cause {
             let Some(inner) = self.inner.upgrade() else { return };
             let outcome = inner.resume_windows(&self.admitted, current).await;
-            cause = inner.resume.finish(self.id, outcome);
+            cause = inner.resume.finish(self.epoch, self.id, outcome);
         }
     }
 }
 
 impl Drop for Runner {
     fn drop(&mut self) {
-        if let Some(inner) = self.inner.upgrade() { inner.resume.abort(self.id, SyncError::Cancelled); }
+        if let Some(inner) = self.inner.upgrade() { inner.resume.abort(self.epoch, self.id, SyncError::Cancelled); }
     }
 }
 
 pub struct Watch {
     inner: Arc<Inner>,
     _read: Option<crate::db::ObservedReadLease>,
+    _state: Option<super::load_owner::RelationWatch>,
     live: Vec<String>,
     failures: Option<tokio::sync::broadcast::Receiver<super::SubscriptionFailureNotice>>,
 }
@@ -149,13 +164,16 @@ impl Sync {
     pub fn watch(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Watch, SyncError> {
         let spec = self.inner.db.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| SyncError::UnknownRelation { model:model.into(), relation:relation.into() })?;
-        let read = if declared.remote.is_some() {
-            let key = self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?.window_key;
-            Some(self.inner.db.register_observed_read(crate::db::ObservedRead { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key }))
-        } else { None };
+        let (read, state) = if declared.remote.is_some() {
+            let resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?;
+            let key = resolved.window_key.clone();
+            let state = self.inner.owner.observe(&key, resolved.target(), None);
+            let read = self.inner.db.register_observed_read(crate::db::ObservedRead { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key });
+            (Some(read), Some(state))
+        } else { (None, None) };
         let failures = self.inner.subscription_failures.subscribe();
         let live = self.inner.acquire_live(model, relation, params);
-        Ok(Watch { inner: self.inner.clone(), _read: read, live, failures: Some(failures) })
+        Ok(Watch { inner: self.inner.clone(), _read: read, _state: state, live, failures: Some(failures) })
     }
 
     pub async fn resume(&self, admitted: &crate::lifecycle::Admitted) -> Result<ResumeReport, SyncError> {
@@ -186,7 +204,8 @@ impl Inner {
     }
 
     pub(crate) fn begin_resume(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<Runner> {
-        self.resume.request(cause, waiter).map(|(id, first)| Runner { inner: Arc::downgrade(self), id, first, admitted: admitted.clone() })
+        let epoch = admitted.value();
+        self.resume.request(epoch, cause, waiter).map(|(id, first)| Runner { inner: Arc::downgrade(self), epoch, id, first, admitted: admitted.clone() })
     }
 
     pub(crate) fn request_resume(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Result<(), SyncError> {

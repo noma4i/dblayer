@@ -101,11 +101,11 @@ async fn model_ephemeral_and_reread_definitions_publish_before_and_after_events(
         put(&rig, "users", json!({"id":"u", "name":"before"}));
         rig.sync.register(super::OperationDef::new("Signal", "subscription Signal { signal { id active } }", "signal"));
         rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u", "name":"after"}})));
-        let events = rig.sync.open_model_events("users").await.unwrap();
+        let events = super::model_event_tests::open_heard(&rig.sync, "users").await.unwrap();
         rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"signal":{"id":"u", "active":true}}))));
         rig.transport.await_consumed("Signal").await;
         let item = tokio::time::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
-        let super::ModelEventItem::Event(event) = item else { panic!("expected event, got {item:?}"); };
+        let super::model_event_tests::HeardItem::Event(event) = item else { panic!("expected event, got {item:?}"); };
         assert_eq!((event.id.as_str(), event.area.as_str(), event.kind.as_str()), ("u", "Signal", "UPDATED"));
         let before = event.before.unwrap();
         let after = event.after.unwrap();
@@ -137,8 +137,8 @@ async fn refused_shared_batch_rereads_every_model_and_records_each_failed_recove
         let _moments = rig.sync.watch("moments", "by_user", &params).unwrap();
         rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &Default::default(), Default::default()).await.unwrap();
         rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, Default::default()).await.unwrap();
-        let users_events = rig.sync.open_model_events("users").await.unwrap();
-        let moments_events = rig.sync.open_model_events("moments").await.unwrap();
+        let users_events = super::model_event_tests::open_heard(&rig.sync, "users").await.unwrap();
+        let moments_events = super::model_event_tests::open_heard(&rig.sync, "moments").await.unwrap();
         let shared = rig.db.shared.clone();
         *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.advance_generation_for_test()));
         rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"u", "name":"event"}, "second":{"id":"m9", "text":"event", "userId":"u"}}))));
@@ -147,7 +147,7 @@ async fn refused_shared_batch_rereads_every_model_and_records_each_failed_recove
         assert!(rig.db.find("moments", &crate::identity::RowId::new("m9").unwrap()).unwrap().is_none());
         for events in [&users_events, &moments_events] {
             let item = tokio::time::timeout(Duration::from_millis(1), events.next()).await;
-            if reread_fails { assert!(matches!(item, Ok(Some(super::ModelEventItem::Missed(1))))); } else { assert!(item.is_err()); }
+            if reread_fails { assert!(matches!(item, Ok(Some(super::model_event_tests::HeardItem::Lost(1))))); } else { assert!(item.is_err()); }
         }
         let name = rig.db.find("users", &crate::identity::RowId::new("u").unwrap()).unwrap().unwrap().text("name").unwrap().to_string();
         assert_eq!(name, if reread_fails { "before" } else { "after" });
@@ -848,7 +848,7 @@ async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_
         rig.transport.enqueue("MomentsByUser", reread);
         let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
         rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
-        let events = rig.sync.open_model_events("moments").await.unwrap();
+        let events = super::model_event_tests::open_heard(&rig.sync, "moments").await.unwrap();
         rig.transport.await_calls("Changes", 1).await;
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         let shared = rig.db.shared.clone();
@@ -863,7 +863,7 @@ async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_
         assert_eq!(rig.transport.call_count("MomentsByUser"), 2);
         if reread_fails {
             assert_eq!(members, ["m1"]);
-            assert!(matches!(gap, Ok(Some(super::ModelEventItem::Missed(1)))));
+            assert!(matches!(gap, Ok(Some(super::model_event_tests::HeardItem::Lost(1)))));
         } else {
             assert_eq!(members, ["m1", "m2"]);
             assert!(gap.is_err());

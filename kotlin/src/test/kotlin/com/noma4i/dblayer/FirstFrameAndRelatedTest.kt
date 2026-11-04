@@ -12,16 +12,32 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 
+/** Keeps the first value of a stream with the thread that first heard values wait: the calling thread means the core produced the value inside the opening call. */
 private class FirstFrameSink(private val caller: Thread) : ValueSink {
     class Frame(val onCaller: Boolean, val seq: ULong, val revision: Long?, val ids: List<String>?)
 
     @Volatile var first: Frame? = null
+    private var heardOnCaller: Boolean? = null
+    private var bound: Pair<ULong, Database>? = null
 
     @Synchronized
-    override fun delivered(delivery: StreamDelivery) {
+    fun bind(stream: ULong, database: Database) {
+        bound = stream to database
+        read()
+    }
+
+    @Synchronized
+    override fun available() {
+        if (heardOnCaller == null) heardOnCaller = Thread.currentThread() === caller
+        read()
+    }
+
+    private fun read() {
         if (first != null) return
+        val (stream, database) = bound ?: return
+        val delivery = database.readStream(stream) ?: return
         val snapshot = delivery.value as? StreamValue.Snapshot
-        first = Frame(Thread.currentThread() === caller, delivery.seq, snapshot?.revision, snapshot?.rows?.map { it.id })
+        first = Frame(heardOnCaller ?: true, delivery.seq, snapshot?.revision, snapshot?.rows?.map { it.id })
     }
 }
 
@@ -39,12 +55,13 @@ class FirstFrameAndRelatedTest {
         val sink = FirstFrameSink(Thread.currentThread())
         try {
             val stream = DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Presence.where(Condition.equal("room", jsonValue("r"))).json), sink)
+            sink.bind(stream, DBlayer.database)
             try {
                 eventually("the first frame arrives") { sink.first != null }
                 val frame = sink.first
                 assertNotNull(frame)
                 assertEquals(1uL, frame!!.seq)
-                assertFalse("the first delivery came on the calling thread, inside the opening call", frame.onCaller)
+                assertFalse("the core produced the first value on the calling thread, inside the opening call", frame.onCaller)
                 assertNotNull("the first delivery was not a snapshot with a revision", frame.revision)
                 assertEquals("the first delivery lacked the cached rows: ${frame.ids}", seats.map { it.id }.toSet(), frame.ids?.toSet())
             } finally {

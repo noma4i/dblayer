@@ -110,7 +110,18 @@ class Query<Model : DBModel>(
     suspend fun edgeValues(id: String, account: AccountScope? = null): JsonObject? =
         onAccount(account) { database, epoch -> (Json.parseToJsonElement(database.edgeValues(epoch, modelName, relation.orEmpty(), params.jsonText(), listOf(id))) as JsonObject)[id] as? JsonObject }
 
-    suspend fun load(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.load(epoch, modelName, relation.orEmpty(), params.jsonText()) }
+    /** Starts loading the relation and returns this caller's interest at once. Callers of the same scope share one request, and the request stops when every caller cancelled its interest. */
+    fun beginLoad(account: AccountScope? = null): LoadRequest = admit(account).let { admission -> admission.database.beginLoad(admission.epoch, modelName, relation.orEmpty(), params.jsonText()) }
+
+    /** Loads the relation. Cancelling the coroutine gives up its interest in the shared request. */
+    suspend fun load(account: AccountScope? = null) {
+        val request = beginLoad(account)
+        try {
+            request.result()
+        } finally {
+            request.cancel()
+        }
+    }
     suspend fun refresh(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.refresh(epoch, modelName, relation.orEmpty(), params.jsonText()) }
     /** Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force = false` uses the current freshness and the pages that are stored, `force = true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation joins it. */
     suspend fun loadAll(force: Boolean = false, account: AccountScope? = null) = onAccount(account) { database, epoch -> database.loadAll(epoch, modelName, relation.orEmpty(), params.jsonText(), force) }

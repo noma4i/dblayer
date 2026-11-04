@@ -13,7 +13,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use super::rig_tests::{bound, plain_models};
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, StreamDelivery, StreamRequest, SubscriptionSink, Transport, TransportRequest, ValueSink};
+use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, StreamDelivery, StreamRequest, SubscriptionSink, Transport, TransportRequest};
 use crate::transport::encrypted::fake_server_tests::decrypt_request;
 
 struct Connection {
@@ -126,7 +126,7 @@ impl Transport for Peer {
 }
 
 struct Rows;
-impl ValueSink for Rows { fn delivered(&self, _: StreamDelivery) {} }
+impl crate::ffi::stream::tape::Reader for Rows { fn delivered(&self, _: StreamDelivery) {} }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
@@ -139,12 +139,12 @@ async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let query = r#"{"model":"Notice","relation":"recent","params":{}}"#;
-    let first = database.subscribe(database.session_epoch(), StreamRequest::Query { query_json: query.into() }, Arc::new(Rows));
+    let first = database.subscribe_reading(database.session_epoch(), StreamRequest::Query { query_json: query.into() }, Arc::new(Rows));
     let old = crate::test_wait::within(subscriptions.recv()).await.unwrap();
     bound(database.session_reset()).await.unwrap();
     assert_eq!(crate::test_wait::within(closes.recv()).await.as_deref(), Some(old.as_str()));
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
-    let second = database.subscribe(database.session_epoch(), StreamRequest::Query { query_json: query.into() }, Arc::new(Rows));
+    let second = database.subscribe_reading(database.session_epoch(), StreamRequest::Query { query_json: query.into() }, Arc::new(Rows));
     let current = crate::test_wait::within(subscriptions.recv()).await.unwrap();
     assert_ne!(current, old);
     peer.emit_old(&old);

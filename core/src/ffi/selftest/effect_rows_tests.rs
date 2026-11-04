@@ -82,7 +82,7 @@ async fn a_refused_destroy_restores_the_row_according_to_its_declaration() {
 
 struct Deliveries(tokio::sync::mpsc::UnboundedSender<crate::ffi::StreamDelivery>);
 
-impl crate::ffi::ValueSink for Deliveries {
+impl crate::ffi::stream::tape::Reader for Deliveries {
     fn delivered(&self, delivery: crate::ffi::StreamDelivery) { let _ = self.0.send(delivery); }
 }
 
@@ -99,13 +99,13 @@ async fn a_member_event_keeps_the_open_join_in_the_list() {
     world.set_members("JOINED", &["u1", "u2", "u3"]);
     let query = json!({"model":"Member","relation":"group_members","params":params});
     let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
-    let stream = rig.database.subscribe(epoch, crate::ffi::StreamRequest::Query { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
-    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::StreamRequest::Query { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
+    bound(rig.database.loaded(stream)).await.unwrap();
     rig.switch.subscription_opened().await;
     let hold = world.hold_next("AddMember");
     let adding = { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "add_member".into(), "{}".into(), json!({"userIds":["u4"]}).to_string()).await }) };
     hold.entered_for("the join").await;
-    rig.switch.emit(json!({"data":{"memberChanged":{"id":"u1","name":"updated"}}}).to_string());
+    rig.switch.emit(json!({"data":{"memberChanged":{"id":"u1","name":"updated"}}}).to_string()).unwrap();
     let applied = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         while let Some(delivery) = crate::test_wait::within_secs(20, deliveries.recv()).await {
             let rows = match delivery.value {
@@ -137,8 +137,8 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string())).await.unwrap();
     let query = json!({"model": "Member", "relation": "group_members", "params": params});
     let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
-    let stream = rig.database.subscribe(epoch, crate::ffi::StreamRequest::Query { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
-    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::StreamRequest::Query { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
+    bound(rig.database.loaded(stream)).await.unwrap();
     let old = rig.world.hold_next("GroupMembers");
     let refreshing = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string()).await }) };
     old.entered_for("the old list").await;

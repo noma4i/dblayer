@@ -100,7 +100,7 @@ END",
   applied INTEGER NOT NULL,
   generation INTEGER NOT NULL,
   landed_at INTEGER NOT NULL,
-  stale_since INTEGER
+  stale_since INTEGER CHECK (stale_since > 0)
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS window_marker (
   window_key TEXT NOT NULL,

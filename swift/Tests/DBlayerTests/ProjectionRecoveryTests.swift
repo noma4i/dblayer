@@ -3,7 +3,7 @@ import Testing
 
 /// C09: a reader that fell behind reads a jump in the sequence of the deliveries. A jump means that deliveries were dropped, also the snapshot that was asked for.
 struct ProjectionRecoveryTests {
-  private let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
+  private let state = StreamState(phase: .loaded, settled: true, revision: 0, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
 
   private func snapshot(_ seq: UInt64, revision: Int64) -> StreamDelivery {
     StreamDelivery(stream: 1, epoch: 1, seq: seq, value: .snapshot(revision: revision, rows: [], state: state))

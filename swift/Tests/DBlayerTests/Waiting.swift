@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 import DBlayerTesting
 @testable import DBlayer
@@ -74,11 +75,6 @@ func finishes(
 func parkUntilCancelled() async throws {
   try await Task.sleep(for: .seconds(3600))
 }
-struct DeliveryFeed: AsyncSequence, Sendable {
-  typealias Element = StreamDelivery
-  let deliveries: AsyncStream<StreamDelivery>
-  func makeAsyncIterator() -> ValueStream.AsyncIterator { ValueStream.AsyncIterator(deliveries) }
-}
 final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Sendable where Sequence.Element: Sendable, Sequence.AsyncIterator: SendableMetatype {
   private var iterator: Sequence.AsyncIterator
 
@@ -143,6 +139,17 @@ func carriesRows(_ delivery: StreamDelivery) -> Bool {
   switch delivery.value {
   case .snapshot, .delta: return true
   default: return false
+  }
+}
+
+@MainActor
+func observe(_ what: String, _ condition: @escaping @MainActor () -> Bool) async -> Bool {
+  let (changes, continuation) = AsyncStream<Void>.makeStream()
+  defer { continuation.finish() }
+  let cursor = Cursor(changes)
+  while true {
+    if withObservationTracking({ condition() }, onChange: { continuation.yield(()) }) { return true }
+    guard await cursor.next(what, timeout: .seconds(20)) != nil else { return false }
   }
 }
 
@@ -268,4 +275,44 @@ extension MutationReceipt {
     guard case let .rejected(failure) = try await outcome() else { throw WaitFailure.unexpectedOutcome }
     return failure
   }
+}
+
+/// Reads the journal of a stream the way `ValueStream` does and hands each value to `take`. A test makes it the sink of `subscribe`, then binds the stream number it got.
+final class PulledStream: ValueSink, @unchecked Sendable {
+  private let lock = NSLock()
+  private let reading = NSLock()
+  private var bound: (stream: UInt64, database: Database)?
+  private let take: @Sendable (StreamDelivery) -> Void
+
+  init(_ take: @escaping @Sendable (StreamDelivery) -> Void) { self.take = take }
+
+  func bind(_ stream: UInt64, _ database: Database) {
+    lock.withLock { bound = (stream, database) }
+    available()
+  }
+
+  func available() {
+    guard let bound = lock.withLock({ bound }) else { return }
+    reading.withLock {
+      while let delivery = bound.database.readStream(stream: bound.stream) { take(delivery) }
+    }
+  }
+}
+
+func stateOf(_ delivery: StreamDelivery) -> StreamState? {
+  switch delivery.value {
+  case let .snapshot(_, _, state), let .count(_, _, state), let .state(state): return state
+  case let .delta(_, _, _, _, _, _, _, _, _, state): return state
+  default: return nil
+  }
+}
+
+/// A reader of the events of a model once its source is open: the first item it read was `.ready`.
+func opened<Model: DBModel>(_ events: EventStream<Model>, sourceLocation: SourceLocation = #_sourceLocation) async -> Cursor<EventStream<Model>> {
+  let cursor = Cursor(events)
+  guard case .ready? = await cursor.next("the source of the events opens", sourceLocation: sourceLocation) else {
+    Issue.record("the first item of the events stream was not ready", sourceLocation: sourceLocation)
+    return cursor
+  }
+  return cursor
 }

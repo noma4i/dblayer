@@ -7,11 +7,11 @@ pub(super) const MODEL: &str = "moments";
 
 pub(super) fn stored(epoch: u64, applied: i64, has_rows: bool) -> Stored {
     let data = Data::Landed { has_more: false, total: None, loaded_at: applied };
-    Stored { epoch, order: Order { applied, pages: 1 }, data, has_rows, revision: 0 }
+    Stored { epoch, order: Order { applied, pages: 1 }, data, has_rows, revision: 0, stale_since: None }
 }
 
 pub(super) fn not_loaded(epoch: u64) -> Stored {
-    Stored { epoch, order: Order::NONE, data: Data::NotLoaded, has_rows: false, revision: 0 }
+    Stored { epoch, order: Order::NONE, data: Data::NotLoaded, has_rows: false, revision: 0, stale_since: None }
 }
 
 pub(super) fn network() -> LoadError {

@@ -38,7 +38,7 @@ private final class HeldSubscribe: Transport, @unchecked Sendable {
 }
 
 private final class IgnoredChanges: ValueSink, @unchecked Sendable {
-  func delivered(delivery: StreamDelivery) {}
+  func available() {}
 }
 
 struct SubscriptionTokenTests {

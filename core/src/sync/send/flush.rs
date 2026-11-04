@@ -819,7 +819,7 @@ impl Inner {
             return self.quarantine(sending, &data);
         }
         let answer = self.answer_fields(spec, sending, operation, &data);
-        let debts = self.mutation_debts(&sending.model, &sending.action)?;
+        let mark = self.prepare_window_event(super::super::WindowEvent::Mutation { model: sending.model.clone(), action: sending.action.clone() })?;
         let held = Prior::of(entry)?.map(|prior| prior.held_files()).unwrap_or_default();
         let owned: Vec<RowId> = entry.operation.row_ids.iter().chain(&temp).cloned().collect();
         let created = Prior::of(entry)?.map(|prior| prior.created_beyond(&owned)).unwrap_or_default();
@@ -832,7 +832,7 @@ impl Inner {
                 let outbox = crate::operation::referencing_sequences(reader.connection(), &ids).map_err(StoreError::from)?.into_iter().filter_map(|seq| OutboxOperation::read(reader, seq).transpose()).collect::<Result<Vec<_>, _>>()?;
                 let mut drops = 0;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
-                envelope.window_debts = debts.clone();
+                envelope.window_debts = mark.as_ref().map(super::super::WindowMark::debts).unwrap_or_default();
                 envelope.snapshot = real.as_ref().or_else(|| entry.operation.row_ids.first()).map(|id| RowRef::new(ModelKey::new(&sending.model), id.clone()));
                 envelope.item_snapshots = batch_items.iter().map(|(item, id)| (item.clone(), RowRef::new(ModelKey::new(&sending.model), id.clone()))).collect();
                 envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
@@ -877,7 +877,7 @@ impl Inner {
             generation = self.db.generation();
         }
         let Some(committed) = committed else { return Ok(SendResult::Discarded) };
-        self.queue_committed_debts(sending.admitted, &sending.effects, &debts)?;
+        self.queue_window_mark(sending.admitted, &sending.effects, mark);
         let value = committed.snapshot.map(|row| self.db.shared.overlay_snapshot(&sending.model, row)).transpose()?;
         let items = committed.item_snapshots.into_iter().filter_map(|(item, row)| row.map(|row| (item, row))).map(|(item, row)| self.db.shared.overlay_snapshot(&sending.model, row).map(|row| (item, row))).collect::<Result<Vec<_>, _>>()?;
         self.finish_ticket(&sending.effects, entry.operation.id.0, SendResult::Committed, answer, value, items);
@@ -941,10 +941,10 @@ impl Inner {
 
     fn fail(&self, sending: &Sending<'_>, status: OperationStatus, failure: OperationFailure, result: SendResult) -> Result<SendResult, SyncError> {
         let seq = sending.entry.operation.id.0;
-        let debts = if status == OperationStatus::Failed && sending.action == "destroy" { self.refused_destroy_debts(&sending.model)? } else { Vec::new() };
+        let mark = if status == OperationStatus::Failed && sending.action == "destroy" { self.prepare_window_event(super::super::WindowEvent::DestroyRefused { model: sending.model.clone() })? } else { None };
         let committed = self.commit(sending.admitted, sending.generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, sending.generation);
-            envelope.window_debts = debts.clone();
+            envelope.window_debts = mark.as_ref().map(super::super::WindowMark::debts).unwrap_or_default();
             if status == OperationStatus::Failed && sending.action == "destroy" {
                 if let Some(prior) = Prior::of(sending.entry)? {
                     (envelope.entity_ops, envelope.scope_ops) = prior.reappearing();
@@ -956,7 +956,7 @@ impl Inner {
         if committed.is_none() {
             return Ok(SendResult::Discarded);
         }
-        self.queue_committed_debts(sending.admitted, &sending.effects, &debts)?;
+        self.queue_window_mark(sending.admitted, &sending.effects, mark);
         self.finish_ticket(&sending.effects, seq, result.clone(), None, None, Vec::new());
         Ok(result)
     }

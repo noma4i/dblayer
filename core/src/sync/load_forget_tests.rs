@@ -66,7 +66,7 @@ async fn inv_loadm_19_a_new_observer_of_a_window_whose_last_watch_drops_concurre
 
 fn stored(order: i64, total: Option<i64>, data: super::load_machine::Data) -> super::load_machine::Stored {
     let landed = matches!(data, super::load_machine::Data::Landed { .. });
-    super::load_machine::Stored { epoch: 0, order: super::load_machine::Order { applied: order, pages: i64::from(landed) }, data, has_rows: landed && total.is_some(), revision: 0 }
+    super::load_machine::Stored { epoch: 0, order: super::load_machine::Order { applied: order, pages: i64::from(landed) }, data, has_rows: landed && total.is_some(), revision: 0, stale_since: None }
 }
 
 #[tokio::test(start_paused = true)]

@@ -25,7 +25,7 @@ class NoticeTest {
         transport.emit("ChatActionSignal", """{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":true}}}""")
         assertEquals("TYPING", awaitWithin("typing arrives") { seen.first { it?.isNotEmpty() == true } }!!.first().kind)
         transport.emit("ChatActionSignal", """{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"SCREENSHOT","active":true}}}""")
-        val notice = (awaitWithin("the screenshot notice arrives") { events.first() } as ModelEventItem.Event).event
+        val notice = (awaitWithin("the screenshot notice arrives") { events.first { it is ModelEventItem.Event } } as ModelEventItem.Event).event
         assertEquals("SCREENSHOT", notice.after?.kind)
         transport.emit("ChatActionSignal", """{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":false}}}""")
         awaitWithin("typing stops") { seen.first { it?.isEmpty() == true } }

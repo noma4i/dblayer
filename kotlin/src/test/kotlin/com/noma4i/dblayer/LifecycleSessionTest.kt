@@ -31,12 +31,12 @@ private class LifecycleCredential : CredentialStore {
     }
 }
 
-private class RowHistory : ValueSink {
+private class RowHistory {
     val states = CopyOnWriteArrayList<List<String>>()
     private var projection = ListProjection<User>()
     private var stream: ULong? = null
 
-    override fun delivered(delivery: StreamDelivery) {
+    fun take(delivery: StreamDelivery) {
         synchronized(this) {
             if (stream != delivery.stream) { stream = delivery.stream; projection = ListProjection<User>() }
             val step = projection.apply(delivery, User)
@@ -51,7 +51,10 @@ class LifecycleSessionTest {
     private val account = AtomicReference<String?>(null)
     private val alreadyAuthenticated = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    private fun holdList(history: RowHistory): ULong = DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Query("""{"model":"User"}"""), history)
+    private fun holdList(history: RowHistory): ULong {
+        val pulled = PulledStream(history::take)
+        return DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Query("""{"model":"User"}"""), pulled).also { pulled.bind(it, DBlayer.database) }
+    }
 
     private fun json(text: String): JsonObject = Json.parseToJsonElement(text).jsonObject
 

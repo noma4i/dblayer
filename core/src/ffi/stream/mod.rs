@@ -8,6 +8,8 @@ use super::wire::{WireModel, WireRow};
 use super::{Database, DbError, WireBlobSnapshot, WireModelEvent};
 
 mod frame;
+mod journal;
+mod machine;
 mod open;
 mod owner;
 #[cfg(test)]
@@ -72,6 +74,8 @@ pub enum StreamRequest {
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct StreamState {
     pub phase: LivePhase,
+    pub settled: bool,
+    pub revision: i64,
     pub initial: bool,
     pub refreshing: bool,
     pub fetching_more: bool,
@@ -121,8 +125,8 @@ pub enum StreamValue {
     State { state: StreamState },
     /// One event of a model. Events before the stream opened are not repeated.
     Event { event: WireModelEvent },
-    /// Events were dropped because the reader was slow.
-    Missed { count: u64 },
+    /// The events at these positions are lost: the reader was slow and the journal of the stream was full, or the event could not be read. `first` and `last` are included.
+    Lost { first: u64, last: u64 },
     /// The status of a media upload when it changed.
     Status { blob: WireBlobSnapshot },
     /// The last value of a stream that ended by itself. Exactly one per stream.
@@ -134,14 +138,15 @@ pub struct StreamDelivery {
     pub stream: u64,
     /// The session epoch the stream was opened in. A delivery whose epoch the reader does not hold belongs to an account that has gone.
     pub epoch: u64,
-    /// Counts the events of this stream from 1, with no gap: a `Missed` advances it by its count, every other value by 1.
+    /// The position of the value in the journal of the stream, from 1. A `Lost` value takes the place of the last position it names.
     pub seq: u64,
     pub value: StreamValue,
 }
 
+/// Hears that a stream has values to read. The reader reads them with `Database::read_stream`; the call carries no value.
 #[uniffi::export(rust, foreign)]
 pub trait ValueSink: Send + Sync {
-    fn delivered(&self, delivery: StreamDelivery);
+    fn available(&self);
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -204,7 +209,7 @@ impl Database {
     /// The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
     pub fn session_epoch(&self) -> u64 { self.streams.snapshot().session_epoch }
 
-    /// Opens a stream and returns its number at once. The first value arrives as a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
+    /// Opens a stream and returns its number at once. The sink hears when values wait, and `read_stream` takes them: the first value is a snapshot, then deltas follow. A stream opened for an epoch that has gone ends with one `Ended` value.
     pub fn subscribe(&self, epoch: u64, request: StreamRequest, sink: Arc<dyn ValueSink>) -> u64 {
         let id = self.stream_table.issue();
         let call = match call_of(&request) {
@@ -212,12 +217,12 @@ impl Database {
             Err(error) => return self.refuse(id, epoch, sink, error),
         };
         let stream = Stream::new(id, epoch, self.streams.clone(), &self.stream_table, sink, call);
+        locked(&self.stream_table.open).insert(id, stream.clone());
         let admitted = self.streams.enroll(&stream);
         if !stream.holds(&admitted) {
             stream.end(if admitted.closed { StreamEnd::Closed } else { StreamEnd::SessionEnded });
             return id;
         }
-        locked(&self.stream_table.open).insert(id, stream.clone());
         if let Ok(sync) = self.sync() { stream.hold_first_screen(sync.first_screen()); }
         match self.open_stream(&stream, &request) {
             Ok(handles) => stream.attach(handles),
@@ -226,9 +231,17 @@ impl Database {
         id
     }
 
-    /// The reader stopped. The stream ends in the core and no new delivery is admitted after this call returns. A delivery already admitted may finish, and the call does not wait for the reader.
+    /// The next value of a stream, or nothing while none waits. The cursor moves past the value it returns. After the one `Ended` value the stream is gone and the call returns nothing.
+    pub fn read_stream(&self, stream: u64) -> Option<StreamDelivery> { self.stream_table.find(stream)?.read() }
+
+    /// The reader stopped. The stream ends in the core, its journal is dropped and no value is read after this call returns. The call does not wait for the reader.
     pub fn cancel_stream(&self, stream: u64) {
         if let Some(open) = self.stream_table.find(stream) { open.cancelled(); }
+    }
+
+    /// The reader waits until the stream shows a revision of the database, such as the revision of its own write. The stream delivers a state with that revision once its rows are read through it, also when the write changed none of them.
+    pub fn reach_stream(&self, stream: u64, revision: i64) {
+        if let Some(open) = self.stream_table.find(stream) { open.want(revision); }
     }
 
     /// The reader could not apply a delta (its revision is not the delta's base). The core sends one new snapshot.
@@ -279,12 +292,6 @@ impl Database {
         lease.run(work).await.map_err(|_| stale())??
     }
 
-    /// Returns when the first load of the stream settled, with the sequence number of the newest delivery the stream made until then. Fails when the epoch of the stream ended first.
-    pub async fn stream_loaded(&self, stream: u64) -> Result<u64, DbError> {
-        let open = self.stream_table.find(stream).ok_or_else(stale)?;
-        open.loaded().await
-    }
-
     /// The rows of a query the core already holds, without a stream and without reading SQLite on the calling thread.
     pub async fn peek_query(&self, epoch: u64, query_json: String) -> Result<Option<CachedQuery>, DbError> {
         self.read_in_epoch(epoch, "peek query", move |this| {
@@ -320,6 +327,7 @@ impl Database {
 impl Database {
     fn refuse(&self, id: u64, epoch: u64, sink: Arc<dyn ValueSink>, error: DbError) -> u64 {
         let stream = Stream::new(id, epoch, self.streams.clone(), &self.stream_table, sink, Request { model: String::new(), relation: None, params_json: "{}".into(), entity: None });
+        locked(&self.stream_table.open).insert(id, stream.clone());
         stream.invalid(error);
         id
     }

@@ -20,12 +20,12 @@ pub struct WindowRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowFreshness {
     pub landed_at: i64,
-    pub invalidated: bool,
+    pub stale_since: Option<i64>,
 }
 
 impl WindowFreshness {
     pub fn is_fresh(&self, now: i64, window: i64) -> bool {
-        !self.invalidated && now - self.landed_at < window
+        self.stale_since.is_none() && now - self.landed_at < window
     }
 }
 
@@ -142,15 +142,19 @@ impl Store {
         inner.ensure_healthy()?;
         Ok(inner
             .connection
-            .query_row("SELECT landed_at, stale_since IS NOT NULL FROM query_window WHERE key = ?1", params![key], |row| {
-                Ok(WindowFreshness { landed_at: row.get(0)?, invalidated: row.get::<_, i64>(1)? != 0 })
+            .query_row("SELECT landed_at, stale_since FROM query_window WHERE key = ?1", params![key], |row| {
+                Ok(WindowFreshness { landed_at: row.get(0)?, stale_since: row.get(1)? })
             })
             .optional()?)
     }
 
     pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
-        let pattern = like_prefix(&family_prefix(model, relation));
-        self.write_store(authority, |inner| Ok(inner.connection.execute("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key LIKE ?1 ESCAPE '\\' AND applied < ?2", params![pattern, since])?))
+        self.write_store(authority, |inner| {
+            if let crate::lifecycle::Authority::Admitted(admitted) = authority {
+                if !admitted.is_current() { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
+            }
+            mark_families(&inner.connection, &[(model.to_string(), relation.to_string())], since)
+        })
     }
 
     pub(crate) fn invalidate_windows(&self, authority: &crate::lifecycle::Authority, keys: &[String], since: i64) -> Result<usize, StoreError> {
@@ -166,7 +170,8 @@ impl Store {
     #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
         let admitted = self.lifecycle.admit(crate::lifecycle::Origin::Explicit, "test invalidate").map_err(|_| StoreError::Refused)?;
-        self.invalidate_family(&admitted.authority(), model, relation, self.max_window_sequence()? + 1)
+        let since = self.max_window_sequence()? + 1;
+        self.invalidate_family(&admitted.authority(), model, relation, since)
     }
 
     #[cfg(test)]

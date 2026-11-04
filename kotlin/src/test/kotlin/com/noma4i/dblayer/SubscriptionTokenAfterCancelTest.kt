@@ -41,7 +41,7 @@ class SubscriptionTokenAfterCancelTest {
         }
         database = openDatabase(Config(null, null, 8u), modelsJSON, transport)
         database.registerOperations(operations)
-        val listener = object : ValueSink { override fun delivered(delivery: StreamDelivery) {} }
+        val listener = object : ValueSink { override fun available() {} }
         database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"""), listener)
         eventually("the call issues its token") { issued.size == 1 }
         eventually("the token is handed back") { unsubscribed.size == 1 }

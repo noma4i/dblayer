@@ -228,7 +228,7 @@ impl Inner {
             envelope.edge_writes = edge_writes(&scope, &edge_fields, &roots, &normalized.edges);
             envelope.window = Some(WindowSave {
                 marker: marker.clone(),
-                invalidated: leave_stale,
+                stale_since: leave_stale.then_some(attempt.issued),
                 key: window_key.clone(),
                 scope: scope.clone(),
                 cursor: page_info.as_ref().and_then(|info| info.end_cursor.clone()),

@@ -32,7 +32,7 @@ class EncryptedOldSinkTest {
             DBlayer.database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
             DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
             val query = """{"model":"Notice","relation":"recent","params":{}}"""
-            val sink = object : ValueSink { override fun delivered(delivery: StreamDelivery) {} }
+            val sink = object : ValueSink { override fun available() {} }
             val first = DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Query(query), sink)
             val old = peer.subscribed.receive()
             DBlayer.sessionReset()

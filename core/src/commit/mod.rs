@@ -162,7 +162,7 @@ pub struct WindowMarker {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowSave {
     pub marker: Option<WindowMarker>,
-    pub invalidated: bool,
+    pub stale_since: Option<i64>,
     pub key: String,
     pub scope: ScopeRef,
     pub cursor: Option<String>,

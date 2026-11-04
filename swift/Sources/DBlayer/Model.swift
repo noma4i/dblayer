@@ -196,7 +196,10 @@ public struct ModelEvent<Model: DBModel>: Sendable {
 }
 
 public enum ModelEventItem<Model: DBModel>: Sendable {
+  /// The source of the events is open: every event after this item reaches the stream.
+  case ready
   case event(ModelEvent<Model>)
-  case missed(UInt64)
+  /// The events at these positions of the stream are lost. `first` and `last` are included.
+  case lost(first: UInt64, last: UInt64)
   case failed(any Error)
 }

@@ -174,7 +174,7 @@ async fn media_marker_commit() {
                 load(&rig, true).await.unwrap();
                 assert_eq!(marker(&rig), old, "an unstable read cannot confirm coverage");
                 let key = rig.sync.window_key("media", "library", &arguments("c1")).unwrap();
-                assert!(rig.db.shared.store.window_freshness(&key).unwrap().unwrap().invalidated);
+                assert!(rig.db.shared.store.window_freshness(&key).unwrap().unwrap().stale_since.is_some());
                 assert_eq!(rig.transport.call_count("Tail"), 3, "no immediate retry");
             }
             "bad cursor" | "repeat cursor" => {

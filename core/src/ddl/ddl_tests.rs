@@ -279,7 +279,7 @@ fn core_table_columns_match_spec() {
     assert_eq!(window.len(), 10);
     assert!(window["landed_at"].1 && !window["cursor"].1 && !window["total"].1);
     let bad_flag = connection.execute(
-        "insert into query_window (key, has_next, issued, applied, generation, landed_at, invalidated) values ('k', 0, 0, 0, 0, 0, 2)",
+        "insert into query_window (key, has_next, pages, issued, applied, generation, landed_at, stale_since) values ('k', 0, 1, 0, 0, 0, 0, 0)",
         [],
     );
     assert!(bad_flag.is_err());

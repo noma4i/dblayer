@@ -37,18 +37,11 @@ class SubscriptionSessionTest {
         database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
         val failures = CopyOnWriteArrayList<DbException>()
         val delivered = CompletableDeferred<DbException>()
-        val listener = object : ValueSink {
-            override fun delivered(delivery: StreamDelivery) {
-                val state = when (val value = delivery.value) {
-                    is StreamValue.Snapshot -> value.state
-                    is StreamValue.Delta -> value.state
-                    is StreamValue.State -> value.state
-                    else -> null
-                }
-                state?.error?.let { failures.add(it); events.add("listener received error"); delivered.complete(it) }
-            }
+        val listener = PulledStream { delivery ->
+            stateOf(delivery)?.error?.let { failures.add(it); events.add("listener received error"); delivered.complete(it) }
         }
         val live = database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Notice","relation":"recent","params":{}}"""), listener)
+        listener.bind(live, database)
         suspend fun <T> step(what: String, block: suspend () -> T): T = try {
             awaitWithin(what, block)
         } catch (error: AssertionError) {

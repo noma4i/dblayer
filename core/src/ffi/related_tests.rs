@@ -189,7 +189,7 @@ struct Canceller {
     cancelled: std::sync::mpsc::Sender<()>,
 }
 
-impl super::ValueSink for Canceller {
+impl crate::ffi::stream::tape::Reader for Canceller {
     fn delivered(&self, _: super::StreamDelivery) {
         let Some(live) = self.live.lock().unwrap().take() else { return };
         live.cancel();

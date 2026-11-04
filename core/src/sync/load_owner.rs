@@ -64,7 +64,7 @@ struct MembersChain {
     identity: Arc<()>,
     readers: usize,
     result: watch::Sender<Option<Result<(), super::SyncError>>>,
-    task: tokio::task::AbortHandle,
+    task: Option<tokio::task::AbortHandle>,
 }
 
 pub(crate) struct MembersRead {
@@ -90,7 +90,7 @@ impl Drop for MembersRead {
             if chain.readers > 0 { return; }
             if let Some(chain) = state.chains.remove(&self.window) {
                 effects.push(move || {
-                    crate::db::lock::effect(|| chain.task.abort());
+                    if let Some(task) = &chain.task { crate::db::lock::effect(|| task.abort()); }
                     drop(chain);
                 });
             }
@@ -118,6 +118,7 @@ pub(crate) struct LoadOwner {
     outbox: OrderedEffects,
     next_flight: AtomicU64,
     epoch: AtomicU64,
+    reload: std::sync::OnceLock<Arc<dyn Fn(Target) + Send + Sync>>,
     #[cfg(test)]
     panic_window: Mutex<Option<String>>,
     #[cfg(test)]
@@ -130,21 +131,43 @@ impl LoadOwner {
     }
 
     pub(crate) fn members(self: &Arc<Self>, window: &str, start: impl FnOnce(watch::Sender<Option<Result<(), super::SyncError>>>) -> tokio::task::AbortHandle) -> MembersRead {
-        self.with_state(|state, _| {
+        let (reader, launch) = self.with_state(|state, _| {
+            let mut launch = None;
             let chain = state.chains.entry(window.to_string()).or_insert_with(|| {
+                let identity = Arc::new(());
                 let result = watch::channel(None).0;
-                let task = start(result.clone());
-                MembersChain { identity: Arc::new(()), readers: 0, result, task }
+                launch = Some((identity.clone(), result.clone()));
+                MembersChain { identity, readers: 0, result, task: None }
             });
             chain.readers += 1;
-            MembersRead { identity: chain.identity.clone(), owner: Arc::downgrade(self), window: window.to_string(), result: chain.result.subscribe() }
-        })
+            (MembersRead { identity: chain.identity.clone(), owner: Arc::downgrade(self), window: window.to_string(), result: chain.result.subscribe() }, launch)
+        });
+        if let Some((identity, result)) = launch {
+            let task = match catch_unwind(AssertUnwindSafe(|| start(result.clone()))) {
+                Ok(task) => task,
+                Err(panic) => {
+                    crate::db::lock::effect(|| result.send_replace(Some(Err(super::SyncError::Event("the load could not start".into())))));
+                    std::panic::resume_unwind(panic);
+                }
+            };
+            self.with_state(|state, effects| {
+                if let Some(chain) = state.chains.get_mut(window).filter(|chain| Arc::ptr_eq(&chain.identity, &identity)) {
+                    chain.task = Some(task);
+                } else {
+                    effects.push(move || { crate::db::lock::effect(|| task.abort()); });
+                }
+            });
+        }
+        reader
     }
 
     pub(crate) async fn unobserved(&self, window: &str) {
         let sender = locked(&self.state).senders.get(window).cloned();
         if let Some(sender) = sender { sender.closed().await; }
     }
+
+    /// Sets how a read that a window owes is started.
+    pub(crate) fn on_reload(&self, reload: Arc<dyn Fn(Target) + Send + Sync>) { let _ = self.reload.set(reload); }
 
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::SeqCst)
@@ -202,6 +225,12 @@ impl LoadOwner {
                         }
                     }
                     Effect::Retry { window, kind } => state.retries.push((window, kind)),
+                    Effect::Reload { window } => {
+                        let observed = state.senders.get(&window).is_some_and(|sender| sender.receiver_count() > 0);
+                        if let (true, Some(target), Some(reload)) = (observed, state.targets.get(&window).cloned(), self.reload.get().cloned()) {
+                            effects.push(move || reload(target));
+                        }
+                    }
                 }
             }
             if finished {
@@ -258,7 +287,7 @@ impl LoadOwner {
             }).cloned().collect();
             for window in windows {
                 if let Some(chain) = state.chains.remove(&window) {
-                    effects.push(move || { crate::db::lock::effect(|| chain.task.abort()); drop(chain); });
+                    effects.push(move || { if let Some(task) = &chain.task { crate::db::lock::effect(|| task.abort()); } drop(chain); });
                 }
             }
         });

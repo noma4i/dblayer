@@ -50,13 +50,14 @@ impl Inner {
                     data: Data::Landed { has_more: window.has_next, total: window.total, loaded_at: freshness.landed_at },
                     has_rows,
                     revision: 0,
+                    stale_since: freshness.stale_since,
                 },
-                _ => Stored { epoch, order: Order::NONE, data: if has_rows { Data::Local } else { Data::NotLoaded }, has_rows, revision: 0 },
+                _ => Stored { epoch, order: Order::NONE, data: if has_rows { Data::Local } else { Data::NotLoaded }, has_rows, revision: 0, stale_since: None },
             }))
         })();
         if let Err(error) = &result {
             let seed = match &rows {
-                Ok(row) => Some(Stored { epoch, order: Order::NONE, data: if row.is_some() { Data::Local } else { Data::NotLoaded }, has_rows: row.is_some(), revision: 0 }),
+                Ok(row) => Some(Stored { epoch, order: Order::NONE, data: if row.is_some() { Data::Local } else { Data::NotLoaded }, has_rows: row.is_some(), revision: 0, stale_since: None }),
                 Err(_) => None,
             };
             self.owner.seed_observed(window_key, model.to_string(), seed);

@@ -755,8 +755,8 @@ fn save_window(connection: &Connection, window: &WindowSave, generation: Generat
     let (cursor, has_next) = kept.map_or((window.cursor.clone(), window.has_next), |tail| (tail.cursor.clone(), tail.has_next));
     let record = WindowRecord { key: window.key.clone(), cursor, has_next, total: window.total, pages: window.pages, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
     upsert_window(connection, &record, now_ms)?;
-    if window.invalidated {
-        connection.execute("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key = ?1", params![window.key, window.issued])?;
+    if let Some(since) = window.stale_since {
+        connection.execute("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key = ?1", params![window.key, since])?;
     }
     if let Some(marker) = &window.marker {
         connection.execute("DELETE FROM window_marker WHERE window_key = ?1", [&window.key])?;

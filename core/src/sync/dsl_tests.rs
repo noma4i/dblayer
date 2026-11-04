@@ -32,7 +32,7 @@ async fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetim
     rig.sync.register(OperationDef::new("Signal", "subscription Signal { signal { chatId userId kind active } }", "signal"));
     rig.sync.inner.listen_all();
     rig.transport.await_calls("Signal", 1).await;
-    let events = rig.sync.open_model_events("notices").await.unwrap();
+    let events = super::model_event_tests::open_heard(&rig.sync, "notices").await.unwrap();
     assert_eq!(rig.transport.call_count("Signal"), 1);
     for kind in ["TYPING","RECORDING_AUDIO","RECORDING_VIDEO","UPLOADING_PHOTO","UPLOADING_VIDEO"] {
         let revision = rig.db.revision_seq().unwrap();
@@ -50,8 +50,8 @@ async fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetim
     signal(&rig, json!("SCREENSHOT"), true);
     rig.transport.await_consumed("Signal").await;
     let item = tokio::time::timeout(Duration::from_secs(1), events.next()).await.unwrap().unwrap();
-    assert!(matches!(item, super::ModelEventItem::Event(event) if event.kind == "SCREENSHOT" && event.after.is_some()));
-    let late = rig.sync.open_model_events("notices").await.unwrap();
+    assert!(matches!(item, super::model_event_tests::HeardItem::Event(event) if event.kind == "SCREENSHOT" && event.after.is_some()));
+    let late = super::model_event_tests::open_heard(&rig.sync, "notices").await.unwrap();
     assert!(tokio::time::timeout(Duration::from_millis(1), late.next()).await.is_err(), "events are not replayed");
     signal(&rig, json!("UNKNOWN"), true);
     rig.transport.await_consumed("Signal").await;
@@ -131,7 +131,7 @@ async fn inv_dsl_11_unchanged_event_node_joins_loaded_membership_heads_and_manua
     }
     rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await.unwrap();
     assert_eq!(listed("PRIMARY"), ["anchor"]);
-    let _events = rig.sync.open_model_events("chats").await.unwrap();
+    let _events = super::model_event_tests::open_heard(&rig.sync, "chats").await.unwrap();
     for (index, (_, primary, secondary)) in cases.into_iter().enumerate() {
         let (topic, id) = if index == 0 {
             rig.transport.enqueue("MessageTranscodeStatus", Reply::data(json!({"node":{"id":"m1","chatId":"c1","text":"new"}})));

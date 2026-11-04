@@ -99,3 +99,13 @@ Replace `LiveList`, `Live`, `Entity`, `.live`, `.snapshots`, `.find(id)`, `.enti
 Replace `Model.create` of a message or a media record with `Model.send(in: scope, ...)`. See [writing data](writing-data.md#sending-without-a-network).
 Replace `add_to`, `remove_from`, `create_row` and `change_row` lines with `upsert` and `refetch`. An action that needs the server fails at once while the network is away.
 Make a new `AccountScope` after each sign-in and build the screens again for it.
+
+## Journal of a stream
+
+Read the state of a projection instead of waiting on the raw stream: `Projected.loaded()` returns with the settled state of the first load. `ValueStream.loaded()` is gone.
+Wait for your own write with `Projected.shown(revision)`, with the revision from its receipt, instead of polling the rows.
+Handle `ModelEventItem.ready` and `ModelEventItem.lost(first, last)` in an events loop. `missed(count)` is gone: the count is `last - first + 1`.
+A test or a screen that must hear every event after a moment waits for `ready` first.
+Give each caller of a shared load its own `beginLoad()` request and cancel it when the caller leaves. The request stops only after every caller cancelled.
+Pass nothing to `DB.resume` and `DBlayer.resume`: they resume the session that is signed in.
+A custom `ValueSink` implements `available()` and reads the stream with `readStream` until it returns nothing.
