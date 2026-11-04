@@ -45,8 +45,7 @@ impl Inner {
                     if !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.stale_since.is_some()) { return Ok(false); }
                     self.fetch(admitted, &resolved, None, true).await?
                 } else { self.fetch(admitted, &resolved, None, false).await? };
-                outcome.paid()?;
-                Ok(true)
+                outcome.paid().map(|_| true)
             }.await;
             match result {
                 Ok(loaded) => reloaded += usize::from(loaded),
