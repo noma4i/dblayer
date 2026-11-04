@@ -647,3 +647,22 @@ async fn settling_an_answer_for_an_unregistered_model_is_an_error_not_a_silent_f
     assert!(error.to_string().contains("ghosts"), "{error}");
     assert_eq!(rig.db.outbox().unwrap().len(), 1);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_running_retry_wake_finishes_its_pass_when_another_flush_arms_the_next_wake() {
+    let rig = rig();
+    put(&rig, "moments", moment("m1", "old"));
+    rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Network("down".into())));
+    rig.transport.enqueue("UpdateMoment", updated("m1", "new").after(std::time::Duration::from_secs(30)));
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    crate::sync::rig::flushed(&rig).await;
+    for _ in 0..600 {
+        if rig.transport.call_count("UpdateMoment") == 2 { break; }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 2, "the retry wake did not send");
+    crate::sync::rig::flushed(&rig).await;
+    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    assert!(rig.db.outbox().unwrap().is_empty(), "{:?}", rig.db.outbox().unwrap().iter().map(|entry| entry.operation.status).collect::<Vec<_>>());
+    assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
+}

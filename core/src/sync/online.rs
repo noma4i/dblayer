@@ -29,7 +29,7 @@ impl Sync {
         crate::db::lock::assert_no_library_lock("Transport::set_online");
         self.inner.transport.set_online(online);
         if !online {
-            let wake = locked(&self.inner.wake).take();
+            let wake = locked(&self.inner.wake).take_sleeping();
             if let Some(wake) = wake { crate::db::lock::effect(|| wake.abort()); }
             self.inner.owner.submit(Event::Offline);
             self.inner.spawn_flush(Duration::ZERO);
@@ -57,15 +57,27 @@ impl Inner {
             queue.retrying.iter().filter_map(|seq| queue.entries.get(seq)).filter_map(|entry| self.retry_due(&entry.operation)).min()
         };
         let wake = due.filter(|_| self.connectivity.is_online()).map(|due| due.saturating_sub(self.clock.now()).max(Duration::from_millis(1)));
-        let task = wake.and_then(|wait| self.spawn_flush(wait));
-        let old = std::mem::replace(&mut *locked(&self.wake), task);
-        if let Some(old) = old {
-            crate::db::lock::effect(|| old.abort());
+        let generation = {
+            let mut slot = locked(&self.wake);
+            slot.generation += 1;
+            slot.generation
+        };
+        let task = wake.and_then(|wait| self.spawn_wake(wait, Some(generation)));
+        let cancelled = {
+            let mut slot = locked(&self.wake);
+            if slot.generation == generation { std::mem::replace(&mut slot.sleeping, task.map(|task| (generation, task))).map(|(_, old)| old) } else { task }
+        };
+        if let Some(cancelled) = cancelled {
+            crate::db::lock::effect(|| cancelled.abort());
         }
         Ok(())
     }
 
-    pub(crate) fn spawn_flush(self: &Arc<Self>, wait: Duration) -> Option<tokio::task::AbortHandle> {
+    pub(crate) fn spawn_flush(self: &Arc<Self>, wait: Duration) {
+        drop(self.spawn_wake(wait, None));
+    }
+
+    fn spawn_wake(self: &Arc<Self>, wait: Duration, slot: Option<u64>) -> Option<tokio::task::AbortHandle> {
         let lifecycle = self.db.shared.store.lifecycle.clone();
         let epoch = self.waking_epoch()?;
         let runtime = Handle::try_current().ok()?;
@@ -78,6 +90,10 @@ impl Inner {
             let admission = woken.unwrap_or_else(|| lifecycle.admit_woken(crate::lifecycle::Origin::Session, "outbox flush", epoch));
             let Some(admitted) = admission.await else { return };
             let Some(inner) = inner.upgrade() else { return };
+            if let Some(generation) = slot {
+                let mut wake = locked(&inner.wake);
+                if wake.sleeping.as_ref().is_some_and(|(sleeping, _)| *sleeping == generation) { wake.sleeping = None; }
+            }
             let _ = admitted.run(inner.flush_pending(&admitted)).await;
         }));
         Some(task.abort_handle())

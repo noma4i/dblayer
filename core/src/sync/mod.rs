@@ -172,7 +172,7 @@ pub(crate) struct Inner {
     pub(crate) upload_effects: crate::db::dispatch::OrderedEffects,
     pub(crate) file_tasks: Arc<tokio::sync::watch::Sender<usize>>,
     pub connectivity: Arc<Connectivity>,
-    pub wake: Mutex<Option<tokio::task::AbortHandle>>,
+    pub(crate) wake: Mutex<WakeSlot>,
     pub(crate) resume: resume::ResumeOwner,
     pub(crate) preload: preload::PreloadOwner,
     pub(crate) entity_due: Mutex<Vec<entity_fetch::DueRefresh>>,
@@ -182,6 +182,19 @@ pub(crate) struct Inner {
     #[cfg(test)]
     pub(crate) refusal_probe: Mutex<Option<Box<dyn Fn() + Send + std::marker::Sync>>>,
     pub final_attempts: Mutex<send::FinalAttempts>,
+}
+
+/// The retry wake of the outbox while it sleeps. A wake that woke up leaves the slot before its pass, so a newer wake never cancels a pass that runs.
+#[derive(Default)]
+pub(crate) struct WakeSlot {
+    generation: u64,
+    sleeping: Option<(u64, tokio::task::AbortHandle)>,
+}
+
+impl WakeSlot {
+    pub(crate) fn take_sleeping(&mut self) -> Option<tokio::task::AbortHandle> {
+        self.sleeping.take().map(|(_, handle)| handle)
+    }
 }
 
 impl Inner {
@@ -314,7 +327,7 @@ impl Sync {
             upload_effects: crate::db::dispatch::OrderedEffects::default(),
             file_tasks: Arc::new(tokio::sync::watch::channel(0).0),
             connectivity,
-            wake: Mutex::new(None),
+            wake: Mutex::new(WakeSlot::default()),
             resume: resume::ResumeOwner::new(),
             preload: preload::PreloadOwner::default(),
             entity_due: Mutex::new(Vec::new()),
