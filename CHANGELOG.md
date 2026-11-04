@@ -110,6 +110,8 @@
 - `Projected.loaded()` returns with the settled state that comes with the rows of the first load.
 - A cached entity whose load failed on the network stays loaded and shows the network error.
 - The stream of an entity that the library loads waits for the frame of the landed row before its first load settles.
+- A refused multipart abort waits for `sessionResume` and reaches the server once.
+- `cancelUpload` cancels an upload that starts while the call runs.
 
 ### Removed
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.

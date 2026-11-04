@@ -587,17 +587,27 @@ impl Sync {
         let position = if batched {
             Some(self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get::<_, i64>(0))?))?)
         } else { None };
-        let running = self.inner.running_uploads(seq, position);
-        for (token, _) in &running { token.cancel(); }
-        if running.is_empty() {
-            for ((_, item), _) in self.inner.operation_uploads(seq)? {
-                if position.is_none_or(|position| item == position) { self.run_inline(admitted, seq, item, RunMode::Cancel).await; }
-            }
-        } else {
-            for (_, mut done) in running { let _ = done.wait_for(|finished| *finished).await; }
+        for ((_, item), _) in self.inner.operation_uploads(seq)? {
+            if position.is_none_or(|position| item == position) { self.cancel_item(admitted, seq, item).await; }
         }
         self.inner.db.shared.read(&[], |_| Ok(()))?;
         Ok(true)
+    }
+
+    async fn cancel_item(&self, admitted: &crate::lifecycle::Admitted, seq: i64, position: i64) {
+        loop {
+            if let Some((run, token)) = self.inner.register(seq, position) {
+                run::drive(self.inner.clone(), admitted.clone(), seq, position, run, token, RunMode::Cancel, None).await;
+                self.inner.finish_run(admitted, seq, position, run);
+                return;
+            }
+            let active = locked(&self.inner.uploads).active.get(&(seq, position)).map(|active| (active.token.clone(), active.done.subscribe()));
+            if let Some((token, mut done)) = active {
+                token.cancel();
+                let _ = done.wait_for(|finished| *finished).await;
+                return;
+            }
+        }
     }
 
     pub(crate) async fn wait_uploads(&self) {
@@ -616,12 +626,6 @@ impl Sync {
                 let _ = done.wait_for(|finished| *finished).await;
             }
         }
-    }
-
-    async fn run_inline(&self, admitted: &crate::lifecycle::Admitted, seq: i64, position: i64, mode: RunMode) {
-        let Some((run, token)) = self.inner.register(seq, position) else { return };
-        run::drive(self.inner.clone(), admitted.clone(), seq, position, run, token, mode, None).await;
-        self.inner.finish_run(admitted, seq, position, run);
     }
 }
 

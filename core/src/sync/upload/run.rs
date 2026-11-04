@@ -365,7 +365,7 @@ impl Runner {
         let state = self.snapshot();
         let (Some(key), Some(upload_id)) = (state.key, state.upload_id) else { return Ok(()) };
         if let Some(steps) = &self.input.steps.multipart {
-            if !self.inner.connectivity.is_online() {
+            if !self.inner.connectivity.is_online() && locked(&self.resumed).is_none() {
                 return Ok(());
             }
             match self.graphql(&steps.abort, json!({"key": key, "uploadId": upload_id}), false).await {
@@ -401,9 +401,8 @@ impl Runner {
 
     pub(super) async fn cancelled(&self) -> Result<(), Stop> {
         let batch = self.batch;
-        self.has_pending_request()?;
         self.save(UploadEvent::Cancel)?;
-        if self.snapshot().upload_id.is_some() {
+        if self.snapshot().upload_id.is_some() && !(self.snapshot().stage == UploadStage::Abort && self.has_pending_request()?) {
             self.save(UploadEvent::AbortStarted)?;
             self.abort_remote().await?;
         }

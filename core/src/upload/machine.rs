@@ -366,9 +366,10 @@ impl UploadState {
 
     pub(crate) fn run_mode(&self, status: OperationStatus, transport_started: bool, waiting: bool, request_pending: impl Fn() -> bool) -> Option<RunMode> {
         let cancelled = self.phase == UploadStatus::Cancelled;
+        let abort_stored = || self.stage == UploadStage::Abort && request_pending();
         match status {
-            OperationStatus::Pending if cancelled => Some(RunMode::Cancel),
-            OperationStatus::Pending if self.phase == UploadStatus::Failed && self.upload_id.is_some() && !self.all_parts_confirmed() => Some(RunMode::Abort),
+            OperationStatus::Pending if cancelled => (!abort_stored()).then_some(RunMode::Cancel),
+            OperationStatus::Pending if self.phase == UploadStatus::Failed && self.upload_id.is_some() && !self.all_parts_confirmed() => (!abort_stored()).then_some(RunMode::Abort),
             OperationStatus::Pending if !transport_started && !waiting && self.awaits_run() => Some(if self.is_transferred() { RunMode::Mutation } else { RunMode::Transfer }),
             OperationStatus::Failed | OperationStatus::DeliveryUnknown if self.upload_id.is_some() && (cancelled || !self.all_parts_confirmed()) && !request_pending() => {
                 Some(if cancelled { RunMode::Cancel } else { RunMode::Abort })
