@@ -183,7 +183,7 @@ class UploadWorkTest {
     }
 
     @Test
-    fun aNewSessionSchedulesUploadsWhenTheOldEndingRoundLostItsSession() = bounded {
+    fun aNewSessionSchedulesUploadsWhenTheOldEndingRoundLostItsSession(): Unit = bounded {
         val directory = Files.createTempDirectory("ending-epoch").toFile()
         try {
             val source = java.io.File(directory, "image.png").apply { writeText("image") }
