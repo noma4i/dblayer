@@ -572,7 +572,7 @@ impl Inner {
             let connection = reader.connection();
             let mut statement = connection.prepare("SELECT position, client_key, row_id, file_id FROM op_item WHERE seq = ?1 ORDER BY position")?;
             let items = statement.query_map([seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            let confirmed: Vec<(String, String)> = crate::operation::read_value(connection, seq, "confirmed")?.map(serde_json::from_value).transpose()?.unwrap_or_default();
+            let confirmed: Vec<(String, String)> = crate::operation::read_value(connection, seq, "confirmed")?.map(serde_json::from_value).transpose().map_err(|error| DbError::Internal(error.to_string()))?.unwrap_or_default();
             Ok((items, confirmed))
         }))?;
         let (items, confirmed) = read;

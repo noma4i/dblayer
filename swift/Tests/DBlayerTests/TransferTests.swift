@@ -15,8 +15,8 @@ private func transferFixture(_ name: String) throws -> String {
 private func confirmedIds<Model: DBModel>(_ receipt: OperationReceipt<Model>) async throws -> [String?] {
   let outcome = try await receipt.outcome()
   guard case .confirmed = outcome.result else { throw DbError.Invalid(detail: "the batch did not confirm: \(outcome.result)") }
-  return outcome.items.map {
-    if case let .confirmed(_, value) = $0 { return value.id }
+  return outcome.items.map { item -> String? in
+    if case let .confirmed(_, value) = item { return value.id }
     return nil
   }
 }

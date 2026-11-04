@@ -80,7 +80,12 @@ private class HoldSecondFile(private val server: SealedServer, private val mock:
 private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Model>): List<String?> {
     val outcome = receipt.outcome()
     assertEquals(BatchResult.Confirmed, outcome.result)
-    return outcome.items.map { (it as? ItemOutcome.Confirmed)?.value?.id }
+    return outcome.items.map {
+        when (it) {
+            is ItemOutcome.Confirmed -> it.value.id
+            is ItemOutcome.Discarded -> null
+        }
+    }
 }
 
 private suspend fun finishTransfers() = DBlayer.database.resumeUploads(DBlayer.database.sessionEpoch())
