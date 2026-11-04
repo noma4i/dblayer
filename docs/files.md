@@ -157,8 +157,8 @@ On Android the app gives the text and the small icon of the notification to `DBl
 
 API 34 and later run one user-initiated job with a network requirement. API 33 runs a sticky `dataSync` foreground task that starts its notification before `open` finishes. The library does not use WorkManager. A job or foreground task never repeats a transfer: retries follow the upload `Backoff` of the core. When the system refuses the start, the reason appears in the `error` of the accepted upload and nothing else changes. Upload requests (the file `PUT`, the steps and the content mutation) use the network of the job, all other requests use the default route. A restart or a force stop continues at the next `open`.
 
-Запрос очистки multipart использует сеть передачи. Собственный `Transport.put` получает `TransferIdentity` с операцией, элементом и шагом. При изменении batch идентичность элемента сохраняется. Ключ элемента - непрозрачное значение, а не имя файла.
-Фоновая задача сохраняет epoch приёма. Поздний отказ системы относится только к этой эпохе.
+The multipart abort uses the transfer network too. A custom `Transport.put` receives a `TransferIdentity` with the operation, the item and the step. The identity of an item stays the same when the batch changes. The item key is an opaque value, not a file name.
+The background job keeps the epoch of the accepted upload. A late refusal of the system applies only to that epoch.
 
 `retry` and `discard` take an `action`. Pass `null` for the whole record, or a declared action. `retry` returns a new receipt. Preparing the request and calling the library run off the caller thread.
 
@@ -327,7 +327,7 @@ A finished upload closes its operation and removes its entry from `uploads`. The
 - Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts.
 - Each step and multipart part stores its retry count and next retry time. Restarting preserves both. A successful step removes its retry record.
 - An explicit `retry(action)` after failure clears saved retry counts and times, giving unfinished steps a fresh budget.
-- Если при переносе старой базы элемент передачи отсутствует, ошибка получает вид `missing_file`. Повтор без файла отклоняется.
+- When an upgraded database has lost the item of a saved transfer, the error kind is `missing_file`. A retry without a file is refused.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
 - A `403` renews the single-upload url or affected part url after backoff. The renewal uses that PUT step's retry budget. Urls older than the presign lifetime are requested again for unfinished parts.
 - The final content mutation uses the [outbox retry policy](server-sync.md#retries), including its saved budget and encrypted request identity.
