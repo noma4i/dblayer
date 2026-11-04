@@ -106,7 +106,7 @@ fn observer_is_called_when_a_member_changes_revision() {
     let (log, callback) = recorder();
     let _subscription = db.observe(query, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.update("moments", &rid("m1"), obj(json!({"userId": "u2"}))).unwrap();
+    db.as_app().update("moments", &rid("m1"), obj(json!({"userId": "u2"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![1, 1]);
     assert_eq!(changes(&log)[1].diff.updated, vec![rid("m1")]);
@@ -120,7 +120,7 @@ fn observer_is_called_when_a_member_leaves_the_result() {
     let (log, callback) = recorder();
     let _subscription = db.observe(query, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.update("moments", &rid("m1"), obj(json!({"text": "gone"}))).unwrap();
+    db.as_app().update("moments", &rid("m1"), obj(json!({"text": "gone"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![1, 0]);
     assert_eq!(changes(&log)[1].diff.removed, vec![rid("m1")]);
@@ -133,7 +133,7 @@ fn touching_a_parent_notifies_observers_of_the_parent() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("chats"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
+    db.as_app().create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![1, 1]);
     assert_eq!(changes(&log)[1].diff.updated, vec![rid("c1")]);
@@ -226,7 +226,7 @@ fn inv_observe_09_observer_may_read_and_write_the_database_from_its_callback() {
         .observe(Query::new("moments"), move |change| {
             counter.store(handle.count(&Query::new("moments")).unwrap() as usize, Ordering::SeqCst);
             if change.rows.len() == 1 {
-                handle.create("chats", obj(json!({"title": "from listener"}))).unwrap();
+                handle.as_app().create("chats", obj(json!({"title": "from listener"}))).unwrap();
             }
         })
         .unwrap();
@@ -258,7 +258,7 @@ fn late_observer_of_a_shared_query_sees_the_write_that_preceded_it() {
         let text = format!("v{round}");
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m1"), row: obj(json!({"id": "m1", "userId": "u1", "text": text})) });
-        db.land(envelope).unwrap();
+        db.as_app().land(envelope).unwrap();
         let (log, second) = recorder();
         let _late = db.observe(Query::new("moments"), second).unwrap();
         db.await_revision(db.revision_seq().unwrap());

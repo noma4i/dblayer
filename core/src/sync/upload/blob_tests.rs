@@ -35,7 +35,7 @@ fn rig() -> Rig {
     rig
 }
 fn use_blob(rig: &Rig, id: &str, row: &str) -> Result<crate::db::Acted, crate::db::DbError> {
-    rig.db.act("moments", "set_video", &rid(row), Map::new(), json!({"video":id}).as_object().unwrap().clone())
+    rig.db.as_app().act("moments", "set_video", &rid(row), Map::new(), json!({"video":id}).as_object().unwrap().clone())
 }
 fn count(rig: &Rig, sql: &str) -> i64 { rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row(sql, [], |row| row.get(0))?)).unwrap() }
 fn accepted() -> Reply { Reply::data(json!({"setVideo":{"profile":{"id":"m1","text":"after","userId":null}}})) }
@@ -45,7 +45,7 @@ async fn blob_before_action() {
     let rig = rig();
     single_replies(&rig);
     let source = file(b"hello");
-    let id = rig.sync.upload_blob("video_intro", "CreateBlob", input(&source)).await.unwrap();
+    let id = crate::sync::rig::app(&rig.sync, rig.sync.upload_blob("video_intro", "CreateBlob", input(&source))).await.unwrap();
     assert!(!id.is_empty());
     rig.sync.wait_uploads().await;
     let snapshot = rig.sync.blob_snapshot(&id).unwrap();
@@ -68,17 +68,17 @@ async fn blob_action_ownership() {
         single_replies(&rig);
         if mode == "uploading" { rig.transport.respond_with(|request| (request.operation_name == "CreateBlob").then(|| super::upload_tests::blob().after(Duration::from_secs(1)))); }
         let source = file(b"hello");
-        let id = rig.sync.upload_blob("video_intro", "CreateBlob", input(&source)).await.unwrap();
+        let id = crate::sync::rig::app(&rig.sync, rig.sync.upload_blob("video_intro", "CreateBlob", input(&source))).await.unwrap();
         if mode != "uploading" { rig.sync.wait_uploads().await; }
         let owned = use_blob(&rig, &id, "m1").unwrap();
         assert!(use_blob(&rig, &id, "m2").is_err(), "{mode}: second pin must fail");
         if mode == "uploading" {
-            rig.sync.flush().await.unwrap();
+            crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
             assert_eq!(rig.transport.call_count("SetVideo"), 0);
         }
         rig.transport.enqueue("SetVideo", match mode { "refused" => Reply::graphql_messages(&["refused"]), "unknown" => Reply::fail(TransportError::Interrupted("lost response".into())), _ => accepted() });
         rig.sync.wait_uploads().await;
-        rig.sync.flush().await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
         let snapshot = rig.sync.blob_snapshot(&id).unwrap();
         match mode {
             "refused" => {
@@ -124,7 +124,7 @@ async fn blob_seven_days() {
             if !advanced.swap(true, Ordering::SeqCst) { clock.advance(Duration::from_secs(2 * 86400)); }
         });
         let source = file(b"hello");
-        let id = rig.sync.upload_blob("video_intro", "CreateBlob", input(&source)).await.unwrap();
+        let id = crate::sync::rig::app(&rig.sync, rig.sync.upload_blob("video_intro", "CreateBlob", input(&source))).await.unwrap();
         rig.sync.wait_uploads().await;
         let created = created_at.load(Ordering::SeqCst) as i64;
         assert!(created > 0);
@@ -145,7 +145,7 @@ async fn blob_seven_days() {
                 envelope.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: 0, state: Box::new(state) });
                 envelope.operation_transitions.push(crate::commit::OperationTransition::Fail { seq, status: crate::operation::OperationStatus::Failed, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "failed") });
             }
-            rig.db.land(envelope).unwrap();
+            rig.db.as_app().land(envelope).unwrap();
             let persisted_failure = rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT failed_at FROM blob_upload WHERE id = ?1", [&id], |row| row.get::<_, i64>(0))?)).unwrap();
             assert!(persisted_failure >= failed_at && persisted_failure <= crate::pacing::Clock::now(&rig.clock).as_millis() as i64);
             rig.clock.set(Duration::from_millis((persisted_failure + BLOB_LIFETIME_MS - 1000) as u64));
@@ -158,7 +158,7 @@ async fn blob_seven_days() {
         match trigger {
             "use" | "failed_use" => assert!(use_blob(&rig, &id, "m1").unwrap_err().to_string().contains("expired")),
             "online" => { rig.sync.set_online(false); rig.sync.set_online(true); rig.sync.wait_uploads().await; },
-            _ => { rig.sync.inner.upload_housekeeping().await.unwrap(); },
+            _ => { crate::sync::rig::app(&rig.sync, rig.sync.inner.upload_housekeeping()).await.unwrap(); },
         }
         assert_eq!(rig.sync.blob_snapshot(&id).unwrap().state, BlobState::Expired, "{trigger}");
         assert_eq!(count(&rig, "SELECT count(*) FROM file"), 0, "{trigger}");
@@ -177,7 +177,7 @@ async fn blob_restart() {
         let rig = setup(Db::open(&path, models(), None).unwrap(), small());
         multipart_replies(&rig);
         rig.transport.respond_with(|request| (request.operation_name == "CompleteMultipart").then(|| Reply::graphql_messages(&["refused complete"])));
-        id = rig.sync.upload_blob("video_intro", "CreateBlob", input(&source)).await.unwrap();
+        id = crate::sync::rig::app(&rig.sync, rig.sync.upload_blob("video_intro", "CreateBlob", input(&source))).await.unwrap();
         rig.sync.wait_uploads().await;
         let snapshot = rig.sync.blob_snapshot(&id).unwrap();
         assert_eq!(snapshot.state, BlobState::Failed);
@@ -191,7 +191,7 @@ async fn blob_restart() {
     assert_eq!(restored.id, id);
     assert_eq!(restored.upload.parts.len(), 3);
     assert_eq!(restored.upload.sent_bytes, 12);
-    rig.sync.retry_blob(&id).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.retry_blob(&id)).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.sync.wait_blob(&id).await.unwrap(), "sid");
     assert_eq!(rig.transport.call_count("InitMultipart"), 0);
@@ -220,7 +220,7 @@ async fn blob_idle_work() {
     let rig = Rig { db, sync, transport, clock: clock.clock.clone() };
     single_replies(&rig);
     let source = file(b"hello");
-    let id = rig.sync.upload_blob("video_intro", "CreateBlob", UploadFile::new(source.path().to_str().unwrap())).await.unwrap();
+    let id = crate::sync::rig::app(&rig.sync, rig.sync.upload_blob("video_intro", "CreateBlob", UploadFile::new(source.path().to_str().unwrap()))).await.unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.sync.blob_snapshot(&id).unwrap().state, BlobState::Uploaded);
     let before = (rig.transport.calls().len(), rig.transport.put_calls().len(), clock.sleeps.load(Ordering::SeqCst), clock.wakes.load(Ordering::SeqCst));

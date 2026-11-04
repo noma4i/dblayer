@@ -35,7 +35,7 @@ fn inv_observe_29_saturation_bounds_reads_until_the_owner_applies_the_results() 
     let cancelled = logs.pop().unwrap();
     drop(observers.pop());
     let issued = db.counters().observation_reads - before;
-    db.update("users", &rid("u1"), obj(json!({"name": "latest"}))).unwrap();
+    db.as_app().update("users", &rid("u1"), obj(json!({"name": "latest"}))).unwrap();
     drop(paused);
     db.await_revision(db.revision_seq().unwrap());
     assert!(issued <= 2, "ready results retain their read slots: {issued} reads before any result was applied");
@@ -52,7 +52,7 @@ fn inv_observe_29_repeated_window_growth_keeps_one_pending_read() {
     for index in 0..64 {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&format!("u{index:02}")), row: obj(json!({"id": format!("u{index:02}"), "name": "Ann"})) });
     }
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let (log, callback) = recorder();
     let query = Query::new("users").ordered(vec![crate::query::Order::new("id", crate::value::SortDirection::Asc)]);
@@ -152,7 +152,7 @@ fn inv_observe_23_a_panic_while_applying_one_group_fails_that_group_and_leaves_t
     for (model, row) in [("users", json!({"id": "u1", "name": "Ann"})), ("moments", json!({"id": "m1", "userId": "u1", "text": "one"}))] {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: rid(row["id"].as_str().unwrap()), row: obj(row) });
     }
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!((calls(&users), calls(&moments)), (vec![0], vec![0, 1]));
     assert_eq!(db.counters().owner_panics, 1);

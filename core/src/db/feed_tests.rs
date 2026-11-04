@@ -146,7 +146,7 @@ fn inv_observe_26_a_panic_while_applying_a_group_reaches_its_subscriber() {
 fn land_user(db: &crate::db::Db, id: &str, name: &str) {
     let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new("users"), id: rid(id), row: obj(json!({"id": id, "name": name})) });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
 }
 
 fn wait_until(mut done: impl FnMut() -> bool) {

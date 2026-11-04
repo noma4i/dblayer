@@ -65,9 +65,9 @@ async fn land_through(path: Path, node: &Value) -> Rig {
             rig.transport.await_consumed("MomentChanged").await;
         }
         Path::Response => {
-            rig.db.update("moments", &rid("m1"), params(json!({"mood": "calm"}))).unwrap();
+            rig.db.as_app().update("moments", &rid("m1"), params(json!({"mood": "calm"}))).unwrap();
             rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": node})));
-            rig.sync.flush().await.unwrap();
+            crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
         }
     }
     rig

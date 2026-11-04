@@ -117,7 +117,7 @@ async fn closing_the_database_ends_a_blob_status_stream_with_one_outcome() {
     database.set_online(false).unwrap();
     let mut file = tempfile::NamedTempFile::new().unwrap();
     file.write_all(b"blob").unwrap();
-    let id = database.sync.as_ref().unwrap().upload_blob("test", "CreateBlob", crate::upload::UploadFile::new(file.path().to_str().unwrap())).await.unwrap();
+    let id = { let sync = database.sync.as_ref().unwrap(); crate::sync::rig::app(sync, sync.upload_blob("test", "CreateBlob", crate::upload::UploadFile::new(file.path().to_str().unwrap()))).await.unwrap() };
     let rows = Arc::new(Rows::default());
     database.watch(StreamRequest::Blob { id }, rows.clone());
     yield_until("the first status arrived", || !rows.values().is_empty()).await;

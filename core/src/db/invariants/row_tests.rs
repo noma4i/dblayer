@@ -15,13 +15,13 @@ fn inv_row_04_every_write_is_visible_to_a_read_and_to_a_new_observer_as_soon_as_
         let seen = changes(&log).last().map(texts).unwrap_or_default();
         seen
     };
-    let created = db.create("moments", obj(json!({"userId": "u1", "text": "a"}))).unwrap();
+    let created = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "a"}))).unwrap();
     assert_eq!(db.find("moments", &created.id).unwrap().unwrap().text("text"), Some("a"));
     assert_eq!(observed(&db), vec!["a"]);
-    db.update("moments", &created.id, obj(json!({"text": "b"}))).unwrap();
+    db.as_app().update("moments", &created.id, obj(json!({"text": "b"}))).unwrap();
     assert_eq!(db.find("moments", &created.id).unwrap().unwrap().text("text"), Some("b"));
     assert_eq!(observed(&db), vec!["b"]);
-    db.destroy("moments", &created.id).unwrap();
+    db.as_app().destroy("moments", &created.id).unwrap();
     assert!(db.find("moments", &created.id).unwrap().is_none());
     assert!(observed(&db).is_empty());
 }
@@ -30,13 +30,13 @@ fn inv_row_04_every_write_is_visible_to_a_read_and_to_a_new_observer_as_soon_as_
 fn inv_row_10_an_unknown_model_field_or_value_type_fails_the_call_and_writes_nothing() {
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
-    assert!(matches!(db.create("ghosts", obj(json!({"text": "x"}))), Err(DbError::UnknownModel(_))));
-    assert!(matches!(db.create("moments", obj(json!({"userId": "u1", "text": "x", "nope": 1}))), Err(DbError::UnknownField { .. })));
-    let kept = db.create("moments", obj(json!({"userId": "u1", "text": "kept"}))).unwrap();
+    assert!(matches!(db.as_app().create("ghosts", obj(json!({"text": "x"}))), Err(DbError::UnknownModel(_))));
+    assert!(matches!(db.as_app().create("moments", obj(json!({"userId": "u1", "text": "x", "nope": 1}))), Err(DbError::UnknownField { .. })));
+    let kept = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "kept"}))).unwrap();
     let revision = db.revision_seq().unwrap();
-    assert!(matches!(db.update("moments", &kept.id, obj(json!({"nope": 1}))), Err(DbError::UnknownField { .. })));
+    assert!(matches!(db.as_app().update("moments", &kept.id, obj(json!({"nope": 1}))), Err(DbError::UnknownField { .. })));
     assert_eq!(db.revision_seq().unwrap(), revision);
-    assert!(db.create("moments", obj(json!({"userId": "u1", "text": 5}))).is_err());
+    assert!(db.as_app().create("moments", obj(json!({"userId": "u1", "text": 5}))).is_err());
     assert_eq!(db.count(&Query::new("moments")).unwrap(), 1);
     assert_eq!(db.outbox().unwrap().len(), 1);
 }

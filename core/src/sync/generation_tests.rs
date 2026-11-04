@@ -22,7 +22,7 @@ async fn nodes_answered_after(wipe: fn(&Rig)) {
     let rig = node_rig();
     rig.transport.enqueue("ChatsByIds", data(json!({"nodes": [{"id": "c1", "title": "a"}, {"id": "c2", "title": "b"}]})).after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
-    let task = tokio::spawn(async move { sync.nodes("chats", "batch", &["c1", "c2"]).await });
+    let task = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.nodes("chats", "batch", &["c1", "c2"])).await });
     rig.transport.await_calls("ChatsByIds", 1).await;
     wipe(&rig);
     let ended = task.await.unwrap();
@@ -67,7 +67,7 @@ async fn nodes_answer_in_the_same_generation_still_lands() {
     let rig = node_rig();
     rig.transport.enqueue("ChatsByIds", data(json!({"nodes": [{"id": "c1", "title": "a"}]})).after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
-    let task = tokio::spawn(async move { sync.nodes("chats", "batch", &["c1"]).await });
+    let task = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.nodes("chats", "batch", &["c1"])).await });
     let rows = task.await.unwrap().unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("a"));

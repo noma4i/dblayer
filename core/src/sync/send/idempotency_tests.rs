@@ -102,11 +102,11 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     let credentials = Arc::new(MemoryCredentials::default());
     let (id, key) = {
         let db = Db::open(&path, models(true), None).unwrap();
-        let row = db.create("moments", params(json!({"text": "hello"}))).unwrap();
+        let row = db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
         let key = db.outbox().unwrap()[0].operation.client_mutation_id.clone();
         let (sync, client) = encrypted(&db, exchange.clone(), credentials.clone());
         client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
-        sync.flush().await.unwrap();
+        crate::sync::rig::app(&sync, sync.flush()).await.unwrap();
         assert_eq!(db.outbox().unwrap()[0].operation.status, OperationStatus::DeliveryUnknown);
         (row.id.clone(), key)
     };
@@ -115,7 +115,7 @@ async fn idempotency_survives_reopen_and_reuses_the_successful_answer() {
     let (sync, client) = encrypted(&db, exchange.clone(), credentials);
     client.clear_credential_for_test().unwrap();
     client.mutate("/api/auth/social", json!({"provider": "test"})).await.unwrap();
-    sync.retry("moments", &id, None).await.unwrap();
+    crate::sync::rig::app(&sync, sync.retry("moments", &id, None)).await.unwrap();
     assert!(db.outbox().unwrap().is_empty());
     assert!(db.find("moments", &id).unwrap().is_none());
     assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_some());
@@ -138,9 +138,9 @@ async fn idempotency_selects_distinct_or_explicit_keys_only_for_supported_inputs
         let sync = connect(&db, server.clone());
         for text in ["one", "two"] {
             let args = explicit.map_or(json!({}), |key| json!({"clientMutationId": key}));
-            db.create_with("moments", params(json!({"text": text})), params(args)).unwrap();
+            db.as_app().create_with("moments", params(json!({"text": text})), params(args)).unwrap();
         }
-        sync.flush().await.unwrap();
+        crate::sync::rig::app(&sync, sync.flush()).await.unwrap();
         let server = server.lock().unwrap();
         let keys: Vec<_> = server.calls.iter().map(|call| call["input"]["clientMutationId"].clone()).collect();
         match (accepts, explicit) {
@@ -157,11 +157,11 @@ async fn idempotency_refusals_keep_the_row_and_manual_retry_keeps_the_key() {
         let db = Db::open_in_memory(models(true), None).unwrap();
         let server = Arc::new(Mutex::new(Server { refuse: Some(code), ..Server::default() }));
         let sync = connect(&db, server.clone());
-        let row = db.create("moments", params(json!({"text": "hello"}))).unwrap();
-        sync.flush().await.unwrap();
+        let row = db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
+        crate::sync::rig::app(&sync, sync.flush()).await.unwrap();
         assert_eq!(db.outbox().unwrap()[0].operation.status, OperationStatus::Failed);
         assert!(db.find("moments", &row.id).unwrap().is_some());
-        sync.retry_all().await.unwrap();
+        crate::sync::rig::app(&sync, sync.retry_all()).await.unwrap();
         assert!(db.outbox().unwrap().is_empty());
         let server = server.lock().unwrap();
         assert!(server.calls[0]["input"]["clientMutationId"].as_str().is_some());

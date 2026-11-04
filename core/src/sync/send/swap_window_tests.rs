@@ -16,7 +16,7 @@ fn ids(rows: &[crate::db::Row]) -> Ids {
 #[tokio::test(start_paused = true)]
 async fn readers_opened_between_the_commit_and_its_announcement_of_a_swap_never_see_an_empty_set() {
     let rig = rig();
-    let temp = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap().id.to_string();
+    let temp = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap().id.to_string();
     let query = Query::new("moments");
     rig.db.warm(&query).unwrap();
     let warm_seen: Arc<Mutex<Vec<Ids>>> = Arc::default();
@@ -35,7 +35,7 @@ async fn readers_opened_between_the_commit_and_its_announcement_of_a_swap_never_
         held.lock().unwrap().push(db.observe(probe_query.clone(), move |change| sink.lock().unwrap().push(ids(&change.rows))).unwrap());
     }));
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m77", "text": "hello", "userId": null}})));
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     let after = vec!["m77".to_string()];
     let before = vec![temp];

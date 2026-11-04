@@ -44,9 +44,9 @@ async fn a_narrower_response_keeps_the_fields_it_does_not_select_on_every_delive
             }
             _ => {
                 put(&rig, "moments", json!({"id": "m1", "text": "old", "userId": null, "likedByMe": true}));
-                rig.db.update("moments", &RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
+                rig.db.as_app().update("moments", &RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
                 rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "mood": "calm"}})));
-                rig.sync.flush().await.unwrap();
+                crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
                 vec![("text", json!("new")), ("likedByMe", json!(true))]
             }
         };

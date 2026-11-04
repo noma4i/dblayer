@@ -96,7 +96,7 @@ fn cannot_enter_cost(size: usize) -> usize {
         let row = obj(json!({"id": id_at(index).to_string(), "name": format!("n{index:06}")}));
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: id_at(index), row });
     }
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let (_log, callback) = recorder();
     let _observer = db.observe(Query::new("users").ordered(vec![Order::new("id", SortDirection::Asc)]), callback).unwrap();

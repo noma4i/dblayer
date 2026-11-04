@@ -90,9 +90,9 @@ fn inv_row_02_find_sees_a_row_changed_after_it_was_cached_by_a_landing_and_by_a_
     put(&db, "users", json!({"id": "u1", "name": "Anna"}));
     assert_eq!(db.find("users", &rid("u1")).unwrap().unwrap().text("name"), Some("Anna"));
     assert_eq!(db.counters().cache_evictions, 1);
-    let created = db.create("moments", obj(json!({"userId": "u1", "text": "a"}))).unwrap();
+    let created = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "a"}))).unwrap();
     db.find("moments", &created.id).unwrap();
-    db.update("moments", &created.id, obj(json!({"text": "b"}))).unwrap();
+    db.as_app().update("moments", &created.id, obj(json!({"text": "b"}))).unwrap();
     assert_eq!(db.find("moments", &created.id).unwrap().unwrap().text("text"), Some("b"));
 }
 
@@ -101,7 +101,7 @@ fn find_does_not_return_a_destroyed_row_from_the_cache() {
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     db.find("users", &rid("u1")).unwrap();
-    db.destroy("users", &rid("u1")).unwrap();
+    db.as_app().destroy("users", &rid("u1")).unwrap();
     assert!(db.find("users", &rid("u1")).unwrap().is_none());
 }
 

@@ -115,7 +115,7 @@ fn row_observers_and_scope_observers_hear_the_write() {
     let scope = ScopeRef::new(ModelKey::new("people"), ListKey::compose(&["people", "room", "1"]));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid("p1"), order_key: "a".into() });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let (row_log, row_callback) = recorder();
     let (scope_log, scope_callback) = recorder();
@@ -212,7 +212,7 @@ fn inv_ephemeral_06_destroying_a_row_removes_its_values() {
     typing(&db, true);
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("people"), id: rid("p1"), reason: DestroyReason::Server });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     put(&db, "people", json!({"id": "p1", "name": "Ann"}));
     assert_eq!(value_of(&db, "typing"), json!(false));
 }
@@ -305,7 +305,7 @@ fn a_write_of_equal_values_renews_a_memory_row_and_stays_silent_for_observers() 
     let writers: [Writer; 2] = [
         ("landed", |db| put(db, "presence", json!({"id": "r1", "room": "lobby"}))),
         ("local update", |db| {
-            db.update("presence", &rid("r1"), obj(json!({"room": "lobby"}))).unwrap();
+            db.as_app().update("presence", &rid("r1"), obj(json!({"room": "lobby"}))).unwrap();
         }),
     ];
     for (name, write) in writers {

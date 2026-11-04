@@ -246,8 +246,8 @@ async fn removal_closes_pending_writes(kind: &str) {
         rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
         put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
         put(&rig, "moments", json!({"id":"m1", "text":"before", "userId":"u1"}));
-        rig.db.update("moments", &crate::identity::RowId::new("m1").unwrap(), json!({"text":"pending"}).as_object().unwrap().clone()).unwrap();
-        rig.db.update("users", &crate::identity::RowId::new("u1").unwrap(), json!({"name":"pending"}).as_object().unwrap().clone()).unwrap();
+        rig.db.as_app().update("moments", &crate::identity::RowId::new("m1").unwrap(), json!({"text":"pending"}).as_object().unwrap().clone()).unwrap();
+        rig.db.as_app().update("users", &crate::identity::RowId::new("u1").unwrap(), json!({"name":"pending"}).as_object().unwrap().clone()).unwrap();
         assert_eq!(rig.db.outbox().unwrap().len(), 2);
         let log = Arc::new(Mutex::new(Vec::new()));
         let output = log.clone();
@@ -997,11 +997,11 @@ async fn an_event_that_waits_for_its_debounce_never_commits_in_the_epoch_a_sessi
     tokio::time::sleep(Duration::from_millis(100)).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
+    rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
-    assert_eq!(rig.transport.call_count("MomentChanged"), 1, "the connection stayed");
 }
 
 #[tokio::test(start_paused = true)]
@@ -1015,27 +1015,27 @@ async fn an_event_queued_before_a_session_start_never_commits_in_the_epoch_that_
     assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
+    rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
-    assert_eq!(rig.transport.call_count("MomentChanged"), 1, "the connection stayed");
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_late_callback_stamped_before_a_session_start_changes_nothing() {
+async fn a_delayed_callback_of_the_connection_a_session_start_replaced_changes_nothing() {
     let rig = rig_with_subscription();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.await_calls("MomentChanged", 1).await;
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
-    let old = life.epoch_now().value();
-    assert!(life.start_session(Some("another-account".into()), old));
-    rig.transport.emit_from_epoch("MomentChanged", Some(old), next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
-    rig.transport.emit_from_epoch("MomentChanged", None, next(json!({"id": "m3", "text": "of no epoch", "userId": null})));
+    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    rig.transport.await_calls("MomentChanged", 2).await;
+    rig.transport.emit_on("MomentChanged", 0, next(json!({"id": "m1", "text": "of the old connection", "userId": null})));
+    rig.transport.emit_on("MomentChanged", 1, next(json!({"id": "m2", "text": "of the new connection", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
     tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_eq!((text_of(&rig, "moments", "m1"), text_of(&rig, "moments", "m3")), (None, None));
+    assert_eq!((text_of(&rig, "moments", "m1"), text_of(&rig, "moments", "m2")), (None, Some("of the new connection".into())));
 }
 
 #[tokio::test(start_paused = true)]
@@ -1046,16 +1046,23 @@ async fn an_event_enqueued_right_after_a_session_start_is_applied() {
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
     assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m2"), Some("of the new epoch".into()));
-    assert_eq!(rig.transport.call_count("MomentChanged"), 1, "the connection stayed");
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Lost {
+    Nothing,
+    Queued,
+    Debounced,
 }
 
 #[tokio::test(start_paused = true)]
-async fn an_event_dropped_at_a_rebound_reloads_the_fresh_window_once_and_a_rebound_that_drops_nothing_reloads_nothing() {
-    for dropped in [true, false] {
+async fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_nothing_lost_reloads_nothing() {
+    for lost in [Lost::Nothing, Lost::Queued, Lost::Debounced] {
         let rig = rig_with_subscription();
         rig.transport.script_subscription("MomentChanged", vec![]);
         for name in ["before", "after"] {
@@ -1063,18 +1070,26 @@ async fn an_event_dropped_at_a_rebound_reloads_the_fresh_window_once_and_a_rebou
         }
         let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
         rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
-        let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
+        let spec = match lost {
+            Lost::Debounced => EventSpec::new("moment_changed").debounced(Duration::from_secs(60)).merged_by_row(),
+            _ => EventSpec::new("moment_changed"),
+        };
+        let _subscription = rig.sync.subscribe(SubscriptionDef::new(spec, "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
         rig.transport.await_calls("MomentChanged", 1).await;
         rig.transport.await_consumed("MomentChanged").await;
         assert_eq!(rig.transport.call_count("CurrentUser"), 1);
-        if dropped {
+        if !matches!(lost, Lost::Nothing) {
             rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
+        }
+        if matches!(lost, Lost::Debounced) {
+            rig.transport.await_consumed("MomentChanged").await;
         }
         let life = rig.db.shared.store.lifecycle.clone();
         assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
         tokio::time::sleep(Duration::from_secs(5)).await;
         let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
-        assert_eq!((rig.transport.call_count("CurrentUser"), user.text("name")), if dropped { (2, Some("after")) } else { (1, Some("before")) }, "dropped: {dropped}");
+        let expected = if matches!(lost, Lost::Nothing) { (1, Some("before")) } else { (2, Some("after")) };
+        assert_eq!((rig.transport.call_count("CurrentUser"), user.text("name")), expected, "lost: {lost:?}");
     }
 }
 

@@ -19,17 +19,17 @@ fn cancel_calls_on_cancel_once() {
 async fn dropping_subscription_cancels_and_closed_stream_ends() {
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();
-    let (sender, receiver) = subscription_channel(None);
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let mut subscription = ServerSubscription::new(
         receiver,
         ServerSubscriptionHandle::new(move || {
             seen.fetch_add(1, Ordering::SeqCst);
         }),
     );
-    assert!(sender.send(SubscriptionEvent::Ready));
+    sender.send(SubscriptionEvent::Ready).unwrap();
     drop(sender);
-    assert_eq!(within(subscription.next_event()).await, Some(SubscriptionEvent::Ready));
-    assert_eq!(within(subscription.next_event()).await, None);
+    assert_eq!(within(subscription.next()).await, Some(SubscriptionEvent::Ready));
+    assert_eq!(within(subscription.next()).await, None);
     drop(subscription);
     assert_eq!(count.load(Ordering::SeqCst), 1);
 }

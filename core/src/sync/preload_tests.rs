@@ -257,7 +257,7 @@ async fn preload_limited_source() {
     let scope = crate::commit::ScopeRef::new(crate::identity::ModelKey::new("vibes"), rig.db.spec("vibes").unwrap().selection_key("list", &Default::default()).unwrap());
     let request = crate::db::ReplaceRequest::new(scope, Coverage::Complete);
     let rows: Vec<_> = (0..10_000).map(|n| params(json!({"id": format!("v{n:05}")}))).collect();
-    rig.db.replace(&request, rows.clone()).unwrap();
+    rig.db.as_app().replace(&request, rows.clone()).unwrap();
     rig.transport.respond_with(|_| Some(feed_reply(&["m1"], false, "c1")));
     rig.sync.check_session();
     rig.sync.preload_settled().await;
@@ -267,7 +267,7 @@ async fn preload_limited_source() {
     assert_eq!(crate::identity::touches::member_reads() - read_before, 40, "only the bounded source prefix is read from SQLite");
     let selected = feed_vibes(&rig);
     assert_eq!(selected, (0..20).flat_map(|n| [format!("v{n:05}"), format!("v{n:05}")]).collect::<Vec<_>>(), "declaration order chooses the first 20 sources twice");
-    rig.db.replace(&request, rows.into_iter().skip(1).collect()).unwrap();
+    rig.db.as_app().replace(&request, rows.into_iter().skip(1).collect()).unwrap();
     rig.sync.inner.preload_on_source("vibes", "list");
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 42, "only the two incoming windows reach the transport");

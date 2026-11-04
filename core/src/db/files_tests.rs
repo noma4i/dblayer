@@ -37,7 +37,7 @@ fn seeded() -> Db {
 }
 
 fn attach(db: &Db, row: &str, field: &str, bytes: &[u8]) -> crate::files::FileDescriptor {
-    db.attach("moments", &rid(row), field, bytes, "a.png", "image/png").unwrap()
+    db.as_app().attach("moments", &rid(row), field, bytes, "a.png", "image/png").unwrap()
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn file_commits_announce_after_the_file_gate_is_released() {
         observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }));
     attach(&db, "m1", "media", SMALL);
-    db.detach("moments", &rid("m1"), "media").unwrap();
+    db.as_app().detach("moments", &rid("m1"), "media").unwrap();
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 
@@ -77,10 +77,10 @@ fn nothing_attached_reads_as_none() {
 #[test]
 fn attach_needs_an_existing_row_and_a_file_field() {
     let db = seeded();
-    assert!(matches!(db.attach("moments", &rid("m1"), "text", SMALL, "a", "b/c"), Err(DbError::NotFileField { .. })));
-    assert!(matches!(db.attach("moments", &rid("m1"), "ghost", SMALL, "a", "b/c"), Err(DbError::NotFileField { .. })));
-    assert!(matches!(db.attach("moments", &rid("nope"), "media", SMALL, "a", "b/c"), Err(DbError::NotFound { .. })));
-    assert!(matches!(db.attach("ghosts", &rid("m1"), "media", SMALL, "a", "b/c"), Err(DbError::UnknownModel(_))));
+    assert!(matches!(db.as_app().attach("moments", &rid("m1"), "text", SMALL, "a", "b/c"), Err(DbError::NotFileField { .. })));
+    assert!(matches!(db.as_app().attach("moments", &rid("m1"), "ghost", SMALL, "a", "b/c"), Err(DbError::NotFileField { .. })));
+    assert!(matches!(db.as_app().attach("moments", &rid("nope"), "media", SMALL, "a", "b/c"), Err(DbError::NotFound { .. })));
+    assert!(matches!(db.as_app().attach("ghosts", &rid("m1"), "media", SMALL, "a", "b/c"), Err(DbError::UnknownModel(_))));
     assert_eq!(count_files(&db), 0);
 }
 
@@ -114,7 +114,7 @@ fn small_file_url_is_created_on_demand_and_kept_until_detach() {
     assert_eq!(std::fs::read(&path).unwrap(), SMALL);
     assert!(path.ends_with("a.png"));
     assert_eq!(db.url("moments", &rid("m1"), "media").unwrap().unwrap(), path);
-    assert!(db.detach("moments", &rid("m1"), "media").unwrap());
+    assert!(db.as_app().detach("moments", &rid("m1"), "media").unwrap());
     assert!(!path.exists());
 }
 
@@ -125,7 +125,7 @@ fn inv_file_02_attaching_again_replaces_the_file_and_its_leftovers() {
     let first = attach(&db, "m1", "media", &large());
     let small = attach(&db, "m1", "media", SMALL);
     let cached = db.url("moments", &rid("m1"), "media").unwrap().unwrap();
-    let second = db.attach("moments", &rid("m1"), "media", &large(), "b.png", "image/png").unwrap();
+    let second = db.as_app().attach("moments", &rid("m1"), "media", &large(), "b.png", "image/png").unwrap();
     assert!(first.id != second.id && small.id != second.id);
     assert_eq!(count_files(&db), 1);
     assert_eq!(db.file("moments", &rid("m1"), "media").unwrap().unwrap().id, second.id);
@@ -150,13 +150,13 @@ fn detach_clears_the_description_the_bytes_and_the_directory_file() {
     let (_root, db) = on_disk();
     seed_tree(&db);
     attach(&db, "m1", "media", &large());
-    assert!(db.detach("moments", &rid("m1"), "media").unwrap());
+    assert!(db.as_app().detach("moments", &rid("m1"), "media").unwrap());
     assert_eq!(db.file("moments", &rid("m1"), "media").unwrap(), None);
     assert_eq!(db.read("moments", &rid("m1"), "media").unwrap(), None);
     assert_eq!(media(&db, "m1"), None);
     assert_eq!(count_files(&db), 0);
     assert!(db.shared.files.directory_entries().unwrap().is_empty());
-    assert!(!db.detach("moments", &rid("m1"), "media").unwrap());
+    assert!(!db.as_app().detach("moments", &rid("m1"), "media").unwrap());
 }
 
 #[test]
@@ -164,10 +164,10 @@ fn inv_file_06_destroying_a_row_hides_its_files_and_those_of_cascaded_children_b
     let (_root, db) = on_disk();
     seed_tree(&db);
     attach(&db, "m1", "media", &large());
-    db.attach("vibes", &rid("v1"), "media", &large(), "v.bin", "a/b").unwrap();
-    db.attach("vibes", &rid("v2"), "media", SMALL, "w.bin", "a/b").unwrap();
+    db.as_app().attach("vibes", &rid("v1"), "media", &large(), "v.bin", "a/b").unwrap();
+    db.as_app().attach("vibes", &rid("v2"), "media", SMALL, "w.bin", "a/b").unwrap();
     attach(&db, "m2", "media", &large());
-    db.destroy("moments", &rid("m1")).unwrap();
+    db.as_app().destroy("moments", &rid("m1")).unwrap();
     for (model, id) in [("moments", "m1"), ("vibes", "v1"), ("vibes", "v2")] {
         assert_eq!(db.read(model, &rid(id), "media").unwrap(), None);
     }
@@ -183,8 +183,8 @@ fn inv_file_01_failed_attach_leaves_neither_a_file_nor_a_description() {
     seed_tree(&db);
     let before = attach(&db, "m1", "media", &large());
     db.execute_for_test("CREATE TRIGGER refuse BEFORE INSERT ON file BEGIN SELECT RAISE(ABORT, 'refused'); END");
-    assert!(db.attach("moments", &rid("m1"), "media", &large(), "x", "y/z").is_err());
-    assert!(db.attach("moments", &rid("m1"), "cover", &large(), "x", "y/z").is_err());
+    assert!(db.as_app().attach("moments", &rid("m1"), "media", &large(), "x", "y/z").is_err());
+    assert!(db.as_app().attach("moments", &rid("m1"), "cover", &large(), "x", "y/z").is_err());
     assert_eq!(db.file("moments", &rid("m1"), "media").unwrap(), Some(before.clone()));
     assert_eq!(db.file("moments", &rid("m1"), "cover").unwrap(), None);
     assert_eq!(count_files(&db), 1);
@@ -206,12 +206,12 @@ fn attach_notifies_observers_of_the_row_and_refreshes_the_cache() {
 #[test]
 fn inv_file_04_temp_row_files_follow_the_row_to_its_real_id() {
     let db = booted();
-    let temp = db.create("moments", obj(json!({"text": "new"}))).unwrap();
-    let descriptor = db.attach("moments", &temp.id, "media", SMALL, "a", "b/c").unwrap();
+    let temp = db.as_app().create("moments", obj(json!({"text": "new"}))).unwrap();
+    let descriptor = db.as_app().attach("moments", &temp.id, "media", SMALL, "a", "b/c").unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: DestroyReason::Replaced { by: rid("m7") } });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new", "media": descriptor.to_value()})) });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     assert_eq!(db.read("moments", &rid("m7"), "media").unwrap(), Some(SMALL.to_vec()));
     assert_eq!(db.read("moments", &temp.id, "media").unwrap(), None);
     assert_eq!(db.maintain(&[]).unwrap().temp_rows_dropped, 0);
@@ -247,7 +247,7 @@ fn maintain_removes_files_of_vanished_rows_and_unreferenced_fields() {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: rid("m1"), reason: DestroyReason::Server });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m2"), row: obj(json!({"id": "m2", "userId": "u2", "text": "two", "media": null, "cover": kept.to_value()})) });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     assert_eq!(db.shared.files.directory_entries().unwrap().len(), 3);
     db.maintain(&[]).unwrap();
     assert_eq!(db.shared.files.directory_entries().unwrap(), vec![kept.id.clone()]);

@@ -10,7 +10,7 @@ fn row_in_state(state: &str) -> Db {
     if state == "synced" || state == "hidden" {
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     } else {
-        db.create("moments", obj(json!({"id": "m1", "userId": "u1", "text": "one"}))).unwrap();
+        db.as_app().create("moments", obj(json!({"id": "m1", "userId": "u1", "text": "one"}))).unwrap();
     }
     match state {
         "sending" => start(&db, only_seq(&db)),
@@ -21,7 +21,7 @@ fn row_in_state(state: &str) -> Db {
             fail(&db, seq, OperationStatus::DeliveryUnknown);
         }
         "hidden" => {
-            db.destroy("moments", &rid("m1")).unwrap();
+            db.as_app().destroy("moments", &rid("m1")).unwrap();
         }
         _ => {}
     }
@@ -33,7 +33,7 @@ fn inv_op_19_create_with_an_existing_id_is_an_error_and_writes_nothing() {
     for state in ["synced", "pending", "sending", "failed", "delivery_unknown", "hidden"] {
         let db = row_in_state(state);
         let before = snapshot(&db);
-        let outcome = db.create("moments", obj(json!({"id": "m1", "userId": "u1", "text": "other"})));
+        let outcome = db.as_app().create("moments", obj(json!({"id": "m1", "userId": "u1", "text": "other"})));
         assert!(matches!(outcome, Err(DbError::AlreadyExists { .. })), "state {state}: {outcome:?}");
         assert_eq!(snapshot(&db), before, "state {state}");
     }
@@ -44,7 +44,7 @@ fn inv_op_20_unsent_updates_of_one_record_stay_separate_operations_in_order() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     for text in ["a", "b", "c"] {
-        db.update("moments", &rid("m1"), obj(json!({"text": text}))).unwrap();
+        db.as_app().update("moments", &rid("m1"), obj(json!({"text": text}))).unwrap();
     }
     let outbox = db.outbox().unwrap();
     assert_eq!(outbox.len(), 3);

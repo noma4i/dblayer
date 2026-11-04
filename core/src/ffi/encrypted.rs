@@ -178,9 +178,10 @@ impl Database {
         let client = self.session()?.clone();
         let sync = self.sync.clone();
         let lease = self.streams.lease(crate::lifecycle::Origin::Explicit, "session resume").map_err(|_| DbError::Interrupted { detail: "the session ended or the database closed".into() })?;
+        let epoch = lease.epoch_value();
         cancellable(async move {
             let _lease = lease;
-            resume(client, sync).await
+            epoch.scope(resume(client, sync)).await
         }).await?
     }
 

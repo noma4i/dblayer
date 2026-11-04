@@ -6,7 +6,7 @@ use crate::value::ScalarKind;
 impl Database {
     fn create_unsent(&self, model: &str, values_json: &str) {
         let values = serde_json::from_str(values_json).unwrap();
-        self.db.create_in(None, model, values, Default::default()).unwrap();
+        self.db.as_app().create_in(None, model, values, Default::default()).unwrap();
     }
 }
 

@@ -120,7 +120,7 @@ impl World {
     }
 
     pub fn replace(&self, request: &crate::db::ReplaceRequest, rows: Vec<serde_json::Map<String, serde_json::Value>>) {
-        let outcome = self.rig.db.replace(request, rows);
+        let outcome = self.rig.db.as_app().replace(request, rows);
         if request.on_absent == crate::db::OnAbsent::Destroy {
             if let Ok(result) = &outcome {
                 for change in &result.rows {

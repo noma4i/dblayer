@@ -20,11 +20,11 @@ fn local_writes_plan_off_the_writer_on_a_disk_database() {
     let (db, _directory) = disk();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let before = plans(&db);
-    let row = db.create("moments", obj(json!({"userId": "u1", "text": "hi"}))).unwrap();
-    db.update("moments", &row.id, obj(json!({"text": "edited"}))).unwrap();
-    db.set_local("moments", &row.id, "pinned", json!("yes")).unwrap();
-    db.set_local("moments", &rid("absent"), "pinned", json!("early")).unwrap();
-    db.destroy("moments", &row.id).unwrap();
+    let row = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "hi"}))).unwrap();
+    db.as_app().update("moments", &row.id, obj(json!({"text": "edited"}))).unwrap();
+    db.as_app().set_local("moments", &row.id, "pinned", json!("yes")).unwrap();
+    db.as_app().set_local("moments", &rid("absent"), "pinned", json!("early")).unwrap();
+    db.as_app().destroy("moments", &row.id).unwrap();
     let after = plans(&db);
     assert_eq!((after.0 - before.0, after.1 - before.1), (5, 0), "five writes, each planned once and off the writer");
 }
@@ -36,7 +36,7 @@ fn a_commit_landing_before_a_local_create_is_written_replans_without_duplicating
     let rival = db.clone();
     *db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || put(&rival, "users", json!({"id": "u2", "name": "Bob"}))));
     let before = plans(&db);
-    let row = db.create("moments", obj(json!({"userId": "u1", "text": "hi"}))).unwrap();
+    let row = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "hi"}))).unwrap();
     let after = plans(&db);
     assert_eq!((after.0 - before.0, after.1 - before.1), (3, 0), "the rival commit and two plans of the create, none under the writer");
     assert_eq!(db.outbox().unwrap().len(), 1, "one queued operation");
@@ -49,7 +49,7 @@ fn a_local_value_for_a_missing_row_is_kept_pending_once_even_when_the_plan_runs_
     let (db, _directory) = disk();
     let rival = db.clone();
     *db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || put(&rival, "users", json!({"id": "u2", "name": "Bob"}))));
-    db.set_local("moments", &rid("m9"), "pinned", json!("early")).unwrap();
+    db.as_app().set_local("moments", &rid("m9"), "pinned", json!("early")).unwrap();
     put(&db, "moments", json!({"id": "m9", "userId": "u2", "text": "arrived"}));
     assert_eq!(db.find("moments", &rid("m9")).unwrap().unwrap().text("pinned"), Some("early"));
 }

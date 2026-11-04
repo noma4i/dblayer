@@ -26,7 +26,7 @@ fn inv_ephemeral_09_a_read_of_two_models_shows_one_snapshot() {
             let writer = writer.clone();
             let (done, finished) = std::sync::mpsc::channel();
             *slot.lock().unwrap() = Some(std::thread::spawn(move || {
-                writer.update("users", &rid("u1"), obj(json!({"name": "Bea"}))).unwrap();
+                writer.as_app().update("users", &rid("u1"), obj(json!({"name": "Bea"}))).unwrap();
                 let _ = done.send(());
             }));
             let _ = finished.recv_timeout(Duration::from_millis(300));

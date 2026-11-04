@@ -26,10 +26,10 @@ pub(in crate::sync) fn confirm_while_landing(sync: &Sync, targets: Vec<(String, 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_waiter_woken_by_the_commit_of_a_create_gets_the_real_id() {
     let rig = rig();
-    let temp = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap().id.clone();
+    let temp = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap().id.clone();
     let received = confirm_while_landing(&rig.sync, vec![("moments".into(), temp)]);
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m77", "text": "hello", "userId": null}})));
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     let confirmed = crate::test_wait::recv_within(&received);
     *locked(&rig.sync.inner.landed_probe) = None;
     assert_eq!(confirmed.into_iter().map(|result| result.unwrap().to_string()).collect::<Vec<_>>(), ["m77"]);
@@ -43,9 +43,9 @@ fn temp_create_reply(id: &str) -> Reply {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_late_wait_for_a_confirmed_create_ignores_the_refusal_of_another_operation_of_its_row() {
     let rig = rig();
-    let temp = rig.db.create("moments", params(json!({"id": "temp-late", "text": "hello"}))).unwrap().id.clone();
+    let temp = rig.db.as_app().create("moments", params(json!({"id": "temp-late", "text": "hello"}))).unwrap().id.clone();
     rig.transport.enqueue("CreateMoment", temp_create_reply("m78"));
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty(), "the create is still queued");
     let refusal = super::super::SendResult::Rejected(crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "late update refusal"));
     locked(&rig.sync.inner.outcomes).keep(9_999, "moments", "moments:update", vec![temp.clone()], &refusal);
@@ -63,10 +63,10 @@ async fn a_wait_for_a_create_never_takes_the_operation_of_another_model_with_the
     let mut moments = moments_spec();
     moments.actions.iter_mut().filter(|action| action.name != "destroy").for_each(|action| action.on_failure = crate::schema::OnFailure::Keep);
     let rig = rig_on(crate::db::Db::open_in_memory(vec![users_spec(), moments, vibes], None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig::default());
-    rig.db.create("moments", params(json!({"id": "temp-shared", "text": "a"}))).unwrap();
+    rig.db.as_app().create("moments", params(json!({"id": "temp-shared", "text": "a"}))).unwrap();
     rig.transport.enqueue("CreateMoment", Reply::graphql_error("not allowed", "BAD_USER_INPUT"));
-    rig.sync.flush().await.unwrap();
-    let temp = rig.db.create("vibes", params(json!({"id": "temp-shared", "kind": "b"}))).unwrap().id.clone();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    let temp = rig.db.as_app().create("vibes", params(json!({"id": "temp-shared", "kind": "b"}))).unwrap().id.clone();
     rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"id": "v1", "kind": "b"}})));
     let confirmed = crate::test_wait::within(rig.sync.confirmed("vibes", &temp)).await;
     assert_eq!(confirmed.unwrap().to_string(), "v1");
@@ -75,7 +75,7 @@ async fn a_wait_for_a_create_never_takes_the_operation_of_another_model_with_the
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_create_with_an_id_of_the_caller_is_confirmed_with_that_id() {
     let rig = rig();
-    let (row, operation) = rig.db.create_queued(None, "moments", params(json!({"id": "known-id", "text": "hello"})), params(json!({}))).unwrap();
+    let (row, operation) = rig.db.as_app().create_queued(None, "moments", params(json!({"id": "known-id", "text": "hello"})), params(json!({}))).unwrap();
     rig.transport.enqueue("CreateMoment", temp_create_reply("known-id"));
     let confirmed = crate::test_wait::within(rig.sync.confirmed_by("moments", &row.id, operation.unwrap())).await;
     assert_eq!(confirmed.unwrap().to_string(), "known-id");
@@ -87,7 +87,8 @@ async fn a_create_restored_after_open_is_waited_for_by_its_own_operation() {
     let path = root.path().join("restored.sqlite");
     let temp = {
         let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig::default());
-        rig.db.create("moments", params(json!({"text": "hello"}))).unwrap().id.clone()
+        let id = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap().id.clone();
+        id
     };
     let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), super::super::SyncConfig::default());
     let refusal = super::super::SendResult::Rejected(crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "update refusal"));

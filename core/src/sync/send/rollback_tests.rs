@@ -47,7 +47,7 @@ fn land_in_feed(rig: &Rig, id: &str) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(id), row: params(moment(id, "one")) });
     envelope.scope_ops.push(ScopeOp::Append { scope, row: rid(id), order_key: "a".into() });
-    rig.db.land(envelope).unwrap();
+    rig.db.as_app().land(envelope).unwrap();
 }
 
 fn feed_members(rig: &Rig) -> usize {
@@ -65,8 +65,8 @@ fn large() -> Vec<u8> {
 fn seed_with_files(rig: &Rig) {
     land_in_feed(rig, "m1");
     put(rig, "vibes", json!({"id": "v1", "momentId": "m1"}));
-    rig.db.attach("moments", &rid("m1"), "media", b"small", "a.bin", "a/b").unwrap();
-    rig.db.attach("vibes", &rid("v1"), "media", &large(), "v.bin", "a/b").unwrap();
+    rig.db.as_app().attach("moments", &rid("m1"), "media", b"small", "a.bin", "a/b").unwrap();
+    rig.db.as_app().attach("vibes", &rid("v1"), "media", &large(), "v.bin", "a/b").unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -74,8 +74,8 @@ async fn a_refused_destroy_brings_back_rows_files_and_list_membership() {
     let (_root, rig) = on_disk();
     seed_with_files(&rig);
     rig.transport.enqueue("DeleteMoment", Reply::graphql_error("denied", "FORBIDDEN"));
-    rig.db.destroy("moments", &rid("m1")).unwrap();
-    rig.sync.flush().await.unwrap();
+    rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert!(rig.db.find("vibes", &rid("v1")).unwrap().is_some());
     assert_eq!(rig.db.read("moments", &rid("m1"), "media").unwrap(), Some(b"small".to_vec()));
     assert_eq!(rig.db.read("vibes", &rid("v1"), "media").unwrap(), Some(large()));
@@ -87,8 +87,8 @@ async fn a_confirmed_destroy_removes_the_files_of_the_row_and_its_children() {
     let (_root, rig) = on_disk();
     seed_with_files(&rig);
     rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"id": "m1"}})));
-    rig.db.destroy("moments", &rid("m1")).unwrap();
-    rig.sync.flush().await.unwrap();
+    rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert_eq!(file_rows(&rig), 0);
     assert!(rig.db.shared.files.directory_entries().unwrap().is_empty());
 }
@@ -104,9 +104,9 @@ async fn a_confirmed_destroy_discards_held_files_off_the_async_executor() {
     let id = held_file_id(&rig, "v1");
     crate::files::watch_file_io(&id);
     rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"id": "m1"}})));
-    rig.db.destroy("moments", &rid("m1")).unwrap();
+    rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
     let executor = std::thread::current().id();
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     rig.sync.wait_uploads().await;
     let events = crate::files::take_file_io(&id);
     assert_eq!(events.iter().map(|(operation, _)| *operation).collect::<Vec<_>>(), ["discard"]);
@@ -123,7 +123,7 @@ async fn a_server_destroy_event_discards_held_files_off_the_async_executor() {
     seed_with_files(&rig);
     let id = held_file_id(&rig, "v1");
     crate::files::watch_file_io(&id);
-    rig.db.destroy("moments", &rid("m1")).unwrap();
+    rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
     let def = SubscriptionDef::new(EventSpec::new("moment_gone"), "MomentChanged", "moments", EventEffect::Destroy);
     let _subscription = rig.sync.subscribe(def).await.unwrap();
     let executor = std::thread::current().id();
@@ -155,9 +155,9 @@ fn replaced_parent(rig: &Rig) {
 async fn replacing_a_temp_parent_id_rewrites_child_rows_and_queued_child_inputs() {
     let rig = notes_rig();
     replaced_parent(&rig);
-    let parent = rig.db.create("moments", params(json!({"text": "parent"}))).unwrap();
-    let child = rig.db.create("notes", params(json!({"momentId": parent.id.as_str()}))).unwrap();
-    rig.sync.flush().await.unwrap();
+    let parent = rig.db.as_app().create("moments", params(json!({"text": "parent"}))).unwrap();
+    let child = rig.db.as_app().create("notes", params(json!({"momentId": parent.id.as_str()}))).unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert_eq!(rig.db.find("notes", &child.id).unwrap().unwrap().get("momentId"), Some(&json!("m1")));
     let queued = rig.db.outbox().unwrap();
     assert_eq!(queued.len(), 1);
@@ -168,10 +168,10 @@ async fn replacing_a_temp_parent_id_rewrites_child_rows_and_queued_child_inputs(
 async fn replacing_a_temp_parent_id_rewrites_the_rows_held_by_a_queued_destroy() {
     let rig = notes_rig();
     replaced_parent(&rig);
-    let parent = rig.db.create("moments", params(json!({"text": "parent"}))).unwrap();
-    let child = rig.db.create("notes", params(json!({"id": "n1", "momentId": parent.id.as_str()}))).unwrap();
-    rig.db.destroy("notes", &child.id).unwrap();
-    rig.sync.flush().await.unwrap();
+    let parent = rig.db.as_app().create("moments", params(json!({"text": "parent"}))).unwrap();
+    let child = rig.db.as_app().create("notes", params(json!({"id": "n1", "momentId": parent.id.as_str()}))).unwrap();
+    rig.db.as_app().destroy("notes", &child.id).unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     let held = rig.db.outbox().unwrap().into_iter().find(|entry| entry.operation.action_key == "notes:destroy").unwrap();
     assert!(held.rollback.unwrap().to_string().contains("\"momentId\":\"m1\""));
 }
@@ -203,12 +203,12 @@ async fn the_server_answer_moves_the_chat_pointer_from_the_temp_id_to_the_real_o
     let rig = rig_on(Db::open_in_memory(with_chat_pointer(), None).unwrap(), MockTransport::new(), SyncConfig::default());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("chats"), id: rid("c1"), row: params(json!({"id": "c1"})) });
-    rig.db.land(envelope).unwrap();
+    rig.db.as_app().land(envelope).unwrap();
     rig.sync.register(OperationDef::new("CreateMessage", "operation CreateMessage { x }", "createMessage"));
     rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": {"id": "m7", "chatId": "c1", "createdAt": "2026-01-02T00:00:00.000Z"}})));
-    let message = rig.db.create("messages", params(json!({"chatId": "c1", "createdAt": "2026-01-02T00:00:00.000Z"}))).unwrap();
+    let message = rig.db.as_app().create("messages", params(json!({"chatId": "c1", "createdAt": "2026-01-02T00:00:00.000Z"}))).unwrap();
     assert_eq!(rig.db.find("chats", &rid("c1")).unwrap().unwrap().text("lastMessageId"), Some(message.id.as_str()));
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert_eq!(rig.db.find("chats", &rid("c1")).unwrap().unwrap().text("lastMessageId"), Some("m7"));
 }
 
@@ -217,10 +217,10 @@ async fn the_confirmed_message_moves_the_chat_fields_to_the_server_values() {
     let rig = rig_on(Db::open_in_memory(with_chat_pointer(), None).unwrap(), MockTransport::new(), SyncConfig::default());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("chats"), id: rid("c1"), row: params(json!({"id": "c1"})) });
-    rig.db.land(envelope).unwrap();
+    rig.db.as_app().land(envelope).unwrap();
     rig.sync.register(OperationDef::new("CreateMessage", "operation CreateMessage { x }", "createMessage"));
     rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": {"id": "m7", "chatId": "c1", "createdAt": "2026-01-02T00:00:03.000Z"}})));
-    rig.db.create("messages", params(json!({"chatId": "c1", "createdAt": "2026-01-02T00:00:00.000Z"}))).unwrap();
-    rig.sync.flush().await.unwrap();
+    rig.db.as_app().create("messages", params(json!({"chatId": "c1", "createdAt": "2026-01-02T00:00:00.000Z"}))).unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert_eq!(rig.db.find("chats", &rid("c1")).unwrap().unwrap().text("lastMessageAt"), Some("2026-01-02T00:00:03.000Z"));
 }

@@ -60,7 +60,7 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
             }
             "nodes" => {
                 rig.transport.enqueue("Nodes", Reply::data(json!({"nodes": [value]})));
-                rig.sync.nodes("Message", "nodes", &["m1"]).await.unwrap();
+                crate::sync::rig::app(&rig.sync, rig.sync.nodes("Message", "nodes", &["m1"])).await.unwrap();
             }
             "event" => {
                 let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("changed"), "Changed", "Message", EventEffect::Upsert)).await.unwrap();
@@ -72,8 +72,8 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
                 let mut response = json!({"change": {"message": value}});
                 if entry == "lands" { response["change"]["id"] = json!("m2"); }
                 rig.transport.enqueue("Change", Reply::data(response));
-                rig.db.act("Message", "revise", &id, params(json!({})), params(json!({}))).unwrap();
-                rig.sync.flush().await.unwrap();
+                rig.db.as_app().act("Message", "revise", &id, params(json!({})), params(json!({}))).unwrap();
+                crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
             }
             "upload" => {
                 put(&rig, "Message", json!({"id": "m1", "reactions": []}));
@@ -81,7 +81,7 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
                 file.write_all(b"photo").unwrap();
                 rig.transport.enqueue("Blob", Reply::data(json!({"blob": {"url": "https://s3/x", "signedId": "s", "blobId": "b"}})));
                 rig.transport.enqueue("Photo", Reply::data(json!({"photo": {"message": value}})));
-                rig.sync.upload("Message", &id, "photo", UploadFile::new(file.path().to_str().unwrap())).await.unwrap();
+                crate::sync::rig::app(&rig.sync, rig.sync.upload("Message", &id, "photo", UploadFile::new(file.path().to_str().unwrap()))).await.unwrap();
                 rig.sync.wait_uploads().await;
             }
             _ => unreachable!(),
@@ -91,11 +91,11 @@ async fn server_entries_read_nested_paths_once_before_keyed_edits() {
             failures.push(format!("{entry}: server key {:?}", row.data["reactions"][0]["user.id"]));
         }
         let patch = params(json!({"reactions": {"$keyed": {"by": "userId", "element": {"userId": "u1", "body": "C"}}}}));
-        let edited = rig.db.act("Message", "edit", &id, patch, params(json!({}))).unwrap();
+        let edited = rig.db.as_app().act("Message", "edit", &id, patch, params(json!({}))).unwrap();
         if edited.row.data["reactions"] != json!([{"user.id": "u1", "body": "C"}]) {
             failures.push(format!("{entry}: keyed edit {:?}", edited.row.data["reactions"]));
         }
-        rig.db.update("Message", &id, params(json!({"text": "kept"}))).unwrap();
+        rig.db.as_app().update("Message", &id, params(json!({"text": "kept"}))).unwrap();
         assert_eq!(rig.db.find("Message", &id).unwrap().unwrap().data["reactions"], edited.row.data["reactions"], "{entry}");
         let cleared = normalize::normalize_nodes(&rig.db, "Message", &[params(json!({"id": "m1", "reactions": null}))]).unwrap();
         assert_eq!(cleared.roots[0].get("reactions"), Some(&serde_json::Value::Null), "{entry}: explicit null");

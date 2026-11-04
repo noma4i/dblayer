@@ -16,14 +16,14 @@ async fn reset_during_flush(rig: &Rig, models: &[&str]) {
         tokio::time::sleep(Duration::from_secs(1)).await;
         rig.db.reset(models).unwrap();
     };
-    let (flushed, ()) = tokio::join!(rig.sync.flush(), reset);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush()), reset);
     flushed.unwrap();
 }
 
 fn rig_with_pending_update() -> Rig {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
-    rig.db.update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     rig
 }
 
@@ -43,7 +43,7 @@ async fn inv_op_13_an_answer_a_refusal_or_a_network_failure_after_a_reset_leaves
             let started = rig.db.outbox().unwrap().iter().filter(|entry| entry.operation.transport_started).count();
             assert_eq!(started, 0, "{models:?} {answer:?}");
             rig.clock.advance(Duration::from_secs(3600));
-            rig.sync.flush().await.unwrap();
+            crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
             assert!(rig.db.outbox().unwrap().is_empty(), "{models:?} {answer:?}");
             let resurrected = models == ["moments"] && text_of(&rig, "moments", "m1").is_some();
             assert!(!resurrected, "{models:?} {answer:?}");
@@ -56,13 +56,13 @@ async fn inv_op_13_an_answer_a_refusal_or_a_network_failure_after_a_reset_leaves
 #[tokio::test(start_paused = true)]
 async fn a_create_answered_after_a_reset_of_another_model_leaves_no_temp_row_behind() {
     let rig = rig();
-    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    let local = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m77", "text": "hello", "userId": null}})).after(Duration::from_secs(5)));
     let reset = async {
         tokio::time::sleep(Duration::from_secs(1)).await;
         rig.db.reset(&["vibes"]).unwrap();
     };
-    let (flushed, ()) = tokio::join!(rig.sync.flush(), reset);
+    let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush()), reset);
     flushed.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(rig.db.find("moments", &local.id).unwrap(), None);

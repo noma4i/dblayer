@@ -43,9 +43,9 @@ fn landing_announces_after_releasing_the_latch() {
         }));
         let input = landing(&rig, 100, &["m1"]);
         if rows_only {
-            rig.sync.inner.land_rows("moments", &input.normalized, &input.attempt).unwrap();
+            rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land_rows("moments", &input.normalized, &input.attempt)).unwrap();
         } else {
-            rig.sync.inner.land(input).unwrap();
+            rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(input)).unwrap();
         }
         assert_eq!(*observed.lock().unwrap(), [true], "rows_only={rows_only}");
         *rig.db.shared.store.after_commit.lock().unwrap() = None;
@@ -75,10 +75,10 @@ fn concurrent_landings_announce_in_commit_order() {
         }
     }));
     let inner = rig.sync.inner.clone();
-    let first_task = std::thread::spawn(move || inner.land(first).unwrap());
+    let first_task = std::thread::spawn(move || inner.db.in_current_epoch(|_| inner.land(first)).unwrap());
     let first_revision = crate::test_wait::recv_within(&ready);
     let inner = rig.sync.inner.clone();
-    let second_task = std::thread::spawn(move || inner.land(second).unwrap());
+    let second_task = std::thread::spawn(move || inner.db.in_current_epoch(|_| inner.land(second)).unwrap());
     crate::test_wait::spin_until("the second landing committed", || rig.db.revision_seq().unwrap() > first_revision);
     let second_revision = rig.db.revision_seq().unwrap();
     release.send(()).unwrap();
@@ -91,8 +91,8 @@ fn concurrent_landings_announce_in_commit_order() {
 #[test]
 fn inv_merge_05_newer_attempt_wins_when_responses_arrive_out_of_order() {
     let rig = rig();
-    assert!(matches!(rig.sync.inner.land(landing(&rig, 200, &["m1"])).unwrap(), Landed::Applied { rows: 1, invalid: 0, .. }));
-    let late = rig.sync.inner.land(landing(&rig, 100, &["m1", "m2"])).unwrap();
+    assert!(matches!(rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(landing(&rig, 200, &["m1"]))).unwrap(), Landed::Applied { rows: 1, invalid: 0, .. }));
+    let late = rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(landing(&rig, 100, &["m1", "m2"]))).unwrap();
     assert_eq!(late, Landed::Discarded(DiscardReason::Superseded));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("issued 200".to_string()));
     assert_eq!(text_of(&rig, "moments", "m2"), None);
@@ -102,8 +102,8 @@ fn inv_merge_05_newer_attempt_wins_when_responses_arrive_out_of_order() {
 #[test]
 fn later_attempt_replaces_an_earlier_one() {
     let rig = rig();
-    rig.sync.inner.land(landing(&rig, 100, &["m1"])).unwrap();
-    assert!(matches!(rig.sync.inner.land(landing(&rig, 200, &["m1", "m2"])).unwrap(), Landed::Applied { rows: 2, invalid: 0, .. }));
+    rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(landing(&rig, 100, &["m1"]))).unwrap();
+    assert!(matches!(rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(landing(&rig, 200, &["m1", "m2"]))).unwrap(), Landed::Applied { rows: 2, invalid: 0, .. }));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("issued 200".to_string()));
 }
 
@@ -112,11 +112,11 @@ async fn inv_merge_03_a_response_read_before_the_server_got_the_edit_does_not_un
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let id = crate::identity::RowId::new("m1").unwrap();
-    rig.db.update("moments", &id, params(serde_json::json!({"text": "mine"}))).unwrap();
+    rig.db.as_app().update("moments", &id, params(serde_json::json!({"text": "mine"}))).unwrap();
     let stale = landing(&rig, 100, &["m1"]);
     rig.transport.enqueue("UpdateMoment", crate::transport::Reply::data(serde_json::json!({"updateMoment": {"id": "m1", "text": "mine", "userId": null}})));
-    rig.sync.flush().await.unwrap();
-    rig.sync.inner.land(stale).unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(stale)).unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("mine".to_string()));
 }
 
@@ -125,8 +125,8 @@ async fn inv_merge_03_a_response_does_not_undo_an_edit_that_is_still_unconfirmed
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
     let id = crate::identity::RowId::new("m1").unwrap();
-    rig.db.update("moments", &id, params(serde_json::json!({"text": "mine"}))).unwrap();
-    rig.sync.inner.land(landing(&rig, 100, &["m1"])).unwrap();
+    rig.db.as_app().update("moments", &id, params(serde_json::json!({"text": "mine"}))).unwrap();
+    rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(landing(&rig, 100, &["m1"]))).unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("mine".to_string()));
 }
 
@@ -139,7 +139,7 @@ async fn a_list_response_started_before_create_preserves_the_confirmed_member() 
         let scope = ScopeRef::new(ModelKey::new("moments"), crate::identity::ListKey::from_raw(key.trim_end_matches(":forward")));
         let mut old = moment("m1", "old").as_object().unwrap().clone();
         old.insert("userId".into(), serde_json::json!("u42"));
-        rig.db.replace(&crate::db::ReplaceRequest::new(scope.clone(), coverage), vec![old.clone()]).unwrap();
+        rig.db.as_app().replace(&crate::db::ReplaceRequest::new(scope.clone(), coverage), vec![old.clone()]).unwrap();
         let response = |issued| {
             let mut reply = landing(&rig, issued, &[]);
             reply.scope = scope.clone();
@@ -150,13 +150,13 @@ async fn a_list_response_started_before_create_preserves_the_confirmed_member() 
             reply
         };
         let stale = response(100);
-        rig.db.create("moments", params(serde_json::json!({"text": "mine", "userId": "u42"}))).unwrap();
+        rig.db.as_app().create("moments", params(serde_json::json!({"text": "mine", "userId": "u42"}))).unwrap();
         rig.transport.enqueue("CreateMoment", crate::transport::Reply::data(serde_json::json!({"createMoment": {"id": "m2", "text": "mine", "userId": "u42"}})));
-        rig.sync.flush().await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
         assert_eq!(member_ids(&rig, "moments", "by_user", &query_params), ["m2", "m1"]);
-        rig.sync.inner.land(stale).unwrap();
+        rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(stale)).unwrap();
         assert_eq!(member_ids(&rig, "moments", "by_user", &query_params), ["m2", "m1"], "{coverage:?}");
-        rig.sync.inner.land(response(200)).unwrap();
+        rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(response(200))).unwrap();
         assert_eq!(member_ids(&rig, "moments", "by_user", &query_params), ["m1"], "{coverage:?}");
     }
 }
@@ -165,11 +165,11 @@ async fn a_list_response_started_before_create_preserves_the_confirmed_member() 
 async fn inv_fresh_11_a_response_read_before_the_server_got_the_destroy_does_not_bring_the_row_back() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
-    rig.db.destroy("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap();
+    rig.db.as_app().destroy("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap();
     let stale = landing(&rig, 100, &["m1"]);
     rig.transport.enqueue("DeleteMoment", crate::transport::Reply::data(serde_json::json!({"deleteMoment": {"id": "m1"}})));
-    rig.sync.flush().await.unwrap();
-    rig.sync.inner.land(stale).unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(stale)).unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), None);
 }
 
@@ -177,7 +177,7 @@ async fn inv_fresh_11_a_response_read_before_the_server_got_the_destroy_does_not
 fn inv_merge_09_a_failing_window_write_leaves_no_landed_rows() {
     let rig = rig();
     rig.db.execute_for_test("CREATE TRIGGER refuse BEFORE INSERT ON query_window BEGIN SELECT RAISE(ABORT, 'refused'); END");
-    assert!(rig.sync.inner.land(landing(&rig, 100, &["m1"])).is_err());
+    assert!(rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(landing(&rig, 100, &["m1"]))).is_err());
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     assert!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()).is_empty());
 }
@@ -187,7 +187,7 @@ fn inv_merge_05_a_row_created_by_another_landing_after_the_fetch_began_still_joi
     let rig = rig();
     let listing = landing(&rig, 100, &["m1"]);
     put(&rig, "moments", moment("m1", "from another landing"));
-    assert!(matches!(rig.sync.inner.land(listing).unwrap(), Landed::Applied { rows: 1, invalid: 0, .. }));
+    assert!(matches!(rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(listing)).unwrap(), Landed::Applied { rows: 1, invalid: 0, .. }));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("from another landing".to_string()));
     assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()), ["m1"]);
 }
@@ -198,14 +198,14 @@ fn next_page_cost(size: usize) -> usize {
     let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
     let mut first = landing(&rig, 100, &ids);
     first.page_info = Some(crate::store::PageInfo { has_next_page: true, end_cursor: Some("c1".to_string()), total: None });
-    rig.sync.inner.land(first).unwrap();
+    rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(first)).unwrap();
     let mut next = landing(&rig, 200, &["next1", "next2"]);
     next.is_first_page = false;
     next.plans_as_first = false;
     next.coverage = crate::schema::Coverage::Page;
     next.requested_cursor = Some("c1".to_string());
     let before = crate::identity::touches::member_reads();
-    assert!(matches!(rig.sync.inner.land(next).unwrap(), Landed::Applied { rows: 2, invalid: 0, .. }));
+    assert!(matches!(rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.land(next)).unwrap(), Landed::Applied { rows: 2, invalid: 0, .. }));
     let cost = crate::identity::touches::member_reads() - before;
     assert_eq!(member_ids(&rig, "moments", "feed", &serde_json::Map::new()).len(), size + 2);
     cost

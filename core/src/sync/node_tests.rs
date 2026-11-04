@@ -178,7 +178,7 @@ async fn an_answer_without_a_matching_entity_is_none_and_writes_nothing() {
 async fn nodes_reads_many_in_one_request_keeps_order_and_skips_missing() {
     let rig = node_rig();
     rig.transport.enqueue("ChatsByIds", data(json!({"nodes": [{"id": "c2", "title": "b"}, null, {}, {"id": "c1", "title": "a"}]})));
-    let rows = rig.sync.nodes("chats", "batch", &["c2", "x", "y", "c1"]).await.unwrap();
+    let rows = crate::sync::rig::app(&rig.sync, rig.sync.nodes("chats", "batch", &["c2", "x", "y", "c1"])).await.unwrap();
     assert_eq!(rows.iter().map(|row| row.text("title").unwrap()).collect::<Vec<_>>(), ["b", "a"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"ids": ["c2", "x", "y", "c1"]}));
     assert_eq!(rig.transport.call_count("ChatsByIds"), 1);
@@ -191,7 +191,7 @@ async fn nodes_accepts_duplicate_ids_and_keeps_response_order() {
         {"id": "c2", "title": "old", "shareUrl": "kept"}, null,
         {"id": "c1", "title": "middle"}, {"id": "c2", "title": "last"}
     ]})));
-    let rows = rig.sync.nodes("chats", "batch", &["c2", "missing", "c1", "c2"]).await.unwrap();
+    let rows = crate::sync::rig::app(&rig.sync, rig.sync.nodes("chats", "batch", &["c2", "missing", "c1", "c2"])).await.unwrap();
     assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["c2", "c1", "c2"]);
     assert_eq!(rows.iter().map(|row| row.text("title")).collect::<Vec<_>>(), [Some("last"), Some("middle"), Some("last")]);
     assert_eq!(stored(&rig, "chats", "c2").unwrap().text("shareUrl"), Some("kept"));

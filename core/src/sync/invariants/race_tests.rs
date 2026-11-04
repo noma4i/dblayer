@@ -11,17 +11,17 @@ use super::spec_fixtures::mentions;
 async fn inv_id_05_inv_op_18_an_update_queued_while_the_create_is_confirmed_follows_the_real_id_or_fails() {
     for schedule in ["before the flush", "while the create is in flight", "after the confirmation"] {
         let rig = rig();
-        let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+        let local = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
         let temp = local.id.to_string();
         let edit = {
             let (db, id) = (rig.db.clone(), local.id.clone());
-            move || db.update("moments", &id, params(json!({"text": "edited"}))).is_ok()
+            move || db.as_app().update("moments", &id, params(json!({"text": "edited"}))).is_ok()
         };
         rig.transport.enqueue("CreateMoment", created("m77", "hello"));
         let queued = match schedule {
             "before the flush" => {
                 let queued = edit();
-                rig.sync.flush().await.unwrap();
+                crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
                 queued
             }
             "while the create is in flight" => {
@@ -33,11 +33,11 @@ async fn inv_id_05_inv_op_18_an_update_queued_while_the_create_is_confirmed_foll
                     }
                     None
                 });
-                rig.sync.flush().await.unwrap();
+                crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
                 queued.load(Ordering::SeqCst)
             }
             _ => {
-                rig.sync.flush().await.unwrap();
+                crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
                 edit()
             }
         };

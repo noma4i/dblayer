@@ -16,14 +16,22 @@ impl Epoch {
     pub(crate) fn life(&self) -> &Arc<Lifecycle> { &self.life }
 
     pub(crate) fn pinned<R>(&self, write: impl FnOnce() -> R) -> R {
+        let before = self.enter();
+        let result = write();
+        self.leave(before);
+        result
+    }
+
+    pub(crate) fn enter(&self) -> Option<Epoch> {
         #[cfg(test)]
         self.life.pinned_writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let before = PINNED.replace(Some(self.clone()));
-        let result = write();
+        PINNED.replace(Some(self.clone()))
+    }
+
+    pub(crate) fn leave(&self, before: Option<Epoch>) {
         PINNED.set(before);
         #[cfg(test)]
         self.life.pinned_writes.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-        result
     }
 
     pub(crate) fn scope<F: std::future::Future>(&self, work: F) -> impl std::future::Future<Output = F::Output> { ORIGIN.scope(self.clone(), work) }

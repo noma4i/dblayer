@@ -73,9 +73,9 @@ async fn node(rig: &Rig, chat: Value) {
 }
 
 async fn mutation(rig: &Rig, chat: Value) {
-    rig.db.act("chats", "update", &RowId::new("c1").unwrap(), params(json!({})), params(json!({}))).unwrap();
+    rig.db.as_app().act("chats", "update", &RowId::new("c1").unwrap(), params(json!({})), params(json!({}))).unwrap();
     answer(rig, "UpdateChat", json!({"updateChat": chat}));
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
 }
 
 async fn event(rig: &Rig, chat: Value) {

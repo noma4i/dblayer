@@ -26,7 +26,7 @@ fn a_waiting_call_claims_its_operation_before_the_sender_can_see_it() {
     put(&client, "moments", moment("m1", "t"));
     let queue = client.sync.inner.operation_queue().unwrap().clone();
     let mut announced_at_claim = None;
-    let (acted, wish) = client.db.act_claiming("moments", "star", &RowId::new("m1").unwrap(), params(serde_json::json!({})), params(serde_json::json!({})), |operation| {
+    let (acted, wish) = client.db.as_app().act_claiming("moments", "star", &RowId::new("m1").unwrap(), params(serde_json::json!({})), params(serde_json::json!({})), |operation| {
         announced_at_claim = Some(locked(&queue).entries.contains_key(&operation));
         client.sync.expect_answer(operation)
     }).unwrap();

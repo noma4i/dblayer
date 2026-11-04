@@ -121,7 +121,7 @@ pub fn put(db: &Db, model: &str, value: Value) {
     let id = rid(row["id"].as_str().unwrap());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
 }
 

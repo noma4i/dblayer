@@ -67,7 +67,7 @@ fn rig(spec: ModelSpec) -> (Db, Sync, Arc<MockTransport>) {
 fn save(db: &Db, values: Value) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("Record"), id: rid(values["id"].as_str().unwrap()), row: fields(values) });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -85,7 +85,7 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
         let db = Db::open_in_memory(vec![model, ModelSpec::new("Folder", vec![FieldSpec::scalar("id", ScalarKind::Id)])], None).unwrap();
         let transport = Arc::new(MockTransport::new());
         let sync = Sync::new(db.clone(), transport.clone(), Arc::new(ManualClock::new(Duration::ZERO)), SyncConfig::default());
-        let id = db.create("Record", fields(json!({"body":"pending"}))).unwrap().id.clone();
+        let id = db.as_app().create("Record", fields(json!({"body":"pending"}))).unwrap().id.clone();
         let operation = OperationDef::new("UpdateRecord", "mutation Probe { id }", "updateRecord.record");
         for attempt in 1..=attempts {
             let delay = if attempt == attempts { Duration::from_secs(5) } else { Duration::ZERO };
@@ -102,7 +102,7 @@ async fn stale_generation_preserves_the_undelivered_attempt_budget() {
                     assert_eq!(db.outbox().unwrap().len(), 1, "operation survives unrelated reset");
                 }
             };
-            let (result, ()) = tokio::join!(sync.inner.send_owned(&sending, &operation, None, false), reset);
+            let (result, ()) = tokio::join!(crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &operation, None, false)), reset);
             result.unwrap();
         }
         let mut entries = db.outbox().unwrap();
@@ -135,7 +135,7 @@ fn batch(db: &Db, count: usize) -> Vec<RowId> {
         values: fields(json!({"clientKey":format!("key-{position}"),"position":position,"size":count})),
         path: "/missing/probe.bin".into(), name: None, mime: None, variables: Map::new(),
     }).collect();
-    db.create_upload_batch(db.generation(), "Record", items, UploadBatchInput { operation: "create_files".into(), variables: Map::new() }, &UploadOperations::empty().create_blob("CreateBlob")).unwrap()
+    db.as_app().create_upload_batch(db.generation(), "Record", items, UploadBatchInput { operation: "create_files".into(), variables: Map::new() }, &UploadOperations::empty().create_blob("CreateBlob")).unwrap()
 }
 
 #[test]
@@ -184,17 +184,17 @@ async fn network_writes_preserve_pending_fields() {
         save(&db, json!({"id":"r1","body":"before"}));
         let closing = match source {
             "response" => {
-                db.update("Record", &rid("r1"), fields(json!({"size":0}))).unwrap();
+                db.as_app().update("Record", &rid("r1"), fields(json!({"size":0}))).unwrap();
                 Some(db.outbox().unwrap().remove(0))
             }
             "lands" => {
                 save(&db, json!({"id":"r0","body":"before"}));
-                db.update("Record", &rid("r0"), fields(json!({"body":"pending"}))).unwrap();
+                db.as_app().update("Record", &rid("r0"), fields(json!({"body":"pending"}))).unwrap();
                 Some(db.outbox().unwrap().remove(0))
             }
             _ => None,
         };
-        db.update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
+        db.as_app().update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
         match source {
             "event" | "event-related" => {
                 let _subscription = sync.subscribe(SubscriptionDef::new(EventSpec::new("changed"), "Changed", "Record", EventEffect::Upsert)).await.unwrap();
@@ -215,13 +215,13 @@ async fn network_writes_preserve_pending_fields() {
                 let node = json!({"id":"r1","body":"server","size":7});
                 let payload = if source == "response" { json!({"updateRecord":{"record":node}}) } else { json!({"updateRecord":{"record":{"id":"r0","body":"confirmed"},"related":node}}) };
                 transport.enqueue("UpdateRecord", Reply::data(payload));
-                sync.inner.send_owned(&sending, &OperationDef::new("UpdateRecord", "mutation UpdateRecord { updateRecord { record { id } } }", "updateRecord.record"), None, true).await.unwrap();
+                crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("UpdateRecord", "mutation UpdateRecord { updateRecord { record { id } } }", "updateRecord.record"), None, true)).await.unwrap();
             }
             _ => unreachable!(),
         }
         let row = db.shared.store.point("Record", "r1").unwrap().unwrap();
         let seq = db.outbox().unwrap()[0].operation.id.0;
-        db.roll_back(seq).unwrap();
+        db.as_app().roll_back(seq).unwrap();
         let restored = db.shared.store.point("Record", "r1").unwrap().unwrap();
         if row["body"] != "pending" || row["size"] != 7 || restored["body"] != "before" {
             failures.push(format!("{source}: row={row:?}, restored={restored:?}"));
@@ -269,10 +269,10 @@ async fn lands_accepts_lists() {
         load_empty(&sync, &transport).await;
         save(&db, json!({"id":"r1","body":"before"}));
         save(&db, json!({"id":"r2","body":"known"}));
-        db.update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
+        db.as_app().update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
         let related = json!([{"id":"r2","body":"landed"},{"id":"r3","body":"landed"}]);
         transport.enqueue("UpdateRecord", Reply::data(json!({"updateRecord":{"record":{"id":"r1","body":"confirmed"},"related":related}})));
-        sync.flush().await.unwrap();
+        crate::sync::rig::app(&sync, sync.flush()).await.unwrap();
         assert_eq!(members(&db), ["r2", "r3"]);
         assert_eq!(db.shared.store.point("Record", "r2").unwrap().unwrap()["body"], "landed");
 }
@@ -289,12 +289,12 @@ async fn removing_upload_item_rewrites_mapped_values() {
         state.signed_id = Some(format!("signed-{position}"));
         transferred.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: position, state: Box::new(state) });
     }
-    db.land(transferred).unwrap();
-    db.remove_upload_item("Record", &ids[1], seq, true).unwrap();
+    db.as_app().land(transferred).unwrap();
+    db.as_app().remove_upload_item("Record", &ids[1], seq, true).unwrap();
     let entry = db.outbox().unwrap().remove(0);
     let sending = super::send::Sending { entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
     transport.enqueue("CreateRecords", Reply::data(json!({"records":[{"id":"r0","clientKey":"key-0"},{"id":"r2","clientKey":"key-2"}]})));
-    sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true).await.unwrap();
+    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true)).await.unwrap();
     let call = transport.calls().into_iter().find(|call| call.operation_name == "CreateRecords").unwrap();
     assert_eq!(call.variables["items"][0]["position"], 0);
     assert_eq!(call.variables["items"][1]["position"], 1);
@@ -314,12 +314,12 @@ async fn waiters_woken_by_the_commit_of_a_batch_get_the_real_ids() {
         state.signed_id = Some(format!("signed-{position}"));
         transferred.operation_transitions.push(crate::commit::OperationTransition::Progress { seq, item_position: position, state: Box::new(state) });
     }
-    db.land(transferred).unwrap();
+    db.as_app().land(transferred).unwrap();
     let entry = db.outbox().unwrap().remove(0);
     let sending = super::send::Sending { entry: &entry, model: "Record".into(), action: "create_files".into(), generation: db.generation(), base_revision: db.revision_seq().unwrap(), checked: None };
     let received = super::send::confirmed_tests::confirm_while_landing(&sync, ids.iter().map(|id| ("Record".to_string(), id.clone())).collect());
     transport.enqueue("CreateRecords", Reply::data(json!({"records":[{"id":"r0","clientKey":"key-0"},{"id":"r1","clientKey":"key-1"},{"id":"r2","clientKey":"key-2"}]})));
-    sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true).await.unwrap();
+    crate::sync::rig::app(&sync, sync.inner.send_owned(&sending, &OperationDef::new("CreateRecords", "mutation CreateRecords { records { id } }", "records"), None, true)).await.unwrap();
     let confirmed = crate::test_wait::recv_within(&received);
     *super::locked(&sync.inner.landed_probe) = None;
     assert_eq!(confirmed.into_iter().map(|result| result.unwrap().to_string()).collect::<Vec<_>>(), ["r0", "r1", "r2"]);
@@ -327,7 +327,7 @@ async fn waiters_woken_by_the_commit_of_a_batch_get_the_real_ids() {
 
 #[test]
 fn removing_upload_item_erases_children() {
-        let (db, _, _) = rig(spec());
+        let (db, _sync, _transport) = rig(spec());
         let ids = batch(&db, 3);
         let seq = db.outbox().unwrap()[0].operation.id.0;
         db.shared.read(&[], |reader| {
@@ -337,7 +337,7 @@ fn removing_upload_item_erases_children() {
             }
             Ok(())
         }).unwrap();
-        db.remove_upload_item("Record", &ids[1], seq, true).unwrap();
+        db.as_app().remove_upload_item("Record", &ids[1], seq, true).unwrap();
         db.shared.read(&[], |reader| {
                 for table in ["op_item_header", "op_item_retry"] {
                     let count: i64 = reader.connection().query_row(&format!("SELECT COUNT(*) FROM {table} WHERE seq = ?1 AND position = 1"), [seq], |row| row.get(0))?;
@@ -379,13 +379,13 @@ fn landing_delete_follows_parent_once() {
     let db = Db::open_in_memory(vec![parent, child], None).unwrap();
     let mut seed = CommitEnvelope::new(WriteOrigin::Snapshot, db.generation());
     seed.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("Folder"), id: rid("f1"), row: fields(json!({"id":"f1","lastId":null,"lastAt":null})) });
-    db.land(seed).unwrap();
+    db.as_app().land(seed).unwrap();
     save(&db, json!({"id":"r1","folderId":"f1","createdAt":"2026-01-01T00:00:00Z"}));
     CHILD_READS.with(|reads| reads.set(0));
     db.shared.store.lock().connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(count_queue_reads));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("Record"), id: rid("r1"), reason: crate::commit::DestroyReason::Server });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.shared.store.lock().connection.trace_v2(TraceEventCodes::empty(), None);
     assert_eq!(CHILD_READS.with(|reads| reads.get()), 1);
     assert!(db.shared.store.point("Folder", "f1").unwrap().unwrap().get("lastId").is_none_or(Value::is_null));
@@ -394,9 +394,9 @@ fn landing_delete_follows_parent_once() {
 #[test]
 fn related_admission_reads_pending_ownership_once() {
     use rusqlite::trace::TraceEventCodes;
-    let (db, _, _) = rig(spec());
+    let (db, _sync, _transport) = rig(spec());
     save(&db, json!({"id":"r1","body":"before"}));
-    db.update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
+    db.as_app().update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
     QUEUE_READS.with(|reads| reads.set(0));
     db.shared.store.lock().connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(count_queue_reads));
     db.shared.read(&[], |reader| {
@@ -424,16 +424,16 @@ fn inv_identity_03_correlation_replaces_the_same_temp_id_in_each_model() {
     });
     let db = Db::open_in_memory(specs.to_vec(), None).unwrap();
     for name in ["First", "Second"] {
-        db.create(name, fields(json!({"id": "temp-shared", "body": "match"}))).unwrap();
+        db.as_app().create(name, fields(json!({"id": "temp-shared", "body": "match"}))).unwrap();
     }
     let mut started = CommitEnvelope::new(WriteOrigin::Response, db.generation());
     started.operation_transitions = db.outbox().unwrap().iter().map(|entry| crate::commit::OperationTransition::Start { seq: entry.operation.id.0 }).collect();
-    db.land(started).unwrap();
+    db.as_app().land(started).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     for name in ["First", "Second"] {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(name), id: rid("server"), row: fields(json!({"id": "server", "body": "match"})) });
     }
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     for name in ["First", "Second"] {
         assert!(db.find(name, &rid("temp-shared")).unwrap().is_none(), "{name} keeps its temp row");
         assert_eq!(db.find(name, &rid("server")).unwrap().unwrap().text("body"), Some("match"));
@@ -451,11 +451,11 @@ fn correlation_reads_candidates_once_for_all_incoming_rows() {
     create.has_temp_row_retention = true;
     create.correlate = vec!["body".into()];
     model.actions.push(create);
-    let (db, _, _) = rig(model);
-    for i in 0..4 { db.create("Record", fields(json!({"body":format!("local-{i}")}))).unwrap(); }
+    let (db, _sync, _transport) = rig(model);
+    for i in 0..4 { db.as_app().create("Record", fields(json!({"body":format!("local-{i}")}))).unwrap(); }
     let mut started = CommitEnvelope::new(WriteOrigin::Response, db.generation());
     started.operation_transitions = db.outbox().unwrap().iter().map(|entry| crate::commit::OperationTransition::Start { seq: entry.operation.id.0 }).collect();
-    db.land(started).unwrap();
+    db.as_app().land(started).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     for i in 0..4 {
         let prefix = if matching { "local" } else { "remote" };
@@ -464,7 +464,7 @@ fn correlation_reads_candidates_once_for_all_incoming_rows() {
     CHILD_READS.with(|reads| reads.set(0));
     FULL_QUEUE_READS.with(|reads| reads.set(0));
     db.shared.store.lock().connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(count_queue_reads));
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.shared.store.lock().connection.trace_v2(TraceEventCodes::empty(), None);
     if !matching { assert!(CHILD_READS.with(|reads| reads.get()) <= 9, "row reads={}", CHILD_READS.with(|reads| reads.get())); }
     assert_eq!(FULL_QUEUE_READS.with(|reads| reads.get()), usize::from(matching), "matching={matching}");
@@ -478,16 +478,16 @@ fn committing_and_discarding_read_only_affected_operations() {
     for action in ["update", "rollback", "discard", "retry"] {
         let db = Db::open_in_memory(vec![spec()], None).unwrap();
         save(&db, json!({"id":"r1","body":"before"}));
-        db.update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
+        db.as_app().update("Record", &rid("r1"), fields(json!({"body":"pending"}))).unwrap();
         let seq = db.outbox().unwrap()[0].operation.id.0;
         FULL_QUEUE_READS.with(|reads| reads.set(0));
         FULL_UPLOAD_READS.with(|reads| reads.set(0));
         db.shared.store.lock().connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(count_queue_reads));
         match action {
-            "update" => { db.update("Record", &rid("r1"), fields(json!({"body":"next"}))).unwrap(); }
-            "rollback" => { db.roll_back(seq).unwrap(); }
-            "retry" => { db.retry("Record", &rid("r1"), None).unwrap(); }
-            _ => { db.discard("Record", &rid("r1"), None).unwrap(); }
+            "update" => { db.as_app().update("Record", &rid("r1"), fields(json!({"body":"next"}))).unwrap(); }
+            "rollback" => { db.as_app().roll_back(seq).unwrap(); }
+            "retry" => { db.as_app().retry("Record", &rid("r1"), None).unwrap(); }
+            _ => { db.as_app().discard("Record", &rid("r1"), None).unwrap(); }
         }
         db.shared.store.lock().connection.trace_v2(TraceEventCodes::empty(), None);
         counts.push((action, FULL_QUEUE_READS.with(|reads| reads.get()), FULL_UPLOAD_READS.with(|reads| reads.get())));
@@ -519,22 +519,22 @@ fn batch_parent_edits_survive_item_removal_and_rollback() {
     let db = Db::open_in_memory(vec![parent, child], None).unwrap();
     let mut seed = CommitEnvelope::new(WriteOrigin::Snapshot, db.generation());
     seed.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("Folder"), id: rid("f1"), row: fields(json!({"id":"f1","lastId":"old","lastPosition":9})) });
-    db.land(seed).unwrap();
+    db.as_app().land(seed).unwrap();
     let items = (0..3).map(|position| UploadItem {
         values: fields(json!({"folderId":"f1","clientKey":format!("key-{position}"),"position":position,"size":3})),
         path: "/missing/probe.bin".into(), name: None, mime: None, variables: Map::new(),
     }).collect();
-    let ids = db.create_upload_batch(db.generation(), "Record", items, UploadBatchInput { operation: "create_files".into(), variables: Map::new() }, &UploadOperations::empty().create_blob("CreateBlob")).unwrap();
+    let ids = db.as_app().create_upload_batch(db.generation(), "Record", items, UploadBatchInput { operation: "create_files".into(), variables: Map::new() }, &UploadOperations::empty().create_blob("CreateBlob")).unwrap();
     let seq = db.outbox().unwrap()[0].operation.id.0;
     assert_ne!(db.shared.store.point("Folder", "f1").unwrap().unwrap()["lastId"], "old");
     if external {
         let mut changed = CommitEnvelope::new(WriteOrigin::Response, db.generation());
         changed.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("Folder"), id: rid("f1"), row: fields(json!({"id":"f1","lastId":"outside","lastPosition":11})) });
-        db.land(changed).unwrap();
+        db.as_app().land(changed).unwrap();
     }
-    db.remove_upload_item("Record", &ids[1], seq, true).unwrap();
+    db.as_app().remove_upload_item("Record", &ids[1], seq, true).unwrap();
     assert_eq!(db.shared.store.point("Folder", "f1").unwrap().unwrap()["lastPosition"], 1);
-    db.roll_back(seq).unwrap();
+    db.as_app().roll_back(seq).unwrap();
     let restored = db.shared.store.point("Folder", "f1").unwrap().unwrap();
     let expected = if external { (json!("outside"), json!(11)) } else { (json!("old"), json!(9)) };
     assert_eq!((restored["lastId"].clone(), restored["lastPosition"].clone()), expected);

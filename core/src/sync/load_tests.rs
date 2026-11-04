@@ -248,7 +248,7 @@ async fn inv_merge_05_row_destroyed_during_flight_is_not_resurrected() {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     let id = crate::identity::RowId::new("m1").unwrap();
     envelope.entity_ops.push(EntityOp::Destroy { model: crate::identity::ModelKey::new("moments"), id, reason: DestroyReason::Server });
-    rig.db.land(envelope).unwrap();
+    rig.db.as_app().land(envelope).unwrap();
     task.await.unwrap().unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m2"]);
@@ -455,7 +455,7 @@ async fn creating_a_row_in_a_loaded_list_reads_the_same_members_at_every_list_si
     let mut costs = Vec::new();
     for size in [100, 10_000] {
         let (rig, params) = rig_with_user_list(size).await;
-        costs.push(reads_during(|| drop(rig.db.create("moments", crate::db::fixtures::obj(json!({"userId": "u1", "text": "new"}))).unwrap())));
+        costs.push(reads_during(|| drop(rig.db.as_app().create("moments", crate::db::fixtures::obj(json!({"userId": "u1", "text": "new"}))).unwrap())));
         assert_eq!(member_ids(&rig, "moments", "by_user", &params).len(), size + 1);
     }
     assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");

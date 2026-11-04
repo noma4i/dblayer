@@ -2,12 +2,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::mpsc;
+
 use super::SubscriptionSink;
-use crate::transport::{EpochEvent, SubscriptionEvent, SubscriptionFailureKind};
+use crate::transport::{SubscriptionEvent, SubscriptionFailureKind};
 use crate::test_wait::{recv_within, within};
 
-fn sink() -> (SubscriptionSink, tokio::sync::mpsc::UnboundedReceiver<EpochEvent>) {
-    let (sender, receiver) = crate::transport::subscription_channel(None);
+fn sink() -> (SubscriptionSink, mpsc::UnboundedReceiver<SubscriptionEvent>) {
+    let (sender, receiver) = mpsc::unbounded_channel();
     (SubscriptionSink::new(crate::ffi::database::executor().unwrap().handle().clone(), sender, |_| Box::pin(async {})), receiver)
 }
 
@@ -16,10 +18,10 @@ fn subscription_failures_keep_graphql_extensions() {
     let (sink, mut receiver) = sink();
     let extensions = crate::transport::GraphqlExtensions { code: Some("NOT_FOUND".into()), transaction_disposition: Some(crate::transport::TransactionDisposition::Keep), fields: Default::default() };
     sink.failed(super::DbError::Graphql { messages: vec!["missing".into()], extensions: Some(extensions.clone()) });
-    let Ok(EpochEvent { event: SubscriptionEvent::Failed(failure), .. }) = receiver.try_recv() else { panic!("missing failure") };
+    let Ok(SubscriptionEvent::Failed(failure)) = receiver.try_recv() else { panic!("missing failure") };
     assert!(matches!(failure.error, crate::transport::TransportError::Graphql { extensions: Some(found), .. } if found == extensions));
     sink.event(r#"{"errors":[{"message":"missing","extensions":{"code":"NOT_FOUND","transactionDisposition":"KEEP"}}]}"#.into()).unwrap();
-    let Ok(EpochEvent { event: SubscriptionEvent::Failed(failure), .. }) = receiver.try_recv() else { panic!("missing frame failure") };
+    let Ok(SubscriptionEvent::Failed(failure)) = receiver.try_recv() else { panic!("missing frame failure") };
     assert!(matches!(failure.error, crate::transport::TransportError::Graphql { extensions: Some(found), .. } if found == extensions));
 }
 
@@ -38,7 +40,7 @@ fn subscription_sink_wakes_its_receiver_with_the_sender_lock_free() {
     assert!(receiver.poll_recv(&mut context).is_pending());
     sink.ready();
     assert_eq!((probe.wakes(), probe.violations()), (1, 0), "an event wakes the receiver with the sender lock free");
-    assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(Some(EpochEvent { event: SubscriptionEvent::Ready, .. }))));
+    assert!(matches!(receiver.poll_recv(&mut context), std::task::Poll::Ready(Some(SubscriptionEvent::Ready))));
     assert!(receiver.poll_recv(&mut context).is_pending());
     sink.closed();
     assert_eq!((probe.wakes(), probe.violations()), (2, 0), "closing wakes the receiver with the sender lock free");
@@ -93,14 +95,14 @@ fn a_frame_without_data_fails_the_subscription_as_internal_and_an_enveloped_fram
 
     let rejected = sink.event(r#"{"messageCreated":{"message":{"id":"9"}}}"#.to_string());
     let failure = match receiver.try_recv() {
-        Ok(EpochEvent { event: SubscriptionEvent::Failed(failure), .. }) => Some(failure),
+        Ok(SubscriptionEvent::Failed(failure)) => Some(failure),
         _ => None,
     };
     assert!(rejected.is_err());
     assert_eq!(failure.map(|failure| failure.kind), Some(SubscriptionFailureKind::Internal));
 
     sink.event(r#"{"data":{"messageCreated":{"message":{"id":"9"}}}}"#.to_string()).unwrap();
-    assert!(matches!(receiver.try_recv(), Ok(EpochEvent { event: SubscriptionEvent::Next(_), .. })));
+    assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Next(_))));
 }
 
 #[test]
@@ -108,8 +110,36 @@ fn inv_panic_01_a_subscription_sink_survives_a_poisoned_lock() {
     let (sink, mut receiver) = sink();
     crate::db::fixtures::poison(&sink.sender);
     sink.ready();
-    assert!(matches!(receiver.try_recv(), Ok(EpochEvent { event: SubscriptionEvent::Ready, .. })));
+    assert!(matches!(receiver.try_recv(), Ok(SubscriptionEvent::Ready)));
     sink.closed();
+}
+
+struct EarlyFailure;
+
+#[async_trait::async_trait]
+impl super::Transport for EarlyFailure {
+    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), super::DbError> { unreachable!() }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), super::DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) { unreachable!() }
+    async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
+    async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
+    async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), super::DbError> {
+        sink.opened("early".into())?;
+        sink.failed(super::DbError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "refused".into() });
+        Ok(())
+    }
+    fn unsubscribe(&self, _: String) {}
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+}
+
+#[tokio::test]
+async fn a_failure_the_platform_reports_before_subscribe_returns_reaches_the_subscription() {
+    use crate::transport::Transport;
+    let transport = super::ForeignTransport(Arc::new(EarlyFailure));
+    let mut subscription = transport.subscribe(crate::transport::GraphQLRequest::new("subscription { x }", "X", serde_json::json!({}))).await.unwrap();
+    let Some(SubscriptionEvent::Failed(failure)) = within(subscription.next()).await else { panic!("the early failure was lost") };
+    assert!(failure.is_terminal());
 }
 
 type Script<A> = Box<dyn FnOnce(Arc<A>) -> Pin<Box<dyn Future<Output = Result<(), super::DbError>> + Send>> + Send>;

@@ -70,7 +70,7 @@ fn reentrant_reset_rig() -> (Db, ResetCalls, std::sync::Arc<ResetProbe>) {
         }
         let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, inner.generation());
         envelope.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new("moments"), id: rid("m9"), row: obj(serde_json::json!({"id": "m9", "userId": "u2", "text": "nine"})) });
-        inner.land(envelope).unwrap();
+        inner.as_app().land(envelope).unwrap();
         inner.reset(&["users"]).unwrap();
     }) });
     db.shared.store.lifecycle.enroll(&probe);

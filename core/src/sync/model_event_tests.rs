@@ -365,7 +365,9 @@ async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_i
     put(&rig, "chats", json!({"id": "c1", "title": "t"}));
     let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.set_session(Some("first"));
+    let reads = rig.transport.waits("Changes");
     rig.sync.commit_session_for_test();
+    rig.transport.await_waits("Changes", reads + 1).await;
     rig.transport.await_calls("Changes", 1).await;
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "one"}})));
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
@@ -378,6 +380,26 @@ async fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_i
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     let seen = expect_event(within(&events).await);
     assert_eq!((seen.kind.as_str(), seen.id.as_str()), ("DELETED", "c1"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_events_collector_keeps_one_stream_across_a_session_start_and_hears_only_the_new_connection() {
+    let rig = chat_rig();
+    put(&rig, "chats", json!({"id": "c1", "title": "t"}));
+    let events = rig.sync.open_model_events("chats").await.unwrap();
+    rig.transport.set_session(Some("first"));
+    rig.sync.commit_session_for_test();
+    rig.transport.await_calls("Changes", 1).await;
+    let life = rig.db.shared.store.lifecycle.clone();
+    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    rig.transport.await_calls("Changes", 2).await;
+    rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "new"}})));
+    let change = |kind: &str| SubscriptionEvent::Next(Response::data(json!({"recordEvents": {"changes": [event("CHAT", kind, "c1")]}})));
+    rig.transport.emit_on("Changes", 0, change("DELETED"));
+    rig.transport.emit_on("Changes", 1, change("UPDATED"));
+    let seen = expect_event(within(&events).await);
+    assert_eq!((seen.kind.as_str(), seen.id.as_str(), title(&seen.after)), ("UPDATED", "c1", Some("new")));
+    assert!(tokio::time::timeout(std::time::Duration::from_millis(50), events.next()).await.is_err(), "the old connection delivered nothing");
 }
 
 #[tokio::test(start_paused = true)]
@@ -411,7 +433,6 @@ async fn an_events_collector_keeps_receiving_across_a_denied_and_allowed_listeni
     tokio::time::sleep(std::time::Duration::from_secs(31)).await;
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     assert_eq!(expect_event(within(&events).await).kind, "DELETED");
-    assert_eq!(rig.transport.call_count("Changes"), 1, "one stream for the whole cycle");
 }
 
 #[tokio::test(start_paused = true)]

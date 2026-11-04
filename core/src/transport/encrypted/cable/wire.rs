@@ -29,7 +29,6 @@ pub trait CableConnect: Send + Sync {
 struct Add {
     request: GraphQLRequest,
     reply: oneshot::Sender<ServerSubscription>,
-    life: Option<Arc<crate::lifecycle::Lifecycle>>,
 }
 
 enum Command {
@@ -54,7 +53,7 @@ impl CableSubscriptions {
 
     pub async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         let (reply, receiver) = oneshot::channel();
-        crate::db::lock::effect(|| self.commands.send(Command::Add(Add { request, reply, life: crate::transport::connection_lifecycle() })).map_err(|_| TransportError::Network("cable stopped".into())))?;
+        crate::db::lock::effect(|| self.commands.send(Command::Add(Add { request, reply })).map_err(|_| TransportError::Network("cable stopped".into())))?;
         receiver.await.map_err(|_| TransportError::Network("cable stopped".into()))
     }
 
@@ -105,7 +104,7 @@ async fn await_connected<T>(next: impl std::future::Future<Output = T>, session:
             _ = session.cancelled() => {}
             command = commands.recv() => {
                 match command {
-                    Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request, add.life); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
+                    Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
                     Some(Command::Resume) => session.resume(),
                     #[cfg(test)]
                     Some(Command::Settled(sender)) => { crate::db::lock::effect(|| { let _ = sender.send(()); }); }
@@ -197,7 +196,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
         tokio::select! {
             command = commands.recv() => {
                 match command {
-                    Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request, add.life); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
+                    Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
                     Some(Command::Resume) => session.resume(),
                     #[cfg(test)]
                     Some(Command::Settled(sender)) => { crate::db::lock::effect(|| { let _ = sender.send(()); }); }

@@ -12,7 +12,7 @@ async fn the_backoff_passes(rig: &Rig) {
 }
 
 fn postponed_create(rig: &Rig) -> crate::identity::RowId {
-    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    let local = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
     rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Network("down".to_string())));
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m77", "text": "hello", "userId": null}})));
     local.id.clone()
@@ -34,7 +34,7 @@ async fn inv_wait_01_answer_parks_once_per_outbox_change_while_a_retry_waits_for
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     let id = crate::identity::RowId::new("m1").unwrap();
-    let acted = rig.db.act("moments", "star", &id, params(json!({})), params(json!({}))).unwrap();
+    let acted = rig.db.as_app().act("moments", "star", &id, params(json!({})), params(json!({}))).unwrap();
     rig.transport.enqueue("StarMoment", Reply::fail(TransportError::Network("down".to_string())));
     rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"moment": {"id": "m1", "text": "t", "userId": null}}})));
     let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.answer("moments", acted.operation));
@@ -97,7 +97,7 @@ fn inv_wait_04_no_test_of_the_wrappers_waits_without_a_bound() {
 #[tokio::test(start_paused = true)]
 async fn settled_ignores_a_pending_change_of_another_model_with_the_same_id() {
     let rig = rig();
-    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    let local = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
     rig.sync.set_online(false);
     let other = rig.sync.settled("users", &local.id, None).await;
     assert!(other.is_ok(), "settled(users) waited for a moments change: {other:?}");

@@ -9,7 +9,7 @@ async fn inv_fresh_03_a_step_answered_after_reset_all_sends_nothing_and_leaves_n
     let rig = upload_rig(small());
     rig.transport.enqueue("CreateBlob", blob().after(Duration::from_secs(5)));
     let source = file(b"abcdef");
-    rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     rig.transport.await_calls("CreateBlob", 1).await;
     rig.db.reset_all().unwrap();
     rig.sync.wait_uploads().await;
@@ -24,7 +24,7 @@ async fn inv_fresh_03_the_mutation_answered_after_reset_all_does_not_bring_the_r
     rig.transport.enqueue("CreateBlob", blob());
     rig.transport.enqueue("CreateMoment", created("m9").after(Duration::from_secs(5)));
     let source = file(b"abcdef");
-    rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
     rig.db.reset_all().unwrap();
@@ -39,7 +39,7 @@ async fn inv_upload_04_a_transfer_in_flight_during_a_reset_does_not_send_its_mut
     single_replies(&rig);
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(4)));
     let source = file(b"abcdef");
-    rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     rig.transport.await_put_calls(1).await;
     rig.db.reset(&["moments"]).unwrap();
     rig.sync.wait_uploads().await;
@@ -54,7 +54,7 @@ async fn ending_the_session_cancels_the_put_in_flight_and_frees_the_upload_slot(
     single_replies(&rig);
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e").after(Duration::from_secs(4)));
     let source = file(b"abcdef");
-    rig.sync.upload("moments", &rid("m1"), "upload", input(&source)).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     rig.transport.await_put_calls(1).await;
     rig.sync.end_session_for_test();
     crate::test_wait::yield_until("the run left its slot", || crate::sync::locked(&rig.sync.inner.uploads).active.is_empty()).await;
@@ -74,8 +74,8 @@ async fn ending_the_session_keeps_the_queued_upload_for_the_next_session() {
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e"));
     rig.transport.enqueue_put("https://s3/single", PutReply::etag("e"));
     let (first, second) = (file(b"abcdef"), file(b"ghijkl"));
-    rig.sync.upload("moments", &rid("m1"), "upload", input(&first)).await.unwrap();
-    rig.sync.upload("moments", &rid("m2"), "upload", input(&second)).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", input(&first))).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m2"), "upload", input(&second))).await.unwrap();
     rig.transport.await_put_calls(1).await;
     assert_eq!(crate::sync::locked(&rig.sync.inner.uploads).ready.len(), 1, "the second file waits behind the file limit");
     rig.sync.end_session_for_test();

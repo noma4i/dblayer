@@ -24,7 +24,7 @@ fn landed(rig: &Rig, id: &str, text: &str, user: serde_json::Value) {
     let row = rig.db.spec("moments").unwrap().patch(&params(json!({"id": id, "text": text, "userId": user})));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(id), row });
-    rig.db.land(envelope).unwrap();
+    rig.db.as_app().land(envelope).unwrap();
 }
 
 fn ids(rig: &Rig) -> Vec<String> {
@@ -37,11 +37,11 @@ fn ids(rig: &Rig) -> Vec<String> {
 async fn inv_id_08_a_row_that_lands_before_the_answer_replaces_the_sent_temp_row() {
     let rig = correlating_rig();
     put(&rig, "users", json!({"id": "u1", "name": "Ann"}));
-    let temp = rig.db.create("moments", params(json!({"text": "hi", "userId": "u1"}))).unwrap();
+    let temp = rig.db.as_app().create("moments", params(json!({"text": "hi", "userId": "u1"}))).unwrap();
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m9", "text": "hi", "userId": "u1"}})).after(Duration::from_secs(1)));
     let flush = tokio::spawn({
         let sync = rig.sync.clone();
-        async move { sync.flush().await }
+        async move { crate::sync::rig::app(&sync, sync.flush()).await }
     });
     rig.transport.await_calls("CreateMoment", 1).await;
     landed(&rig, "m9", "hi", json!("u1"));
@@ -57,13 +57,13 @@ async fn inv_id_08_a_row_that_lands_before_the_answer_replaces_the_sent_temp_row
 #[tokio::test(start_paused = true)]
 async fn a_row_with_other_fields_or_a_record_not_sent_yet_keeps_the_temp_row() {
     let rig = correlating_rig();
-    let temp = rig.db.create("moments", params(json!({"text": "hi", "userId": "u1"}))).unwrap();
+    let temp = rig.db.as_app().create("moments", params(json!({"text": "hi", "userId": "u1"}))).unwrap();
     landed(&rig, "m8", "hi", json!("u1"));
     assert_eq!(ids(&rig).len(), 2);
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m9", "text": "hi", "userId": "u1"}})).after(Duration::from_secs(1)));
     let flush = tokio::spawn({
         let sync = rig.sync.clone();
-        async move { sync.flush().await }
+        async move { crate::sync::rig::app(&sync, sync.flush()).await }
     });
     rig.transport.await_calls("CreateMoment", 1).await;
     landed(&rig, "m7", "other", json!("u1"));

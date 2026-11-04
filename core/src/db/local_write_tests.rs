@@ -12,7 +12,7 @@ use serde_json::json;
 #[test]
 fn create_stores_a_temp_row_and_enqueues_a_create_operation() {
     let db = booted();
-    let row = db.create("moments", obj(json!({"userId": "u1", "text": "hi"}))).unwrap();
+    let row = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "hi"}))).unwrap();
     assert!(row.id.is_temp());
     assert_eq!(row.text("text"), Some("hi"));
     assert_eq!(db.find("moments", &row.id).unwrap().unwrap().text("text"), Some("hi"));
@@ -27,7 +27,7 @@ fn create_stores_a_temp_row_and_enqueues_a_create_operation() {
 #[test]
 fn create_keeps_an_explicit_id_and_records_no_temp_id() {
     let db = booted();
-    let row = db.create("users", obj(json!({"id": "u7", "name": "Zed"}))).unwrap();
+    let row = db.as_app().create("users", obj(json!({"id": "u7", "name": "Zed"}))).unwrap();
     assert_eq!(row.id.as_str(), "u7");
     assert_eq!(db.outbox().unwrap()[0].operation.temp_id, None);
 }
@@ -37,7 +37,7 @@ fn inv_cascade_03_create_touches_the_resident_parent() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
     let before = db.find("chats", &rid("c1")).unwrap().unwrap().revision;
-    db.create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
+    db.as_app().create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
     let after = db.find("chats", &rid("c1")).unwrap().unwrap();
     assert!(after.revision > before);
     assert_eq!(after.text("title"), Some("t"));
@@ -55,7 +55,7 @@ fn chat_pointer(db: &Db) -> (Option<String>, Option<String>) {
 fn create_sets_the_parent_fields_when_the_child_is_newer() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m0", "lastMessageAt": OLD}));
-    let message = db.create("messages", obj(json!({"chatId": "c1", "body": "yo", "createdAt": NEW}))).unwrap();
+    let message = db.as_app().create("messages", obj(json!({"chatId": "c1", "body": "yo", "createdAt": NEW}))).unwrap();
     assert_eq!(chat_pointer(&db), (Some(message.id.to_string()), Some(NEW.to_string())));
 }
 
@@ -63,7 +63,7 @@ fn create_sets_the_parent_fields_when_the_child_is_newer() {
 fn create_keeps_the_pointer_of_a_pending_message_that_is_newer() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "temp-9", "lastMessageAt": NEW}));
-    db.create("messages", obj(json!({"chatId": "c1", "body": "late", "createdAt": OLD}))).unwrap();
+    db.as_app().create("messages", obj(json!({"chatId": "c1", "body": "late", "createdAt": OLD}))).unwrap();
     assert_eq!(chat_pointer(&db), (Some("temp-9".to_string()), Some(NEW.to_string())));
 }
 
@@ -73,10 +73,10 @@ fn destroying_the_head_message_moves_the_pointer_to_the_previous_one_and_a_refus
     put(&db, "messages", json!({"id": "m1", "chatId": "c1", "createdAt": OLD}));
     put(&db, "messages", json!({"id": "m2", "chatId": "c1", "createdAt": NEW}));
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m2", "lastMessageAt": NEW}));
-    db.destroy("messages", &rid("m2")).unwrap();
+    db.as_app().destroy("messages", &rid("m2")).unwrap();
     assert_eq!(chat_pointer(&db), (Some("m1".to_string()), Some(OLD.to_string())));
     let seq = db.outbox().unwrap()[0].operation.id.0;
-    db.roll_back_at(seq, db.generation()).unwrap();
+    db.as_app().roll_back_at(seq, db.generation()).unwrap();
     assert_eq!(chat_pointer(&db), (Some("m2".to_string()), Some(NEW.to_string())));
 }
 
@@ -85,7 +85,7 @@ fn destroying_a_chat_does_not_bring_it_back_through_its_own_pointer() {
     let db = booted();
     put(&db, "messages", json!({"id": "m1", "chatId": "c1", "createdAt": OLD}));
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m1", "lastMessageAt": OLD}));
-    db.destroy("chats", &rid("c1")).unwrap();
+    db.as_app().destroy("chats", &rid("c1")).unwrap();
     assert!(db.find("chats", &rid("c1")).unwrap().is_none());
 }
 
@@ -93,26 +93,26 @@ fn destroying_a_chat_does_not_bring_it_back_through_its_own_pointer() {
 fn discarding_the_create_gives_the_parent_fields_back() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m0", "lastMessageAt": OLD}));
-    let message = db.create("messages", obj(json!({"chatId": "c1", "body": "yo", "createdAt": NEW}))).unwrap();
+    let message = db.as_app().create("messages", obj(json!({"chatId": "c1", "body": "yo", "createdAt": NEW}))).unwrap();
     let seq = db.outbox().unwrap()[0].operation.id.0;
     let mut envelope = CommitEnvelope::new(WriteOrigin::Response, db.generation());
     envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: OperationFailure::new(FailureKind::Rejected, "no") });
     db.shared.store.commit(envelope).unwrap();
-    db.discard("messages", &message.id, None).unwrap();
+    db.as_app().discard("messages", &message.id, None).unwrap();
     assert_eq!(chat_pointer(&db), (Some("m0".to_string()), Some(OLD.to_string())));
 }
 
 #[test]
 fn create_does_not_touch_a_missing_parent() {
     let db = booted();
-    db.create("messages", obj(json!({"chatId": "ghost", "body": "yo"}))).unwrap();
+    db.as_app().create("messages", obj(json!({"chatId": "ghost", "body": "yo"}))).unwrap();
     assert!(db.find("chats", &rid("ghost")).unwrap().is_none());
 }
 
 #[test]
 fn create_without_a_required_field_fails_and_writes_nothing() {
     let db = booted();
-    assert!(matches!(db.create("messages", obj(json!({"body": "yo"}))), Err(DbError::Schema(_))));
+    assert!(matches!(db.as_app().create("messages", obj(json!({"body": "yo"}))), Err(DbError::Schema(_))));
     assert_eq!(db.count(&Query::new("messages")).unwrap(), 0);
     assert!(db.outbox().unwrap().is_empty());
 }
@@ -121,7 +121,7 @@ fn create_without_a_required_field_fails_and_writes_nothing() {
 fn update_merges_the_patch_into_the_stored_row() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    let row = db.update("moments", &rid("m1"), obj(json!({"text": "uno"}))).unwrap();
+    let row = db.as_app().update("moments", &rid("m1"), obj(json!({"text": "uno"}))).unwrap();
     assert_eq!(row.text("text"), Some("uno"));
     assert_eq!(row.text("userId"), Some("u1"));
     let stored = db.find("moments", &rid("m1")).unwrap().unwrap();
@@ -133,7 +133,7 @@ fn update_merges_the_patch_into_the_stored_row() {
 fn update_enqueues_an_update_operation_that_holds_the_values_it_replaces() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    db.update("moments", &rid("m1"), obj(json!({"text": "uno"}))).unwrap();
+    db.as_app().update("moments", &rid("m1"), obj(json!({"text": "uno"}))).unwrap();
     let outbox = db.outbox().unwrap();
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].operation.action_key, "moments:update");
@@ -150,7 +150,7 @@ fn inv_cascade_03_update_touches_the_parent_of_the_row() {
     put(&db, "chats", json!({"id": "c1", "title": "t"}));
     put(&db, "messages", json!({"id": "g1", "chatId": "c1", "body": "a"}));
     let before = db.find("chats", &rid("c1")).unwrap().unwrap().revision;
-    db.update("messages", &rid("g1"), obj(json!({"body": "b"}))).unwrap();
+    db.as_app().update("messages", &rid("g1"), obj(json!({"body": "b"}))).unwrap();
     assert!(db.find("chats", &rid("c1")).unwrap().unwrap().revision > before);
 }
 
@@ -163,7 +163,7 @@ fn inv_row_05_update_with_unchanged_values_writes_nothing() {
     db.await_revision(db.revision_seq().unwrap());
     let delivered = calls(&log).len();
     let before = db.find("moments", &rid("m1")).unwrap().unwrap().revision;
-    let row = db.update("moments", &rid("m1"), obj(json!({"text": "one"}))).unwrap();
+    let row = db.as_app().update("moments", &rid("m1"), obj(json!({"text": "one"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(row.revision, before);
     assert!(db.outbox().unwrap().is_empty());
@@ -173,7 +173,7 @@ fn inv_row_05_update_with_unchanged_values_writes_nothing() {
 #[test]
 fn update_of_a_missing_row_fails() {
     let db = booted();
-    assert!(matches!(db.update("moments", &rid("nope"), obj(json!({"text": "x"}))), Err(DbError::NotFound { .. })));
+    assert!(matches!(db.as_app().update("moments", &rid("nope"), obj(json!({"text": "x"}))), Err(DbError::NotFound { .. })));
     assert!(db.outbox().unwrap().is_empty());
 }
 
@@ -181,7 +181,7 @@ fn update_of_a_missing_row_fails() {
 fn destroy_removes_the_row_and_enqueues_a_destroy_operation() {
     let db = booted();
     put(&db, "vibes", json!({"id": "v1", "momentId": "m1", "kind": "like"}));
-    let destroyed = db.destroy("vibes", &rid("v1")).unwrap();
+    let destroyed = db.as_app().destroy("vibes", &rid("v1")).unwrap();
     assert_eq!(destroyed.len(), 1);
     assert!(db.find("vibes", &rid("v1")).unwrap().is_none());
     let outbox = db.outbox().unwrap();
@@ -194,7 +194,7 @@ fn destroy_removes_the_row_and_enqueues_a_destroy_operation() {
 fn inv_cascade_01_destroy_cascades_through_dependent_associations() {
     let db = booted();
     seed_tree(&db);
-    let destroyed = db.destroy("users", &rid("u1")).unwrap();
+    let destroyed = db.as_app().destroy("users", &rid("u1")).unwrap();
     assert_eq!(destroyed.len(), 4);
     assert!(db.find("users", &rid("u1")).unwrap().is_none());
     assert!(db.find("moments", &rid("m1")).unwrap().is_none());
@@ -209,7 +209,7 @@ fn inv_cascade_01_destroy_with_cascade_is_one_commit_and_one_operation() {
     let db = booted();
     seed_tree(&db);
     let before = db.revision_seq().unwrap();
-    db.destroy("users", &rid("u1")).unwrap();
+    db.as_app().destroy("users", &rid("u1")).unwrap();
     assert_eq!(db.revision_seq().unwrap(), before + 1);
     let outbox = db.outbox().unwrap();
     assert_eq!(outbox.len(), 1);
@@ -221,7 +221,7 @@ fn inv_cascade_01_destroy_with_cascade_is_one_commit_and_one_operation() {
 #[test]
 fn destroy_of_a_missing_row_fails() {
     let db = booted();
-    assert!(matches!(db.destroy("users", &rid("nope")), Err(DbError::NotFound { .. })));
+    assert!(matches!(db.as_app().destroy("users", &rid("nope")), Err(DbError::NotFound { .. })));
     assert!(db.outbox().unwrap().is_empty());
 }
 
@@ -264,10 +264,10 @@ fn create_lands_the_temp_row_in_the_unfiltered_scope_of_its_params() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("messages").in_scope(scope_of("thread", "c1")), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    let row = db.create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
+    let row = db.as_app().create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
-    let other = db.create("messages", obj(json!({"chatId": "c2", "body": "elsewhere"}))).unwrap();
+    let other = db.as_app().create("messages", obj(json!({"chatId": "c2", "body": "elsewhere"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
     assert_eq!(db.shared.store.scope_members("messages", scope_of("media", "c1").as_str()).unwrap(), vec![]);
@@ -279,13 +279,13 @@ fn changing_a_by_column_moves_the_row_between_the_unfiltered_scopes() {
     let db = threaded_db();
     put(&db, "chats", json!({"id": "c1", "title": "one"}));
     put(&db, "chats", json!({"id": "c2", "title": "two"}));
-    let row = db.create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
+    let row = db.as_app().create("messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
     let (first, first_callback) = recorder();
     let (second, second_callback) = recorder();
     let _one = db.observe(Query::new("messages").in_scope(scope_of("thread", "c1")), first_callback).unwrap();
     let _two = db.observe(Query::new("messages").in_scope(scope_of("thread", "c2")), second_callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.update("messages", &row.id, obj(json!({"chatId": "c2"}))).unwrap();
+    db.as_app().update("messages", &row.id, obj(json!({"chatId": "c2"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(changes(&first).last().unwrap()), Vec::<String>::new());
     assert_eq!(ids(changes(&second).last().unwrap()), [row.id.to_string()]);
@@ -307,7 +307,7 @@ fn a_remote_relation_lists_its_scope_in_the_relation_order() {
         ScopeOp::Append { scope: scope.clone(), row: rid("m1"), order_key: "a".into() },
         ScopeOp::Append { scope, row: rid("m2"), order_key: "b".into() },
     ]);
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     let query = db.remote_relation_query("messages", "thread", &obj(json!({"chatId": "c1"}))).unwrap().unwrap();
     assert_eq!(db.query(&query).unwrap().iter().map(|row| row.id.to_string()).collect::<Vec<_>>(), ["m2", "m1"]);
 }
@@ -318,7 +318,7 @@ fn a_keyed_patch_upserts_and_removes_one_element_of_an_array_field() {
     put(&db, "messages", json!({"id": "m1", "chatId": "c1", "reactions": [{"userId": "u2", "body": "x"}]}));
     let react = |user: &str, body: &str| {
         let patch = obj(json!({"reactions": {"$keyed": {"by": "userId", "element": {"userId": {"$arg": "user"}, "body": {"$arg": "body"}}}}}));
-        db.act("messages", "react", &rid("m1"), patch, obj(json!({"user": user, "body": body}))).unwrap();
+        db.as_app().act("messages", "react", &rid("m1"), patch, obj(json!({"user": user, "body": body}))).unwrap();
         db.find("messages", &rid("m1")).unwrap().unwrap().get("reactions").cloned().unwrap()
     };
     assert_eq!(react("u1", "a"), json!([{"userId": "u2", "body": "x"}, {"userId": "u1", "body": "a"}]));
@@ -350,7 +350,7 @@ fn reacting_db(linked: bool) -> Db {
 
 fn react_as(db: &Db, user: &str) -> serde_json::Value {
     let patch = obj(json!({"reactions": {"$keyed": {"by": "userId", "element": {"userId": {"$arg": "user"}, "body": {"$arg": "body"}}}}}));
-    db.act("messages", "react", &rid("m1"), patch, obj(json!({"user": user, "body": "x"}))).unwrap();
+    db.as_app().act("messages", "react", &rid("m1"), patch, obj(json!({"user": user, "body": "x"}))).unwrap();
     db.find("messages", &rid("m1")).unwrap().unwrap().get("reactions").cloned().unwrap()
 }
 
@@ -380,7 +380,7 @@ fn a_keyed_element_without_a_declared_link_has_no_nested_record_whatever_the_own
 #[test]
 fn create_args_reach_the_operation_input_and_stay_out_of_the_row() {
     let db = booted();
-    let row = db.create_with("moments", obj(json!({"userId": "u1", "text": "hi"})), obj(json!({"signedId": "blob-1"}))).unwrap();
+    let row = db.as_app().create_with("moments", obj(json!({"userId": "u1", "text": "hi"})), obj(json!({"signedId": "blob-1"}))).unwrap();
     assert_eq!(db.outbox().unwrap()[0].input["signedId"], json!("blob-1"));
     assert_eq!(db.outbox().unwrap()[0].input["text"], json!("hi"));
     assert!(!db.find("moments", &row.id).unwrap().unwrap().data.contains_key("signedId"));
@@ -390,7 +390,7 @@ fn create_args_reach_the_operation_input_and_stay_out_of_the_row() {
 fn update_args_alone_still_enqueue_an_operation_that_carries_them() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    db.update_with("moments", &rid("m1"), obj(json!({})), obj(json!({"signedId": "blob-2"}))).unwrap();
+    db.as_app().update_with("moments", &rid("m1"), obj(json!({})), obj(json!({"signedId": "blob-2"}))).unwrap();
     let outbox = db.outbox().unwrap();
     assert_eq!(outbox.len(), 1);
     assert_eq!(outbox[0].input, json!({"id": "m1", "signedId": "blob-2"}));
@@ -401,11 +401,11 @@ fn a_mapped_patch_value_follows_the_parameter_and_rolls_back_with_the_action() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let patch = || obj(json!({"text": {"$map": {"from": "decision", "map": {"ACCEPT": "yes", "REJECT": "no"}}}}));
-    db.act("moments", "decide", &rid("m1"), patch(), obj(json!({"decision": "REJECT"}))).unwrap();
+    db.as_app().act("moments", "decide", &rid("m1"), patch(), obj(json!({"decision": "REJECT"}))).unwrap();
     assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("no"));
-    db.roll_back(db.outbox().unwrap()[0].operation.id.0).unwrap();
+    db.as_app().roll_back(db.outbox().unwrap()[0].operation.id.0).unwrap();
     assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("one"));
-    db.act("moments", "decide", &rid("m1"), patch(), obj(json!({"decision": "ACCEPT"}))).unwrap();
+    db.as_app().act("moments", "decide", &rid("m1"), patch(), obj(json!({"decision": "ACCEPT"}))).unwrap();
     assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("yes"));
 }
 
@@ -438,14 +438,14 @@ fn join_current(db: &Db, model: &str, id: &str) {
     let key = db.spec(model).unwrap().selection_key("current", &Default::default()).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: ScopeRef::new(ModelKey::new(model), key), row: crate::identity::RowId::new(id).unwrap(), order_key: "a".to_string() });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
 }
 
 #[test]
 fn inv_dsl_09_a_create_fills_a_local_attribute_from_the_singleton_row_and_skips_it_without_one() {
     let db = authored_notes();
     let created = |arguments: serde_json::Value| {
-        let row = db.create("notes", obj(arguments)).unwrap();
+        let row = db.as_app().create("notes", obj(arguments)).unwrap();
         json!([row.get("authorId").cloned().filter(|value| !value.is_null()), row.get("regionId").cloned().filter(|value| !value.is_null())])
     };
     assert_eq!(created(json!({"roomId": "a"})), json!([null, null]));

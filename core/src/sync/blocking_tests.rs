@@ -26,7 +26,7 @@ async fn busy_store_does_not_stop_async_progress() {
         let inner = inner.clone();
         async move {
             started.send(()).unwrap();
-            inner.commit(generation, |_| Ok::<_, SyncError>(Some(CommitEnvelope::new(WriteOrigin::Response, generation))))
+            inner.db.in_current_epoch(|_| inner.commit(generation, |_| Ok::<_, SyncError>(Some(CommitEnvelope::new(WriteOrigin::Response, generation)))))
         }
     });
     recv_within(&running);

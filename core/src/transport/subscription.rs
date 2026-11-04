@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use super::request::Response;
 
@@ -95,41 +95,8 @@ impl SubscriptionEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct EpochEvent {
-    pub epoch: Option<u64>,
-    pub event: SubscriptionEvent,
-}
-
-pub(crate) fn connection_lifecycle() -> Option<Arc<crate::lifecycle::Lifecycle>> {
-    crate::lifecycle::Epoch::ambient().map(|epoch| epoch.life().clone())
-}
-
-#[derive(Clone)]
-pub struct SubscriptionSender {
-    events: UnboundedSender<EpochEvent>,
-    life: Option<Arc<crate::lifecycle::Lifecycle>>,
-}
-
-impl SubscriptionSender {
-    pub fn send(&self, event: SubscriptionEvent) -> bool {
-        let epoch = self.life.as_ref().map(|life| life.published_epoch());
-        crate::db::lock::effect(|| self.events.send(EpochEvent { epoch, event }).is_ok())
-    }
-
-    #[cfg(any(test, feature = "stress"))]
-    pub(crate) fn send_from(&self, epoch: Option<u64>, event: SubscriptionEvent) -> bool {
-        crate::db::lock::effect(|| self.events.send(EpochEvent { epoch, event }).is_ok())
-    }
-}
-
-pub(crate) fn subscription_channel(life: Option<Arc<crate::lifecycle::Lifecycle>>) -> (SubscriptionSender, UnboundedReceiver<EpochEvent>) {
-    let (events, receiver) = mpsc::unbounded_channel();
-    (SubscriptionSender { events, life }, receiver)
-}
-
 pub struct ServerSubscription {
-    events: UnboundedReceiver<EpochEvent>,
+    events: UnboundedReceiver<SubscriptionEvent>,
     handle: ServerSubscriptionHandle,
     #[cfg(any(test, feature = "stress"))]
     on_next: Option<Box<dyn Fn(ConsumerSignal) + Send + Sync>>,
@@ -154,7 +121,7 @@ impl Drop for Waiting<'_> {
 }
 
 impl ServerSubscription {
-    pub fn new(events: UnboundedReceiver<EpochEvent>, handle: ServerSubscriptionHandle) -> Self {
+    pub fn new(events: UnboundedReceiver<SubscriptionEvent>, handle: ServerSubscriptionHandle) -> Self {
         Self {
             events,
             handle,
@@ -169,7 +136,7 @@ impl ServerSubscription {
         self
     }
 
-    pub async fn next(&mut self) -> Option<EpochEvent> {
+    pub async fn next(&mut self) -> Option<SubscriptionEvent> {
         #[cfg(any(test, feature = "stress"))]
         let _waiting = self.on_next.as_deref().map(|hook| {
             hook(ConsumerSignal::Waiting);
@@ -183,9 +150,12 @@ impl ServerSubscription {
         event
     }
 
-    #[cfg(test)]
-    pub async fn next_event(&mut self) -> Option<SubscriptionEvent> {
-        self.next().await.map(|frame| frame.event)
+    pub(crate) fn take_queued_responses(&mut self) -> bool {
+        let mut taken = false;
+        while let Ok(event) = self.events.try_recv() {
+            taken |= matches!(event, SubscriptionEvent::Next(_));
+        }
+        taken
     }
 
     #[cfg(test)]

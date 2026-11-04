@@ -30,11 +30,11 @@ async fn every_upload_entry_refuses_a_bad_declaration_without_touching_files_out
             rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
             put_if(&rig, entry);
             let outcome = match entry {
-                "upload" => rig.sync.upload("moments", &rid("m1"), "upload", UploadFile::new(path)).await.map(drop),
-                "upload_create" => rig.sync.upload_create("moments", "upload", params(json!({"text": "x"})), UploadFile::new(path)).await.map(drop),
+                "upload" => crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", UploadFile::new(path))).await.map(drop),
+                "upload_create" => crate::sync::rig::app(&rig.sync, rig.sync.upload_create("moments", "upload", params(json!({"text": "x"})), UploadFile::new(path))).await.map(drop),
                 _ => {
                     let items = (0..2).map(|position| UploadItem { values: params(json!({"clientKey": format!("key-{position}"), "size": 2})), path: path.into(), name: None, mime: None, variables: Default::default() }).collect();
-                    rig.sync.upload_create_batch("Asset", items, UploadBatchInput { operation: "create_files".into(), variables: Default::default() }).await.map(drop)
+                    crate::sync::rig::app(&rig.sync, rig.sync.upload_create_batch("Asset", items, UploadBatchInput { operation: "create_files".into(), variables: Default::default() })).await.map(drop)
                 }
             };
             let error = outcome.expect_err(&format!("{case}/{entry} was accepted")).to_string();

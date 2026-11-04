@@ -146,7 +146,7 @@ impl Snapshot {
 
 pub(crate) enum Invalidated {
     Ended,
-    Rebound(Snapshot),
+    Rebound,
 }
 
 /// Follows the latest settled change. A receiver that falls behind sees the newest change only, and compares the epoch and generation it holds.
@@ -166,7 +166,7 @@ impl Watch {
             let moved = std::mem::replace(&mut self.generation, next.generation) != next.generation;
             let epoch_moved = std::mem::replace(&mut self.session_epoch, next.session_epoch) != next.session_epoch;
             if moved || !matches!(next.change, Change::SessionStarted(_)) { return Some(Invalidated::Ended); }
-            if epoch_moved { return Some(Invalidated::Rebound(next)); }
+            if epoch_moved { return Some(Invalidated::Rebound); }
         }
     }
 
@@ -278,8 +278,6 @@ pub(crate) struct Lifecycle {
     work: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     pub(crate) pinned_writes: std::sync::atomic::AtomicUsize,
-    #[cfg(test)]
-    strict: std::sync::atomic::AtomicBool,
 }
 
 impl Default for Lifecycle {
@@ -298,8 +296,6 @@ impl Default for Lifecycle {
             work: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             pinned_writes: std::sync::atomic::AtomicUsize::new(0),
-            #[cfg(test)]
-            strict: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -408,15 +404,7 @@ impl Drop for Permit {
 }
 
 impl Lifecycle {
-    #[cfg(test)]
-    pub(crate) fn strict_epoch(&self) -> bool { self.strict.load(std::sync::atomic::Ordering::SeqCst) }
-
-    #[cfg(test)]
-    pub(crate) fn require_epoch(&self) { self.strict.store(true, std::sync::atomic::Ordering::SeqCst); }
-
     pub(crate) fn snapshot(&self) -> Snapshot { crate::db::locked(&self.state).snapshot().clone() }
-
-    pub(crate) fn published_epoch(&self) -> u64 { self.changed.borrow().session_epoch }
 
     /// Whether the epoch is the one now and the database is open. It reads the published snapshot and takes no library lock, so the writer may call it.
     pub(crate) fn admits_epoch(&self, epoch: u64) -> bool {

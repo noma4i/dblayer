@@ -35,12 +35,12 @@ impl Connectivity {
         *self.sender.borrow()
     }
 
-    pub async fn offline(&self) {
+    pub(crate) async fn offline(&self) {
         let mut receiver = self.sender.subscribe();
         let _ = receiver.wait_for(|online| !*online).await;
     }
 
-    pub async fn online(&self) {
+    pub(crate) async fn online(&self) {
         let mut receiver = self.sender.subscribe();
         let _ = receiver.wait_for(|online| *online).await;
     }

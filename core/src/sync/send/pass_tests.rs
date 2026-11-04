@@ -18,11 +18,11 @@ async fn a_flush_reads_the_queue_once_and_visits_each_candidate_once() {
     put(&rig, "moments", moment("m1", "plain"));
     let count = 8;
     for number in 0..count {
-        rig.db.update("moments", &RowId::new("m1").unwrap(), params(json!({"text": number.to_string()}))).unwrap();
+        rig.db.as_app().update("moments", &RowId::new("m1").unwrap(), params(json!({"text": number.to_string()}))).unwrap();
     }
     rig.transport.respond_with(|request| Some(Reply::data(json!({"updateMoment": {"id": request.variables["id"], "text": request.variables["text"], "userId": null}}))));
     let before = rig.db.counters();
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     let after = rig.db.counters();
     let scans = after.outbox_reads - before.outbox_reads;
     let rows = after.outbox_rows_loaded - before.outbox_rows_loaded;
@@ -35,10 +35,10 @@ async fn a_flush_reads_the_queue_once_and_visits_each_candidate_once() {
 async fn a_create_that_is_retried_during_a_pass_does_not_let_its_later_updates_overtake_the_earlier_ones() {
     let rig = rig();
     put(&rig, "moments", moment("m9", "plain"));
-    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
-    rig.db.update("moments", &local.id, params(json!({"text": "one"}))).unwrap();
-    rig.db.update("moments", &RowId::new("m9").unwrap(), params(json!({"text": "x"}))).unwrap();
-    rig.db.update("moments", &local.id, params(json!({"text": "two"}))).unwrap();
+    let local = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
+    rig.db.as_app().update("moments", &local.id, params(json!({"text": "one"}))).unwrap();
+    rig.db.as_app().update("moments", &RowId::new("m9").unwrap(), params(json!({"text": "x"}))).unwrap();
+    rig.db.as_app().update("moments", &local.id, params(json!({"text": "two"}))).unwrap();
     let creates = Arc::new(AtomicUsize::new(0));
     let (db, seen) = (rig.db.clone(), creates.clone());
     rig.transport.respond_with(move |request| match request.operation_name.as_str() {
@@ -46,15 +46,15 @@ async fn a_create_that_is_retried_during_a_pass_does_not_let_its_later_updates_o
         "CreateMoment" => Some(Reply::data(json!({"createMoment": {"id": "m77", "text": "hello", "userId": null}}))),
         "UpdateMoment" => {
             if request.variables["id"] == json!("m9") {
-                db.retry_all().unwrap();
+                db.as_app().retry_all().unwrap();
             }
             Some(Reply::data(json!({"updateMoment": {"id": request.variables["id"], "text": request.variables["text"], "userId": null}})))
         }
         _ => None,
     });
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert_eq!(update_texts(&rig), ["x"]);
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert_eq!(update_texts(&rig), ["x", "one", "two"]);
 }
 
@@ -63,7 +63,7 @@ async fn waiting_for_one_record_loads_no_operations_of_independent_records() {
     let rig = rig();
     for number in 0..30 {
         put(&rig, "moments", moment(&format!("r{number}"), "plain"));
-        rig.db.update("moments", &RowId::new(&format!("r{number}")).unwrap(), params(json!({"text": "edited"}))).unwrap();
+        rig.db.as_app().update("moments", &RowId::new(&format!("r{number}")).unwrap(), params(json!({"text": "edited"}))).unwrap();
     }
     put(&rig, "moments", moment("target", "plain"));
     let before = rig.db.counters();

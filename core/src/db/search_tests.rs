@@ -91,7 +91,7 @@ fn a_search_follows_updates_and_deletes() {
     put(&db, "notes", json!({"id": "n1", "chatId": "c1", "body": "goodbye moon", "tags": ["greeting"]}));
     assert_eq!(found(&db, "hello", false), Vec::<String>::new());
     assert_eq!(found(&db, "moon", false), ["n1"]);
-    db.destroy("notes", &rid("n3")).unwrap();
+    db.as_app().destroy("notes", &rid("n3")).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(found(&db, "submarine", false), Vec::<String>::new());
 }

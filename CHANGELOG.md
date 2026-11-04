@@ -61,6 +61,8 @@
 - Every terminal subscription failure reaches the query listener once.
 - A `create` with an id given by the caller returns the confirmed row.
 - A network change waits for the start of an action that already passed its check.
+- A subscription event lost at a session start reloads the windows that watch its model.
+- `sessionResume` writes in the session epoch of its call.
 
 ## 6.16.1 - 2026-11-03
 

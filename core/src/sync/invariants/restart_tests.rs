@@ -30,13 +30,13 @@ async fn inv_rollback_05_inv_file_03_a_refused_destroy_after_a_sweep_and_a_resta
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m1"), row: params(moment("m1", "one")) });
     envelope.scope_ops.push(ScopeOp::Append { scope, row: rid("m1"), order_key: "a".into() });
-    rig.db.land(envelope).unwrap();
+    rig.db.as_app().land(envelope).unwrap();
     put(&rig, "vibes", json!({"id": "v1", "momentId": "m1"}));
     let large: Vec<u8> = (0..LARGE).map(|index| (index % 251) as u8).collect();
-    rig.db.attach("moments", &rid("m1"), "media", b"small", "a.bin", "a/b").unwrap();
-    rig.db.attach("vibes", &rid("v1"), "media", &large, "v.bin", "a/b").unwrap();
+    rig.db.as_app().attach("moments", &rid("m1"), "media", b"small", "a.bin", "a/b").unwrap();
+    rig.db.as_app().attach("vibes", &rid("v1"), "media", &large, "v.bin", "a/b").unwrap();
 
-    rig.db.destroy("moments", &rid("m1")).unwrap();
+    rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
     start(&rig.db, rig.db.outbox().unwrap()[0].operation.id.0);
     rig.db.sweep_files().unwrap();
     drop(rig);
@@ -44,9 +44,9 @@ async fn inv_rollback_05_inv_file_03_a_refused_destroy_after_a_sweep_and_a_resta
     let rig = open_rig(&path);
     assert_eq!(rig.db.sync_info("moments", &rid("m1")).unwrap().state, SyncState::DeliveryUnknown);
     rig.db.sweep_files().unwrap();
-    rig.db.retry("moments", &rid("m1"), None).unwrap();
+    rig.db.as_app().retry("moments", &rid("m1"), None).unwrap();
     rig.transport.enqueue("DeleteMoment", Reply::graphql_error("denied", "FORBIDDEN"));
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
 
     assert!(rig.db.find("moments", &rid("m1")).unwrap().is_some());
     assert!(rig.db.find("vibes", &rid("v1")).unwrap().is_some());
@@ -62,16 +62,16 @@ async fn inv_op_03_an_operation_started_before_a_restart_is_not_sent_again_until
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("3.sqlite");
     let rig = open_rig(&path);
-    rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
     start(&rig.db, rig.db.outbox().unwrap()[0].operation.id.0);
     drop(rig);
 
     let rig = open_rig(&path);
     rig.transport.enqueue("CreateMoment", created("m77", "hello"));
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     let held = rig.db.outbox().unwrap().remove(0).operation;
     assert_eq!((rig.transport.call_count("CreateMoment"), held.status), (0, OperationStatus::DeliveryUnknown));
-    rig.db.retry("moments", &held.row_ids[0], None).unwrap();
-    rig.sync.flush().await.unwrap();
+    rig.db.as_app().retry("moments", &held.row_ids[0], None).unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
 }

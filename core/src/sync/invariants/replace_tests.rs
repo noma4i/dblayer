@@ -20,15 +20,15 @@ async fn inv_id_02_inv_id_03_no_reference_to_the_temp_id_survives_the_confirmati
             references.foreign_key.clear();
         }
         let rig = rig_on(Db::open_in_memory(specs, None).unwrap(), MockTransport::new(), SyncConfig::default());
-        let parent = rig.db.create("moments", params(json!({"text": "parent"}))).unwrap();
+        let parent = rig.db.as_app().create("moments", params(json!({"text": "parent"}))).unwrap();
         let temp = parent.id.to_string();
-        rig.db.create("notes", params(json!({"id": "n1", "momentId": temp, "momentIds": ["m4", temp, "m5"], "text": "one"}))).unwrap();
-        rig.db.update("notes", &rid("n1"), params(json!({"momentId": "m5", "momentIds": ["m5"]}))).unwrap();
-        rig.db.create("notes", params(json!({"id": "n2", "momentId": temp, "momentIds": ["m4", temp, "m5", temp], "text": "two"}))).unwrap();
-        rig.db.attach("moments", &parent.id, "media", b"bytes", "a.bin", "a/b").unwrap();
+        rig.db.as_app().create("notes", params(json!({"id": "n1", "momentId": temp, "momentIds": ["m4", temp, "m5"], "text": "one"}))).unwrap();
+        rig.db.as_app().update("notes", &rid("n1"), params(json!({"momentId": "m5", "momentIds": ["m5"]}))).unwrap();
+        rig.db.as_app().create("notes", params(json!({"id": "n2", "momentId": temp, "momentIds": ["m4", temp, "m5", temp], "text": "two"}))).unwrap();
+        rig.db.as_app().attach("moments", &parent.id, "media", b"bytes", "a.bin", "a/b").unwrap();
         rig.db.set_ephemeral("moments", &parent.id, params(json!({"typing": true}))).unwrap();
         rig.transport.enqueue("CreateMoment", created("m77", "parent"));
-        rig.sync.flush().await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
         let note = rig.db.find("notes", &rid("n2")).unwrap().unwrap();
         assert_eq!(note.get("momentId"), Some(&json!("m77")));
         assert_eq!(note.get("momentIds"), Some(&json!(["m4", "m77", "m5", "m77"])));
@@ -41,10 +41,10 @@ async fn inv_id_02_inv_id_03_no_reference_to_the_temp_id_survives_the_confirmati
 #[tokio::test(start_paused = true)]
 async fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_after_it() {
     let rig = rig();
-    let local = rig.db.create("moments", params(json!({"text": "hello"}))).unwrap();
+    let local = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
     put(&rig, "moments", moment("m77", "hello"));
     rig.transport.enqueue("CreateMoment", created("m77", "hello"));
-    rig.sync.flush().await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     let ids: Vec<String> = rig.db.query(&Query::new("moments")).unwrap().iter().map(|row| row.id.to_string()).collect();
     assert_eq!(ids, ["m77"]);
     assert!(rig.db.find("moments", &local.id).unwrap().is_none());

@@ -26,7 +26,7 @@ fn upsert(db: &Db, rows: impl Iterator<Item = (String, String)>) {
         let row = obj(json!({"id": id.clone(), "name": name}));
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row });
     }
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
 }
 
@@ -75,7 +75,7 @@ fn remove(db: &Db, size: usize) -> Vec<String> {
     let id = format!("u{:06}", size / 2);
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("users"), id: rid(&id), reason: crate::commit::DestroyReason::Server });
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     vec![id]
 }
@@ -174,7 +174,7 @@ fn scoped_step_cost(size: usize) -> usize {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row: obj(json!({"id": id.clone(), "name": name_at(index)})) });
         envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid(&id), order_key: format!("k{index:06}") });
     }
-    db.land(envelope).unwrap();
+    db.as_app().land(envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let previous = Arc::new(db.shared.evaluate(&Subject::Rows(scoped_query())).unwrap().version);
     let id = format!("u{:06}", size / 2);

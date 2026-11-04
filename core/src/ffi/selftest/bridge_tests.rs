@@ -531,14 +531,17 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     let begun_before = operations_begun(&rig);
     let (entered, entered_rx) = std::sync::mpsc::channel();
     let (release_tx, release) = std::sync::mpsc::channel::<()>();
-    *store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { entered.send(()).unwrap(); let _ = release.recv_timeout(std::time::Duration::from_secs(20)); }));
+    let expired = Arc::new(AtomicBool::new(false));
+    let release_expired = expired.clone();
+    *store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { entered.send(()).unwrap(); if release.recv_timeout(std::time::Duration::from_secs(20)).is_err() { release_expired.store(true, Ordering::SeqCst); } }));
     let (committed, committed_rx) = std::sync::mpsc::channel();
     let (publish_tx, publish_release) = std::sync::mpsc::channel::<()>();
     let (committed, publish_release, held) = (Mutex::new(committed), Mutex::new(publish_release), AtomicBool::new(true));
+    let publish_expired = expired.clone();
     *store.after_commit.lock().unwrap() = Some(Box::new(move |result| {
         if result.queue_operations.is_empty() || !held.swap(false, Ordering::SeqCst) { return; }
         committed.lock().unwrap().send(()).unwrap();
-        let _ = publish_release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(20));
+        if publish_release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(20)).is_err() { publish_expired.store(true, Ordering::SeqCst); }
     }));
     let sender = { let database = rig.database.clone(); tokio::spawn(async move { database.send(message(epoch, "late", 9)).await }) };
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
@@ -553,6 +556,7 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     publish_tx.send(()).unwrap();
     let sent = bound(sender).await.unwrap();
     assert!(sent.is_ok() || matches!(sent, Err(DbError::Interrupted { .. })), "the send ended with {:?}", sent.as_ref().err());
+    assert!(!expired.load(Ordering::SeqCst), "a held step ran out of time and was not released by the test");
     assert_ne!(rig.database.session_epoch(), epoch);
     assert!(operations_begun(&rig) > begun_before, "the send did not commit before the epoch changed");
     settle(&rig).await;

@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use async_trait::async_trait;
+use tokio::sync::mpsc;
 use crate::transport as core;
 use super::lease::TokenLease;
 use super::DbError;
@@ -87,7 +88,7 @@ impl core::CableSocket for ForeignSocket {
 }
 
 #[derive(uniffi::Object)]
-pub struct SubscriptionSink { sender: Mutex<Option<core::SubscriptionSender>>, lease: TokenLease }
+pub struct SubscriptionSink { sender: Mutex<Option<mpsc::UnboundedSender<core::SubscriptionEvent>>>, lease: TokenLease }
 
 #[uniffi::export]
 impl SubscriptionSink {
@@ -110,7 +111,7 @@ impl SubscriptionSink {
 }
 
 impl SubscriptionSink {
-    fn new(handle: tokio::runtime::Handle, sender: core::SubscriptionSender, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
+    fn new(handle: tokio::runtime::Handle, sender: mpsc::UnboundedSender<core::SubscriptionEvent>, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
         Self { sender: Mutex::new(Some(sender)), lease: TokenLease::new(handle, release) }
     }
     fn abandon(&self) {
@@ -258,7 +259,7 @@ impl core::Transport for ForeignTransport {
     }
     async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::subscribe");
-        let (sender, receiver) = core::subscription_channel(core::connection_lifecycle());
+        let (sender, receiver) = mpsc::unbounded_channel();
         let transport = self.0.clone();
         let handle = super::database::executor().map_err(transport_error)?.handle().clone();
         let sink = Arc::new(SubscriptionSink::new(handle, sender, move |token| {

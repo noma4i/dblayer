@@ -66,7 +66,7 @@ async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
         }
     });
     let input = UploadFile::new(source.to_str().unwrap());
-    sync.upload("Moment", &crate::identity::RowId::new("42").unwrap(), "upload", input).await.unwrap();
+    crate::sync::rig::app(&sync, sync.upload("Moment", &crate::identity::RowId::new("42").unwrap(), "upload", input)).await.unwrap();
     within(lost.notified()).await;
     let mut resume = Box::pin(super::encrypted::resume(database.session.clone().unwrap(), Some(sync.clone())));
     assert!(resume.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
@@ -157,7 +157,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     let input = UploadFile::new(source.to_str().unwrap());
     let state = crate::upload::UploadState { key: Some("key".into()), upload_id: Some("upload".into()), ..crate::upload::UploadState::queued() };
     let row = crate::identity::RowId::new("42").unwrap();
-    database.sync.as_ref().unwrap().inner.begin_upload(database.sync.as_ref().unwrap().inner.db.generation(), "Moment", &row, "upload", &input, state).unwrap();
+    database.db.in_current_epoch(|_| database.sync.as_ref().unwrap().inner.begin_upload(database.sync.as_ref().unwrap().inner.db.generation(), "Moment", &row, "upload", &input, state)).unwrap();
     rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
     database.cancel_upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into()).await.unwrap();
     drop(database);
