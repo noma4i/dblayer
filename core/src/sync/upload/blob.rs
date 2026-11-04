@@ -96,17 +96,20 @@ impl Sync {
         if blob.consumer.is_some() { return Err(SyncError::Params("Blob is pinned to an operation".into())); }
         let files: Vec<String> = self.inner.db.shared.read(&[], |reader| Ok(reader.connection().prepare("SELECT i.file_id FROM blob_upload b JOIN op_item i ON i.seq = b.seq WHERE b.id = ?1 AND i.file_id IS NOT NULL")?.query_map([id], |row| row.get(0))?.collect::<Result<_, _>>()?))?;
         let seq = self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT seq FROM blob_upload WHERE id = ?1", [id], |row| row.get::<_, Option<i64>>(0))?))?;
+        let mut owned = Vec::new();
         if let Some(seq) = seq {
-            let running = self.inner.running_uploads(seq, None);
-            for (token, _) in &running { token.cancel(); }
-            let waiting = running.into_iter().map(|(_, done)| done);
-            for mut done in waiting { let _ = done.wait_for(|done| *done).await; }
+            for ((_, position), _) in self.inner.operation_uploads(seq)? {
+                let (run, _) = self.inner.own_upload(seq, position).await;
+                owned.push((seq, position, run));
+            }
         }
-        self.inner.commit(admitted, generation, |_| {
+        let retired = self.inner.commit(admitted, generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             envelope.operation_transitions.push(OperationTransition::RetireBlob { id: id.into(), expired: false });
             Ok(Some(envelope))
-        })?;
+        });
+        for (seq, position, run) in owned { self.inner.finish_run(admitted, seq, position, run); }
+        retired?;
         self.inner.spawn_upload_housekeeping(false);
         self.inner.discard_files(admitted, files).await?;
         Ok(())

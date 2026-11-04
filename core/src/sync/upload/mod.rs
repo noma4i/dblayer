@@ -314,10 +314,6 @@ impl Inner {
         locked(&self.uploads).active.get(&(seq, position)).is_some_and(|active| active.run == run && active.ended)
     }
 
-    pub(super) fn running_uploads(&self, seq: i64, position: Option<i64>) -> Vec<(CancelToken, watch::Receiver<bool>)> {
-        locked(&self.uploads).active.range((seq, i64::MIN)..=(seq, i64::MAX)).filter(|(key, _)| position.is_none_or(|position| key.1 == position)).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect()
-    }
-
     fn finish_run(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, seq: i64, position: i64, run: u64) {
         if !self.with_uploads(|runs, effects| runs.finish(seq, position, run, effects)) { return; }
         let retry = {
@@ -435,6 +431,17 @@ impl Inner {
         }
         runs.ready.remove(&(seq, position));
         Some(runs.register(seq, position, false))
+    }
+
+    pub(super) async fn own_upload(&self, seq: i64, position: i64) -> (u64, CancelToken) {
+        loop {
+            if let Some(owned) = self.register(seq, position) { return owned; }
+            let active = locked(&self.uploads).active.get(&(seq, position)).map(|active| (active.token.clone(), active.done.subscribe()));
+            if let Some((token, mut done)) = active {
+                token.cancel();
+                let _ = done.wait_for(|finished| *finished).await;
+            }
+        }
     }
 
     pub(crate) async fn claim_upload_resume(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, owner: &crate::transport::RequestOwner) -> Result<Option<UploadResume>, SyncError> {
@@ -595,19 +602,9 @@ impl Sync {
     }
 
     async fn cancel_item(&self, admitted: &crate::lifecycle::Admitted, seq: i64, position: i64) {
-        loop {
-            if let Some((run, token)) = self.inner.register(seq, position) {
-                run::drive(self.inner.clone(), admitted.clone(), seq, position, run, token, RunMode::Cancel, None).await;
-                self.inner.finish_run(admitted, seq, position, run);
-                return;
-            }
-            let active = locked(&self.inner.uploads).active.get(&(seq, position)).map(|active| (active.token.clone(), active.done.subscribe()));
-            if let Some((token, mut done)) = active {
-                token.cancel();
-                let _ = done.wait_for(|finished| *finished).await;
-                return;
-            }
-        }
+        let (run, token) = self.inner.own_upload(seq, position).await;
+        run::drive(self.inner.clone(), admitted.clone(), seq, position, run, token, RunMode::Cancel, None).await;
+        self.inner.finish_run(admitted, seq, position, run);
     }
 
     pub(crate) async fn wait_uploads(&self) {

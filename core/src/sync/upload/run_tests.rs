@@ -325,3 +325,22 @@ fn queued_cleanup_survives_dropping_the_sync_that_queued_it() {
     }
     assert!(!path.exists(), "the queued cleanup was lost with the sync");
 }
+
+#[tokio::test]
+async fn owning_an_item_cancels_its_running_upload_and_waits_for_its_end() {
+    use std::future::Future;
+    use std::task::{Context, Waker};
+
+    let rig = upload_rig(small());
+    let source = file(b"abcdef");
+    let seq = rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued()).unwrap();
+    let (running, token) = rig.sync.inner.register(seq, 0).unwrap();
+    let inner = rig.sync.inner.clone();
+    let mut owning = Box::pin(async move { inner.own_upload(seq, 0).await });
+    assert!(owning.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
+    assert!(token.is_cancelled());
+    rig.sync.inner.with_uploads(|runs, effects| runs.finish(seq, 0, running, effects));
+    let (owned, _) = owning.await;
+    assert_ne!(owned, running);
+    assert!(rig.sync.inner.register(seq, 0).is_none());
+}
