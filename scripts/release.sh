@@ -66,12 +66,22 @@ grep -Fq "## $version - " CHANGELOG.md || fail 'changelog heading missing'
 manifest=core/src/ffi/selftest/manifest.tsv
 [ -s "$manifest" ] || fail "sequence manifest missing: $manifest (the lifecycle sequences must be on master before a release)"
 for check in check_docs check_invariants check_zoo; do bash "scripts/$check.sh" || fail "$check failed"; done
-# The app suites run when the release touches the library boundary or its build and test inputs. RELEASE_CONSUMERS=always forces them. No setting skips them.
+# The app suites run when the release touches the library boundary or its build and test inputs. RELEASE_CONSUMERS=always forces them. Both lanes run unless the owner skips one lane for this exact version: RELEASE_SKIP_CONSUMER_LANE=<ios|android>, RELEASE_SKIP_CONSUMER_VERSION=<version> and RELEASE_SKIP_CONSUMER_REASON=<text> must all be set and valid, else the release is refused.
 consumer_boundary='^(core/src/(lifecycle|ffi|session|sync|store)/|gen/|swift/|kotlin/|Cargo\.toml$|scripts/(build_|generate_|release\.sh|check_sequences|check_consumers))'
 consumers=required
 if [ "${RELEASE_CONSUMERS:-}" != always ]; then
   changed="$(git diff --name-only "$previous_tag"..HEAD)" || fail 'cannot list files changed since the previous tag'
   grep -Eq "$consumer_boundary" <<< "$changed" || consumers=not-required
+fi
+skip_lane="${RELEASE_SKIP_CONSUMER_LANE:-}"
+skip_reason="${RELEASE_SKIP_CONSUMER_REASON:-}"
+consumer_lanes=(ios android)
+if [ -n "$skip_lane${RELEASE_SKIP_CONSUMER_VERSION:-}$skip_reason" ]; then
+  case "$skip_lane" in ios) consumer_lanes=(android) ;; android) consumer_lanes=(ios) ;; *) fail "RELEASE_SKIP_CONSUMER_LANE must be ios or android, got: '$skip_lane'" ;; esac
+  [ "${RELEASE_SKIP_CONSUMER_VERSION:-}" = "$version" ] || fail "RELEASE_SKIP_CONSUMER_VERSION must equal the released version $version, got: '${RELEASE_SKIP_CONSUMER_VERSION:-}'"
+  [ -n "$skip_reason" ] || fail 'RELEASE_SKIP_CONSUMER_REASON must not be empty'
+  [[ "$skip_reason" != *$'\n'* ]] || fail 'RELEASE_SKIP_CONSUMER_REASON must be one line'
+  [ "$consumers" = required ] || skip_lane=""
 fi
 bash scripts/build_ios.sh
 bash scripts/build_kotlin.sh --abis
@@ -95,6 +105,7 @@ else
 fi
 for archive in "${archives[@]}"; do mkdir -p "$tmp/$archive"; unzip -q "$stage/$archive" -d "$tmp/$archive"; done
 awk -v heading="## $version - " 'index($0, heading)==1 {found=1; next} found && /^## / {exit} found {print}' CHANGELOG.md > "$stage/NOTES.md"
+cp "$stage/NOTES.md" "$tmp/page-notes.md"
 check_archs() {
   local file="$1" expected="$2" actual
   lipo -info "$file"
@@ -166,14 +177,17 @@ write_package > "$tmp/Package.swift"
 /bin/rm -f "$stage/sequences.tsv" "$stage/consumers.tsv" "$stage/RECEIPT.json"
 bash scripts/check_sequences.sh "$stage" --manifest "$manifest" || fail 'sequence suites are red or incomplete: no tag'
 if [ "$consumers" = required ]; then
-  bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" || fail 'app suites are red or incomplete: no tag'
+  lane_args=()
+  for lane in "${consumer_lanes[@]}"; do lane_args+=(--lane "$lane"); done
+  bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" "${lane_args[@]}" || fail 'app suites are red or incomplete: no tag'
 fi
 require_source
-python3 -I - "$stage" "$version" "$manifest" "$consumers" "$source_sha" "$run_id" <<'RECEIPT' || fail 'lane reports are missing or incomplete: no tag'
+python3 -I - "$stage" "$version" "$manifest" "$consumers" "$source_sha" "$run_id" "$skip_lane" "$skip_reason" <<'RECEIPT' || fail 'lane reports are missing or incomplete: no tag'
 import hashlib, json, sys
 from pathlib import Path
 
 stage, version, manifest, consumers, commit, run_id = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
+skip_lane, skip_reason = sys.argv[7], sys.argv[8]
 def refuse(message):
     sys.exit(f"release: {message}")
 def rows(name):
@@ -209,7 +223,7 @@ for lane, row in lanes("sequences.tsv", ["core", "swift", "kotlin"], 7).items():
     sequences[lane] = {"listed": listed, "passed": passed, "rc": row[3]}
 consumer_lanes = {}
 if consumers == "required":
-    for lane, row in lanes("consumers.tsv", ["ios", "android"], 5).items():
+    for lane, row in lanes("consumers.tsv", [l for l in ("ios", "android") if l != skip_lane], 5).items():
         if row[1] != "0":
             refuse(f"consumers lane {lane} is red: rc={row[1]}")
         consumer_lanes[lane] = {"rc": row[1]}
@@ -222,6 +236,10 @@ receipt = {
     "consumers": consumers,
     "consumer_lanes": consumer_lanes,
 }
+if skip_lane:
+    receipt["skipped_consumer_lane"] = {"lane": skip_lane, "reason": skip_reason, "version": version}
+    with (stage / "NOTES.md").open("a") as notes:
+        notes.write(f"\nSkipped consumer lane: {skip_lane} (owner-approved for {version}): {skip_reason}\n")
 (stage / "RECEIPT.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
 RECEIPT
 if [ "$publish" = --publish ]; then
@@ -289,7 +307,7 @@ if [ "$publish" = --publish ]; then
   push_maven_branch "$(git remote get-url origin)"
   files=(); for file in "${attachments[@]}"; do files+=("$stage/$file"); done
   if ! gh release view "$version" >/dev/null 2>&1; then
-    gh release create "$version" --title "$version" --notes-file "$stage/NOTES.md" --latest "${files[@]}"
+    gh release create "$version" --title "$version" --notes-file "$tmp/page-notes.md" --latest "${files[@]}"
   fi
   gh release view "$version" --json assets --jq '.assets[].name' > "$tmp/assets"
   for file in "${attachments[@]}"; do grep -Fxq "$file" "$tmp/assets" || fail "missing published attachment: $file"; done

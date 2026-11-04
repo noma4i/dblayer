@@ -57,8 +57,16 @@ case "${STUB_CONSUMER_REPORT:-green}" in
   missing-file) ;;
   missing-lane) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
   rc) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nandroid\\t1\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
-  *) printf 'ios\\t0\\tlog\\t'"$S"'\\t'"$R"'\\nandroid\\t0\\tlog\\t'"$S"'\\t'"$R"'\\n' > "$1/consumers.tsv" ;;
+  *) : > "$1/consumers.tsv"
+    for L in ios android; do
+      case "$*" in *"--lane "*) case "$*" in *"--lane $L"*) ;; *) continue ;; esac ;; esac
+      RC=0; [ "${STUB_RED_LANE:-}" != "$L" ] || RC=1
+      printf '%s\\t%s\\tlog\\t%s\\t%s\\n' "$L" "$RC" "$S" "$R" >> "$1/consumers.tsv"
+    done ;;
 esac
+if [ -n "${STUB_RED_LANE:-}" ]; then
+  case "$*" in *"--lane "*) case "$*" in *"--lane $STUB_RED_LANE"*) echo "consumers: lane $STUB_RED_LANE red" >&2; exit 1 ;; esac ;; *) echo "consumers: lane $STUB_RED_LANE red" >&2; exit 1 ;; esac
+fi
 [ "${STUB_CONSUMERS:-green}" = green ] || { echo "consumers: lane ios red" >&2; exit 1; }
 """)
     if manifest:
@@ -276,6 +284,37 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     assert any(line.startswith("check_consumers ") for line in (base / "app-red/events").read_text().splitlines())
     assert not (app_red / "target/release-1.2.3/RECEIPT.json").exists()
     print("ok a red app suite refuses the tag after a lifecycle change")
+    skip_env = {"RELEASE_SKIP_CONSUMER_LANE": "ios", "RELEASE_SKIP_CONSUMER_VERSION": version, "RELEASE_SKIP_CONSUMER_REASON": "app adaptations are app-only"}
+    skip_ok, skip_ok_env = fixture(base / "skip-ok", touch=boundary)
+    run(["bash", "scripts/release.sh", version, "--publish"], skip_ok, dict(skip_ok_env, **skip_env))
+    stage_ok = skip_ok / "target/release-1.2.3"
+    receipt = json.loads((stage_ok / "RECEIPT.json").read_text())
+    assert receipt["consumers"] == "required" and receipt["consumer_lanes"] == {"android": {"rc": "0"}}, receipt
+    assert receipt["skipped_consumer_lane"] == {"lane": "ios", "reason": "app adaptations are app-only", "version": version}, receipt
+    assert "Skipped consumer lane: ios" in (stage_ok / "NOTES.md").read_text()
+    skip_calls = [line for line in (base / "skip-ok/events").read_text().splitlines() if line.startswith("check_consumers ")]
+    assert len(skip_calls) == 1 and "--lane android" in skip_calls[0] and "--lane ios" not in skip_calls[0], skip_calls
+    print("ok a skip with all three values runs only the other lane and is recorded in the receipt and NOTES.md")
+    for name, change, text in (
+        ("wrong-version", {"RELEASE_SKIP_CONSUMER_VERSION": "9.9.9"}, "RELEASE_SKIP_CONSUMER_VERSION must equal"),
+        ("empty-reason", {"RELEASE_SKIP_CONSUMER_REASON": ""}, "RELEASE_SKIP_CONSUMER_REASON must not be empty"),
+        ("unknown-lane", {"RELEASE_SKIP_CONSUMER_LANE": "web"}, "RELEASE_SKIP_CONSUMER_LANE must be ios or android"),
+    ):
+        bad, bad_env = fixture(base / f"skip-{name}", touch=boundary)
+        run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **dict(skip_env, **change)), expected=1, contains=text)
+        assert_no_release(bad, bad_env, base / f"skip-{name}/events")
+        assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
+        assert not any(line.startswith("check_consumers ") for line in (base / f"skip-{name}/events").read_text().splitlines())
+        print(f"ok a skip with {name} is refused")
+    skip_red, skip_red_env = fixture(base / "skip-lane-red", touch=boundary)
+    run(["bash", "scripts/release.sh", version, "--publish"], skip_red, dict(skip_red_env, **skip_env, STUB_RED_LANE="ios"))
+    assert (skip_red / "target/release-1.2.3/RECEIPT.json").exists()
+    print("ok a red skipped lane is not run and does not stop the release")
+    other_red, other_red_env = fixture(base / "skip-other-red", touch=boundary)
+    run(["bash", "scripts/release.sh", version, "--publish"], other_red, dict(other_red_env, **skip_env, STUB_RED_LANE="android"), expected=1, contains="app suites are red")
+    assert_no_release(other_red, other_red_env, base / "skip-other-red/events")
+    assert not (other_red / "target/release-1.2.3/RECEIPT.json").exists()
+    print("ok a red lane that is not skipped still refuses the tag")
     forced, forced_env = fixture(base / "forced")
     run(["bash", "scripts/release.sh", version, "--publish"], forced, dict(forced_env, RELEASE_CONSUMERS="always", STUB_CONSUMERS="red"), expected=1, contains="app suites are red")
     assert_no_release(forced, forced_env, base / "forced/events")
