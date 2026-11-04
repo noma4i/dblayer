@@ -146,3 +146,14 @@ K28	E06	kotlin	com.noma4i.dblayer.BridgeProbeTest.updateAndDestroyReachTypedLive
 K29	F02	core	a_network_that_moves_between_the_plan_and_the_commit_of_a_start_refuses_the_action	green	core-only: the proof runs a hook inside the writer between the plan and the commit; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3f review F02
 K30	F01	core	a_public_flush_holds_the_commit_line_of_its_epoch_while_it_commits	green	core-only: the proof holds a commit inside the writer and moves the epoch; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3f review F01
 K31	F01	core	a_write_without_a_session_epoch_is_refused	green	core-only: the proof writes through the core Db without an epoch; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3f review F01
+P01		core	an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_one_is_delivered	green	-	parity slice 3 platform tests
+P01		swift	BridgeProbeTests.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests
+P01		kotlin	com.noma4i.dblayer.ModelEventsTest.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests
+P02		core	the_session_reset_ends_every_stream_with_one_outcome_and_no_account_value_follows	green	-	parity slice 3 platform tests
+P02		swift	BridgeProbeTests.aSessionResetEndsTheOldEventsStream	green	test rig limit: a stream of the next session needs a real session with a model-event subscription, covered by the core Sync test an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_in	parity slice 3 platform tests
+P02		kotlin	com.noma4i.dblayer.ModelEventsTest.aSessionResetEndsTheOldEventsStream	green	test rig limit: as swift	parity slice 3 platform tests
+P03		core	related_01_belongs_to_follows_parent_order_links_targets_and_late_arrivals	green	-	parity slice 3 platform tests
+P03		swift	BridgeProbeTests.aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange	green	-	parity slice 3 platform tests
+P03		kotlin	com.noma4i.dblayer.FirstFrameAndRelatedTest.aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange	green	-	parity slice 3 platform tests
+P04		swift	BridgeProbeTests.theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows	green	spec B first frame: SQLite thread not observable through the public API, asserts the delivery thread and not-inside-subscribe	parity slice 3 platform tests
+P04		kotlin	com.noma4i.dblayer.FirstFrameAndRelatedTest.theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows	green	spec B first frame: as swift	parity slice 3 platform tests
