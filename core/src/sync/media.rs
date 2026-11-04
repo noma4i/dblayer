@@ -39,8 +39,8 @@ impl Inner {
         Ok(WindowMarker { sequence, values })
     }
 
-    pub(super) async fn media_load(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, media: &MediaSpec) -> Result<Executed, SyncError> {
-        let attempt = self.begin_attempt(&resolved.window_key)?;
+    pub(super) async fn media_load(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, media: &MediaSpec, generation: crate::identity::Generation) -> Result<Executed, SyncError> {
+        let attempt = self.begin_attempt(&resolved.window_key, generation)?;
         let stored = self.db.shared.store.marker(&resolved.window_key, attempt.generation.value() as i64)?;
         let prefix = stored.as_ref().map_or(0, |marker| marker.sequence);
         let owes = self.db.shared.store.window_freshness(&resolved.window_key)?.is_some_and(|freshness| freshness.stale_since.is_some());

@@ -1304,6 +1304,11 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
      */
     func beginLoad(epoch: UInt64, model: String, relation: String, paramsJson: String) throws  -> LoadRequest
     
+    /**
+     * Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
+     */
+    func beginLoadAll(epoch: UInt64, model: String, relation: String, paramsJson: String, force: Bool) throws  -> LoadRequest
+    
     func cancelUpload(epoch: UInt64, model: String, rowId: String, action: String) async throws  -> Bool
     
     /**
@@ -1326,8 +1331,6 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func file(epoch: UInt64, model: String, rowId: String, field: String) async throws  -> String?
     
     func flush() async throws 
-    
-    func loadAll(epoch: UInt64, model: String, relation: String, paramsJson: String, force: Bool) async throws 
     
     func loadMore(epoch: UInt64, model: String, relation: String, paramsJson: String) async throws  -> LoadMoreResult
     
@@ -1680,6 +1683,23 @@ open func beginLoad(epoch: UInt64, model: String, relation: String, paramsJson: 
 })
 }
     
+    /**
+     * Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
+     */
+open func beginLoadAll(epoch: UInt64, model: String, relation: String, paramsJson: String, force: Bool)throws  -> LoadRequest  {
+    return try  FfiConverterTypeLoadRequest_lift(try rustCallWithError(FfiConverterTypeDbError_lift) {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_database_begin_load_all(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(epoch),
+        FfiConverterString.lower(model),
+        FfiConverterString.lower(relation),
+        FfiConverterString.lower(paramsJson),
+        FfiConverterBool.lower(force),uniffiCallStatus
+    )
+})
+}
+    
 open func cancelUpload(epoch: UInt64, model: String, rowId: String, action: String)async throws  -> Bool  {
     return
         try  await uniffiRustCallAsync(
@@ -1825,22 +1845,6 @@ open func flush()async throws   {
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_flush(
                         self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-open func loadAll(epoch: UInt64, model: String, relation: String, paramsJson: String, force: Bool)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_load_all(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(relation),FfiConverterString.lower(paramsJson),FfiConverterBool.lower(force)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -11532,6 +11536,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_begin_load() != 23095) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_database_begin_load_all() != 42434) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_database_cancel_upload() != 27388) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11560,9 +11567,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_flush() != 20138) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_load_all() != 16467) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_load_more() != 38719) {

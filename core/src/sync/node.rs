@@ -24,7 +24,7 @@ impl Sync {
         self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
         let resolved = self.inner.resolve_node(crate::lifecycle::Origin::Explicit, model, relation, NodeRead::Many, Map::new())?;
-        let attempt = self.inner.begin_attempt(&resolved.window_key)?;
+        let attempt = self.inner.begin_attempt(&resolved.window_key, self.inner.db.generation())?;
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, json!({ "ids": ids }));
         let (response, _) = admitted.run(self.inner.query_with_retry(admitted, request)).await??;
         let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::stream::tape::{Reader, Rows, Silent};
+use super::stream::tape::{Rows, Silent};
 use super::stream::{follow, Frame, Request, Stream, StreamTable};
 use super::DbError;
 use crate::sync::Failures;

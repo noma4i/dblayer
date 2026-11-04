@@ -60,7 +60,6 @@ mod variables;
 pub use entity_fetch::{EntityFetch, RefreshError, RefreshSink};
 pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
-pub(crate) use load::Interest;
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
 pub use load_machine::{LoadError, LoadPhase, RelationState};
 pub use load_owner::RelationWatch;
@@ -372,7 +371,7 @@ impl Sync {
         let preloads = Arc::downgrade(&this.inner);
         this.inner.preload.attach(preloads.clone());
         let _ = this.inner.this.set(preloads.clone());
-        this.inner.owner.on_reload(Arc::new(move |target| { if let Some(inner) = preloads.upgrade() { inner.spawn_retry(target, load_machine::LoadKind::Refresh, false); } }));
+        this.inner.owner.on_reload(Arc::new(move |target, since| { if let Some(inner) = preloads.upgrade() { inner.spawn_retry(target, load_machine::LoadKind::Refresh, Some(since)); } }));
         if let Ok(session) = this.inner.transport.session() {
             if let Ok(admitted) = this.inner.db.admit() {
                 let _ = this.inner.db.shared.store.lifecycle.session_from(session, admitted);

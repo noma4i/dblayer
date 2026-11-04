@@ -43,7 +43,7 @@ impl Sync {
         let generation = self.inner.db.generation();
         for id in ids {
             let due = DueRefresh { model: model.into(), relation: relation.clone(), id: id.clone(), fetch, generation, cancel: cancel.clone(), sink: sink.clone(), session: false, admitted: admitted.clone() };
-            crate::task::spawn_on(crate::task::Carry::here(), &runtime, self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
+            crate::task::spawn_on(admitted.clone().into(), &runtime, self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
         }
         Ok(cancel)
     }
@@ -119,7 +119,7 @@ impl Inner {
         };
         let Ok(runtime) = Handle::try_current() else { return };
         for due in waiting.into_iter().filter(|due| !due.cancel.is_cancelled() && due.generation == self.db.generation()) {
-            crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(Sync::refresh_entity(self.clone(), due)));
+            crate::task::spawn_on(due.admitted.clone().into(), &runtime, self.until_closed(Sync::refresh_entity(self.clone(), due)));
         }
     }
 }

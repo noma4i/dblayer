@@ -23,6 +23,7 @@
 ### Changed
 - `Projected.loaded()` returns for any load error while rows exist; the state shows the error in the `Loaded` phase. It throws only in the `Failed` phase.
 - `Query.beginLoad` reads its arguments off the caller's thread; the interest of the caller exists when the call returns.
+- `Query.loadAll` gives up its pages when the caller's task or coroutine is cancelled. The core call is `Database.beginLoadAll`, which returns a `LoadRequest`; `Database.loadAll` is removed.
 - Core writes and transport calls carry one `Admitted` value from the calling database.
 - Requests, loads, uploads and subscriptions hold a lease that a session end, reset or close ends.
 - `sessionReset` and `close` are async and return after clearing; `sessionReset` clears the data.

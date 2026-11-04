@@ -40,7 +40,7 @@ impl Sync {
             self.inner.spawn_upload_housekeeping(true);
             self.inner.spawn_flush(Duration::ZERO);
             for (target, kind) in self.inner.owner.online() {
-                self.inner.spawn_retry(target, kind, true);
+                self.inner.spawn_retry(target, kind, None);
             }
             self.inner.resume_on_event();
             self.inner.preload_start();
@@ -107,8 +107,8 @@ impl Inner {
 }
 
 impl Inner {
-    /// Loads a window again in the session now. `force` loads also a fresh window; without it a window that another read already paid is skipped.
-    pub(super) fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind, force: bool) {
+    /// Loads a window again in the session now. Without a debt the read is forced. A debt is written to the store first, and the read is skipped when a request issued after the debt already read the window.
+    pub(super) fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind, debt: Option<i64>) {
         let Ok(runtime) = Handle::try_current() else { return };
         let Some(epoch) = self.waking_epoch() else { return };
         let admission = self.db.shared.store.lifecycle.admit_woken(crate::lifecycle::Origin::Session, "retry load", epoch);
@@ -117,6 +117,10 @@ impl Inner {
             let Some(admitted) = admission.await else { return };
             let Some(inner) = inner.upgrade() else { return };
             let Ok(resolved) = inner.resolve(crate::lifecycle::Origin::Session, &target.model, &target.relation, &target.params) else { return };
+            if let Some(since) = debt {
+                if inner.db.shared.store.invalidate_windows(&admitted.authority(), std::slice::from_ref(&resolved.window_key), since).is_err() { return; }
+            }
+            let force = debt.is_none();
             if resolved.members_complete || resolved.media.is_some() {
                 tokio::select! {
                     _ = inner.owner.unobserved(&resolved.window_key) => {},

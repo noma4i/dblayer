@@ -118,7 +118,7 @@ pub(crate) struct LoadOwner {
     outbox: OrderedEffects,
     next_flight: AtomicU64,
     epoch: AtomicU64,
-    reload: std::sync::OnceLock<Arc<dyn Fn(Target) + Send + Sync>>,
+    reload: std::sync::OnceLock<Arc<dyn Fn(Target, i64) + Send + Sync>>,
     #[cfg(test)]
     panic_window: Mutex<Option<String>>,
     #[cfg(test)]
@@ -167,7 +167,7 @@ impl LoadOwner {
     }
 
     /// Sets how a read that a window owes is started.
-    pub(crate) fn on_reload(&self, reload: Arc<dyn Fn(Target) + Send + Sync>) { let _ = self.reload.set(reload); }
+    pub(crate) fn on_reload(&self, reload: Arc<dyn Fn(Target, i64) + Send + Sync>) { let _ = self.reload.set(reload); }
 
     pub(crate) fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::SeqCst)
@@ -225,10 +225,10 @@ impl LoadOwner {
                         }
                     }
                     Effect::Retry { window, kind } => state.retries.push((window, kind)),
-                    Effect::Reload { window } => {
+                    Effect::Reload { window, since } => {
                         let observed = state.senders.get(&window).is_some_and(|sender| sender.receiver_count() > 0);
                         if let (true, Some(target), Some(reload)) = (observed, state.targets.get(&window).cloned(), self.reload.get().cloned()) {
-                            effects.push(move || reload(target));
+                            effects.push(move || reload(target, since));
                         }
                     }
                 }

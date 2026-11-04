@@ -99,6 +99,7 @@ struct Flight {
     node_reread: bool,
     cursor: Option<String>,
     force: bool,
+    generation: crate::identity::Generation,
 }
 
 pub(super) enum Executed {
@@ -249,8 +250,8 @@ impl Inner {
         Ok(Resolved { origin, media: declared.media.as_ref(), members_complete: declared.members_complete, node_reread: false, model: model.to_string(), relation: relation.to_string(), remote, operation, scope, window_key, params: params.clone(), scope_values, edge_fields: &declared.edge_fields })
     }
 
-    pub(crate) fn begin_attempt(&self, key: &str) -> Result<FetchAttempt, SyncError> {
-        let (generation, base_revision) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> { Ok((self.db.generation(), self.db.revision_seq()?)) })?;
+    pub(crate) fn begin_attempt(&self, key: &str, generation: crate::identity::Generation) -> Result<FetchAttempt, SyncError> {
+        let base_revision = crate::blocking::blocking_unit(|| self.db.revision_seq())?;
         Ok(FetchAttempt::new(key, self.next_issued()?, generation, base_revision))
     }
 
@@ -289,11 +290,6 @@ impl Inner {
             let Some(mut receiver) = pending else { break };
             let _ = receiver.wait_for(Option::is_some).await;
         }
-    }
-
-    pub(crate) async fn fetch_after_flights(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>) -> FlightResult {
-        self.flights_settled(resolved).await;
-        self.fetch(admitted, resolved, None, true).await
     }
 
     pub(crate) async fn fetch(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
@@ -353,16 +349,16 @@ impl Inner {
                         flights.waiting.insert(flight_key.clone(), sender.clone());
                         let token = flights.started;
                         flights.owners.insert(flight_key.clone(), (token, current));
-                        Ok((sender, token))
+                        Ok((sender, token, current))
                     }
                     FetchVerdict::AwaitInFlight => Err(flights.waiting.get(&flight_key).map(watch::Sender::subscribe)),
                     FetchVerdict::SkipFresh => Err(None),
                 }
             };
             let mut receiver = match verdict {
-                Ok((sender, token)) => {
+                Ok((sender, token, generation)) => {
                     let receiver = sender.subscribe();
-                    let flight = Flight { key: flight_key.clone(), token, origin: resolved.origin, model: resolved.model.clone(), relation: resolved.relation.clone(), params: resolved.params.clone(), node_reread: resolved.node_reread, cursor: cursor.clone(), force };
+                    let flight = Flight { key: flight_key.clone(), token, origin: resolved.origin, model: resolved.model.clone(), relation: resolved.relation.clone(), params: resolved.params.clone(), node_reread: resolved.node_reread, cursor: cursor.clone(), force, generation };
                     let task = crate::task::spawn(lease.clone().into(), this.clone().fly(flight, sender, lease.clone()));
                     locked(&self.flights).tasks.insert(flight_key.clone(), (token, task.abort_handle()));
                     receiver
@@ -395,7 +391,7 @@ impl Inner {
         let seed = match self.stored(&resolved) { Ok(seed) => seed, Err(error) => return guard.finish(Err(error)) };
         let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), flight.cursor.is_some(), seed);
         let ticket = if resolved.media.is_some() { ticket.cancel_failed() } else { ticket };
-        let executed = Box::pin(self.execute_bound(&resolved, flight.cursor, flight.force, &lease)).await;
+        let executed = Box::pin(self.execute_bound(&resolved, flight.cursor, flight.force, &lease, flight.generation)).await;
         let result = match executed {
             Executed::Landed(outcome, revision) => {
                 match outcome.status {
@@ -419,23 +415,23 @@ impl Inner {
         guard.finish(result);
     }
 
-    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted) -> Executed {
-        match lease.run(self.execute(lease, resolved, cursor, force)).await {
+    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted, generation: crate::identity::Generation) -> Executed {
+        match lease.run(self.execute(lease, resolved, cursor, force, generation)).await {
             Ok(executed) => executed,
             Err(ended) => Executed::Failed(ended.into()),
         }
     }
 
-    async fn execute(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> Executed {
-        let loaded = if let Some(media) = resolved.media { self.media_load(admitted, resolved, media).await } else { self.run(admitted, resolved, cursor, force).await };
+    async fn execute(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, generation: crate::identity::Generation) -> Executed {
+        let loaded = if let Some(media) = resolved.media { self.media_load(admitted, resolved, media, generation).await } else { self.run(admitted, resolved, cursor, force, generation).await };
         match loaded {
             Ok(executed) => executed,
             Err(error) => Executed::Failed(error),
         }
     }
 
-    async fn run(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool) -> Result<Executed, SyncError> {
-        let attempt = self.begin_attempt(&resolved.window_key)?;
+    async fn run(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool, generation: crate::identity::Generation) -> Result<Executed, SyncError> {
+        let attempt = self.begin_attempt(&resolved.window_key, generation)?;
         let has_window = crate::blocking::blocking_unit(|| self.db.shared.store.window(&resolved.window_key))?.is_some();
         let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);

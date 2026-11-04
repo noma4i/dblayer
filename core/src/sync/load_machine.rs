@@ -285,7 +285,7 @@ impl WindowFacts {
                     self.retry_on_online = None;
                     self.needs = self.needs.max(stored.as_ref().map_or(0, |stored| stored.revision));
                     self.accept(stored);
-                    if self.stale_since.is_some() && self.flights.is_empty() { context.effects.push(Effect::Reload { window: self.window.clone() }); }
+                    if let (Some(since), true) = (self.stale_since, self.flights.is_empty()) { context.effects.push(Effect::Reload { window: self.window.clone(), since }); }
                 }
             }
             Event::Discarded { flight, .. } | Event::Abandoned { flight, .. } => {
@@ -330,8 +330,9 @@ impl WindowFacts {
             Event::ReadFailed { error, .. } => self.read_error = Some(error.clone()),
             Event::Stale { since, .. } => {
                 if self.order.applied < *since {
-                    self.stale_since = Some(self.stale_since.map_or(*since, |old| old.max(*since)));
-                    if self.flights.is_empty() { context.effects.push(Effect::Reload { window: self.window.clone() }); }
+                    let owed = self.stale_since.map_or(*since, |old| old.max(*since));
+                    self.stale_since = Some(owed);
+                    if self.flights.is_empty() { context.effects.push(Effect::Reload { window: self.window.clone(), since: owed }); }
                 }
             }
             Event::StaleFamily { .. } => {}
@@ -457,8 +458,8 @@ impl Event {
 pub(crate) enum Effect {
     Publish { window: String, state: Box<RelationState> },
     Retry { window: String, kind: LoadKind },
-    /// The window owes a read that only a request issued after its debt pays. The owner starts it while the window is observed.
-    Reload { window: String },
+    /// The window owes a read that only a request issued after `since` pays. The owner writes the debt to the store and starts the read while the window is observed.
+    Reload { window: String, since: i64 },
 }
 
 #[derive(Default)]

@@ -498,12 +498,20 @@ impl Database {
         let scopes: Vec<String> = failures.iter().map(|failure| format!("{}.{} {}: {}", failure.model, failure.relation, serde_json::Value::Object(failure.params.clone()), failure.error)).collect();
         Err(DbError::Sync { detail: format!("{} preload scopes failed to refresh: {}", scopes.len(), scopes.join("; ")) })
     }
-    pub async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
+    /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
+    pub fn begin_load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "load all", move |admitted| async move {
-            let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.load_all(&admitted, &model, &relation, &params, LoadOptions { force }).await?)
-        }).await
+        drop(self.acquire(crate::lifecycle::Origin::Explicit, epoch, "load all")?);
+        let (sender, outcome) = tokio::sync::watch::channel(None);
+        let this = self.clone();
+        let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
+            let result = this.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "load all", true, |admitted| async move {
+                let params: Map<String, Value> = serde_json::from_str(&params_json)?;
+                Ok::<_, DbError>(sync.load_all(&admitted, &model, &relation, &params, LoadOptions { force }).await?)
+            }).await;
+            crate::db::lock::effect(|| sender.send_replace(Some(result)));
+        });
+        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
     }
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.require_online(&format!("{model}.{relation} load more"))?;
@@ -675,6 +683,11 @@ impl Database {
         let mut finished = self.streams.close();
         if let Some(sync) = &self.sync { finished &= sync.close(); }
         finished
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
+        self.begin_load_all(epoch, model, relation, params_json, force)?.result().await
     }
 
     /// The part of `close` that does not wait: for a caller that cannot await.

@@ -127,7 +127,8 @@ public struct Query<Model: DBModel>: Sendable {
   /// Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force: false` uses the current freshness and the pages that are stored, `force: true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation shares its page requests. It throws when a page fails, when `max_pages` stops it before the end, or when the query has no remote relation. It does not make the pages atomic: rows of earlier pages stay after a failure.
   @concurrent public func loadAll(force: Bool = false, in scope: AccountScope? = nil) async throws {
     let (database, epoch) = try DB.admitted(scope)
-    try await database.loadAll(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, force: force)
+    let request = try database.beginLoadAll(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, force: force)
+    try await withTaskCancellationHandler { try await request.result() } onCancel: { request.cancel() }
   }
   @discardableResult @concurrent public func loadMore(in scope: AccountScope? = nil) async throws -> LoadMoreResult {
     let (database, epoch) = try DB.admitted(scope)

@@ -40,7 +40,11 @@ impl Inner {
             let result = async {
                 if only_stale && !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.stale_since.is_some()) { return Ok(false); }
                 let resolved = self.resolve(crate::lifecycle::Origin::Session, model, &relation, &params)?;
-                let outcome = if only_stale { self.fetch_after_flights(admitted, &resolved).await? } else { self.fetch(admitted, &resolved, None, false).await? };
+                let outcome = if only_stale {
+                    self.flights_settled(&resolved).await;
+                    if !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.stale_since.is_some()) { return Ok(false); }
+                    self.fetch(admitted, &resolved, None, true).await?
+                } else { self.fetch(admitted, &resolved, None, false).await? };
                 if let Some(error) = outcome.kept_error { return Err(error); }
                 Ok(true)
             }.await;
@@ -54,9 +58,10 @@ impl Inner {
 }
 
 impl Inner {
-    pub(crate) async fn expire_and_reload_watched(&self, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<usize, SyncError> {
+    pub(crate) async fn expire_and_reload_watched(&self, admitted: &crate::lifecycle::Admitted, model: &str, since: Option<i64>) -> Result<usize, SyncError> {
         let keys: Vec<String> = self.db.observed_reads().into_iter().filter(|entry| entry.model == model).map(|entry| entry.key).collect();
-        self.db.shared.store.invalidate_windows(&admitted.authority(), &keys, self.next_issued()?)?;
+        let since = match since { Some(since) => since, None => self.next_issued()? };
+        self.db.shared.store.invalidate_windows(&admitted.authority(), &keys, since)?;
         self.reload_watched(admitted, model, None, true).await
     }
 }

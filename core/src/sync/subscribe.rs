@@ -174,6 +174,14 @@ struct Feed {
 struct LostEvents {
     held: bool,
     reload: bool,
+    since: Option<i64>,
+}
+
+impl LostEvents {
+    fn owe(&mut self, since: Option<i64>) {
+        self.reload = true;
+        self.since = self.since.max(since);
+    }
 }
 
 impl Feed {
@@ -187,20 +195,21 @@ impl Feed {
     }
 
     async fn reload_lost(&self) -> bool {
-        {
+        let since = {
             let mut lost = crate::db::locked(&self.lost);
             if !std::mem::take(&mut lost.reload) { return false; }
-        }
+            lost.since.take()
+        };
         let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
         let mut failed = false;
         for model in models {
-            if self.now().scope(self.inner.expire_and_reload_watched(&self.epoch, &model)).await.is_err() {
+            if self.now().scope(self.inner.expire_and_reload_watched(&self.epoch, &model, since)).await.is_err() {
                 self.inner.publish_model_gap(&model);
                 locked(&self.status).rejected += 1;
                 failed = true;
             }
         }
-        if failed { crate::db::locked(&self.lost).reload = true; }
+        if failed { crate::db::locked(&self.lost).owe(since); }
         true
     }
 
@@ -209,19 +218,20 @@ impl Feed {
     }
 
     fn lose_superseded(&self) {
-        if !self.epoch.life().admits_epoch(self.epoch.value()) { crate::db::locked(&self.lost).reload = true; }
+        if !self.epoch.life().admits_epoch(self.epoch.value()) { crate::db::locked(&self.lost).owe(self.inner.next_issued().ok()); }
     }
 
     fn lose_queued(&self, connection: Option<ServerSubscription>, change: &Option<crate::lifecycle::Invalidated>) {
         let rebound = matches!(change, Some(crate::lifecycle::Invalidated::Rebound));
         let queued = connection.is_some_and(|mut connection| rebound && connection.take_queued_responses());
+        let since = if rebound { self.inner.next_issued().ok() } else { None };
         let mut lost = crate::db::locked(&self.lost);
         let held = std::mem::take(&mut lost.held);
         if !rebound {
             *lost = LostEvents::default();
             return;
         }
-        lost.reload |= held || queued;
+        if held || queued { lost.owe(since); }
     }
 
     fn mark(&self, change: impl FnOnce(&mut SubscriptionStatus)) {
@@ -663,16 +673,19 @@ impl Feed {
         pending.into_iter().flat_map(|(_, _, items)| items).collect()
     }
 
-    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation) -> (SubscriptionFailureKind, Option<SubscriptionFailure>, Vec<Pending>) {
+    /// Reads the connection until it ends or the session moves. A change of the session is taken only between events: the event in hand is applied or recovered to its end.
+    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation, resets: &mut crate::lifecycle::Watch) -> Pumped {
         let mut pending: Vec<(Arc<SubscriptionDef>, Duration, Vec<Pending>)> = Vec::new();
         loop {
             let deadline = pending.iter().map(|(_, deadline, _)| *deadline).min();
             let wait = deadline.unwrap_or_default().saturating_sub(self.inner.clock.now());
             tokio::select! {
+                biased;
+                change = invalidated(resets) => return Pumped::Invalidated(change),
                 event = connection.next() => match event {
                     None => {
                         self.opening(Err(SyncError::Event("subscription closed".into())));
-                        return (SubscriptionFailureKind::Transport, None, Self::drain(pending));
+                        return Pumped::Ended(SubscriptionFailureKind::Transport, None, Self::drain(pending));
                     }
                     Some(SubscriptionEvent::Ready) => {
                         if generation != self.inner.db.generation() { continue; }
@@ -715,7 +728,7 @@ impl Feed {
                         }
                         self.apply_active(items).await;
                     }
-                    Some(SubscriptionEvent::Failed(failure)) => return (failure.kind, Some(failure), Self::drain(pending)),
+                    Some(SubscriptionEvent::Failed(failure)) => return Pumped::Ended(failure.kind, Some(failure), Self::drain(pending)),
                 },
                 _ = self.inner.clock.sleep(wait), if deadline.is_some() => {
                     let mut items = Vec::new();
@@ -779,15 +792,14 @@ impl Feed {
                         }
                     }
                     lifecycle.handle(Event::Connected);
-                    tokio::select! {
-                        biased;
-                        change = invalidated(&mut resets) => {
+                    match self.pump(&mut connection, &mut lifecycle, generation, &mut resets).await {
+                        Pumped::Invalidated(change) => {
                             self.lose_queued(Some(connection), &change);
                             self.mark(|status| status.connected = false);
                             lifecycle = Lifecycle::new(self.backoff);
                             continue 'open;
                         }
-                        ended = self.pump(&mut connection, &mut lifecycle, generation) => ended,
+                        Pumped::Ended(kind, failure, leftover) => (kind, failure, leftover),
                     }
                 }
                 Err(error) => {
@@ -812,6 +824,11 @@ impl Feed {
             }
         }
     }
+}
+
+enum Pumped {
+    Ended(SubscriptionFailureKind, Option<SubscriptionFailure>, Vec<Pending>),
+    Invalidated(Option<crate::lifecycle::Invalidated>),
 }
 
 async fn invalidated(resets: &mut crate::lifecycle::Watch) -> Option<crate::lifecycle::Invalidated> {
