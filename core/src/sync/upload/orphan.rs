@@ -43,7 +43,7 @@ impl Inner {
         Ok(())
     }
 
-    async fn abort_orphan_uploads(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+    pub(super) async fn abort_orphan_uploads(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
         let _draining = self.upload_orphan_gate.lock().await;
         if !self.connectivity.is_online() { return Ok(()); }
         let shared = self.db.shared.clone();

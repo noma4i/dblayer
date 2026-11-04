@@ -22,7 +22,7 @@ enum Phase {
 enum RoundEvent {
     Restore,
     Accept(UploadAccepted),
-    Begin,
+    Begin(u64),
     Next(u32),
     Leave(u32),
     End(u32),
@@ -44,6 +44,7 @@ struct Cover {
     accepted: u64,
     seen: u64,
     round: u32,
+    epoch: u64,
     phase: Phase,
     late: Vec<UploadAccepted>,
     reply: Reply,
@@ -54,9 +55,10 @@ impl Cover {
         owner == self.round
     }
 
-    fn start(&mut self) -> Outcome<State> {
+    fn start(&mut self, epoch: u64) -> Outcome<State> {
         self.seen = self.accepted;
         self.round += 1;
+        self.epoch = epoch;
         self.reply = Reply::Began(Some(self.round));
         Transition(State::running())
     }
@@ -116,7 +118,7 @@ impl RoundFlow {
                 context.reply = Reply::Accepted(true);
                 Handled
             }
-            RoundEvent::Begin => context.start(),
+            RoundEvent::Begin(epoch) => context.start(*epoch),
             _ => Super,
         }
     }
@@ -124,12 +126,18 @@ impl RoundFlow {
     #[state(superstate = "any")]
     fn running(context: &mut Cover, event: &RoundEvent) -> Outcome<State> {
         match event {
+            RoundEvent::Accept(group) if group.epoch != context.epoch => {
+                context.accepted += 1;
+                context.round += 1;
+                context.reply = Reply::Accepted(true);
+                Transition(State::idle())
+            }
             RoundEvent::Accept(_) => {
                 context.accepted += 1;
                 context.reply = Reply::Accepted(false);
                 Handled
             }
-            RoundEvent::Begin => {
+            RoundEvent::Begin(_) => {
                 context.reply = Reply::Began(None);
                 Handled
             }
@@ -153,7 +161,10 @@ impl RoundFlow {
                 context.reply = Reply::Accepted(true);
                 Handled
             }
-            RoundEvent::Begin => context.start(),
+            RoundEvent::Begin(_) => {
+                context.reply = Reply::Began(None);
+                Handled
+            }
             RoundEvent::Next(owner) if context.owns(*owner) => context.step(),
             RoundEvent::Leave(owner) if context.owns(*owner) => context.leave(),
             RoundEvent::End(owner) if context.owns(*owner) => {
@@ -193,8 +204,8 @@ impl UploadRound {
         matches!(self.send(RoundEvent::Accept(group)), Reply::Accepted(true))
     }
 
-    pub(crate) fn begin(&mut self) -> Option<u32> {
-        match self.send(RoundEvent::Begin) {
+    pub(crate) fn begin(&mut self, epoch: u64) -> Option<u32> {
+        match self.send(RoundEvent::Begin(epoch)) {
             Reply::Began(owner) => owner,
             _ => None,
         }
@@ -242,7 +253,7 @@ impl Db {
     }
 
     pub fn round_begin(&self, admitted: &crate::lifecycle::Admitted) -> Result<Option<u32>, super::DbError> {
-        self.change_round(admitted, UploadRound::begin)
+        self.change_round(admitted, |round| round.begin(admitted.value()))
     }
 
     pub fn round_next(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<RoundStep, super::DbError> {

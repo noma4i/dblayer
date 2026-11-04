@@ -19,7 +19,7 @@ private class HeldUploadTransport(val base: MockTransport = MockTransport()) : T
     val released = CompletableDeferred<Unit>()
     val finished = CompletableDeferred<Unit>()
 
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, tag: String, progress: ByteProgress): PutReply {
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         try {
             arrived.complete(Unit)
             released.await()

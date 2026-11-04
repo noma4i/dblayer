@@ -103,6 +103,7 @@ struct ActiveRun {
 }
 
 struct ReadyRun {
+    mode: RunMode,
     resumed: Option<Result<crate::transport::Response, crate::transport::TransportError>>,
 }
 
@@ -214,9 +215,9 @@ impl Inner {
         for (position, mode) in ready {
             let key = (seq, position);
             if runs.active.contains_key(&key) { continue; }
-            let pending = previous.remove(&key).unwrap_or(ReadyRun { resumed: None });
+            let pending = previous.remove(&key).unwrap_or(ReadyRun { mode, resumed: None });
             if matches!(mode, RunMode::Transfer) {
-                runs.ready.insert(key, pending);
+                runs.ready.insert(key, ReadyRun { mode, resumed: pending.resumed });
             } else {
                 self.launch_run(&mut runs, seq, position, mode, pending.resumed);
             }
@@ -319,13 +320,18 @@ impl Inner {
 
     fn finish_run(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, seq: i64, position: i64, run: u64) {
         if !self.with_uploads(|runs, effects| runs.finish(seq, position, run, effects)) { return; }
-        let retry = (|| -> Result<(), SyncError> {
+        let retry = {
+            let life = &self.db.shared.store.lifecycle;
+            let _line = life.commit_line();
+            if !admitted.is_current() { return; }
+            (|| -> Result<(), SyncError> {
             let retried = locked(self.operation_queue()?).entries.get(&seq).is_some_and(|entry| entry.uploading && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation));
             if !retried { return Ok(()); }
             let unfinished = self.operation_uploads(seq)?.remove(&(seq, position)).is_some_and(|state| state.awaits_transfer());
-            if unfinished { locked(&self.uploads).ready.entry((seq, position)).or_insert(ReadyRun { resumed: None }); }
+            if unfinished { locked(&self.uploads).ready.entry((seq, position)).or_insert(ReadyRun { mode: RunMode::Transfer, resumed: None }); }
             Ok(())
-        })();
+            })()
+        };
         if let Err(error) = retry {
             self.fail_upload(admitted, seq, error);
         }
@@ -340,7 +346,7 @@ impl Inner {
             let mut runs = locked(&self.uploads);
             if runs.active.contains_key(&(seq, position)) { return Ok(()); }
             if matches!(mode, RunMode::Transfer) {
-                runs.ready.insert((seq, position), ReadyRun { resumed: None });
+                runs.ready.insert((seq, position), ReadyRun { mode: RunMode::Transfer, resumed: None });
             } else {
                 self.launch_run(&mut runs, seq, position, mode, None);
             }
@@ -352,10 +358,13 @@ impl Inner {
     fn drain_uploads(self: &Arc<Self>) {
         let mut runs = locked(&self.uploads);
         if !self.admitted(crate::lifecycle::Origin::Session) { return; }
-        while runs.active_files < runs.max_files {
-            let Some(((seq, position), pending)) = runs.ready.pop_first() else { break };
+        loop {
+            let available = runs.active_files < runs.max_files;
+            let Some(key) = runs.ready.iter().find(|(_, pending)| available || pending.mode != RunMode::Transfer).map(|(key, _)| *key) else { break };
+            let Some(pending) = runs.ready.remove(&key) else { continue };
+            let (seq, position) = key;
             if runs.active.contains_key(&(seq, position)) { continue; }
-            self.launch_run(&mut runs, seq, position, RunMode::Transfer, pending.resumed);
+            self.launch_run(&mut runs, seq, position, pending.mode, pending.resumed);
         }
     }
 
@@ -462,22 +471,26 @@ impl Inner {
         };
         let Some(state) = state else { return };
         let mode = state.resume_mode();
-        let mut parked = false;
-        let resumed = self.with_uploads(|runs, effects| {
-            if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) { return false; }
-            if let Some(active) = runs.active.remove(&(seq, owner.position)) { effects.push(move || { crate::db::lock::effect(|| active.done.send_replace(true)); }); }
-            if !self.admitted(crate::lifecycle::Origin::Session) {
-                parked = true;
-                return false;
-            }
-            if matches!(mode, RunMode::Transfer) {
-                runs.ready.insert((seq, owner.position), ReadyRun { resumed: Some(result) });
+        let resumed = {
+            let life = &self.db.shared.store.lifecycle;
+            let _line = life.commit_line();
+            let mut effects = Effects::default();
+            let mut runs = locked(&self.uploads);
+            let resumed = if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) {
+                false
             } else {
-                self.launch_run(runs, seq, owner.position, mode, Some(result));
+            if let Some(active) = runs.active.remove(&(seq, owner.position)) { effects.push(move || { crate::db::lock::effect(|| active.done.send_replace(true)); }); }
+            if !owner.admitted.is_current() {
+                false
+            } else {
+                runs.ready.insert((seq, owner.position), ReadyRun { mode, resumed: Some(result) });
+                true
             }
-            true
-        });
-        if parked { self.restart_uploads([seq]); }
+            };
+            self.upload_effects.push(effects);
+            resumed
+        };
+        self.upload_effects.run();
         if resumed { self.drain_uploads(); }
     }
 }
@@ -486,6 +499,7 @@ impl Sync {
     pub async fn resume_uploads(&self, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
         self.inner.require_session(admitted)?;
         admitted.run(async {
+            self.inner.abort_orphan_uploads(admitted).await?;
             self.inner.start_uploads()?;
             self.wait_uploads().await;
             Ok(())

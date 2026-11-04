@@ -270,7 +270,7 @@ async fn changed_session_table_ddl_migrates_the_sequence_and_complete_pending_re
     let client = session_at_seven(&rig, &db).await;
     rig.server.lose_next_answer();
     let owner = crate::transport::RequestOwner::Operation { seq: 4 };
-    assert!(client.mutate_owned(&client.admit("test call").unwrap(), GRAPHQL, json!({ "query": "mutation { pending }" }), Some(owner), crate::transport::NetworkPurpose::Transfer).await.is_err());
+    assert!(client.mutate_owned(&client.admit("test mutation").unwrap(), GRAPHQL, json!({ "query": "mutation { pending }" }), Some(owner), crate::transport::NetworkPurpose::Transfer).await.is_err());
     let before = (rows(&db), rig.credentials.inner.value(), rig.touched());
     db.shared.store.lock().connection.execute_batch(
         "ALTER TABLE encrypted_session ADD COLUMN retired TEXT;

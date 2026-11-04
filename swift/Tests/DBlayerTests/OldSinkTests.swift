@@ -18,7 +18,7 @@ private final class OldSinkTransport: Transport, @unchecked Sendable {
     opened.continuation.yield(sink)
   }
   func unsubscribe(token: String) { base.unsubscribe(token: token); closed.continuation.yield(token) }
-  func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply { try await base.put(url: url, headers: headers, file: file, tag: tag, progress: progress) }
+  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply { try await base.put(url: url, headers: headers, file: file, identity: identity, progress: progress) }
 }
 
 private final class IgnoredSink: ValueSink {

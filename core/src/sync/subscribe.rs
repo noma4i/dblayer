@@ -704,6 +704,10 @@ impl Feed {
                             }
                         }
                     }
+                    Some(SubscriptionEvent::Lost { .. }) => {
+                        crate::db::locked(&self.lost).reload = true;
+                        self.reload_lost().await;
+                    }
                     Some(SubscriptionEvent::Next(response)) => {
                         if generation != self.inner.db.generation() { continue; }
                         let _frame = self.epoch.life().admit_session_at(crate::lifecycle::Origin::Session, "subscription frame", self.epoch.value()).ok();

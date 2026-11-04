@@ -68,9 +68,9 @@ async fn resume_does_not_repeat_a_step_owned_by_an_active_upload() {
         }
     });
     let input = UploadFile::new(source.to_str().unwrap());
-    crate::sync::rig::app(&sync, sync.upload(&database.db.admit().unwrap(), "Moment", &crate::identity::RowId::new("42").unwrap(), "upload", input)).await.unwrap();
-    within(lost.notified()).await;
     let admitted = database.db.admit().unwrap();
+    crate::sync::rig::app(&sync, sync.upload(&admitted, "Moment", &crate::identity::RowId::new("42").unwrap(), "upload", input)).await.unwrap();
+    within(lost.notified()).await;
     let mut resume = Box::pin(super::encrypted::resume(&admitted, database.session.clone().unwrap(), Some(sync.clone())));
     assert!(resume.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     sync.set_online(true);

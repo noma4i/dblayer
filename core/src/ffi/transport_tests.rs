@@ -87,7 +87,8 @@ impl super::Transport for FloodSubscription {
 async fn subscription_overflow_reports_the_lost_range_before_failure() {
     use crate::transport::Transport;
     let transport = super::ForeignTransport(Arc::new(FloodSubscription));
-    let mut subscription = within(transport.subscribe(request())).await.unwrap();
+    let admitted = test_admission();
+    let mut subscription = within(transport.subscribe(&admitted, request())).await.unwrap();
     assert_eq!(within(subscription.next()).await, Some(SubscriptionEvent::Ready));
     for number in 1..=255 {
         let Some(SubscriptionEvent::Next(response)) = within(subscription.next()).await else { panic!("missing event {number}") };

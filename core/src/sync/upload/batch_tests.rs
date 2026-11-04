@@ -584,7 +584,7 @@ async fn a_batch_item_that_fails_while_its_request_is_pending_is_aborted_once_th
         if call.operation_name != "Presign" { return None; }
         let seq: i64 = pending.shared.store.lock().connection.query_row("SELECT seq FROM op", [], |row| row.get(0)).unwrap();
         let position = 0;
-        pending.shared.store.lock().connection.execute("INSERT OR REPLACE INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage) VALUES (1, 'd', 'r', 'k', 1, '/graphql', '{}', ?1, ?2, 'presign')", rusqlite::params![seq, position]).unwrap();
+        pending.shared.store.lock().connection.execute("INSERT OR REPLACE INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose) SELECT 1, 'd', 'r', 'k', 1, '/graphql', '{}', 'transfer', transfer_operation_id, client_key, 'presign', 1 FROM op_item WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position]).unwrap();
         Some(crate::transport::Reply::graphql_error("denied", "FORBIDDEN"))
     });
     let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();

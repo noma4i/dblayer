@@ -17,7 +17,7 @@ private final class HeldUploadTransport: Transport, @unchecked Sendable {
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }
   func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { try await base.subscribe(request: request, sink: sink) }
   func unsubscribe(token: String) { base.unsubscribe(token: token) }
-  func put(url: String, headers: [String: String], file: PutFile, tag: String, progress: ByteProgress) async throws -> PutReply {
+  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     defer { finished.continuation.yield(()) }
     arrived.continuation.yield(())
     _ = await Cursor(released.stream).next("the held upload is released")
