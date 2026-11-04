@@ -74,11 +74,11 @@ async fn resume_drop_completes_waiters() {
     let inner = rig.sync.inner.clone();
     let (current_sender, current_receiver) = oneshot::channel();
     let (queued_sender, queued_receiver) = oneshot::channel();
-    let runner = inner.begin_resume(Cause::Explicit, Some(current_sender)).expect("the first request starts a runner");
-    assert!(inner.begin_resume(Cause::Explicit, Some(queued_sender)).is_none());
+    let runner = inner.begin_resume(&inner.db.admit().unwrap(), Cause::Explicit, Some(current_sender)).expect("the first request starts a runner");
+    assert!(inner.begin_resume(&inner.db.admit().unwrap(), Cause::Explicit, Some(queued_sender)).is_none());
     drop(runner);
     assert_eq!(within_secs(30, current_receiver).await, Ok(Err(SyncError::Cancelled)));
     assert_eq!(within_secs(30, queued_receiver).await, Ok(Err(SyncError::Cancelled)));
     within_secs(30, inner.db.shared.store.lifecycle.settled()).await;
-    assert!(inner.begin_resume(Cause::Event, None).is_some(), "the owner accepts a new resume after the abandoned one");
+    assert!(inner.begin_resume(&inner.db.admit().unwrap(), Cause::Event, None).is_some(), "the owner accepts a new resume after the abandoned one");
 }

@@ -11,7 +11,7 @@ async fn uploaded_with_answer(answer: Reply) -> (Rig, tempfile::NamedTempFile) {
     rig.transport.enqueue("CreateMoment", answer);
     rig.transport.enqueue("CreateMoment", created("m9"));
     let source = file(b"abcdef");
-    crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", input(&source))).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     rig.sync.wait_uploads().await;
     (rig, source)
 }
@@ -23,7 +23,7 @@ async fn inv_upload_03_an_event_showing_the_applied_effect_does_not_lift_failed_
         (Reply::graphql_error("nope", "FORBIDDEN"), SyncState::Failed, UploadStatus::Failed),
     ] {
         let (rig, _source) = uploaded_with_answer(answer).await;
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
         rig.sync.wait_uploads().await;
         assert_eq!((rig.db.sync_info("moments", &rid("m1")).unwrap().state, upload_of(&rig, "m1").unwrap().status), (state, status));
         put(&rig, "moments", moment("m1", "clip"));
@@ -31,9 +31,9 @@ async fn inv_upload_03_an_event_showing_the_applied_effect_does_not_lift_failed_
         assert_eq!((rig.db.sync_info("moments", &rid("m1")).unwrap().state, upload_of(&rig, "m1").unwrap().status), (state, status));
         assert_eq!(rig.db.outbox().unwrap().len(), 1);
         if status == UploadStatus::Failed {
-            assert_eq!(rig.db.as_app().discard("moments", &rid("m1"), None).unwrap(), 1);
+            assert_eq!(rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), None).unwrap(), 1);
         } else {
-            crate::sync::rig::app(&rig.sync, rig.sync.retry("moments", &rid("m1"), None)).await.unwrap();
+            crate::sync::rig::app(&rig.sync, rig.sync.retry(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), None)).await.unwrap();
             rig.sync.wait_uploads().await;
         }
         assert!(rig.db.outbox().unwrap().is_empty(), "{status:?} left {:?}", rig.db.outbox().unwrap());

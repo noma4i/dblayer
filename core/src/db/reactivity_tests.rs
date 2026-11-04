@@ -20,7 +20,7 @@ fn feed() -> ScopeRef {
 fn land_scope(db: &Db, scope_ops: Vec<ScopeOp>) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops = scope_ops;
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
 }
 
@@ -37,7 +37,7 @@ fn inv_observe_07_changing_an_included_author_wakes_the_observer_of_moments() {
     db.await_revision(db.revision_seq().unwrap());
     let first = changes(&log);
     assert_eq!(first[0].related["author"][&rid("m1")][0].text("name"), Some("Ann"));
-    db.as_app().update("users", &rid("u1"), obj(json!({"name": "Zed"}))).unwrap();
+    db.update(&db.admit().unwrap(), "users", &rid("u1"), obj(json!({"name": "Zed"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let all = changes(&log);
     assert_eq!(all.len(), 2);
@@ -114,10 +114,10 @@ fn observe_row_follows_one_row() {
     let reads = db.counters().observation_reads;
     put(&db, "moments", json!({"id": "m2", "userId": "u2", "text": "other row"}));
     assert_eq!(db.counters().observation_reads, reads);
-    db.as_app().update("moments", &rid("m1"), obj(json!({"text": "changed"}))).unwrap();
+    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "changed"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(texts(&changes(&log)[1]), ["changed"]);
-    db.as_app().destroy("moments", &rid("m1")).unwrap();
+    db.destroy(&db.admit().unwrap(), "moments", &rid("m1")).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let last = changes(&log).pop().unwrap();
     assert!(last.rows.is_empty());
@@ -134,7 +134,7 @@ fn observe_count_delivers_only_when_the_count_changes() {
     let _subscription = db.observe_count(query, move |change| sink.lock().unwrap().push((change.revision, change.count))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     put(&db, "moments", json!({"id": "m3", "userId": "u1", "text": "three"}));
-    db.as_app().update("moments", &rid("m1"), obj(json!({"userId": "u2"}))).unwrap();
+    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"userId": "u2"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(counts.lock().unwrap().iter().map(|(_, count)| *count).collect::<Vec<_>>(), [1]);
     put(&db, "moments", json!({"id": "m4", "userId": "u1", "text": "one"}));
@@ -146,14 +146,14 @@ fn observe_count_delivers_only_when_the_count_changes() {
 #[test]
 fn inv_id_04_a_temp_id_swap_arrives_as_replaced() {
     let db = booted();
-    let temp = db.as_app().create("moments", obj(json!({"text": "new"}))).unwrap();
+    let temp = db.create(&db.admit().unwrap(), "moments", obj(json!({"text": "new"}))).unwrap();
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: DestroyReason::Replaced { by: rid("m7") } });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let all = changes(&log);
     assert_eq!(all.len(), 2);
@@ -174,7 +174,7 @@ fn inv_observe_04_destroying_a_parent_is_one_delivery_per_observer_with_one_revi
         })
         .collect();
     db.await_revision(db.revision_seq().unwrap());
-    db.as_app().destroy("users", &rid("u1")).unwrap();
+    db.destroy(&db.admit().unwrap(), "users", &rid("u1")).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let revisions: Vec<i64> = observed
         .iter()
@@ -203,7 +203,7 @@ fn a_thousand_subscribers_cost_at_most_one_read_per_commit() {
     for number in 0..100 {
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{number}")), row: obj(json!({"id": format!("m{number}"), "userId": "u1", "text": "t"})) });
-        db.as_app().land(envelope).unwrap();
+        db.land(&db.admit().unwrap(), envelope).unwrap();
     }
     db.await_revision(db.revision_seq().unwrap());
     assert!(db.counters().observation_reads - reads <= 100);
@@ -238,7 +238,7 @@ fn inv_observe_03_a_slow_observer_gets_the_newest_position_after_older_ones_wait
         let row = obj(json!({"id": format!("m{number}"), "userId": "u1", "text": "t"}));
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{number}")), row });
-        db.as_app().land(envelope).unwrap();
+        db.land(&db.admit().unwrap(), envelope).unwrap();
     }
     let newest = db.revision_seq().unwrap();
     while fast.recv_timeout(WAIT).unwrap() < newest {}
@@ -284,11 +284,11 @@ fn inv_observe_13_commits_behind_a_busy_listener_arrive_as_one_delivery_that_hol
     for _ in 0..100 {
         let (id, row) = random_row(&mut seed, 14);
         if seed.below(4) == 0 {
-            let _ = db.as_app().destroy("moments", &rid(&id));
+            let _ = db.destroy(&db.admit().unwrap(), "moments", &rid(&id));
         } else {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
             envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&id), row });
-            db.as_app().land(envelope).unwrap();
+            db.land(&db.admit().unwrap(), envelope).unwrap();
         }
     }
     let last = db.revision_seq().unwrap();
@@ -325,7 +325,7 @@ fn a_cancelled_subscription_gets_no_call_after_the_cancel_returns() {
     db.await_revision(db.revision_seq().unwrap());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m1"), row: obj(json!({"id": "m1", "userId": "u1", "text": "one"})) });
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     entered.recv_timeout(WAIT).unwrap();
     drop(subscription);
     release.send(()).unwrap();
@@ -359,7 +359,7 @@ fn inv_observe_09_a_slow_listener_does_not_hold_back_the_others_and_gets_the_lat
     for number in 0..3 {
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{number}")), row: obj(json!({"id": format!("m{number}"), "userId": "u1", "text": "t"})) });
-        db.as_app().land(envelope).unwrap();
+        db.land(&db.admit().unwrap(), envelope).unwrap();
         if number == 0 {
             entered.recv_timeout(WAIT).unwrap();
         }
@@ -419,27 +419,27 @@ fn work(db: Db, seed_value: u64) {
             0 => {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
                 envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&id), row });
-                db.as_app().land(envelope).unwrap();
+                db.land(&db.admit().unwrap(), envelope).unwrap();
             }
             1 => {
-                let _ = db.as_app().update("moments", &rid(&id), obj(json!({"text": row["text"]})));
+                let _ = db.update(&db.admit().unwrap(), "moments", &rid(&id), obj(json!({"text": row["text"]})));
             }
             2 => {
-                let _ = db.as_app().destroy("moments", &rid(&id));
+                let _ = db.destroy(&db.admit().unwrap(), "moments", &rid(&id));
             }
             3 => {
                 let rows = (0..seed.below(8)).map(|_| random_row(&mut seed, 14)).map(|(_, row)| row).collect();
                 let mut request = ReplaceRequest::new(feed(), Coverage::Complete);
                 request.on_absent = if seed.below(2) == 0 { OnAbsent::Destroy } else { OnAbsent::Detach };
-                db.as_app().replace(&request, rows).unwrap();
+                db.replace(&db.admit().unwrap(), &request, rows).unwrap();
             }
             4 => {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
                 envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&id), row });
-                db.as_app().land(envelope).unwrap();
+                db.land(&db.admit().unwrap(), envelope).unwrap();
             }
             _ => {
-                let _ = db.as_app().create("moments", obj(json!({"text": "fresh"})));
+                let _ = db.create(&db.admit().unwrap(), "moments", obj(json!({"text": "fresh"})));
             }
         }
     }

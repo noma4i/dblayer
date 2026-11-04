@@ -16,9 +16,9 @@ fn rolling_back_an_update_restores_the_old_values_for_observers() {
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.as_app().update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
+    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.as_app().roll_back(only_seq(&db)).unwrap();
+    db.roll_back(&db.admit().unwrap(), only_seq(&db)).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(texts(changes(&log).last().unwrap()), ["one"]);
     assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("one"));
@@ -31,9 +31,9 @@ fn rolling_back_a_create_removes_the_row() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    let row = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "new"}))).unwrap();
+    let row = db.create(&db.admit().unwrap(), "moments", obj(json!({"userId": "u1", "text": "new"}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.as_app().roll_back(only_seq(&db)).unwrap();
+    db.roll_back(&db.admit().unwrap(), only_seq(&db)).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![0, 1, 0]);
     assert_eq!(changes(&log)[2].diff.removed, vec![row.id.clone()]);
@@ -47,10 +47,10 @@ fn rolling_back_a_destroy_restores_the_cascade() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("vibes"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.as_app().destroy("moments", &rid("m1")).unwrap();
+    db.destroy(&db.admit().unwrap(), "moments", &rid("m1")).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![2, 0]);
-    db.as_app().roll_back(only_seq(&db)).unwrap();
+    db.roll_back(&db.admit().unwrap(), only_seq(&db)).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![2, 0, 2]);
     assert!(db.find("moments", &rid("m1")).unwrap().is_some());
@@ -60,10 +60,10 @@ fn rolling_back_a_destroy_restores_the_cascade() {
 fn inv_rollback_03_rolling_back_an_older_update_keeps_a_newer_edit() {
     let db = booted();
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "A"}));
-    db.as_app().update("moments", &rid("m1"), obj(json!({"text": "B"}))).unwrap();
+    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "B"}))).unwrap();
     let older = only_seq(&db);
-    db.as_app().update("moments", &rid("m1"), obj(json!({"text": "C"}))).unwrap();
-    db.as_app().roll_back(older).unwrap();
+    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "C"}))).unwrap();
+    db.roll_back(&db.admit().unwrap(), older).unwrap();
     assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("C"));
 }
 
@@ -72,14 +72,14 @@ fn inv_rollback_02_rolling_back_every_update_restores_the_original_in_either_ord
     for oldest_first in [true, false] {
         let db = booted();
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "A"}));
-        db.as_app().update("moments", &rid("m1"), obj(json!({"text": "B"}))).unwrap();
-        db.as_app().update("moments", &rid("m1"), obj(json!({"text": "C"}))).unwrap();
+        db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "B"}))).unwrap();
+        db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "C"}))).unwrap();
         let mut seqs: Vec<i64> = db.outbox().unwrap().iter().map(|entry| entry.operation.id.0).collect();
         if !oldest_first {
             seqs.reverse();
         }
         for seq in seqs {
-            db.as_app().roll_back(seq).unwrap();
+            db.roll_back(&db.admit().unwrap(), seq).unwrap();
         }
         assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("A"), "oldest_first={oldest_first}");
     }
@@ -88,10 +88,10 @@ fn inv_rollback_02_rolling_back_every_update_restores_the_original_in_either_ord
 #[test]
 fn rolling_back_a_create_with_an_explicit_id_removes_the_row_and_its_queued_edits() {
     let db = booted();
-    db.as_app().create("moments", obj(json!({"id": "m9", "userId": "u1", "text": "new"}))).unwrap();
+    db.create(&db.admit().unwrap(), "moments", obj(json!({"id": "m9", "userId": "u1", "text": "new"}))).unwrap();
     let create = only_seq(&db);
-    db.as_app().update("moments", &rid("m9"), obj(json!({"text": "edited"}))).unwrap();
-    db.as_app().roll_back(create).unwrap();
+    db.update(&db.admit().unwrap(), "moments", &rid("m9"), obj(json!({"text": "edited"}))).unwrap();
+    db.roll_back(&db.admit().unwrap(), create).unwrap();
     assert!(db.find("moments", &rid("m9")).unwrap().is_none());
     assert!(db.outbox().unwrap().is_empty());
 }
@@ -99,7 +99,7 @@ fn rolling_back_a_create_with_an_explicit_id_removes_the_row_and_its_queued_edit
 #[test]
 fn rolling_back_an_unknown_operation_fails() {
     let db = booted();
-    assert!(matches!(db.as_app().roll_back(99), Err(DbError::UnknownOperation(99))));
+    assert!(matches!(db.roll_back(&db.admit().unwrap(), 99), Err(DbError::UnknownOperation(99))));
 }
 
 #[test]
@@ -108,10 +108,10 @@ fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
     let request = ReplaceRequest::new(scope, Coverage::Complete);
     let rows = |ids: &[&str]| ids.iter().map(|id| obj(json!({"id": id, "userId": "u1", "text": id}))).collect::<Vec<_>>();
-    db.as_app().replace(&request, rows(&["a", "b"])).unwrap();
-    db.as_app().destroy("moments", &rid("b")).unwrap();
-    db.as_app().replace(&request, rows(&["a", "x"])).unwrap();
-    db.as_app().roll_back(only_seq(&db)).unwrap();
+    db.replace(&db.admit().unwrap(), &request, rows(&["a", "b"])).unwrap();
+    db.destroy(&db.admit().unwrap(), "moments", &rid("b")).unwrap();
+    db.replace(&db.admit().unwrap(), &request, rows(&["a", "x"])).unwrap();
+    db.roll_back(&db.admit().unwrap(), only_seq(&db)).unwrap();
     let members: Vec<String> = db.shared.store.scope_members("moments", "feed").unwrap().into_iter().map(|(id, _)| id).collect();
     assert_eq!(members.len(), 3);
     assert!(members.contains(&"b".to_string()));

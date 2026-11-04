@@ -128,7 +128,7 @@ async fn open(server: Arc<Server>) -> Arc<Database> {
     database
 }
 
-async fn start_session(database: &Database, account: &str) {
+async fn sign_in(database: &Database, account: &str) {
     within(database.session_call("login_link".into(), json!({"account":account}).to_string())).await.unwrap();
     within(database.run(database.session_epoch(), "SessionProfile".into(), "{}".into())).await.unwrap();
     within(database.refresh(database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
@@ -142,7 +142,7 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
         let close = end == "close";
         let server = Arc::new(Server::default());
         let database = open(server.clone()).await;
-        start_session(&database, "A").await;
+        sign_in(&database, "A").await;
         let pause = Arc::new(Pause { entered: tokio::sync::Notify::new(), release: tokio::sync::Semaphore::new(0) });
         *server.pause.lock().unwrap() = Some(pause.clone());
         let caller = database.clone();
@@ -183,7 +183,7 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     for end in ["session_reset", "close"] {
         let server = Arc::new(Server::default());
         let database = open(server.clone()).await;
-        start_session(&database, "A").await;
+        sign_in(&database, "A").await;
         server.fail_with(Some(500));
         let hits = server.hits();
         let caller = database.clone();
@@ -196,7 +196,7 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     }
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;
-    start_session(&database, "A").await;
+    sign_in(&database, "A").await;
     let pause = server.pause_next();
     let (first, second) = (database.clone(), database.clone());
     let running = tokio::spawn(async move { first.session_call("login_link".into(), json!({"account":"first"}).to_string()).await.map(|_| ()) });
@@ -215,7 +215,7 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
 async fn an_answer_that_reaches_the_commit_after_the_session_ended_writes_nothing() {
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;
-    start_session(&database, "A").await;
+    sign_in(&database, "A").await;
     let sequence = || database.session.as_ref().unwrap().sequence_for_test();
     let before = sequence();
     let pause = server.pause_next();
@@ -237,7 +237,7 @@ async fn an_answer_that_reaches_the_commit_after_the_session_ended_writes_nothin
 async fn a_confirmed_logout_that_reaches_the_commit_after_the_close_clears_nothing() {
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;
-    start_session(&database, "A").await;
+    sign_in(&database, "A").await;
     let pause = server.pause_next();
     let caller = database.clone();
     let work = tokio::spawn(async move { caller.session_call("logout".into(), "{}".into()).await.map(|_| ()) });
@@ -267,7 +267,7 @@ async fn ending_the_session_of_an_older_epoch_ends_nothing() {
 async fn a_credential_created_while_a_reset_clears_keeps_its_session_state() {
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;
-    start_session(&database, "A").await;
+    sign_in(&database, "A").await;
     let park = database.session.as_ref().unwrap().park_next_reset_for_test();
     let resetting = database.clone();
     let reset = tokio::spawn(async move { resetting.session_reset().await });
@@ -286,7 +286,7 @@ async fn a_credential_created_while_a_reset_clears_keeps_its_session_state() {
 async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation() {
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;
-    start_session(&database, "A").await;
+    sign_in(&database, "A").await;
     let pause = server.pause_next();
     let first = database.clone();
     let epoch = first.session_epoch();
@@ -294,7 +294,7 @@ async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation(
     within(pause.entered.notified()).await;
     let before = server.calls()["Users"];
     within(database.session_reset()).await.unwrap();
-    start_session(&database, "B").await;
+    sign_in(&database, "B").await;
     within(database.refresh(database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap();
     assert_eq!(server.calls()["Users"], before + 1, "the refresh after the reset waited for the old request");
     assert!(within(old).await.unwrap().is_err(), "the refresh of the old data waited for its request after the reset");
@@ -306,7 +306,7 @@ async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation(
 async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_request() {
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;
-    start_session(&database, "A").await;
+    sign_in(&database, "A").await;
     let pause = server.pause_next();
     let first = database.clone();
     let epoch = first.session_epoch();

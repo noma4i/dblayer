@@ -135,8 +135,8 @@ async fn refused_shared_batch_rereads_every_model_and_records_each_failed_recove
         let params = params(json!({"userId":"u"}));
         let _users = rig.sync.watch("users", "current", &Default::default()).unwrap();
         let _moments = rig.sync.watch("moments", "by_user", &params).unwrap();
-        rig.sync.load("users", "current", &Default::default(), Default::default()).await.unwrap();
-        rig.sync.load("moments", "by_user", &params, Default::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &Default::default(), Default::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, Default::default()).await.unwrap();
         let users_events = rig.sync.open_model_events("users").await.unwrap();
         let moments_events = rig.sync.open_model_events("moments").await.unwrap();
         let shared = rig.db.shared.clone();
@@ -246,8 +246,8 @@ async fn removal_closes_pending_writes(kind: &str) {
         rig.sync.register(super::OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
         put(&rig, "users", json!({"id":"u1", "name":"Ann"}));
         put(&rig, "moments", json!({"id":"m1", "text":"before", "userId":"u1"}));
-        rig.db.as_app().update("moments", &crate::identity::RowId::new("m1").unwrap(), json!({"text":"pending"}).as_object().unwrap().clone()).unwrap();
-        rig.db.as_app().update("users", &crate::identity::RowId::new("u1").unwrap(), json!({"name":"pending"}).as_object().unwrap().clone()).unwrap();
+        rig.db.update(&rig.db.admit().unwrap(), "moments", &crate::identity::RowId::new("m1").unwrap(), json!({"text":"pending"}).as_object().unwrap().clone()).unwrap();
+        rig.db.update(&rig.db.admit().unwrap(), "users", &crate::identity::RowId::new("u1").unwrap(), json!({"name":"pending"}).as_object().unwrap().clone()).unwrap();
         assert_eq!(rig.db.outbox().unwrap().len(), 2);
         let log = Arc::new(Mutex::new(Vec::new()));
         let output = log.clone();
@@ -360,7 +360,7 @@ async fn declared_activity_changes_only_ephemeral_typing_and_expires() {
         assert_eq!(row().get("typing"), Some(&json!(expected)));
     }
     rig.clock.advance(Duration::from_secs(6));
-    rig.db.expire_ephemeral().unwrap();
+    rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
     assert_eq!(row().get("typing"), Some(&json!(false)));
     assert_eq!(row().text("name"), Some("Ann"));
 }
@@ -413,7 +413,7 @@ async fn memory_events_without_server_ids_create_distinct_expiring_rows() {
         assert_eq!(subscription.status().applied, 2);
         assert!(rig.transport.calls().iter().all(|call| call.kind == crate::transport::CallKind::Subscription));
         rig.clock.advance(Duration::from_secs(6));
-        rig.db.expire_ephemeral().unwrap();
+        rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
         assert!(rig.db.query(&Query::new("notices")).unwrap().is_empty());
     }
 }
@@ -439,11 +439,11 @@ async fn a_server_event_of_equal_values_renews_a_memory_row_and_stays_silent_for
     rig.transport.await_consumed("MomentChanged").await;
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     rig.clock.advance(Duration::from_secs(5));
-    assert_eq!(rig.db.expire_ephemeral().unwrap(), 0);
+    assert_eq!(rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap(), 0);
     assert!(rig.db.find("notices", &id).unwrap().is_some());
     assert_eq!(notices.load(std::sync::atomic::Ordering::SeqCst), seen);
     rig.clock.advance(Duration::from_secs(4));
-    rig.db.expire_ephemeral().unwrap();
+    rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
     crate::test_wait::spin_until("the notice expires", || rig.db.find("notices", &id).unwrap().is_none());
 }
 
@@ -455,7 +455,7 @@ async fn inv_live_03_repeated_ready_rereads_expired_watched_queries_after_cable_
         rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":name}})));
     }
     let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
-    rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
     rig.transport.emit("MomentChanged", SubscriptionEvent::Ready);
     rig.transport.await_consumed("MomentChanged").await;
@@ -490,7 +490,7 @@ async fn reconnect_reads_only_expired_watched_nodes() {
                 for index in 0..count {
                     let id = format!("m{index}");
                     rig.transport.enqueue("MomentNode", crate::transport::Reply::data(json!({"node":{"id":id, "text":"before"}})));
-                    rig.sync.node("moments", "node", &id, false).await.unwrap();
+                    rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "moments", "node", &id, false).await.unwrap();
                     watches.push(rig.sync.watch("moments", "node", &params(json!({"nodeId":id}))).unwrap());
                     if expired_first && index == 0 { rig.clock.advance(Duration::from_secs(300)); }
                 }
@@ -735,12 +735,12 @@ async fn a_typed_session_refusal_during_subscribe_stops_without_retry() {
     struct Refusal;
     #[async_trait::async_trait]
     impl crate::transport::Transport for Refusal {
-        async fn query(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
-        async fn mutate(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
-        async fn subscribe(&self, _: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
+        async fn query(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
+        async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
+        async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
             Err(crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "session_unknown".into() })
         }
-        async fn put(&self, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> { unreachable!() }
+        async fn put(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> { unreachable!() }
     }
     let rig = rig_with_subscription();
     let sync = crate::sync::Sync::new(rig.db.clone(), std::sync::Arc::new(Refusal), std::sync::Arc::new(rig.clock.clone()), Default::default());
@@ -819,7 +819,7 @@ async fn inv_event_05_an_event_that_creates_a_row_does_not_reload_the_watched_li
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2"));
     let _watch = rig.sync.watch("moments", "feed", &serde_json::Map::new()).unwrap();
-    rig.sync.load("moments", "feed", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": null})));
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -847,7 +847,7 @@ async fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_
         let reread = if reread_fails { crate::transport::Reply::fail(crate::transport::TransportError::Http { status: 422, body: "rejected".into() }) } else { user_list(&["m1", "m2"]) };
         rig.transport.enqueue("MomentsByUser", reread);
         let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
-        rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
         let events = rig.sync.open_model_events("moments").await.unwrap();
         rig.transport.await_calls("Changes", 1).await;
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
@@ -878,7 +878,7 @@ async fn inv_event_05_an_event_row_joins_the_loaded_list_that_declares_it_and_do
     rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
     rig.transport.enqueue("MomentsByUser", user_list(&["m1"]));
     let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
-    rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": "u1"})));
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -893,21 +893,21 @@ struct RefusingFirstSubscribe {
 
 #[async_trait::async_trait]
 impl crate::transport::Transport for RefusingFirstSubscribe {
-    async fn query(&self, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
-        self.inner.query(request).await
+    async fn query(&self, _admitted: &crate::lifecycle::Admitted, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
+        self.inner.query(_admitted, request).await
     }
-    async fn mutate(&self, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
-        self.inner.mutate(request).await
+    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
+        self.inner.mutate(_admitted, request).await
     }
-    async fn subscribe(&self, request: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
+    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
         let refused = self.refusals.try_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |left| left.checked_sub(1)).is_ok();
         if refused {
             return Err(crate::transport::TransportError::Network("down".to_string()));
         }
-        self.inner.subscribe(request).await
+        self.inner.subscribe(_admitted, request).await
     }
-    async fn put(&self, request: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> {
-        self.inner.put(request).await
+    async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> {
+        self.inner.put(_admitted, request).await
     }
 }
 
@@ -955,7 +955,7 @@ async fn an_event_for_a_child_whose_parent_is_not_stored_reloads_the_watched_lis
         rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
     }
     let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
-    rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "new", "userId": "u9"})));
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -969,7 +969,7 @@ async fn join_cost(size: usize) -> usize {
     let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
     rig.transport.enqueue("MomentsByUser", user_list(&ids));
     let _watch = rig.sync.watch("moments", "by_user", &params).unwrap();
-    rig.sync.load("moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
     let before = crate::identity::touches::member_reads();
     rig.transport.emit("MomentChanged", next(json!({"id": "joined", "text": "new", "userId": "u1"})));
@@ -993,7 +993,7 @@ async fn an_event_that_waits_for_its_debounce_never_commits_in_the_epoch_a_sessi
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     tokio::time::sleep(Duration::from_millis(100)).await;
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
@@ -1012,7 +1012,7 @@ async fn an_event_queued_before_a_session_start_never_commits_in_the_epoch_that_
     rig.transport.await_consumed("MomentChanged").await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     rig.transport.await_calls("MomentChanged", 2).await;
@@ -1029,7 +1029,7 @@ async fn a_delayed_callback_of_the_connection_a_session_start_replaced_changes_n
     rig.transport.await_calls("MomentChanged", 1).await;
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit_on("MomentChanged", 0, next(json!({"id": "m1", "text": "of the old connection", "userId": null})));
     rig.transport.emit_on("MomentChanged", 1, next(json!({"id": "m2", "text": "of the new connection", "userId": null})));
@@ -1045,7 +1045,7 @@ async fn an_event_enqueued_right_after_a_session_start_is_applied() {
     rig.transport.await_calls("MomentChanged", 1).await;
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
@@ -1069,7 +1069,7 @@ async fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_noth
             rig.transport.enqueue("CurrentUser", crate::transport::Reply::data(json!({"me":{"id":"u1", "name":name}})));
         }
         let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
-        rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
         let spec = match lost {
             Lost::Debounced => EventSpec::new("moment_changed").debounced(Duration::from_secs(60)).merged_by_row(),
             _ => EventSpec::new("moment_changed"),
@@ -1085,7 +1085,7 @@ async fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_noth
             rig.transport.await_consumed("MomentChanged").await;
         }
         let life = rig.db.shared.store.lifecycle.clone();
-        assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+        assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
         tokio::time::sleep(Duration::from_secs(5)).await;
         let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
         let expected = if matches!(lost, Lost::Nothing) { (1, Some("before")) } else { (2, Some("after")) };
@@ -1119,14 +1119,14 @@ async fn an_event_refused_at_its_sql_commit_by_a_session_start_reloads_the_fresh
         let directory = tempfile::tempdir().unwrap();
         let rig = current_user_rig(Some(directory.path()));
         let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
-        rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
         let spec = if debounced { EventSpec::new("moment_changed").debounced(Duration::from_secs(1)).merged_by_row() } else { EventSpec::new("moment_changed") };
         let _subscription = rig.sync.subscribe(SubscriptionDef::new(spec, "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
         rig.transport.await_calls("MomentChanged", 1).await;
         rig.transport.await_consumed("MomentChanged").await;
         let life = rig.db.shared.store.lifecycle.clone();
-        let epoch = life.epoch_now().value();
-        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { assert!(life.start_session(Some("another-account".into()), epoch)); }));
+        let epoch = life.snapshot().session_epoch;
+        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()); }));
         rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
         rig.transport.await_consumed("MomentChanged").await;
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -1138,18 +1138,18 @@ async fn an_event_refused_at_its_sql_commit_by_a_session_start_reloads_the_fresh
 async fn a_lost_event_reloads_an_already_stale_window_once() {
     let rig = current_user_rig(None);
     let _watch = rig.sync.watch("users", "current", &serde_json::Map::new()).unwrap();
-    rig.sync.load("users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &serde_json::Map::new(), crate::sync::LoadOptions::default()).await.unwrap();
     let _subscription = rig.sync.subscribe(SubscriptionDef::new(EventSpec::new("moment_changed"), "MomentChanged", "users", EventEffect::Upsert)).await.unwrap();
     rig.transport.await_calls("MomentChanged", 1).await;
     rig.transport.await_consumed("MomentChanged").await;
     {
-        let _app = rig.db.as_app();
+        let admitted = rig.db.admit().unwrap();
         let keys: Vec<String> = rig.db.observed_reads().into_iter().map(|entry| entry.key).collect();
-        rig.db.shared.store.invalidate_windows(&rig.db.authority().unwrap(), &keys).unwrap();
+        rig.db.shared.store.invalidate_windows(&admitted.authority(), &keys).unwrap();
     }
     rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     tokio::time::sleep(Duration::from_secs(5)).await;
     assert_eq!((rig.transport.call_count("CurrentUser"), user_name(&rig)), (2, Some("after".into())));
 }
@@ -1162,7 +1162,7 @@ async fn a_session_start_drops_the_replaced_connection_without_holding_a_library
     rig.transport.await_consumed("MomentChanged").await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "queued", "userId": null})));
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     rig.transport.await_cancellations("MomentChanged", 1).await;
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));

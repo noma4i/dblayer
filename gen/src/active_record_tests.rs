@@ -160,7 +160,7 @@ end
     assert!(kotlin.contains("fun inFolder(") && kotlin.contains("fun create("), "{kotlin}");
     let db = Db::open_in_memory(models, None).unwrap();
     for (text, folder, position) in [("first", "f1", 1), ("second", "f1", 2), ("other", "f2", 3)] {
-        db.in_current_epoch(|db| db.create("Note", json!({"text": text, "folderId": folder, "position": position}).as_object().unwrap().clone())).unwrap();
+        db.create(&db.admit().unwrap(), "Note", json!({"text": text, "folderId": folder, "position": position}).as_object().unwrap().clone()).unwrap();
     }
     let query = Query::new("Note").filtered(Where::equal("folderId", json!("f1"))).ordered(vec![Order::new("position", SortDirection::Desc)]);
     let rows = db.query(&query).unwrap();

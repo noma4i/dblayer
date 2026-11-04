@@ -8,14 +8,22 @@ import org.junit.Test
 class ServerModelWithoutTransportTest {
     /** A database opened without a transport keeps rows of local models only. A server model gets its rows from the replies of a transport (`ClubTest` queues the `CreateClub` reply). */
     @Test
-    fun aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsInvalid() = bounded {
+    fun aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsNoSession() = bounded {
         try {
             DBlayer.close()
             DBlayer.openTesting(null, modelsJSON)
             val refused = runCatching {
                 DBlayer.database.create(DBlayer.database.sessionEpoch(), "Club", """{"name":"friends"}""", "{}")
             }.exceptionOrNull()
-            assertTrue("the create was not refused: $refused", refused is DbException.Invalid)
+            assertTrue("the create was not refused: $refused", refused is DbException.NoSession)
+            val load = runCatching {
+                DBlayer.database.load(DBlayer.database.sessionEpoch(), "Club", "all", "{}")
+            }.exceptionOrNull()
+            assertTrue("the load was not refused: $load", load is DbException.NoSession)
+            val act = runCatching {
+                DBlayer.database.act(DBlayer.database.sessionEpoch(), "Club", "g1", "leave", "{}", "{}")
+            }.exceptionOrNull()
+            assertTrue("the act was not refused: $act", act is DbException.NoSession)
         } finally {
             DBlayer.close()
         }

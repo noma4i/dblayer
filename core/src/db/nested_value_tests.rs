@@ -55,12 +55,12 @@ fn cases() -> Vec<(Value, &'static str)> {
 #[test]
 fn nested_values_are_checked_on_create_update_and_act() {
     let db = notes();
-    let kept = db.as_app().create("notes", obj(json!({"title": "kept"}))).unwrap();
+    let kept = db.create(&db.admit().unwrap(), "notes", obj(json!({"title": "kept"}))).unwrap();
     for (values, expected) in cases() {
         let revision = db.revision_seq().unwrap();
-        let created = verdict(db.as_app().create("notes", obj(values.clone())).map(|_| ()));
-        let updated = verdict(db.as_app().update("notes", &kept.id, obj(values.clone())).map(|_| ()));
-        let acted = verdict(db.as_app().act("notes", "touch", &kept.id, obj(values.clone()), Default::default()).map(|_| ()));
+        let created = verdict(db.create(&db.admit().unwrap(), "notes", obj(values.clone())).map(|_| ()));
+        let updated = verdict(db.update(&db.admit().unwrap(), "notes", &kept.id, obj(values.clone())).map(|_| ()));
+        let acted = verdict(db.act(&db.admit().unwrap(), "notes", "touch", &kept.id, obj(values.clone()), Default::default()).map(|_| ()));
         assert_eq!((created.as_str(), updated.as_str(), acted.as_str()), (expected, expected, expected), "{values}");
         if expected != "ok" {
             assert_eq!(db.revision_seq().unwrap(), revision, "{values}");
@@ -71,9 +71,9 @@ fn nested_values_are_checked_on_create_update_and_act() {
 #[test]
 fn nested_values_are_checked_on_set_local() {
     let db = notes();
-    let kept = db.as_app().create("notes", obj(json!({"title": "kept"}))).unwrap();
+    let kept = db.create(&db.admit().unwrap(), "notes", obj(json!({"title": "kept"}))).unwrap();
     for (value, expected) in [(json!({"text": "hi", "nope": 1}), "unknown draft.nope"), (json!({"text": 5}), "other value for local field draft of notes is invalid"), (json!({"text": "hi"}), "ok")] {
-        assert_eq!(verdict(db.as_app().set_local("notes", &kept.id, "draft", value.clone())), expected, "{value}");
+        assert_eq!(verdict(db.set_local(&db.admit().unwrap(), "notes", &kept.id, "draft", value.clone())), expected, "{value}");
     }
     assert_eq!(db.find("notes", &rid(kept.id.as_str())).unwrap().unwrap().get("draft"), Some(&json!({"text": "hi"})));
 }

@@ -15,41 +15,39 @@ use std::sync::Arc;
 use super::{Inner, Sync};
 
 impl Sync {
-    pub async fn node(&self, model: &str, relation: &str, id: &str, force: bool) -> Result<Option<Row>, SyncError> {
-        self.inner.node(crate::lifecycle::Origin::Explicit, model, relation, id, force).await
+    pub async fn node(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, id: &str, force: bool) -> Result<Option<Row>, SyncError> {
+        self.inner.ensure_admitted(admitted)?;
+        self.inner.node(admitted, crate::lifecycle::Origin::Explicit, model, relation, id, force).await
     }
 
-    pub async fn nodes(&self, model: &str, relation: &str, ids: &[&str]) -> Result<Vec<Row>, SyncError> {
-        let lease = self.inner.lease(crate::lifecycle::Origin::Explicit, "nodes")?;
-        let epoch = lease.epoch();
+    pub async fn nodes(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, ids: &[&str]) -> Result<Vec<Row>, SyncError> {
+        self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
         let resolved = self.inner.resolve_node(crate::lifecycle::Origin::Explicit, model, relation, NodeRead::Many, Map::new())?;
         let attempt = self.inner.begin_attempt(&resolved.window_key)?;
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, json!({ "ids": ids }));
-        let (response, _) = lease.run(self.inner.query_with_retry(request)).await??;
+        let (response, _) = admitted.run(self.inner.query_with_retry(admitted, request)).await??;
         let data = response.data.ok_or_else(|| SyncError::Malformed("response has no data".to_string()))?;
         let root = resolved.remote.root.as_deref().unwrap_or(&resolved.operation.root_path);
         let extracted = extract(&data, root, &RemoteShape::List { coverage: Coverage::Complete }, None)?;
         let normalized = normalize_nodes(&self.inner.db, model, &extracted.nodes)?;
-        if let Landed::Discarded(_) = self.inner.land_rows(model, &normalized, &attempt)? {
+        if let Landed::Discarded(_) = self.inner.land_rows(admitted, model, &normalized, &attempt)? {
             return Ok(Vec::new());
         }
         let mut rows: Vec<Row> = Vec::new();
         for id in &normalized.order {
             rows.extend(self.inner.db.find(model, id)?);
         }
-        drop(lease);
-        self.inner.explicit_succeeded(epoch);
         Ok(rows)
     }
 }
 
 impl Inner {
-    pub(crate) async fn node(self: &Arc<Self>, origin: crate::lifecycle::Origin, model: &str, relation: &str, id: &str, force: bool) -> Result<Option<Row>, SyncError> {
+    pub(crate) async fn node(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, origin: crate::lifecycle::Origin, model: &str, relation: &str, id: &str, force: bool) -> Result<Option<Row>, SyncError> {
         let _app = self.app_load();
         let row_id = RowId::new(id).map_err(|error| SyncError::Params(error.to_string()))?;
         let resolved = self.resolve_node(origin, model, relation, NodeRead::One, Map::from_iter([(NODE_PARAM.to_string(), json!(id))]))?;
-        self.fetch(&resolved, None, force).await?;
+        self.fetch(admitted, &resolved, None, force).await?;
         let listed = self.db.shared.store.read(&[model], |reader| reader.scope_has_member(model, resolved.scope.key.as_str(), id))?;
         Ok(if listed { self.db.find(model, &row_id)? } else { None })
     }

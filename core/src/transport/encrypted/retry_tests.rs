@@ -84,7 +84,7 @@ async fn audit_durable_upload_owns_the_failed_http_attempt() {
         .into_iter().chain([false, true].map(|confirmed| (None, Some(("TIMEOUT", confirmed)))));
     for (error, code) in failures {
     let (client, http, db) = rig(error, code);
-    http.server.clone().with_sequence(&client.credential().unwrap(), 0);
+    http.server.clone().with_sequence(&client.credential(&client.admit("test credential").unwrap()).unwrap(), 0);
     let owner = crate::transport::RequestOwner { seq: 1, item_position: 0, stage: "create".into() };
     let mut call = Box::pin(client.mutate_owned("/api/graphql", json!({}), Some(owner), false));
     assert!(matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(_))), "durable owner must receive the failure before another HTTP attempt");
@@ -109,8 +109,8 @@ async fn temporary_http_failures_retry_without_spending_sequence() {
       for route in ["social", "ticket", "read"] {
         let (client, http, db) = rig(Some(Err(error.clone())), None);
         let answer = if route == "read" {
-            http.server.clone().with_sequence(&client.credential().unwrap(), 0);
-            client.read("/api/graphql", json!({"query": "query { a }"})).await
+            http.server.clone().with_sequence(&client.credential(&client.admit("test credential").unwrap()).unwrap(), 0);
+            client.read(&db.admit().unwrap(), "/api/graphql", json!({"query": "query { a }"})).await
         } else { client.session_call(route, json!({})).await };
         assert!(answer.is_ok(), "{error:?}: {answer:?}");
         let seen = http.seen.lock().unwrap();

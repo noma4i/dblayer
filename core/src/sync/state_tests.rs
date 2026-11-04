@@ -17,7 +17,7 @@ async fn stored_seed_read_failures_remain_visible_with_and_without_rows() {
             let rig = rig();
             let ids: &[&str] = if rows { &["m1"] } else { &[] };
             rig.transport.enqueue("MomentsFeed", feed_reply(ids, false, "c"));
-            rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+            rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
             let watch = if case == "scope" { Some(rig.sync.relation_state("moments", "feed", &none()).await.unwrap()) } else { None };
             {
                 let store = rig.db.shared.store.lock();
@@ -52,7 +52,7 @@ async fn the_state_follows_a_load_from_loading_to_idle_with_the_page_flag() {
     let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     let load = tokio::spawn({
         let sync = rig.sync.clone();
-        async move { sync.load("moments", "feed", &none(), LoadOptions::default()).await }
+        async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await }
     });
     rig.transport.await_calls("MomentsFeed", 1).await;
     assert_eq!(state.borrow().phase, LoadPhase::Loading);
@@ -67,9 +67,9 @@ async fn load_more_clears_the_page_flag_on_the_last_page() {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["b"], false, "c2"));
     let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert!(state.borrow().has_more);
-    rig.sync.load_more("moments", "feed", &none()).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none()).await.unwrap();
     assert!(!state.borrow().has_more);
 }
 
@@ -85,9 +85,9 @@ async fn the_state_carries_the_total_the_server_reports_for_the_whole_list() {
     rig.transport.enqueue("MomentsFeed", page(&["b"], "c2", 8));
     let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     assert_eq!(state.borrow().total, None);
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(state.borrow().total, Some(7));
-    rig.sync.load_more("moments", "feed", &none()).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none()).await.unwrap();
     assert_eq!(state.borrow().total, Some(8));
     let reopened = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     assert_eq!(reopened.borrow().total, Some(8));
@@ -99,11 +99,11 @@ async fn a_failed_load_reports_its_kind_and_the_next_success_clears_it() {
     rig.transport.enqueue("MomentsFeed", Reply::fail(crate::transport::TransportError::Http { status: 422, body: "no".to_string() }));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     let state = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
-    assert!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
+    assert!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.is_err());
     let failed = state.borrow().clone();
     assert_eq!(failed.phase, LoadPhase::Failed);
     assert!(failed.error.is_some());
-    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     let healed = state.borrow().clone();
     assert_eq!((healed.phase, healed.error), (LoadPhase::Loaded, None));
 }
@@ -112,7 +112,7 @@ async fn a_failed_load_reports_its_kind_and_the_next_success_clears_it() {
 async fn a_second_receiver_starts_from_the_stored_window() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let mut fresh = rig.sync.relation_state("moments", "feed", &none()).await.unwrap();
     within(fresh.changed()).await.unwrap();
     assert!(fresh.borrow().has_more && fresh.borrow().loaded_at.is_some());
@@ -128,7 +128,7 @@ async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_
     let running = |state: &RelationState| (state.initial, state.refreshing, state.fetching_more);
     let first = tokio::spawn({
         let sync = rig.sync.clone();
-        async move { sync.load("moments", "feed", &none(), LoadOptions::default()).await }
+        async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await }
     });
     rig.transport.await_calls("MomentsFeed", 1).await;
     assert_eq!(running(&state.borrow()), (true, false, false));
@@ -136,14 +136,14 @@ async fn the_state_tells_whether_the_running_load_is_the_first_one_a_refresh_or_
     assert_eq!(running(&state.borrow()), (false, false, false));
     let refresh = tokio::spawn({
         let sync = rig.sync.clone();
-        async move { sync.load("moments", "feed", &none(), LoadOptions { force: true }).await }
+        async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await }
     });
     rig.transport.await_calls("MomentsFeed", 2).await;
     assert_eq!(running(&state.borrow()), (false, true, false));
     refresh.await.unwrap().unwrap();
     let more = tokio::spawn({
         let sync = rig.sync.clone();
-        async move { sync.load_more("moments", "feed", &none()).await }
+        async move { sync.load_more(&sync.inner.db.admit().unwrap(), "moments", "feed", &none()).await }
     });
     rig.transport.await_calls("MomentsFeed", 3).await;
     assert_eq!(running(&state.borrow()), (false, false, true));

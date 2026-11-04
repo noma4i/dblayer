@@ -45,7 +45,7 @@ async fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetim
     signal(&rig, json!("UPLOADING_VIDEO"), true);
     rig.transport.await_consumed("Signal").await;
     rig.clock.advance(Duration::from_secs(2));
-    rig.db.expire_ephemeral().unwrap();
+    rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
     assert_eq!(rig.db.query(&Query::new("actions")).unwrap().len(), 1, "equal writes renew the lifetime");
     signal(&rig, json!("SCREENSHOT"), true);
     rig.transport.await_consumed("Signal").await;
@@ -61,7 +61,7 @@ async fn chat_action_routes_share_one_stream_commit_and_keep_independent_lifetim
     assert!(rig.db.query(&Query::new("actions")).unwrap().is_empty());
     assert!(rig.db.query(&Query::new("mirror")).unwrap().is_empty());
     rig.clock.advance(Duration::from_secs(9));
-    rig.db.expire_ephemeral().unwrap();
+    rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
     assert_eq!(rig.db.query(&Query::new("notices")).unwrap().len(), 1);
     assert_eq!(rig.transport.call_count("Signal"), 1, "idle makes no requests");
 }
@@ -113,9 +113,9 @@ async fn inv_dsl_11_unchanged_event_node_joins_loaded_membership_heads_and_manua
     }
     rig.transport.enqueue("Chats", Reply::data(json!({"chats":[]})));
     for name in ["PRIMARY", "SECONDARY"] {
-        rig.sync.load("chats", "list", json!({"list":name}).as_object().unwrap(), LoadOptions::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", json!({"list":name}).as_object().unwrap(), LoadOptions::default()).await.unwrap();
     }
-    rig.sync.load("chats", "scalar", json!({"name":"same"}).as_object().unwrap(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "scalar", json!({"name":"same"}).as_object().unwrap(), LoadOptions::default()).await.unwrap();
     let listed = |name: &str| {
         let key = rig.db.spec("chats").unwrap().selection_key("list", json!({"list":name}).as_object().unwrap()).unwrap();
         rig.db.query(&Query::new("chats").in_scope(key)).unwrap().iter().map(|row| row.id.to_string()).collect::<Vec<_>>()
@@ -129,7 +129,7 @@ async fn inv_dsl_11_unchanged_event_node_joins_loaded_membership_heads_and_manua
     for node in responses {
         rig.transport.enqueue("ChatNode", Reply::data(json!({"node":node})));
     }
-    rig.sync.node("chats", "node", "c1", true).await.unwrap();
+    rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await.unwrap();
     assert_eq!(listed("PRIMARY"), ["anchor"]);
     let _events = rig.sync.open_model_events("chats").await.unwrap();
     for (index, (_, primary, secondary)) in cases.into_iter().enumerate() {

@@ -337,8 +337,9 @@ impl Sync {
         this.inner.preload.attach(preloads.clone());
         let _ = this.inner.this.set(preloads);
         if let Ok(session) = this.inner.transport.session() {
-            let epoch = this.inner.db.shared.store.lifecycle.snapshot().session_epoch;
-            this.inner.db.shared.store.lifecycle.start_session(session, epoch);
+            if let Ok(admitted) = this.inner.db.admit() {
+                let _ = this.inner.db.shared.store.lifecycle.session_from(session, admitted);
+            }
         }
         locked(&this.inner.account).0 = this.inner.db.shared.store.lifecycle.snapshot().session;
         this.inner.db.shared.store.lifecycle.enroll(&this.inner);
@@ -393,7 +394,9 @@ impl crate::lifecycle::Holder for Inner {
                 if snapshot.session.is_some() {
                     inner.refresh_due_entities(true);
                     inner.preload_on_event();
-                    let _ = inner.request_resume(resume_machine::Cause::Explicit, None);
+                    if let Ok(admitted) = self.db.shared.store.lifecycle.admit_session_at(crate::lifecycle::Origin::Session, "resume", snapshot.session_epoch) {
+                        let _ = inner.request_resume(&admitted, resume_machine::Cause::Explicit, None);
+                    }
                     inner.spawn_flush(Duration::ZERO);
                 }
             }

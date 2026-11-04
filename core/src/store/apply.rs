@@ -138,15 +138,16 @@ impl Store {
     /// The SQL commit of a write that belongs to a session epoch: the epoch check and the commit happen while the lifecycle holds its commit line, so a transition either comes before the check and refuses the write, or waits for the commit.
     fn attempt_in_epoch(&self, authority: &Authority, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
         let _line = match authority {
-            Authority::Epoch(epoch) => {
-                let line = epoch.life().commit_line();
-                if !epoch.life().epoch_holds(epoch.value()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
+            Authority::Admitted(admitted) => {
+                if !std::sync::Arc::ptr_eq(&self.lifecycle, admitted.life()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
+                let line = admitted.life().commit_line();
+                if !admitted.is_current() { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
                 Some(line)
             }
             Authority::Internal(_) => None,
         };
         #[cfg(test)]
-        if matches!(authority, Authority::Epoch(_)) {
+        if matches!(authority, Authority::Admitted(_)) {
             let hook = self.after_epoch_check.lock().unwrap_or_else(|error| error.into_inner()).take();
             if let Some(hook) = hook { hook(); }
         }

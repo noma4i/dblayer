@@ -1,0 +1,95 @@
+package com.noma4i.dblayer
+
+import com.noma4i.dblayer.models.Moment
+import com.noma4i.dblayer.models.User
+import com.noma4i.dblayer.models.modelsJSON
+import java.nio.file.Files
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+private class HeldUploadTransport(val base: MockTransport = MockTransport()) : Transport by base {
+    val arrived = CompletableDeferred<Unit>()
+    val released = CompletableDeferred<Unit>()
+    val finished = CompletableDeferred<Unit>()
+
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, tag: String, progress: ByteProgress): PutReply {
+        try {
+            arrived.complete(Unit)
+            released.await()
+            return PutReply(200u, null)
+        } finally {
+            finished.complete(Unit)
+        }
+    }
+}
+
+class UploadSessionTest {
+    @Test
+    fun uploadRoundKeepsEachGroupsOriginalEpoch() = bounded {
+        val file = Files.createTempFile("clip", ".mp4").toFile().apply { writeText("clip") }
+        val transport = MockTransport()
+        try {
+            transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
+            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"""
+            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = operations, uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            database.setUploadAcceptedSink(object : UploadAcceptedSink { override fun accepted(event: WireUploadAccepted) {} })
+            database.setOnline(false)
+            val first = database.sessionEpoch()
+            val owner = requireNotNull(database.roundBegin(first))
+            assertEquals(WireRoundStep.DONE, database.roundNext(first, owner))
+            AccountScope.current().send(Moment, buildJsonObject { put("text", "A") }, upload = UploadCommand("upload_clip", UploadRequest(file.path)))
+            DBlayer.sessionReset()
+            assertTrue(runCatching { database.roundNext(first, owner) }.exceptionOrNull() is DbException.Interrupted)
+            database.setOnline(true)
+            User.profile.load(AccountScope.current())
+            database.setOnline(false)
+            val second = database.sessionEpoch()
+            assertTrue(first != second)
+            AccountScope.current().send(Moment, buildJsonObject { put("text", "B") }, upload = UploadCommand("upload_clip", UploadRequest(file.path)))
+            val groups = requireNotNull(database.roundEnd(second, owner))
+            assertEquals(listOf(first, second), groups.map { it.epoch })
+            assertEquals(listOf(1, 1), groups.map { it.items.size })
+        } finally {
+            DBlayer.close()
+            file.delete()
+        }
+    }
+
+    @Test
+    fun resetDuringPutEndsTheWaitAndRemovesTheOldUpload() = bounded {
+        val file = Files.createTempFile("clip", ".mp4").toFile().apply { writeText("clip") }
+        val transport = HeldUploadTransport()
+        try {
+            transport.base.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
+            transport.base.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
+            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""", uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            val epoch = database.sessionEpoch()
+            val row = AccountScope.current().send(Moment, buildJsonObject { put("text", "hello") }, upload = UploadCommand("upload_clip", UploadRequest(file.path))).row
+            transport.arrived.await()
+            val waiting = async(start = CoroutineStart.UNDISPATCHED) { runCatching { database.settled(epoch, "Moment", row.id, "upload_clip") } }
+            DBlayer.sessionReset()
+            val error = waiting.await().exceptionOrNull()
+            assertTrue("old upload wait returned $error", error is DbException.Interrupted || error is DbException.NoSession)
+            assertTrue(runCatching { database.resumeUploads(epoch) }.exceptionOrNull() is DbException.Interrupted)
+            val refused = runCatching { database.upload(database.sessionEpoch(), "Moment", row.id, "upload_clip", UploadRequest(file.path).wire()) }.exceptionOrNull()
+            assertTrue("upload without a session returned $refused", refused is DbException.NoSession)
+            User.profile.load(AccountScope.current())
+            assertEquals("B", User.profile.read(AccountScope.current()).single().name)
+            transport.released.complete(Unit)
+            transport.finished.await()
+            assertNull(database.readRow(database.sessionEpoch(), "Moment", row.id))
+            assertTrue(transport.base.calls.none { it.operationName == "CreateMoment" })
+        } finally {
+            transport.released.complete(Unit)
+            DBlayer.close()
+            file.delete()
+        }
+    }
+}

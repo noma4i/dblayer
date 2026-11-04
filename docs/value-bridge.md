@@ -85,6 +85,7 @@ One owner in the core serves each stream. The wrappers keep no registry, no lock
 | `loaded()` | Returns when the first load settled. On `Projected` it also waits until the projection shows every delivery the core handed over until then. |
 
 A call that outlives its epoch ends as `Interrupted`.
+Server work without a session or transport fails with `NoSession`.
 Its late answer changes nothing, and a request of the stream does not start in the next epoch.
 A delivery that was prepared and not yet handed over is withdrawn by the cancel of the reader and by the end of the epoch.
 A stream whose source cannot be connected ends once with the `invalid` outcome.

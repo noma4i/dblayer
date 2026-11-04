@@ -57,8 +57,8 @@ async fn owner_first_keeps_the_server_order_across_load_more_and_a_restart() {
         let rig = rig_with_db(Db::open(&path, vec![users()], None).unwrap());
         rig.transport.enqueue("ChatMembers", page(&server_order[..3], true, 5));
         rig.transport.enqueue("ChatMembers", page(&server_order[3..], false, 5));
-        rig.sync.load("users", "chat_members", &owner_first, Default::default()).await.unwrap();
-        rig.sync.load_more("users", "chat_members", &owner_first).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &owner_first, Default::default()).await.unwrap();
+        rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &owner_first).await.unwrap();
         assert_eq!(rig.transport.calls()[0].variables, json!({"chatId": "c1", "order": "OWNER_FIRST", "first": 30}));
         assert_eq!(rig.transport.calls()[1].variables, json!({"chatId": "c1", "order": "OWNER_FIRST", "first": 30, "after": "b2-cursor"}));
         assert_eq!(member_ids(&rig, "users", "chat_members", &owner_first), server_order);
@@ -75,10 +75,10 @@ async fn each_order_of_one_chat_has_its_own_window_members_cursor_and_total() {
     rig.transport.enqueue("ChatMembers", page(&["o1", "o2"], true, 4));
     rig.transport.enqueue("ChatMembers", page(&["o3", "o4"], false, 4));
     rig.transport.enqueue("ChatMembers", page(&["j3", "j4"], false, 4));
-    rig.sync.load("users", "chat_members", &joined, Default::default()).await.unwrap();
-    rig.sync.load("users", "chat_members", &owner_first, Default::default()).await.unwrap();
-    rig.sync.load_more("users", "chat_members", &owner_first).await.unwrap();
-    rig.sync.load_more("users", "chat_members", &joined).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &joined, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &owner_first, Default::default()).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &owner_first).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &joined).await.unwrap();
     let calls = rig.transport.calls();
     assert_eq!(calls[2].variables, json!({"chatId": "c1", "order": "OWNER_FIRST", "first": 30, "after": "o2-cursor"}));
     assert_eq!(calls[3].variables, json!({"chatId": "c1", "order": "JOINED", "first": 30, "after": "j2-cursor"}));
@@ -93,8 +93,8 @@ async fn two_chats_stay_apart_in_the_same_order() {
     let (one, two) = (scope("c1", "OWNER_FIRST"), scope("c2", "OWNER_FIRST"));
     rig.transport.enqueue("ChatMembers", page(&["a1", "a2"], false, 2));
     rig.transport.enqueue("ChatMembers", page(&["b1"], false, 1));
-    rig.sync.load("users", "chat_members", &one, Default::default()).await.unwrap();
-    rig.sync.load("users", "chat_members", &two, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &one, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &two, Default::default()).await.unwrap();
     assert_eq!(member_ids(&rig, "users", "chat_members", &one), ["a1", "a2"]);
     assert_eq!(member_ids(&rig, "users", "chat_members", &two), ["b1"]);
     assert_eq!((total_of(&rig, &one).await, total_of(&rig, &two).await), (Some(2), Some(1)));

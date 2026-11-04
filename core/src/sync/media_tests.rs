@@ -62,7 +62,7 @@ fn register(sync: &Sync) {
 }
 
 fn arguments(chat: &str) -> Map<String, Value> { params(json!({"chatId":chat})) }
-async fn load(rig: &Rig, force: bool) -> Result<(), super::SyncError> { rig.sync.load_all("media", "library", &arguments("c1"), LoadOptions { force }).await }
+async fn load(rig: &Rig, force: bool) -> Result<(), super::SyncError> { rig.sync.load_all(&rig.sync.inner.db.admit().unwrap(), "media", "library", &arguments("c1"), LoadOptions { force }).await }
 fn ids(rig: &Rig) -> Vec<String> { member_ids(rig, "media", "library", &arguments("c1")) }
 fn marker(rig: &Rig) -> crate::commit::WindowMarker {
     let key = rig.sync.window_key("media", "library", &arguments("c1")).unwrap();
@@ -108,7 +108,7 @@ async fn media_marker_reopen() {
     load(&rig, true).await.unwrap();
     assert_eq!(rig.transport.call_count("Full") - full_before, 3, "missing marker reloads full coverage");
     let full_before = rig.transport.call_count("Full");
-    rig.sync.load_all("media", "library", &arguments("c2"), LoadOptions::default()).await.unwrap();
+    rig.sync.load_all(&rig.sync.inner.db.admit().unwrap(), "media", "library", &arguments("c2"), LoadOptions::default()).await.unwrap();
     assert_eq!(rig.transport.call_count("Full") - full_before, 3, "parameters isolate markers");
 }
 

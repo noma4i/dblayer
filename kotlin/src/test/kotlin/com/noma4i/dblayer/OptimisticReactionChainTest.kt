@@ -23,12 +23,12 @@ class OptimisticReactionChainTest {
 
     /** A database opened without a transport holds no session, so a send is refused (`docs/value-bridge.md`: a send needs a signed-in session). */
     @Test
-    fun aSendOnADatabaseWithoutATransportIsRefusedAsInterrupted() = bounded {
+    fun aSendOnADatabaseWithoutATransportIsRefusedAsNoSession() = bounded {
         try {
             DBlayer.close()
             DBlayer.openTesting(null, modelsJSON)
             val refused = runCatching { Record.send(AccountScope.current(), containerId = "c1", authorId = "u1", text = "hello") }.exceptionOrNull()
-            assertTrue("the send was not refused: $refused", refused is DbException.Interrupted)
+            assertTrue("the send was not refused: $refused", refused is DbException.NoSession)
         } finally {
             DBlayer.close()
         }

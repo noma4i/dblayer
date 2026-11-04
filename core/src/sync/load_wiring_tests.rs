@@ -42,12 +42,12 @@ async fn inv_loadm_17_the_state_of_a_real_sync_equals_the_oracle_over_random_com
                 0 | 1 => {
                     enqueue(&rig, &mut random);
                     let (sync, force) = (rig.sync.clone(), random.chance(2));
-                    flights.push(tokio::spawn(async move { sync.load("moments", "feed", &none(), LoadOptions { force }).await }));
+                    flights.push(tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force }).await }));
                 }
                 2 => {
                     enqueue(&rig, &mut random);
                     let sync = rig.sync.clone();
-                    flights.push(tokio::spawn(async move { sync.load_more("moments", "feed", &none()).await }));
+                    flights.push(tokio::spawn(async move { sync.load_more(&sync.inner.db.admit().unwrap(), "moments", "feed", &none()).await }));
                 }
                 3 if !flights.is_empty() => flights.remove(random.below(flights.len())).abort(),
                 4 => rig.sync.set_online(false),

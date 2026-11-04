@@ -24,7 +24,7 @@ async fn transport(rest: MockTransport) -> (EncryptedTransport, Arc<FakeServer>)
 async fn encrypted_subscriptions_do_not_send_credentials_or_queries_to_v2() {
     let rest = MockTransport::new();
     let (transport, _) = transport(rest.clone()).await;
-    let _subscription = transport.subscribe(GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
+    let _subscription = transport.subscribe(&transport.test_admission(), GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
     assert_eq!(rest.call_count("Changes"), 0);
 }
 
@@ -61,8 +61,8 @@ async fn queries_and_mutations_use_the_encrypted_client() {
     server.register("query Q { q }");
     server.register("mutation M { m }");
 
-    let read = transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
-    let written = transport.mutate(GraphQLRequest::new("mutation M { m }", "M", json!({}))).await.unwrap();
+    let read = transport.query(&transport.test_admission(), GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
+    let written = transport.mutate(&transport.test_admission(), GraphQLRequest::new("mutation M { m }", "M", json!({}))).await.unwrap();
 
     assert_eq!(read.data, Some(json!({ "read": "query Q { q }" })));
     assert_eq!(written.data, Some(json!({ "done": "mutation M { m }" })));

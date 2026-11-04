@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, OperationTransition, WriteOrigin};
 use crate::identity::Generation;
-use crate::lifecycle::{Authority, Epoch};
+use crate::lifecycle::Authority;
 use crate::store::{Committed, PlanCommitError, Reader};
 
 use super::error::DbError;
@@ -11,22 +11,9 @@ use super::open::Db;
 use super::parent_pointer::Followed;
 
 impl Db {
-    #[doc(hidden)]
-    pub fn in_current_epoch<R>(&self, work: impl FnOnce(&Db) -> R) -> R { self.shared.store.lifecycle.epoch_now().pinned(|| work(self)) }
-
-    /// A call of the application into the database for a test: the statement runs in the session epoch of the moment, as a call through the bridge does.
-    #[cfg(any(test, feature = "stress"))]
-    pub fn as_app(&self) -> AppCall<'_> {
-        let epoch = self.shared.store.lifecycle.epoch_now();
-        let before = epoch.enter();
-        AppCall { db: self, epoch, before: Some(before) }
-    }
-
-    pub(crate) fn authority(&self) -> Result<Authority, DbError> {
-        match Epoch::ambient() {
-            Some(epoch) => Ok(Authority::Epoch(epoch)),
-            None => Err(DbError::Internal("a write of the database needs the session epoch of its caller".into())),
-        }
+    pub fn admit(&self) -> Result<crate::lifecycle::Admitted, DbError> {
+        self.shared.store.lifecycle.admit(crate::lifecycle::Origin::Explicit, "core call")
+            .map_err(|_| DbError::NoSession { detail: "the database does not admit work".into() })
     }
 
     /// Plans on a read connection while the writer stays free and writes when no commit landed in between, otherwise plans again under the writer. `plan` runs once or twice and must only read and build from data it can build again: it must not consume captures, write files or announce anything.
@@ -90,25 +77,5 @@ impl Db {
             record.rollback = record.rollback.take().map(|prior| super::prior::Prior::with_edits(prior, reader, &followed.edits)).transpose().map_err(DbError::from)?;
         }
         Ok((envelope, followed))
-    }
-}
-
-#[cfg(any(test, feature = "stress"))]
-pub struct AppCall<'a> {
-    db: &'a Db,
-    epoch: Epoch,
-    before: Option<Option<Epoch>>,
-}
-
-#[cfg(any(test, feature = "stress"))]
-impl std::ops::Deref for AppCall<'_> {
-    type Target = Db;
-    fn deref(&self) -> &Db { self.db }
-}
-
-#[cfg(any(test, feature = "stress"))]
-impl Drop for AppCall<'_> {
-    fn drop(&mut self) {
-        if let Some(before) = self.before.take() { self.epoch.leave(before); }
     }
 }

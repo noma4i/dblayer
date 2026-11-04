@@ -9,7 +9,7 @@ async fn int_and_bool_params_go_out_as_json_values() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     let since = params(json!({"afterSequence": 120, "pinned": true}));
-    rig.sync.load("moments", "since", &since, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "since", &since, LoadOptions::default()).await.unwrap();
     assert_eq!(rig.transport.calls()[0].variables, json!({"afterSequence": 120, "pinned": true, "first": 2}));
 }
 
@@ -17,7 +17,7 @@ async fn int_and_bool_params_go_out_as_json_values() {
 async fn typed_params_reject_text_of_the_wrong_kind() {
     let rig = rig();
     for wrong in [json!({"afterSequence": "120", "pinned": true}), json!({"afterSequence": 120, "pinned": "yes"}), json!({"afterSequence": 1.5, "pinned": true})] {
-        let result = rig.sync.load("moments", "since", &params(wrong.clone()), LoadOptions::default()).await;
+        let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "since", &params(wrong.clone()), LoadOptions::default()).await;
         assert!(matches!(result, Err(SyncError::Params(_))), "{wrong}: {result:?}");
     }
     assert_eq!(rig.transport.call_count("MomentsFeed"), 0);
@@ -29,8 +29,8 @@ async fn each_typed_value_keys_its_own_window() {
     let at = |n: i64| params(json!({"afterSequence": n, "pinned": false}));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["b"], false, "c2"));
-    rig.sync.load("moments", "since", &at(5), LoadOptions::default()).await.unwrap();
-    rig.sync.load("moments", "since", &at(6), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "since", &at(5), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "since", &at(6), LoadOptions::default()).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "since", &at(5)), ["a"]);
     assert_eq!(member_ids(&rig, "moments", "since", &at(6)), ["b"]);
     assert_ne!(rig.sync.window_key("moments", "since", &at(5)).unwrap(), rig.sync.window_key("moments", "since", &at(6)).unwrap());
@@ -43,9 +43,9 @@ async fn ascending_and_descending_windows_never_share_a_cursor() {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a1", "a2"], true, "up2"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["d1", "d2"], true, "down2"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a3"], false, "up3"));
-    rig.sync.load("moments", "since", &same, LoadOptions::default()).await.unwrap();
-    rig.sync.load("moments", "tail", &same, LoadOptions::default()).await.unwrap();
-    rig.sync.load_more("moments", "since", &same).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "since", &same, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "tail", &same, LoadOptions::default()).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "moments", "since", &same).await.unwrap();
     let calls = rig.transport.calls();
     assert_eq!(calls[1].variables, json!({"afterSequence": 5, "pinned": false, "last": 2}));
     assert_eq!(calls[2].variables, json!({"afterSequence": 5, "pinned": false, "first": 2, "after": "up2"}));
@@ -61,8 +61,8 @@ async fn a_typed_param_beside_a_column_keys_the_window_and_fills_the_column() {
     let at = |n: i64| params(json!({"userId": "u1", "afterSequence": n}));
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "b", "text": "b"}]})));
-    rig.sync.load("moments", "user_since", &at(5), LoadOptions::default()).await.unwrap();
-    rig.sync.load("moments", "user_since", &at(6), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "user_since", &at(5), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "user_since", &at(6), LoadOptions::default()).await.unwrap();
     assert_eq!(rig.transport.calls()[0].variables, json!({"userId": "u1", "afterSequence": 5}));
     assert_eq!(member_ids(&rig, "moments", "user_since", &at(5)), ["a"]);
     assert_eq!(member_ids(&rig, "moments", "user_since", &at(6)), ["b"]);

@@ -72,7 +72,7 @@ async fn survives_panic(work: impl std::future::Future<Output = ()>) -> bool {
 
 struct FileTask {
     pending: Arc<watch::Sender<usize>>,
-    _lease: Option<crate::lifecycle::Lease>,
+    _admitted: crate::lifecycle::Admitted,
 }
 
 impl Drop for FileTask {
@@ -83,6 +83,7 @@ impl Drop for FileTask {
 
 pub(crate) struct UploadResume {
     inner: Arc<Inner>,
+    admitted: crate::lifecycle::Admitted,
     seq: i64,
     position: i64,
     run: u64,
@@ -90,7 +91,7 @@ pub(crate) struct UploadResume {
 
 impl Drop for UploadResume {
     fn drop(&mut self) {
-        self.inner.finish_run(self.seq, self.position, self.run);
+        self.inner.finish_run(&self.admitted, self.seq, self.position, self.run);
     }
 }
 
@@ -180,7 +181,7 @@ impl Inner {
         Ok(file.with_steps(uploads.steps(&mutation)))
     }
 
-    pub(crate) fn begin_upload(&self, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, file: &UploadFile, state: UploadState) -> Result<i64, SyncError> {
+    pub(crate) fn begin_upload(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, id: &RowId, action: &str, file: &UploadFile, state: UploadState) -> Result<i64, SyncError> {
         let input = self.upload_input(model, action, file.clone())?;
         let family = self.db.spec(model)?.upload_family(action);
         let record = OperationRecord {
@@ -197,9 +198,9 @@ impl Inner {
             rollback: None,
             upload: Some(state.clone()),
         };
-        self.db.preparing_uploads(model, generation, |files, generation, pending| {
+        self.db.preparing_uploads(admitted, model, generation, |files, generation, pending| {
             let item = files.prepare(model, id.clone(), uuid::Uuid::new_v4().to_string(), input.clone(), state)?;
-            let committed = self.commit_deferred(generation, |reader| {
+            let committed = self.commit_deferred(admitted, generation, |reader| {
                 if upload_entry(OutboxOperation::for_rows(reader, &[(model.to_string(), id.to_string())].into())?, model, id, &family).is_some() {
                     return Err(SyncError::Params(format!("{model} {id} already has the upload {action}")));
                 }
@@ -246,7 +247,7 @@ impl Inner {
         locked(&self.uploads).active.range((seq, i64::MIN)..=(seq, i64::MAX)).filter(|(key, _)| position.is_none_or(|position| key.1 == position)).map(|(_, active)| (active.token.clone(), active.done.subscribe())).collect()
     }
 
-    fn finish_run(self: &Arc<Self>, seq: i64, position: i64, run: u64) {
+    fn finish_run(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, seq: i64, position: i64, run: u64) {
         if !self.with_uploads(|runs, effects| runs.finish(seq, position, run, effects)) { return; }
         let retry = (|| -> Result<(), SyncError> {
             let retried = locked(self.operation_queue()?).entries.get(&seq).is_some_and(|entry| entry.uploading && entry.operation.status == OperationStatus::Pending && !entry.operation.transport_started && !self.is_waiting(&entry.operation));
@@ -256,7 +257,7 @@ impl Inner {
             Ok(())
         })();
         if let Err(error) = retry {
-            self.fail_upload(seq, error);
+            self.fail_upload(admitted, seq, error);
         }
         self.drain_uploads();
     }
@@ -292,41 +293,42 @@ impl Inner {
         while runs.tasks.try_join_next().is_some() {}
         let (run, token) = runs.register(seq, position, matches!(mode, RunMode::Transfer));
         let inner = self.clone();
+        let epoch = self.db.shared.store.lifecycle.snapshot().session_epoch;
         runs.tasks.spawn(crate::task::Carry::Detached, self.until_closed(async move {
-            let Ok(lease) = inner.lease(crate::lifecycle::Origin::Session, "upload") else {
-                inner.finish_run(seq, position, run);
+            let Ok(admitted) = inner.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Session, "upload", Some(epoch)) else {
+                inner.with_uploads(|runs, effects| runs.finish(seq, position, run, effects));
                 return;
             };
-            if let Ok(false) = lease.run(survives_panic(run::drive(inner.clone(), seq, position, run, token, mode, resumed))).await {
-                lease.epoch_value().pinned(|| inner.fail_upload(seq, SyncError::Store("the upload task panicked".into())));
+            if let Ok(false) = admitted.run(survives_panic(run::drive(inner.clone(), admitted.clone(), seq, position, run, token, mode, resumed))).await {
+                inner.fail_upload(&admitted, seq, SyncError::Store("the upload task panicked".into()));
             }
-            lease.epoch_value().pinned(|| inner.finish_run(seq, position, run));
-            drop(lease);
+            inner.finish_run(&admitted, seq, position, run);
         }));
     }
 
-    fn spawn_file_task(&self, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
+    fn spawn_file_task(&self, admitted: &crate::lifecycle::Admitted, runtime: &tokio::runtime::Handle, task: impl FnOnce() + Send + 'static) {
         crate::db::lock::effect(|| self.file_tasks.send_modify(|pending| *pending += 1));
-        let finished = FileTask { pending: self.file_tasks.clone(), _lease: self.lease(crate::lifecycle::Origin::Session, "file task").ok() };
-        drop(crate::task::spawn_blocking_on(crate::task::Carry::here(), runtime, move || { task(); drop(finished); }));
+        let finished = FileTask { pending: self.file_tasks.clone(), _admitted: admitted.clone() };
+        let admitted = admitted.clone();
+        drop(crate::task::spawn_blocking_on(crate::task::Carry::from(admitted.clone()), runtime, move || { if admitted.is_current() { task(); } drop(finished); }));
     }
 
-    pub(crate) async fn discard_files(&self, ids: Vec<String>) -> Result<(), SyncError> {
+    pub(crate) async fn discard_files(&self, admitted: &crate::lifecycle::Admitted, ids: Vec<String>) -> Result<(), SyncError> {
         if ids.is_empty() { return Ok(()); }
         let (sent, received) = tokio::sync::oneshot::channel();
         let shared = self.db.shared.clone();
-        self.spawn_file_task(&tokio::runtime::Handle::current(), move || { crate::db::lock::effect(|| { let _ = sent.send(shared.files.discard(&ids)); }); });
+        self.spawn_file_task(admitted, &tokio::runtime::Handle::current(), move || { crate::db::lock::effect(|| { let _ = sent.send(shared.files.discard(&ids)); }); });
         received.await.map_err(|_| SyncError::Cancelled)?.map_err(|error| crate::store::StoreError::from(error).into())
     }
 
-    fn fail_upload(&self, seq: i64, error: SyncError) {
+    fn fail_upload(&self, admitted: &crate::lifecycle::Admitted, seq: i64, error: SyncError) {
         let generation = self.db.generation();
-        if let Err(failed) = self.commit(generation, |_| {
+        if let Err(failed) = self.commit(admitted, generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
             envelope.operation_transitions.push(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Unrecognized, error.to_string()) });
             Ok(Some(envelope))
         }) {
-            self.fail_commit(SyncError::Store(format!("upload {seq}: {error}, recording failure: {failed}")));
+            self.fail_commit(admitted, SyncError::Store(format!("upload {seq}: {error}, recording failure: {failed}")));
         }
     }
 
@@ -350,14 +352,14 @@ impl Inner {
         Some(runs.register(seq, position, false))
     }
 
-    pub(crate) async fn claim_upload_resume(self: &Arc<Self>, owner: &crate::transport::RequestOwner) -> Result<Option<UploadResume>, SyncError> {
+    pub(crate) async fn claim_upload_resume(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, owner: &crate::transport::RequestOwner) -> Result<Option<UploadResume>, SyncError> {
         loop {
             let mut items: Vec<_> = self.operation_uploads(owner.seq)?.into_iter().filter(|(key, state)| key.1 == owner.item_position || owner.item_position == -1 && state.stage == crate::upload::UploadStage::Mutation).collect();
             items.sort_by_key(|(key, _)| *key);
             let Some(((seq, position), state)) = items.into_iter().next() else { return Ok(None) };
             if crate::operation::enum_text(&state.stage).as_deref() != Some(&owner.stage) { return Ok(None); }
             if let Some((run, _)) = self.register(seq, position) {
-                return Ok(Some(UploadResume { inner: self.clone(), seq, position, run }));
+                return Ok(Some(UploadResume { inner: self.clone(), admitted: admitted.clone(), seq, position, run }));
             }
             let waiting = locked(&self.uploads).active.get(&(seq, position)).map(|active| active.done.subscribe());
             if let Some(mut done) = waiting {
@@ -370,7 +372,7 @@ impl Inner {
         let seq = owner.seq;
         let state = match self.operation_uploads(seq) {
             Ok(mut items) => items.remove(&(seq, owner.position)),
-            Err(error) => { self.fail_upload(seq, error); return; }
+            Err(error) => { self.fail_upload(&owner.admitted, seq, error); return; }
         };
         let Some(state) = state else { return };
         let mode = state.resume_mode();
@@ -394,25 +396,14 @@ impl Inner {
     }
 }
 
-/// Runs a write that belongs to a session epoch, when the caller names one.
-pub(super) fn pinned<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch: Option<u64>, write: impl FnOnce() -> R) -> R {
-    match epoch {
-        Some(epoch) => crate::store::pinned_to_epoch(life, epoch, write),
-        None => write(),
-    }
-}
-
 impl Sync {
-    pub async fn upload_create_batch(&self, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput) -> Result<Vec<crate::db::Row>, SyncError> { self.upload_create_batch_in(model, items, input, None).await }
-
-    pub async fn upload(&self, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<i64, SyncError> { self.upload_in(model, id, action, file, None).await }
-
-    pub async fn upload_create(&self, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<RowId, SyncError> { self.upload_create_in(model, action, values, file, None).await }
-
-    pub async fn resume_uploads(&self) -> Result<(), SyncError> {
-        self.inner.start_uploads()?;
-        self.wait_uploads().await;
-        Ok(())
+    pub async fn resume_uploads(&self, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+        self.inner.require_session(admitted)?;
+        admitted.run(async {
+            self.inner.start_uploads()?;
+            self.wait_uploads().await;
+            Ok(())
+        }).await?
     }
 
     pub fn check_uploads(&self) -> Result<(), SyncError> {
@@ -420,48 +411,52 @@ impl Sync {
         Ok(())
     }
 
-    pub async fn upload_create_batch_in(&self, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput, epoch: Option<u64>) -> Result<Vec<crate::db::Row>, SyncError> {
+    pub async fn upload_create_batch(&self, admitted: &crate::lifecycle::Admitted, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput) -> Result<Vec<crate::db::Row>, SyncError> {
+        self.inner.require_session(admitted)?;
         let inner = self.inner.clone();
+        let admitted = admitted.clone();
         let generation = inner.db.generation();
         let model = model.to_string();
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
-            let life = inner.db.shared.store.lifecycle.clone();
-            let ids = pinned(&life, epoch, || inner.db.create_upload_batch(generation, &model, items, input, inner.upload_operations()?))?;
+            let ids = inner.db.create_upload_batch(&admitted, generation, &model, items, input, inner.upload_operations()?)?;
             let rows = ids.iter().map(|id| inner.db.find(&model, id)?.ok_or_else(|| crate::db::DbError::NotFound { model: model.clone(), id: id.to_string() })).collect::<Result<Vec<_>, _>>()?;
             inner.start_uploads()?;
-            inner.db.report_upload_accepted(&model, inner.db.accepted_items(&ids)?);
+            inner.db.report_upload_accepted(&admitted, &model, inner.db.accepted_items(&ids)?);
             Ok(rows)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload_in(&self, model: &str, id: &RowId, action: &str, file: UploadFile, epoch: Option<u64>) -> Result<i64, SyncError> {
+    pub async fn upload(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: &str, file: UploadFile) -> Result<i64, SyncError> {
+        self.inner.require_session(admitted)?;
         let inner = self.inner.clone();
+        let admitted = admitted.clone();
         let generation = inner.db.generation();
         let (model, id, action) = (model.to_string(), id.clone(), action.to_string());
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
-            let life = inner.db.shared.store.lifecycle.clone();
-            let seq = pinned(&life, epoch, || inner.begin_upload(generation, &model, &id, &action, &file, UploadState::queued()))?;
+            let seq = inner.begin_upload(&admitted, generation, &model, &id, &action, &file, UploadState::queued())?;
             inner.start_uploads()?;
-            inner.db.report_upload_accepted(&model, vec![crate::db::AcceptedUpload { seq, position: 0 }]);
+            inner.db.report_upload_accepted(&admitted, &model, vec![crate::db::AcceptedUpload { seq, position: 0 }]);
             Ok(seq)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn upload_create_in(&self, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile, epoch: Option<u64>) -> Result<RowId, SyncError> {
+    pub async fn upload_create(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<RowId, SyncError> {
+        self.inner.require_session(admitted)?;
         let inner = self.inner.clone();
+        let admitted = admitted.clone();
         let generation = inner.db.generation();
         let (model, action) = (model.to_string(), action.to_string());
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
             let input = inner.upload_input(&model, &action, file)?;
-            let life = inner.db.shared.store.lifecycle.clone();
-            let id = pinned(&life, epoch, || inner.db.create_held(generation, &model, &action, values, input, UploadState::queued()))?;
+            let id = inner.db.create_held(&admitted, generation, &model, &action, values, input, UploadState::queued())?;
             inner.start_uploads()?;
-            inner.db.report_upload_accepted(&model, inner.db.accepted_items(std::slice::from_ref(&id))?);
+            inner.db.report_upload_accepted(&admitted, &model, inner.db.accepted_items(std::slice::from_ref(&id))?);
             Ok(id)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
-    pub async fn cancel_upload(&self, model: &str, id: &RowId, action: &str) -> Result<bool, SyncError> {
+    pub async fn cancel_upload(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: &str) -> Result<bool, SyncError> {
+        self.inner.require_session(admitted)?;
         let spec = self.inner.db.spec(model)?;
         if spec.upload_action(action).is_none() { return Err(crate::db::DbError::InvalidUpload(format!("{model} declares no upload action {action}")).into()); }
         let family = spec.upload_family(action);
@@ -480,7 +475,7 @@ impl Sync {
         for (token, _) in &running { token.cancel(); }
         if running.is_empty() {
             for ((_, item), _) in self.inner.operation_uploads(seq)? {
-                if position.is_none_or(|position| item == position) { self.run_inline(seq, item, RunMode::Cancel).await; }
+                if position.is_none_or(|position| item == position) { self.run_inline(admitted, seq, item, RunMode::Cancel).await; }
             }
         } else {
             for (_, mut done) in running { let _ = done.wait_for(|finished| *finished).await; }
@@ -489,7 +484,7 @@ impl Sync {
         Ok(true)
     }
 
-    pub async fn wait_uploads(&self) {
+    pub(crate) async fn wait_uploads(&self) {
         loop {
             let mut tasks = std::mem::take(&mut locked(&self.inner.uploads).tasks);
             while tasks.join_next().await.is_some() {}
@@ -507,10 +502,10 @@ impl Sync {
         }
     }
 
-    async fn run_inline(&self, seq: i64, position: i64, mode: RunMode) {
+    async fn run_inline(&self, admitted: &crate::lifecycle::Admitted, seq: i64, position: i64, mode: RunMode) {
         let Some((run, token)) = self.inner.register(seq, position) else { return };
-        run::drive(self.inner.clone(), seq, position, run, token, mode, None).await;
-        self.inner.finish_run(seq, position, run);
+        run::drive(self.inner.clone(), admitted.clone(), seq, position, run, token, mode, None).await;
+        self.inner.finish_run(admitted, seq, position, run);
     }
 }
 

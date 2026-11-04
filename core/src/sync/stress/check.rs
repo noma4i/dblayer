@@ -116,7 +116,7 @@ pub fn lists(db: &Db, findings: &Findings) {
 }
 
 fn stale_cache_entries(db: &Db, universe: &[(String, String)]) -> Result<Vec<String>, DbError> {
-    let _ = db.expire_ephemeral();
+    let _ = db.expire_ephemeral(&db.admit().unwrap());
     db.shared.read(&[], |reader| {
         let mut stale = Vec::new();
         for model in MODELS {

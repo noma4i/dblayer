@@ -139,14 +139,15 @@ impl Inner {
         self.db.shared.store.lifecycle.snapshot().admits(origin)
     }
 
-    pub(crate) fn explicit_succeeded(&self, epoch: u64) {
-        if let Ok(Some(session)) = self.transport.session() {
-            self.db.shared.store.lifecycle.restore_session(session, epoch);
-        }
+    pub(crate) fn ensure_admitted(&self, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+        if !Arc::ptr_eq(admitted.life(), &self.db.shared.store.lifecycle) || !admitted.is_current() { return Err(SyncError::Cancelled); }
+        Ok(())
     }
 
-    pub(crate) fn lease(&self, origin: crate::lifecycle::Origin, target: &'static str) -> Result<crate::lifecycle::Lease, crate::lifecycle::Ended> {
-        self.db.shared.store.lifecycle.lease(origin, target)
+    pub(crate) fn require_session(&self, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+        self.ensure_admitted(admitted)?;
+        if !self.admitted(crate::lifecycle::Origin::Session) { return Err(SyncError::NoSession("the database has no session".into())); }
+        Ok(())
     }
 
     pub(super) fn preloaded_windows(&self) -> Result<Vec<Window>, SyncError> {
@@ -200,17 +201,26 @@ impl Inner {
     pub(crate) fn preload_start(self: &Arc<Self>) {
         if !self.admitted(crate::lifecycle::Origin::Session) { return; }
         if let Ok(runtime) = Handle::try_current() { let _ = self.preload.runtime.set(runtime); }
-        let mut state = locked(&self.preload.state);
-        if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
+        {
+            let state = locked(&self.preload.state);
+            if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
+        }
         let Some(runtime) = Handle::try_current().ok().or_else(|| self.preload.runtime.get().cloned()) else { return };
-        let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "preload") else { return };
-        state.running = true;
+        let Ok(admitted) = self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "preload") else { return };
+        {
+            let mut state = locked(&self.preload.state);
+            if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { drop(state); drop(admitted); return; }
+            state.running = true;
+        }
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
-            let _lease = lease;
             while let Some(inner) = inner.upgrade() {
                 if !inner.preload_take() { return; }
-                inner.preload_windows().await;
+                if admitted.run(inner.preload_windows_in_epoch(&admitted)).await.is_err() {
+                    locked(&inner.preload.state).running = false;
+                    inner.preload_start();
+                    return;
+                }
             }
         }));
     }
@@ -234,12 +244,7 @@ impl Inner {
         }
     }
 
-    async fn preload_windows(self: &Arc<Self>) {
-        let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "preload") else { return };
-        lease.pinned(self.preload_windows_in_epoch()).await
-    }
-
-    async fn preload_windows_in_epoch(self: &Arc<Self>) {
+    async fn preload_windows_in_epoch(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) {
         let lanes = Arc::new(Semaphore::new(PRELOAD_PARALLEL));
         let mut changed = self.preload.changed.subscribe();
         let mut loads = Children::new();
@@ -262,12 +267,12 @@ impl Inner {
                 let key = format!("{model}|{relation}|{params:?}");
                 if !started.insert(key.clone()) { continue; }
                 let Ok(window_key) = self.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
-                let (inner, lanes, loaded) = (self.clone(), lanes.clone(), key.clone());
+                let (inner, lanes, loaded, admitted) = (self.clone(), lanes.clone(), key.clone(), admitted.clone());
                 let task = loads.spawn(crate::task::Carry::here(), async move {
                     let _lane = lanes.acquire_owned().await;
                     inner.app_loads_settled().await;
                     let result = match inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) {
-                        Ok(resolved) => inner.load_scope(&resolved, false).await,
+                        Ok(resolved) => inner.load_scope(&admitted, &resolved, false).await,
                         Err(error) => Err(error),
                     };
                     (loaded, result)
@@ -338,7 +343,8 @@ impl Sync {
         if was_saving && !saving { self.inner.preload_start(); }
     }
 
-    pub async fn refresh_preloads(&self) -> Result<Vec<PreloadFailure>, SyncError> {
+    pub async fn refresh_preloads(&self, admitted: &crate::lifecycle::Admitted) -> Result<Vec<PreloadFailure>, SyncError> {
+        self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
         if !self.inner.connectivity.is_online() { return Err(SyncError::Offline); }
         let lanes = Arc::new(Semaphore::new(PRELOAD_PARALLEL));
@@ -349,12 +355,12 @@ impl Sync {
             if windows.is_empty() { return Ok(failures); }
             let mut loads = Children::new();
             for window in windows {
-                let (inner, lanes) = (self.inner.clone(), lanes.clone());
+                let (inner, lanes, admitted) = (self.inner.clone(), lanes.clone(), admitted.clone());
                 loads.spawn(crate::task::Carry::here(), async move {
                     let _lane = lanes.acquire_owned().await;
                     let (model, relation, params) = window;
                     let fetched = match inner.resolve(crate::lifecycle::Origin::Explicit, &model, &relation, &params) {
-                        Ok(resolved) => inner.load_scope(&resolved, true).await.map(|outcome| outcome.kept_error),
+                        Ok(resolved) => inner.load_scope(&admitted, &resolved, true).await.map(|outcome| outcome.kept_error),
                         Err(error) => Err(error),
                     };
                     match fetched {
@@ -377,19 +383,14 @@ impl Sync {
         locked(&self.inner.preload.state).low_ram = low_ram;
     }
 
-    pub fn check_session(&self) {
-        let lifecycle = &self.inner.db.shared.store.lifecycle;
-        let snapshot = lifecycle.snapshot();
-        if snapshot.ended { return; }
-        match self.inner.transport.session() {
-            Ok(session) => {
-                lifecycle.start_session(session, snapshot.session_epoch);
-                if !self.inner.registered.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                    self.inner.preload_session();
-                    self.inner.preload_on_event();
-                }
+    pub(crate) fn operations_ready(&self) {
+        if !self.inner.registered.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if let Err(error) = self.inner.transport.session() {
+                self.inner.preload_failed(&SyncError::Transport(error));
+                return;
             }
-            Err(error) => self.inner.preload_failed(&SyncError::Transport(error)),
+            self.inner.preload_session();
+            self.inner.preload_on_event();
         }
     }
 
@@ -411,7 +412,11 @@ impl Sync {
     }
 
     pub(crate) fn commit_session_for_test(&self) {
-        self.inner.explicit_succeeded(self.inner.db.shared.store.lifecycle.snapshot().session_epoch);
+        let lifecycle = &self.inner.db.shared.store.lifecycle;
+        match self.inner.transport.session() {
+            Ok(session) => { if let Ok(admitted) = self.inner.db.admit() { let _ = lifecycle.session_from(session, admitted); } self.operations_ready(); }
+            Err(error) => self.inner.preload_failed(&SyncError::Transport(error)),
+        }
     }
 
     pub(crate) async fn settled_for_test(&self) {

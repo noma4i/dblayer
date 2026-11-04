@@ -202,7 +202,7 @@ async fn authenticated_error_retryability_controls_feed_until_resume() {
             assert_eq!(status().connects, 1);
             assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
             assert!(peer.outgoing.try_recv().is_err());
-            sync.resume().await.unwrap();
+            sync.resume(&sync.inner.db.admit().unwrap()).await.unwrap();
         }
         peer.sequence = 0;
         tokio::time::timeout(std::time::Duration::from_secs(1), peer.handshake(&kat, &config, challenge)).await.expect("resume opens a new connection");
@@ -306,10 +306,10 @@ impl CableConnect for FakeConnect {
 #[async_trait]
 impl crate::transport::Transport for FakeConnect {
     async fn open_cable(&self) -> Result<Arc<dyn CableSocket>, TransportError> { CableConnect::open(self).await }
-    async fn query(&self, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted query") }
-    async fn mutate(&self, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted mutation") }
-    async fn subscribe(&self, _: GraphQLRequest) -> Result<crate::transport::ServerSubscription, TransportError> { panic!("V2 subscription") }
-    async fn put(&self, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, TransportError> { unreachable!() }
+    async fn query(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted query") }
+    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted mutation") }
+    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<crate::transport::ServerSubscription, TransportError> { panic!("V2 subscription") }
+    async fn put(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, TransportError> { unreachable!() }
 }
 
 struct Http {

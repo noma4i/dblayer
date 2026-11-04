@@ -20,7 +20,7 @@ fn seeded(db: &Db) {
         let row = obj(row);
         let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(crate::commit::EntityOp::Upsert { model: ModelKey::new(model), id: rid(row["id"].as_str().unwrap()), row });
-        db.as_app().land(envelope).unwrap();
+        db.land(&db.admit().unwrap(), envelope).unwrap();
     };
     put_row("users", json!({"id": "u1", "name": "Ann"}));
     put_row("users", json!({"id": "u2", "name": "Bob"}));
@@ -31,9 +31,9 @@ fn seeded(db: &Db) {
         put_row("vibes", json!({"id": id, "momentId": moment, "kind": "like"}));
     }
     let feed = ReplaceRequest::new(ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed")), Coverage::Complete);
-    db.as_app().replace(&feed, ["m1", "m2", "m3"].iter().map(|id| obj(json!({"id": id}))).collect()).unwrap();
-    db.as_app().attach("moments", &rid("m1"), "media", b"m1 bytes", "a.bin", "a/b").unwrap();
-    db.as_app().attach("vibes", &rid("v1"), "media", b"v1 bytes", "b.bin", "a/b").unwrap();
+    db.replace(&db.admit().unwrap(), &feed, ["m1", "m2", "m3"].iter().map(|id| obj(json!({"id": id}))).collect()).unwrap();
+    db.attach(&db.admit().unwrap(), "moments", &rid("m1"), "media", b"m1 bytes", "a.bin", "a/b").unwrap();
+    db.attach(&db.admit().unwrap(), "vibes", &rid("v1"), "media", b"v1 bytes", "b.bin", "a/b").unwrap();
 }
 
 fn left(db: &Db) -> BTreeMap<String, Vec<String>> {
@@ -53,7 +53,7 @@ fn left(db: &Db) -> BTreeMap<String, Vec<String>> {
 async fn inv_event_04_inv_cascade_04_a_delete_event_removes_the_same_set_as_a_local_destroy_and_leaves_no_orphan() {
     let local = Db::open_in_memory(all_specs(), None).unwrap();
     seeded(&local);
-    local.as_app().destroy("users", &rid("u1")).unwrap();
+    local.destroy(&local.admit().unwrap(), "users", &rid("u1")).unwrap();
 
     let rig = rig_on(Db::open_in_memory(all_specs(), None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(crate::sync::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));

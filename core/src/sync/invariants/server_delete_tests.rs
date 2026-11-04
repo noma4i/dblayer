@@ -22,7 +22,7 @@ async fn inv_cascade_05_a_server_delete_closes_the_open_operations_without_sendi
     for state in ["pending", "failed", "delivery_unknown"] {
         let rig = rig();
         put(&rig, "moments", moment("m1", "old"));
-        rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "edited"}))).unwrap();
+        rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "edited"}))).unwrap();
         let seq = rig.db.outbox().unwrap()[0].operation.id.0;
         match state {
             "failed" => fail(&rig.db, seq, OperationStatus::Failed),
@@ -35,7 +35,7 @@ async fn inv_cascade_05_a_server_delete_closes_the_open_operations_without_sendi
         let _subscription = server_destroys(&rig, "m1").await;
         assert_eq!(text_of(&rig, "moments", "m1"), None, "state {state}");
         assert!(rig.db.outbox().unwrap().is_empty(), "state {state}");
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
         assert!(names(&rig).iter().all(|name| name == "MomentChanged"), "state {state}: {:?}", names(&rig));
         assert_eq!(text_of(&rig, "moments", "m1"), None, "state {state}");
     }
@@ -45,13 +45,13 @@ async fn inv_cascade_05_a_server_delete_closes_the_open_operations_without_sendi
 async fn inv_cascade_05_an_answer_to_a_sending_operation_after_the_server_delete_does_not_bring_the_row_back() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
-    rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "edited"}))).unwrap();
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "edited"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", updated("m1", "edited").after(Duration::from_secs(5)));
     let delete = async {
         tokio::time::sleep(Duration::from_secs(1)).await;
         server_destroys(&rig, "m1").await
     };
-    let (flushed, _subscription) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush()), delete);
+    let (flushed, _subscription) = tokio::join!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())), delete);
     flushed.unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
     assert_eq!(text_of(&rig, "moments", "m1"), None);

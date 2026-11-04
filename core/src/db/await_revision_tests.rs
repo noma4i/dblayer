@@ -26,7 +26,7 @@ fn inv_observe_28_await_revision_returns_after_every_subscriber_was_told_that_re
     let _observer = db.observe_query_feed(Query::new("users"), false, false, feed).unwrap();
     for number in 0..20 {
         let id = format!("m{number}");
-        db.as_app().create("moments", obj(json!({"id": id, "userId": "u1", "text": "t"}))).unwrap();
+        db.create(&db.admit().unwrap(), "moments", obj(json!({"id": id, "userId": "u1", "text": "t"}))).unwrap();
         let revision = db.revision_seq().unwrap();
         db.await_revision(revision);
         assert_eq!(log.lock().unwrap().last().copied(), Some(revision), "commit {number} of a model that the group does not read");

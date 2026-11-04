@@ -12,7 +12,7 @@ async fn inv_id_01_a_numeric_id_and_the_same_id_as_text_are_one_row_in_the_model
     let params = serde_json::Map::new();
     for id in [json!(54), json!("54")] {
         rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![json!({"id": id, "text": "x", "userId": null})], false, "c")));
-        rig.sync.load("moments", "feed", &params, LoadOptions { force: true }).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &params, LoadOptions { force: true }).await.unwrap();
         let ids: Vec<String> = rig.db.query(&Query::new("moments")).unwrap().iter().map(|row| row.id.to_string()).collect();
         assert_eq!(ids, ["54"], "landed {id}");
         assert!(rig.db.find("moments", &rid("54")).unwrap().is_some(), "landed {id}");

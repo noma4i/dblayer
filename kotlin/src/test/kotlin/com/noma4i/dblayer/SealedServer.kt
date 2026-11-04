@@ -78,7 +78,7 @@ class SealedServer(private val answer: (path: String, body: JsonObject) -> JsonO
         return EncryptedReply(200u, seal(request, reply))
     }
 
-    private fun open(token: String): JsonObject {
+    fun open(token: String): JsonObject {
         val parts = token.split(".")
         val oaep = Cipher.getInstance("RSA/ECB/OAEPPadding")
         oaep.init(Cipher.DECRYPT_MODE, privateKey, OAEPParameterSpec("SHA-1", "MGF1", MGF1ParameterSpec.SHA1, PSource.PSpecified.DEFAULT))

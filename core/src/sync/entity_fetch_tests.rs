@@ -29,15 +29,15 @@ async fn two_readers_of_one_entity_send_one_request_and_a_stale_read_of_a_fresh_
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "one"}})).after(Duration::from_secs(1)));
     let (sink, got) = sink();
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
     assert_eq!(told(&got, 2).await, [None, None]);
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Stale, sink.clone()).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Stale, sink.clone()).unwrap();
     assert_eq!(told(&got, 3).await.len(), 3);
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "two"}})));
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Force, sink).unwrap();
     told(&got, 4).await;
     assert_eq!(rig.transport.call_count("ChatNode"), 2);
 }
@@ -47,7 +47,7 @@ async fn a_stale_read_of_a_missing_row_sends_one_request() {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c2", "title": "x"}})));
     let (sink, got) = sink();
-    rig.sync.refresh_entities("chats", &ids("c2"), super::EntityFetch::Stale, sink).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c2"), super::EntityFetch::Stale, sink).unwrap();
     told(&got, 1).await;
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
 }
@@ -57,7 +57,7 @@ async fn an_offline_refresh_reports_offline_and_repeats_once_when_the_network_re
     let rig = node_rig();
     rig.sync.set_online(false);
     let (sink, got) = sink();
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Force, sink).unwrap();
     assert_eq!(told(&got, 1).await, [Some(RefreshError::Offline)]);
     assert_eq!(rig.transport.call_count("ChatNode"), 0);
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "back"}})));
@@ -70,7 +70,7 @@ async fn an_offline_refresh_reports_offline_and_repeats_once_when_the_network_re
 async fn a_model_without_a_node_read_is_refused() {
     let rig = super::rig::rig();
     let (sink, _) = sink();
-    assert!(rig.sync.refresh_entities("moments", &ids("m1"), super::EntityFetch::Force, sink).is_err());
+    assert!(rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "moments", &ids("m1"), super::EntityFetch::Force, sink).is_err());
 }
 
 #[tokio::test(start_paused = true)]
@@ -85,13 +85,13 @@ async fn entity_fetch_presence_modes() {
         let rig = node_rig();
         if negative {
             rig.transport.enqueue("ChatNode", data(json!({"node": null})));
-            rig.sync.node("chats", "node", "c1", true).await.unwrap();
+            rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await.unwrap();
         }
         if present { super::rig::put(&rig, "chats", json!({"id":"c1", "title":"from list"})); }
         let before = rig.transport.call_count("ChatNode");
         rig.transport.enqueue("ChatNode", data(json!({"node":{"id":"c1", "title":"node"}})));
         let (sink, got) = sink();
-        rig.sync.refresh_entities("chats", &ids("c1"), mode, sink).unwrap();
+        rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), mode, sink).unwrap();
         assert_eq!(told(&got, 1).await, [None]);
         assert_eq!(rig.transport.call_count("ChatNode") - before, expected, "{mode:?}, present={present}, negative={negative}");
     }
@@ -103,7 +103,7 @@ async fn entity_if_missing_online() {
         let rig = node_rig();
         rig.sync.set_online(false);
         let (sink, got) = sink();
-        rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::IfMissing, sink).unwrap();
+        rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::IfMissing, sink).unwrap();
         assert_eq!(told(&got, 1).await, [Some(RefreshError::Offline)]);
         assert_eq!(rig.transport.call_count("ChatNode"), 0);
         if arriving { super::rig::put(&rig, "chats", json!({"id":"c1", "title":"list while offline"})); }
@@ -119,7 +119,7 @@ async fn entity_if_missing_read_error() {
     let rig = node_rig();
     rig.db.shared.store.fail_next_entity_reads(1);
     let (sink, got) = sink();
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::IfMissing, sink).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::IfMissing, sink).unwrap();
     assert!(matches!(&told(&got, 1).await[0], Some(RefreshError::Failed(_))));
     assert_eq!(rig.transport.call_count("ChatNode"), 0);
 }
@@ -129,16 +129,16 @@ async fn entity_if_missing_shared() {
     let rig = node_rig();
     let (sink, got) = sink();
     rig.transport.enqueue("ChatNode", data(json!({"node":{"id":"c1", "title":"shared"}})).after(Duration::from_secs(1)));
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::IfMissing, sink.clone()).unwrap();
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::IfMissing, sink.clone()).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::IfMissing, sink.clone()).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::IfMissing, sink.clone()).unwrap();
     assert_eq!(told(&got, 2).await, [None, None]);
     assert_eq!(rig.transport.call_count("ChatNode"), 1);
     rig.sync.set_online(false);
-    let cancelled = rig.sync.refresh_entities("chats", &ids("c2"), super::EntityFetch::IfMissing, sink.clone()).unwrap();
+    let cancelled = rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c2"), super::EntityFetch::IfMissing, sink.clone()).unwrap();
     told(&got, 3).await;
     rig.sync.cancel_entity_refresh(&cancelled);
     assert!(rig.sync.inner.entity_due.lock().unwrap().is_empty());
-    rig.sync.refresh_entities("chats", &ids("c3"), super::EntityFetch::IfMissing, sink).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c3"), super::EntityFetch::IfMissing, sink).unwrap();
     told(&got, 4).await;
     rig.db.reset_all().unwrap();
     rig.sync.set_online(true);
@@ -170,7 +170,7 @@ async fn entity_if_missing_idle() {
     sync.register(super::OperationDef::from_document("ChatNode", "query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title } } }").unwrap());
     sync.set_online(false);
     let (sink, got) = sink();
-    sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::IfMissing, sink).unwrap();
+    sync.refresh_entities(&sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::IfMissing, sink).unwrap();
     told(&got, 1).await;
     let before = (clock.sleeps.load(Ordering::SeqCst), clock.wakes.load(Ordering::SeqCst));
     rig.db.shared.store.fail_next_entity_reads(1);
@@ -201,7 +201,7 @@ async fn a_cancelled_parked_refresh_releases_its_sink_outside_the_due_lock() {
     let seen: Arc<Mutex<Vec<bool>>> = Arc::default();
     let probe = DropProbe(Arc::downgrade(&rig.sync.inner), seen.clone());
     let sink: RefreshSink = Arc::new(move |_, _| { let _keep = &probe; });
-    let cancel = rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
+    let cancel = rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
     yield_until("the refresh parked", || !rig.sync.inner.entity_due.lock().unwrap().is_empty()).await;
     yield_until("the task released its copy", || Arc::strong_count(&sink) == 2).await;
     drop(sink);
@@ -215,12 +215,12 @@ async fn a_pending_refresh_does_not_keep_the_database_alive() {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "slow"}})).after(Duration::from_secs(3600)));
     let (sink, _) = sink();
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Force, sink.clone()).unwrap();
     yield_until("the request is in flight", || rig.transport.call_count("ChatNode") == 1).await;
     assert!(Arc::strong_count(&rig.sync.inner) >= 2, "the task holds the inner state");
     rig.sync.close();
     yield_until("the task ended with the close", || Arc::strong_count(&rig.sync.inner) == 1).await;
-    rig.sync.refresh_entities("chats", &ids("c2"), super::EntityFetch::Force, sink.clone()).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c2"), super::EntityFetch::Force, sink.clone()).unwrap();
     for _ in 0..8 { tokio::task::yield_now().await; }
     assert_eq!(rig.transport.call_count("ChatNode"), 1, "a closed database sends nothing");
 }
@@ -230,7 +230,7 @@ async fn dropping_the_last_owner_ends_a_pending_refresh() {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "slow"}})).after(Duration::from_secs(3600)));
     let (sink, _) = sink();
-    rig.sync.refresh_entities("chats", &ids("c1"), super::EntityFetch::Force, sink).unwrap();
+    rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c1"), super::EntityFetch::Force, sink).unwrap();
     yield_until("the request is in flight", || rig.transport.call_count("ChatNode") == 1).await;
     let owner = Arc::downgrade(&rig.sync.inner);
     let sync = rig.sync;

@@ -31,7 +31,7 @@ fn inv_open_04_a_reopen_with_the_same_schema_keeps_rows_and_operations() {
     let path = directory.path().join("db.sqlite");
     let created = {
         let db = Db::open(&path, all_specs(), Some("v1")).unwrap();
-        let created = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "kept"}))).unwrap();
+        let created = db.create(&db.admit().unwrap(), "moments", obj(json!({"userId": "u1", "text": "kept"}))).unwrap();
         created
     };
     let db = Db::open(&path, all_specs(), Some("v1")).unwrap();
@@ -67,7 +67,7 @@ fn concurrent_creates_all_land() {
             let db = db.clone();
             std::thread::spawn(move || {
                 for index in 0..25 {
-                    db.as_app().create("moments", obj(json!({"userId": "u1", "text": format!("{worker}-{index}")}))).unwrap();
+                    db.create(&db.admit().unwrap(), "moments", obj(json!({"userId": "u1", "text": format!("{worker}-{index}")}))).unwrap();
                 }
             })
         })
@@ -96,8 +96,8 @@ fn quarantined(db: &Db, reason: &str) -> i64 {
 fn inv_identity_02_recovery_distinguishes_models_with_the_same_temp_id() {
     for mode in ["rebuild", "one_orphan", "two_orphans"] {
         let (_directory, db) = reopened_after(|db| {
-            db.as_app().create("users", obj(json!({"id": "temp-shared", "name": "user"}))).unwrap();
-            db.as_app().create("moments", obj(json!({"id": "temp-shared", "text": "moment"}))).unwrap();
+            db.create(&db.admit().unwrap(), "users", obj(json!({"id": "temp-shared", "name": "user"}))).unwrap();
+            db.create(&db.admit().unwrap(), "moments", obj(json!({"id": "temp-shared", "text": "moment"}))).unwrap();
             match mode {
                 "rebuild" => db.execute_for_test("DELETE FROM row_moments"),
                 "one_orphan" => db.execute_for_test("DELETE FROM op WHERE action_key = 'moments:create'"),
@@ -114,7 +114,7 @@ fn inv_identity_02_recovery_distinguishes_models_with_the_same_temp_id() {
 fn fsck_rebuilds_a_missing_temp_row_from_its_create_operation_on_open() {
     let mut temp_id = None;
     let (_directory, db) = reopened_after(|db| {
-        let created = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "lost"}))).unwrap();
+        let created = db.create(&db.admit().unwrap(), "moments", obj(json!({"userId": "u1", "text": "lost"}))).unwrap();
         db.execute_for_test("DELETE FROM row_moments");
         temp_id = Some(created.id.clone());
     });
@@ -129,7 +129,7 @@ fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_othe
     let (_directory, db) = reopened_after(|db| {
         put(db, "moments", json!({"id": "temp-orphan", "text": "orphan"}));
         put(db, "moments", json!({"id": "m1", "text": "server row"}));
-        kept_id = Some(db.as_app().create("moments", obj(json!({"userId": "u1", "text": "queued"}))).unwrap().id.clone());
+        kept_id = Some(db.create(&db.admit().unwrap(), "moments", obj(json!({"userId": "u1", "text": "queued"}))).unwrap().id.clone());
     });
     assert!(db.find("moments", &rid("temp-orphan")).unwrap().is_none());
     assert!(db.find("moments", &rid("m1")).unwrap().is_some());

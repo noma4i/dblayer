@@ -111,7 +111,7 @@ pub struct SubscriptionStatus {
 
 type SharedStatus = Arc<Mutex<SubscriptionStatus>>;
 
-type Opened = (Generation, crate::lifecycle::Epoch, Result<ServerSubscription, TransportError>);
+type Opened = (Generation, crate::lifecycle::Admitted, Result<ServerSubscription, TransportError>);
 
 pub struct Updates {
     abort: AbortHandle,
@@ -166,7 +166,7 @@ struct Feed {
     backoff: Backoff,
     ready: Option<tokio::sync::watch::Sender<Option<Result<(), SyncError>>>>,
     received: crate::lifecycle::Stamp,
-    epoch: crate::lifecycle::Epoch,
+    epoch: crate::lifecycle::Admitted,
     lost: Arc<Mutex<LostEvents>>,
 }
 
@@ -194,7 +194,7 @@ impl Feed {
         let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
         let mut failed = false;
         for model in models {
-            if self.now().scope(self.inner.expire_and_reload_watched(&model)).await.is_err() {
+            if self.now().scope(self.inner.expire_and_reload_watched(&self.epoch, &model)).await.is_err() {
                 self.inner.publish_model_gap(&model);
                 locked(&self.status).rejected += 1;
                 failed = true;
@@ -402,7 +402,7 @@ impl Feed {
         let mut failure = None;
         for (relation, params) in targets.into_values() {
             let outcome = match self.inner.resolve(crate::lifecycle::Origin::Session, model, &relation, &params) {
-                Ok(resolved) => self.inner.load_scope(&resolved, true).await.map(|_| ()),
+                Ok(resolved) => self.inner.load_scope(&self.epoch, &resolved, true).await.map(|_| ()),
                 Err(error) => Err(error),
             };
             if let Err(error) = outcome { failure.get_or_insert(error); }
@@ -420,10 +420,10 @@ impl Feed {
         };
         let mut resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, name, &params)?;
         resolved.node_reread = relation.node == Some(crate::schema::NodeRead::One);
-        self.inner.load_scope(&resolved, true).await.map(|_| ())
+        self.inner.load_scope(&self.epoch, &resolved, true).await.map(|_| ())
     }
 
-    fn now(&self) -> crate::lifecycle::Epoch { self.epoch.clone() }
+    fn now(&self) -> crate::lifecycle::Admitted { self.epoch.clone() }
 
     async fn apply_event(&self, response: &Response) -> bool { self.now().scope(self.apply_event_in(response)).await }
 
@@ -443,7 +443,7 @@ impl Feed {
             SubscriptionAction::Ephemeral { fields } => {
                 let values: Option<Map<String, Value>> = fields.iter().map(|(name, path)| root_value(node, path).cloned().map(|value| (name.clone(), value))).collect();
                 match (id.as_ref(), values) {
-                    (Some(id), Some(values)) => self.inner.db.set_ephemeral(&self.def.model, id, values).map_err(SyncError::from),
+                    (Some(id), Some(values)) => self.inner.db.set_ephemeral(&self.epoch, &self.def.model, id, values).map_err(SyncError::from),
                     _ => Err(SyncError::Event("missing event id or fields".into())),
                 }
             }
@@ -522,7 +522,7 @@ impl Feed {
             Ok(stale) => {
                 let mut reloaded = true;
                 for model in stale {
-                    if self.inner.reload_lists_of_absent_parent(&model).await.is_err() {
+                    if self.inner.reload_lists_of_absent_parent(&self.epoch, &model).await.is_err() {
                         self.inner.publish_model_gap(&model);
                         locked(&self.status).rejected += 1;
                         reloaded = false;
@@ -569,7 +569,7 @@ impl Feed {
         let mut count = 0;
         let mut announced: Vec<(String, RowId, Map<String, Value>)> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
-        let committed = db.commit_following_report(&crate::lifecycle::Authority::Epoch(self.now()), generation, |reader| {
+        let committed = db.commit_following_report(&crate::lifecycle::Authority::Admitted(self.now()), generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();
@@ -643,7 +643,7 @@ impl Feed {
             Err(PlanCommitError::Store(error)) => return Err(error.into()),
         };
         for (model, id, values) in &announced {
-            db.set_ephemeral(model, id, values.clone())?;
+            db.set_ephemeral(&self.epoch, model, id, values.clone())?;
         }
         for (stamp, model, id, kind, before) in before {
             self.inner.publish_rows(Heard { stamp, area: &self.def.operation, kind: &kind }, &model, id.as_str(), before, db.find(&model, &id));
@@ -681,7 +681,7 @@ impl Feed {
                         if lifecycle.take_reload() {
                             let models: Vec<_> = self.inner.db.shared.specs.values().filter(|spec| !spec.changes.is_empty() || spec.key.as_str() == self.def.model).map(|spec| spec.key.to_string()).collect();
                             for model in models {
-                                if self.inner.reload_watched(&model, None, false).await.is_err() {
+                                if self.inner.reload_watched(&self.epoch, &model, None, false).await.is_err() {
                                     self.inner.publish_model_gap(&model);
                                     locked(&self.status).rejected += 1;
                                 }
@@ -772,7 +772,7 @@ impl Feed {
                     if !self.reload_lost().await && reconnected {
                         let models: BTreeSet<_> = self.recipients(self.received).iter().map(|feed| feed.def.model.clone()).collect();
                         for model in models {
-                            if self.inner.reload_watched(&model, None, false).await.is_err() {
+                            if self.inner.reload_watched(&self.epoch, &model, None, false).await.is_err() {
                                 self.inner.publish_model_gap(&model);
                                 locked(&self.status).rejected += 1;
                             }
@@ -833,18 +833,19 @@ impl Inner {
             result = async {
                 self.connectivity.online().await;
                 let lifecycle = &self.db.shared.store.lifecycle;
-                let lease = loop {
-                    match self.db.shared.store.lifecycle.lease_for_session(crate::lifecycle::Origin::Session, "subscription open") {
-                        Ok(lease) => break lease,
+                let admitted = loop {
+                    match self.db.shared.store.lifecycle.admit_for_session(crate::lifecycle::Origin::Session, "subscription open") {
+                        Ok(admitted) => break admitted,
                         Err(_) if !lifecycle.admission(crate::lifecycle::Origin::Session).await => return None,
                         Err(_) => {}
                     }
                 };
                 let generation = self.db.generation();
-                let epoch = lease.epoch_value();
+                let epoch = admitted.value();
                 crate::db::lock::assert_no_library_lock("Transport::subscribe");
-                let opened = lease.run(self.transport.subscribe(request)).await;
-                Some((generation, epoch, opened.unwrap_or_else(|ended| Err(ended.into()))))
+                let opened = admitted.run(self.transport.subscribe(&admitted, request)).await;
+                let admitted = lifecycle.admit_passive(crate::lifecycle::Origin::Session, "subscription event", Some(epoch)).ok()?;
+                Some((generation, admitted, opened.unwrap_or_else(|ended| Err(ended.into()))))
             } => result,
         }
     }
@@ -872,7 +873,14 @@ impl Inner {
         let def_root = def.root.clone();
         let backoff = RetryPolicy::Subscription.backoff().randomized();
         let root_path = def_root.unwrap_or_else(|| operation.root_path.clone());
-        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp(), lost: Arc::default(), epoch: first.as_ref().map_or_else(|| self.db.shared.store.lifecycle.epoch_now(), |(_, epoch, _)| epoch.clone()) };
+        let epoch = if let Some((_, admitted, _)) = &first { admitted.clone() } else {
+            let lifecycle = &self.db.shared.store.lifecycle;
+            loop {
+                if let Ok(admitted) = lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "subscription", None) { break admitted; }
+                if !lifecycle.admission(crate::lifecycle::Origin::Explicit).await { return Err(SyncError::Cancelled); }
+            }
+        };
+        let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp(), lost: Arc::default(), epoch };
         let task = crate::task::spawn(crate::task::Carry::Detached, self.until_closed(feed.run(request, first, resets)));
         Ok(Updates { abort: task.abort_handle(), status, definition })
     }

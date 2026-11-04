@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -65,7 +66,13 @@ async fn a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once(
     migrated.close_now();
 }
 
-struct HeldPut(Arc<Gate>);
+struct HeldPut { gate: Arc<Gate>, ended: Arc<tokio::sync::Notify> }
+
+struct PutEnd(Arc<tokio::sync::Notify>);
+
+impl Drop for PutEnd {
+    fn drop(&mut self) { self.0.notify_one(); }
+}
 
 #[async_trait]
 impl Transport for HeldPut {
@@ -78,20 +85,63 @@ impl Transport for HeldPut {
     async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
     fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
-        self.0.pass().await;
+        let _ended = PutEnd(self.ended.clone());
+        self.gate.pass().await;
         Ok(PutReply { status: 200, etag: Some("part".into()) })
     }
+}
+
+struct AcceptUploads;
+
+impl crate::ffi::UploadAcceptedSink for AcceptUploads {
+    fn accepted(&self, _: crate::ffi::WireUploadAccepted) {}
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ending_an_upload_round_keeps_the_epoch_of_each_accepted_group() {
+    let rig = SessionRig::new();
+    let gate = Gate::new();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("upload.mp4");
+    std::fs::write(&source, b"abc").unwrap();
+    let operations = UploadOperations::empty().create_blob("CreateBlob").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart");
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(HeldPut { gate, ended: Arc::new(tokio::sync::Notify::new()) })), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), Some(operations), None).await.unwrap();
+    let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
+        let document = format!("mutation {name} {{ {root} {{ id }} }}");
+        rig.server.register(&document);
+        json!({"name": name, "document": document, "rootPath": root})
+    }).collect();
+    database.register_operations(json!(registered).to_string()).unwrap();
+    database.set_upload_accepted_sink(Arc::new(AcceptUploads));
+    named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+    let first = database.session_epoch();
+    let owner = database.round_begin(first).unwrap().unwrap();
+    assert_eq!(database.round_next(first, owner).unwrap(), crate::ffi::WireRoundStep::Done);
+    let file = || WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
+    named_bound("upload in A", database.upload(first, "Moment".into(), "42".into(), "upload".into(), file())).await.unwrap();
+    named_bound("reset A", database.session_reset()).await.unwrap();
+    assert!(matches!(database.round_next(first, owner), Err(DbError::Interrupted { .. })));
+    named_bound("second sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+    let second = database.session_epoch();
+    assert_ne!(first, second);
+    named_bound("upload in B", database.upload(second, "Moment".into(), "43".into(), "upload".into(), file())).await.unwrap();
+    let groups = database.round_end(second, owner).unwrap().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!((groups[0].epoch, groups[0].items.len()), (first, 1));
+    assert_eq!((groups[1].epoch, groups[1].items.len()), (second, 1));
+    database.close_now();
 }
 
 /// C15, G06: one upload holds its PUT, a second waits behind it. The session reset or the data logout arrives, every waiter ends, the PUT then answers late, and the next sign-in runs each upload at most once and none after a data logout.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs_each_once() {
-    for data_logout in [false, true] {
+    {
         let rig = SessionRig::new();
         let gate = Gate::new();
+        let put_ended = Arc::new(tokio::sync::Notify::new());
         let directory = tempfile::tempdir().unwrap();
         let operations = UploadOperations::empty().create_blob("CreateBlob").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart");
-        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(HeldPut(gate.clone()))), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), Some(operations), None).await.unwrap();
+        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(HeldPut { gate: gate.clone(), ended: put_ended.clone() })), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), Some(operations), None).await.unwrap();
         let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
             let document = format!("mutation {name} {{ {root} {{ id }} }}");
             rig.server.register(&document);
@@ -99,6 +149,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         }).collect();
         database.register_operations(json!(registered).to_string()).unwrap();
         named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+        let epoch = database.session_epoch();
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));
         for id in ["42", "43"] {
             let source = directory.path().join(format!("{id}.mp4"));
@@ -108,25 +159,44 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         gate.entered_for("the first PUT").await;
         let waiters: Vec<_> = ["42", "43"].into_iter().map(|id| {
             let database = database.clone();
-            tokio::spawn(async move { database.settled(database.session_epoch(), "Moment".into(), id.into(), None).await })
+            let (started, ready) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(async move {
+                let mut waiting = Box::pin(database.settled(database.session_epoch(), "Moment".into(), id.into(), None));
+                let mut started = Some(started);
+                std::future::poll_fn(|context| {
+                    let result = waiting.as_mut().poll(context);
+                    if result.is_pending() { if let Some(started) = started.take() { let _ = started.send(()); } }
+                    result
+                }).await
+            });
+            (task, ready)
         }).collect();
 
-        crate::test_wait::yield_until("both settle calls parked", || database.sync.as_ref().unwrap().counters().settle_parks >= 2).await;
+        let mut tasks = Vec::new();
+        for (task, ready) in waiters { bound(ready).await.unwrap(); tasks.push(task); }
 
-        if data_logout { named_bound("logout", database.session_reset()).await.unwrap() } else { database.session_reset().await.unwrap() }
+        named_bound("session reset", database.session_reset()).await.unwrap();
+        let old_resume = named_bound("old upload resume", database.resume_uploads(epoch)).await;
+        assert!(matches!(old_resume, Err(DbError::Interrupted { .. })));
 
-        for (index, waiter) in waiters.into_iter().enumerate() {
+        let refused = named_bound("upload without a session", database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(directory.path().join("42.mp4").to_str().unwrap())))).await;
+        assert!(matches!(refused, Err(DbError::NoSession { .. })));
+
+        for (index, waiter) in tasks.into_iter().enumerate() {
             let ended = named_bound(&format!("settled of upload {index}"), waiter).await.unwrap();
-            assert!(ended.is_err() || !data_logout, "data_logout={data_logout}: waiter {index} reported a success for work that was cleared");
+            assert!(matches!(ended, Err(DbError::Interrupted { .. } | DbError::NoSession { .. })), "waiter {index} returned {ended:?}");
         }
-        for _ in 0..8 { gate.release(); }
         named_bound("second sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
-        named_bound("resume_uploads", database.resume_uploads()).await.unwrap();
-        named_bound("wait_uploads", database.sync.as_ref().unwrap().wait_uploads()).await;
+        for _ in 0..8 { gate.release(); }
+        bound(put_ended.notified()).await;
+        named_bound("resume_uploads", database.resume_uploads(database.session_epoch())).await.unwrap();
 
         let made = effects(&rig, "MakeMoment");
-        assert!(made.len() <= 2, "data_logout={data_logout}: {} mutations ran for 2 uploads", made.len());
-        if data_logout { assert!(made.is_empty(), "data_logout={data_logout}: the late PUT of cleared work reached the server"); }
+        assert!(made.is_empty(), "the late PUT of cleared work reached the server");
+        for id in ["42", "43"] {
+            let row = bound(database.read_row(database.session_epoch(), "Moment".into(), id.into())).await.unwrap();
+            assert!(row.is_none(), "the new account retained upload row {id}: {row:?}");
+        }
         database.close_now();
     }
 }

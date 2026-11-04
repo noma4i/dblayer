@@ -12,9 +12,9 @@ const MOMENT_ROW: &str = "m77";
 
 fn prepare(path: &Path) -> Rig {
     let rig = open_rig(path);
-    let parent = rig.db.as_app().create("moments", params(json!({"text": "parent"}))).unwrap();
-    rig.db.as_app().create("vibes", params(json!({"id": "v1", "momentId": parent.id.as_str()}))).unwrap();
-    rig.db.as_app().attach("moments", &parent.id, "media", b"bytes", "a.bin", "a/b").unwrap();
+    let parent = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "parent"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "vibes", params(json!({"id": "v1", "momentId": parent.id.as_str()}))).unwrap();
+    rig.db.attach(&rig.db.admit().unwrap(), "moments", &parent.id, "media", b"bytes", "a.bin", "a/b").unwrap();
     rig.transport.enqueue("CreateMoment", created(MOMENT_ROW, "parent"));
     rig
 }
@@ -61,7 +61,7 @@ async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_
         let root = tempfile::tempdir().unwrap();
         let rig = prepare(&root.path().join("1.sqlite"));
         let steps = interrupt_at(&rig, usize::MAX);
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
         rig.sync.wait_uploads().await;
         steps.load(Ordering::SeqCst)
     };
@@ -72,7 +72,7 @@ async fn inv_op_16_inv_row_01_a_failure_at_any_point_of_the_confirmation_leaves_
         let path = root.path().join("1.sqlite");
         let rig = prepare(&path);
         interrupt_at(&rig, limit);
-        faulted += usize::from(crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.is_err());
+        faulted += usize::from(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.is_err());
         rig.sync.wait_uploads().await;
         drop(rig);
         match check_all_or_nothing(&path, limit) {

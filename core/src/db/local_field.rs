@@ -9,7 +9,7 @@ use super::local_write::plan_fault;
 use super::open::Db;
 
 impl Db {
-    pub fn set_local(&self, model: &str, id: &RowId, path: &str, value: Value) -> Result<(), DbError> {
+    pub fn set_local(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, path: &str, value: Value) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
         let slot = spec.local_slot(path).ok_or_else(|| DbError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
         let value = match slot.key {
@@ -23,7 +23,7 @@ impl Db {
             _ => value,
         };
         let generation = self.generation();
-        self.commit_following(&self.authority()?, generation, |reader| {
+        self.commit_following(&admitted.authority(), generation, |reader| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 let Some(mut row) = reader.point(model, id.as_str())? else {
                     envelope.pending_locals.push(PendingLocal { model: model.to_string(), row_id: id.to_string(), path: path.to_string(), value: value.clone() });

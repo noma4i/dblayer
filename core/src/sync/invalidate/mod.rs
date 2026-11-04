@@ -9,7 +9,7 @@ use super::load::{LoadOptions, LoadOutcome};
 use super::{Inner, Sync};
 
 impl Inner {
-    pub(crate) async fn reload_watched(&self, model: &str, relations: Option<&std::collections::BTreeSet<String>>, only_stale: bool) -> Result<usize, SyncError> {
+    pub(crate) async fn reload_watched(&self, admitted: &crate::lifecycle::Admitted, model: &str, relations: Option<&std::collections::BTreeSet<String>>, only_stale: bool) -> Result<usize, SyncError> {
         let targets: BTreeMap<String, (String, Map<String, Value>)> = self.db.observed_reads()
             .into_iter()
             .filter(|entry| entry.model == model && relations.is_none_or(|names| names.contains(&entry.relation)))
@@ -21,7 +21,7 @@ impl Inner {
             let result = async {
                 if only_stale && !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.invalidated) { return Ok(false); }
                 let resolved = self.resolve(crate::lifecycle::Origin::Session, model, &relation, &params)?;
-                let outcome = if only_stale { self.fetch_after_flights(&resolved).await? } else { self.fetch(&resolved, None, false).await? };
+                let outcome = if only_stale { self.fetch_after_flights(admitted, &resolved).await? } else { self.fetch(admitted, &resolved, None, false).await? };
                 if let Some(error) = outcome.kept_error { return Err(error); }
                 Ok(true)
             }.await;
@@ -39,12 +39,12 @@ pub(crate) struct StaleMark {
     model: String,
     names: std::collections::BTreeSet<String>,
     since: i64,
-    epoch: crate::lifecycle::Epoch,
+    admitted: crate::lifecycle::Admitted,
 }
 
 impl Inner {
     pub(crate) async fn reload_stale(self: &std::sync::Arc<Self>, mark: &StaleMark) -> Result<usize, SyncError> {
-        if !self.db.shared.store.lifecycle.admits_epoch(mark.epoch.value()) { return Ok(0); }
+        if !mark.admitted.is_current() { return Ok(0); }
         let model = mark.model.as_str();
         let targets: BTreeMap<String, (String, Map<String, Value>)> = self.db.observed_reads()
             .into_iter()
@@ -61,7 +61,7 @@ impl Inner {
                 let pending = self.flight_pending(&resolved);
                 let predates_mark = store.window(&key)?.map_or(pending, |window| window.applied < mark.since);
                 if !invalidated && !predates_mark { return Ok(false); }
-                let outcome = self.fetch_after_flights(&resolved).await?;
+                let outcome = self.fetch_after_flights(&mark.admitted, &resolved).await?;
                 if let Some(error) = outcome.kept_error { return Err(error); }
                 Ok(true)
             }.await;
@@ -75,16 +75,17 @@ impl Inner {
 }
 
 impl Inner {
-    pub(crate) async fn expire_and_reload_watched(&self, model: &str) -> Result<usize, SyncError> {
+    pub(crate) async fn expire_and_reload_watched(&self, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<usize, SyncError> {
         let keys: Vec<String> = self.db.observed_reads().into_iter().filter(|entry| entry.model == model).map(|entry| entry.key).collect();
-        self.db.shared.store.invalidate_windows(&self.db.authority()?, &keys)?;
-        self.reload_watched(model, None, true).await
+        self.db.shared.store.invalidate_windows(&admitted.authority(), &keys)?;
+        self.reload_watched(admitted, model, None, true).await
     }
 }
 
 impl Sync {
-    pub async fn refresh(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
-        self.load(model, relation, params, LoadOptions { force: true }).await
+    pub async fn refresh(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
+        self.inner.ensure_admitted(admitted)?;
+        self.load(admitted, model, relation, params, LoadOptions { force: true }).await
     }
 }
 

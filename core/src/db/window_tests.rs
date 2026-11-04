@@ -38,7 +38,7 @@ fn seeded(size: usize) -> Db {
         let id = format!("u{index:06}");
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row: obj(json!({"id": id, "name": name_at(index)})) });
     }
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     db
 }
@@ -56,7 +56,7 @@ fn members_bounded_rows() {
     for n in 0..100_000 {
         envelope.scope_ops.push(crate::commit::ScopeOp::Append { scope: scope.clone(), row: rid(&format!("u{n:06}")), order_key: format!("k{n:06}") });
     }
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     let query = Query { stable: true, ..query().in_scope(scope.key) };
     let subject = Subject::window(query.clone(), WindowSpec::Members { size: 50, max: 200 });
     let before = total();
@@ -316,7 +316,7 @@ fn edit(db: &Db, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize, ke
         envelope.entity_ops.push(EntityOp::Upsert { model: moments, id: rid(&id), row: obj(row) });
         id
     };
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     id
 }
 

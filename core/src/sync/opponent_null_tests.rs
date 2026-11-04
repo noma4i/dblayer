@@ -64,18 +64,18 @@ fn answer(rig: &Rig, operation: &'static str, data: Value) {
 
 async fn page(rig: &Rig, chat: Value) {
     answer(rig, "ChatsPage", json!({"chats": {"nodes": [chat], "pageInfo": {"hasNextPage": false, "endCursor": "e"}}}));
-    rig.sync.load("chats", "recent", &Default::default(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "recent", &Default::default(), LoadOptions { force: true }).await.unwrap();
 }
 
 async fn node(rig: &Rig, chat: Value) {
     answer(rig, "ChatNode", json!({"node": chat}));
-    rig.sync.node("chats", "node", "c1", true).await.unwrap();
+    rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await.unwrap();
 }
 
 async fn mutation(rig: &Rig, chat: Value) {
-    rig.db.as_app().act("chats", "update", &RowId::new("c1").unwrap(), params(json!({})), params(json!({}))).unwrap();
+    rig.db.act(&rig.db.admit().unwrap(), "chats", "update", &RowId::new("c1").unwrap(), params(json!({})), params(json!({}))).unwrap();
     answer(rig, "UpdateChat", json!({"updateChat": chat}));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
 }
 
 async fn event(rig: &Rig, chat: Value) {

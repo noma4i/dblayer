@@ -42,8 +42,8 @@ fn inv_merge_07_the_list_after_a_merge_follows_the_complete_and_page_rules_for_r
         for coverage in [Coverage::Complete, Coverage::Page] {
             let db = booted();
             let (current, incoming) = (seed.some_of(12), seed.some_of(12));
-            db.as_app().replace(&ReplaceRequest::new(scope.clone(), Coverage::Complete), rows(&current)).unwrap();
-            db.as_app().replace(&ReplaceRequest::new(scope.clone(), coverage), rows(&incoming)).unwrap();
+            db.replace(&db.admit().unwrap(), &ReplaceRequest::new(scope.clone(), Coverage::Complete), rows(&current)).unwrap();
+            db.replace(&db.admit().unwrap(), &ReplaceRequest::new(scope.clone(), coverage), rows(&incoming)).unwrap();
             let members: Vec<String> = db.shared.store.scope_members("moments", "feed").unwrap().into_iter().map(|(id, _)| id).collect();
             assert_eq!(members, composed(&current, &incoming, coverage), "case {case} {coverage:?} current {current:?} incoming {incoming:?}");
         }

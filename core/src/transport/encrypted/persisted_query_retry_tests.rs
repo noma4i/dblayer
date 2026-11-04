@@ -15,7 +15,7 @@ async fn lose_the_answer_to_the_second_send(rig: &Rig) {
             server.lose_next_answer();
         }
     });
-    super::client_tests::cancel_pending(rig.transport().mutate(request(WRITE)));
+    super::client_tests::cancel_pending(rig.transport().mutate(&rig.db.admit().unwrap(), request(WRITE)));
     assert_eq!(rig.pending_sequence(), Some(3));
 }
 
@@ -25,7 +25,7 @@ async fn the_same_call_after_a_lost_answer_to_the_second_send_returns_the_stored
     let before = rig.server.executed().len();
     lose_the_answer_to_the_second_send(&rig).await;
 
-    let answer = rig.transport().mutate(request(WRITE)).await;
+    let answer = rig.transport().mutate(&rig.db.admit().unwrap(), request(WRITE)).await;
 
     assert_eq!(answer.unwrap().data, Some(json!({ "done": WRITE })));
     assert_eq!(rig.server.executed().len() - before, 1);

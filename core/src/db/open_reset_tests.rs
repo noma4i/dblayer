@@ -36,13 +36,13 @@ fn inv_open_05_a_fingerprint_change_of_one_server_model_clears_the_whole_server_
         let db = Db::open(&path, specs(false), None).unwrap();
         put(&db, "users", json!({"id": "u1", "name": "Ann"}));
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-        db.as_app().set_local("moments", &rid("m1"), "pinned", json!("yes")).unwrap();
-        db.as_app().set_local("moments", &rid("m2"), "pinned", json!("early")).unwrap();
+        db.set_local(&db.admit().unwrap(), "moments", &rid("m1"), "pinned", json!("yes")).unwrap();
+        db.set_local(&db.admit().unwrap(), "moments", &rid("m2"), "pinned", json!("early")).unwrap();
         db.shared
             .store
             .save_window(&WindowRecord { key: window_key(ListKey::compose(&["moments", "feed"]).as_str(), PageDirection::Forward), cursor: None, has_next: false, total: None, pages: 1, issued: 1, applied: 1, generation: 0 })
             .unwrap();
-        let created = db.as_app().create("notes", obj(json!({"body": "mine"}))).unwrap();
+        let created = db.create(&db.admit().unwrap(), "notes", obj(json!({"body": "mine"}))).unwrap();
         created
     };
 
@@ -66,7 +66,7 @@ fn inv_open_05_a_fingerprint_change_of_a_local_model_clears_only_that_model() {
     {
         let db = Db::open(&path, specs(false), None).unwrap();
         put(&db, "users", json!({"id": "u1", "name": "Ann"}));
-        db.as_app().create("notes", obj(json!({"body": "mine"}))).unwrap();
+        db.create(&db.admit().unwrap(), "notes", obj(json!({"body": "mine"}))).unwrap();
     }
     let mut changed = specs(false);
     changed[3].fields.push(FieldSpec::scalar("extra", ScalarKind::Str).optional());
@@ -83,7 +83,7 @@ fn inv_open_05_an_open_that_stopped_after_the_clearing_keeps_local_values() {
     {
         let db = Db::open(&path, specs(false), None).unwrap();
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-        db.as_app().set_local("moments", &rid("m1"), "pinned", json!("yes")).unwrap();
+        db.set_local(&db.admit().unwrap(), "moments", &rid("m1"), "pinned", json!("yes")).unwrap();
     }
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection.execute_batch("CREATE TRIGGER stop_open BEFORE INSERT ON manifest BEGIN SELECT RAISE(ABORT, 'stopped'); END;").unwrap();
@@ -103,7 +103,7 @@ fn inv_open_05_a_changed_model_keeps_local_values_of_columns_that_survive() {
     {
         let db = Db::open(&path, specs(false), None).unwrap();
         put(&db, "users", json!({"id": "u1", "name": "Ann"}));
-        db.as_app().set_local("users", &rid("u1"), "nickname", json!("annie")).unwrap();
+        db.set_local(&db.admit().unwrap(), "users", &rid("u1"), "nickname", json!("annie")).unwrap();
     }
     let db = Db::open(&path, specs(true), None).unwrap();
     assert_eq!(db.open_report().changed_models, vec!["users".to_string()]);

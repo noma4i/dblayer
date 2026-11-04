@@ -156,7 +156,8 @@ impl Store {
 
     #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
-        self.invalidate_family(&crate::lifecycle::Authority::Epoch(self.lifecycle.epoch_now()), model, relation)
+        let admitted = self.lifecycle.admit(crate::lifecycle::Origin::Explicit, "test invalidate").expect("the test call is admitted");
+        self.invalidate_family(&admitted.authority(), model, relation)
     }
 
     #[cfg(test)]

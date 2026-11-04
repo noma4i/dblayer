@@ -7,9 +7,9 @@ use crate::transport::Reply;
 
 async fn displaced_chat(rig: &Rig) {
     load_first_page(rig).await;
-    rig.db.as_app().create("messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:09.000Z"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:09.000Z"}))).unwrap();
     rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": message("m9", Some(3), 9)})));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]

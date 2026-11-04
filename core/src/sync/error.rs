@@ -3,6 +3,8 @@ use crate::store::StoreError;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SyncError {
+    #[error("no session: {0}")]
+    NoSession(String),
     #[error("model {0} is not registered")]
     UnknownModel(String),
     #[error("relation {relation} of {model} does not exist")]
@@ -37,7 +39,10 @@ pub enum SyncError {
 
 impl From<DbError> for SyncError {
     fn from(error: DbError) -> Self {
-        SyncError::Store(error.to_string())
+        match error {
+            DbError::NoSession { detail } => SyncError::NoSession(detail),
+            other => SyncError::Store(other.to_string()),
+        }
     }
 }
 

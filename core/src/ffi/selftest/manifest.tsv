@@ -145,7 +145,7 @@ K28	E06	swift	BridgeProbeTests.updateAndDestroyReachTypedLiveRows	green	-	arch-r
 K28	E06	kotlin	com.noma4i.dblayer.BridgeProbeTest.updateAndDestroyReachTypedLiveRows	green	-	arch-r3e review E06
 K29	F02	core	a_network_that_moves_between_the_plan_and_the_commit_of_a_start_refuses_the_action	green	core-only: the proof runs a hook inside the writer between the plan and the commit; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3f review F02
 K30	F01	core	a_public_flush_holds_the_commit_line_of_its_epoch_while_it_commits	green	core-only: the proof holds a commit inside the writer and moves the epoch; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3f review F01
-K31	F01	core	a_write_without_a_session_epoch_is_refused	green	core-only: the proof writes through the core Db without an epoch; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3f review F01
+K31	F01	core	an_old_admission_cannot_write_ephemeral_data_in_the_next_session	red-by-reading	core-only: writes require admission at the call site	arch-r3f review F01
 P01		core	an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_one_is_delivered	green	-	parity slice 3 platform tests
 P01		swift	BridgeProbeTests.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests
 P01		kotlin	com.noma4i.dblayer.ModelEventsTest.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests
@@ -174,7 +174,38 @@ C20	C4	kotlin	com.noma4i.dblayer.SessionRestoreTest.theLoadThatRestoresAResetSes
 C21	C4	core	a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages	green	-	android-reds 2
 C21	C4	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheCallerOfLoadAllStopsTheTransportCalls	green	-	android-reds 2
 C22		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.eachReactionOnTheRowOfThePreviousCallKeepsOtherUsersReactions	green	-	android-reds 1
-C22		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.aSendOnADatabaseWithoutATransportIsRefusedAsInterrupted	green	-	android-reds 1
+C22		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.aSendOnADatabaseWithoutATransportIsRefusedAsNoSession	green	-	android-reds 1
 C23		kotlin	com.noma4i.dblayer.ProjectedLoadedTest.theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer	green	-	android-reds 3
 C23		swift	BridgeProbeTests.theValueOfAHeldStreamIsThereWhenLoadedReturnsAndARefreshStillAsksTheServer	green	-	android-reds 3
-C24		kotlin	com.noma4i.dblayer.ServerModelWithoutTransportTest.aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsInvalid	green	-	android-reds 4
+C24		kotlin	com.noma4i.dblayer.ServerModelWithoutTransportTest.aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsNoSession	green	-	android-reds 4
+S101		core	server_calls_without_a_transport_report_no_session	red-by-reading	-	arch-audit Fable K2 K8
+S101		swift	BridgeProbeTests.serverCallsWithoutATransportReportNoSession	red-by-reading	-	arch-audit Fable K2 K8
+S101		kotlin	com.noma4i.dblayer.ServerModelWithoutTransportTest.aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsNoSession	red-by-reading	-	arch-audit Fable K2 K8
+S101		kotlin	com.noma4i.dblayer.OptimisticReactionChainTest.aSendOnADatabaseWithoutATransportIsRefusedAsNoSession	red-by-reading	-	arch-audit Fable K2 K8
+S102		core	reset_clears_ephemeral_values_before_the_next_account_reads_the_same_id	unrun	S1: reset clears the account	arch-audit Astra A1
+S102		swift	BridgeProbeTests.resetClearsEphemeralValuesBeforeTheNextAccountReadsTheSameId	unrun	S1: reset clears the account	arch-audit Astra A1
+S102		kotlin	com.noma4i.dblayer.SessionRestoreTest.resetClearsEphemeralValuesBeforeTheNextAccountReadsTheSameId	unrun	S1: reset clears the account	arch-audit Astra A1
+S103		core	an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs_each_once	unrun	S1: reset ends the transfer	arch-audit Fable K2
+S103		swift	BridgeProbeTests.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	unrun	S1: reset ends the transfer	arch-audit Fable K2
+S103		kotlin	com.noma4i.dblayer.UploadSessionTest.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	unrun	S1: reset ends the transfer	arch-audit Fable K2
+S104		core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	unrun	S1: reset ends the load	arch-audit Fable K2
+S104		swift	BridgeProbeTests.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
+S104		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
+S105		core	an_old_admission_cannot_write_ephemeral_data_in_the_next_session	red-by-reading	core-only: admission at memory commit	arch-audit Astra A1
+S106		core	an_old_subscription_admission_cannot_land_an_event_in_the_next_session	red-by-reading	core-only: admission at SQL commit	arch-audit Astra A1
+S107		core	an_old_subscription_sink_is_closed_before_the_next_account	unrun	S1: reset closes the subscription	arch-audit Astra A1
+S107		swift	BridgeProbeTests.oldSubscriptionSinkIsClosedBeforeTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
+S107		kotlin	com.noma4i.dblayer.OldSinkTest.oldSubscriptionSinkIsClosedBeforeTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
+S108		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the cable	arch-audit Astra A1
+S108		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
+S108		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
+S109		core	ending_an_upload_round_keeps_the_epoch_of_each_accepted_group	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
+S109		swift	BridgeProbeTests.uploadRoundKeepsEachGroupsOriginalEpoch	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
+S109		kotlin	com.noma4i.dblayer.UploadSessionTest.uploadRoundKeepsEachGroupsOriginalEpoch	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
+S110		core	upload_without_a_session_refuses_before_accepting_a_file	red-by-reading	core admission	arch-audit Fable K8
+S110		swift	BridgeProbeTests.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	red-by-reading	S1: upload needs a session	arch-audit Fable K8
+S110		kotlin	com.noma4i.dblayer.UploadSessionTest.resetDuringPutEndsTheWaitAndRemovesTheOldUpload	red-by-reading	S1: upload needs a session	arch-audit Fable K8
+S111		core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	red-by-reading	S1: old resume is refused	arch-audit Astra A1
+S111		swift	BridgeProbeTests.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	red-by-reading	S1: old resume is refused	arch-audit Astra A1
+S111		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	red-by-reading	S1: old resume is refused	arch-audit Astra A1
+S112		core	an_admission_from_another_database_cannot_start_a_server_call	red-by-reading	core-only: Admitted is not exposed through FFI	arch-audit Astra A1

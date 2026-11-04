@@ -21,7 +21,7 @@ async fn local_models_reject_uploads_without_creating_rows_or_files() {
     rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
     rig.sync.set_online(false);
     let source = super::upload_tests::file(&vec![73; crate::files::TABLE_LIMIT + 1]);
-    let result = crate::sync::rig::app(&rig.sync, rig.sync.upload_create("moments", "upload", params(json!({"id":"local-upload","text":"rejected"})), input(&source))).await;
+    let result = crate::sync::rig::app(&rig.sync, rig.sync.upload_create(&rig.sync.inner.db.admit().unwrap(), "moments", "upload", params(json!({"id":"local-upload","text":"rejected"})), input(&source))).await;
     assert!(result.is_err());
     assert!(rig.db.find("moments", &rid("local-upload")).unwrap().is_none());
     assert!(rig.db.shared.files.directory_entries().unwrap().is_empty());
@@ -45,7 +45,8 @@ fn reset_rejects_upload_admission_waiting_for_a_blocking_thread() {
             release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         });
         entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        let mut upload = Box::pin(crate::sync::rig::app(&rig.sync, rig.sync.upload_create("moments", "upload", params(json!({"id":"old-upload","text":"old account"})), input(&source))));
+        let admitted = rig.db.admit().unwrap();
+        let mut upload = Box::pin(crate::sync::rig::app(&rig.sync, rig.sync.upload_create(&admitted, "moments", "upload", params(json!({"id":"old-upload","text":"old account"})), input(&source))));
         let pending = matches!(upload.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Pending);
         rig.db.reset_all().unwrap();
         release_tx.send(()).unwrap();
@@ -81,11 +82,11 @@ async fn admit(rig: &Rig, mode: &str, source: &tempfile::NamedTempFile) -> Resul
     Ok(match mode {
         "existing" => {
             put(rig, "moments", moment("m1", "existing"));
-            crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", input(source))).await?;
+            crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", input(source))).await?;
             1
         }
         "create" => {
-            crate::sync::rig::app(&rig.sync, rig.sync.upload_create("moments", "upload", params(json!({"text":"created"})), input(source))).await?;
+            crate::sync::rig::app(&rig.sync, rig.sync.upload_create(&rig.sync.inner.db.admit().unwrap(), "moments", "upload", params(json!({"text":"created"})), input(source))).await?;
             1
         }
         _ => {
@@ -93,7 +94,7 @@ async fn admit(rig: &Rig, mode: &str, source: &tempfile::NamedTempFile) -> Resul
                 values: params(json!({"clientKey":format!("key-{position}"),"size":2})),
                 path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
             }).collect();
-            crate::sync::rig::app(&rig.sync, rig.sync.upload_create_batch("Asset", items, UploadBatchInput {
+            crate::sync::rig::app(&rig.sync, rig.sync.upload_create_batch(&rig.sync.inner.db.admit().unwrap(), "Asset", items, UploadBatchInput {
                 operation: "create_files".into(), variables: Default::default(),
             })).await?;
             2
@@ -136,7 +137,7 @@ async fn admitted_large_files_live_on_disk_and_resume_without_the_source() {
         for _ in 0..count { rig.transport.enqueue("CreateBlob", blob()); }
         rig.transport.enqueue("CreateMoment", created("m9"));
         rig.transport.enqueue("CreateAssets", Reply::data(json!({"createAssets":{"assets":[{"id":"a0","clientKey":"key-0","size":2},{"id":"a1","clientKey":"key-1","size":2}]}})));
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
         rig.sync.wait_uploads().await;
         let puts = rig.transport.put_calls();
         assert_eq!(puts.len(), count, "{mode}");

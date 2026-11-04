@@ -56,7 +56,7 @@ fn message(chat: Value, message: Value) -> Value {
 async fn load_list(rig: &Rig, list: &str) -> Map<String, Value> {
     let params = Map::from_iter([("list".into(), json!(list))]);
     rig.transport.enqueue("ChatList", Reply::data(json!({"chats":[]})));
-    rig.sync.load("chats", "list", &params, super::load::LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", &params, super::load::LoadOptions::default()).await.unwrap();
     params
 }
 
@@ -123,13 +123,13 @@ async fn chat_payload_revision() {
     }
     assert_eq!(members(&rig, &secondary), ["c1"]);
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node":chat("c1", "older node", 18, "PRIMARY")})));
-    let _ = rig.sync.node("chats", "node", "c1", true).await.unwrap();
+    let _ = rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await.unwrap();
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("higher"));
     assert!(members(&rig, &primary).is_empty());
     assert_eq!(updates.status().rejected, 0);
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node":chat("c1", "late after delete", 30, "PRIMARY")})).after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
-    let pending = tokio::spawn(async move { sync.node("chats", "node", "c1", true).await });
+    let pending = tokio::spawn(async move { sync.node(&sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await });
     rig.transport.await_calls("ChatNode", 2).await;
     emit(&rig, json!({"topic":"CHAT", "action":"DELETED", "recordId":"c1"}));
     rig.transport.await_consumed("Changes").await;

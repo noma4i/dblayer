@@ -27,9 +27,12 @@ impl CableConnect for TransportCable {
 impl EncryptedTransport {
     pub fn new(client: Arc<EncryptedClient>, rest: Arc<dyn Transport>) -> Self {
         let credentials = client.clone();
-        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move || credentials.credential()), Arc::new(TransportCable(rest.clone())), client.online.clone(), client.clock.clone());
+        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move || credentials.cable_credential()), Arc::new(TransportCable(rest.clone())), client.online.clone(), client.clock.clone());
         Self { client, rest, cable }
     }
+
+    #[cfg(test)]
+    pub(super) fn test_admission(&self) -> crate::lifecycle::Admitted { self.client.admit("test transport").unwrap() }
 }
 
 pub fn graphql_body(request: &GraphQLRequest, with_document: bool) -> Value {
@@ -79,32 +82,34 @@ impl Transport for EncryptedTransport {
     fn resume_subscriptions(&self) { self.cable.resume(); }
     fn session(&self) -> Result<Option<String>, TransportError> { self.client.signed_in() }
 
-    async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
-        let response = response_of(self.client.read(&self.client.config.endpoints.graphql, graphql_body(&request, false)).await?)?;
+    async fn query(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
+        let response = response_of(self.client.read(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, false)).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.client.read(&self.client.config.endpoints.graphql, graphql_body(&request, true)).await?)
+        response_of(self.client.read(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, true)).await?)
     }
 
-    async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
+    async fn mutate(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
         let stored = graphql_body(&request, true);
         if self.client.pending_call()?.is_some_and(|(path, body)| path == self.client.config.endpoints.graphql && body == stored) {
-            return response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, stored, request.owner, request.upload).await?);
+            return response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, stored, request.owner, request.upload).await?);
         }
-        let response = response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, false), request.owner.clone(), request.upload).await?)?;
+        let response = response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, false), request.owner.clone(), request.upload).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.client.mutate_owned(&self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone(), request.upload).await?)
+        response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone(), request.upload).await?)
     }
 
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
+    async fn subscribe(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
+        self.client.validate(admitted)?;
         self.cable.subscribe(request).await
     }
 
-    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
+    async fn put(&self, admitted: &crate::lifecycle::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
+        self.client.validate(admitted)?;
         crate::db::lock::assert_no_library_lock("Transport::put");
-        self.rest.put(request).await
+        self.rest.put(admitted, request).await
     }
 }

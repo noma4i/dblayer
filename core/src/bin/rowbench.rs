@@ -127,7 +127,7 @@ fn land(db: &Db, rows: usize, count: i64, shape: Shape) {
             EntityOp::Upsert { model: ModelKey::new("bench"), id: RowId::new(&format!("r{index}")).expect("id"), row }
         })
         .collect();
-    db.land(envelope).expect("land");
+    db.land(&db.admit().expect("admission"), envelope).expect("land");
 }
 
 fn run(rows: usize, shape: Shape, counted: bool) -> [f64; 5] {

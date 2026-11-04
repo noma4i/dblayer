@@ -212,15 +212,15 @@ fn restore_edit(
 }
 
 impl Db {
-    pub(crate) fn remove_upload_item(&self, model: &str, id: &RowId, seq: i64, remove_row: bool) -> Result<bool, DbError> {
-        self.remove_upload_item_if(model, id, seq, remove_row, None)
+    pub(crate) fn remove_upload_item(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, seq: i64, remove_row: bool) -> Result<bool, DbError> {
+        self.remove_upload_item_if(admitted, model, id, seq, remove_row, None)
     }
 
-    pub(crate) fn remove_upload_item_if(&self, model: &str, id: &RowId, seq: i64, remove_row: bool, still: Option<&Still<'_>>) -> Result<bool, DbError> {
+    pub(crate) fn remove_upload_item_if(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, seq: i64, remove_row: bool, still: Option<&Still<'_>>) -> Result<bool, DbError> {
         let generation = self.generation();
         let spec = self.spec(model)?;
         let mut removed = false;
-        self.commit_following(&self.authority()?, generation, |reader| {
+        self.commit_following(&admitted.authority(), generation, |reader| {
             removed = false;
             let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
             if let Some(still) = still { if !still(reader, &entry)? { return Ok(None); } }
@@ -268,17 +268,17 @@ impl Db {
         Ok(removed)
     }
 
-    pub fn roll_back(&self, seq: i64) -> Result<CommitResult, DbError> {
-        self.roll_back_at(seq, self.generation())
+    pub fn roll_back(&self, admitted: &crate::lifecycle::Admitted, seq: i64) -> Result<CommitResult, DbError> {
+        self.roll_back_at(admitted, seq, self.generation())
     }
 
-    pub(crate) fn roll_back_at(&self, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
-        self.roll_back_if(seq, generation, None)
+    pub(crate) fn roll_back_at(&self, admitted: &crate::lifecycle::Admitted, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
+        self.roll_back_if(admitted, seq, generation, None)
     }
 
-    pub(crate) fn roll_back_if(&self, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
+    pub(crate) fn roll_back_if(&self, admitted: &crate::lifecycle::Admitted, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
-        let result = self.commit_following(&self.authority()?, generation, |reader| {
+        let result = self.commit_following(&admitted.authority(), generation, |reader| {
                 discarded = Vec::new();
                 let found = OutboxOperation::read(reader, seq)?;
                 let entry = match (found, still) {

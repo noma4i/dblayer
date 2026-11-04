@@ -99,7 +99,7 @@ async fn shared_feed_applies_only_active_definitions_and_reports_failure_to_each
         assert_eq!(seen, refusal);
         assert_eq!((failure.recheck)(), Some(refusal.clone()));
     }
-    rig.sync.resume().await.unwrap();
+    rig.sync.resume(&rig.db.admit().unwrap()).await.unwrap();
     rig.transport.await_calls("Signal", 2).await;
     drop(first);
     emit("three");
@@ -132,7 +132,7 @@ async fn memory_scope_events_follow_readers_and_expire_without_http() {
     rig.transport.await_consumed("BulletinAdded").await;
     assert_eq!(rig.db.query(&crate::query::Query::new("notices")).unwrap()[0].text("body"), Some("hello"));
     rig.clock.advance(Duration::from_secs(6));
-    rig.db.expire_ephemeral().unwrap();
+    rig.db.expire_ephemeral(&rig.db.admit().unwrap()).unwrap();
     assert!(rig.db.query(&crate::query::Query::new("notices")).unwrap().is_empty());
     drop(first);
     assert_eq!(rig.transport.cancellations("BulletinAdded"), 0);
@@ -250,7 +250,7 @@ async fn inv_live_03_dropped_connection_rereads_the_expired_watched_relation_aft
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsPulse", feed_reply(&["m1", "m2"], false, "c2"));
     let _watch = rig.sync.watch("moments", "pulse", &none()).unwrap();
-    rig.sync.load("moments", "pulse", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "pulse", &none(), LoadOptions::default()).await.unwrap();
     rig.transport.await_calls("MomentEvents", 1).await;
     assert_eq!(rig.transport.call_count("MomentsPulse"), 1);
     rig.transport.disconnect("MomentEvents");
@@ -386,7 +386,7 @@ async fn last_reader_of_a_param_set_closes_only_its_subscription_and_the_event_l
 async fn a_committed_credential_starts_the_model_subscriptions_and_the_end_of_the_session_stops_them() {
     let rig = rig();
     rig.transport.set_session(None);
-    rig.sync.check_session();
+    rig.sync.commit_session_for_test();
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("MomentListen"), 0, "no credential");
     rig.transport.set_session(Some("first"));
@@ -406,7 +406,7 @@ async fn a_denied_listening_keeps_a_committed_credential_from_opening_subscripti
     let rig = rig();
     rig.sync.set_listening(false);
     rig.transport.set_session(Some("stored"));
-    rig.sync.check_session();
+    rig.sync.commit_session_for_test();
     rig.transport.set_session(Some("signed-in"));
     rig.sync.commit_session_for_test();
     tokio::time::sleep(Duration::from_secs(1)).await;
@@ -427,7 +427,7 @@ async fn a_denied_listening_keeps_a_committed_credential_from_opening_subscripti
 async fn allowing_listening_without_a_credential_opens_nothing_and_logout_stops_the_allowed_listen() {
     let rig = rig();
     rig.transport.set_session(None);
-    rig.sync.check_session();
+    rig.sync.commit_session_for_test();
     rig.sync.set_listening(false);
     rig.sync.set_listening(true);
     tokio::time::sleep(Duration::from_secs(1)).await;

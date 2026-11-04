@@ -18,6 +18,7 @@ use super::steps::{text, StepError, Stop, EXPIRED_MESSAGE};
 
 pub(super) struct Runner {
     pub(super) inner: Arc<Inner>,
+    pub(super) admitted: crate::lifecycle::Admitted,
     pub(super) seq: i64,
     pub(super) position: i64,
     pub(super) run: u64,
@@ -46,7 +47,7 @@ impl Drop for Runner {
             });
             if missing.is_ok_and(|missing| missing) { let _ = shared.files.discard(std::slice::from_ref(&id)); }
         };
-        self.inner.spawn_file_task(&self.runtime, cleanup);
+        self.inner.spawn_file_task(&self.admitted, &self.runtime, cleanup);
     }
 }
 
@@ -58,16 +59,16 @@ pub(super) fn stop_of(error: StepError) -> Stop {
     }
 }
 
-pub(super) fn drive(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
-    Box::pin(drive_pass(inner, seq, position, run, token, mode, resumed))
+pub(super) fn drive(inner: Arc<Inner>, admitted: crate::lifecycle::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+    Box::pin(drive_pass(inner, admitted, seq, position, run, token, mode, resumed))
 }
 
-async fn drive_pass(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
-    let runner = match crate::blocking::blocking_unit(|| Runner::load(inner.clone(), seq, position, run, token, matches!(mode, RunMode::Transfer))) {
+async fn drive_pass(inner: Arc<Inner>, admitted: crate::lifecycle::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
+    let runner = match crate::blocking::blocking_unit(|| Runner::load(inner.clone(), admitted.clone(), seq, position, run, token, matches!(mode, RunMode::Transfer))) {
         Ok(Some(runner)) => runner,
         Ok(None) => return,
         Err(error) => {
-            if inner.is_current(seq, position, run) { inner.fail_upload(seq, error); }
+            if inner.is_current(seq, position, run) { inner.fail_upload(&admitted, seq, error); }
             return;
         }
     };
@@ -79,12 +80,12 @@ async fn drive_pass(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token:
         RunMode::Cancel => runner.cancelled().await,
     };
     if let Err(Stop::Failed(failure)) = result {
-        inner.fail_upload(seq, super::super::SyncError::Store(failure.message));
+        inner.fail_upload(&admitted, seq, super::super::SyncError::Store(failure.message));
     }
 }
 
 impl Runner {
-    pub(super) fn load(inner: Arc<Inner>, seq: i64, position: i64, run: u64, token: CancelToken, transfer: bool) -> Result<Option<Self>, super::super::SyncError> {
+    pub(super) fn load(inner: Arc<Inner>, admitted: crate::lifecycle::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, transfer: bool) -> Result<Option<Self>, super::super::SyncError> {
         let Some(entry) = inner.outbox_operation(seq)? else { return Ok(None) };
         let owner = match inner.blob_id(seq)? {
             Some(id) => crate::upload::UploadOwner::Blob { id },
@@ -125,7 +126,7 @@ impl Runner {
         }
         let batch = match &owner { crate::upload::UploadOwner::Action { model } => inner.db.spec(model)?.actions.iter().any(|action| action.batch.is_some() && action.mutation.as_deref() == Some(&input.steps.mutation)), crate::upload::UploadOwner::Blob { .. } => false };
         let progress = TransferProgress::new(state.total_bytes, inner.config.upload.tick);
-        Ok(Some(Self { inner, seq, position, run, token, batch, owner, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
+        Ok(Some(Self { inner, admitted, seq, position, run, token, batch, owner, runtime: tokio::runtime::Handle::current(), input, source_error, file_id, inline_file: Mutex::new(inline_file), model, state: Mutex::new(state), progress: Mutex::new(progress), resumed: Mutex::new(None) }))
     }
 
     pub(super) fn snapshot(&self) -> UploadState {
@@ -134,7 +135,7 @@ impl Runner {
 
     fn commit_deferred(&self, mut build: impl FnMut(&mut CommitEnvelope)) -> Result<crate::store::Committed<'_>, Stop> {
         let generation = crate::blocking::blocking_unit(|| self.inner.db.generation());
-        let committed = self.inner.commit_deferred(generation, |reader| {
+        let committed = self.inner.commit_deferred(&self.admitted, generation, |reader| {
             if !self.inner.is_current(self.seq, self.position, self.run) {
                 return Ok(None);
             }
@@ -184,7 +185,7 @@ impl Runner {
         };
         if let Some(sent) = due {
             if let Err(Stop::Failed(failure)) = self.save(UploadEvent::Progress { sent }) {
-                self.inner.fail_upload(self.seq, super::super::SyncError::Store(failure.message));
+                self.inner.fail_upload(&self.admitted, self.seq, super::super::SyncError::Store(failure.message));
                 self.token.cancel();
             }
         }
@@ -204,7 +205,7 @@ impl Runner {
         let result = match transferred {
             Ok(()) if matches!(self.owner, crate::upload::UploadOwner::Blob { .. }) => {
                 match self.save(UploadEvent::BlobUploaded) {
-                    Ok(()) => self.inner.flush().await.map(|_| ()).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string()))),
+                    Ok(()) => self.inner.flush(&self.admitted).await.map(|_| ()).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string()))),
                     Err(error) => Err(error),
                 }
             }
@@ -224,7 +225,7 @@ impl Runner {
         let Some((id, name, bytes)) = locked(&self.inline_file).take() else { return Ok(()) };
         let (sent, received) = tokio::sync::oneshot::channel();
         let runner = self.clone();
-        self.inner.spawn_file_task(&self.runtime, move || { crate::db::lock::effect(|| { let _ = sent.send(runner.inner.db.shared.files.materialize(&id, &name, &bytes)); }); });
+        self.inner.spawn_file_task(&self.admitted, &self.runtime, move || { crate::db::lock::effect(|| { let _ = sent.send(runner.inner.db.shared.files.materialize(&id, &name, &bytes)); }); });
         match received.await {
             Ok(Ok(_)) => Ok(()),
             Ok(Err(error)) => Err(Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string()))),
@@ -337,6 +338,7 @@ impl Runner {
         };
         let action = crate::operation::Operation::upload_action(&entry.operation.action_key).ok_or_else(|| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, "the upload has no declared action")))?.1;
         let sending = Sending {
+            admitted: &self.admitted,
             entry: &entry,
             model: self.model.clone(),
             action,
@@ -410,7 +412,7 @@ impl Runner {
             let row = self.inner.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT row_id FROM op_item WHERE seq = ?1 AND position = ?2", rusqlite::params![self.seq, self.position], |row| row.get::<_, String>(0))?))
                 .map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
             let id = crate::identity::RowId::new(&row).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
-            self.inner.db.remove_upload_item(&self.model, &id, self.seq, false).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
+            self.inner.db.remove_upload_item(&self.admitted, &self.model, &id, self.seq, false).map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
             return self.inner.start_uploads().map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())));
         }
         self.commit(|envelope| {

@@ -43,15 +43,16 @@ impl Drop for Handles {
 }
 
 fn follow_failures(watch: Option<&mut crate::sync::Watch>, stream: Arc<Stream>) -> Option<tokio::task::AbortHandle> {
-    Some(follow(watch?.failures()?, stream))
+    follow(watch?.failures()?, stream)
 }
 
-pub(in crate::ffi) fn follow(failures: crate::sync::Failures, stream: Arc<Stream>) -> tokio::task::AbortHandle {
+pub(in crate::ffi) fn follow(failures: crate::sync::Failures, stream: Arc<Stream>) -> Option<tokio::task::AbortHandle> {
     let crate::sync::Failures { current, recheck, mut receiver, sources } = failures;
     let post = |stream: &Stream, failure: crate::transport::SubscriptionFailure| stream.subscription_failed(Some(DbError::from(crate::sync::SyncError::Transport(failure.error))));
     let mut failed = current.is_some();
     if let Some(failure) = current { post(&stream, failure); }
-    crate::task::spawn(stream.carry(), async move {
+    let admitted = stream.admitted().ok()?;
+    Some(crate::task::spawn(admitted.into(), async move {
         loop {
             match receiver.recv().await {
                 Ok(None) => { failed = false; stream.subscription_failed(None); }
@@ -65,12 +66,13 @@ pub(in crate::ffi) fn follow(failures: crate::sync::Failures, stream: Arc<Stream
                 _ => {}
             }
         }
-    }).abort_handle()
+    }).abort_handle())
 }
 
 impl Database {
     pub(super) fn open_stream(&self, stream: &Arc<Stream>, request: &StreamRequest) -> Result<Handles, DbError> {
-        stream.pinned(|| self.open_stream_pinned(stream, request))
+        let _admitted = stream.admitted()?;
+        self.open_stream_pinned(stream, request)
     }
 
     fn open_stream_pinned(&self, stream: &Arc<Stream>, request: &StreamRequest) -> Result<Handles, DbError> {
@@ -94,6 +96,7 @@ impl Database {
         };
         let mut handles = self.connect(Query::new(model).filtered(Where::equal("id", serde_json::json!(row))), None, false, None, LoadOptions::default(), stream)?;
         let Some(sync) = sync else { return Ok(handles) };
+        let admitted = stream.admitted()?;
         if let Some(control) = handles.observer.as_ref().map(ObserverHandle::control) { stream.on_ahead(Arc::new(move |revision| control.want_reach(revision))); }
         let token: Arc<Mutex<Option<CancelToken>>> = Arc::default();
         let start = {
@@ -113,7 +116,7 @@ impl Database {
                     }
                 });
                 let _entered = executor()?.enter();
-                let cancel = sync.refresh_entities(&model, std::slice::from_ref(&id), fetch, sink)?;
+                let cancel = sync.refresh_entities(&admitted, &model, std::slice::from_ref(&id), fetch, sink)?;
                 let replaced = crate::db::locked(&token).replace(cancel);
                 if let Some(old) = replaced { sync.cancel_entity_refresh(&old); }
                 Ok(())
@@ -132,12 +135,13 @@ impl Database {
         let mut skip = !connectivity.is_online();
         let mut returns = connectivity.returns();
         let this = self.clone();
-        let task = crate::task::spawn_on(crate::task::Carry::Epoch(crate::lifecycle::Epoch::new(&self.db.shared.store.lifecycle, epoch)), executor()?.handle(), async move {
+        let admitted = self.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "reconnect refresh", Some(epoch)).map_err(|_| DbError::Interrupted { detail: "the session ended".into() })?;
+        let task = crate::task::spawn_on(admitted.into(), executor()?.handle(), async move {
             while returns.changed().await.is_ok() {
                 if std::mem::take(&mut skip) { continue; }
                 let refreshing = sync.clone();
                 let (model, relation, params) = (model.clone(), relation.clone(), params.clone());
-                let _ = this.in_epoch(epoch, "reconnect refresh", async move { Ok::<_, DbError>(refreshing.refresh(&model, &relation, &params).await?) }).await;
+                let _ = this.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "reconnect refresh", true, |admitted| async move { Ok::<_, DbError>(refreshing.refresh(&admitted, &model, &relation, &params).await?) }).await;
             }
         });
         Ok(task.abort_handle())
@@ -148,7 +152,7 @@ impl Database {
         let wire = self.wire_of(model)?;
         let cell: Arc<OnceLock<Arc<ModelEvents>>> = Arc::default();
         let (opened, weak, model) = (cell.clone(), Arc::downgrade(stream), model.to_string());
-        let task = crate::task::spawn_on(stream.carry(), executor()?.handle(), async move {
+        let task = crate::task::spawn_on(stream.admitted()?.into(), executor()?.handle(), async move {
             let events = match sync.open_model_events(&model).await {
                 Ok(events) => Arc::new(events),
                 Err(error) => {
@@ -177,7 +181,7 @@ impl Database {
         let sync = self.sync()?.clone();
         let mut changes = self.db.outbox_changes();
         let (weak, id) = (Arc::downgrade(stream), id.to_string());
-        let task = crate::task::spawn_on(stream.carry(), executor()?.handle(), async move {
+        let task = crate::task::spawn_on(stream.admitted()?.into(), executor()?.handle(), async move {
             let mut last: Option<WireBlobSnapshot> = None;
             loop {
                 changes.borrow_and_update();
@@ -273,7 +277,7 @@ impl Database {
         stream.on_ahead(Arc::new(move |revision| ask.want_reach(revision)));
         let (follower, loader) = (stream.clone(), stream.clone());
         let (ready, seeded) = tokio::sync::oneshot::channel();
-        let state = crate::task::spawn_on(stream.carry(), executor()?.handle(), async move {
+        let state = crate::task::spawn_on(stream.admitted()?.into(), executor()?.handle(), async move {
             let mut changes = match sync.relation_state(&model, &relation, &params).await {
                 Ok(changes) => changes,
                 Err(error) => {
@@ -290,7 +294,8 @@ impl Database {
                 follower.relation_changed(current);
             }
         }).abort_handle();
-        let load = crate::task::spawn_on(stream.carry(), executor()?.handle(), async move {
+        let admitted = stream.admitted()?;
+        let load = crate::task::spawn_on(admitted.clone().into(), executor()?.handle(), async move {
             let Ok((sync, model, relation, params, receiver)) = seeded.await else { return };
             let mut force = options.force;
             loop {
@@ -322,7 +327,7 @@ impl Database {
                         if changed.is_none() { return; }
                         continue;
                     }
-                    result = sync.inner.load_scope(&resolved, force) => result,
+                    result = sync.inner.load_scope(&admitted, &resolved, force) => result,
                 };
                 force = false;
                 let settled = receiver.borrow().clone();

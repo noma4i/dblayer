@@ -24,10 +24,12 @@ pub(crate) struct DueRefresh {
     cancel: CancelToken,
     sink: RefreshSink,
     session: bool,
+    admitted: crate::lifecycle::Admitted,
 }
 
 impl Sync {
-    pub fn refresh_entities(&self, model: &str, ids: &[String], fetch: EntityFetch, sink: RefreshSink) -> Result<CancelToken, SyncError> {
+    pub fn refresh_entities(&self, admitted: &crate::lifecycle::Admitted, model: &str, ids: &[String], fetch: EntityFetch, sink: RefreshSink) -> Result<CancelToken, SyncError> {
+        self.inner.ensure_admitted(admitted)?;
         let cancel = CancelToken::new();
         if fetch == EntityFetch::None { return Ok(cancel); }
         if !self.inner.admitted(crate::lifecycle::Origin::Session) {
@@ -40,14 +42,14 @@ impl Sync {
         let runtime = Handle::try_current().map_err(|_| SyncError::Store("no async runtime to refresh entities".into()))?;
         let generation = self.inner.db.generation();
         for id in ids {
-            let due = DueRefresh { model: model.into(), relation: relation.clone(), id: id.clone(), fetch, generation, cancel: cancel.clone(), sink: sink.clone(), session: false };
+            let due = DueRefresh { model: model.into(), relation: relation.clone(), id: id.clone(), fetch, generation, cancel: cancel.clone(), sink: sink.clone(), session: false, admitted: admitted.clone() };
             crate::task::spawn_on(crate::task::Carry::here(), &runtime, self.inner.until_closed(Self::refresh_entity(self.inner.clone(), due)));
         }
         Ok(cancel)
     }
 
     async fn refresh_entity(inner: Arc<Inner>, mut due: DueRefresh) {
-        if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return; }
+        if due.cancel.is_cancelled() || !due.admitted.is_current() || due.generation != inner.db.generation() { return; }
         let work = async {
             if due.fetch == EntityFetch::IfMissing {
                 let db = inner.db.clone();
@@ -57,10 +59,10 @@ impl Sync {
                 if present { return Ok(()); }
                 if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return Err(SyncError::Cancelled); }
             }
-            inner.node(crate::lifecycle::Origin::Session, &due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
+            inner.node(&due.admitted, crate::lifecycle::Origin::Session, &due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
         };
         let result = tokio::select! { biased; _ = due.cancel.cancelled() => return, result = work => result };
-        if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return; }
+        if due.cancel.is_cancelled() || !due.admitted.is_current() || due.generation != inner.db.generation() { return; }
         let outcome = match result {
             Ok(()) => None,
             Err(error @ (SyncError::Offline | SyncError::Transport(crate::transport::TransportError::Session { .. }))) => {
@@ -73,11 +75,12 @@ impl Sync {
         (due.sink)(&due.id, outcome);
     }
 
-    pub async fn load_entity(&self, model: &str, id: &str) -> Result<(), SyncError> {
+    pub async fn load_entity(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &str) -> Result<(), SyncError> {
+        self.inner.ensure_admitted(admitted)?;
         let spec = self.inner.db.spec(model).map_err(|_| SyncError::UnknownModel(model.into()))?;
         let relation = spec.relations.iter().find(|declared| declared.node == Some(NodeRead::One))
             .ok_or_else(|| SyncError::UnknownRelation { model: model.into(), relation: "node".into() })?.name.clone();
-        self.inner.node(crate::lifecycle::Origin::Explicit, model, &relation, id, true).await.map(|_| ())
+        self.inner.node(admitted, crate::lifecycle::Origin::Explicit, model, &relation, id, true).await.map(|_| ())
     }
 
     pub fn cancel_entity_refresh(&self, cancel: &CancelToken) {

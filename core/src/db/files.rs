@@ -32,7 +32,7 @@ impl Db {
         })
     }
 
-    pub fn attach(&self, model: &str, id: &RowId, field: &str, bytes: &[u8], name: &str, mime: &str) -> Result<FileDescriptor, DbError> {
+    pub fn attach(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, field: &str, bytes: &[u8], name: &str, mime: &str) -> Result<FileDescriptor, DbError> {
         self.file_field(model, field)?;
         let _gate = locked(&self.shared.files_gate);
         let descriptor = FileDescriptor {
@@ -58,7 +58,7 @@ impl Db {
         };
         let generation = self.generation();
         let mut replaced: Option<String> = None;
-        let committed = self.commit_following_deferred(&self.authority()?, generation, |reader| {
+        let committed = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
             let mut row = reader
                 .point(model, id.as_str())?
                 .ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
@@ -111,12 +111,12 @@ impl Db {
         }
     }
 
-    pub fn detach(&self, model: &str, id: &RowId, field: &str) -> Result<bool, DbError> {
+    pub fn detach(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, field: &str) -> Result<bool, DbError> {
         let nullable = self.file_field(model, field)?;
         let _gate = locked(&self.shared.files_gate);
         let generation = self.generation();
         let mut removed: Option<String> = None;
-        let (result, _) = self.commit_following_deferred(&self.authority()?, generation, |reader| {
+        let (result, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
                 removed = None;
                 let mut row = reader
                     .point(model, id.as_str())?

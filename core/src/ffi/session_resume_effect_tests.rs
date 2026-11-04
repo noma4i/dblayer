@@ -89,7 +89,7 @@ async fn a_queued_create_whose_answer_was_lost_is_executed_once_by_resume_and_th
             if !first.swap(false, std::sync::atomic::Ordering::SeqCst) { return; }
             clock.advance(Duration::from_secs(10));
             let sync = sync.clone();
-            let mut flush = Box::pin(async move { sync.flush().await });
+            let mut flush = Box::pin(async move { sync.flush(&sync.inner.db.admit().unwrap()).await });
             assert!(flush.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
             *competing.lock().unwrap() = Some(tokio::spawn(flush));
         });

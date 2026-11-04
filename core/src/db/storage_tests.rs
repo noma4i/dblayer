@@ -25,12 +25,12 @@ fn storage_rules_and_writes_follow_the_shared_cases() {
         let (log, callback) = recorder();
         let observer = db.observe(crate::query::Query::new("StorageRow"), callback).unwrap();
         db.await_revision(db.revision_seq().unwrap());
-        let row = db.as_app().create("StorageRow", obj(json!({"record": "one"}))).unwrap();
+        let row = db.create(&db.admit().unwrap(), "StorageRow", obj(json!({"record": "one"}))).unwrap();
         db.await_revision(db.revision_seq().unwrap());
         assert_eq!(changes(&log).last().unwrap().rows[0].text("record"), Some("one"), "{name}");
         assert_eq!(row.sync.state, state, "{name}");
         assert_eq!(db.outbox().unwrap().len(), usize::from(!local), "{name}: create");
-        db.as_app().update("StorageRow", &row.id, obj(json!({"record": "two"}))).unwrap();
+        db.update(&db.admit().unwrap(), "StorageRow", &row.id, obj(json!({"record": "two"}))).unwrap();
         db.await_revision(db.revision_seq().unwrap());
         assert_eq!(changes(&log).last().unwrap().rows[0].text("record"), Some("two"), "{name}");
         assert_eq!(db.outbox().unwrap().len(), 2 * usize::from(!local), "{name}: update");
@@ -40,11 +40,11 @@ fn storage_rules_and_writes_follow_the_shared_cases() {
         let reopened = db.find("StorageRow", &row.id).unwrap().unwrap_or_else(|| panic!("{name}: row {} lost on reopen, report {:?}", row.id, db.open_report()));
         assert_eq!(reopened.text("record"), Some("two"), "{name}: reopen");
         assert_eq!(reopened.sync.state, state, "{name}: reopen");
-        db.as_app().destroy("StorageRow", &row.id).unwrap();
+        db.destroy(&db.admit().unwrap(), "StorageRow", &row.id).unwrap();
         assert!(db.find("StorageRow", &row.id).unwrap().is_none(), "{name}: destroy unsent");
         assert!(db.outbox().unwrap().is_empty(), "{name}: unsent create is cancelled");
         put(&db, "StorageRow", json!({"id": "confirmed", "record": "from disk"}));
-        db.as_app().destroy("StorageRow", &rid("confirmed")).unwrap();
+        db.destroy(&db.admit().unwrap(), "StorageRow", &rid("confirmed")).unwrap();
         assert_eq!(db.outbox().unwrap().len(), usize::from(!local), "{name}: destroy confirmed");
     }
 }

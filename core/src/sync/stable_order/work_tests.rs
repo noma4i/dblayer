@@ -62,9 +62,9 @@ async fn confirmed_row(size: usize) -> Work {
     enqueue_chat(&rig, size);
     load_first_page(&rig).await;
     let (_log, _window) = watch_thread(&rig, WINDOW);
-    rig.db.as_app().create("messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:09.000Z"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:09.000Z"}))).unwrap();
     rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": message("new", Some(FIRST_SEQUENCE + size as i64), 9)})));
-    measured(&rig, directory, async { crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap(); }).await
+    measured(&rig, directory, async { crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap(); }).await
 }
 
 async fn older_page(size: usize) -> Work {

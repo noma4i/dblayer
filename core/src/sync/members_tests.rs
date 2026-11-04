@@ -47,9 +47,9 @@ async fn load_more_reads_the_second_page_with_the_cursor_of_the_first() {
     let chat = params(json!({"chatId": "c1"}));
     rig.transport.enqueue("ChatMembers", page(0..30, "u", true));
     rig.transport.enqueue("ChatMembers", page(30..45, "u", false));
-    let first = rig.sync.load("users", "chat_members", &chat, Default::default()).await.unwrap();
+    let first = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat, Default::default()).await.unwrap();
     assert_eq!((first.rows, first.has_next), (30, true));
-    let second = rig.sync.load_more("users", "chat_members", &chat).await.unwrap();
+    let second = rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat).await.unwrap();
     assert_eq!((second.rows, second.has_next), (15, false));
     assert_eq!(rig.transport.calls()[0].variables, json!({"chatId": "c1", "first": 30}));
     assert_eq!(rig.transport.calls()[1].variables, json!({"chatId": "c1", "first": 30, "after": "u29"}));
@@ -61,8 +61,8 @@ async fn a_second_load_inside_fresh_for_does_not_reach_the_network() {
     let rig = members_rig();
     let chat = params(json!({"chatId": "c1"}));
     rig.transport.enqueue("ChatMembers", page(0..2, "u", false));
-    rig.sync.load("users", "chat_members", &chat, Default::default()).await.unwrap();
-    rig.sync.load("users", "chat_members", &chat, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat, Default::default()).await.unwrap();
     assert_eq!(rig.transport.call_count("ChatMembers"), 1);
 }
 
@@ -73,9 +73,9 @@ async fn two_chats_keep_separate_windows() {
     rig.transport.enqueue("ChatMembers", page(0..3, "a", true));
     rig.transport.enqueue("ChatMembers", page(0..2, "b", false));
     rig.transport.enqueue("ChatMembers", page(3..5, "a", false));
-    rig.sync.load("users", "chat_members", &one, Default::default()).await.unwrap();
-    rig.sync.load("users", "chat_members", &two, Default::default()).await.unwrap();
-    rig.sync.load_more("users", "chat_members", &one).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &one, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &two, Default::default()).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &one).await.unwrap();
     assert_eq!(rig.transport.calls()[2].variables, json!({"chatId": "c1", "first": 30, "after": "a2"}));
     assert_eq!(member_ids(&rig, "users", "chat_members", &one), ids("a", 0..5));
     assert_eq!(member_ids(&rig, "users", "chat_members", &two), ids("b", 0..2));
@@ -96,9 +96,9 @@ async fn the_server_order_survives_load_more_a_refresh_by_another_list_and_a_res
         let rig = rig_with_db(Db::open(&path, vec![users()], None).unwrap());
         rig.transport.enqueue("ChatMembers", named_page(&server_order[..3], true));
         rig.transport.enqueue("ChatMembers", named_page(&server_order[3..], false));
-        rig.sync.load("users", "chat_members", &chat, Default::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat, Default::default()).await.unwrap();
         assert_eq!(member_ids(&rig, "users", "chat_members", &chat), server_order[..3]);
-        rig.sync.load_more("users", "chat_members", &chat).await.unwrap();
+        rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat).await.unwrap();
         put(&rig, "users", json!({"id": "u1", "name": "renamed"}));
         put(&rig, "users", json!({"id": "u0", "name": "a"}));
         assert_eq!(member_ids(&rig, "users", "chat_members", &chat), server_order);

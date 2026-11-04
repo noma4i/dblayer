@@ -8,6 +8,19 @@ use crate::upload::{MultipartOperations, UploadBatchInput, UploadFile, UploadIte
 
 use super::upload_tests::{file, rid};
 
+#[tokio::test]
+async fn upload_without_a_session_refuses_before_accepting_a_file() {
+    let rig = super::upload_tests::upload_rig(super::upload_tests::small());
+    put(&rig, "moments", moment("m1", "x"));
+    rig.sync.end_session_for_test();
+    let source = file(b"clip");
+    let admitted = rig.db.admit().unwrap();
+    let result = rig.sync.upload(&admitted, "moments", &rid("m1"), "upload", UploadFile::new(source.path().to_str().unwrap())).await;
+    assert!(matches!(result, Err(crate::sync::SyncError::NoSession(_))));
+    assert!(rig.db.outbox().unwrap().is_empty());
+    assert!(rig.transport.calls().is_empty());
+}
+
 #[tokio::test(start_paused = true)]
 async fn every_upload_entry_refuses_a_bad_declaration_without_touching_files_outbox_or_network() {
     let conflicting = UploadOperations {
@@ -30,11 +43,11 @@ async fn every_upload_entry_refuses_a_bad_declaration_without_touching_files_out
             rig.sync.register(OperationDef::new("CreateBlob", "mutation x { x }", "createBlob"));
             put_if(&rig, entry);
             let outcome = match entry {
-                "upload" => crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", UploadFile::new(path))).await.map(drop),
-                "upload_create" => crate::sync::rig::app(&rig.sync, rig.sync.upload_create("moments", "upload", params(json!({"text": "x"})), UploadFile::new(path))).await.map(drop),
+                "upload" => crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", UploadFile::new(path))).await.map(drop),
+                "upload_create" => crate::sync::rig::app(&rig.sync, rig.sync.upload_create(&rig.sync.inner.db.admit().unwrap(), "moments", "upload", params(json!({"text": "x"})), UploadFile::new(path))).await.map(drop),
                 _ => {
                     let items = (0..2).map(|position| UploadItem { values: params(json!({"clientKey": format!("key-{position}"), "size": 2})), path: path.into(), name: None, mime: None, variables: Default::default() }).collect();
-                    crate::sync::rig::app(&rig.sync, rig.sync.upload_create_batch("Asset", items, UploadBatchInput { operation: "create_files".into(), variables: Default::default() })).await.map(drop)
+                    crate::sync::rig::app(&rig.sync, rig.sync.upload_create_batch(&rig.sync.inner.db.admit().unwrap(), "Asset", items, UploadBatchInput { operation: "create_files".into(), variables: Default::default() })).await.map(drop)
                 }
             };
             let error = outcome.expect_err(&format!("{case}/{entry} was accepted")).to_string();

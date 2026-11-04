@@ -16,13 +16,13 @@ async fn inv_fresh_02_an_invalidation_during_a_flight_gets_exactly_one_repeat_th
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", crate::transport::Reply::data(feed_page(vec![moment("m1", "m1")], false, "c2")).after(Duration::from_secs(5)));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c3"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let invalidate = async {
         tokio::time::sleep(Duration::from_secs(1)).await;
         crate::sync::rig::app(&rig.sync, rig.sync.inner.reload_lists_of_absent_parent("moments")).await.unwrap();
     };
     let no_params = none();
-    let (loaded, ()) = tokio::join!(rig.sync.load("moments", "feed", &no_params, LoadOptions { force: true }), invalidate);
+    let (loaded, ()) = tokio::join!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &no_params, LoadOptions { force: true }), invalidate);
     loaded.unwrap();
     tokio::time::sleep(Duration::from_secs(10)).await;
     let key = rig.sync.window_key("moments", "feed", &none()).unwrap();

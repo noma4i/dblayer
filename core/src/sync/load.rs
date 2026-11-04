@@ -131,12 +131,12 @@ impl Drop for FlightGuard<'_> {
 }
 
 impl Inner {
-    pub(crate) async fn load_scope(self: &Arc<Self>, resolved: &Resolved<'_>, force: bool) -> FlightResult {
+    pub(crate) async fn load_scope(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, force: bool) -> FlightResult {
         if resolved.members_complete || resolved.media.is_some() {
-            self.load_members(resolved, force).await?;
+            self.load_members(admitted, resolved, force).await?;
             return Ok(LoadOutcome::of(LoadStatus::Loaded));
         }
-        self.fetch(resolved, None, force).await
+        self.fetch(admitted, resolved, None, force).await
     }
 
     pub(crate) fn resolve(&self, origin: crate::lifecycle::Origin, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Resolved<'_>, SyncError> {
@@ -221,24 +221,16 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn fetch_after_flights(&self, resolved: &Resolved<'_>) -> FlightResult {
+    pub(crate) async fn fetch_after_flights(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>) -> FlightResult {
         self.flights_settled(resolved).await;
-        self.fetch(resolved, None, true).await
+        self.fetch(admitted, resolved, None, true).await
     }
 
-    pub(crate) async fn fetch(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
-        let explicit = resolved.origin == crate::lifecycle::Origin::Explicit;
-        let lease = self.lease(resolved.origin, "load").map_err(|ended| if explicit { SyncError::from(ended) } else { SyncError::Cancelled })?;
-        let epoch = lease.epoch();
-        let result = self.fetch_in(resolved, cursor, force, &lease).await;
-        drop(lease);
-        if explicit && result.as_ref().is_ok_and(|outcome| outcome.kept_error.is_none()) {
-            self.explicit_succeeded(epoch);
-        }
-        result
+    pub(crate) async fn fetch(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
+        self.fetch_in(resolved, cursor, force, admitted).await
     }
 
-    async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Lease) -> FlightResult {
+    async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted) -> FlightResult {
         let generation = self.db.generation();
         let flight_key = match &cursor {
             Some(cursor) => format!("{}|{cursor}", resolved.window_key),
@@ -343,34 +335,34 @@ impl Inner {
         }
     }
 
-    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Lease) -> Executed {
-        match lease.run(self.execute(resolved, cursor, force)).await {
+    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted) -> Executed {
+        match lease.run(self.execute(lease, resolved, cursor, force)).await {
             Ok(executed) => executed,
             Err(ended) => Executed::Failed(ended.into()),
         }
     }
 
-    async fn execute(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> Executed {
-        let loaded = if let Some(media) = resolved.media { self.media_load(resolved, media).await } else { self.run(resolved, cursor, force).await };
+    async fn execute(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> Executed {
+        let loaded = if let Some(media) = resolved.media { self.media_load(admitted, resolved, media).await } else { self.run(admitted, resolved, cursor, force).await };
         match loaded {
             Ok(executed) => executed,
             Err(error) => Executed::Failed(error),
         }
     }
 
-    async fn run(&self, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool) -> Result<Executed, SyncError> {
+    async fn run(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool) -> Result<Executed, SyncError> {
         let attempt = self.begin_attempt(&resolved.window_key)?;
         let has_window = crate::blocking::blocking_unit(|| self.db.shared.store.window(&resolved.window_key))?.is_some();
         let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
         let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
         let mut replace_window = false;
-        let response = match self.query_with_cursor_error(request, cursor.is_some()).await {
+        let response = match self.query_with_cursor_error(admitted, request, cursor.is_some()).await {
             Ok((response, attempts)) if response.errors.iter().any(|error| error.code() == Some(INVALID_CURSOR)) => {
                 replace_window = true;
                 cursor = None;
                 let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), None, &resolved.remote.variables);
                 let request = GraphQLRequest::new(&resolved.operation.document, &resolved.operation.name, variables);
-                self.query_with_retry(request).await.map(|(response, retried)| (response, attempts + retried))
+                self.query_with_retry(admitted, request).await.map(|(response, retried)| (response, attempts + retried))
             }
             result => result,
         };
@@ -406,7 +398,7 @@ impl Inner {
             keeps_total: resolved.remote.total_from.is_some(),
             attempt,
         };
-        Ok(match self.land(landing)? {
+        Ok(match self.land(admitted, landing)? {
             Landed::Applied { rows, invalid, revision } => {
                 self.preload_on_source(&resolved.model, &resolved.relation);
                 Executed::Landed(LoadOutcome { status: LoadStatus::Loaded, rows, dropped: dropped + invalid, has_next, attempts, kept_error: None }, revision)
@@ -423,15 +415,15 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn query_with_retry(&self, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
-        self.query_with_cursor_error(request, false).await
+    pub(crate) async fn query_with_retry(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
+        self.query_with_cursor_error(admitted, request, false).await
     }
 
-    async fn query_with_cursor_error(&self, request: GraphQLRequest, return_invalid_cursor: bool) -> Result<(Response, u32), SyncError> {
+    async fn query_with_cursor_error(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest, return_invalid_cursor: bool) -> Result<(Response, u32), SyncError> {
         let (response, attempts) = tokio::select! {
             biased;
             () = self.connectivity.offline() => return Err(SyncError::Offline),
-            result = crate::transport::retry::query(self.transport.as_ref(), request, self.clock.as_ref(), &self.connectivity, || locked(&self.counters).record_transport_call()) => result.map_err(SyncError::Transport)?,
+            result = crate::transport::retry::query(admitted, self.transport.as_ref(), request, self.clock.as_ref(), &self.connectivity, || locked(&self.counters).record_transport_call()) => result.map_err(SyncError::Transport)?,
         };
         if response.shape().outcome() == ResponseOutcome::Commit || return_invalid_cursor && response.errors.iter().any(|error| error.code() == Some(INVALID_CURSOR)) {
             return Ok((response, attempts));
@@ -441,7 +433,7 @@ impl Inner {
         Err(SyncError::Graphql { messages, extensions: response.extensions() })
     }
 
-    pub(crate) async fn load_more(&self, resolved: &Resolved<'_>) -> FlightResult {
+    pub(crate) async fn load_more(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>) -> FlightResult {
         let RemoteShape::Connection { max_pages, .. } = resolved.remote.shape else {
             return Err(SyncError::NotPaged { model: resolved.model.clone(), relation: resolved.scope.key.to_string() });
         };
@@ -458,7 +450,7 @@ impl Inner {
         if !verdict.calls_transport() {
             return Ok(LoadOutcome::of(LoadStatus::NoMorePages(verdict)));
         }
-        self.fetch(resolved, window.cursor, true).await
+        self.fetch(admitted, resolved, window.cursor, true).await
     }
 }
 
@@ -495,16 +487,18 @@ impl Sync {
         let _ = joined.wait_for(|joined| *joined >= at_least).await;
     }
 
-    pub async fn load(&self, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
+    pub async fn load(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
+        self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
         let resolved = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?;
-        self.inner.load_scope(&resolved, options.force).await
+        self.inner.load_scope(admitted, &resolved, options.force).await
     }
 
-    pub async fn load_more(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
+    pub async fn load_more(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
+        self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
         let resolved = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?;
-        self.inner.load_more(&resolved).await
+        self.inner.load_more(admitted, &resolved).await
     }
 }
 

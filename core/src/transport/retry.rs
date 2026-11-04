@@ -128,11 +128,11 @@ impl<'a> Retrying<'a> {
     }
 }
 
-pub(crate) async fn query(transport: &dyn Transport, request: GraphQLRequest, clock: &dyn Clock, online: &Connectivity, called: impl Fn()) -> Result<(Response, u32), TransportError> {
+pub(crate) async fn query(admitted: &crate::lifecycle::Admitted, transport: &dyn Transport, request: GraphQLRequest, clock: &dyn Clock, online: &Connectivity, called: impl Fn()) -> Result<(Response, u32), TransportError> {
     if transport.retries_queries() {
         called();
         crate::db::lock::assert_no_library_lock("Transport::query");
-        return transport.query(request).await.map(|response| (response, 1));
+        return transport.query(admitted, request).await.map(|response| (response, 1));
     }
     let progress = RetryCalls::default();
     let mut retry = Retrying::new(clock, &progress, online, RetryPolicy::QueryNetwork);
@@ -140,7 +140,7 @@ pub(crate) async fn query(transport: &dyn Transport, request: GraphQLRequest, cl
         online.online().await;
         called();
         crate::db::lock::assert_no_library_lock("Transport::query");
-        let (error, response) = match transport.query(request.clone()).await {
+        let (error, response) = match transport.query(admitted, request.clone()).await {
             Ok(response) => {
                 let codes: Vec<_> = response.errors.iter().filter_map(|error| error.code()).collect();
                 if RetryClass::classify(false, None, &codes) == RetryClass::Fatal { return Ok((response, retry.attempt as u32 + 1)); }

@@ -391,7 +391,7 @@ async fn an_events_collector_keeps_one_stream_across_a_session_start_and_hears_o
     rig.sync.commit_session_for_test();
     rig.transport.await_calls("Changes", 1).await;
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.start_session(Some("another-account".into()), life.epoch_now().value()));
+    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     rig.transport.await_calls("Changes", 2).await;
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "new"}})));
     let change = |kind: &str| SubscriptionEvent::Next(Response::data(json!({"recordEvents": {"changes": [event("CHAT", kind, "c1")]}})));

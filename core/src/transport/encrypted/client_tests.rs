@@ -223,9 +223,9 @@ async fn reads_carry_a_null_sequence_leave_no_pending_and_a_replayed_read_is_ret
     let client = rig.client(&db);
 
     client.mutate("/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
-    client.read("/api/graphql", graphql("query { a }")).await.unwrap();
+    client.read(&db.admit().unwrap(), "/api/graphql", graphql("query { a }")).await.unwrap();
     rig.server.replay_next_read();
-    let answer = client.read("/api/graphql", graphql("query { a }")).await.unwrap();
+    let answer = client.read(&db.admit().unwrap(), "/api/graphql", graphql("query { a }")).await.unwrap();
 
     let seen = rig.server.seen();
     assert_eq!(seen.iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(1), Value::Null, Value::Null, Value::Null]);
@@ -363,7 +363,8 @@ fn the_client_requires_an_https_origin_without_a_path_and_a_pinned_key() {
 async fn a_request_over_256_kib_is_refused_without_being_sent() {
     let rig = Rig::new();
 
-    let outcome = rig.client(&memory_db()).read("/api/graphql", graphql(&"q".repeat(300 * 1024))).await;
+    let db = memory_db();
+    let outcome = rig.client(&db).read(&db.admit().unwrap(), "/api/graphql", graphql(&"q".repeat(300 * 1024))).await;
 
     assert!(matches!(outcome, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
     assert!(rig.server.seen().is_empty());
@@ -392,7 +393,7 @@ async fn a_confirmed_retry_that_exceeds_the_size_limit_does_not_poison_pending()
     let rig = Rig::new();
     let db = memory_db();
     let client = rig.client(&db);
-    let credential = client.credential().unwrap();
+    let credential = client.credential(&client.admit("test credential").unwrap()).unwrap();
     rig.server.clone().with_sequence(&credential, 8);
     db.shared.store.lock().connection.execute("UPDATE encrypted_session SET sequence = 8", []).unwrap();
     let mut low = 0;
@@ -440,7 +441,7 @@ async fn encrypted_paths_never_carry_a_query_or_a_fragment() {
     let client = rig.client(&memory_db());
 
     for path in ["/api/graphql?platform=ios", "/api/graphql#frag"] {
-        assert!(matches!(client.read(path, graphql("{ a }")).await, Err(TransportError::Decode(_))), "{path}");
+        assert!(matches!(client.read(&client.admit("test read").unwrap(), path, graphql("{ a }")).await, Err(TransportError::Decode(_))), "{path}");
         assert!(matches!(client.mutate(path, graphql("{ a }")).await, Err(TransportError::Decode(_))), "{path}");
     }
 }

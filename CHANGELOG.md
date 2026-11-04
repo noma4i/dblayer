@@ -3,6 +3,7 @@
 ## 6.17.0 - 2026-11-04
 
 ### Added
+- `NoSession` reports server work without a session or transport on both platforms.
 - Value bridge: `AccountScope`, `ValueStream`, `Projected`, snapshots and keyed deltas with the session epoch.
 - `AccountScope.send`: a durable message command with `CommandStatus`, refused for an old epoch.
 - `refresh`, `loadMore` and `loaded` on a stream, interrupted when its session ends.
@@ -15,6 +16,7 @@
 - A projection keeps the edits of its deltas and the temporary id of a row.
 
 ### Changed
+- Core writes and transport calls carry one `Admitted` value from the calling database.
 - Requests, loads, uploads and subscriptions hold a lease that a session end, reset or close ends.
 - `sessionReset` and `close` are async and return after clearing; `sessionReset` clears the data.
 - A session end replays after a crash between the credential and the data clear.

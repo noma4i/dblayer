@@ -78,12 +78,12 @@ pub fn enqueue_page(rig: &Rig, nodes: Vec<Value>, has_next: bool, cursor: &str) 
 }
 
 pub async fn load_first_page(rig: &Rig) {
-    rig.sync.load("messages", "thread", &chat_params(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "messages", "thread", &chat_params(), LoadOptions { force: true }).await.unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
 }
 
 pub async fn load_next_page(rig: &Rig) {
-    rig.sync.load_more("messages", "thread", &chat_params()).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "messages", "thread", &chat_params()).await.unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
 }
 

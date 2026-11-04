@@ -29,21 +29,21 @@ impl Db {
         self.shared.read(&[model], |reader| Ok(read_sync(reader.connection(), model, &[id.to_string()])?.remove(id.as_str()).unwrap_or_default()))
     }
 
-    pub fn retry(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
+    pub fn retry(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
         let key = self.action_operation_key(model, action)?;
         let stuck = self.stuck_operations(model, id, key.as_deref())?;
-        Ok(self.retry_operations(stuck)? + self.retry_upload_items(Some((model, id, key.as_deref())))?)
+        Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, Some((model, id, key.as_deref())))?)
     }
 
-    pub fn retry_all(&self) -> Result<usize, DbError> {
+    pub fn retry_all(&self, admitted: &crate::lifecycle::Admitted) -> Result<usize, DbError> {
         let stuck: Vec<OutboxOperation> = self.outbox()?.into_iter().filter(is_stuck).collect();
-        Ok(self.retry_operations(stuck)? + self.retry_upload_items(None)?)
+        Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, None)?)
     }
 
-    fn retry_upload_items(&self, target: Option<(&str, &RowId, Option<&str>)>) -> Result<usize, DbError> {
+    fn retry_upload_items(&self, admitted: &crate::lifecycle::Admitted, target: Option<(&str, &RowId, Option<&str>)>) -> Result<usize, DbError> {
         let generation = self.generation();
         let mut retried = 0;
-        self.commit_following(&self.authority()?, generation, |reader| {
+        self.commit_following(&admitted.authority(), generation, |reader| {
             retried = 0;
             let connection = reader.connection();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
@@ -70,12 +70,12 @@ impl Db {
         Ok(retried)
     }
 
-    pub(crate) fn retry_operations(&self, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
+    pub(crate) fn retry_operations(&self, admitted: &crate::lifecycle::Admitted, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
         if stuck.is_empty() {
             return Ok(0);
         }
         let generation = self.generation();
-        self.commit_following(&self.authority()?, generation, |_| {
+        self.commit_following(&admitted.authority(), generation, |_| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops = stuck.iter().filter(|entry| is_failed_destroy(entry)).filter_map(|entry| Prior::of(entry).transpose()).collect::<Result<Vec<_>, _>>()?.into_iter().flat_map(|prior| prior.hiding()).collect();
                 envelope.operation_transitions.extend(stuck.iter().map(|entry| OperationTransition::Retry { seq: entry.operation.id.0 }));
@@ -97,7 +97,7 @@ impl Db {
         })
     }
 
-    pub(crate) fn expire_candidates(&self, candidates: Vec<(i64, String, String, String)>, due: i64, running: &[i64]) -> Result<usize, DbError> {
+    pub(crate) fn expire_candidates(&self, admitted: &crate::lifecycle::Admitted, candidates: Vec<(i64, String, String, String)>, due: i64, running: &[i64]) -> Result<usize, DbError> {
         let mut removed = 0;
         let mut rolled_back = std::collections::BTreeSet::new();
         for (seq, action_key, status, row) in candidates {
@@ -118,16 +118,16 @@ impl Db {
                         _ => Ok(false),
                     }
                 };
-                if self.remove_upload_item_if(&model, &id, seq, true, Some(&still))? { removed += 1; }
+                if self.remove_upload_item_if(admitted, &model, &id, seq, true, Some(&still))? { removed += 1; }
             } else if rolled_back.insert(seq) {
                 let still = |_: &crate::store::Reader<'_>, entry: &OutboxOperation| Ok(entry.operation.status == OperationStatus::Failed && entry.operation.since <= due);
-                if !self.roll_back_if(seq, self.generation(), Some(&still))?.is_noop() { removed += 1; }
+                if !self.roll_back_if(admitted, seq, self.generation(), Some(&still))?.is_noop() { removed += 1; }
             }
         }
         Ok(removed)
     }
 
-    pub fn discard(&self, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
+    pub fn discard(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
         let key = self.action_operation_key(model, action)?;
         if self.record_operations(model, id, key.as_deref())?.iter().any(is_sending) {
             return Err(DbError::InFlight { model: model.to_string(), id: id.to_string() });
@@ -136,9 +136,9 @@ impl Db {
         while let Some(entry) = self.record_operations(model, id, key.as_deref())?.first() {
             let batched = self.spec(model)?.is_batch_upload(&entry.operation.action_key);
             if batched && entry.operation.status != OperationStatus::DeliveryUnknown {
-                self.remove_upload_item(model, id, entry.operation.id.0, true)?;
+                self.remove_upload_item(admitted, model, id, entry.operation.id.0, true)?;
             } else {
-                self.roll_back(entry.operation.id.0)?;
+                self.roll_back(admitted, entry.operation.id.0)?;
             }
             discarded += 1;
         }

@@ -70,7 +70,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
     return EncryptedReply(status: 200, body: try seal(request, reply))
   }
 
-  private func open(_ token: String) throws -> [String: Any] {
+  func open(_ token: String) throws -> [String: Any] {
     let parts = token.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
     var error: Unmanaged<CFError>?
     let cek = SecKeyCreateDecryptedData(privateKey, .rsaEncryptionOAEPSHA1, Self.decode(parts[1]) as CFData, &error)! as Data

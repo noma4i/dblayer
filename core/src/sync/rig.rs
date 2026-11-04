@@ -212,7 +212,7 @@ pub fn register_operations(sync: &Sync) {
 }
 
 pub fn app<F: std::future::Future>(sync: &Sync, work: F) -> impl std::future::Future<Output = F::Output> {
-    sync.inner.db.shared.store.lifecycle.epoch_now().scope(work)
+    sync.inner.db.admit().expect("the test call is admitted").scope(work)
 }
 
 pub fn keeping_rig() -> Rig {
@@ -298,5 +298,5 @@ pub fn put(rig: &Rig, model: &str, row: Value) {
     let id = crate::identity::RowId::new(row["id"].as_str().unwrap()).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: crate::identity::ModelKey::new(model), id, row });
-    rig.db.as_app().land(envelope).unwrap();
+    rig.db.land(&rig.db.admit().unwrap(), envelope).unwrap();
 }

@@ -10,41 +10,41 @@ use super::super::{locked, Inner, SyncError};
 impl Inner {
     pub(crate) fn spawn_upload_housekeeping(self: &Arc<Self>, expire: bool) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else { return };
-        let Ok(lease) = self.lease(crate::lifecycle::Origin::Session, "upload housekeeping") else { return };
+        let Ok(admitted) = self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "upload housekeeping") else { return };
         let inner = self.clone();
         let task = self.until_closed(async move {
-            if lease.pinned(inner.run_housekeeping(expire)).await.is_err() {
+            if admitted.run(inner.run_housekeeping(&admitted, expire)).await.is_err() {
                 inner.upload_housekeeping_due.store(true, Ordering::SeqCst);
             }
-            drop(lease);
         });
         locked(&self.uploads).tasks.spawn_on(crate::task::Carry::Detached, task, &runtime);
     }
 
     #[cfg(test)]
-    pub(crate) async fn upload_housekeeping(self: &Arc<Self>) -> Result<(), SyncError> {
-        self.run_housekeeping(true).await
+    pub(crate) async fn upload_housekeeping(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+        self.run_housekeeping(admitted, true).await
     }
 
-    async fn run_housekeeping(self: &Arc<Self>, expire: bool) -> Result<(), SyncError> {
-        if expire { self.expire_uploads().await?; }
-        self.abort_orphan_uploads().await
+    async fn run_housekeeping(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, expire: bool) -> Result<(), SyncError> {
+        if expire { self.expire_uploads(admitted).await?; }
+        self.abort_orphan_uploads(admitted).await
     }
 
-    pub(crate) async fn expire_uploads(self: &Arc<Self>) -> Result<(), SyncError> {
-        self.expire_blobs().await?;
+    pub(crate) async fn expire_uploads(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+        self.expire_blobs(admitted).await?;
         let limit = i64::try_from(self.config.upload.failed_ttl.as_millis()).unwrap_or(i64::MAX);
         let due = self.now_ms().saturating_sub(limit);
         let running: Vec<i64> = locked(&self.uploads).active.keys().map(|key| key.0).collect();
         let db = self.db.clone();
+        let admitted = admitted.clone();
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
             let candidates = db.failed_upload_candidates(due)?;
-            db.expire_candidates(candidates, due, &running)
+            db.expire_candidates(&admitted, candidates, due, &running)
         }).await.map_err(|error| SyncError::Store(error.to_string()))??;
         Ok(())
     }
 
-    async fn abort_orphan_uploads(self: &Arc<Self>) -> Result<(), SyncError> {
+    async fn abort_orphan_uploads(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
         let _draining = self.upload_orphan_gate.lock().await;
         if !self.connectivity.is_online() { return Ok(()); }
         let shared = self.db.shared.clone();
@@ -56,7 +56,7 @@ impl Inner {
             let request = GraphQLRequest::new(&operation.document, &operation.name, json!({"key": key, "uploadId": upload_id}));
             locked(&self.counters).record_transport_call();
             crate::db::lock::assert_no_library_lock("Transport::mutate");
-            let call = crate::pacing::timeout(self.clock.as_ref(), self.config.upload.step_timeout, self.transport.mutate(request)).await;
+            let call = crate::pacing::timeout(self.clock.as_ref(), self.config.upload.step_timeout, self.transport.mutate(admitted, request)).await;
             let settled = match call {
                 Ok(Ok(response)) => {
                     let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
@@ -66,7 +66,7 @@ impl Inner {
             };
             if !settled { continue; }
             let shared = self.db.shared.clone();
-            let authority = self.db.authority()?;
+            let authority = admitted.authority();
             crate::task::spawn_blocking(crate::task::Carry::here(), move || shared.store.settle_upload_orphan(&authority, id)).await.map_err(|error| SyncError::Store(error.to_string()))??;
         }
         Ok(())

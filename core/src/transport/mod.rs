@@ -45,10 +45,15 @@ pub trait Transport: Send + Sync {
     async fn open_cable(&self) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {
         Err(TransportError::Network("encrypted cable socket is not connected".into()))
     }
-    async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError>;
-    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError>;
+    async fn query(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError>;
+    async fn mutate(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError>;
+    async fn subscribe(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError>;
+    async fn put(&self, admitted: &crate::lifecycle::Admitted, request: PutRequest) -> Result<PutResponse, TransportError>;
+}
+
+#[cfg(test)]
+pub(crate) fn test_admission() -> crate::lifecycle::Admitted {
+    std::sync::Arc::new(crate::lifecycle::Lifecycle::default()).admit(crate::lifecycle::Origin::Explicit, "test transport").unwrap()
 }
 
 #[cfg(test)]

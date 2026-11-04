@@ -15,7 +15,7 @@ fn interrupt_at(db: &Db, limit: usize) -> Arc<AtomicUsize> {
 }
 
 fn write(db: &Db) -> bool {
-    db.as_app().update("moments", &rid("m1"), obj(json!({"text": "two"}))).is_ok()
+    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "two"}))).is_ok()
 }
 
 #[test]

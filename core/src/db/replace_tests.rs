@@ -30,7 +30,7 @@ fn observe_scope(db: &Db, name: &str) -> (ChangeLog, ObserverHandle) {
 }
 
 fn start(db: &Db, name: &str, items: &[(&str, &str)]) {
-    db.as_app().replace(&request(name, Coverage::Complete), rows(items)).unwrap();
+    db.replace(&db.admit().unwrap(), &request(name, Coverage::Complete), rows(items)).unwrap();
     db.await_revision(db.revision_seq().unwrap());
 }
 
@@ -40,12 +40,12 @@ fn inv_identity_01_foreign_pending_rows_do_not_survive_replacement() {
         for on_absent in [OnAbsent::Detach, OnAbsent::Destroy] {
             let db = booted();
             start(&db, "feed", &[("same", "server"), ("own", "local")]);
-            db.as_app().create("users", obj(json!({"id": "same", "name": "pending"}))).unwrap();
-            db.as_app().update("moments", &rid("own"), obj(json!({"text": "edited"}))).unwrap();
+            db.create(&db.admit().unwrap(), "users", obj(json!({"id": "same", "name": "pending"}))).unwrap();
+            db.update(&db.admit().unwrap(), "moments", &rid("own"), obj(json!({"text": "edited"}))).unwrap();
             let mut request = request("feed", coverage);
             request.on_absent = on_absent;
             request.replace_all = true;
-            db.as_app().replace(&request, vec![]).unwrap();
+            db.replace(&db.admit().unwrap(), &request, vec![]).unwrap();
             assert_eq!(members(&db, "feed"), ["own"], "{coverage:?} {on_absent:?}");
             assert_eq!(db.find("moments", &rid("same")).unwrap().is_some(), on_absent == OnAbsent::Detach);
             assert!(db.find("users", &rid("same")).unwrap().is_some());
@@ -61,7 +61,7 @@ fn inv_merge_04_inv_observe_05_three_merges_in_a_row_give_one_delivery_each_and_
     let steps = [rows(&[("m1", "one"), ("m2", "two!"), ("m3", "three")]), rows(&[("m1", "uno"), ("m2", "two!"), ("m3", "three")]), rows(&[("m3", "three"), ("m1", "uno"), ("m2", "two!")])];
     for step in steps {
         let before = db.revision_seq().unwrap();
-        db.as_app().replace(&request("feed", Coverage::Complete), step).unwrap();
+        db.replace(&db.admit().unwrap(), &request("feed", Coverage::Complete), step).unwrap();
         assert_eq!(db.revision_seq().unwrap(), before + 1);
         db.await_revision(db.revision_seq().unwrap());
     }
@@ -79,7 +79,7 @@ fn identical_rows_commit_nothing() {
     let db = booted();
     start(&db, "feed", &[("m1", "one"), ("m2", "two")]);
     let revision = db.revision_seq().unwrap();
-    let result = db.as_app().replace(&request("feed", Coverage::Complete), rows(&[("m1", "one"), ("m2", "two")])).unwrap();
+    let result = db.replace(&db.admit().unwrap(), &request("feed", Coverage::Complete), rows(&[("m1", "one"), ("m2", "two")])).unwrap();
     assert!(result.is_noop());
     assert_eq!(db.revision_seq().unwrap(), revision);
 }
@@ -87,7 +87,7 @@ fn identical_rows_commit_nothing() {
 #[test]
 fn replace_merges_repeated_ids_before_storing_unique_members() {
     let db = booted();
-    db.as_app().replace(&request("feed", Coverage::Complete), vec![
+    db.replace(&db.admit().unwrap(), &request("feed", Coverage::Complete), vec![
         obj(json!({"id": "m2", "userId": "u1", "text": "first"})),
         obj(json!({"id": "m1", "userId": "u1", "text": "middle"})),
         obj(json!({"id": "m2", "text": "last"})),
@@ -101,7 +101,7 @@ fn replace_merges_repeated_ids_before_storing_unique_members() {
 fn inv_merge_02_fields_of_a_stored_row_that_the_response_omits_are_kept() {
     let db = booted();
     start(&db, "feed", &[("m1", "one")]);
-    db.as_app().replace(&request("feed", Coverage::Complete), vec![obj(json!({"id": "m1", "text": "changed"}))]).unwrap();
+    db.replace(&db.admit().unwrap(), &request("feed", Coverage::Complete), vec![obj(json!({"id": "m1", "text": "changed"}))]).unwrap();
     let row = db.find("moments", &rid("m1")).unwrap().unwrap();
     assert_eq!((row.text("text"), row.text("userId")), (Some("changed"), Some("u1")));
 }
@@ -111,7 +111,7 @@ fn inv_merge_07_a_found_anchor_keeps_the_tail_and_drops_the_vanished_row_before_
     let db = booted();
     start(&db, "feed", &[("m1", "1"), ("m2", "2"), ("m3", "3"), ("m4", "4"), ("m5", "5")]);
     let (log, _subscription) = observe_scope(&db, "feed");
-    db.as_app().replace(&request("feed", Coverage::Page), rows(&[("m1", "1"), ("m3", "3")])).unwrap();
+    db.replace(&db.admit().unwrap(), &request("feed", Coverage::Page), rows(&[("m1", "1"), ("m3", "3")])).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(ids(changes(&log).last().unwrap()), ["m1", "m3", "m4", "m5"]);
     assert_eq!(changes(&log).len(), 2);
@@ -122,7 +122,7 @@ fn inv_merge_07_a_found_anchor_keeps_the_tail_and_drops_the_vanished_row_before_
 fn inv_merge_07_a_missing_anchor_drops_the_tail() {
     let db = booted();
     start(&db, "feed", &[("m1", "1"), ("m2", "2"), ("m3", "3")]);
-    db.as_app().replace(&request("feed", Coverage::Page), rows(&[("m9", "9"), ("m8", "8")])).unwrap();
+    db.replace(&db.admit().unwrap(), &request("feed", Coverage::Page), rows(&[("m9", "9"), ("m8", "8")])).unwrap();
     assert_eq!(members(&db, "feed"), ["m9", "m8"]);
 }
 
@@ -130,15 +130,15 @@ fn inv_merge_07_a_missing_anchor_drops_the_tail() {
 fn inv_merge_07_local_rows_stay_in_the_list_on_their_places() {
     let db = booted();
     start(&db, "feed", &[("m1", "1"), ("m2", "2")]);
-    let local = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "mine"}))).unwrap();
+    let local = db.create(&db.admit().unwrap(), "moments", obj(json!({"userId": "u1", "text": "mine"}))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: local.id.clone(), order_key: "Zz".to_string() });
-    db.as_app().land(envelope).unwrap();
-    let pending = db.as_app().create("moments", obj(json!({"id": "m5", "userId": "u1", "text": "pending"}))).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
+    let pending = db.create(&db.admit().unwrap(), "moments", obj(json!({"id": "m5", "userId": "u1", "text": "pending"}))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: pending.id.clone(), order_key: "b00".to_string() });
-    db.as_app().land(envelope).unwrap();
-    db.as_app().replace(&request("feed", Coverage::Complete), rows(&[("m2", "2"), ("m3", "3")])).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
+    db.replace(&db.admit().unwrap(), &request("feed", Coverage::Complete), rows(&[("m2", "2"), ("m3", "3")])).unwrap();
     let after = members(&db, "feed");
     assert_eq!(after.first().map(String::as_str), Some(local.id.as_str()));
     assert!(after.contains(&"m5".to_string()) && after.contains(&"m2".to_string()) && after.contains(&"m3".to_string()));
@@ -153,7 +153,7 @@ fn inv_merge_08_a_merge_changes_only_its_own_scope() {
     start(&db, "feed", &[("m1", "1"), ("m3", "3")]);
     let (other, _subscription) = observe_scope(&db, "byUser2");
     let (feed, _feed_subscription) = observe_scope(&db, "feed");
-    db.as_app().replace(&request("byUser1", Coverage::Complete), rows(&[("m2", "2")])).unwrap();
+    db.replace(&db.admit().unwrap(), &request("byUser1", Coverage::Complete), rows(&[("m2", "2")])).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(members(&db, "byUser2"), ["m3"]);
     assert_eq!(calls(&other), vec![1]);
@@ -165,13 +165,13 @@ fn detach_keeps_the_row_and_destroy_removes_it_with_its_cascade() {
     let db = booted();
     seed_tree(&db);
     start(&db, "feed", &[("m1", "one"), ("m2", "two")]);
-    db.as_app().replace(&request("feed", Coverage::Complete), rows(&[("m2", "two")])).unwrap();
+    db.replace(&db.admit().unwrap(), &request("feed", Coverage::Complete), rows(&[("m2", "two")])).unwrap();
     assert!(db.find("moments", &rid("m1")).unwrap().is_some());
     start(&db, "feed", &[("m1", "one"), ("m2", "two")]);
     let mut destroying = request("feed", Coverage::Complete);
     destroying.on_absent = OnAbsent::Destroy;
     let before = db.revision_seq().unwrap();
-    db.as_app().replace(&destroying, rows(&[("m2", "two")])).unwrap();
+    db.replace(&db.admit().unwrap(), &destroying, rows(&[("m2", "two")])).unwrap();
     assert_eq!(db.revision_seq().unwrap(), before + 1);
     assert!(db.find("moments", &rid("m1")).unwrap().is_none());
     assert_eq!(db.count(&Query::new("vibes")).unwrap(), 0);
@@ -181,13 +181,13 @@ fn detach_keeps_the_row_and_destroy_removes_it_with_its_cascade() {
 fn destroy_spares_local_rows() {
     let db = booted();
     start(&db, "feed", &[("m1", "1")]);
-    let local = db.as_app().create("moments", obj(json!({"userId": "u1", "text": "mine"}))).unwrap();
+    let local = db.create(&db.admit().unwrap(), "moments", obj(json!({"userId": "u1", "text": "mine"}))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: scope("feed"), row: local.id.clone(), order_key: "b00".to_string() });
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     let mut destroying = request("feed", Coverage::Complete);
     destroying.on_absent = OnAbsent::Destroy;
-    db.as_app().replace(&destroying, vec![]).unwrap();
+    db.replace(&db.admit().unwrap(), &destroying, vec![]).unwrap();
     assert!(db.find("moments", &local.id).unwrap().is_some());
     assert_eq!(members(&db, "feed"), [local.id.to_string()]);
     assert!(db.find("moments", &rid("m1")).unwrap().is_none());
@@ -199,7 +199,7 @@ fn replace_all_ignores_the_anchor() {
     start(&db, "feed", &[("m1", "1"), ("m2", "2"), ("m3", "3")]);
     let mut all = request("feed", Coverage::Page);
     all.replace_all = true;
-    db.as_app().replace(&all, rows(&[("m1", "1")])).unwrap();
+    db.replace(&db.admit().unwrap(), &all, rows(&[("m1", "1")])).unwrap();
     assert_eq!(members(&db, "feed"), ["m1"]);
 }
 
@@ -207,7 +207,7 @@ fn replace_all_ignores_the_anchor() {
 fn replace_on_an_unknown_model_fails() {
     let db = booted();
     let ghost = ScopeRef::new(ModelKey::new("ghosts"), ListKey::from_raw("x"));
-    assert!(matches!(db.as_app().replace(&ReplaceRequest::new(ghost, Coverage::Complete), vec![]), Err(DbError::UnknownModel(_))));
+    assert!(matches!(db.replace(&db.admit().unwrap(), &ReplaceRequest::new(ghost, Coverage::Complete), vec![]), Err(DbError::UnknownModel(_))));
 }
 
 const OLD: &str = "2026-01-01T00:00:00.000Z";
@@ -225,7 +225,7 @@ fn a_server_row_moves_the_parent_pointer_only_forward() {
         let db = booted();
         put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": held, "lastMessageAt": held_at}));
         let chats = ScopeRef::new(ModelKey::new("chats"), ListKey::from_raw("all"));
-        db.as_app().replace(&ReplaceRequest::new(chats, Coverage::Complete), vec![obj(json!({"id": "c1", "title": "t", "lastMessageId": id, "lastMessageAt": at}))]).unwrap();
+        db.replace(&db.admit().unwrap(), &ReplaceRequest::new(chats, Coverage::Complete), vec![obj(json!({"id": "c1", "title": "t", "lastMessageId": id, "lastMessageAt": at}))]).unwrap();
         let chat = db.find("chats", &rid("c1")).unwrap().unwrap();
         let expected = if name.starts_with("a newer") { (id, at) } else { (held, held_at) };
         assert_eq!((chat.text("lastMessageId"), chat.text("lastMessageAt")), (Some(expected.0), Some(expected.1)), "{name}");
@@ -237,7 +237,7 @@ fn touches_to_replace_with_new_rows(size: usize) -> usize {
     let items: Vec<(String, String)> = (0..size).map(|index| (format!("m{index:05}"), "x".to_string())).collect();
     let borrowed: Vec<(&str, &str)> = items.iter().map(|(id, text)| (id.as_str(), text.as_str())).collect();
     let before = crate::identity::touches::total();
-    db.as_app().replace(&request("feed", Coverage::Complete), rows(&borrowed)).unwrap();
+    db.replace(&db.admit().unwrap(), &request("feed", Coverage::Complete), rows(&borrowed)).unwrap();
     crate::identity::touches::total() - before
 }
 
@@ -253,7 +253,7 @@ fn replacing_a_list_on_a_disk_database_plans_off_the_writer() {
     let db = Db::open(&directory.path().join("db.sqlite"), all_specs(), None).unwrap();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));
     let before = db.shared.store.counters();
-    db.as_app().replace(&request("recent", Coverage::Complete), rows(&[("m1", "one"), ("m2", "two")])).unwrap();
+    db.replace(&db.admit().unwrap(), &request("recent", Coverage::Complete), rows(&[("m1", "one"), ("m2", "two")])).unwrap();
     let after = db.shared.store.counters();
     assert_eq!((after.plans_off_writer - before.plans_off_writer, after.plans_under_writer - before.plans_under_writer), (1, 0));
 }

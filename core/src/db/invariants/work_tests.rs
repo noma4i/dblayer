@@ -14,7 +14,7 @@ fn with_open_operations(count: usize) -> (Db, i64) {
     let db = booted();
     for turn in 0..count {
         put(&db, "moments", json!({"id": format!("x{turn}"), "userId": "u1", "text": "one"}));
-        db.as_app().update("moments", &rid(&format!("x{turn}")), obj(json!({"text": "two"}))).unwrap();
+        db.update(&db.admit().unwrap(), "moments", &rid(&format!("x{turn}")), obj(json!({"text": "two"}))).unwrap();
     }
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
     let record = OperationRecord {

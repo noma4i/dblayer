@@ -8,9 +8,10 @@ impl Store {
         self.writes_waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let inner = self.lock();
         let _line = match authority {
-            Authority::Epoch(epoch) => {
-                let line = epoch.life().commit_line();
-                if !epoch.life().epoch_holds(epoch.value()) { return Err(refused()); }
+            Authority::Admitted(admitted) => {
+                if !std::sync::Arc::ptr_eq(&self.lifecycle, admitted.life()) { return Err(refused()); }
+                let line = admitted.life().commit_line();
+                if !admitted.is_current() { return Err(refused()); }
                 Some(line)
             }
             Authority::Internal(_) => None,

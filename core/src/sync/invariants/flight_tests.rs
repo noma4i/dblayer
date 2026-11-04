@@ -12,7 +12,7 @@ fn slow_feed(rig: &Rig) {
 
 fn spawn_load(rig: &Rig) -> tokio::task::JoinHandle<Result<super::super::load::LoadOutcome, super::super::SyncError>> {
     let sync = rig.sync.clone();
-    tokio::spawn(async move { sync.load("moments", "feed", &Map::new(), LoadOptions::default()).await })
+    tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &Map::new(), LoadOptions::default()).await })
 }
 
 #[tokio::test(start_paused = true)]

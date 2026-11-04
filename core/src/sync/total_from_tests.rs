@@ -55,7 +55,7 @@ async fn the_chat_member_count_becomes_the_total_of_a_first_page_of_30_rows() {
     let rig = declared_rig();
     let chat = params(json!({"chatId": "c1"}));
     rig.transport.enqueue("ChatMembers", page(0..30, true, Some(53), None));
-    let landed = rig.sync.load("users", "chat_members", &chat, Default::default()).await.unwrap();
+    let landed = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat, Default::default()).await.unwrap();
     assert_eq!(landed.rows, 30);
     assert_eq!(total_of(&rig, "c1").await, Some(53));
 }
@@ -67,10 +67,10 @@ async fn load_more_keeps_the_total_and_takes_the_newest_answer() {
     rig.transport.enqueue("ChatMembers", page(0..30, true, Some(53), None));
     rig.transport.enqueue("ChatMembers", page(30..45, true, Some(54), None));
     rig.transport.enqueue("ChatMembers", page(45..53, false, None, None));
-    rig.sync.load("users", "chat_members", &chat, Default::default()).await.unwrap();
-    rig.sync.load_more("users", "chat_members", &chat).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat, Default::default()).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat).await.unwrap();
     assert_eq!(total_of(&rig, "c1").await, Some(54));
-    rig.sync.load_more("users", "chat_members", &chat).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &chat).await.unwrap();
     assert_eq!(total_of(&rig, "c1").await, Some(54), "an answer without the field keeps the last total");
 }
 
@@ -79,8 +79,8 @@ async fn each_chat_has_its_own_total() {
     let rig = declared_rig();
     rig.transport.enqueue("ChatMembers", page(0..3, true, Some(53), None));
     rig.transport.enqueue("ChatMembers", page(0..2, false, Some(2), None));
-    rig.sync.load("users", "chat_members", &params(json!({"chatId": "c1"})), Default::default()).await.unwrap();
-    rig.sync.load("users", "chat_members", &params(json!({"chatId": "c2"})), Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &params(json!({"chatId": "c1"})), Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &params(json!({"chatId": "c2"})), Default::default()).await.unwrap();
     assert_eq!((total_of(&rig, "c1").await, total_of(&rig, "c2").await), (Some(53), Some(2)));
 }
 
@@ -91,7 +91,7 @@ async fn the_total_survives_a_restart() {
     {
         let rig = rig_with_db(Db::open(&path, vec![users(Some("node.membersCount"))], None).unwrap());
         rig.transport.enqueue("ChatMembers", page(0..30, true, Some(53), None));
-        rig.sync.load("users", "chat_members", &params(json!({"chatId": "c1"})), Default::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &params(json!({"chatId": "c1"})), Default::default()).await.unwrap();
     }
     let reopened = rig_with_db(Db::open(&path, vec![users(Some("node.membersCount"))], None).unwrap());
     assert_eq!(total_of(&reopened, "c1").await, Some(53));
@@ -102,8 +102,8 @@ async fn without_a_declaration_the_total_is_the_total_count_of_the_connection() 
     let rig = rig_with_db(Db::open_in_memory(vec![users(None)], None).unwrap());
     rig.transport.enqueue("ChatMembers", page(0..3, true, Some(53), None));
     rig.transport.enqueue("ChatMembers", page(0..3, true, Some(53), Some(40)));
-    rig.sync.load("users", "chat_members", &params(json!({"chatId": "c1"})), Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &params(json!({"chatId": "c1"})), Default::default()).await.unwrap();
     assert_eq!(total_of(&rig, "c1").await, None);
-    rig.sync.load("users", "chat_members", &params(json!({"chatId": "c2"})), Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "chat_members", &params(json!({"chatId": "c2"})), Default::default()).await.unwrap();
     assert_eq!(total_of(&rig, "c2").await, Some(40));
 }

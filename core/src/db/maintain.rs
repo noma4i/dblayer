@@ -11,14 +11,21 @@ use super::open::{locked, Db};
 use super::prior::Prior;
 
 impl Db {
-    pub fn maintain(&self, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, DbError> {
-        let report = self.shared.store.maintain(temp_rows)?;
-        self.sweep_files()?;
+    pub fn maintain(&self, admitted: &crate::lifecycle::Admitted, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, DbError> {
+        let report = self.shared.store.maintain(admitted, temp_rows)?;
+        self.sweep_files(admitted)?;
         Ok(report)
     }
 
-    pub fn sweep_files(&self) -> Result<usize, DbError> {
+    pub fn sweep_files(&self, admitted: &crate::lifecycle::Admitted) -> Result<usize, DbError> {
         let _gate = locked(&self.shared.files_gate);
+        {
+            let life = &self.shared.store.lifecycle;
+            let _line = life.commit_line();
+            if !std::sync::Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() {
+                return Err(DbError::NoSession { detail: "the session of this maintenance ended".into() });
+            }
+        }
         let mut committed = None;
         let result = (|| {
         let orphans = self.shared.read(&[], |reader| {
@@ -48,7 +55,7 @@ impl Db {
         })?;
         let mut removed = orphans.len();
         if !orphans.is_empty() {
-            let (pending, cleanup) = self.remove_references(&orphans)?;
+            let (pending, cleanup) = self.remove_references(admitted, &orphans)?;
             committed = Some(pending);
             cleanup?;
         }
@@ -75,7 +82,7 @@ impl Db {
         result
     }
 
-    fn remove_references(&self, references: &[FileReference]) -> Result<(crate::store::Committed<'_>, Result<(), DbError>), DbError> {
+    fn remove_references(&self, admitted: &crate::lifecycle::Admitted, references: &[FileReference]) -> Result<(crate::store::Committed<'_>, Result<(), DbError>), DbError> {
         let generation = self.generation();
         let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
         for reference in references {
@@ -85,7 +92,7 @@ impl Db {
                 field: reference.field.clone(),
             });
         }
-        let (committed, _) = self.commit_following_deferred(&crate::lifecycle::Authority::Epoch(self.shared.store.lifecycle.epoch_now()), generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
+        let (committed, _) = self.commit_following_deferred(&admitted.authority(), generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
         let ids: Vec<String> = references.iter().map(|reference| reference.id.clone()).collect();
         let cleanup = self.shared.files.discard(&ids).map_err(super::files::io_fault);
         Ok((committed, cleanup))

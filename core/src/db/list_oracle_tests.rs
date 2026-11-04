@@ -66,7 +66,7 @@ fn commit(db: &Db, dice: &mut Dice, op: EntityOp) {
         _ => {}
     }
     envelope.entity_ops.push(op);
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
 }
 
 fn edit(db: &Db, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) -> String {

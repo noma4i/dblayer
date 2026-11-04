@@ -72,14 +72,10 @@ pub(crate) struct Inner {
     pub counters: Counters,
 }
 
-pub(crate) fn pinned_to_epoch<R>(life: &Arc<crate::lifecycle::Lifecycle>, epoch: u64, write: impl FnOnce() -> R) -> R {
-    crate::lifecycle::Epoch::new(life, epoch).pinned(write)
-}
-
 impl Inner {
     pub(crate) fn ensure_generation(&self, authority: &crate::lifecycle::Authority, generation: Generation) -> Result<(), StoreError> {
-        if let crate::lifecycle::Authority::Epoch(epoch) = authority {
-            if !epoch.life().admits_epoch(epoch.value()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
+        if let crate::lifecycle::Authority::Admitted(admitted) = authority {
+            if !admitted.life().admits_epoch(admitted.value()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
         }
         if generation != self.generation {
             return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration));

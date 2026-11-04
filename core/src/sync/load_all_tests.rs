@@ -86,7 +86,8 @@ async fn load_all_reads_the_connection_to_the_confirmed_end() {
         let budget = case.calls;
         let seen = Arc::new(AtomicUsize::new(0));
         rig.transport.respond_with(move |_| (seen.fetch_add(1, Ordering::SeqCst) >= budget).then(|| Reply::graphql_messages(&["request budget exhausted"])));
-        let load = |force: bool| rig.sync.load_all("moments", case.relation, &query_params, LoadOptions { force });
+        let admitted = rig.db.admit().unwrap();
+        let load = |force: bool| rig.sync.load_all(&admitted, "moments", case.relation, &query_params, LoadOptions { force });
         let outcome = match case.run {
             Run::Once => load(false).await,
             Run::ThenAgain => {

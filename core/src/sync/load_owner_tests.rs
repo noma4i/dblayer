@@ -18,12 +18,12 @@ async fn feed_state(rig: &Rig) -> super::RelationWatch {
 
 fn load(rig: &Rig, force: bool) -> tokio::task::JoinHandle<Result<super::load::LoadOutcome, SyncError>> {
     let sync = rig.sync.clone();
-    tokio::spawn(async move { sync.load("moments", "feed", &none(), LoadOptions { force }).await })
+    tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force }).await })
 }
 
 fn load_more(rig: &Rig) -> tokio::task::JoinHandle<Result<super::load::LoadOutcome, SyncError>> {
     let sync = rig.sync.clone();
-    tokio::spawn(async move { sync.load_more("moments", "feed", &none()).await })
+    tokio::spawn(async move { sync.load_more(&sync.inner.db.admit().unwrap(), "moments", "feed", &none()).await })
 }
 
 fn summary(state: &RelationState) -> (LoadPhase, Option<&'static str>) {
@@ -35,7 +35,7 @@ async fn inv_loadm_05_a_load_offline_before_the_flight_ends_with_a_network_error
     let rig = rig();
     let state = feed_state(&rig).await;
     rig.sync.set_online(false);
-    let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
+    let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await;
     assert_eq!(result.unwrap_err(), SyncError::Offline);
     assert_eq!(summary(&state.borrow()), (LoadPhase::Failed, Some("network")));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 0);
@@ -46,9 +46,9 @@ async fn inv_loadm_05_an_offline_load_of_a_window_with_rows_keeps_the_rows_phase
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     let state = feed_state(&rig).await;
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     rig.sync.set_online(false);
-    assert!(rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.is_err());
+    assert!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.is_err());
     assert_eq!(summary(&state.borrow()), (LoadPhase::Loaded, Some("network")));
 }
 
@@ -80,7 +80,7 @@ async fn inv_loadm_06_an_answer_that_arrives_after_the_caller_left_changes_nothi
     assert_eq!(summary(&state.borrow()), (LoadPhase::NotLoaded, None));
     assert!(member_ids(&rig, "moments", "feed", &none()).is_empty());
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(summary(&state.borrow()), (LoadPhase::Loaded, None));
 }
 
@@ -92,7 +92,7 @@ async fn inv_loadm_07_a_window_with_two_flights_stays_loading_until_both_end_in_
         rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], true, "c1").after(Duration::from_secs(refresh_takes)));
         rig.transport.enqueue("MomentsFeed", feed_reply(&["b"], false, "c2").after(Duration::from_secs(more_takes)));
         let state = feed_state(&rig).await;
-        rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
         let refresh = load(&rig, true);
         rig.transport.await_calls("MomentsFeed", 2).await;
         let more = load_more(&rig);
@@ -115,7 +115,7 @@ async fn inv_loadm_08_going_online_repeats_the_load_that_failed_by_network_once(
     let rig = rig();
     let state = feed_state(&rig).await;
     rig.sync.set_online(false);
-    assert!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
+    assert!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.is_err());
     assert_eq!(state.borrow().phase, LoadPhase::Failed);
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.sync.set_online(true);
@@ -133,8 +133,8 @@ async fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_e
     let rig = rig();
     let watched = feed_state(&rig).await;
     rig.sync.set_online(false);
-    assert!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
-    assert!(rig.sync.load("moments", "history", &none(), LoadOptions::default()).await.is_err());
+    assert!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.is_err());
+    assert!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "history", &none(), LoadOptions::default()).await.is_err());
     drop(watched);
     rig.sync.set_online(true);
     await_tasks_ended().await;
@@ -143,7 +143,7 @@ async fn inv_loadm_08_going_online_skips_a_window_nobody_observes_and_a_server_e
     let server = super::rig::rig();
     let state = feed_state(&server).await;
     server.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
-    assert!(server.sync.load("moments", "feed", &none(), LoadOptions::default()).await.is_err());
+    assert!(server.sync.load(&server.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.is_err());
     server.sync.set_online(false);
     server.sync.set_online(true);
     await_tasks_ended().await;
@@ -157,9 +157,9 @@ async fn inv_loadm_04_a_background_failure_with_rows_is_loaded_with_the_error() 
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
     let state = feed_state(&rig).await;
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     rig.clock.advance(Duration::from_secs(400));
-    let kept = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let kept = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(kept.status, LoadStatus::KeptStale);
     assert_eq!(summary(&state.borrow()), (LoadPhase::Loaded, Some("server")));
 }
@@ -169,7 +169,7 @@ async fn inv_loadm_09_a_cache_reset_returns_the_window_to_not_loaded() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
     let state = feed_state(&rig).await;
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(state.borrow().phase, LoadPhase::Loaded);
     rig.db.reset(&["moments"]).unwrap();
     assert_eq!(summary(&state.borrow()), (LoadPhase::NotLoaded, None));
@@ -189,10 +189,10 @@ async fn inv_loadm_01_closing_the_last_sync_handle_ends_every_window_as_closed()
 async fn inv_loadm_10_the_first_load_after_a_reopen_is_not_superseded_by_the_stored_window() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
-    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     let reopened = rig_on(rig.db.clone(), rig.transport.clone(), Default::default());
     reopened.clock.advance(Duration::from_secs(400));
-    let outcome = reopened.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let outcome = reopened.sync.load(&reopened.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(outcome.status, LoadStatus::Loaded);
 }

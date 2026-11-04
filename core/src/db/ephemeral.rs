@@ -229,7 +229,8 @@ impl Ephemerals {
         super::threads::spawn_named(crate::task::Carry::Detached, "dblayer-ephemeral", move || {
                 while ephemerals.wait_for_due() {
                     let Some(shared) = shared.upgrade() else { return };
-                    let _ = Db { shared }.expire_ephemeral();
+                    let db = Db { shared };
+                    if let Ok(admitted) = db.admit() { let _ = db.expire_ephemeral(&admitted); }
                 }
             })
     }
@@ -282,9 +283,16 @@ impl Shared {
 }
 
 impl Db {
-    pub fn set_ephemeral(&self, model: &str, id: &RowId, values: Map<String, Value>) -> Result<(), DbError> {
+    pub fn set_ephemeral(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, values: Map<String, Value>) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
-        let changed = self.shared.ephemeral.lock().write(spec, id.as_str(), &values)?;
+        let changed = {
+            let life = &self.shared.store.lifecycle;
+            let _line = life.commit_line();
+            if !Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() {
+                return Err(DbError::NoSession { detail: "the session of this write ended".into() });
+            }
+            self.shared.ephemeral.lock().write(spec, id.as_str(), &values)?
+        };
         self.shared.ephemeral.nudge();
         match changed {
             Some(epoch) => self.shared.publish_overlay(&[(model.to_string(), id.to_string())], epoch),
@@ -292,29 +300,37 @@ impl Db {
         }
     }
 
-    pub fn expire_ephemeral(&self) -> Result<usize, DbError> {
+    pub fn expire_ephemeral(&self, admitted: &crate::lifecycle::Admitted) -> Result<usize, DbError> {
         let _gate = locked(&self.shared.expiry_gate);
         let (due, epoch) = {
+            let life = &self.shared.store.lifecycle;
+            let _line = life.commit_line();
+            if !Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() { return Err(DbError::NoSession { detail: "the session of this expiry ended".into() }); }
             let mut state = self.shared.ephemeral.lock();
             let due = state.take_due();
             (due, state.epoch)
         };
         self.shared.publish_overlay(&due.reset, epoch)?;
-        Ok(due.reset.len() + self.destroy_expired(&due.expired)?)
+        Ok(due.reset.len() + self.destroy_expired(admitted, &due.expired)?)
     }
 
-    pub(crate) fn destroy_expired(&self, candidates: &[RowKey]) -> Result<usize, DbError> {
+    pub(crate) fn destroy_expired(&self, admitted: &crate::lifecycle::Admitted, candidates: &[RowKey]) -> Result<usize, DbError> {
         if candidates.is_empty() {
             return Ok(0);
         }
         let generation = self.generation();
-        let claimed = self.shared.ephemeral.lock().claim_expired(candidates);
-        self.destroy_claimed(generation, &claimed)
+        let claimed = {
+            let life = &self.shared.store.lifecycle;
+            let _line = life.commit_line();
+            if !Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() { return Err(DbError::NoSession { detail: "the session of this expiry ended".into() }); }
+            self.shared.ephemeral.lock().claim_expired(candidates)
+        };
+        self.destroy_claimed(admitted, generation, &claimed)
     }
 
-    pub(crate) fn destroy_claimed(&self, generation: Generation, claimed: &[(RowKey, i64)]) -> Result<usize, DbError> {
+    pub(crate) fn destroy_claimed(&self, admitted: &crate::lifecycle::Admitted, generation: Generation, claimed: &[(RowKey, i64)]) -> Result<usize, DbError> {
         let mut destroyed = 0;
-        let committed = self.commit_following(&crate::lifecycle::Authority::Epoch(self.shared.store.lifecycle.epoch_now()), generation, |reader| {
+        let committed = self.commit_following(&admitted.authority(), generation, |reader| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);
             let mut targets: Vec<RowRef> = Vec::new();
             let mut expired: Vec<&RowKey> = Vec::new();

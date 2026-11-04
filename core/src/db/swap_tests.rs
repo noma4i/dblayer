@@ -8,8 +8,8 @@ use crate::commit::OperationTransition;
 #[test]
 fn inv_rollback_07_a_temp_id_swap_rewrites_the_prior_of_a_queued_update_to_the_real_id() {
     let db = booted();
-    let temp = db.as_app().create("moments", obj(json!({"text": "first"}))).unwrap();
-    db.as_app().update("moments", &temp.id, obj(json!({"text": "second"}))).unwrap();
+    let temp = db.create(&db.admit().unwrap(), "moments", obj(json!({"text": "first"}))).unwrap();
+    db.update(&db.admit().unwrap(), "moments", &temp.id, obj(json!({"text": "second"}))).unwrap();
     let update = db.outbox().unwrap().remove(1);
     let swap = Swap { model: "moments", temp: &temp.id, real: &rid("m77"), references: &[] };
     let Some(OperationTransition::Begin(record)) = retarget(&update, &swap).unwrap() else { panic!("the update was not retargeted") };

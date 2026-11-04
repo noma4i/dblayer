@@ -62,7 +62,7 @@ fn rig() -> (Db, Arc<ManualClock>) {
 }
 
 fn typing(db: &Db, value: bool) {
-    db.set_ephemeral("people", &rid("p1"), obj(json!({"typing": value}))).unwrap();
+    db.set_ephemeral(&db.admit().unwrap(), "people", &rid("p1"), obj(json!({"typing": value}))).unwrap();
     db.await_revision(db.revision_seq().unwrap());
 }
 
@@ -79,7 +79,7 @@ fn rows_read_with_defaults_and_written_values_but_store_nothing() {
     let (db, _) = rig();
     assert_eq!((value_of(&db, "typing"), value_of(&db, "mood")), (json!(false), json!(null)));
     typing(&db, true);
-    db.set_ephemeral("people", &rid("p1"), obj(json!({"mood": "happy"}))).unwrap();
+    db.set_ephemeral(&db.admit().unwrap(), "people", &rid("p1"), obj(json!({"mood": "happy"}))).unwrap();
     let found = db.find("people", &rid("p1")).unwrap().unwrap();
     assert_eq!((found.get("typing"), found.get("mood")), (Some(&json!(true)), Some(&json!("happy"))));
     assert_eq!(db.query(&Query::new("people")).unwrap()[0].get("typing"), Some(&json!(true)));
@@ -115,7 +115,7 @@ fn row_observers_and_scope_observers_hear_the_write() {
     let scope = ScopeRef::new(ModelKey::new("people"), ListKey::compose(&["people", "room", "1"]));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: rid("p1"), order_key: "a".into() });
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let (row_log, row_callback) = recorder();
     let (scope_log, scope_callback) = recorder();
@@ -136,10 +136,10 @@ fn inv_ephemeral_02_the_value_returns_to_default_by_the_clock_and_observers_see_
     typing(&db, true);
     let before = db.revision_seq().unwrap();
     clock.advance(seconds(4));
-    assert_eq!(db.expire_ephemeral().unwrap(), 0);
+    assert_eq!(db.expire_ephemeral(&db.admit().unwrap()).unwrap(), 0);
     assert_eq!(value_of(&db, "typing"), json!(true));
     clock.advance(seconds(2));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     assert_eq!(value_of(&db, "typing"), json!(false));
     db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
@@ -161,7 +161,7 @@ fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revi
     typing(&db, true);
     seen.push(epoch(&db));
     clock.advance(seconds(6));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     seen.push(epoch(&db));
     assert!(seen.windows(2).all(|pair| pair[0] < pair[1]), "epochs {seen:?}");
     assert_eq!(db.revision_seq().unwrap(), revision);
@@ -171,11 +171,11 @@ fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revi
 fn inv_ephemeral_08_values_for_rows_that_never_arrive_leave_no_memory_behind() {
     let (db, clock) = rig();
     for turn in 0..50 {
-        db.set_ephemeral("people", &rid(&format!("ghost{turn}")), obj(json!({"typing": true}))).unwrap();
+        db.set_ephemeral(&db.admit().unwrap(), "people", &rid(&format!("ghost{turn}")), obj(json!({"typing": true}))).unwrap();
     }
     assert_eq!(db.shared.ephemeral.lock().held_rows(), 50);
     clock.advance(seconds(6));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     assert_eq!(db.shared.ephemeral.lock().held_rows(), 0);
 }
 
@@ -184,12 +184,12 @@ fn inv_ephemeral_02_a_write_restarts_the_timer() {
     let (db, clock) = rig();
     typing(&db, true);
     clock.advance(seconds(3));
-    db.set_ephemeral("people", &rid("p1"), obj(json!({"typing": true}))).unwrap();
+    db.set_ephemeral(&db.admit().unwrap(), "people", &rid("p1"), obj(json!({"typing": true}))).unwrap();
     clock.advance(seconds(3));
-    assert_eq!(db.expire_ephemeral().unwrap(), 0);
+    assert_eq!(db.expire_ephemeral(&db.admit().unwrap()).unwrap(), 0);
     assert_eq!(value_of(&db, "typing"), json!(true));
     clock.advance(seconds(3));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     assert_eq!(value_of(&db, "typing"), json!(false));
 }
 
@@ -212,7 +212,7 @@ fn inv_ephemeral_06_destroying_a_row_removes_its_values() {
     typing(&db, true);
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("people"), id: rid("p1"), reason: DestroyReason::Server });
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     put(&db, "people", json!({"id": "p1", "name": "Ann"}));
     assert_eq!(value_of(&db, "typing"), json!(false));
 }
@@ -226,10 +226,26 @@ fn inv_ephemeral_06_reset_forgets_every_value() {
     assert_eq!(value_of(&db, "typing"), json!(false));
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn an_old_admission_cannot_write_ephemeral_data_in_the_next_session() {
+    let (db, _) = rig();
+    let life = db.shared.store.lifecycle.clone();
+    assert!(life.session_from(Some("A".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    let admitted = life.admit(crate::lifecycle::Origin::Session, "ephemeral write").unwrap();
+    db.end_session::<DbError>(crate::lifecycle::End::Local, None, false, |_| Ok(())).await.unwrap();
+    assert!(life.session_from(Some("B".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    put(&db, "people", json!({"id": "p1", "name": "B"}));
+
+    let result = db.set_ephemeral(&admitted, "people", &rid("p1"), obj(json!({"typing": true})));
+
+    assert!(matches!(result, Err(DbError::NoSession { .. })));
+    assert_eq!(value_of(&db, "typing"), json!(false));
+}
+
 #[test]
 fn bad_writes_are_rejected() {
     let (db, _) = rig();
-    let set = |model: &str, id: &str, values: serde_json::Value| db.set_ephemeral(model, &rid(id), obj(values));
+    let set = |model: &str, id: &str, values: serde_json::Value| db.set_ephemeral(&db.admit().unwrap(), model, &rid(id), obj(values));
     assert!(matches!(set("people", "p1", json!({"name": "Bob"})), Err(DbError::NotEphemeralField { .. })));
     assert!(matches!(set("people", "p1", json!({"typing": "yes"})), Err(DbError::InvalidEphemeralValue { .. })));
     assert!(matches!(set("people", "p1", json!({"typing": null})), Err(DbError::InvalidEphemeralValue { .. })));
@@ -252,7 +268,7 @@ fn memory_models_read_and_observe_like_stored_ones_and_expire_by_the_clock() {
     put(&db, "presence", json!({"id": "r1", "room": "lobby"}));
     assert_eq!(db.find("presence", &rid("r1")).unwrap().unwrap().text("room"), Some("lobby"));
     clock.advance(seconds(31));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert!(db.find("presence", &rid("r1")).unwrap().is_none());
     let seen = changes(&log);
@@ -278,7 +294,7 @@ fn inv_ephemeral_03_a_landing_before_its_expiry_is_armed_keeps_the_memory_row_al
             return;
         }
         let (rival, claimed) = (rival.clone(), claimed.clone());
-        let count = crate::test_wait::join_within(std::thread::spawn(move || rival.destroy_claimed(rival.generation(), &claimed).unwrap()));
+        let count = crate::test_wait::join_within(std::thread::spawn(move || rival.destroy_claimed(&rival.admit().unwrap(), rival.generation(), &claimed).unwrap()));
         seen.lock().unwrap().push(count);
     }));
     put(&db, "presence", json!({"id": "r1", "room": "garden"}));
@@ -293,9 +309,9 @@ fn a_rewrite_keeps_a_memory_row_alive() {
     clock.advance(seconds(20));
     put(&db, "presence", json!({"id": "r1", "room": "garden"}));
     clock.advance(seconds(20));
-    assert_eq!(db.expire_ephemeral().unwrap(), 0);
+    assert_eq!(db.expire_ephemeral(&db.admit().unwrap()).unwrap(), 0);
     clock.advance(seconds(11));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     assert!(db.find("presence", &rid("r1")).unwrap().is_none());
 }
 
@@ -305,7 +321,7 @@ fn a_write_of_equal_values_renews_a_memory_row_and_stays_silent_for_observers() 
     let writers: [Writer; 2] = [
         ("landed", |db| put(db, "presence", json!({"id": "r1", "room": "lobby"}))),
         ("local update", |db| {
-            db.as_app().update("presence", &rid("r1"), obj(json!({"room": "lobby"}))).unwrap();
+            db.update(&db.admit().unwrap(), "presence", &rid("r1"), obj(json!({"room": "lobby"}))).unwrap();
         }),
     ];
     for (name, write) in writers {
@@ -319,11 +335,11 @@ fn a_write_of_equal_values_renews_a_memory_row_and_stays_silent_for_observers() 
         write(&db);
         db.await_revision(db.revision_seq().unwrap());
         clock.advance(seconds(29));
-        assert_eq!(db.expire_ephemeral().unwrap(), 0, "{name}");
+        assert_eq!(db.expire_ephemeral(&db.admit().unwrap()).unwrap(), 0, "{name}");
         assert!(db.find("presence", &rid("r1")).unwrap().is_some(), "{name}");
         assert_eq!(changes(&log).len(), seen, "{name}");
         clock.advance(seconds(1));
-        db.expire_ephemeral().unwrap();
+        db.expire_ephemeral(&db.admit().unwrap()).unwrap();
         crate::test_wait::spin_until(name, || db.find("presence", &rid("r1")).unwrap().is_none());
     }
 }
@@ -354,7 +370,7 @@ fn the_background_timer_resets_a_value_by_itself() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("people"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.set_ephemeral("people", &rid("p1"), obj(json!({"typing": true}))).unwrap();
+    db.set_ephemeral(&db.admit().unwrap(), "people", &rid("p1"), obj(json!({"typing": true}))).unwrap();
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     while changes(&log).len() < 3 && std::time::Instant::now() < deadline {
         std::thread::yield_now();
@@ -368,21 +384,21 @@ fn the_background_timer_resets_a_value_by_itself() {
 #[test]
 fn inv_ephemeral_06_a_value_for_a_missing_row_waits_for_the_row_and_still_resets_by_the_clock() {
     let (db, clock) = rig();
-    db.set_ephemeral("people", &rid("late"), obj(json!({"typing": true}))).unwrap();
+    db.set_ephemeral(&db.admit().unwrap(), "people", &rid("late"), obj(json!({"typing": true}))).unwrap();
     clock.advance(seconds(2));
     put(&db, "people", json!({"id": "late", "name": "Bob"}));
     assert_eq!(db.find("people", &rid("late")).unwrap().unwrap().get("typing"), Some(&json!(true)));
     clock.advance(seconds(4));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     assert_eq!(db.find("people", &rid("late")).unwrap().unwrap().get("typing"), Some(&json!(false)));
 }
 
 #[test]
 fn a_value_for_a_row_that_never_arrives_lapses_by_the_clock() {
     let (db, clock) = rig();
-    db.set_ephemeral("people", &rid("ghost"), obj(json!({"typing": true}))).unwrap();
+    db.set_ephemeral(&db.admit().unwrap(), "people", &rid("ghost"), obj(json!({"typing": true}))).unwrap();
     clock.advance(seconds(6));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     put(&db, "people", json!({"id": "ghost", "name": "Bob"}));
     assert_eq!(db.find("people", &rid("ghost")).unwrap().unwrap().get("typing"), Some(&json!(false)));
 }
@@ -412,7 +428,7 @@ fn a_query_pinned_to_an_id_sees_the_write_and_the_reset_of_its_row() {
     db.await_revision(db.revision_seq().unwrap());
     typing(&db, true);
     clock.advance(seconds(6));
-    db.expire_ephemeral().unwrap();
+    db.expire_ephemeral(&db.admit().unwrap()).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     assert_eq!(seen.len(), 3);

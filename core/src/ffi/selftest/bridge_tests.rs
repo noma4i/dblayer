@@ -388,15 +388,15 @@ async fn a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row()
     let epoch = rig.database.session_epoch();
     rig.database.set_online(false).unwrap();
     let store = &rig.database.db.shared.store;
-    let pinned = store.lifecycle.pinned_writes.load(Ordering::SeqCst);
+    let pinned = store.lifecycle.writes_entered.load(Ordering::SeqCst);
     let writer = store.lock();
     let sender = { let database = rig.database.clone(); tokio::spawn(async move { database.send(message(epoch, "late", 9)).await }) };
-    yield_until("the send reached the writer", || store.lifecycle.pinned_writes.load(Ordering::SeqCst) > pinned).await;
+    yield_until("the send reached the writer", || store.lifecycle.writes_entered.load(Ordering::SeqCst) > pinned).await;
     let permit = store.lifecycle.try_begin(Boundary::SessionEnd(End::Local), Some(epoch)).ok().and_then(Result::ok).expect("the epoch of the caller is current");
     drop(writer);
     let sent = bound(sender).await.unwrap();
     assert!(matches!(sent, Err(DbError::Interrupted { .. })), "a send of the ended session ran: {sent:?}");
-    yield_until("the pinned write finished", || store.lifecycle.pinned_writes.load(Ordering::SeqCst) == pinned).await;
+    yield_until("the admitted write finished", || store.lifecycle.writes_entered.load(Ordering::SeqCst) == pinned).await;
     assert_eq!(store.row_count("Message").unwrap(), 0, "the send wrote its row after its session ended");
     drop(permit);
     rig.database.close_now();
@@ -548,7 +548,7 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
     let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
     assert_eq!(rig.database.session_epoch(), epoch);
-    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session(Some("another-account".into()), epoch)) };
+    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.session_from(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
     yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while the commit of the send was held");
     release_tx.send(()).unwrap();
@@ -594,10 +594,10 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     assert!(named(&seen, "B"), "the row of B changed");
 
     let store = &rig.database.db.shared.store;
-    let pinned = store.lifecycle.pinned_writes.load(Ordering::SeqCst);
+    let pinned = store.lifecycle.writes_entered.load(Ordering::SeqCst);
     let writer = store.lock();
     let late = { let database = rig.database.clone(); tokio::spawn(async move { database.update(current, "User".into(), "user".into(), json!({"name":"late"}).to_string(), "{}".into()).await }) };
-    yield_until("the update reached the writer", || store.lifecycle.pinned_writes.load(Ordering::SeqCst) > pinned).await;
+    yield_until("the update reached the writer", || store.lifecycle.writes_entered.load(Ordering::SeqCst) > pinned).await;
     let permit = store.lifecycle.try_begin(Boundary::SessionEnd(End::Local), Some(current)).ok().and_then(Result::ok).expect("the epoch of the caller is current");
     drop(writer);
     assert!(refused(bound(late).await.unwrap().map(|_| ())), "an update that waited for the writer while the session ended ran");
@@ -611,13 +611,13 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     let rig = Rig::encrypted().await;
     let epoch = rig.database.session_epoch();
     let sent = bound(rig.database.send(message(epoch, "anonymous", 1))).await;
-    assert!(matches!(sent, Err(DbError::Interrupted { .. })), "a send without a session was accepted: {sent:?}");
+    assert!(matches!(sent, Err(DbError::NoSession { .. })), "a send without a session was accepted: {sent:?}");
     assert!(rig.database.db.outbox().unwrap().is_empty(), "a send without a session left an operation");
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("g");
-    let held = rig.database.db.shared.store.lifecycle.epoch_now();
-    held.pinned(|| rig.database.db.create_with("Group", serde_json::from_str(&values).unwrap(), serde_json::from_str(&args).unwrap())).unwrap();
+    let admitted = rig.database.db.admit().unwrap();
+    rig.database.db.create_with(&admitted, "Group", serde_json::from_str(&values).unwrap(), serde_json::from_str(&args).unwrap()).unwrap();
     assert_eq!(rig.database.db.outbox().unwrap().len(), 1, "the plain action was queued once");
     rig.database.set_online(false).unwrap();
     bound(rig.database.flush()).await.unwrap();
@@ -629,6 +629,71 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out after the network returned");
     let receipt = bound(rig.database.send(message(epoch, "offline", 2))).await.unwrap();
     assert_eq!(rig.database.command_status(receipt).unwrap(), CommandStatus::Queued);
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn server_calls_without_a_transport_report_no_session() {
+    let rig = Rig::encrypted().await;
+    bound(rig.database.close_database()).await.unwrap();
+    let database = rig.open_again(None).await.unwrap();
+    let epoch = database.session_epoch();
+    let (values, args) = group("friends");
+    let create = bound(database.create(epoch, "Group".into(), values, args)).await;
+    let load = bound(database.load(epoch, "User".into(), "profile".into(), "{}".into())).await;
+    let send = bound(database.send(message(epoch, "hello", 1))).await;
+    let act = bound(database.act(epoch, "Group".into(), "g1".into(), "leave".into(), "{}".into(), "{}".into())).await;
+    assert!(matches!(create, Err(DbError::NoSession { .. })), "create: {create:?}");
+    assert!(matches!(load, Err(DbError::NoSession { .. })), "load: {load:?}");
+    assert!(matches!(send, Err(DbError::NoSession { .. })), "send: {send:?}");
+    assert!(matches!(act, Err(DbError::NoSession { .. })), "act: {act:?}");
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn reset_clears_ephemeral_values_before_the_next_account_reads_the_same_id() {
+    use crate::schema::{EphemeralSpec, FieldSpec, ModelSpec};
+    use crate::value::ScalarKind;
+    let mut user: Vec<ModelSpec> = serde_json::from_str(&crate::ffi::lifecycle_tests::models()).unwrap();
+    user[0].ephemeral.push(EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false))));
+    let world = super::rig_tests::World::new("server", "A", true);
+    let transport = super::rig_tests::Switchable::new(Some(world.clone()), false);
+    let database = Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&user).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
+    database.register_operations(r#"[{"name":"MyProfile","document":"query MyProfile { me { id name } }"}]"#.into()).unwrap();
+    let epoch = database.session_epoch();
+    bound(database.load(epoch, "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    bound(database.set_ephemeral(epoch, "User".into(), "user".into(), r#"{"typing":true}"#.into())).await.unwrap();
+    let old = bound(database.read_row(epoch, "User".into(), "user".into())).await.unwrap().unwrap();
+    assert!(matches!(old.cells.last(), Some(crate::ffi::Cell::Bool { value: true })));
+
+    bound(database.session_reset()).await.unwrap();
+    world.set_account("B");
+    bound(database.load(database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    let current = bound(database.read_row(database.session_epoch(), "User".into(), "user".into())).await.unwrap().unwrap();
+
+    assert!(named(&current, "B"));
+    assert!(matches!(current.cells.last(), Some(crate::ffi::Cell::Bool { value: false })));
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_old_subscription_sink_is_closed_before_the_next_account() {
+    let world = super::rig_tests::World::new("server", "A", true);
+    let rig = Rig::plain(world.clone(), false).await;
+    let epoch = rig.database.session_epoch();
+    let stream = rig.database.subscribe(epoch, StreamRequest::Query { query_json: r#"{"model":"Notice","relation":"recent","params":{}}"#.into() }, Reader::open());
+    let (token, old_sink) = rig.switch.first_sink().await;
+
+    bound(rig.database.session_reset()).await.unwrap();
+    rig.switch.wait_unsubscribed(&token).await;
+    world.set_account("B");
+    bound(rig.database.load(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    old_sink.event(r#"{"data":{"notices":{"id":"old"}}}"#.into()).unwrap();
+    let rows = bound(rig.database.read_query(rig.database.session_epoch(), r#"{"model":"Notice","relation":"recent","params":{}}"#.into())).await.unwrap();
+
+    assert!(rows.is_empty());
+    assert!(rig.switch.unsubscribed().contains(&token));
+    rig.database.cancel_stream(stream);
     rig.database.close_now();
 }
 
@@ -847,7 +912,7 @@ pub(super) fn seed_members(rig: &Rig, group: &str) {
             envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id).unwrap(), order_key });
         }
     }
-    db.shared.store.lifecycle.epoch_now().pinned(|| db.land(envelope)).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
 }
 
 fn ids_of(rows: Vec<WireRow>) -> Vec<String> { rows.into_iter().map(|row| row.id).collect() }
@@ -1100,7 +1165,7 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     let running = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "profile".into(), "{}".into()).await }) };
     gate.entered_for("the accepted request").await;
     let store = &rig.database.db.shared.store;
-    let moved = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session(Some("another-account".into()), epoch)) };
+    let moved = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.session_from(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
     assert!(bound(moved).await.unwrap(), "the session start of the other identity did not begin");
     assert_ne!(rig.database.session_epoch(), epoch);
     gate.release();
@@ -1283,25 +1348,12 @@ async fn a_public_flush_holds_the_commit_line_of_its_epoch_while_it_commits() {
     let flushing = { let database = rig.database.clone(); tokio::spawn(async move { database.flush().await }) };
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
     let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
-    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session(Some("another-account".into()), epoch)) };
+    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.session_from(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
     yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while a commit of the flush was held");
     release_tx.send(()).unwrap();
     let _ = bound(flushing).await.unwrap();
     assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
     settle(&rig).await;
-    rig.database.close_now();
-}
-
-/// K31 (F01): a write of the database that carries no session epoch is refused, never written without the epoch check.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_write_without_a_session_epoch_is_refused() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let (values, _) = group("friends");
-    let values: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&values).unwrap();
-    let database = rig.database.clone();
-    let refused = tokio::task::spawn_blocking(move || database.db.create("Group", values)).await.unwrap();
-    assert!(matches!(refused, Err(crate::db::DbError::Internal(_))), "a write without an epoch ended with {:?}", refused.as_ref().err());
     rig.database.close_now();
 }

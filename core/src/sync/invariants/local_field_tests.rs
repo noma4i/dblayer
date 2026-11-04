@@ -16,12 +16,12 @@ fn serve(rig: &Rig, operation: &'static str, body: Value) {
 
 async fn load_feed(rig: &Rig, nodes: Vec<Value>) {
     serve(rig, "MomentsFeed", feed_page(nodes, false, "c"));
-    rig.sync.load("moments", "feed", &serde_json::Map::new(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &serde_json::Map::new(), LoadOptions { force: true }).await.unwrap();
 }
 
 async fn load_user(rig: &Rig, nodes: Vec<Value>) {
     serve(rig, "MomentsByUser", json!({"moments": nodes}));
-    rig.sync.load("moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions { force: true }).await.unwrap();
 }
 
 fn field(rig: &Rig, id: &str, path: &str) -> Option<Value> {
@@ -34,8 +34,8 @@ fn field(rig: &Rig, id: &str, path: &str) -> Option<Value> {
 }
 
 fn write_both(rig: &Rig, id: &str) {
-    rig.db.as_app().set_local("moments", &rid(id), "tone", json!("warm")).unwrap();
-    rig.db.as_app().set_local("moments", &rid(id), "cover.tone", json!({"hue": 30})).unwrap();
+    rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid(id), "tone", json!("warm")).unwrap();
+    rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid(id), "cover.tone", json!({"hue": 30})).unwrap();
 }
 
 fn both_kept(rig: &Rig, id: &str) -> bool {
@@ -59,9 +59,9 @@ async fn inv_merge_12_a_partial_response_and_a_mutation_answer_keep_the_locally_
     write_both(&rig, "m1");
     load_feed(&rig, vec![json!({"id": "m1", "mood": "calm"})]).await;
     assert!(both_kept(&rig, "m1"));
-    rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "n", "cover": {"url": "three"}}))).unwrap();
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "n", "cover": {"url": "three"}}))).unwrap();
     rig.transport.enqueue("UpdateMoment", updated("m1", "n"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(field(&rig, "m1", "cover.url"), Some(json!("three")));
     assert!(both_kept(&rig, "m1"));
 }
@@ -100,7 +100,7 @@ async fn inv_merge_12_the_locally_written_fields_survive_a_restart_and_go_with_t
     let rig = open_rig(&path);
     load_feed(&rig, vec![json!({"id": "m1", "text": "a", "cover": {"url": "one"}})]).await;
     write_both(&rig, "m1");
-    rig.db.as_app().set_local("moments", &rid("m5"), "tone", json!("early")).unwrap();
+    rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m5"), "tone", json!("early")).unwrap();
     drop(rig);
 
     let rig = open_rig(&path);
@@ -108,7 +108,7 @@ async fn inv_merge_12_the_locally_written_fields_survive_a_restart_and_go_with_t
     load_feed(&rig, vec![json!({"id": "m1", "text": "b"}), json!({"id": "m5", "text": "late"})]).await;
     assert!(both_kept(&rig, "m1"));
     assert_eq!(field(&rig, "m5", "tone"), Some(json!("early")));
-    rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
+    rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
     assert!(field(&rig, "m1", "tone").is_none());
 }
 
@@ -126,10 +126,10 @@ async fn inv_merge_12_one_write_is_one_delivery_to_every_subscription_of_the_row
     }).unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     let base = (rows.load(Ordering::SeqCst), row_count.load(Ordering::SeqCst));
-    rig.db.as_app().set_local("moments", &rid("m1"), "cover.tone", json!({"hue": 30})).unwrap();
+    rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m1"), "cover.tone", json!({"hue": 30})).unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!((rows.load(Ordering::SeqCst), row_count.load(Ordering::SeqCst)), (base.0 + 1, base.1 + 1));
-    rig.db.as_app().set_local("moments", &rid("m1"), "cover.tone", json!({"hue": 30})).unwrap();
+    rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m1"), "cover.tone", json!({"hue": 30})).unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!((rows.load(Ordering::SeqCst), row_count.load(Ordering::SeqCst)), (base.0 + 1, base.1 + 1));
 }
@@ -139,10 +139,10 @@ async fn inv_merge_12_a_local_field_never_enters_the_server_request_or_the_outbo
     let rig = rig();
     load_feed(&rig, vec![json!({"id": "m1", "text": "a", "cover": {"url": "one"}})]).await;
     write_both(&rig, "m1");
-    rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "n", "tone": "forged"}))).unwrap();
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "n", "tone": "forged"}))).unwrap();
     assert!(!rig.db.outbox().unwrap()[0].input.as_object().unwrap().contains_key("tone"));
     rig.transport.enqueue("UpdateMoment", updated("m1", "n"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     let sent: Vec<Value> = rig.transport.calls().into_iter().filter(|call| call.operation_name == "UpdateMoment").map(|call| call.variables).collect();
     assert_eq!(sent.len(), 1);
     assert!(!sent[0].to_string().contains("tone") && !sent[0].to_string().contains("forged"));
@@ -154,7 +154,7 @@ async fn inv_merge_12_a_path_that_is_not_declared_local_is_refused() {
     let rig = rig();
     load_feed(&rig, vec![json!({"id": "m1", "text": "a"})]).await;
     for path in ["text", "cover", "cover.url", "ghost", "tone.deep"] {
-        assert!(matches!(rig.db.as_app().set_local("moments", &rid("m1"), path, json!("x")), Err(crate::db::DbError::NotLocalField { .. })), "{path}");
+        assert!(matches!(rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m1"), path, json!("x")), Err(crate::db::DbError::NotLocalField { .. })), "{path}");
     }
-    assert!(matches!(rig.db.as_app().set_local("moments", &rid("m1"), "tone", json!(7)), Err(crate::db::DbError::LocalValue { .. })));
+    assert!(matches!(rig.db.set_local(&rig.db.admit().unwrap(), "moments", &rid("m1"), "tone", json!(7)), Err(crate::db::DbError::LocalValue { .. })));
 }

@@ -82,7 +82,7 @@ pub(super) fn data(value: Value) -> Reply {
 async fn node_reads_one_entity_and_lands_its_row() {
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "Hi", "shareUrl": "u", "isPublic": true}})));
-    let row = rig.sync.node("chats", "node", "c1", false).await.unwrap().unwrap();
+    let row = rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", false).await.unwrap().unwrap();
     assert_eq!((row.text("title"), row.get("isPublic")), (Some("Hi"), Some(&json!(true))));
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("shareUrl"), Some("u"));
     assert_eq!(rig.transport.calls()[0].variables, json!({"id": "c1"}));
@@ -108,12 +108,12 @@ async fn an_event_joins_a_manual_node_flight_and_keeps_its_membership_intent() {
     rig.sync.register(OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId } } }", "recordEvents"));
     let values = params(json!({"name":"same"}));
     rig.transport.enqueue("Chats", data(json!({"chats":[]})));
-    rig.sync.load("chats", "list", &values, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", &values, Default::default()).await.unwrap();
     put(&rig, "chats", json!({"id":"c1", "title":"before"}));
     let events = rig.sync.open_model_events("chats").await.unwrap();
     rig.transport.enqueue("ChatNode", data(json!({"node":{"id":"c1", "title":"same"}})).after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
-    let manual = tokio::spawn(async move { sync.node("chats", "node", "c1", true).await });
+    let manual = tokio::spawn(async move { sync.node(&sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await });
     rig.transport.await_calls("ChatNode", 1).await;
     rig.transport.emit("Changes", SubscriptionEvent::Next(Response::data(json!({"recordEvents":{"changes":[{"topic":"CHAT", "action":"UPDATED", "recordId":"c1"}]}}))));
     tokio::time::timeout(Duration::from_secs(1), rig.sync.wait_joined(1)).await.expect("the event must join the manual request");
@@ -132,7 +132,7 @@ async fn a_relation_under_node_lands_the_connection_rows() {
     let rig = node_rig();
     let edges = json!([{"node": {"id": "m1", "chatId": "c1", "text": "a"}}, {"node": {"id": "m2", "chatId": "c1", "text": "b"}}]);
     rig.transport.enqueue("ChatThread", data(json!({"node": {"messages": {"edges": edges, "pageInfo": {"hasNextPage": false, "endCursor": "e"}}}})));
-    let outcome = rig.sync.load("messages", "thread", &params(json!({"chatId": "c1"})), Default::default()).await.unwrap();
+    let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "messages", "thread", &params(json!({"chatId": "c1"})), Default::default()).await.unwrap();
     assert_eq!(outcome.rows, 2);
     assert_eq!(member_ids(&rig, "messages", "thread", &params(json!({"chatId": "c1"}))), ["m1", "m2"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"chatId": "c1", "first": 20}));
@@ -143,7 +143,7 @@ async fn a_subset_read_changes_only_the_selected_fields() {
     let rig = node_rig();
     put(&rig, "messages", json!({"id": "m1", "chatId": "c1", "text": "keep", "media": {"fileUrl": "http://f", "extra": 1}}));
     rig.transport.enqueue("MessageTranscodeStatus", data(json!({"node": {"id": "m1", "chatId": "c1", "media": {"kind": "VIDEO", "fileUrl": ""}}})));
-    let row = rig.sync.node("messages", "transcode_status", "m1", false).await.unwrap().unwrap();
+    let row = rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "messages", "transcode_status", "m1", false).await.unwrap().unwrap();
     assert_eq!(row.text("text"), Some("keep"));
     assert_eq!(row.get("media"), Some(&json!({"fileUrl": "http://f", "extra": 1, "kind": "VIDEO"})));
     assert_eq!(rig.transport.calls()[0].variables, json!({"messageId": "m1"}));
@@ -154,10 +154,10 @@ async fn an_event_rereads_with_force_and_a_plain_call_inside_fresh_for_does_not(
     let rig = node_rig();
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "one"}})));
     rig.transport.enqueue("ChatNode", data(json!({"node": {"id": "c1", "title": "two"}})));
-    rig.sync.node("chats", "node", "c1", false).await.unwrap();
-    let fresh = rig.sync.node("chats", "node", "c1", false).await.unwrap().unwrap();
+    rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", false).await.unwrap();
+    let fresh = rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", false).await.unwrap().unwrap();
     assert_eq!((fresh.text("title"), rig.transport.call_count("ChatNode")), (Some("one"), 1));
-    let forced = rig.sync.node("chats", "node", "c1", true).await.unwrap().unwrap();
+    let forced = rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await.unwrap().unwrap();
     assert_eq!((forced.text("title"), rig.transport.call_count("ChatNode")), (Some("two"), 2));
 }
 
@@ -168,7 +168,7 @@ async fn an_answer_without_a_matching_entity_is_none_and_writes_nothing() {
     let before = rig.db.revision_seq().unwrap();
     for answer in [json!({"node": null}), json!({"node": {}}), json!({"node": {"__typename": "Gadget"}})] {
         rig.transport.enqueue("ChatNode", data(answer));
-        assert_eq!(rig.sync.node("chats", "node", "c1", true).await.unwrap(), None);
+        assert_eq!(rig.sync.node(&rig.sync.inner.db.admit().unwrap(), "chats", "node", "c1", true).await.unwrap(), None);
     }
     assert_eq!(stored(&rig, "chats", "c1").unwrap().text("title"), Some("old"));
     assert_eq!(rig.db.revision_seq().unwrap(), before);
@@ -178,7 +178,7 @@ async fn an_answer_without_a_matching_entity_is_none_and_writes_nothing() {
 async fn nodes_reads_many_in_one_request_keeps_order_and_skips_missing() {
     let rig = node_rig();
     rig.transport.enqueue("ChatsByIds", data(json!({"nodes": [{"id": "c2", "title": "b"}, null, {}, {"id": "c1", "title": "a"}]})));
-    let rows = crate::sync::rig::app(&rig.sync, rig.sync.nodes("chats", "batch", &["c2", "x", "y", "c1"])).await.unwrap();
+    let rows = crate::sync::rig::app(&rig.sync, rig.sync.nodes(&rig.sync.inner.db.admit().unwrap(), "chats", "batch", &["c2", "x", "y", "c1"])).await.unwrap();
     assert_eq!(rows.iter().map(|row| row.text("title").unwrap()).collect::<Vec<_>>(), ["b", "a"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"ids": ["c2", "x", "y", "c1"]}));
     assert_eq!(rig.transport.call_count("ChatsByIds"), 1);
@@ -191,7 +191,7 @@ async fn nodes_accepts_duplicate_ids_and_keeps_response_order() {
         {"id": "c2", "title": "old", "shareUrl": "kept"}, null,
         {"id": "c1", "title": "middle"}, {"id": "c2", "title": "last"}
     ]})));
-    let rows = crate::sync::rig::app(&rig.sync, rig.sync.nodes("chats", "batch", &["c2", "missing", "c1", "c2"])).await.unwrap();
+    let rows = crate::sync::rig::app(&rig.sync, rig.sync.nodes(&rig.sync.inner.db.admit().unwrap(), "chats", "batch", &["c2", "missing", "c1", "c2"])).await.unwrap();
     assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["c2", "c1", "c2"]);
     assert_eq!(rows.iter().map(|row| row.text("title")).collect::<Vec<_>>(), [Some("last"), Some("middle"), Some("last")]);
     assert_eq!(stored(&rig, "chats", "c2").unwrap().text("shareUrl"), Some("kept"));

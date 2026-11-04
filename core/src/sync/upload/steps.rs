@@ -82,7 +82,7 @@ impl Runner {
         let call = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.step_timeout, async {
             match resumed {
                 Some(result) => result,
-                None => { crate::db::lock::assert_no_library_lock("Transport::mutate"); self.inner.mutate_scoped(request).await },
+                None => { crate::db::lock::assert_no_library_lock("Transport::mutate"); self.inner.mutate_scoped(&self.admitted, request).await },
             }
         });
         let outcome = if interruptible {
@@ -160,7 +160,7 @@ impl Runner {
             sent: Arc::new(crate::task::bind(crate::task::Carry::here(), move |bytes| runner.report(part, bytes))),
         };
         crate::db::lock::assert_no_library_lock("Transport::put");
-        let sent = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.put_timeout, self.inner.transport.put(request)).await;
+        let sent = crate::pacing::timeout(self.inner.clock.as_ref(), self.inner.config.upload.put_timeout, self.inner.transport.put(&self.admitted, request)).await;
         if !whole {
             let path = file.path.clone();
             let _ = crate::task::spawn_blocking(crate::task::Carry::Detached, move || std::fs::remove_file(path)).await;

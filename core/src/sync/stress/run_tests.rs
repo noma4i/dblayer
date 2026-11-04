@@ -54,12 +54,12 @@ fn settling_uploads_waits_for_an_upload_started_offline_and_released_online() {
         rig.sync.register(OperationDef::new("CreateBlob", "operation CreateBlob { x }", "createBlob"));
         server.set_offline(true);
         rig.sync.set_online(false);
-        let row = rig.db.as_app().create("moments", json!({"text": "w0:1"}).as_object().unwrap().clone()).unwrap();
+        let row = rig.db.create(&rig.db.admit().unwrap(), "moments", json!({"text": "w0:1"}).as_object().unwrap().clone()).unwrap();
         let scratch = scratch_dir();
         let path = scratch.path().join("upload.bin");
         std::fs::write(&path, b"abcdef").unwrap();
         let input = UploadFile::new(&path.to_string_lossy()).variable("text", json!("w0:2"));
-        crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &row.id, "upload", input)).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &row.id, "upload", input)).await.unwrap();
         server.set_offline(false);
         server.hold_blob_replies(std::time::Duration::from_secs(10));
         rig.sync.set_online(true);
@@ -98,7 +98,7 @@ fn outcome_of_cancelling(stage: Stage, cancel: Cancel) -> String {
         let path = scratch.path().join("upload.bin");
         std::fs::write(&path, b"abcdef").unwrap();
         let input = UploadFile::new(&path.to_string_lossy()).variable("text", json!("w0:2"));
-        crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &row.id, "upload", input)).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &row.id, "upload", input)).await.unwrap();
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         let mut release_tx = Some(release_tx);
@@ -123,7 +123,7 @@ fn outcome_of_cancelling(stage: Stage, cancel: Cancel) -> String {
         }
         match cancel {
             Cancel::Discard => {
-                rig.db.as_app().discard("moments", &row.id, None).unwrap();
+                rig.db.discard(&rig.db.admit().unwrap(), "moments", &row.id, None).unwrap();
             }
             Cancel::Reset => rig.db.reset(&["moments"]).unwrap(),
         }

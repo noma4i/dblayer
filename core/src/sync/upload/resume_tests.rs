@@ -16,7 +16,7 @@ async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts
         stage: UploadStage::Presign, total_bytes: 12, key: Some("key".into()), upload_id: Some("upload".into()), request: Some(request.clone()),
         ..UploadState::queued()
     };
-    let seq = rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.begin_upload(rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state)).unwrap();
+    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state)).unwrap();
     rig.transport.enqueue("PresignParts", Reply::data(json!({"presignParts": {"parts": [
         {"partNumber": 1, "url": "https://s3/p1"}, {"partNumber": 3, "url": "https://s3/p3"}
     ]}})));
@@ -25,8 +25,9 @@ async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts
     let resumed = Response::data(json!({"presignParts": {"parts": [{"partNumber": 2, "url": "https://s3/p2"}]}}));
     let serial = rig.sync.inner.outbox_gate.lock().await;
     let owner = crate::transport::RequestOwner { seq, item_position: 0, stage: "presign".into() };
-    let upload = rig.sync.inner.claim_upload_resume(&owner).await.unwrap();
-    rig.sync.inner.settle_resumed(&serial, upload, owner, Ok(resumed)).await.unwrap();
+    let admitted = rig.db.admit().unwrap();
+    let upload = rig.sync.inner.claim_upload_resume(&admitted, &owner).await.unwrap();
+    rig.sync.inner.settle_resumed(&admitted, &serial, upload, owner, Ok(resumed)).await.unwrap();
     drop(serial);
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.put_calls().len(), 3);

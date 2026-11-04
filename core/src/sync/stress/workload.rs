@@ -155,7 +155,7 @@ impl Worker {
         match op {
             Op::Create => {
                 let text = self.next_text();
-                let outcome = rig.db.as_app().create("moments", params(json!({"text": text})));
+                let outcome = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": text})));
                 world.findings.trace(|| format!("issued create {text} -> {:?}", outcome.as_ref().map(|row| row.id.to_string())));
                 if let Ok(row) = &outcome {
                     world.issue(&text, "create", Some(row.id.as_str()));
@@ -167,7 +167,7 @@ impl Worker {
             Op::Update => {
                 let Some(row) = self.pick_own(world) else { return };
                 let text = self.next_text();
-                let outcome = rig.db.as_app().update("moments", &row.id, params(json!({"text": text})));
+                let outcome = rig.db.update(&rig.db.admit().unwrap(), "moments", &row.id, params(json!({"text": text})));
                 if outcome.is_ok() {
                     world.issue(&text, "update", Some(row.id.as_str()));
                     world.findings.trace(|| format!("issued update {text} on {}", row.id));
@@ -176,20 +176,20 @@ impl Worker {
             }
             Op::Like => {
                 let Some(row) = self.pick_own(world) else { return };
-                let outcome = rig.db.as_app().act("moments", "like", &row.id, params(json!({"likedByMe": true})), no_params());
+                let outcome = rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &row.id, params(json!({"likedByMe": true})), no_params());
                 world.expect("like", outcome.map(|_| ()));
             }
             Op::Destroy => {
                 let Some(row) = self.pick_own(world) else { return };
                 world.findings.trace(|| format!("issued destroy of {} {:?}", row.id, row.text("text")));
-                let outcome = rig.db.as_app().destroy("moments", &row.id);
+                let outcome = rig.db.destroy(&rig.db.admit().unwrap(), "moments", &row.id);
                 if outcome.is_ok() && row.is_local() && !rig.db.outbox().unwrap().iter().any(|entry| entry.operation.row_ids.contains(&row.id)) {
                     world.discarded(row.id.as_str());
                 }
                 world.expect("destroy", outcome.map(|_| ()));
             }
             Op::Flush => {
-                let report = rig.sync.flush().await;
+                let report = rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await;
                 world.findings.trace(|| format!("flush report {:?}", report.as_ref().map(|report| report.operations.iter().map(|sent| format!("{}:{:?}", sent.sequence, sent.result)).collect::<Vec<_>>())));
                 self.report("flush", report.map(|_| ()), world);
             }
@@ -199,37 +199,37 @@ impl Worker {
             }
             Op::LoadMore => {
                 if !world.is_offline() {
-                    self.report("load_more", rig.sync.load_more("moments", "feed", &no_params()).await.map(|_| ()), world);
+                    self.report("load_more", rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &no_params()).await.map(|_| ()), world);
                 }
             }
             Op::History => self.load(world, "history", LoadOptions { force: true }).await,
             Op::Complete => self.load(world, "empty_aware", LoadOptions { force: true }).await,
             Op::Refresh => {
                 if !world.is_offline() {
-                    self.report("refresh", rig.sync.refresh("moments", "feed", &no_params()).await.map(|_| ()), world);
+                    self.report("refresh", rig.sync.refresh(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &no_params()).await.map(|_| ()), world);
                 }
             }
             Op::Replace => self.replace(world),
             Op::Retry => {
                 let Some(row) = self.pick_own(world) else { return };
                 let _call = world.server.note_retry();
-                self.report("retry", rig.sync.retry("moments", &row.id, None).await.map(|_| ()), world);
+                self.report("retry", rig.sync.retry(&rig.sync.inner.db.admit().unwrap(), "moments", &row.id, None).await.map(|_| ()), world);
             }
             Op::RetryAll => {
                 let _call = world.server.note_retry();
-                self.report("retry_all", rig.sync.retry_all().await.map(|_| ()), world);
+                self.report("retry_all", rig.sync.retry_all(&rig.sync.inner.db.admit().unwrap()).await.map(|_| ()), world);
             }
             Op::Discard => {
                 let Some(row) = self.pick_own(world) else { return };
                 world.findings.trace(|| format!("discard of {} {:?} {:?}", row.id, row.text("text"), row.sync.state));
                 world.discarded(row.id.as_str());
-                world.expect("discard", rig.db.as_app().discard("moments", &row.id, None).map(|_| ()));
+                world.expect("discard", rig.db.discard(&rig.db.admit().unwrap(), "moments", &row.id, None).map(|_| ()));
             }
             Op::Typing => {
                 let user = RowId::new(&format!("u{}", self.dice.below(3))).expect("user id");
                 world.remember("users", user.as_str());
                 let flag = self.dice.percent(50);
-                world.expect("typing", rig.db.set_ephemeral("users", &user, params(json!({"typing": flag}))));
+                world.expect("typing", rig.db.set_ephemeral(&rig.db.admit().unwrap(), "users", &user, params(json!({"typing": flag}))));
             }
             Op::Upload => self.upload(world).await,
             Op::Reset => {
@@ -247,7 +247,7 @@ impl Worker {
             }
             Op::Tick => {
                 rig.clock.advance(Duration::from_secs(1 + self.dice.below(90)));
-                world.expect("expire", rig.db.expire_ephemeral().map(|_| ()));
+                world.expect("expire", rig.db.expire_ephemeral(&rig.db.admit().unwrap()).map(|_| ()));
                 if self.dice.percent(40) {
                     world.go_offline(false);
                 }
@@ -265,7 +265,7 @@ impl Worker {
         if world.is_offline() {
             return;
         }
-        self.report(relation, world.rig.sync.load("moments", relation, &no_params(), options).await.map(|_| ()), world);
+        self.report(relation, world.rig.sync.load(&world.rig.sync.inner.db.admit().unwrap(), "moments", relation, &no_params(), options).await.map(|_| ()), world);
     }
 
     fn noise_target(&mut self, world: &World) -> Option<String> {
@@ -328,7 +328,7 @@ impl Worker {
             return;
         }
         let file = UploadFile::new(&path.to_string_lossy()).variable("text", json!(text));
-        let outcome = world.rig.sync.upload("moments", &row.id, "upload", file).await;
+        let outcome = world.rig.sync.upload(&world.rig.sync.inner.db.admit().unwrap(), "moments", &row.id, "upload", file).await;
         if outcome.is_ok() {
             world.issue(&text, "upload", Some(row.id.as_str()));
             world.findings.trace(|| format!("issued upload {text} on {}", row.id));

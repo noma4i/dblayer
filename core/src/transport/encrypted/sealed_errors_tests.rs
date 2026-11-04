@@ -62,8 +62,8 @@ async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_creden
                 rig.server.refuse_next(wire, confirmed);
 
                 let outcome = match mutation {
-                    true => rig.transport.mutate(GraphQLRequest::new("mutation M { m }", "M", json!({}))).await,
-                    false => rig.transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await,
+                    true => rig.transport.mutate(&rig.db.admit().unwrap(), GraphQLRequest::new("mutation M { m }", "M", json!({}))).await,
+                    false => rig.transport.query(&rig.db.admit().unwrap(), GraphQLRequest::new("query Q { q }", "Q", json!({}))).await,
                 };
 
                 let case = format!("{wire} mutation={mutation} confirmed={confirmed}");
@@ -80,7 +80,7 @@ async fn a_code_outside_the_session_table_stays_a_graphql_error_in_the_response(
         let rig = rig().await;
         rig.server.refuse_next(wire, true);
 
-        let response = rig.transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
+        let response = rig.transport.query(&rig.db.admit().unwrap(), GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
 
         assert_eq!((response.data, response.errors[0].code()), (None, Some(wire)));
     }

@@ -25,11 +25,11 @@ impl Inner {
         locked(&self.operations).get(name).cloned().ok_or_else(|| SyncError::UnknownOperation(name.to_string()))
     }
 
-    async fn media_marker(&self, resolved: &Resolved<'_>, media: &MediaSpec, prefix: i64) -> Result<WindowMarker, SyncError> {
+    async fn media_marker(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, media: &MediaSpec, prefix: i64) -> Result<WindowMarker, SyncError> {
         let operation = self.media_operation(&media.marker)?;
         let mut variables = declared_variables(&resolved.params, &media.marker_variables);
         variables.insert("upToSequence".into(), json!(prefix));
-        let (response, _) = self.query_with_retry(GraphQLRequest::new(&operation.document, &operation.name, Value::Object(variables))).await?;
+        let (response, _) = self.query_with_retry(admitted, GraphQLRequest::new(&operation.document, &operation.name, Value::Object(variables))).await?;
         let data = response.data.ok_or_else(|| SyncError::Malformed("marker response has no data".into()))?;
         let row = root_value(&data, &media.from).and_then(Value::as_object).ok_or_else(|| SyncError::Malformed(format!("marker {} is not an object", media.from)))?;
         let get = |name: &str| integer(row.get(name).ok_or_else(|| SyncError::Malformed(format!("marker has no {name}")))?, name);
@@ -39,11 +39,11 @@ impl Inner {
         Ok(WindowMarker { sequence, values })
     }
 
-    pub(super) async fn media_load(&self, resolved: &Resolved<'_>, media: &MediaSpec) -> Result<Executed, SyncError> {
+    pub(super) async fn media_load(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, media: &MediaSpec) -> Result<Executed, SyncError> {
         let attempt = self.begin_attempt(&resolved.window_key)?;
         let stored = self.db.shared.store.marker(&resolved.window_key, attempt.generation.value() as i64)?;
         let prefix = stored.as_ref().map_or(0, |marker| marker.sequence);
-        let before = self.media_marker(resolved, media, prefix).await?;
+        let before = self.media_marker(admitted, resolved, media, prefix).await?;
         let tail = stored.as_ref().is_some_and(|stored| stored.values == before.values);
         let window = self.db.shared.store.window(&resolved.window_key)?;
         let mut nodes = Vec::new();
@@ -61,7 +61,7 @@ impl Inner {
             let mut pages = 0;
             loop {
                 let variables = load_variables(&params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &mapping);
-                let (response, used) = self.query_with_retry(GraphQLRequest::new(&operation.document, &operation.name, variables)).await?;
+                let (response, used) = self.query_with_retry(admitted, GraphQLRequest::new(&operation.document, &operation.name, variables)).await?;
                 attempts += used;
                 let data = response.data.ok_or_else(|| SyncError::Malformed("media response has no data".into()))?;
                 let extracted = extract(&data, resolved.remote.root.as_deref().unwrap_or(&operation.root_path), &resolved.remote.shape, resolved.remote.total_from.as_deref())?;
@@ -76,7 +76,7 @@ impl Inner {
                 if !cursors.insert(next.clone()) { return Err(SyncError::Incomplete { model: resolved.model.clone(), relation: resolved.relation.clone(), reason: "media cursor did not advance".into() }); }
                 cursor = Some(next);
             }
-            let checked = self.media_marker(resolved, media, prefix).await?;
+            let checked = self.media_marker(admitted, resolved, media, prefix).await?;
             stable = checked == before;
             if stable && before.sequence != prefix {
                 confirmed = self.media_marker(resolved, media, before.sequence).await?;
@@ -88,7 +88,7 @@ impl Inner {
         let normalized = normalize_nodes(&self.db, &resolved.model, &stamp_scope_values(nodes, &resolved.scope_values))?;
         let dropped = normalized.dropped;
         if dropped != 0 { return Err(SyncError::Malformed("media coverage contains invalid rows".into())); }
-        let result = self.land(Landing {
+        let result = self.land(admitted, Landing {
             marker: stable.then_some(confirmed), leave_stale: !stable,
             node_reread: false, model: resolved.model.clone(), scope: resolved.scope.clone(), window_key: resolved.window_key.clone(), normalized,
             is_first_page: !tail, replace_window: !tail, plans_as_first: !tail, coverage: Coverage::Complete,

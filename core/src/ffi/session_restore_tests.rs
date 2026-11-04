@@ -12,11 +12,18 @@ struct Accounts {
     held: AtomicUsize,
     hold: Option<Arc<tokio::sync::Semaphore>>,
     entered: tokio::sync::Notify,
+    ended: Arc<tokio::sync::Notify>,
+}
+
+struct AnswerEnd(Arc<tokio::sync::Notify>);
+
+impl Drop for AnswerEnd {
+    fn drop(&mut self) { self.0.notify_one(); }
 }
 
 impl Accounts {
     fn new(hold: Option<Arc<tokio::sync::Semaphore>>) -> Arc<Self> {
-        Arc::new(Self { asked: Mutex::new(HashMap::new()), held: AtomicUsize::new(0), hold, entered: tokio::sync::Notify::new() })
+        Arc::new(Self { asked: Mutex::new(HashMap::new()), held: AtomicUsize::new(0), hold, entered: tokio::sync::Notify::new(), ended: Arc::new(tokio::sync::Notify::new()) })
     }
 
     fn asked(&self, operation: &str) -> usize { self.asked.lock().unwrap().get(operation).copied().unwrap_or(0) }
@@ -37,6 +44,7 @@ impl Transport for Accounts {
         };
         if nth == 1 && request.operation_name == "Profile" {
             if let Some(hold) = &self.hold {
+                let _ended = AnswerEnd(self.ended.clone());
                 self.held.fetch_add(1, Ordering::SeqCst);
                 self.entered.notify_one();
                 hold.acquire().await.unwrap().forget();
@@ -100,14 +108,15 @@ async fn a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_t
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let transport = Accounts::new(Some(hold.clone()));
     let database = open(transport.clone()).await;
+    let old_epoch = database.session_epoch();
     let old = tokio::spawn({ let database = database.clone(); async move { load(&database, "Profile", "profile").await } });
     within(transport.entered.notified()).await;
     database.session_reset().await.unwrap();
+    assert!(matches!(within(database.resume(old_epoch)).await, Err(DbError::Interrupted { .. })));
     assert!(matches!(within(old).await.unwrap(), Err(DbError::Interrupted { .. })), "a call of the old epoch survived the reset");
-    hold.add_permits(1);
-
     assert_eq!(within(load(&database, "Profile", "profile")).await, Ok(()));
-    within(crate::ffi::settled(&database)).await.unwrap();
+    hold.add_permits(1);
+    within(transport.ended.notified()).await;
     assert_eq!(transport.asked("Profile"), 2, "the old command was sent again");
     assert_eq!(ids(&database, "Profile", "profile").await, vec!["profile-b".to_string()], "the late answer of the old epoch landed");
     database.close_database().await.unwrap();

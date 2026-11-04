@@ -28,7 +28,7 @@ async fn rows_removed_by_an_authoritative_replace_are_not_missing() {
     let mut worker = Worker::new(0, 7);
     worker.run(&world, Op::Create).await;
     worker.run(&world, Op::Flush).await;
-    world.rig.sync.load("moments", "feed", &Map::new(), LoadOptions { force: true }).await.unwrap();
+    world.rig.sync.load(&world.rig.sync.inner.db.admit().unwrap(), "moments", "feed", &Map::new(), LoadOptions { force: true }).await.unwrap();
     let mut request = crate::db::ReplaceRequest::new(crate::commit::ScopeRef::new(crate::identity::ModelKey::new("moments"), scope_of(&world.rig.db, "feed")), crate::schema::Coverage::Complete);
     request.on_absent = crate::db::OnAbsent::Destroy;
     world.replace(&request, Vec::new());

@@ -24,7 +24,7 @@ fn universe_of(ids: &[&str]) -> Universe {
 fn an_untouched_database_passes_every_check() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "one"));
-    let local = rig.db.as_app().create("moments", params(json!({"text": "two"}))).unwrap();
+    let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "two"}))).unwrap();
     rig.db.find("moments", &local.id).unwrap();
     let findings = Findings::default();
     check::queue(&rig.db, &findings);
@@ -36,7 +36,7 @@ fn an_untouched_database_passes_every_check() {
 #[test]
 fn a_lost_row_sync_entry_turns_the_queue_check_red() {
     let rig = rig();
-    rig.db.as_app().create("moments", params(json!({"text": "two"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "two"}))).unwrap();
     rig.db.execute_for_test("DELETE FROM row_sync");
     let findings = Findings::default();
     check::queue(&rig.db, &findings);

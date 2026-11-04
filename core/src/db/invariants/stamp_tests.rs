@@ -13,7 +13,7 @@ type Cause = (&'static str, fn(&Db), fn(&Db));
 fn nothing(_: &Db) {}
 
 fn pending_update(db: &Db) {
-    db.as_app().update("moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
+    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
 }
 
 fn upload_at(db: &Db, sent: u64) {
@@ -44,7 +44,7 @@ fn upload_at(db: &Db, sent: u64) {
 const CAUSES: [Cause; 5] = [
     ("sync state", pending_update, |db| start(db, only_seq(db))),
     ("action list", pending_update, |db| {
-        db.as_app().act("moments", "like", &rid("m1"), obj(json!({})), obj(json!({}))).unwrap();
+        db.act(&db.admit().unwrap(), "moments", "like", &rid("m1"), obj(json!({})), obj(json!({}))).unwrap();
     }),
     ("attempts and error", |db| {
         pending_update(db);
@@ -54,7 +54,7 @@ const CAUSES: [Cause; 5] = [
     }),
     ("upload bytes", |db| upload_at(db, 5), |db| upload_at(db, 6)),
     ("included row sync", nothing, |db| {
-        db.as_app().update("users", &rid("u1"), obj(json!({"name": "Bea"}))).unwrap();
+        db.update(&db.admit().unwrap(), "users", &rid("u1"), obj(json!({"name": "Bea"}))).unwrap();
     }),
 ];
 

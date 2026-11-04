@@ -67,6 +67,8 @@ pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, 
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum DbError {
+    #[error("no session: {detail}")]
+    NoSession { detail: String },
     #[error("security {code:?}: {detail}")]
     Security { code: SecurityCode, detail: String },
     #[error("config {code:?}: {detail}")]
@@ -92,7 +94,12 @@ pub enum DbError {
 }
 
 impl From<crate::db::DbError> for DbError {
-    fn from(error: crate::db::DbError) -> Self { Self::Database { detail: error.to_string() } }
+    fn from(error: crate::db::DbError) -> Self {
+        match error {
+            crate::db::DbError::NoSession { detail } => Self::NoSession { detail },
+            other => Self::Database { detail: other.to_string() },
+        }
+    }
 }
 
 impl From<crate::sync::SyncError> for DbError {
@@ -100,6 +107,7 @@ impl From<crate::sync::SyncError> for DbError {
         use crate::sync::SyncError;
         use crate::transport::TransportError;
         match error {
+            SyncError::NoSession(detail) => Self::NoSession { detail },
             SyncError::Transport(TransportError::Security { code, detail }) => Self::Security { code, detail },
             SyncError::Transport(TransportError::Config { code, detail }) => Self::Config { code, detail },
             SyncError::Transport(TransportError::Http { status, body }) => Self::Http { status, detail: body },

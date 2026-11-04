@@ -85,7 +85,7 @@ async fn inv_op_11_random_record_histories_end_equal_on_the_client_the_server_an
             let index = dice.below(records.len() + 1);
             if index == records.len() {
                 let text = format!("c{seed}-{step}");
-                let row = rig.db.as_app().create("moments", params(json!({"text": text}))).unwrap();
+                let row = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": text}))).unwrap();
                 records.push(Record { id: Some(row.id.clone()), shown: Some(text.clone()), synced: None });
                 history.push(format!("create {text}"));
                 continue;
@@ -96,17 +96,17 @@ async fn inv_op_11_random_record_histories_end_equal_on_the_client_the_server_an
             match action {
                 0 | 1 => {
                     let text = format!("u{seed}-{step}");
-                    rig.db.as_app().update("moments", &id, params(json!({"text": text}))).unwrap();
+                    rig.db.update(&rig.db.admit().unwrap(), "moments", &id, params(json!({"text": text}))).unwrap();
                     record.shown = Some(text.clone());
                     history.push(format!("update {index} {text}"));
                 }
                 2 => {
-                    rig.db.as_app().destroy("moments", &id).unwrap();
+                    rig.db.destroy(&rig.db.admit().unwrap(), "moments", &id).unwrap();
                     record.shown = None;
                     history.push(format!("destroy {index}"));
                 }
                 3 => {
-                    rig.db.as_app().discard("moments", &id, None).unwrap();
+                    rig.db.discard(&rig.db.admit().unwrap(), "moments", &id, None).unwrap();
                     record.shown = record.synced.clone();
                     if record.synced.is_none() {
                         record.id = None;
@@ -114,7 +114,7 @@ async fn inv_op_11_random_record_histories_end_equal_on_the_client_the_server_an
                     history.push(format!("discard {index}"));
                 }
                 _ => {
-                    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+                    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
                     for record in &mut records {
                         record.synced = record.shown.clone();
                     }
@@ -133,7 +133,7 @@ async fn inv_op_11_random_record_histories_end_equal_on_the_client_the_server_an
         for entry in &history {
             *kinds.entry(entry.split(' ').next().unwrap().to_string()).or_default() += 1;
         }
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
         let mut expected: Vec<String> = records.iter().filter_map(|record| record.shown.clone()).collect();
         expected.sort();
         let mut on_server: Vec<String> = server.lock().unwrap().rows.values().cloned().collect();

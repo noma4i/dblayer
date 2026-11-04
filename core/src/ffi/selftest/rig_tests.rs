@@ -259,17 +259,33 @@ pub(super) struct Switchable {
     failures: Mutex<Vec<String>>,
     sinks: Mutex<Vec<(String, Arc<SubscriptionSink>)>>,
     unsubscribed: Mutex<Vec<String>>,
+    sink_opened: Notify,
+    sink_closed: Notify,
 }
 
 impl Switchable {
     pub(super) fn new(target: Option<Arc<World>>, invalid: bool) -> Arc<Self> {
-        Arc::new(Self { target: Mutex::new(target), invalid, tokens: AtomicUsize::new(0), attempts: AtomicUsize::new(0), failures: Mutex::new(Vec::new()), sinks: Mutex::new(Vec::new()), unsubscribed: Mutex::new(Vec::new()) })
+        Arc::new(Self { target: Mutex::new(target), invalid, tokens: AtomicUsize::new(0), attempts: AtomicUsize::new(0), failures: Mutex::new(Vec::new()), sinks: Mutex::new(Vec::new()), unsubscribed: Mutex::new(Vec::new()), sink_opened: Notify::new(), sink_closed: Notify::new() })
     }
     pub(super) fn set(&self, target: Option<Arc<World>>) { *self.target.lock().unwrap() = target; }
     pub(super) fn unsubscribed(&self) -> Vec<String> { self.unsubscribed.lock().unwrap().clone() }
     pub(super) fn failures(&self) -> Vec<String> { self.failures.lock().unwrap().clone() }
     pub(super) fn attempts(&self) -> usize { self.attempts.load(Ordering::SeqCst) }
     pub(super) fn opened(&self) -> usize { self.tokens.load(Ordering::SeqCst) }
+    pub(super) async fn first_sink(&self) -> (String, Arc<SubscriptionSink>) {
+        loop {
+            let notified = self.sink_opened.notified();
+            if let Some(sink) = self.sinks.lock().unwrap().first().cloned() { return sink; }
+            bound(notified).await;
+        }
+    }
+    pub(super) async fn wait_unsubscribed(&self, token: &str) {
+        loop {
+            let notified = self.sink_closed.notified();
+            if self.unsubscribed.lock().unwrap().iter().any(|found| found == token) { return; }
+            bound(notified).await;
+        }
+    }
     fn current(&self) -> Result<Arc<World>, DbError> {
         self.target.lock().unwrap().clone().ok_or_else(|| match self.invalid {
             true => DbError::Invalid { detail: "No test transport".into() },
@@ -295,13 +311,14 @@ impl Transport for Switchable {
             sink.opened(token.clone())?;
             sink.ready();
             self.sinks.lock().unwrap().push((token, sink));
+            self.sink_opened.notify_one();
             Ok(())
         };
         let result: Result<(), DbError> = opened.await;
         if let Err(error) = &result { self.failures.lock().unwrap().push(format!("{error:?}")); }
         result
     }
-    fn unsubscribe(&self, token: String) { self.unsubscribed.lock().unwrap().push(token); }
+    fn unsubscribe(&self, token: String) { self.unsubscribed.lock().unwrap().push(token); self.sink_closed.notify_one(); }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: String, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         self.current()?.plain("PUT").await?;
         Ok(PutReply { status: 200, etag: Some("etag".into()) })
@@ -333,7 +350,7 @@ const OPERATIONS: &str = r#"[
 ]"#;
 
 /// The plain harness also holds a memory model that a server subscription feeds.
-fn plain_models() -> String {
+pub(super) fn plain_models() -> String {
     let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&models()).unwrap();
     let mut notice = crate::schema::ModelSpec::new("Notice", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
     notice.storage = crate::schema::Storage::Memory;

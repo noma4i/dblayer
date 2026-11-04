@@ -18,6 +18,6 @@ async fn inv_dsl_03_the_page_size_of_a_remote_declaration_reaches_the_request() 
     }
     let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments, vibes_spec()], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(rig.transport.calls()[0].variables["first"], json!(7));
 }

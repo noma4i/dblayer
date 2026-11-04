@@ -12,7 +12,7 @@ async fn the_backoff_passes(rig: &Rig) {
 }
 
 fn postponed_create(rig: &Rig) -> crate::identity::RowId {
-    let local = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
+    let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
     rig.transport.enqueue("CreateMoment", Reply::fail(TransportError::Network("down".to_string())));
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m77", "text": "hello", "userId": null}})));
     local.id.clone()
@@ -22,7 +22,8 @@ fn postponed_create(rig: &Rig) -> crate::identity::RowId {
 async fn inv_wait_01_settled_parks_once_per_outbox_change_while_a_retry_waits_for_its_backoff() {
     let rig = rig();
     let id = postponed_create(&rig);
-    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.settled("moments", &id, None));
+    let admitted = rig.db.admit().unwrap();
+    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.settled(&admitted, "moments", &id, None));
     let (settled, ()) = tokio::join!(bounded, the_backoff_passes(&rig));
     settled.expect("settled did not return within 60 s").unwrap();
     let parks = rig.sync.counters().settle_parks;
@@ -34,10 +35,11 @@ async fn inv_wait_01_answer_parks_once_per_outbox_change_while_a_retry_waits_for
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     let id = crate::identity::RowId::new("m1").unwrap();
-    let acted = rig.db.as_app().act("moments", "star", &id, params(json!({})), params(json!({}))).unwrap();
+    let acted = rig.db.act(&rig.db.admit().unwrap(), "moments", "star", &id, params(json!({})), params(json!({}))).unwrap();
     rig.transport.enqueue("StarMoment", Reply::fail(TransportError::Network("down".to_string())));
     rig.transport.enqueue("StarMoment", Reply::data(json!({"starMoment": {"moment": {"id": "m1", "text": "t", "userId": null}}})));
-    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.answer("moments", acted.operation));
+    let admitted = rig.db.admit().unwrap();
+    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.answer(&admitted, "moments", acted.operation));
     let (answered, ()) = tokio::join!(bounded, the_backoff_passes(&rig));
     answered.expect("answer did not return within 60 s").unwrap();
     let parks = rig.sync.counters().settle_parks;
@@ -49,7 +51,7 @@ async fn inv_wait_02_a_waiting_caller_wakes_zero_times_in_ten_seconds_of_an_unch
     let rig = rig_with(super::super::SyncConfig { send_backoff: crate::pacing::Backoff::new(Duration::from_secs(30), Duration::from_secs(30)), ..Default::default() });
     let id = postponed_create(&rig);
     tokio::select! {
-        _ = rig.sync.settled("moments", &id, None) => panic!("settled returned while the backoff has not passed"),
+        _ = rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "moments", &id, None) => panic!("settled returned while the backoff has not passed"),
         () = tokio::time::sleep(Duration::from_secs(10)) => {}
     }
     let counters = rig.sync.counters();
@@ -64,7 +66,8 @@ async fn inv_wait_02_a_waiting_caller_returns_offline_when_the_connection_drops(
         tokio::time::sleep(Duration::from_secs(1)).await;
         rig.sync.set_online(false);
     };
-    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.settled("moments", &id, None));
+    let admitted = rig.db.admit().unwrap();
+    let bounded = tokio::time::timeout(Duration::from_secs(60), rig.sync.settled(&admitted, "moments", &id, None));
     let (settled, ()) = tokio::join!(bounded, going_offline);
     assert!(matches!(settled, Ok(Err(crate::sync::SyncError::Offline))), "settled did not return Offline within 60 s of going offline");
 }
@@ -97,8 +100,8 @@ fn inv_wait_04_no_test_of_the_wrappers_waits_without_a_bound() {
 #[tokio::test(start_paused = true)]
 async fn settled_ignores_a_pending_change_of_another_model_with_the_same_id() {
     let rig = rig();
-    let local = rig.db.as_app().create("moments", params(json!({"text": "hello"}))).unwrap();
+    let local = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
     rig.sync.set_online(false);
-    let other = rig.sync.settled("users", &local.id, None).await;
+    let other = rig.sync.settled(&rig.sync.inner.db.admit().unwrap(), "users", &local.id, None).await;
     assert!(other.is_ok(), "settled(users) waited for a moments change: {other:?}");
 }

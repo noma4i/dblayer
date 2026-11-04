@@ -24,7 +24,7 @@ async fn freshness_read_does_not_hold_the_flight_lock() {
         sent.send(crate::test_wait::mutex_free(&inner.upgrade().unwrap().flights)).unwrap();
     }));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-    crate::test_wait::within(rig.sync.load("moments", "feed", &none(), LoadOptions::default())).await.unwrap();
+    crate::test_wait::within(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default())).await.unwrap();
     assert!(crate::test_wait::recv_within(&received));
 }
 
@@ -32,7 +32,7 @@ async fn freshness_read_does_not_hold_the_flight_lock() {
 async fn first_page_lands_rows_members_and_window() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], true, "c2"));
-    let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(outcome.status, LoadStatus::Loaded);
     assert_eq!((outcome.rows, outcome.has_next, outcome.attempts), (2, true, 1));
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m1", "m2"]);
@@ -46,7 +46,7 @@ async fn nested_author_lands_in_users() {
     let rig = rig();
     let node = json!({"id": "m1", "text": "hi", "author": {"id": "u1", "name": "Ann"}});
     rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![node], false, "c1")));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
     assert_eq!(user.text("name"), Some("Ann"));
     assert_eq!(text_of(&rig, "moments", "m1"), Some("hi".to_string()));
@@ -56,13 +56,13 @@ async fn nested_author_lands_in_users() {
 async fn inv_fresh_01_fresh_window_is_skipped_until_stale_time_passes() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     rig.clock.advance(Duration::from_secs(299));
-    let skipped = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let skipped = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(skipped.status, LoadStatus::SkippedFresh);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
     rig.clock.advance(Duration::from_secs(2));
-    let again = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let again = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(again.status, LoadStatus::Loaded);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
 }
@@ -71,8 +71,8 @@ async fn inv_fresh_01_fresh_window_is_skipped_until_stale_time_passes() {
 async fn force_reloads_a_fresh_window() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
-    let forced = rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let forced = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     assert_eq!(forced.status, LoadStatus::Loaded);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
 }
@@ -81,9 +81,9 @@ async fn force_reloads_a_fresh_window() {
 async fn invalidated_window_loads_again() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     rig.db.shared.store.invalidate_family_now("moments", "feed").unwrap();
-    let again = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let again = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(again.status, LoadStatus::Loaded);
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
 }
@@ -92,12 +92,12 @@ async fn invalidated_window_loads_again() {
 async fn empty_result_uses_the_shorter_empty_window() {
     let rig = rig();
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": []})));
-    rig.sync.load("moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
     rig.clock.advance(Duration::from_secs(5));
-    let early = rig.sync.load("moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
+    let early = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(early.status, LoadStatus::SkippedFresh);
     rig.clock.advance(Duration::from_secs(6));
-    let again = rig.sync.load("moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
+    let again = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "empty_aware", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(again.status, LoadStatus::Loaded);
 }
 
@@ -108,7 +108,7 @@ async fn inv_fresh_01_parallel_identical_loads_share_one_transport_call() {
     let nothing = none();
     let (rig_ref, nothing_ref) = (&rig, &nothing);
     let returned = |options: LoadOptions| async move {
-        let outcome = rig_ref.sync.load("moments", "feed", nothing_ref, options).await;
+        let outcome = rig_ref.sync.load(&rig_ref.sync.inner.db.admit().unwrap(), "moments", "feed", nothing_ref, options).await;
         (outcome, member_ids(rig_ref, "moments", "feed", nothing_ref))
     };
     let ((first, first_rows), (second, second_rows)) = tokio::join!(returned(LoadOptions::default()), returned(LoadOptions { force: true }));
@@ -128,7 +128,7 @@ async fn network_error_is_retried_with_delay() {
         rig.transport.enqueue("MomentsFeed", Reply::fail(TransportError::Network("down".to_string())));
         rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
         let started = tokio::time::Instant::now();
-        let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+        let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
         assert_eq!((outcome.status, outcome.attempts), (LoadStatus::Loaded, 2));
         delays.push(started.elapsed());
         assert!((Duration::from_millis(800)..=Duration::from_secs(1)).contains(&started.elapsed()));
@@ -143,14 +143,14 @@ async fn inv_fresh_08_offline_load_makes_no_call_and_online_loads_again() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.sync.set_online(false);
-    let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
+    let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await;
     assert_eq!(result, Err(SyncError::Offline));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 0);
     rig.sync.set_online(true);
-    let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(outcome.status, LoadStatus::Loaded);
     rig.sync.set_online(false);
-    assert_eq!(rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await, Err(SyncError::Offline));
+    assert_eq!(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await, Err(SyncError::Offline));
 }
 
 #[tokio::test]
@@ -160,12 +160,13 @@ async fn offline_interrupts_a_load_without_waiting_for_http() {
     let rig = rig();
     if cached {
         rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-        rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+        rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
         rig.clock.advance(Duration::from_secs(301));
     }
     rig.transport.respond_with(|_| Some(feed_reply(&["m1"], false, "c1").after(Duration::from_secs(60))));
     let params = none();
-    let mut load = Box::pin(rig.sync.load("moments", "feed", &params, LoadOptions::default()));
+    let admitted = rig.db.admit().unwrap();
+    let mut load = Box::pin(rig.sync.load(&admitted, "moments", "feed", &params, LoadOptions::default()));
     assert!(load.as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
     rig.sync.set_online(false);
     assert!(matches!(load.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(SyncError::Offline))));
@@ -177,7 +178,7 @@ async fn offline_interrupts_a_load_without_waiting_for_http() {
 async fn retry_budget_is_spent_then_the_error_is_returned() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::fail(TransportError::Network("down".to_string())));
-    let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
+    let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await;
     assert_eq!(result, Err(SyncError::Transport(TransportError::Network("down".to_string()))));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 4);
 }
@@ -187,10 +188,10 @@ async fn server_code_is_retried_and_fatal_code_is_not() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("busy", "SERVICE_UNAVAILABLE"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-    let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(outcome.attempts, 2);
     rig.transport.enqueue("MomentsByUser", Reply::graphql_error("nope", "FORBIDDEN"));
-    let fatal = rig.sync.load("moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions::default()).await;
+    let fatal = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions::default()).await;
     assert!(matches!(fatal, Err(SyncError::Graphql { messages, .. }) if messages == ["nope"]));
     assert_eq!(rig.transport.call_count("MomentsByUser"), 1);
 }
@@ -200,12 +201,12 @@ async fn inv_fresh_05_inv_merge_10_failed_refresh_keeps_stale_data_unless_forced
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let (row, window_before) = (rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap(), window(&rig, "feed", &none()));
     rig.clock.advance(Duration::from_secs(400));
-    let kept = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let kept = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(kept.status, LoadStatus::KeptStale);
-    let forced = rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await;
+    let forced = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await;
     assert!(matches!(forced, Err(SyncError::Graphql { messages, .. }) if messages == ["nope"]));
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m1"]);
     assert_eq!(rig.db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap(), row);
@@ -216,7 +217,7 @@ async fn inv_fresh_05_inv_merge_10_failed_refresh_keeps_stale_data_unless_forced
 async fn inv_fresh_05_inv_merge_10_failed_first_load_without_window_is_an_error() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", Reply::graphql_error("nope", "FORBIDDEN"));
-    let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
+    let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await;
     assert!(matches!(result, Err(SyncError::Graphql { messages, .. }) if messages == ["nope"]));
 }
 
@@ -227,7 +228,7 @@ async fn older_response_does_not_overwrite_newer_event_data() {
     let page = Reply::data(feed_page(vec![moment("m1", "from server"), moment("m2", "m2")], false, "c2"));
     rig.transport.enqueue("MomentsFeed", page.after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
-    let task = tokio::spawn(async move { sync.load("moments", "feed", &Map::new(), LoadOptions::default()).await });
+    let task = tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &Map::new(), LoadOptions::default()).await });
     rig.transport.await_calls("MomentsFeed", 1).await;
     put(&rig, "moments", json!({"id": "m1", "text": "event wins", "userId": null}));
     task.await.unwrap().unwrap();
@@ -243,12 +244,12 @@ async fn inv_merge_05_row_destroyed_during_flight_is_not_resurrected() {
     put(&rig, "moments", json!({"id": "m1", "text": "old", "userId": null}));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c2").after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
-    let task = tokio::spawn(async move { sync.load("moments", "feed", &Map::new(), LoadOptions::default()).await });
+    let task = tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &Map::new(), LoadOptions::default()).await });
     rig.transport.await_calls("MomentsFeed", 1).await;
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     let id = crate::identity::RowId::new("m1").unwrap();
     envelope.entity_ops.push(EntityOp::Destroy { model: crate::identity::ModelKey::new("moments"), id, reason: DestroyReason::Server });
-    rig.db.as_app().land(envelope).unwrap();
+    rig.db.land(&rig.db.admit().unwrap(), envelope).unwrap();
     task.await.unwrap().unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m2"]);
@@ -259,7 +260,7 @@ async fn inv_fresh_03_response_after_a_reset_is_discarded() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1").after(Duration::from_secs(5)));
     let sync = rig.sync.clone();
-    let task = tokio::spawn(async move { sync.load("moments", "feed", &Map::new(), LoadOptions::default()).await });
+    let task = tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &Map::new(), LoadOptions::default()).await });
     rig.transport.await_calls("MomentsFeed", 1).await;
     rig.db.shared.store.reset_cache_only(&["moments"]).unwrap();
     let outcome = task.await.unwrap();
@@ -274,9 +275,9 @@ async fn list_load_replaces_membership_completely() {
     let list = |ids: &[&str]| Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()}));
     rig.transport.enqueue("MomentsByUser", list(&["a", "b"]));
     rig.transport.enqueue("MomentsByUser", list(&["b", "c"]));
-    rig.sync.load("moments", "by_user", &mine, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &mine, LoadOptions::default()).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "by_user", &mine), ["a", "b"]);
-    rig.sync.load("moments", "by_user", &mine, LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &mine, LoadOptions { force: true }).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "by_user", &mine), ["b", "c"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"userId": "u1"}));
 }
@@ -286,7 +287,7 @@ async fn null_param_loads_its_own_list_and_sends_null() {
     let rig = rig();
     let unowned = params(json!({"userId": null}));
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [moment("a", "a")]})));
-    let outcome = rig.sync.load("moments", "by_user", &unowned, LoadOptions::default()).await.unwrap();
+    let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &unowned, LoadOptions::default()).await.unwrap();
     assert_eq!(outcome.status, LoadStatus::Loaded);
     assert_eq!(member_ids(&rig, "moments", "by_user", &unowned), ["a"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"userId": null}));
@@ -298,9 +299,9 @@ async fn singleton_load_and_refresh_store_without_observers() {
         let rig = rig();
         rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
         let outcome = if force {
-            rig.sync.refresh("users", "current", &none()).await
+            rig.sync.refresh(&rig.sync.inner.db.admit().unwrap(), "users", "current", &none()).await
         } else {
-            rig.sync.load("users", "current", &none(), LoadOptions::default()).await
+            rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &none(), LoadOptions::default()).await
         }.unwrap();
         assert_eq!(outcome.rows, 1, "force={force}");
         assert_eq!(member_ids(&rig, "users", "current", &none()), ["u1"]);
@@ -315,10 +316,10 @@ async fn refreshing_the_first_page_keeps_the_loaded_tail_when_the_anchor_is_foun
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "c2"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["c", "d"], false, "c4"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a", "b"], true, "r2"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
-    rig.sync.load_more("moments", "feed", &none()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none()).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["a", "b", "c", "d"]);
-    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["a", "b", "c", "d"]);
     assert_eq!(window(&rig, "feed", &none()).unwrap().cursor.as_deref(), Some("c4"));
 }
@@ -328,7 +329,7 @@ async fn rows_failing_normalization_are_counted_not_fatal() {
     let rig = rig();
     let page = feed_page(vec![moment("m1", "ok"), json!({"text": "no id"})], false, "c1");
     rig.transport.enqueue("MomentsFeed", Reply::data(page));
-    let outcome = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    let outcome = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!((outcome.rows, outcome.dropped), (1, 1));
 }
 
@@ -337,7 +338,7 @@ async fn unknown_names_are_reported() {
     let rig = rig();
     let load = |model: &'static str, relation: &'static str| {
         let sync = rig.sync.clone();
-        async move { sync.load(model, relation, &Map::new(), LoadOptions::default()).await }
+        async move { sync.load(&sync.inner.db.admit().unwrap(), model, relation, &Map::new(), LoadOptions::default()).await }
     };
     assert!(matches!(load("ghosts", "feed").await, Err(SyncError::UnknownModel(_))));
     assert!(matches!(load("moments", "nope").await, Err(SyncError::UnknownRelation { .. })));
@@ -348,14 +349,14 @@ async fn unknown_names_are_reported() {
 async fn missing_operation_registration_is_reported() {
     let rig = rig();
     rig.sync.inner.operations.lock().unwrap().clear();
-    let result = rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await;
+    let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await;
     assert_eq!(result, Err(SyncError::UnknownOperation("MomentsFeed".to_string())));
 }
 
 #[tokio::test(start_paused = true)]
 async fn invalid_params_are_reported() {
     let rig = rig();
-    let result = rig.sync.load("moments", "by_user", &params(json!({"bogus": "x"})), LoadOptions::default()).await;
+    let result = rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params(json!({"bogus": "x"})), LoadOptions::default()).await;
     assert!(matches!(result, Err(SyncError::Params(_))));
 }
 
@@ -363,7 +364,7 @@ async fn invalid_params_are_reported() {
 async fn inv_observe_05_forced_reload_of_a_complete_feed_replaces_the_members_in_one_delivery() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1", "m2"], false, "c1"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     let spec = rig.db.spec("moments").unwrap();
     let relation = spec.relations.iter().find(|candidate| candidate.name == "feed").unwrap();
     let scope = relation.scope_key("moments", &Default::default()).unwrap();
@@ -379,10 +380,10 @@ async fn inv_observe_05_forced_reload_of_a_complete_feed_replaces_the_members_in
         .unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m2", "m3"], false, "c2"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m2", "m3"], false, "c2"));
-    rig.sync.load("moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions { force: true }).await.unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     let all = seen.lock().unwrap().clone();
     assert_eq!(all, vec![(vec!["m1".to_string(), "m2".to_string()], 0), (vec!["m2".to_string(), "m3".to_string()], 1)]);
@@ -393,7 +394,7 @@ async fn rows_without_the_scope_column_get_the_param() {
     let rig = rig();
     let mine = params(json!({"userId": "u1"}));
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
-    rig.sync.load("moments", "by_user", &mine, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &mine, LoadOptions::default()).await.unwrap();
     let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
     assert_eq!(row.text("userId"), Some("u1"));
 }
@@ -405,8 +406,8 @@ async fn text_param_keys_its_own_window_without_a_column() {
     let dogs = params(json!({"query": "dogs"}));
     rig.transport.enqueue("MomentsSearch", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
     rig.transport.enqueue("MomentsSearch", Reply::data(json!({"moments": [{"id": "b", "text": "b"}]})));
-    rig.sync.load("moments", "search", &cats, LoadOptions::default()).await.unwrap();
-    rig.sync.load("moments", "search", &dogs, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "search", &cats, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "search", &dogs, LoadOptions::default()).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "search", &cats), ["a"]);
     assert_eq!(member_ids(&rig, "moments", "search", &dogs), ["b"]);
     assert_eq!(rig.transport.calls()[0].variables, json!({"query": "cats"}));
@@ -417,7 +418,7 @@ async fn enum_column_groups_a_relation_and_fills_rows() {
     let rig = rig();
     let calm = params(json!({"mood": "calm"}));
     rig.transport.enqueue("MomentsByMood", Reply::data(json!({"moments": [{"id": "a", "text": "a"}]})));
-    rig.sync.load("moments", "by_mood", &calm, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_mood", &calm, LoadOptions::default()).await.unwrap();
     assert_eq!(member_ids(&rig, "moments", "by_mood", &calm), ["a"]);
     let row = rig.db.find("moments", &crate::identity::RowId::new("a").unwrap()).unwrap().unwrap();
     assert_eq!(row.text("mood"), Some("calm"));
@@ -429,7 +430,7 @@ async fn rig_with_user_list(size: usize) -> (Rig, Map<String, serde_json::Value>
     let ids: Vec<String> = (0..size).map(|index| format!("m{index:06}")).collect();
     let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()})));
-    rig.sync.load("moments", "by_user", &params, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, LoadOptions::default()).await.unwrap();
     (rig, params)
 }
 
@@ -455,7 +456,7 @@ async fn creating_a_row_in_a_loaded_list_reads_the_same_members_at_every_list_si
     let mut costs = Vec::new();
     for size in [100, 10_000] {
         let (rig, params) = rig_with_user_list(size).await;
-        costs.push(reads_during(|| drop(rig.db.as_app().create("moments", crate::db::fixtures::obj(json!({"userId": "u1", "text": "new"}))).unwrap())));
+        costs.push(reads_during(|| drop(rig.db.create(&rig.db.admit().unwrap(), "moments", crate::db::fixtures::obj(json!({"userId": "u1", "text": "new"}))).unwrap())));
         assert_eq!(member_ids(&rig, "moments", "by_user", &params).len(), size + 1);
     }
     assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");

@@ -3,12 +3,11 @@ use std::collections::BTreeSet;
 use super::super::error::SyncError;
 use super::super::{locked, Inner};
 use super::StaleMark;
-use crate::lifecycle::Epoch;
 use crate::task::Carry;
 use std::sync::Arc;
 
 impl Inner {
-    pub(crate) fn invalidate_after(&self, model: &str, action: &str) -> Result<(), SyncError> {
+    pub(crate) fn invalidate_after(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str) -> Result<(), SyncError> {
         let spec = self.db.spec(model)?;
         let mut names: BTreeSet<String> = spec
             .actions
@@ -26,49 +25,49 @@ impl Inner {
         }
         let mut marks = Vec::new();
         for (target, relation) in foreign.iter().filter_map(|name| name.split_once('.')) {
-            marks.push(self.mark_stale(target, BTreeSet::from([relation.to_string()]))?);
+            marks.push(self.mark_stale(admitted, target, BTreeSet::from([relation.to_string()]))?);
         }
-        marks.push(self.mark_stale(model, names)?);
+        marks.push(self.mark_stale(admitted, model, names)?);
         locked(&self.pending_reloads).extend(marks);
         Ok(())
     }
 
-    fn mark_stale(&self, model: &str, names: BTreeSet<String>) -> Result<StaleMark, SyncError> {
+    fn mark_stale(&self, admitted: &crate::lifecycle::Admitted, model: &str, names: BTreeSet<String>) -> Result<StaleMark, SyncError> {
         let since = self.next_issued();
         for name in &names {
-            self.db.shared.store.invalidate_family(&self.db.authority()?, model, name)?;
+            self.db.shared.store.invalidate_family(&admitted.authority(), model, name)?;
         }
-        let epoch = Epoch::ambient().unwrap_or_else(|| self.db.shared.store.lifecycle.epoch_now());
-        Ok(StaleMark { model: model.to_string(), names, since, epoch })
+        let admitted = admitted.life().admit_passive(crate::lifecycle::Origin::Explicit, "reload", Some(admitted.value()))?;
+        Ok(StaleMark { model: model.to_string(), names, since, admitted })
     }
 
     pub(crate) fn reload_marked(self: &Arc<Self>) {
         let marked = std::mem::take(&mut *locked(&self.pending_reloads));
         for mark in marked {
             let inner = self.clone();
-            let carry = Carry::from(mark.epoch.clone());
+            let carry = Carry::from(mark.admitted.clone());
             crate::task::spawn(carry, async move { let _ = inner.reload_stale(&mark).await; });
         }
     }
 
-    pub(crate) async fn reload_lists_of_absent_parent(self: &Arc<Self>, model: &str) -> Result<(), SyncError> {
-        self.invalidate_model(model).await
+    pub(crate) async fn reload_lists_of_absent_parent(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {
+        self.invalidate_model(admitted, model).await
     }
 
-    pub(crate) fn mark_lists_after_refused_destroy(&self, model: &str) -> Result<(), SyncError> {
-        let mark = self.mark_model_stale(model)?;
+    pub(crate) fn mark_lists_after_refused_destroy(&self, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {
+        let mark = self.mark_model_stale(admitted, model)?;
         locked(&self.pending_reloads).push(mark);
         Ok(())
     }
 
-    async fn invalidate_model(self: &Arc<Self>, model: &str) -> Result<(), SyncError> {
-        let mark = self.mark_model_stale(model)?;
+    async fn invalidate_model(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {
+        let mark = self.mark_model_stale(admitted, model)?;
         self.reload_stale(&mark).await.map(|_| ())
     }
 
-    fn mark_model_stale(&self, model: &str) -> Result<StaleMark, SyncError> {
+    fn mark_model_stale(&self, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<StaleMark, SyncError> {
         let spec = self.db.spec(model)?;
         let names: BTreeSet<String> = spec.relations.iter().filter(|relation| relation.remote.is_some() && !relation.joins_events).map(|relation| relation.name.clone()).collect();
-        self.mark_stale(model, names)
+        self.mark_stale(admitted, model, names)
     }
 }

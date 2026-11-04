@@ -3,15 +3,16 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 use super::*;
-use crate::lifecycle::{Epoch, Lifecycle};
+use crate::lifecycle::{Lifecycle, Origin};
 
-fn held() -> Option<u64> { Epoch::ambient().map(|epoch| epoch.value()) }
+fn held() -> Option<u64> { admitted().map(|admitted| admitted.value()) }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_boundary_carries_the_epoch_it_is_given_and_a_detached_one_carries_none() {
     let handle = Handle::current();
-    let epoch = Epoch::new(&Arc::new(Lifecycle::default()), 7);
-    let carry = || Carry::from(epoch.clone());
+    let admission = Arc::new(Lifecycle::default()).admit(Origin::Explicit, "test call").unwrap();
+    let carried = Some(admission.value());
+    let carry = || Carry::from(admission.clone());
     let mut children = Children::new();
     children.spawn(carry(), async { held() });
     let callback = bind(carry(), |()| held());
@@ -34,6 +35,5 @@ async fn every_boundary_carries_the_epoch_it_is_given_and_a_detached_one_carries
         thread_held(carry()),
         thread_held(Carry::Detached),
     );
-    let carried = Some(7);
     assert_eq!(seen, (carried, carried, carried, carried, carried, carried, None, None, None, carried, None));
 }

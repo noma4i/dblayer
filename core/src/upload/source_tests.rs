@@ -33,12 +33,12 @@ async fn upload_file_reads_do_not_run_on_the_async_executor() {
     let source = file_with(&bytes);
     let input = UploadFile::new(source.path().to_str().unwrap());
     let row = crate::identity::RowId::new("m1").unwrap();
-    let seq = rig.sync.inner.db.in_current_epoch(|_| rig.sync.inner.begin_upload(rig.db.generation(), "moments", &row, "upload", &input, UploadState::queued())).unwrap();
+    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &row, "upload", &input, UploadState::queued())).unwrap();
     let id = rig.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT file_id FROM op_item WHERE seq = ?1", [seq], |row| row.get::<_, String>(0))?)).unwrap();
     let path = rig.db.shared.files.path(&id).unwrap();
     READS.get_or_init(Default::default).lock().unwrap().insert(path.clone(), Vec::new());
     let executor = std::thread::current().id();
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.db.admit().unwrap())).await.unwrap();
     rig.sync.wait_uploads().await;
     let reads = READS.get().unwrap().lock().unwrap().remove(&path).unwrap();
     assert_eq!(reads.iter().map(|(operation, _)| *operation).collect::<Vec<_>>(), ["metadata", "checksum"]);

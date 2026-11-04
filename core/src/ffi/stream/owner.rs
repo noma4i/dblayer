@@ -5,7 +5,7 @@ use tokio::sync::watch;
 
 use crate::db::dispatch::{Effects, OrderedEffects};
 use crate::db::locked;
-use crate::lifecycle::{Change, Holder, Lease, Lifecycle, Origin, Registration, Snapshot};
+use crate::lifecycle::{Admitted, Change, Holder, Lifecycle, Origin, Registration, Snapshot};
 use crate::sync::{snapshot_phase, FirstScreenHold, LoadError, LoadPhase, RelationState};
 use super::open::Handles;
 use super::{Frame, LivePhase, Request, StreamDelivery, StreamEnd, StreamState, StreamTable, StreamValue, ValueSink};
@@ -69,7 +69,7 @@ pub(in crate::ffi) struct Stream {
     calls: Arc<crate::db::CallState>,
     revoked: Arc<AtomicBool>,
     handles: Mutex<Option<Handles>>,
-    lease: Mutex<Option<Lease>>,
+    lease: Mutex<Option<Admitted>>,
     registration: OnceLock<Registration>,
     pub(super) request: Request,
 }
@@ -117,9 +117,9 @@ impl Stream {
         })
     }
 
-    pub(super) fn pinned<R>(&self, work: impl FnOnce() -> R) -> R { crate::store::pinned_to_epoch(&self.life, self.epoch, work) }
-
-    pub(super) fn carry(&self) -> crate::task::Carry { crate::task::Carry::Epoch(crate::lifecycle::Epoch::new(&self.life, self.epoch)) }
+    pub(super) fn admitted(&self) -> Result<Admitted, DbError> {
+        self.life.admit_passive(Origin::Explicit, "stream work", Some(self.epoch)).map_err(|_| interrupted())
+    }
 
     pub(super) fn holds(&self, snapshot: &Snapshot) -> bool { !snapshot.closed && snapshot.session_epoch == self.epoch }
 
@@ -157,7 +157,7 @@ impl Stream {
             let mut changed = gone.is_some();
             drop(gone);
             if make {
-                let made = self.life.lease_passive(Origin::Session, "stream").ok();
+                let made = self.life.admit_passive(Origin::Session, "stream", Some(self.epoch)).ok();
                 changed |= made.is_some();
                 let extra = { let mut slot = locked(&self.lease); if slot.is_none() { *slot = made; None } else { made } };
                 drop(extra);

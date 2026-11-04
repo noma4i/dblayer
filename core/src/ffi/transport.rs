@@ -247,17 +247,17 @@ impl core::Transport for ForeignTransport {
         };
         Ok(Arc::new(ForeignSocket { transport: self.0.clone(), lease, token }))
     }
-    async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
+    async fn query(&self, _admitted: &crate::lifecycle::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::query");
         let json = self.0.query(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
-    async fn mutate(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
+    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::mutate");
         let json = self.0.mutate(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
-    async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
+    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::subscribe");
         let (sender, receiver) = mpsc::unbounded_channel();
         let transport = self.0.clone();
@@ -274,7 +274,7 @@ impl core::Transport for ForeignTransport {
         }
         Ok(core::ServerSubscription::new(receiver, core::ServerSubscriptionHandle::new(move || sink.abandon())))
     }
-    async fn put(&self, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
+    async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::put");
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
         let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.tag, progress).await.map_err(transport_error)?;

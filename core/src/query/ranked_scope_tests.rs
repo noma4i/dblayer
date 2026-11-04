@@ -18,7 +18,7 @@ fn steps_to_read_30_members(size: usize) -> i32 {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("messages"), id: id.clone(), row });
         envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: id, order_key: String::new() });
     }
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     let ids: Vec<String> = (0..30).map(|index| format!("m{:05}", index * size / 30)).collect();
     let statement = compile_ranked(&query, db.spec("messages").unwrap(), Some(&ids)).unwrap().statement;
     let inner = db.shared.store.lock();

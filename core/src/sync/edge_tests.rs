@@ -22,7 +22,7 @@ fn page(edges: Vec<Value>) -> Reply {
 }
 
 async fn refresh(rig: &Rig, relation: &str, params: &Map<String, Value>) {
-    rig.sync.load("moments", relation, params, LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", relation, params, LoadOptions { force: true }).await.unwrap();
 }
 
 fn read(rig: &Rig, relation: &str, params: &Map<String, Value>, id: &str) -> Option<Map<String, Value>> {
@@ -77,7 +77,7 @@ async fn an_answer_without_edges_leaves_the_connection_values_alone() {
     rig.transport.enqueue("MomentsFeed", page(vec![edge("m1", json!("imp-1"), json!(5))]));
     rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": [{"id": "m1", "text": "plain", "userId": "u1"}]})));
     refresh(&rig, "feed", &none()).await;
-    rig.sync.load("moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params(json!({"userId": "u1"})), LoadOptions { force: true }).await.unwrap();
     assert_eq!(text_of(&rig, "moments", "m1").as_deref(), Some("plain"));
     assert_eq!(read(&rig, "feed", &none(), "m1"), values("imp-1", 5));
 }

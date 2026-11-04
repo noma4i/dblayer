@@ -52,7 +52,7 @@ async fn inv_live_05_unversioned_events_apply_in_arrival_order_and_the_last_one_
     rig.transport.await_consumed("MomentChanged").await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("c".to_string()));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c1"));
-    rig.sync.load("moments", "feed", &params(json!({})), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &params(json!({})), LoadOptions { force: true }).await.unwrap();
     assert_eq!(text_of(&rig, "moments", "m1"), Some("m1".to_string()));
     rig.transport.emit("MomentChanged", event(json!({"id": "m1", "text": "after the load"})));
     rig.transport.await_consumed("MomentChanged").await;
@@ -66,7 +66,7 @@ async fn inv_event_03_an_event_and_a_local_edit_of_one_row_end_as_one_of_the_two
             let rig = rig_with_events();
             put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": "u0"}));
             let _subscription = rig.sync.subscribe(upserts(EventSpec::new("moment_changed"))).await.unwrap();
-            let edit = || rig.db.as_app().update("moments", &rid("m1"), params(json!({ local_field: "local" }))).unwrap();
+            let edit = || rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({ local_field: "local" }))).unwrap();
             let push = || rig.transport.emit("MomentChanged", event(json!({"id": "m1", event_field: "server"})));
             if event_first {
                 push();
@@ -96,7 +96,7 @@ async fn inv_event_03_an_edit_before_during_or_after_a_held_event_is_never_lost(
         put(&rig, "moments", json!({"id": "m1", "text": "start", "userId": "u0"}));
         let spec = EventSpec::new("moment_changed").debounced(Duration::from_millis(500)).merged_by_row();
         let _subscription = rig.sync.subscribe(upserts(spec)).await.unwrap();
-        let edit = || rig.db.as_app().update("moments", &rid("m1"), params(json!({"userId": "local"}))).unwrap();
+        let edit = || rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"userId": "local"}))).unwrap();
         if schedule == "before the event" { edit(); }
         rig.transport.emit("MomentChanged", event(json!({"id": "m1", "text": "server"})));
         rig.transport.await_consumed("MomentChanged").await;

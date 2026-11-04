@@ -68,14 +68,14 @@ pub(crate) enum Landed {
     Discarded(DiscardReason),
 }
 
-pub(crate) struct Admitted {
+pub(crate) struct AcceptedRows {
     pub rows: Vec<Map<String, Value>>,
     pub invalid: usize,
 }
 
-pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64>, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<Admitted, SyncError> {
+pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64>, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<AcceptedRows, SyncError> {
     db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
-    let mut admitted = Admitted { rows: Vec::with_capacity(rows.len()), invalid: 0 };
+    let mut admitted = AcceptedRows { rows: Vec::with_capacity(rows.len()), invalid: 0 };
     for row in rows {
         if row.get("id").and_then(read_id).is_none() { continue; }
         let origin = if closing.is_some() { WriteOrigin::Response } else { WriteOrigin::Snapshot };
@@ -127,17 +127,17 @@ impl Inner {
         Ok(ops)
     }
 
-    pub(crate) fn land_rows(&self, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
-        crate::blocking::blocking_unit(|| self.land_rows_unit(model, normalized, attempt))
+    pub(crate) fn land_rows(&self, admitted: &crate::lifecycle::Admitted, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
+        crate::blocking::blocking_unit(|| self.land_rows_unit(admitted, model, normalized, attempt))
     }
 
-    fn land_rows_unit(&self, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
+    fn land_rows_unit(&self, admitted: &crate::lifecycle::Admitted, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
         let serial = locked(&self.landing);
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
-        let committed = self.db.commit_following_deferred(&self.db.authority()?, attempt.generation, |reader| {
+        let committed = self.db.commit_following_deferred(&admitted.authority(), attempt.generation, |reader| {
             drops = 0;
-            let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, model, &normalized.roots, &mut drops)?;
+            let AcceptedRows { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
             invalid_roots = invalid;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, attempt.generation);
@@ -159,11 +159,11 @@ impl Inner {
         Ok(Landed::Applied { rows: admitted_roots, invalid: invalid_roots, revision })
     }
 
-    pub(crate) fn land(&self, landing: Landing) -> Result<Landed, SyncError> {
-        crate::blocking::blocking_unit(|| self.land_unit(landing))
+    pub(crate) fn land(&self, admitted: &crate::lifecycle::Admitted, landing: Landing) -> Result<Landed, SyncError> {
+        crate::blocking::blocking_unit(|| self.land_unit(admitted, landing))
     }
 
-    fn land_unit(&self, landing: Landing) -> Result<Landed, SyncError> {
+    fn land_unit(&self, admitted: &crate::lifecycle::Admitted, landing: Landing) -> Result<Landed, SyncError> {
         let serial = locked(&self.landing);
         let Landing { marker, leave_stale, node_reread, model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
         let generation = attempt.generation;
@@ -193,9 +193,9 @@ impl Inner {
         let keeps_member_order = self.db.spec(&model)?.stable_order(&scope.key).is_some();
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
-        let committed = self.db.commit_following_deferred(&self.db.authority()?, generation, |reader| {
+        let committed = self.db.commit_following_deferred(&admitted.authority(), generation, |reader| {
             drops = 0;
-            let Admitted { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
+            let AcceptedRows { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
             invalid_roots = invalid;
             if marker.is_some() && invalid != 0 { return Err(SyncError::Malformed("media coverage contains invalid rows".into())); }

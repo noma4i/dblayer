@@ -15,6 +15,7 @@ pub struct AcceptedUpload {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UploadAccepted {
+    pub epoch: u64,
     pub model: String,
     pub items: Vec<AcceptedUpload>,
 }
@@ -26,12 +27,18 @@ impl Db {
         *locked(&self.shared.upload_accepted) = Some(sink);
     }
 
-    pub(crate) fn report_upload_accepted(&self, model: &str, items: Vec<AcceptedUpload>) {
+    pub(crate) fn report_upload_accepted(&self, admitted: &crate::lifecycle::Admitted, model: &str, items: Vec<AcceptedUpload>) {
         let Some(sink) = locked(&self.shared.upload_accepted).clone() else { return };
-        if items.is_empty() || !self.round_accept(&items) {
+        let group = UploadAccepted { epoch: admitted.value(), model: model.to_string(), items };
+        let accepted = {
+            let life = &self.shared.store.lifecycle;
+            let _line = life.commit_line();
+            std::sync::Arc::ptr_eq(life, admitted.life()) && admitted.is_current() && !group.items.is_empty() && self.round_accept(group.clone())
+        };
+        if !accepted {
             return;
         }
-        sink(UploadAccepted { model: model.to_string(), items });
+        sink(group);
     }
 
     pub(crate) fn accepted_items(&self, ids: &[RowId]) -> Result<Vec<AcceptedUpload>, DbError> {
@@ -47,10 +54,10 @@ impl Db {
         })
     }
 
-    pub fn note_background_refused(&self, items: &[AcceptedUpload], detail: &str) -> Result<usize, DbError> {
+    pub fn note_background_refused(&self, admitted: &crate::lifecycle::Admitted, items: &[AcceptedUpload], detail: &str) -> Result<usize, DbError> {
         let generation = self.generation();
         let mut noted = 0;
-        self.commit_following(&crate::lifecycle::Authority::Epoch(self.shared.store.lifecycle.epoch_now()), generation, |reader| {
+        self.commit_following(&admitted.authority(), generation, |reader| {
             noted = 0;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             for item in items {

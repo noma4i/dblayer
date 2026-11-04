@@ -20,7 +20,7 @@ fn consecutive_refreshes_never_hand_two_members_one_order_key() {
         (&[7, 6, 1, 3, 2], Coverage::Complete),
     ];
     for (ids, coverage) in steps {
-        db.as_app().replace(&ReplaceRequest::new(scope.clone(), coverage), rows(ids)).unwrap();
+        db.replace(&db.admit().unwrap(), &ReplaceRequest::new(scope.clone(), coverage), rows(ids)).unwrap();
     }
     let stored = db.shared.store.scope_members("moments", "feed").unwrap();
     let order: Vec<&str> = stored.iter().map(|(id, _)| id.as_str()).collect();

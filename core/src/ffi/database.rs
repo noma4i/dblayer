@@ -134,6 +134,9 @@ impl Database {
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
         let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
         db.set_clock(clock.clone());
+        let opening = db.admit()?;
+        db.expire_blobs_before_use(&opening)?;
+        drop(opening);
         let (transport, session) = wire(&db, &clock)?;
         if uploads.is_some() && transport.is_none() {
             return Err(DbError::Invalid { detail: "upload operations require a transport".into() });
@@ -232,9 +235,9 @@ impl Database {
         if declared.as_ref().is_some_and(|action| action.durable) {
             return Err(DbError::Invalid { detail: format!("{model} sends its create as a durable command: use send") });
         }
-        if remote { self.refuse_offline(&model, "create")?; }
-        let written = self.write_in_epoch(epoch, "create", { let model = model.clone(); move |database| {
-            let created = database.db.create_queued(None, &model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
+        let origin = if remote { crate::lifecycle::Origin::Session } else { crate::lifecycle::Origin::Explicit };
+        let written = self.write_in_epoch(origin, epoch, "create", { let model = model.clone(); move |database, admitted| {
+            let created = database.db.create_queued(admitted, None, &model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?)?;
             database.send_writes();
             Ok(created)
         } }).await?;
@@ -242,47 +245,47 @@ impl Database {
         if !remote { return Ok(self.wire(&model)?.row(&written)); }
         let sync = self.sync()?.clone();
         let (db, wire, temporary) = (self.db.clone(), self.wire(&model)?.clone(), written.id.clone());
-        self.serve_in_epoch(epoch, "create", async move {
+        self.serve_in_epoch(epoch, "create", |admitted| async move {
             let real = match operation {
-                Some(operation) => sync.confirmed_by(&model, &temporary, operation).await?,
-                None => sync.confirmed(&model, &temporary).await?,
+                Some(operation) => sync.confirmed_by(&admitted, &model, &temporary, operation).await?,
+                None => sync.confirmed(&admitted, &model, &temporary).await?,
             };
             let row = db.find(&model, &real)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {real} was not created") })?;
             Ok::<_, DbError>(wire.row(&row))
         }).await
     }
     pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireRow, DbError> {
-        self.refuse_offline(&model, "update")?;
-        self.write_in_epoch(epoch, "update", move |database| {
-            let row = database.db.update_with(&model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
+        let origin = self.write_origin(&model, "update")?;
+        self.write_in_epoch(origin, epoch, "update", move |database, admitted| {
+            let row = database.db.update_with(admitted, &model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?)?;
             database.send_writes();
             Ok(database.wire(&model)?.row(&row))
         }).await
     }
     pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
-        self.write_in_epoch(epoch, "set local", move |database| {
-            Ok(database.db.set_local(&model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
+        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "set local", move |database, admitted| {
+            Ok(database.db.set_local(admitted, &model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
         }).await
     }
     /// Queues the action. An action with no optimistic change and no declared result returns after the server answered, with the row at the root of the answer: the receiver row when the answer names the receiver, else the row the answer carried. The receiver row is never overwritten by an answer with another id.
     pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<QueuedAction, DbError> {
-        self.refuse_offline(&model, &action)?;
+        let origin = self.write_origin(&model, &action)?;
         let declared = self.db.spec(&model)?.actions.iter().find(|declared| declared.name == action).cloned();
         let waits = declared.as_ref().is_some_and(|declared| declared.returns_answer());
         let removes_receiver = declared.as_ref().is_some_and(|declared| declared.removes_receiver);
         let (call_model, call_action, receiver) = (model.clone(), action.clone(), row_id.clone());
         let sync_for_wish = if waits { Some(self.sync()?.clone()) } else { None };
-        let (queued, wish) = self.write_in_epoch(epoch, "act", move |database| {
-            let (acted, wish) = database.db.act_claiming(&model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?, |operation| sync_for_wish.map(|sync| sync.expect_answer(operation)))?;
+        let (queued, wish) = self.write_in_epoch(origin, epoch, "act", move |database, admitted| {
+            let (acted, wish) = database.db.act_claiming(admitted, &model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?, |operation| sync_for_wish.map(|sync| sync.expect_answer(operation)))?;
             database.send_writes();
             Ok((QueuedAction { row: database.wire(&model)?.row(&acted.row), operation: acted.operation }, wish))
         }).await?;
         if !waits { return Ok(queued); }
         let (sync, db, wire, operation, left) = (self.sync()?.clone(), self.db.clone(), self.wire(&call_model)?.clone(), queued.operation, queued.row.clone());
-        self.serve_in_epoch(epoch, "act answer", async move {
+        self.serve_in_epoch(epoch, "act answer", |admitted| async move {
             let _wish = wish;
             let receiver = id(&receiver)?;
-            sync.settled_operation(&call_model, operation).await?;
+            sync.settled_operation(&admitted, &call_model, operation).await?;
             let answered = match sync.answer_root(operation) {
                 Some(Some(root)) => root,
                 Some(None) => receiver.clone(),
@@ -300,22 +303,22 @@ impl Database {
         }).await
     }
     pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<(), DbError> {
-        self.refuse_offline(&model, "destroy")?;
-        self.write_in_epoch(epoch, "destroy", move |database| {
-            database.db.destroy(&model, &id(&row_id)?)?;
+        let origin = self.write_origin(&model, "destroy")?;
+        self.write_in_epoch(origin, epoch, "destroy", move |database, admitted| {
+            database.db.destroy(admitted, &model, &id(&row_id)?)?;
             database.send_writes();
             Ok(())
         }).await
     }
     pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
-        self.write_in_epoch(epoch, "set ephemeral", move |database| {
-            Ok(database.db.set_ephemeral(&model, &id(&row_id)?, serde_json::from_str(&values_json)?)?)
+        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "set ephemeral", move |database, admitted| {
+            Ok(database.db.set_ephemeral(admitted, &model, &id(&row_id)?, serde_json::from_str(&values_json)?)?)
         }).await
     }
     #[allow(clippy::too_many_arguments)]
     pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String) -> Result<String, DbError> {
         let row_id = id(&row_id)?;
-        self.write_in_epoch(epoch, "attach", move |database| Ok(database.db.attach(&model, &row_id, &field, &bytes, &name, &mime)?.to_value().to_string())).await
+        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "attach", move |database, admitted| Ok(database.db.attach(admitted, &model, &row_id, &field, &bytes, &name, &mime)?.to_value().to_string())).await
     }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;
@@ -331,7 +334,7 @@ impl Database {
     }
     pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
         let row_id = id(&row_id)?;
-        self.write_in_epoch(epoch, "detach", move |database| Ok(database.db.detach(&model, &row_id, &field)?)).await
+        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "detach", move |database, admitted| Ok(database.db.detach(admitted, &model, &row_id, &field)?)).await
     }
     pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
@@ -347,52 +350,52 @@ impl Database {
             sync.register(operation);
         }
         let _entered = executor()?.enter();
-        sync.check_session();
+        sync.operations_ready();
         Ok(())
     }
     pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
-        let answer = self.serve_in_epoch(epoch, "run", async move {
+        let answer = self.serve_in_epoch(epoch, "run", |admitted| async move {
             let variables: Value = serde_json::from_str(&variables_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.run(&operation, variables).await?)
+            Ok::<_, DbError>(sync.run(&admitted, &operation, variables).await?)
         }).await?;
         Ok(answer.to_string())
     }
     pub async fn load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.serve_shared_in_epoch(epoch, "load", async move {
+        self.serve_shared_in_epoch(epoch, "load", |admitted| async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.load(&model, &relation, &params, LoadOptions::default()).await?)
+            Ok::<_, DbError>(sync.load(&admitted, &model, &relation, &params, LoadOptions::default()).await?)
         }).await.map(drop)
     }
     pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         self.require_online(&format!("{model}.{relation} refresh"))?;
         let sync = self.sync()?.clone();
-        self.serve_shared_in_epoch(epoch, "refresh", async move {
+        self.serve_shared_in_epoch(epoch, "refresh", |admitted| async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.refresh(&model, &relation, &params).await?)
+            Ok::<_, DbError>(sync.refresh(&admitted, &model, &relation, &params).await?)
         }).await.map(drop)
     }
     pub async fn refresh_preloads(&self, epoch: u64) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        let failures = self.serve_in_epoch(epoch, "refresh preloads", async move { Ok::<_, DbError>(sync.refresh_preloads().await?) }).await?;
+        let failures = self.serve_in_epoch(epoch, "refresh preloads", |admitted| async move { Ok::<_, DbError>(sync.refresh_preloads(&admitted).await?) }).await?;
         if failures.is_empty() { return Ok(()); }
         let scopes: Vec<String> = failures.iter().map(|failure| format!("{}.{} {}: {}", failure.model, failure.relation, serde_json::Value::Object(failure.params.clone()), failure.error)).collect();
         Err(DbError::Sync { detail: format!("{} preload scopes failed to refresh: {}", scopes.len(), scopes.join("; ")) })
     }
     pub async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "load all", async move {
+        self.serve_in_epoch(epoch, "load all", |admitted| async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.load_all(&model, &relation, &params, LoadOptions { force }).await?)
+            Ok::<_, DbError>(sync.load_all(&admitted, &model, &relation, &params, LoadOptions { force }).await?)
         }).await
     }
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.require_online(&format!("{model}.{relation} load more"))?;
         let sync = self.sync()?.clone();
-        let outcome = self.serve_shared_in_epoch(epoch, "load more", async move {
+        let outcome = self.serve_shared_in_epoch(epoch, "load more", |admitted| async move {
             let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.load_more(&model, &relation, &params).await?)
+            Ok::<_, DbError>(sync.load_more(&admitted, &model, &relation, &params).await?)
         }).await?;
         Ok(match outcome.status {
             LoadStatus::NoMorePages(LoadMoreVerdict::AlreadyLoading) => LoadMoreResult::AlreadyLoading,
@@ -403,46 +406,45 @@ impl Database {
     pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?;
-        let row = self.serve_shared_in_epoch(epoch, "node", async move { sync.node(&model, &relation, &row_id, force).await }).await?;
+        let row = self.serve_shared_in_epoch(epoch, "node", |admitted| async move { sync.node(&admitted, &model, &relation, &row_id, force).await }).await?;
         Ok(row.map(|row| wire.row(&row)))
     }
     pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?;
-        let rows = self.serve_shared_in_epoch(epoch, "nodes", async move { sync.nodes(&model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
+        let rows = self.serve_shared_in_epoch(epoch, "nodes", |admitted| async move { sync.nodes(&admitted, &model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
         Ok(rows.iter().map(|row| wire.row(row)).collect())
     }
     pub async fn flush(&self) -> Result<(), DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(()) };
-        on_executor(async move { sync.flush().await }).await?;
+        let admitted = self.streams.admit(crate::lifecycle::Origin::Session, "flush").map_err(|_| DbError::NoSession { detail: "the database has no session".into() })?;
+        on_executor(async move { sync.flush(&admitted).await }).await?;
         Ok(())
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<u64, DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(0) };
         let row = id(&row_id)?;
         let db = self.db.clone();
-        let this = self.clone();
-        self.serve_in_epoch(epoch, "retry", async move {
-            let count = this.pinned_write(epoch, || Ok(db.retry(&model, &row, action.as_deref())?))?;
-            sync.flush().await?;
+        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "retry", false, |admitted| async move {
+            let count = db.retry(&admitted, &model, &row, action.as_deref())?;
+            sync.flush(&admitted).await?;
             Ok::<_, DbError>(count as u64)
         }).await
     }
     pub async fn retry_all(&self, epoch: u64) -> Result<u64, DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(0) };
         let db = self.db.clone();
-        let this = self.clone();
-        self.serve_in_epoch(epoch, "retry all", async move {
-            let count = this.pinned_write(epoch, || Ok(db.retry_all()?))?;
-            sync.flush().await?;
+        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "retry all", false, |admitted| async move {
+            let count = db.retry_all(&admitted)?;
+            sync.flush(&admitted).await?;
             Ok::<_, DbError>(count as u64)
         }).await
     }
     pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
         let sync = self.sync.clone();
-        self.write_in_epoch(epoch, "discard", move |database| {
+        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "discard", move |database, admitted| {
             let row = id(&row_id)?;
-            database.db.discard(&model, &row, action.as_deref())?;
+            database.db.discard(admitted, &model, &row, action.as_deref())?;
             if let Some(sync) = &sync {
                 let _entered = executor()?.enter();
                 sync.inner.start_uploads()?;
@@ -450,15 +452,16 @@ impl Database {
             Ok(())
         }).await
     }
-    pub async fn resume(&self) -> Result<(), DbError> {
-        let Some(sync) = self.sync.clone() else { return Ok(()) };
-        on_executor(async move { sync.resume().await }).await?;
-        Ok(())
+    pub async fn resume(&self, epoch: u64) -> Result<(), DbError> {
+        let sync = self.sync.clone();
+        self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "resume", false, |admitted| async move {
+            let Some(sync) = sync else { return Ok(()) };
+            on_executor(async move { sync.resume(&admitted).await.map(drop).map_err(DbError::from) }).await
+        }).await
     }
-    pub async fn resume_uploads(&self) -> Result<(), DbError> {
-        let Some(sync) = self.sync.clone() else { return Ok(()) };
-        on_executor(async move { sync.resume_uploads().await }).await?;
-        Ok(())
+    pub async fn resume_uploads(&self, epoch: u64) -> Result<(), DbError> {
+        let sync = self.sync()?.clone();
+        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "resume uploads", false, |admitted| on_executor(async move { sync.resume_uploads(&admitted).await.map_err(DbError::from) })).await
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
 
@@ -478,49 +481,44 @@ impl Database {
     pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<i64, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        let lease = self.streams.lease(crate::lifecycle::Origin::Session, "upload").map_err(|_| DbError::Interrupted { detail: "the session of this upload ended".into() })?;
-        if lease.epoch() != epoch { return Err(DbError::Interrupted { detail: "the session of this upload ended".into() }); }
-        let work = on_executor(async move {
+        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "upload", false, |admitted| on_executor(async move {
             let file = request.into_file()?;
-            Ok::<_, DbError>(sync.upload_in(&model, &row, &action, file, Some(epoch)).await?)
-        });
-        lease.run(work).await.map_err(|_| DbError::Interrupted { detail: "the session of this upload ended".into() })?
+            Ok::<_, DbError>(sync.upload(&admitted, &model, &row, &action, file).await?)
+        })).await
     }
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<Vec<WireRow>, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?.clone();
-        let lease = self.streams.lease(crate::lifecycle::Origin::Session, "upload batch").map_err(|_| DbError::Interrupted { detail: "the session of this upload ended".into() })?;
-        if lease.epoch() != epoch { return Err(DbError::Interrupted { detail: "the session of this upload ended".into() }); }
-        let work = on_executor(async move {
+        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "upload batch", false, |admitted| on_executor(async move {
             let items = items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?;
             let input = request.into_input()?;
-            let rows = sync.upload_create_batch_in(&model, items, input, Some(epoch)).await?;
+            let rows = sync.upload_create_batch(&admitted, &model, items, input).await?;
             Ok::<_, DbError>(rows.iter().map(|row| wire.row(row)).collect())
-        });
-        lease.run(work).await.map_err(|_| DbError::Interrupted { detail: "the session of this upload ended".into() })?
+        })).await
     }
     pub async fn confirmed(&self, epoch: u64, model: String, row_id: String) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        self.serve_in_epoch(epoch, "confirmed", async move { Ok::<_, DbError>(sync.confirmed(&model, &row).await?.to_string()) }).await
+        self.serve_in_epoch(epoch, "confirmed", |admitted| async move { Ok::<_, DbError>(sync.confirmed(&admitted, &model, &row).await?.to_string()) }).await
     }
     pub async fn settled(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        self.serve_in_epoch(epoch, "settled", async move { Ok::<_, DbError>(sync.settled(&model, &row, action.as_deref()).await?) }).await
+        self.serve_in_epoch(epoch, "settled", |admitted| async move { Ok::<_, DbError>(sync.settled(&admitted, &model, &row, action.as_deref()).await?) }).await
     }
     pub async fn answer(&self, epoch: u64, model: String, operation: i64) -> Result<String, DbError> {
         let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "answer", async move { Ok::<_, DbError>(sync.answer(&model, operation).await?.to_string()) }).await
+        self.serve_in_epoch(epoch, "answer", |admitted| async move { Ok::<_, DbError>(sync.answer(&admitted, &model, operation).await?.to_string()) }).await
     }
     pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
-        self.serve_in_epoch(epoch, "cancel upload", async move { sync.cancel_upload(&model, &row, &action).await }).await
+        self.serve_in_epoch(epoch, "cancel upload", |admitted| async move { sync.cancel_upload(&admitted, &model, &row, &action).await }).await
     }
     pub async fn maintain(&self) -> Result<(), DbError> {
         let db = self.db.clone();
-        blocking(move || Ok(db.maintain(&[]).map(|_| ())?)).await
+        let admitted = db.admit()?;
+        blocking(move || Ok(db.maintain(&admitted, &[]).map(|_| ())?)).await
     }
     /// Closes the database: every lease ends, every holder closes, the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
@@ -548,7 +546,7 @@ impl Database {
         if self.close_holders() { if let Some(lease) = self.lease.get() { lease.release(); } }
     }
 
-    pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::Invalid { detail: "transport is required for server operations".into() }) }
+    pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() }) }
     pub(super) fn send_writes(&self) {
         if let (Some(sync), Ok(executor)) = (self.sync.as_ref(), executor()) {
             let _entered = executor.enter();
@@ -562,12 +560,9 @@ impl Database {
     }
 
     /// An action that needs the server fails at once while the network is away. Only sending a message and a media upload wait for it (`send`, `upload`).
-    fn refuse_offline(&self, model: &str, action: &str) -> Result<(), DbError> {
+    fn write_origin(&self, model: &str, action: &str) -> Result<crate::lifecycle::Origin, DbError> {
         let declared = self.db.spec(model)?.actions.iter().any(|declared| declared.name == action && declared.mutation.is_some());
-        if declared && !self.db.connectivity().is_online() {
-            return Err(DbError::Network { detail: format!("{model}.{action} needs the network") });
-        }
-        Ok(())
+        Ok(if declared { crate::lifecycle::Origin::Session } else { crate::lifecycle::Origin::Explicit })
     }
 
     pub(super) fn parsed_query(&self, json: &str) -> Result<ParsedQuery, DbError> {

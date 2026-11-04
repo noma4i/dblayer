@@ -28,7 +28,7 @@ fn info(rig: &Rig, id: &str) -> SyncInfo {
 
 fn queue_update(rig: &Rig, text: &str) {
     put(rig, "moments", moment("m1", "old"));
-    rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": text}))).unwrap();
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": text}))).unwrap();
 }
 
 async fn exhaust(rig: &Rig, operation: &str) {
@@ -37,7 +37,7 @@ async fn exhaust(rig: &Rig, operation: &str) {
     }
     for _ in 0..40 {
         rig.clock.advance(Duration::from_secs(31));
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     }
 }
 
@@ -47,14 +47,14 @@ async fn unreached_mutation_stays_pending_and_leaves_again_after_the_pause() {
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", unreachable());
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap().committed(), 0);
+    assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap().committed(), 0);
     let waiting = info(&rig, "m1");
     assert_eq!((waiting.state, waiting.attempts), (SyncState::Pending, 1));
     assert_eq!(waiting.error.map(|error| error.kind), Some(FailureKind::Network));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
     rig.clock.advance(Duration::from_secs(2));
-    assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap().committed(), 1);
+    assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap().committed(), 1);
     assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
     assert!(info(&rig, "m1").is_synced());
 }
@@ -65,10 +65,10 @@ async fn interrupted_transfer_is_delivery_unknown_and_never_resent_by_itself() {
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Interrupted("reset".into())));
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(info(&rig, "m1").state, SyncState::DeliveryUnknown);
     rig.clock.advance(Duration::from_secs(3600));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
 }
 
@@ -78,7 +78,7 @@ async fn inv_op_17_offline_flag_holds_the_mutation_without_a_call_or_an_attempt_
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
     rig.sync.set_online(false);
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("UpdateMoment"), 0);
     let held = info(&rig, "m1");
     assert_eq!((held.state, held.attempts), (SyncState::Pending, 0));
@@ -94,7 +94,7 @@ async fn the_pause_ends_by_itself_without_another_flush() {
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", unreachable());
     rig.transport.enqueue("UpdateMoment", updated("m1", "new"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     rig.clock.advance(Duration::from_secs(2));
     tokio::time::sleep(Duration::from_secs(2)).await;
     assert_eq!(rig.transport.call_count("UpdateMoment"), 2);
@@ -134,7 +134,7 @@ async fn forty_unreached_attempts_leave_a_kept_update_failed() {
 async fn inv_op_08_forty_unreached_attempts_bring_a_destroyed_record_back_as_failed() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "old"));
-    rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
+    rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
     assert_eq!(rig.db.find("moments", &rid("m1")).unwrap(), None);
     exhaust(&rig, "DeleteMoment").await;
     assert_eq!(text_of(&rig, "moments", "m1"), Some("old".to_string()));
@@ -146,14 +146,14 @@ async fn inv_op_08_forty_unreached_attempts_bring_a_destroyed_record_back_as_fai
 async fn a_waiting_mutation_holds_back_later_ones_on_the_same_record() {
     let rig = rig();
     queue_update(&rig, "first");
-    rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "second"}))).unwrap();
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "second"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", unreachable());
     rig.transport.enqueue("UpdateMoment", updated("m1", "first"));
     rig.transport.enqueue("UpdateMoment", updated("m1", "second"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);
     rig.clock.advance(Duration::from_secs(2));
-    assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap().committed(), 2);
+    assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap().committed(), 2);
     let sent: Vec<_> = rig.transport.calls().into_iter().map(|call| call.variables).collect();
     assert_eq!(sent.len(), 3);
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -164,12 +164,12 @@ async fn the_count_continues_after_a_restart() {
     let rig = rig();
     queue_update(&rig, "new");
     rig.transport.enqueue("UpdateMoment", unreachable());
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(info(&rig, "m1").attempts, 1);
     let again = rig_on(rig.db.clone(), crate::transport::MockTransport::new(), Default::default());
     again.transport.enqueue("UpdateMoment", unreachable());
     again.clock.set(Clock::now(&rig.clock) + Duration::from_secs(2));
-    crate::sync::rig::app(&again.sync, again.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&again.sync, again.sync.flush(&again.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(again.transport.call_count("UpdateMoment"), 1);
     assert_eq!(info(&again, "m1").attempts, 2);
     assert_eq!(rig.db.outbox().unwrap()[0].operation.status, OperationStatus::Pending);
@@ -180,15 +180,15 @@ async fn retry_all_sends_every_failed_and_unknown_record_again() {
     let rig = keeping_rig();
     put(&rig, "moments", moment("m1", "a"));
     put(&rig, "moments", moment("m2", "b"));
-    rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "a2"}))).unwrap();
-    rig.db.as_app().update("moments", &rid("m2"), params(json!({"text": "b2"}))).unwrap();
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "a2"}))).unwrap();
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m2"), params(json!({"text": "b2"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::fail(TransportError::Interrupted("reset".into())));
     rig.transport.enqueue("UpdateMoment", Reply::graphql_error("no", "FORBIDDEN"));
     rig.transport.enqueue("UpdateMoment", updated("m1", "a2"));
     rig.transport.enqueue("UpdateMoment", updated("m2", "b2"));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!((info(&rig, "m1").state, info(&rig, "m2").state), (SyncState::DeliveryUnknown, SyncState::Failed));
-    let report = crate::sync::rig::app(&rig.sync, rig.sync.retry_all()).await.unwrap();
+    let report = crate::sync::rig::app(&rig.sync, rig.sync.retry_all(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(report.committed(), 2);
     assert_eq!(rig.transport.call_count("UpdateMoment"), 4);
 }
@@ -197,7 +197,6 @@ async fn retry_all_sends_every_failed_and_unknown_record_again() {
 async fn a_change_of_the_network_waits_for_the_commit_of_a_start_that_passed_its_admission() {
     use crate::commit::{CommitEnvelope, EntityOp, NetworkAdmission, WriteOrigin};
     use crate::identity::ModelKey;
-    use crate::lifecycle::Authority;
     let rig = rig();
     let (inner, shared) = (rig.sync.inner.clone(), rig.db.shared.clone());
     let store = &shared.store;
@@ -216,7 +215,8 @@ async fn a_change_of_the_network_waits_for_the_commit_of_a_start_that_passed_its
         assert!(!slot.lock().unwrap().as_ref().unwrap().is_finished(), "the change of the network did not wait for the commit");
         assert!(online.is_online(), "the network moved while the start held the line");
     }));
-    let committed = store.commit_as(&Authority::Epoch(store.lifecycle.epoch_now()), envelope);
+    let admitted = store.lifecycle.admit(crate::lifecycle::Origin::Explicit, "test commit").unwrap();
+    let committed = store.commit_as(&admitted.authority(), envelope);
     assert!(committed.is_ok(), "{:?}", committed.err());
     crate::test_wait::join_within(changing.lock().unwrap().take().unwrap());
     assert!(!connectivity.is_online());

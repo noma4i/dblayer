@@ -6,11 +6,12 @@ use crate::upload::{BlobSnapshot, BlobState, UploadFile, UploadState, UploadOper
 use super::super::{locked, Inner, Sync, SyncError};
 
 impl Inner {
-    pub(crate) async fn expire_blobs(self: &Arc<Self>) -> Result<(), SyncError> {
+    pub(crate) async fn expire_blobs(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
         let failed_due = self.now_ms().saturating_sub(self.config.upload.failed_ttl.as_millis().try_into().unwrap_or(i64::MAX));
         let inner = self.clone();
+        let admitted = admitted.clone();
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
-            inner.db.expire_blob_cache(failed_due)?;
+            inner.db.expire_blob_cache(&admitted, failed_due)?;
             Ok::<_, SyncError>(())
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
@@ -21,11 +22,11 @@ impl Inner {
 }
 
 impl Sync {
-    pub async fn upload_blob(&self, name: &str, create: &str, file: UploadFile) -> Result<String, SyncError> { self.upload_blob_in(name, create, file, None).await }
-
-    pub async fn upload_blob_in(&self, name: &str, create: &str, file: UploadFile, epoch: Option<u64>) -> Result<String, SyncError> {
+    pub async fn upload_blob(&self, admitted: &crate::lifecycle::Admitted, name: &str, create: &str, file: UploadFile) -> Result<String, SyncError> {
+        self.inner.require_session(admitted)?;
         if !locked(&self.inner.operations).contains_key(create) { return Err(SyncError::UnknownOperation(create.into())); }
         let inner = self.inner.clone();
+        let admitted = admitted.clone();
         let generation = inner.db.generation();
         let (name, create) = (name.to_owned(), create.to_owned());
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
@@ -33,11 +34,10 @@ impl Sync {
             uploads.check(|name| locked(&inner.operations).contains_key(name)).map_err(SyncError::Params)?;
             let input = file.with_steps(uploads.steps(""));
             let id = uuid::Uuid::new_v4().to_string();
-            let life = inner.db.shared.store.lifecycle.clone();
-            let seq = super::pinned(&life, epoch, || inner.db.prepare_blob(generation, |files, pending| {
+            let seq = inner.db.prepare_blob(&admitted, generation, |files, pending| {
                 let item = files.prepare("", crate::identity::RowId::new(&id).map_err(|error| SyncError::Params(error.to_string()))?, id.clone(), input.clone(), UploadState::queued())?;
                 let record = OperationRecord { seq: None, action_key: format!("@blob/{name}"), status: OperationStatus::Pending, row_ids: Vec::new(), temp_id: None, input: serde_json::Value::Null, transport_started: false, base_revision: Some(inner.db.revision_seq()?), created_at: inner.now_ms(), dedupe_key: None, rollback: None, upload: None };
-                let result = inner.commit_deferred(generation, |_| {
+                let result = inner.commit_deferred(&admitted, generation, |_| {
                     let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                     envelope.operation_transitions.push(OperationTransition::BeginBlob { record: Box::new(record.clone()), item: Box::new(item.clone()), id: id.clone(), name: name.clone() });
                     Ok(Some(envelope))
@@ -45,9 +45,9 @@ impl Sync {
                 let seq = result.as_ref().and_then(|result| result.result().operations.iter().next().copied()).ok_or(SyncError::Cancelled);
                 *pending = result;
                 seq
-            }))?;
+            })?;
             inner.start_uploads()?;
-            inner.db.report_upload_accepted("", vec![crate::db::AcceptedUpload { seq, position: 0 }]);
+            inner.db.report_upload_accepted(&admitted, "", vec![crate::db::AcceptedUpload { seq, position: 0 }]);
             Ok(id)
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
@@ -68,15 +68,13 @@ impl Sync {
         }
     }
 
-    pub async fn retry_blob(&self, id: &str) -> Result<(), SyncError> { self.retry_blob_in(id, None).await }
-
-    pub async fn retry_blob_in(&self, id: &str, epoch: Option<u64>) -> Result<(), SyncError> {
-        self.inner.expire_blobs().await?;
+    pub async fn retry_blob(&self, admitted: &crate::lifecycle::Admitted, id: &str) -> Result<(), SyncError> {
+        self.inner.require_session(admitted)?;
+        self.inner.expire_blobs(admitted).await?;
         let blob = self.blob_snapshot(id)?;
         if blob.state != BlobState::Failed { return Err(SyncError::Params("only a failed Blob can retry".into())); }
         let generation = self.inner.db.generation();
-        let life = self.inner.db.shared.store.lifecycle.clone();
-        super::pinned(&life, epoch, || self.inner.commit(generation, |reader| {
+        self.inner.commit(admitted, generation, |reader| {
             let seq = reader.connection().query_row("SELECT seq FROM blob_upload WHERE id = ?1", [id], |row| row.get::<_, i64>(0)).map_err(crate::store::StoreError::from)?;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             let mut state = blob.upload.clone();
@@ -87,13 +85,12 @@ impl Sync {
             envelope.operation_transitions.push(OperationTransition::Progress { seq, item_position: 0, state: Box::new(state) });
             envelope.operation_transitions.push(OperationTransition::Retry { seq });
             Ok(Some(envelope))
-        }))?;
+        })?;
         self.inner.start_uploads()
     }
 
-    pub async fn discard_blob(&self, id: &str) -> Result<(), SyncError> { self.discard_blob_in(id, None).await }
-
-    pub async fn discard_blob_in(&self, id: &str, epoch: Option<u64>) -> Result<(), SyncError> {
+    pub async fn discard_blob(&self, admitted: &crate::lifecycle::Admitted, id: &str) -> Result<(), SyncError> {
+        self.inner.require_session(admitted)?;
         let generation = self.inner.db.generation();
         let blob = self.blob_snapshot(id)?;
         if blob.consumer.is_some() { return Err(SyncError::Params("Blob is pinned to an operation".into())); }
@@ -105,14 +102,13 @@ impl Sync {
             let waiting = running.into_iter().map(|(_, done)| done);
             for mut done in waiting { let _ = done.wait_for(|done| *done).await; }
         }
-        let life = self.inner.db.shared.store.lifecycle.clone();
-        super::pinned(&life, epoch, || self.inner.commit(generation, |_| {
+        self.inner.commit(admitted, generation, |_| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
             envelope.operation_transitions.push(OperationTransition::RetireBlob { id: id.into(), expired: false });
             Ok(Some(envelope))
-        }))?;
+        })?;
         self.inner.spawn_upload_housekeeping(false);
-        self.inner.discard_files(files).await?;
+        self.inner.discard_files(admitted, files).await?;
         Ok(())
     }
 }

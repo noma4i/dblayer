@@ -11,19 +11,19 @@ fn queue(kind: &str) -> (Rig, &'static str, &'static str) {
     put(&rig, "moments", moment("m1", "old"));
     match kind {
         "create" => {
-            rig.db.as_app().create("moments", params(json!({"text": "new"}))).unwrap();
+            rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "new"}))).unwrap();
             (rig, "CreateMoment", "createMoment")
         }
         "update" => {
-            rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+            rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
             (rig, "UpdateMoment", "updateMoment")
         }
         "destroy" => {
-            rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
+            rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
             (rig, "DeleteMoment", "deleteMoment")
         }
         _ => {
-            rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+            rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
             (rig, "LikeMoment", "likeMoment")
         }
     }
@@ -52,7 +52,7 @@ async fn inv_op_05_an_answer_that_cannot_be_read_never_acknowledges_a_mutation()
         for (label, reply) in unreadable_answers(kind, root) {
             let (rig, operation, _) = queue(kind);
             rig.transport.enqueue(operation, reply);
-            crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+            crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
             let open = rig.db.outbox().unwrap();
             let state = open.first().map(|entry| rig.db.sync_info("moments", &entry.operation.row_ids[0]).unwrap().state);
             if state != Some(SyncState::DeliveryUnknown) {
@@ -68,7 +68,7 @@ async fn inv_op_14_an_answer_that_cannot_be_matched_is_kept_in_quarantine_and_th
     for kind in ["update", "destroy", "action"] {
         let (rig, operation, _) = queue(kind);
         rig.transport.enqueue(operation, Reply::data(json!({"wrong": {"id": "m1"}})));
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
         let kept: usize = quarantine_counts(&rig.db.shared.store.lock().connection).unwrap().values().sum();
         assert_eq!((kept, rig.db.outbox().unwrap().len()), (1, 1), "{kind}");
     }

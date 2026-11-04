@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::db::locked;
-use crate::lifecycle::{Lease, Origin};
+use crate::lifecycle::{Admitted, Origin};
 use super::wire::{WireModel, WireRow};
 use super::{Database, DbError, WireBlobSnapshot, WireModelEvent};
 
@@ -247,11 +247,12 @@ impl Database {
         }
         let sync = self.sync()?.clone();
         let request = open.request.clone();
+        let work_admitted = lease.clone();
         let work = super::database::cancellable(async move {
             let params = serde_json::from_str(&request.params_json).map_err(DbError::from)?;
             match (&request.relation, &request.entity) {
-                (Some(relation), _) => sync.refresh(&request.model, relation, &params).await.map(|_| ()).map_err(DbError::from),
-                (None, Some(id)) => sync.load_entity(&request.model, id).await.map_err(DbError::from),
+                (Some(relation), _) => sync.refresh(&work_admitted, &request.model, relation, &params).await.map(|_| ()).map_err(DbError::from),
+                (None, Some(id)) => sync.load_entity(&work_admitted, &request.model, id).await.map_err(DbError::from),
                 (None, None) => Err(DbError::Invalid { detail: "the stream reads local rows and has nothing to refresh".into() }),
             }
         });
@@ -265,9 +266,10 @@ impl Database {
         let sync = self.sync()?.clone();
         let request = open.request.clone();
         let Some(relation) = request.relation.clone() else { return Err(DbError::Invalid { detail: "the stream has no relation to page".into() }) };
+        let work_admitted = lease.clone();
         let work = super::database::cancellable(async move {
             let params = serde_json::from_str(&request.params_json).map_err(DbError::from)?;
-            let outcome = sync.load_more(&request.model, &relation, &params).await.map_err(DbError::from)?;
+            let outcome = sync.load_more(&work_admitted, &request.model, &relation, &params).await.map_err(DbError::from)?;
             Ok::<_, DbError>(match outcome.status {
                 crate::sync::LoadStatus::NoMorePages(crate::read::LoadMoreVerdict::AlreadyLoading) => LoadMoreResult::AlreadyLoading,
                 crate::sync::LoadStatus::NoMorePages(_) => LoadMoreResult::NoMore,
@@ -330,10 +332,10 @@ impl Database {
         }
     }
 
-    fn stream_call(&self, stream: u64, target: &'static str) -> Result<(Arc<Stream>, Lease), DbError> {
+    fn stream_call(&self, stream: u64, target: &'static str) -> Result<(Arc<Stream>, Admitted), DbError> {
         let open = self.stream_table.find(stream).ok_or_else(stale)?;
-        let lease = self.streams.lease(Origin::Session, target).map_err(|_| stale())?;
-        if lease.epoch() != open.epoch { return Err(stale()); }
+        let lease = self.streams.admit(Origin::Session, target).map_err(|_| stale())?;
+        if lease.value() != open.epoch { return Err(stale()); }
         Ok((open, lease))
     }
 

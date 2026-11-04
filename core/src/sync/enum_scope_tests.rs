@@ -41,8 +41,8 @@ async fn each_list_value_has_its_window_and_the_server_answer_decides_the_member
     let (primary, secondary) = (params(json!({"list": "PRIMARY"})), params(json!({"list": "SECONDARY"})));
     rig.transport.enqueue("Chats", answer(&[("c1", &["PRIMARY", "SECONDARY"]), ("c2", &["PRIMARY"])]));
     rig.transport.enqueue("Chats", answer(&[("c1", &["PRIMARY", "SECONDARY"]), ("c3", &["SECONDARY", "FUTURE"])]));
-    rig.sync.load("chats", "list", &primary, Default::default()).await.unwrap();
-    rig.sync.load("chats", "list", &secondary, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", &primary, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", &secondary, Default::default()).await.unwrap();
     assert_eq!(rig.transport.calls()[0].variables, json!({"list": "PRIMARY", "first": 25}));
     assert_eq!(rig.transport.calls()[1].variables, json!({"list": "SECONDARY", "first": 25}));
     assert_eq!(member_ids(&rig, "chats", "list", &primary), ["c1", "c2"]);
@@ -58,10 +58,10 @@ async fn a_stale_window_reloads_and_a_chat_the_server_dropped_leaves_only_that_w
     rig.transport.enqueue("Chats", answer(&[("c1", &["PRIMARY", "SECONDARY"]), ("c2", &["PRIMARY"])]));
     rig.transport.enqueue("Chats", answer(&[("c1", &["PRIMARY", "SECONDARY"])]));
     rig.transport.enqueue("Chats", answer(&[("c2", &["PRIMARY"])]));
-    rig.sync.load("chats", "list", &primary, Default::default()).await.unwrap();
-    rig.sync.load("chats", "list", &secondary, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", &primary, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", &secondary, Default::default()).await.unwrap();
     rig.db.shared.store.invalidate_family_now("chats", "list").unwrap();
-    rig.sync.load("chats", "list", &primary, Default::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "chats", "list", &primary, Default::default()).await.unwrap();
     assert_eq!(rig.transport.call_count("Chats"), 3);
     assert_eq!(member_ids(&rig, "chats", "list", &primary), ["c2"]);
     assert_eq!(member_ids(&rig, "chats", "list", &secondary), ["c1"]);

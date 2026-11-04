@@ -2,6 +2,7 @@ mod cache;
 pub(crate) use cache::row_bytes;
 mod warm;
 mod commit;
+pub use crate::lifecycle::Admitted;
 mod correlate;
 mod diff;
 pub(crate) mod dispatch;

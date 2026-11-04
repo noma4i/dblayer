@@ -42,7 +42,7 @@ struct Member {
 }
 
 impl Db {
-    pub fn replace(&self, request: &ReplaceRequest, rows: Vec<Map<String, Value>>) -> Result<CommitResult, DbError> {
+    pub fn replace(&self, admitted: &crate::lifecycle::Admitted, request: &ReplaceRequest, rows: Vec<Map<String, Value>>) -> Result<CommitResult, DbError> {
         let spec = self.shared.spec(request.scope.model.as_str())?;
         let rows = rows.iter().map(|row| {
             let mut patch = spec.patch(row);
@@ -51,7 +51,7 @@ impl Db {
         }).collect::<Result<Vec<_>, DbError>>()?;
         let rows = crate::store::coalesce_rows(rows.into_iter().map(|row| (request.scope.model.clone(), row)));
         let generation = self.generation();
-        self.commit_following(&self.authority()?, generation, |reader| {
+        self.commit_following(&admitted.authority(), generation, |reader| {
                 let model = request.scope.model.as_str();
                 let rows = rows
                     .iter()

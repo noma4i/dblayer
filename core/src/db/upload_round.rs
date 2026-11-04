@@ -1,7 +1,7 @@
 use statig::prelude::*;
 
 use super::open::{locked, Db};
-use super::upload_accepted::AcceptedUpload;
+use super::upload_accepted::UploadAccepted;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoundStep {
@@ -21,7 +21,7 @@ enum Phase {
 #[derive(Debug, Clone)]
 enum RoundEvent {
     Restore,
-    Accept(Vec<AcceptedUpload>),
+    Accept(UploadAccepted),
     Begin,
     Next(u32),
     Leave(u32),
@@ -36,7 +36,7 @@ enum Reply {
     Accepted(bool),
     Began(Option<u32>),
     Step(RoundStep),
-    Ended(Option<Vec<AcceptedUpload>>),
+    Ended(Option<Vec<UploadAccepted>>),
 }
 
 #[derive(Default)]
@@ -45,7 +45,7 @@ struct Cover {
     seen: u64,
     round: u32,
     phase: Phase,
-    late: Vec<AcceptedUpload>,
+    late: Vec<UploadAccepted>,
     reply: Reply,
 }
 
@@ -147,9 +147,9 @@ impl RoundFlow {
     #[state(superstate = "any")]
     fn ending(context: &mut Cover, event: &RoundEvent) -> Outcome<State> {
         match event {
-            RoundEvent::Accept(items) => {
+            RoundEvent::Accept(group) => {
                 context.accepted += 1;
-                context.late.extend_from_slice(items);
+                context.late.push(group.clone());
                 context.reply = Reply::Accepted(true);
                 Handled
             }
@@ -189,8 +189,8 @@ impl UploadRound {
         std::mem::take(&mut self.cover.reply)
     }
 
-    pub(crate) fn accept(&mut self, items: &[AcceptedUpload]) -> bool {
-        matches!(self.send(RoundEvent::Accept(items.to_vec())), Reply::Accepted(true))
+    pub(crate) fn accept(&mut self, group: UploadAccepted) -> bool {
+        matches!(self.send(RoundEvent::Accept(group)), Reply::Accepted(true))
     }
 
     pub(crate) fn begin(&mut self) -> Option<u32> {
@@ -215,7 +215,7 @@ impl UploadRound {
         }
     }
 
-    pub(crate) fn end(&mut self, owner: u32) -> Option<Vec<AcceptedUpload>> {
+    pub(crate) fn end(&mut self, owner: u32) -> Option<Vec<UploadAccepted>> {
         match self.send(RoundEvent::End(owner)) {
             Reply::Ended(late) => late,
             _ => None,
@@ -228,27 +228,36 @@ impl UploadRound {
 }
 
 impl Db {
-    pub(crate) fn round_accept(&self, items: &[AcceptedUpload]) -> bool {
-        locked(&self.shared.upload_round).accept(items)
+    pub(crate) fn round_accept(&self, group: UploadAccepted) -> bool {
+        locked(&self.shared.upload_round).accept(group)
     }
 
-    pub fn round_begin(&self) -> Option<u32> {
-        locked(&self.shared.upload_round).begin()
+    fn change_round<T>(&self, admitted: &crate::lifecycle::Admitted, change: impl FnOnce(&mut UploadRound) -> T) -> Result<T, super::DbError> {
+        let life = &self.shared.store.lifecycle;
+        let _line = life.commit_line();
+        if !std::sync::Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() {
+            return Err(super::DbError::NoSession { detail: "the session of this upload round ended".into() });
+        }
+        Ok(change(&mut locked(&self.shared.upload_round)))
     }
 
-    pub fn round_next(&self, owner: u32) -> RoundStep {
-        locked(&self.shared.upload_round).next(owner)
+    pub fn round_begin(&self, admitted: &crate::lifecycle::Admitted) -> Result<Option<u32>, super::DbError> {
+        self.change_round(admitted, UploadRound::begin)
     }
 
-    pub fn round_leave(&self, owner: u32) -> RoundStep {
-        locked(&self.shared.upload_round).leave(owner)
+    pub fn round_next(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<RoundStep, super::DbError> {
+        self.change_round(admitted, |round| round.next(owner))
     }
 
-    pub fn round_end(&self, owner: u32) -> Option<Vec<AcceptedUpload>> {
-        locked(&self.shared.upload_round).end(owner)
+    pub fn round_leave(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<RoundStep, super::DbError> {
+        self.change_round(admitted, |round| round.leave(owner))
     }
 
-    pub fn round_abandon(&self, owner: u32) {
-        locked(&self.shared.upload_round).abandon(owner);
+    pub fn round_end(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<Option<Vec<UploadAccepted>>, super::DbError> {
+        self.change_round(admitted, |round| round.end(owner))
+    }
+
+    pub fn round_abandon(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<(), super::DbError> {
+        self.change_round(admitted, |round| round.abandon(owner))
     }
 }

@@ -21,7 +21,7 @@ fn enqueue_pages(rig: &Rig, pages: Vec<Value>) {
 }
 
 async fn load_page(rig: &Rig) {
-    rig.sync.load("moments", "feed", &serde_json::Map::new(), LoadOptions { force: true }).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &serde_json::Map::new(), LoadOptions { force: true }).await.unwrap();
 }
 
 #[tokio::test(start_paused = true)]
@@ -38,15 +38,15 @@ async fn a_narrower_response_keeps_the_fields_it_does_not_select_on_every_delive
             "next page" => {
                 rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![json!({"id": "m1", "text": "first", "userId": "u1"})], true, "c1")));
                 rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![json!({"id": "m1", "mood": "calm"})], false, "c2")));
-                rig.sync.load("moments", "feed", &serde_json::Map::new(), LoadOptions::default()).await.unwrap();
-                rig.sync.load_more("moments", "feed", &serde_json::Map::new()).await.unwrap();
+                rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &serde_json::Map::new(), LoadOptions::default()).await.unwrap();
+                rig.sync.load_more(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &serde_json::Map::new()).await.unwrap();
                 vec![("text", json!("first")), ("userId", json!("u1"))]
             }
             _ => {
                 put(&rig, "moments", json!({"id": "m1", "text": "old", "userId": null, "likedByMe": true}));
-                rig.db.as_app().update("moments", &RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
+                rig.db.update(&rig.db.admit().unwrap(), "moments", &RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
                 rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "mood": "calm"}})));
-                crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+                crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
                 vec![("text", json!("new")), ("likedByMe", json!(true))]
             }
         };

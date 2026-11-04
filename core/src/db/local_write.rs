@@ -150,33 +150,33 @@ pub(super) fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> 
 }
 
 impl Db {
-    pub fn create(&self, model: &str, values: Map<String, Value>) -> Result<Row, DbError> {
-        self.create_with(model, values, Map::new())
+    pub fn create(&self, admitted: &crate::lifecycle::Admitted, model: &str, values: Map<String, Value>) -> Result<Row, DbError> {
+        self.create_with(admitted, model, values, Map::new())
     }
 
-    pub fn create_with(&self, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
-        self.create_in(None, model, values, args)
+    pub fn create_with(&self, admitted: &crate::lifecycle::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        self.create_in(admitted, None, model, values, args)
     }
 
     /// Creates the row in the data generation the caller was admitted in: a commit after that generation ended is refused as stale.
-    pub(crate) fn create_in(&self, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
-        self.create_queued(pinned, model, values, args).map(|(row, _)| row)
+    pub(crate) fn create_in(&self, admitted: &crate::lifecycle::Admitted, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        self.create_queued(admitted, pinned, model, values, args).map(|(row, _)| row)
     }
 
-    pub(crate) fn create_queued(&self, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>), DbError> {
-        if !args.is_empty() { self.expire_blobs_before_use()?; }
+    pub(crate) fn create_queued(&self, admitted: &crate::lifecycle::Admitted, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>), DbError> {
+        if !args.is_empty() { self.expire_blobs_before_use(admitted)?; }
         self.fill_local_sources(model, &mut values)?;
-        let (id, operation) = self.insert_local(model, values, args, Action::Create, (None, pinned), None)?;
+        let (id, operation) = self.insert_local(admitted, model, values, args, Action::Create, (None, pinned), None)?;
         let row = self.find(model, &id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
         Ok((row, operation))
     }
 
-    pub(crate) fn create_held(&self, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
+    pub(crate) fn create_held(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
         let id = values.get("id").and_then(read_id).unwrap_or_else(|| RowId::generate_temp(None));
         values.insert("id".into(), Value::String(id.to_string()));
-        self.preparing_uploads(model, generation, |files, generation, committed| {
+        self.preparing_uploads(admitted, model, generation, |files, generation, committed| {
             let item = files.prepare(model, id, uuid::Uuid::new_v4().to_string(), input, state)?;
-            self.insert_local(model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed)).map(|(id, _)| id)
+            self.insert_local(admitted, model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed)).map(|(id, _)| id)
         })
     }
 
@@ -186,7 +186,7 @@ impl Db {
         declared.mutation.clone().ok_or_else(|| DbError::InvalidUpload(format!("{model} {action} declares no mutation")))
     }
 
-    pub(crate) fn create_upload_batch(&self, generation: crate::identity::Generation, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput, uploads: &crate::upload::UploadOperations) -> Result<Vec<RowId>, DbError> {
+    pub(crate) fn create_upload_batch(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput, uploads: &crate::upload::UploadOperations) -> Result<Vec<RowId>, DbError> {
         let spec = self.shared.spec(model)?;
         let action = spec.actions.iter().find(|action| action.name == request.operation).ok_or_else(|| DbError::InvalidUpload("unknown upload operation".into()))?;
         let batch = action.batch.as_ref().ok_or_else(|| DbError::InvalidUpload("operation has no upload batch declaration".into()))?;
@@ -223,9 +223,9 @@ impl Db {
             base_revision: Some(self.revision_seq()?), created_at: now, dedupe_key: None, upload: None,
             rollback: Some(Prior { rows: ids.iter().map(|id| PriorRow::Created { model: model.into(), id: id.to_string() }).collect() }.to_value()),
         };
-        self.preparing_uploads(model, generation, |prepared, generation, pending| {
+        self.preparing_uploads(admitted, model, generation, |prepared, generation, pending| {
             let files = files.into_iter().map(|(row, key, input)| prepared.prepare(model, row, key, input, UploadState::queued())).collect::<Result<Vec<_>, _>>()?;
-            let (committed, _) = self.commit_following_deferred(&self.authority()?, generation, |reader| {
+            let (committed, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 for (id, data) in &rows {
                     envelope.scope_ops.extend(local_scope_ops(reader, spec, id, data)?);
@@ -239,7 +239,7 @@ impl Db {
         })
     }
 
-    fn insert_local<'a>(&'a self, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>), DbError> {
+    fn insert_local<'a>(&'a self, admitted: &crate::lifecycle::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>), DbError> {
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &values)?;
         let mut input = values;
@@ -269,7 +269,7 @@ impl Db {
             scope_ops: Vec::new(),
             upload,
         };
-        let committed = self.commit_local_optional(spec, &mut queued, generation, pending, |reader, plan, queued| {
+        let committed = self.commit_local_optional(admitted, spec, &mut queued, generation, pending, |reader, plan, queued| {
             if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
                 return Err(DbError::AlreadyExists { model: model.to_string(), id: id.to_string() });
             }
@@ -282,12 +282,12 @@ impl Db {
         Ok((id, operation))
     }
 
-    pub fn update(&self, model: &str, id: &RowId, patch: Map<String, Value>) -> Result<Row, DbError> {
-        self.update_with(model, id, patch, Map::new())
+    pub fn update(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, patch: Map<String, Value>) -> Result<Row, DbError> {
+        self.update_with(admitted, model, id, patch, Map::new())
     }
 
-    pub fn update_with(&self, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
-        if !args.is_empty() { self.expire_blobs_before_use()?; }
+    pub fn update_with(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+        if !args.is_empty() { self.expire_blobs_before_use(admitted)?; }
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &patch)?;
         reject_invalid_values(spec, model, &patch)?;
@@ -301,12 +301,11 @@ impl Db {
         let sends_args = !args.is_empty();
         input.extend(args);
         let mut queued = Queued { action: Action::Update, row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
-        let committed = !self.commit_local_optional(spec, &mut queued, None, None, |reader, plan, queued| {
+        let committed = !self.commit_local_optional(admitted, spec, &mut queued, None, None, |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
             if same_fields(&merged, &current) && !sends_args {
-                self.shared.ephemeral.lock().track(model, id.as_str(), i64::MAX);
                 return Ok(None);
             }
             queued.rollback = Some(Prior { rows: vec![PriorRow::edited(reader, model, id.as_str(), &current, &merged)?] }.to_value());
@@ -315,18 +314,24 @@ impl Db {
         })?
         .is_noop();
         if !committed {
+            {
+                let life = &self.shared.store.lifecycle;
+                let _line = life.commit_line();
+                if !std::sync::Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() { return Err(DbError::NoSession { detail: "the session of this write ended".into() }); }
+                self.shared.ephemeral.lock().track(model, id.as_str(), i64::MAX);
+            }
             let current = self.find(model, id)?;
             return current.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() });
         }
         self.find(model, id)?.ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })
     }
 
-    pub fn act(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
-        self.act_claiming(model, action, id, patch, args, |_| ()).map(|(acted, ())| acted)
+    pub fn act(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
+        self.act_claiming(admitted, model, action, id, patch, args, |_| ()).map(|(acted, ())| acted)
     }
 
-    pub fn act_claiming<T>(&self, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(i64) -> T) -> Result<(Acted, T), DbError> {
-        self.expire_blobs_before_use()?;
+    pub fn act_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(i64) -> T) -> Result<(Acted, T), DbError> {
+        self.expire_blobs_before_use(admitted)?;
         let spec = self.shared.spec(model)?;
         let mut patch = patch;
         crate::schema::keyed::resolve_maps(&mut patch, &args);
@@ -346,7 +351,7 @@ impl Db {
         let receiver_row = self.find(model, id)?;
         let mut queued = Queued { action: Action::Named(action.to_string()), row_id: id.clone(), temp_id: None, input: Value::Object(input), rollback: None, scope_ops: Vec::new(), upload: None };
         let mut unannounced = None;
-        let committed = self.commit_local_optional(spec, &mut queued, None, Some(&mut unannounced), |reader, plan, queued| {
+        let committed = self.commit_local_optional(admitted, spec, &mut queued, None, Some(&mut unannounced), |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
@@ -508,14 +513,14 @@ impl Db {
         Ok(())
     }
 
-    pub fn destroy(&self, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {
+    pub fn destroy(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {
         let spec = self.shared.spec(model)?;
         let own = RowRef::new(ModelKey::new(model), id.clone());
         let generation = self.generation();
         let created_at = self.shared.store.lock().now_ms();
         let mut destroyed: Vec<RowRef> = Vec::new();
         let mut discarded: Vec<String> = Vec::new();
-        self.commit_following(&self.authority()?, generation, |reader| {
+        self.commit_following(&admitted.authority(), generation, |reader| {
                 if reader.point(model, id.as_str())?.is_none() {
                     return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
                 }
@@ -577,6 +582,7 @@ impl Db {
 
     fn commit_local_optional<'a>(
         &'a self,
+        admitted: &crate::lifecycle::Admitted,
         spec: &ModelSpec,
         queued: &mut Queued,
         generation: Option<crate::identity::Generation>,
@@ -585,7 +591,7 @@ impl Db {
     ) -> Result<CommitResult, DbError> {
         let generation = generation.unwrap_or_else(|| self.generation());
         let created_at = self.shared.store.lock().now_ms();
-        let (result, _) = self.commit_following_deferred(&self.authority()?, generation, |reader| {
+        let (result, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
                 queued.scope_ops.clear();
                 let mut plan = WritePlan::new();
                 let Some(touches) = build(reader, &mut plan, queued)? else { return Ok(None) };

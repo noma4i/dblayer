@@ -101,7 +101,7 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     assert!(received.try_recv().is_err(), "the failure reached the listener more than once");
     assert!(subscriptions.try_recv().is_err());
     assert_eq!(transport.queries.load(Ordering::SeqCst), initial_reads);
-    database.resume().await.unwrap();
+    database.resume(database.session_epoch()).await.unwrap();
     let resumed = within(subscriptions.recv()).await.expect("resume restarts the stopped subscription");
     resumed.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "second_session".into() });
     assert!(matches!(within(received.recv()).await.expect("observer receives the next session failure"), DbError::Session { detail, .. } if detail == "second_session"));

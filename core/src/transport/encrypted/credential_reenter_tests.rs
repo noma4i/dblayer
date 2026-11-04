@@ -96,7 +96,7 @@ fn session_digest(db: &Db) -> Option<String> {
 
 fn load_on_thread(client: &Arc<EncryptedClient>) -> std::thread::JoinHandle<Result<String, TransportError>> {
     let client = client.clone();
-    std::thread::spawn(move || client.credential())
+    std::thread::spawn(move || client.credential(&client.admit("test credential").unwrap()))
 }
 
 #[test]
@@ -159,7 +159,7 @@ fn credential_callback_asking_for_the_credential_is_refused() {
     impl CredentialSlot for Asks {
         fn get(&self) -> Result<Option<String>, TransportError> {
             let client = self.0.lock().unwrap().upgrade().unwrap();
-            *self.1.lock().unwrap() = Some(client.credential());
+            *self.1.lock().unwrap() = Some(client.credential(&client.admit("test credential").unwrap()));
             Ok(None)
         }
         fn set(&self, _: &str) -> Result<(), TransportError> { Ok(()) }

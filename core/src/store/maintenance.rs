@@ -33,8 +33,8 @@ fn iso_millis(milliseconds: i64) -> Option<String> {
 }
 
 impl Store {
-    pub fn maintain(&self, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, StoreError> {
-        let authority = crate::lifecycle::Authority::Epoch(self.lifecycle.epoch_now());
+    pub(crate) fn maintain(&self, admitted: &crate::lifecycle::Admitted, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, StoreError> {
+        let authority = admitted.authority();
         let (tombstone_drops, ids, generation) = self.write_store(&authority, |inner| {
             let now = inner.now_ms();
             let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT)?;

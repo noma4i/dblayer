@@ -56,7 +56,7 @@ async fn land_through(path: Path, node: &Value) -> Rig {
     match path {
         Path::Load => {
             rig.transport.enqueue("MomentsFeed", Reply::data(feed_page(vec![node.clone()], false, "c1")));
-            rig.sync.load("moments", "feed", &params(json!({})), LoadOptions { force: true }).await.unwrap();
+            rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &params(json!({})), LoadOptions { force: true }).await.unwrap();
         }
         Path::Upsert | Path::Patch => {
             let effect = if matches!(path, Path::Upsert) { EventEffect::Upsert } else { EventEffect::Patch };
@@ -65,9 +65,9 @@ async fn land_through(path: Path, node: &Value) -> Rig {
             rig.transport.await_consumed("MomentChanged").await;
         }
         Path::Response => {
-            rig.db.as_app().update("moments", &rid("m1"), params(json!({"mood": "calm"}))).unwrap();
+            rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"mood": "calm"}))).unwrap();
             rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": node})));
-            crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+            crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
         }
     }
     rig

@@ -23,7 +23,7 @@ async fn inv_upload_15_every_step_of_an_upload_reaches_the_observer_with_current
         rig.transport.enqueue_put(&format!("https://s3/p{number}"), PutReply::etag("e").after(Duration::from_secs(2)));
     }
     let source = file(TWELVE);
-    crate::sync::rig::app(&rig.sync, rig.sync.upload("moments", &rid("m1"), "upload", input(&source))).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     rig.sync.wait_uploads().await;
     rig.db.await_revision(rig.db.revision_seq().unwrap());
 

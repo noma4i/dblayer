@@ -77,7 +77,7 @@ async fn load(rig: &Rig, relation: &str, after_sequence: Option<i64>) -> Map<Str
     let mut query = params(json!({"chatId": "c1"}));
     if let Some(bound) = after_sequence { query.insert("afterSequence".into(), json!(bound)); }
     rig.transport.enqueue("ChatMedia", Reply::data(json!({"media": {"nodes": [], "pageInfo": {"hasNextPage": false, "endCursor": "c"}}})));
-    rig.sync.load("messages", relation, &query, LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "messages", relation, &query, LoadOptions::default()).await.unwrap();
     query
 }
 

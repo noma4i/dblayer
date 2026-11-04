@@ -61,7 +61,7 @@ fn operate(db: &Db, seed: &mut Seed, pool: u64) {
     let id = format!("u{:03}", seed.below(pool));
     match seed.below(4) {
         0 => {
-            let _ = db.as_app().destroy("users", &rid(&id));
+            let _ = db.destroy(&db.admit().unwrap(), "users", &rid(&id));
         }
         _ => put(db, "users", json!({"id": id, "name": format!("n{:02}", seed.below(30))})),
     }
@@ -111,7 +111,7 @@ fn inv_observe_15_a_listener_that_falls_behind_still_rebuilds_the_fresh_list() {
         let (id, name) = (format!("u{:03}", seed.below(25)), format!("n{:02}", seed.below(30)));
         let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row: obj(json!({"id": id, "name": name})) });
-        db.as_app().land(envelope).unwrap();
+        db.land(&db.admit().unwrap(), envelope).unwrap();
     }
     release.send(()).unwrap();
     db.await_revision(db.revision_seq().unwrap());
@@ -157,11 +157,11 @@ fn inv_observe_18_a_replaced_pair_reaches_a_reader_that_never_saw_the_temporary_
         })
         .unwrap();
     entered.recv_timeout(WAIT).unwrap();
-    let temp = db.as_app().create("moments", obj(json!({"text": "new"}))).unwrap();
+    let temp = db.create(&db.admit().unwrap(), "moments", obj(json!({"text": "new"}))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
-    db.as_app().land(envelope).unwrap();
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     release.send(()).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let seen = log.lock().unwrap().clone();
@@ -179,12 +179,12 @@ fn inv_observe_18_a_pair_replaced_while_the_group_is_evaluated_still_reaches_the
     let hold = crate::db::open::locked(&db.shared.observers);
     let writer = db.clone();
     let temp = crate::test_wait::join_within(std::thread::spawn(move || {
-        let temp = writer.as_app().create("moments", obj(json!({"text": "new"}))).unwrap();
+        let temp = writer.create(&writer.admit().unwrap(), "moments", obj(json!({"text": "new"}))).unwrap();
         crate::test_wait::spin_until("the dispatcher never took the create event", || writer.shared.dispatch.queued() == 0);
         let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, writer.generation());
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
-        writer.as_app().land(envelope).unwrap();
+        writer.land(&writer.admit().unwrap(), envelope).unwrap();
         temp
     }));
     drop(hold);
@@ -208,9 +208,9 @@ fn inv_observe_18_more_replaced_pairs_than_the_log_keeps_deliver_none_of_them() 
         second.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: rid(&format!("t{n}")), reason: crate::commit::DestroyReason::Replaced { by: rid(&format!("m{n}")) } });
         second.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("m{n}")), row: obj(json!({"id": format!("m{n}"), "text": "new"})) });
     }
-    db.as_app().land(first).unwrap();
+    db.land(&db.admit().unwrap(), first).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.as_app().land(second).unwrap();
+    db.land(&db.admit().unwrap(), second).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     let seen = changes(&log);
     let last = seen.last().unwrap();

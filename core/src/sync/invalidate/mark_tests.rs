@@ -29,12 +29,12 @@ async fn a_refused_reread_leaves_the_call_of_the_mutation_successful() {
         }
         load(&rig, "feed").await;
         load(&rig, "history").await;
-        rig.db.as_app().create("moments", params(json!({"text": "t"}))).unwrap();
+        rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "t"}))).unwrap();
         rig.transport.enqueue("CreateMoment", created());
         if case == "read" {
             rig.db.shared.store.lock().connection.execute("ALTER TABLE query_window RENAME COLUMN landed_at TO broken_landed_at", []).unwrap();
         }
-        let report = crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        let report = crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
         rereads_finished(&rig, "MomentsHistory", if case == "read" { 1 } else { 2 }).await;
         assert_eq!(report.committed(), 1, "{case}");
         assert_eq!(rig.transport.call_count("MomentsFeed"), if case == "read" { 1 } else { 2 }, "{case}");
@@ -59,7 +59,7 @@ fn invalidated(rig: &Rig, relation: &str) -> bool {
 }
 
 async fn load(rig: &Rig, relation: &str) {
-    rig.sync.load("moments", relation, &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", relation, &none(), LoadOptions::default()).await.unwrap();
 }
 
 fn history_reply(ids: &[&str]) -> Reply {
@@ -71,12 +71,12 @@ async fn inv_fresh_10_created_moment_marks_the_open_feed_stale_and_the_next_load
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     load(&rig, "feed").await;
-    rig.db.as_app().create("moments", params(json!({"text": "t"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "t"}))).unwrap();
     rig.transport.enqueue("CreateMoment", created());
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert!(invalidated(&rig, "feed"));
     assert_eq!(rig.transport.call_count("MomentsFeed"), 1);
-    rig.sync.load("moments", "feed", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
     assert!(!invalidated(&rig, "feed"));
 }
@@ -88,9 +88,9 @@ async fn watched_feed_is_reread_right_after_create() {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m9", "m1"], false, "c2"));
     load(&rig, "feed").await;
-    rig.db.as_app().create("moments", params(json!({"text": "t"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "t"}))).unwrap();
     rig.transport.enqueue("CreateMoment", created());
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     rereads_finished(&rig, "MomentsFeed", 2).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
     assert!(!invalidated(&rig, "feed"));
@@ -101,9 +101,9 @@ async fn watched_feed_is_reread_right_after_create() {
 async fn feed_without_an_open_window_is_not_touched() {
     let rig = rig();
     let _watch = rig.sync.watch("moments", "feed", &none()).unwrap();
-    rig.db.as_app().create("moments", params(json!({"text": "t"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "t"}))).unwrap();
     rig.transport.enqueue("CreateMoment", created());
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("MomentsFeed"), 0);
 }
 
@@ -115,9 +115,9 @@ async fn inv_fresh_10_refetch_marks_only_the_named_relations() {
     rig.transport.enqueue("MomentsHistory", history_reply(&["m1"]));
     load(&rig, "feed").await;
     load(&rig, "history").await;
-    rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+    rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
     rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert!(invalidated(&rig, "history"));
     assert!(!invalidated(&rig, "feed"));
 }
@@ -127,13 +127,13 @@ async fn refetch_of_a_relation_of_another_model_marks_that_relation() {
     let rig = rig();
     put(&rig, "moments", moment("m1", "t"));
     rig.transport.enqueue("CurrentUser", Reply::data(json!({"me": {"id": "u1", "name": "Ann"}})));
-    rig.sync.load("users", "current", &none(), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "users", "current", &none(), LoadOptions::default()).await.unwrap();
     let key = rig.sync.window_key("users", "current", &none()).unwrap();
     let stale = || rig.db.shared.store.window_freshness(&key).unwrap().is_some_and(|freshness| freshness.invalidated);
     assert!(!stale());
-    rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+    rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
     rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert!(stale());
 }
 
@@ -143,9 +143,9 @@ async fn update_without_refetch_marks_nothing() {
     put(&rig, "moments", moment("m1", "old"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     load(&rig, "feed").await;
-    rig.db.as_app().update("moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
+    rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert!(!invalidated(&rig, "feed"));
 }
 
@@ -155,9 +155,9 @@ async fn destroy_success_marks_the_feed_stale() {
     put(&rig, "moments", moment("m1", "t"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     load(&rig, "feed").await;
-    rig.db.as_app().destroy("moments", &rid("m1")).unwrap();
+    rig.db.destroy(&rig.db.admit().unwrap(), "moments", &rid("m1")).unwrap();
     rig.transport.enqueue("DeleteMoment", Reply::data(json!({"deleteMoment": {"ok": true}})));
-    assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap().committed(), 1);
+    assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap().committed(), 1);
     assert!(invalidated(&rig, "feed"));
 }
 
@@ -167,7 +167,7 @@ async fn refresh_rereads_a_fresh_window() {
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m1"], false, "c"));
     rig.transport.enqueue("MomentsFeed", feed_reply(&["m2"], false, "c2"));
     load(&rig, "feed").await;
-    rig.sync.refresh("moments", "feed", &none()).await.unwrap();
+    rig.sync.refresh(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none()).await.unwrap();
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m2"]);
 }
@@ -189,13 +189,14 @@ async fn reload_after_a_commit_is_issued_after_the_load_that_was_in_flight_at_th
         })
     });
     load(&rig, "feed").await;
-    rig.db.as_app().create("moments", params(json!({"text": "t"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "t"}))).unwrap();
     rig.transport.enqueue("CreateMoment", created());
     let no_params = none();
-    let older = rig.sync.refresh("moments", "feed", &no_params);
+    let admitted = rig.db.admit().unwrap();
+    let older = rig.sync.refresh(&admitted, "moments", "feed", &no_params);
     let commit = async {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     };
     let (older, ()) = tokio::join!(older, commit);
     older.unwrap();
@@ -211,9 +212,9 @@ async fn a_confirmed_create_does_not_reload_a_watched_list_that_takes_events() {
     enqueue_page(&rig, vec![message("m1", Some(1), 1)], false, "c");
     let _watch = rig.sync.watch("messages", "thread", &chat_params()).unwrap();
     load_first_page(&rig).await;
-    rig.db.as_app().create("messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:09.000Z"}))).unwrap();
+    rig.db.create(&rig.db.admit().unwrap(), "messages", params(json!({"chatId": CHAT, "text": "mine", "createdAt": "2026-01-01T00:00:09.000Z"}))).unwrap();
     rig.transport.enqueue("CreateMessage", Reply::data(json!({"createMessage": message("m9", Some(2), 9)})));
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("MessagesThread"), 1);
 }
 
@@ -236,15 +237,16 @@ async fn a_mutation_does_not_wait_for_a_load_of_its_refetched_list_that_is_in_fl
     });
     load(&rig, "history").await;
     let no_params = none();
-    let held = rig.sync.refresh("moments", "history", &no_params);
+    let admitted = rig.db.admit().unwrap();
+    let held = rig.sync.refresh(&admitted, "moments", "history", &no_params);
     let liking = async {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        let liked = rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        let liked = rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
         rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
         rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
-        let first = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation("moments", liked.operation))).await;
-        let liked_again = rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
-        let second = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation("moments", liked_again.operation))).await;
+        let first = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation(&rig.sync.inner.db.admit().unwrap(), "moments", liked.operation))).await;
+        let liked_again = rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        let second = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation(&rig.sync.inner.db.admit().unwrap(), "moments", liked_again.operation))).await;
         (first, second)
     };
     let (held, (first, second)) = tokio::join!(held, liking);
@@ -270,9 +272,9 @@ async fn a_mutation_returns_with_its_own_answer_while_its_reread_is_held() {
         })
     });
     load(&rig, "history").await;
-    let liked = rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+    let liked = rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
     rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
-    let settled = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation("moments", liked.operation))).await;
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(60), crate::sync::rig::app(&rig.sync, rig.sync.settled_operation(&rig.sync.inner.db.admit().unwrap(), "moments", liked.operation))).await;
     settled.expect("the call of the mutation waited for its reread").expect("the mutation failed");
     rig.transport.await_calls("MomentsHistory", 2).await;
     assert!(invalidated(&rig, "history"), "the reread has not been answered yet");
@@ -301,14 +303,15 @@ async fn an_older_answer_landing_after_the_mark_still_leads_to_the_reread() {
     });
     load(&rig, "history").await;
     let no_params = none();
-    let older = rig.sync.refresh("moments", "history", &no_params);
+    let admitted = rig.db.admit().unwrap();
+    let older = rig.sync.refresh(&admitted, "moments", "history", &no_params);
     let commits = async {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
-        rig.db.as_app().act("moments", "poke", &rid("m2"), params(json!({})), params(json!({}))).unwrap();
+        rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        rig.db.act(&rig.db.admit().unwrap(), "moments", "poke", &rid("m2"), params(json!({})), params(json!({}))).unwrap();
         rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
         rig.transport.enqueue("PokeMoment", Reply::data(json!({"pokeMoment": {"id": "m2", "text": "t", "userId": null}})).after(std::time::Duration::from_secs(10)));
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     };
     let (older, ()) = tokio::join!(older, commits);
     older.unwrap();
@@ -334,12 +337,13 @@ async fn a_mutation_committed_during_the_first_load_of_its_refetched_list_leads_
         })
     });
     let no_params = none();
-    let first = rig.sync.load("moments", "history", &no_params, LoadOptions::default());
+    let admitted = rig.db.admit().unwrap();
+    let first = rig.sync.load(&admitted, "moments", "history", &no_params, LoadOptions::default());
     let commit = async {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
         rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
-        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+        crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     };
     let (first, ()) = tokio::join!(first, commit);
     first.unwrap();
@@ -355,12 +359,12 @@ async fn a_reread_queued_before_a_session_change_writes_nothing_in_the_next_sess
     put(&rig, "moments", moment("m2", "t"));
     rig.transport.enqueue("MomentsHistory", history_reply(&["m1"]));
     load(&rig, "history").await;
-    rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
-    rig.db.as_app().act("moments", "like", &rid("m2"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+    rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+    rig.db.act(&rig.db.admit().unwrap(), "moments", "like", &rid("m2"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
     rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
     rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m2", "text": "t", "userId": null, "likedByMe": true}})).after(std::time::Duration::from_secs(3600)));
     let sync = rig.sync.clone();
-    let flushing = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.flush()).await });
+    let flushing = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await });
     rig.transport.await_calls("LikeMoment", 2).await;
     assert!(!super::super::locked(&rig.sync.inner.pending_reloads).is_empty(), "the first commit queued no reread");
     rig.sync.end_session_for_test();
@@ -372,7 +376,7 @@ async fn a_reread_queued_before_a_session_change_writes_nothing_in_the_next_sess
     rereads_finished(&rig, "MomentsHistory", 2).await;
     rig.db.shared.store.invalidate_family_now("moments", "history").unwrap();
     let before = rig.transport.call_count("MomentsHistory");
-    crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     rereads_finished(&rig, "MomentsHistory", before).await;
     assert_eq!(rig.transport.call_count("MomentsHistory"), before, "the reread of the ended epoch ran in the next session");
     assert!(invalidated(&rig, "history"));

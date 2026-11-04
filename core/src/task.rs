@@ -4,32 +4,54 @@ use std::future::Future;
 use tokio::runtime::Handle;
 use tokio::task::{AbortHandle, JoinError, JoinHandle, JoinSet};
 
-use crate::lifecycle::{Authority, Epoch};
+use crate::lifecycle::{Admitted, Authority};
+
+thread_local! {
+    static CURRENT_ADMISSION: std::cell::RefCell<Option<Admitted>> = const { std::cell::RefCell::new(None) };
+}
+
+tokio::task_local! {
+    static ASYNC_ADMISSION: Admitted;
+}
+
+struct Current(Option<Admitted>);
+
+impl Drop for Current {
+    fn drop(&mut self) { CURRENT_ADMISSION.set(self.0.take()); }
+}
+
+pub(crate) fn scope<F: Future>(admitted: Admitted, work: F) -> impl Future<Output = F::Output> {
+    ASYNC_ADMISSION.scope(admitted, work)
+}
+
+pub(crate) fn admitted() -> Option<Admitted> {
+    CURRENT_ADMISSION.with(|current| current.borrow().clone()).or_else(|| ASYNC_ADMISSION.try_with(Clone::clone).ok())
+}
 
 #[derive(Clone)]
 pub(crate) enum Carry {
-    Epoch(Epoch),
+    Admitted(Admitted),
     Internal,
     Detached,
 }
 
 impl Carry {
     pub(crate) fn here() -> Self {
-        match Epoch::ambient() {
-            Some(epoch) => Self::Epoch(epoch),
-            None => Self::Detached,
+        if let Some(admitted) = admitted() {
+            return Self::Admitted(admitted);
         }
+        Self::Detached
     }
 }
 
-impl From<Epoch> for Carry {
-    fn from(epoch: Epoch) -> Self { Self::Epoch(epoch) }
+impl From<Admitted> for Carry {
+    fn from(admitted: Admitted) -> Self { Self::Admitted(admitted) }
 }
 
 impl From<&Authority> for Carry {
     fn from(authority: &Authority) -> Self {
         match authority {
-            Authority::Epoch(epoch) => Self::Epoch(epoch.clone()),
+            Authority::Admitted(admitted) => Self::Admitted(admitted.clone()),
             Authority::Internal(_) => Self::Internal,
         }
     }
@@ -38,7 +60,7 @@ impl From<&Authority> for Carry {
 #[allow(clippy::disallowed_methods)]
 pub(crate) fn spawn<F>(carry: Carry, work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
     match carry {
-        Carry::Epoch(epoch) => tokio::spawn(epoch.scope(work)),
+        Carry::Admitted(admitted) => tokio::spawn(ASYNC_ADMISSION.scope(admitted, work)),
         Carry::Internal | Carry::Detached => tokio::spawn(work),
     }
 }
@@ -46,7 +68,7 @@ pub(crate) fn spawn<F>(carry: Carry, work: F) -> JoinHandle<F::Output> where F: 
 #[allow(clippy::disallowed_methods)]
 pub(crate) fn spawn_on<F>(carry: Carry, runtime: &Handle, work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
     match carry {
-        Carry::Epoch(epoch) => runtime.spawn(epoch.scope(work)),
+        Carry::Admitted(admitted) => runtime.spawn(ASYNC_ADMISSION.scope(admitted, work)),
         Carry::Internal | Carry::Detached => runtime.spawn(work),
     }
 }
@@ -68,14 +90,20 @@ pub(crate) fn spawn_thread(carry: Carry, name: String, body: impl FnOnce() + Sen
 
 fn bind_once<R>(carry: Carry, work: impl FnOnce() -> R) -> impl FnOnce() -> R {
     move || match carry {
-        Carry::Epoch(epoch) => epoch.pinned(work),
+        Carry::Admitted(admitted) => {
+            let _current = Current(CURRENT_ADMISSION.replace(Some(admitted)));
+            work()
+        }
         Carry::Internal | Carry::Detached => work(),
     }
 }
 
 pub(crate) fn bind<A, R>(carry: Carry, callback: impl Fn(A) -> R) -> impl Fn(A) -> R {
     move |argument| match &carry {
-        Carry::Epoch(epoch) => epoch.pinned(|| callback(argument)),
+        Carry::Admitted(admitted) => {
+            let _current = Current(CURRENT_ADMISSION.replace(Some(admitted.clone())));
+            callback(argument)
+        }
         Carry::Internal | Carry::Detached => callback(argument),
     }
 }
@@ -94,7 +122,7 @@ impl<T: Send + 'static> Children<T> {
     #[allow(clippy::disallowed_methods)]
     pub(crate) fn spawn<F>(&mut self, carry: Carry, work: F) -> AbortHandle where F: Future<Output = T> + Send + 'static {
         match carry {
-            Carry::Epoch(epoch) => self.set.spawn(epoch.scope(work)),
+            Carry::Admitted(admitted) => self.set.spawn(ASYNC_ADMISSION.scope(admitted, work)),
             Carry::Internal | Carry::Detached => self.set.spawn(work),
         }
     }
@@ -102,7 +130,7 @@ impl<T: Send + 'static> Children<T> {
     #[allow(clippy::disallowed_methods)]
     pub(crate) fn spawn_on<F>(&mut self, carry: Carry, work: F, runtime: &Handle) -> AbortHandle where F: Future<Output = T> + Send + 'static {
         match carry {
-            Carry::Epoch(epoch) => self.set.spawn_on(epoch.scope(work), runtime),
+            Carry::Admitted(admitted) => self.set.spawn_on(ASYNC_ADMISSION.scope(admitted, work), runtime),
             Carry::Internal | Carry::Detached => self.set.spawn_on(work, runtime),
         }
     }

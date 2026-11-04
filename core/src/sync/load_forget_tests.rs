@@ -31,7 +31,7 @@ async fn inv_loadm_19_a_reset_keeps_a_window_with_a_flight() {
     let rig = rig();
     rig.transport.enqueue("MomentsFeed", feed_reply(&["a"], false, "c1").after(std::time::Duration::from_secs(30)));
     let sync = rig.sync.clone();
-    let flight = tokio::spawn(async move { sync.load("moments", "vibe_feed", &vibe(1), LoadOptions::default()).await });
+    let flight = tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "vibe_feed", &vibe(1), LoadOptions::default()).await });
     tokio::time::sleep(std::time::Duration::from_millis(1)).await;
     rig.db.reset_all().unwrap();
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);

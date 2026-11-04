@@ -61,31 +61,66 @@ impl CommandStatus {
 
 pub(super) fn ended() -> DbError { DbError::Interrupted { detail: "the session of this command ended".into() } }
 
+#[cfg(test)]
+struct WriteProbe(std::sync::Arc<crate::lifecycle::Lifecycle>);
+
+#[cfg(test)]
+impl Drop for WriteProbe {
+    fn drop(&mut self) { self.0.writes_entered.fetch_sub(1, std::sync::atomic::Ordering::SeqCst); }
+}
+
 fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no durable command: only sending a message and a media upload work without a network") } }
 
 impl Database {
+    pub(super) fn acquire(&self, origin: Origin, epoch: u64, target: &'static str) -> Result<crate::lifecycle::Admitted, DbError> {
+        if !self.streams.admits_epoch(epoch) { return Err(ended()); }
+        let admitted = self.streams.admit(origin, target).map_err(|_| {
+            let state = self.streams.snapshot();
+            if origin == Origin::Session && !state.closed && state.transition.is_none() && !state.signed_in() {
+                DbError::NoSession { detail: "the database has no session".into() }
+            } else { ended() }
+        })?;
+        if admitted.value() != epoch { return Err(ended()); }
+        Ok(admitted)
+    }
+
     /// Runs the work in the epoch of the caller: it starts only while that epoch is current and ends with it. `Session` work also needs a signed-in session.
-    pub(super) async fn in_epoch_as<T>(&self, origin: Origin, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
-        let lease = self.streams.lease(origin, target).map_err(|_| ended())?;
-        if lease.epoch() != epoch { return Err(ended()); }
-        lease.run(lease.pinned(work)).await.map_err(|_| ended())?
+    pub(super) async fn in_epoch_as<T, F>(&self, origin: Origin, epoch: u64, target: &'static str, restore: bool, work: impl FnOnce(crate::lifecycle::Admitted) -> F) -> Result<T, DbError>
+    where F: Future<Output = Result<T, DbError>> {
+        let admitted = self.acquire(origin, epoch, target)?;
+        let result = admitted.run(work(admitted.clone())).await.map_err(|_| ended())??;
+        let admitted = if restore {
+            if let Some(sync) = &self.sync {
+                let session = sync.inner.transport.session().map_err(|error| DbError::from(crate::sync::SyncError::Transport(error)))?;
+                if session.is_some() { self.streams.session_from(session, admitted).map_err(|_| ended())? } else { admitted }
+            } else { admitted }
+        } else { admitted };
+        admitted.run(async { result }).await.map_err(|_| ended())
     }
 
     pub(super) async fn in_epoch<T>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
-        self.in_epoch_as(Origin::Explicit, epoch, target, work).await
+        self.in_epoch_as(Origin::Explicit, epoch, target, false, |_| work).await
     }
 
     /// A write to the local database that belongs to the epoch of the caller. The SQL commit is refused when the epoch moved or the database closed before it.
-    pub(super) async fn write_in_epoch<T: Send + 'static>(&self, epoch: u64, target: &'static str, write: impl FnOnce(&Database) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+    pub(super) async fn write_in_epoch<T: Send + 'static>(&self, origin: Origin, epoch: u64, target: &'static str, write: impl FnOnce(&Database, &crate::lifecycle::Admitted) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+        let admitted = self.acquire(origin, epoch, target)?;
+        if origin == Origin::Session { self.require_online(target)?; }
         let this = self.clone();
+        let write_admitted = admitted.clone();
         let work = async move {
-            let life = this.db.shared.store.lifecycle.clone();
             super::database::blocking(move || {
-                let result = crate::store::pinned_to_epoch(&life, epoch, || write(&this));
+                #[cfg(test)]
+                let _probe = {
+                    let life = this.db.shared.store.lifecycle.clone();
+                    life.writes_entered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    WriteProbe(life)
+                };
+                let result = write(&this, &write_admitted);
                 result.map_err(|error| if this.admits(epoch) { error } else { ended() })
             }).await
         };
-        self.in_epoch(epoch, target, work).await
+        admitted.run(work).await.map_err(|_| ended())?
     }
 
     /// A read of the local database that belongs to the epoch of the caller: a result read after the epoch moved is not returned.
@@ -99,15 +134,15 @@ impl Database {
     }
 
     /// Server work of the epoch of the caller: the task is aborted when the epoch ends.
-    pub(super) async fn serve_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-        self.in_epoch(epoch, target, async move {
-            super::database::cancellable(async move { work.await.map_err(Into::into) }).await?
+    pub(super) async fn serve_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static, F: Future<Output = Result<T, E>> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl FnOnce(crate::lifecycle::Admitted) -> F + Send + 'static) -> Result<T, DbError> {
+        self.in_epoch_as(Origin::Explicit, epoch, target, true, |admitted| async move {
+            super::database::cancellable(async move { work(admitted).await.map_err(Into::into) }).await?
         }).await
     }
 
     /// One request whose flight other callers may join: a caller that goes away does not stop it. A chain of requests (`load_all`, `refresh_preloads`) goes through `serve_in_epoch`, which stops it with its caller. The epoch still bounds the lease, the origin and the SQL commit.
-    pub(super) async fn serve_shared_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-        self.in_epoch(epoch, target, super::database::on_executor(work)).await
+    pub(super) async fn serve_shared_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static, F: Future<Output = Result<T, E>> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl FnOnce(crate::lifecycle::Admitted) -> F) -> Result<T, DbError> {
+        self.in_epoch_as(Origin::Explicit, epoch, target, true, |admitted| super::database::on_executor(work(admitted))).await
     }
 
     fn admit_command(&self, request: &CommandRequest) -> Result<(), DbError> {
@@ -127,11 +162,6 @@ impl Database {
         if self.admits(epoch) { Ok(()) } else { Err(ended()) }
     }
 
-    /// A write on the calling thread that belongs to the epoch of the caller: the SQL commit is refused when the epoch moved before it.
-    pub(super) fn pinned_write<T>(&self, epoch: u64, write: impl FnOnce() -> Result<T, DbError>) -> Result<T, DbError> {
-        let life = self.db.shared.store.lifecycle.clone();
-        crate::store::pinned_to_epoch(&life, epoch, write).map_err(|error| if self.admits(epoch) { error } else { ended() })
-    }
 }
 
 #[uniffi::export]
@@ -142,15 +172,20 @@ impl Database {
         let this = self.clone();
         let epoch = request.epoch;
         let (model, upload_action) = (request.model.clone(), request.upload.as_ref().map(|upload| upload.action.clone()));
-        let work = async move {
+        let work = move |admitted: crate::lifecycle::Admitted| async move {
             let values: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&request.values_json)?;
             let row = match request.upload {
                 None => {
                     let args = serde_json::from_str(&request.args_json)?;
                     let (database, model) = (this.clone(), request.model.clone());
                     blocking(move || {
-                        let life = database.db.shared.store.lifecycle.clone();
-                        let row = crate::store::pinned_to_epoch(&life, epoch, || database.db.create_in(None, &model, values, args));
+                        #[cfg(test)]
+                        let _probe = {
+                            let life = database.db.shared.store.lifecycle.clone();
+                            life.writes_entered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            WriteProbe(life)
+                        };
+                        let row = database.db.create_in(&admitted, None, &model, values, args);
                         let row = row.map_err(|error| if database.admits(epoch) { DbError::from(error) } else { ended() })?;
                         database.send_writes();
                         Ok(database.wire(&model)?.row(&row))
@@ -161,7 +196,7 @@ impl Database {
                     let (db, wire, model) = (this.db.clone(), this.wire(&request.model)?.clone(), request.model.clone());
                     on_executor(async move {
                         let file = upload.request.into_file()?;
-                        let id = sync.upload_create_in(&model, &upload.action, values, file, Some(epoch)).await?;
+                        let id = sync.upload_create(&admitted, &model, &upload.action, values, file).await?;
                         let row = db.find(&model, &id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {id} was not created") })?;
                         Ok::<_, DbError>(wire.row(&row))
                     }).await?
@@ -169,7 +204,7 @@ impl Database {
             };
             Ok(row)
         };
-        let row = self.in_epoch_as(Origin::Session, epoch, "send", work).await?;
+        let row = self.in_epoch_as(Origin::Session, epoch, "send", false, work).await?;
         Ok(CommandReceipt { epoch, model, row, upload_action })
     }
 

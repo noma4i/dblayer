@@ -39,7 +39,7 @@ fn append(rig: &Rig, number: usize, text: &str) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: id.clone(), row: obj(json!({"id": id.as_str(), "text": text, "userId": "c1"})) });
     envelope.scope_ops.push(ScopeOp::Append { scope, row: id, order_key: format!("k{number}") });
-    rig.db.as_app().land(envelope).unwrap();
+    rig.db.land(&rig.db.admit().unwrap(), envelope).unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
 }
 
@@ -50,7 +50,7 @@ fn obj(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
 async fn loaded_thread(rig: &Rig) -> Query {
     let reply = json!({"feed": {"nodes": (1..=7).map(node).collect::<Vec<_>>(), "pageInfo": {"hasNextPage": false, "endCursor": "c"}}});
     rig.transport.enqueue("MomentsThread", Reply::data(reply));
-    rig.sync.load("moments", "thread", &params(json!({"userId": "c1"})), LoadOptions::default()).await.unwrap();
+    rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "thread", &params(json!({"userId": "c1"})), LoadOptions::default()).await.unwrap();
     rig.db.remote_relation_query("moments", "thread", &params(json!({"userId": "c1"}))).unwrap().unwrap()
 }
 
@@ -74,7 +74,7 @@ async fn a_window_over_the_thread_shape_follows_the_tail_and_ignores_rows_before
     let scope = ScopeRef::new(ModelKey::new("moments"), rig.db.remote_relation_query("moments", "thread", &params(json!({"userId": "c1"}))).unwrap().unwrap().scope.unwrap());
     let mut membership = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
     membership.scope_ops.push(ScopeOp::Append { scope, row: RowId::new("m9").unwrap(), order_key: "k9".to_string() });
-    rig.db.as_app().land(membership).unwrap();
+    rig.db.land(&rig.db.admit().unwrap(), membership).unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(ids(&changes(&log).pop().unwrap()), ["m7", "m8", "m9"], "a row that joins the scope alone enters the window");
 

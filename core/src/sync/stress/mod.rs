@@ -241,7 +241,7 @@ async fn drain(world: &World, progress: &Progress) {
         world.rig.clock.advance(Duration::from_secs(3600));
         let _call = world.server.note_retry();
         let step = async {
-            judge("drain retry_all", world.rig.sync.retry_all().await.map(|_| ()), world);
+            judge("drain retry_all", world.rig.sync.retry_all(&world.rig.sync.inner.db.admit().unwrap()).await.map(|_| ()), world);
             world.rig.sync.wait_uploads().await;
         };
         if tokio::time::timeout(STEP_LIMIT, step).await.is_err() {
@@ -260,10 +260,10 @@ async fn drain(world: &World, progress: &Progress) {
 async fn reload(world: &World) {
     let params = Map::new();
     for relation in ["empty_aware", "feed", "history"] {
-        let _ = world.rig.sync.load("moments", relation, &params, LoadOptions { force: true }).await;
+        let _ = world.rig.sync.load(&world.rig.sync.inner.db.admit().unwrap(), "moments", relation, &params, LoadOptions { force: true }).await;
     }
     for _ in 0..8 {
-        let _ = world.rig.sync.load_more("moments", "feed", &params).await;
+        let _ = world.rig.sync.load_more(&world.rig.sync.inner.db.admit().unwrap(), "moments", "feed", &params).await;
     }
     world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
 }
@@ -286,7 +286,7 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     let scratch = scratch_dir();
     let world = Arc::new(World::new(rig, server, findings.clone(), universe, aliases, scratch.path().to_path_buf()));
     world.server.set_calm(true);
-    let _ = world.rig.sync.load("moments", "empty_aware", &Map::new(), LoadOptions { force: true }).await;
+    let _ = world.rig.sync.load(&world.rig.sync.inner.db.admit().unwrap(), "moments", "empty_aware", &Map::new(), LoadOptions { force: true }).await;
     world.server.set_calm(false);
     let _events = world.rig.sync.subscribe(subscription()).await.expect("subscribe");
     let stop = Arc::new(AtomicBool::new(false));
@@ -300,7 +300,7 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     drain(&world, &progress).await;
     tokio::time::sleep(Duration::from_millis(50)).await;
     world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
-    let _ = world.rig.db.expire_ephemeral();
+    let _ = world.rig.db.expire_ephemeral(&world.rig.db.admit().unwrap());
     check::queue(&world.rig.db, &findings);
     check::lists(&world.rig.db, &findings);
     check::cache(&world.rig.db, &world.universe, &findings);
