@@ -150,11 +150,9 @@ class ClubTest {
             awaitWithin("the add to return with its answer while the list load is held") { adding.await() }
         } finally {
             loadHold.release()
+            rereadHold.release()
         }
-        refreshing.await()
-        withTimeout(5000) { rereadHold.entered() }
-        rereadHold.release()
-
+        awaitWithin("the refresh to end once the holds are released") { refreshing.await() }
         eventually("the list is read again after the held load") { list.rows.value.map { it.id } == current + "u9" }
         scope.cancel()
     }

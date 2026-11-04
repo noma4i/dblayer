@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -17,10 +18,7 @@ import kotlinx.serialization.json.JsonObject
 class ValueStream internal constructor(val id: ULong, val epoch: ULong, private val database: Database, private val channel: Channel<StreamDelivery>) {
     val deliveries: Flow<StreamDelivery> = flow {
         try {
-            for (delivery in channel) {
-                emit(delivery)
-                if (delivery.value is StreamValue.Ended) break
-            }
+            emitAll(channel.read())
         } finally {
             close()
         }
@@ -47,22 +45,28 @@ class ValueStream internal constructor(val id: ULong, val epoch: ULong, private 
 /** A reader that falls behind keeps the newest deliveries only. The count of the dropped ones reaches the reader as `Missed`, and a list projection that misses a delta asks the core for a new snapshot. */
 private const val STREAM_BUFFER = 256
 
-internal class Forward(private val channel: Channel<StreamDelivery>, private val dropped: java.util.concurrent.atomic.AtomicLong) : ValueSink {
+internal fun streamChannel(): Channel<StreamDelivery> = Channel(STREAM_BUFFER, BufferOverflow.DROP_OLDEST)
+
+internal class Forward(private val channel: Channel<StreamDelivery>) : ValueSink {
     override fun delivered(delivery: StreamDelivery) {
-        val lost = dropped.getAndSet(0)
-        if (lost > 0) channel.trySend(StreamDelivery(delivery.stream, delivery.epoch, delivery.seq, StreamValue.Missed(lost.toULong())))
         channel.trySend(delivery)
         if (delivery.value is StreamValue.Ended) channel.close()
     }
 }
 
-internal fun lossyChannel(dropped: java.util.concurrent.atomic.AtomicLong): Channel<StreamDelivery> =
-    Channel(STREAM_BUFFER, BufferOverflow.DROP_OLDEST) { old -> dropped.addAndGet((old.value as? StreamValue.Missed)?.count?.toLong() ?: 1L) }
+internal fun Channel<StreamDelivery>.read(): Flow<StreamDelivery> = flow {
+    var last = 0uL
+    for (delivery in this@read) {
+        if (delivery.seq > last + 1uL) emit(StreamDelivery(delivery.stream, delivery.epoch, delivery.seq, StreamValue.Missed(delivery.seq - last - 1uL)))
+        last = maxOf(last, delivery.seq)
+        emit(delivery)
+        if (delivery.value is StreamValue.Ended) break
+    }
+}
 
 internal fun Database.openValueStream(epoch: ULong, request: StreamRequest): ValueStream {
-    val dropped = java.util.concurrent.atomic.AtomicLong()
-    val channel = lossyChannel(dropped)
-    val id = subscribe(epoch, request, Forward(channel, dropped))
+    val channel = streamChannel()
+    val id = subscribe(epoch, request, Forward(channel))
     return ValueStream(id, epoch, this, channel)
 }
 

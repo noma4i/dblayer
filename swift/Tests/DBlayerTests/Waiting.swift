@@ -47,6 +47,11 @@ func finishes(
 func parkUntilCancelled() async throws {
   try await Task.sleep(for: .seconds(3600))
 }
+struct DeliveryFeed: AsyncSequence, Sendable {
+  typealias Element = StreamDelivery
+  let deliveries: AsyncStream<StreamDelivery>
+  func makeAsyncIterator() -> ValueStream.AsyncIterator { ValueStream.AsyncIterator(deliveries) }
+}
 final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Sendable where Sequence.Element: Sendable, Sequence.AsyncIterator: SendableMetatype {
   private var iterator: Sequence.AsyncIterator
 

@@ -58,7 +58,8 @@ impl Inner {
                 let store = &self.db.shared.store;
                 let invalidated = store.window_freshness(&key)?.is_some_and(|freshness| freshness.invalidated);
                 let resolved = self.resolve(crate::lifecycle::Origin::Session, model, &relation, &params)?;
-                let predates_mark = store.window(&key)?.map_or_else(|| self.flight_pending(&resolved), |window| window.applied < mark.since);
+                let pending = self.flight_pending(&resolved);
+                let predates_mark = store.window(&key)?.map_or(pending, |window| window.applied < mark.since);
                 if !invalidated && !predates_mark { return Ok(false); }
                 let outcome = self.fetch_after_flights(&resolved).await?;
                 if let Some(error) = outcome.kept_error { return Err(error); }

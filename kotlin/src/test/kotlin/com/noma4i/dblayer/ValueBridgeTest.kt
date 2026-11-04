@@ -10,6 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -498,22 +499,44 @@ class ValueBridgeTest {
         }
     }
 
-    /** K16b: the missed counts plus the deliveries a paused reader receives equal the deliveries the core sent, also when the buffer evicts markers. */
+    /** K16b: the missed counts plus the deliveries a reader receives equal the deliveries the core sent, for a full buffer that ends with `Ended` and for a burst with no delivery after it. */
     @Test
-    fun missedCountsPlusReceivedDeliveriesEqualTheDeliveriesSentWhenMarkersAreEvicted() {
+    fun missedCountsPlusReceivedDeliveriesEqualTheDeliveriesSent() = bounded {
         val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
-        val dropped = java.util.concurrent.atomic.AtomicLong()
-        val channel = lossyChannel(dropped)
-        val sink = Forward(channel, dropped)
-        val sent = 700L
-        for (seq in 1..sent) sink.delivered(StreamDelivery(1uL, 1uL, seq.toULong(), StreamValue.State(state)))
-        var received = 0L
-        var missed = 0L
-        fun read(delivery: StreamDelivery) { (delivery.value as? StreamValue.Missed)?.let { missed += it.count.toLong() } ?: run { received += 1 } }
-        repeat(2) { read(channel.tryReceive().getOrThrow()) }
-        sink.delivered(StreamDelivery(1uL, 1uL, (sent + 1).toULong(), StreamValue.Ended(StreamEnd.CLOSED)))
-        while (true) read(channel.tryReceive().getOrNull() ?: break)
-        assertEquals("the core sent ${sent + 1} deliveries, the reader received $received and was told about $missed missed ones", sent + 1, received + missed)
+        for (endsWithEnded in listOf(true, false)) {
+            val channel = streamChannel()
+            val sink = Forward(channel)
+            val received = AtomicInteger(0)
+            val missed = java.util.concurrent.atomic.AtomicLong(0)
+            suspend fun read() = channel.read().collect { delivery -> (delivery.value as? StreamValue.Missed)?.let { missed.addAndGet(it.count.toLong()) } ?: received.incrementAndGet() }
+            fun send(seq: Long, value: StreamValue = StreamValue.State(state)) = sink.delivered(StreamDelivery(1uL, 1uL, seq.toULong(), value))
+            val sent: Long
+            if (endsWithEnded) {
+                sent = 257
+                for (seq in 1L..256L) send(seq)
+                send(257, StreamValue.Ended(StreamEnd.CLOSED))
+                withTimeout(5000) { read() }
+            } else {
+                sent = 701
+                val paused = kotlinx.coroutines.CompletableDeferred<Unit>()
+                val reading = launch {
+                    channel.read().collect { delivery ->
+                        (delivery.value as? StreamValue.Missed)?.let { missed.addAndGet(it.count.toLong()) } ?: received.incrementAndGet()
+                        if (delivery.seq == 1uL) paused.await()
+                    }
+                }
+                send(1)
+                eventually("the reader holds the first delivery") { received.get() == 1 }
+                for (seq in 2L..701L) send(seq)
+                paused.complete(Unit)
+                try {
+                    eventually("the missed count of a burst with no later delivery") { received.get() + missed.get() == sent }
+                } finally {
+                    reading.cancel()
+                }
+            }
+            assertEquals("the core sent $sent deliveries, the reader received ${received.get()} and was told about ${missed.get()} missed ones", sent, received.get() + missed.get())
+        }
     }
 }
 

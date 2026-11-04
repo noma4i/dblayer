@@ -16,7 +16,28 @@ public struct ValueStream: AsyncSequence, Sendable {
     self.database = database
   }
 
-  public func makeAsyncIterator() -> AsyncStream<StreamDelivery>.AsyncIterator { deliveries.makeAsyncIterator() }
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(deliveries) }
+
+  public struct AsyncIterator: AsyncIteratorProtocol {
+    private var inner: AsyncStream<StreamDelivery>.AsyncIterator
+    private var held: StreamDelivery?
+    private var lastSeq: UInt64 = 0
+
+    init(_ deliveries: AsyncStream<StreamDelivery>) { inner = deliveries.makeAsyncIterator() }
+
+    public mutating func next() async -> StreamDelivery? {
+      if let delivery = held {
+        held = nil
+        return delivery
+      }
+      guard let delivery = await inner.next() else { return nil }
+      let lost = delivery.seq > lastSeq + 1 ? delivery.seq - lastSeq - 1 : 0
+      lastSeq = delivery.seq
+      guard lost > 0 else { return delivery }
+      held = delivery
+      return StreamDelivery(stream: delivery.stream, epoch: delivery.epoch, seq: delivery.seq, value: .missed(count: lost))
+    }
+  }
 
   /// The projection could not apply a delta. The core sends one new snapshot.
   public func resync() { database.resyncStream(stream: id) }
@@ -38,20 +59,10 @@ private let streamBuffer = 256
 
 final class Forward: ValueSink, @unchecked Sendable {
   private let continuation: AsyncStream<StreamDelivery>.Continuation
-  private var dropped: UInt64 = 0
   init(_ continuation: AsyncStream<StreamDelivery>.Continuation) { self.continuation = continuation }
   func delivered(delivery: StreamDelivery) {
-    if dropped > 0 {
-      let marker = StreamDelivery(stream: delivery.stream, epoch: delivery.epoch, seq: delivery.seq, value: .missed(count: dropped))
-      dropped = 0
-      lose(continuation.yield(marker))
-    }
-    lose(continuation.yield(delivery))
+    continuation.yield(delivery)
     if case .ended = delivery.value { continuation.finish() }
-  }
-  private func lose(_ result: AsyncStream<StreamDelivery>.Continuation.YieldResult) {
-    guard case let .dropped(old) = result else { return }
-    if case let .missed(count) = old.value { dropped += count } else { dropped += 1 }
   }
 }
 
@@ -294,7 +305,7 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
   public let stream: ValueStream
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    var inner: AsyncStream<StreamDelivery>.AsyncIterator
+    var inner: ValueStream.AsyncIterator
     let stream: ValueStream
     var reported = false
 
@@ -329,7 +340,7 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
   public let stream: ValueStream
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    var inner: AsyncStream<StreamDelivery>.AsyncIterator
+    var inner: ValueStream.AsyncIterator
 
     public mutating func next() async -> WireBlobSnapshot? {
       while let delivery = await inner.next() {

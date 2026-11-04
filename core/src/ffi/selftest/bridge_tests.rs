@@ -853,6 +853,45 @@ fn ids_of(rows: Vec<WireRow>) -> Vec<String> { rows.into_iter().map(|row| row.id
 
 pub(super) fn strings(ids: &[&str]) -> Vec<String> { ids.iter().map(|id| id.to_string()).collect() }
 
+/// K36: an action that waits for its answer returns with that answer when the flush closed its operation before the wait began, while a load of the list its refetch rereads is held. The list is read again once that load ends.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_action_closed_by_the_flush_before_its_wait_returns_while_the_load_of_its_refetched_list_is_held() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (values, args) = group("friends");
+    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    rig.world.set_members("JOINED", &["u1", "u2", "u3"]);
+    let (reader, query) = (Reader::open(), json!({"model": "Member", "relation": "group_members", "params": {"groupId": created.id, "order": "JOINED"}}).to_string());
+    let stream = rig.database.subscribe(epoch, StreamRequest::Query { query_json: query }, reader.clone());
+    bound(rig.database.stream_loaded(stream)).await.unwrap();
+    let ids = |reader: &Reader| reader.replay().0.into_iter().map(|row| row.id).collect::<Vec<_>>();
+    assert_eq!(ids(&reader), strings(&["u1", "u2", "u3"]), "the list before the add");
+
+    let load = rig.world.hold_next("GroupMembers");
+    let database = rig.database.clone();
+    let refreshing = tokio::spawn(async move { database.refresh_stream(stream).await });
+    load.entered().await;
+    rig.world.set_members("JOINED", &["u1", "u2", "u3", "u9"]);
+
+    let pause = rig.database.act_pause.get_or_init(Default::default);
+    let (database, group_id) = (rig.database.clone(), created.id.clone());
+    let acting = tokio::spawn(async move { database.act(epoch, "Group".into(), group_id, "add_member".into(), "{}".into(), json!({"userIds": ["u9"]}).to_string()).await });
+    bound(pause.entered.notified()).await;
+    let queue = rig.database.sync().unwrap().inner.operation_queue().unwrap().clone();
+    yield_until("the flush closed the operation before the call began to wait", || !crate::sync::locked(&queue).entries.values().any(|entry| entry.operation.status == crate::operation::OperationStatus::Pending)).await;
+    assert_eq!(rig.world.count("AddMember"), 1, "the flush sent the action");
+    pause.release.add_permits(1);
+
+    let answered = tokio::time::timeout(std::time::Duration::from_secs(10), acting).await;
+    load.release();
+    bound(refreshing).await.unwrap().unwrap();
+    let answered = answered.expect("the call waited for the held load of the refetched list").unwrap();
+    assert!(answered.is_ok(), "the call failed: {:?}", answered.as_ref().err());
+    yield_until("the list ends with the list of the server", || ids(&reader) == strings(&["u1", "u2", "u3", "u9"])).await;
+    rig.database.close_now();
+}
+
 /// K32: a member added or removed ends with the member lists of the server in both orders: the added user appears in the lists the screen reads and the removed one leaves them, without a read by the app.
 #[tokio::test(flavor = "multi_thread")]
 async fn adding_and_removing_a_member_ends_with_the_member_lists_of_the_server_in_both_orders() {

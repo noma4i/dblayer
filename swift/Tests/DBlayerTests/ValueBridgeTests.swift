@@ -442,26 +442,33 @@ extension BridgeProbeTests {
     stream.cancel()
   }
 
-  /// K16b: the missed counts plus the deliveries a paused reader receives equal the deliveries the core sent, also when the buffer evicts markers.
-  @Test(.timeLimit(.minutes(1)))
-  func missedCountsPlusReceivedDeliveriesEqualTheDeliveriesSentWhenMarkersAreEvicted() async {
+  /// K16b: the missed counts plus the deliveries a reader receives equal the deliveries the core sent, for a full buffer that ends with `Ended` and for a burst with no delivery after it.
+  @Test(.timeLimit(.minutes(1)), arguments: [true, false])
+  func missedCountsPlusReceivedDeliveriesEqualTheDeliveriesSent(endsWithEnded: Bool) async {
     let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
     let (deliveries, continuation) = AsyncStream<StreamDelivery>.makeStream(bufferingPolicy: .bufferingNewest(256))
     let sink = Forward(continuation)
-    let sent: UInt64 = 700
-    for seq in 1...sent { sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: seq, value: .state(state: state))) }
+    let cursor = Cursor(DeliveryFeed(deliveries: deliveries))
+    func send(_ seq: UInt64) { sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: seq, value: .state(state: state))) }
+    let sent: UInt64
+    let read: [StreamDelivery]
+    if endsWithEnded {
+      for seq in 1...256 { send(UInt64(seq)) }
+      sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: 257, value: .ended(reason: .closed)))
+      sent = 257
+      read = await cursor.collect(257, "a missed count and the kept deliveries of a full buffer that ended")
+    } else {
+      send(1)
+      let first = await cursor.collect(1, "the first delivery")
+      for seq in 2...701 { send(UInt64(seq)) }
+      sent = 701
+      let rest = await cursor.collect(257, "the missed count and the kept deliveries of a burst with no later delivery", timeout: .seconds(5))
+      read = first + rest
+    }
     var received: UInt64 = 0
     var missed: UInt64 = 0
-    var iterator = deliveries.makeAsyncIterator()
-    for _ in 0..<2 {
-      guard let delivery = await iterator.next() else { break }
-      if case let .missed(count) = delivery.value { missed += count } else { received += 1 }
-    }
-    sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: sent + 1, value: .ended(reason: .closed)))
-    while let delivery = await iterator.next() {
-      if case let .missed(count) = delivery.value { missed += count } else { received += 1 }
-    }
-    #expect(received + missed == sent + 1, "the core sent \(sent + 1) deliveries, the reader received \(received) and was told about \(missed) missed ones")
+    for delivery in read { if case let .missed(count) = delivery.value { missed += count } else { received += 1 } }
+    #expect(received + missed == sent, "the core sent \(sent) deliveries, the reader received \(received) and was told about \(missed) missed ones")
   }
 }
 

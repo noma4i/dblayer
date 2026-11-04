@@ -23,11 +23,14 @@ extension BridgeProbeTests {
     addHold.release()
     let returned = await finishes("the add to return with its answer while the list load is held") { _ = try? await adding.value }
     loadHold.release()
-    #expect(returned)
+    rereadHold.release()
+    #expect(returned, "the add waited for the held load of its refetched list")
+    await finishes("the add and the refresh to end once the holds are released") {
+      _ = try? await adding.value
+      _ = try? await refreshing.value
+    }
     try await adding.value
     try await refreshing.value
-    await rereadHold.entered()
-    rereadHold.release()
 
     await eventually("the list is read again after the held load") { list.ids == current + ["u9"] }
   }

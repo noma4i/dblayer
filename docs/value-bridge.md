@@ -134,6 +134,6 @@ val rows = Chat.list.read(scope)
 
 An idle stream sends no request and wakes nothing.
 A stream that ended leaves no observer: a write after its last reader left reads nothing. `retainedObservers` counts only the observers of an explicit `warm`.
-A reader that falls behind keeps the newest 256 deliveries. The dropped ones arrive as `missed`, and a list asks for a new snapshot.
+A reader that falls behind keeps the newest 256 deliveries. The count of the dropped ones arrives as `missed` before the delivery that follows the loss, also before `ended`, and a list asks for a new snapshot.
 A change of one row sends one row and decodes one row.
 The number of subscriptions is the number of readers.
