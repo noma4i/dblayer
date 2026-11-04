@@ -64,6 +64,8 @@ impl Store {
             transaction.execute_batch("INSERT OR IGNORE INTO file SELECT * FROM retained_transfer_files; DROP TABLE retained_transfer_files;")?;
             for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
             transaction.execute("DELETE FROM op_value WHERE part = 'prior'", [])?;
+            transaction.execute("DELETE FROM scope_revision", [])?;
+            crate::db::op_effect::rebuild_operation_effects(&transaction, &inner.models)?;
             let after: std::collections::HashSet<String> = transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
             let database: String = transaction.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
             if !database.is_empty() { removed_files = Some((database, before.into_iter().filter(|id| !after.contains(id)).collect::<Vec<_>>())); }

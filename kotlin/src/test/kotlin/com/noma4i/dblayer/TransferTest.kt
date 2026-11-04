@@ -34,12 +34,14 @@ internal interface LegacySqlite : Library {
     fun sqlite3_close(database: Pointer): Int
 }
 
-private fun writeLegacyTransfer(path: String) {
+private fun writeLegacyTransfer(path: String, dropPendingItem: Boolean = false) {
     val sqlite = Native.load("sqlite3", LegacySqlite::class.java)
     val database = PointerByReference()
     check(sqlite.sqlite3_open(path, database) == 0)
     try {
-        check(sqlite.sqlite3_exec(database.value, java.io.File("../fixtures/transfer-legacy.sql").readText(), null, null, null) == 0)
+        val fixture = java.io.File("../fixtures/transfer-legacy.sql").readText()
+        val deletion = if (dropPendingItem) "DELETE FROM op_item WHERE seq = (SELECT owner_seq FROM encrypted_pending) AND position = (SELECT item_position FROM encrypted_pending);" else ""
+        check(sqlite.sqlite3_exec(database.value, fixture + deletion, null, null, null) == 0)
     } finally {
         check(sqlite.sqlite3_close(database.value) == 0)
     }
@@ -167,7 +169,9 @@ class TransferTest {
     fun shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner() = bounded {
         val directory = Files.createTempDirectory("encrypted-album").toFile()
         try {
-            for (lose in listOf(false, true)) {
+            for (case in listOf("live", "reopen", "missing")) {
+                val lose = case != "live"
+                val missing = case == "missing"
                 val server = SealedServer(deduplicate = true) { path, body ->
                     when {
                         path == "/api/auth/login_link" -> Json.parseToJsonElement("""{"sessionId":"A"}""").jsonObject
@@ -183,7 +187,7 @@ class TransferTest {
                     val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", false))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
                     val transport = HoldSecondFile(server)
                     val credential = TransferCredential()
-                    val path = directory.resolve("db-$lose.sqlite").path
+                    val path = directory.resolve("db-$case.sqlite").path
                     val uploads = UploadOperations(createBlob = UploadOperation("CreateBlob"))
                     val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
                     DBlayer.close()
@@ -200,8 +204,19 @@ class TransferTest {
                     if (lose) {
                         server.lostAnswer()
                         DBlayer.close()
+                        if (missing) writeLegacyTransfer(path, dropPendingItem = true)
                         DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
+                        if (missing) {
+                            val before = runCatching { DBlayer.database.retryAll(DBlayer.database.sessionEpoch()) }.exceptionOrNull()
+                            assertTrue("missing file before resume: $before", before?.message?.contains("select the file again", ignoreCase = true) == true)
+                            assertTrue(runCatching { DBlayer.database.sessionResume() }.isFailure)
+                            val after = runCatching { DBlayer.database.retryAll(DBlayer.database.sessionEpoch()) }.exceptionOrNull()
+                            assertTrue("missing file after resume: $after", after?.message?.contains("select the file again", ignoreCase = true) == true)
+                            assertEquals(0, server.operationRequests("CreateAssets"))
+                            DBlayer.close()
+                            continue
+                        }
                         DBlayer.database.sessionResume()
                     }
                     assertEquals("a1", rows[1].confirmedId())

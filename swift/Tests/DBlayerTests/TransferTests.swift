@@ -12,11 +12,12 @@ private func transferFixture(_ name: String) throws -> String {
   return try String(contentsOf: root.appendingPathComponent("fixtures/\(name)"), encoding: .utf8)
 }
 
-private func writeLegacyTransfer(_ path: String) throws {
+private func writeLegacyTransfer(_ path: String, dropPendingItem: Bool = false) throws {
   var database: OpaquePointer?
   guard legacyOpen(path, &database) == 0 else { throw DbError.Invalid(detail: "cannot open the legacy fixture") }
   defer { _ = legacyClose(database) }
-  guard legacyExec(database, try transferFixture("transfer-legacy.sql"), nil, nil, nil) == 0 else { throw DbError.Invalid(detail: "cannot write the legacy fixture") }
+  let deletion = dropPendingItem ? "DELETE FROM op_item WHERE seq = (SELECT owner_seq FROM encrypted_pending) AND position = (SELECT item_position FROM encrypted_pending);" : ""
+  guard legacyExec(database, try transferFixture("transfer-legacy.sql") + deletion, nil, nil, nil) == 0 else { throw DbError.Invalid(detail: "cannot write the legacy fixture") }
 }
 
 private final class MultipartTransfer: Transport, @unchecked Sendable {
@@ -165,7 +166,9 @@ extension BridgeProbeTests {
 
   @MainActor @Test(.timeLimit(.minutes(1)))
   func shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner() async throws {
-    for lose in [false, true] {
+    for scenario in ["live", "reopen", "missing"] {
+      let lose = scenario != "live"
+      let missing = scenario == "missing"
       let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: directory) }
@@ -204,8 +207,23 @@ extension BridgeProbeTests {
       if lose {
         await server.lostAnswer()
         try await DB.close()
+        if missing { try writeLegacyTransfer(path, dropPendingItem: true) }
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, uploads: uploads, encrypted: encrypted, credentials: credential, http: server)
         try DB.database.registerOperations(defsJson: operations)
+        if missing {
+          do {
+            _ = try await DB.database.retryAll(epoch: DB.database.sessionEpoch())
+            Issue.record("retry accepted a missing file before resume")
+          } catch { #expect("\(error)".localizedCaseInsensitiveContains("select the file again")) }
+          await #expect(throws: DbError.self) { _ = try await DB.database.sessionResume() }
+          do {
+            _ = try await DB.database.retryAll(epoch: DB.database.sessionEpoch())
+            Issue.record("retry accepted a missing file after resume")
+          } catch { #expect("\(error)".localizedCaseInsensitiveContains("select the file again")) }
+          #expect(server.operationRequests("CreateAssets") == 0)
+          try await DB.close()
+          continue
+        }
         _ = try await DB.database.sessionResume()
       }
       #expect(try await rows[1].confirmedId() == "a1")

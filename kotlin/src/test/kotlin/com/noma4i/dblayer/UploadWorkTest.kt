@@ -47,23 +47,45 @@ class UploadWorkTest {
 
     @Test
     fun onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob() = bounded {
-        MockWebServer().use { server ->
-            repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
-            server.start()
-            val transport = OkHttpTransport(server.url("/graphql").toString())
-            val oldOwner = UploadJobToken()
-            val owner = UploadJobToken()
-            UploadNetwork.started(null, oldOwner)
-            UploadNetwork.started(null, owner)
-            UploadNetwork.ended(oldOwner)
+        val directory = Files.createTempDirectory("job-network").toFile()
+        try {
+            val source = java.io.File(directory, "image.png").apply { writeText("image") }
+            val mock = MockTransport()
+            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]"""
+            val database = reopen(Config(null, null, 32u), modelsJSON, mock, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            database.setUploadAcceptedSink(object : UploadAcceptedSink { override fun accepted(event: WireUploadAccepted) {} })
+            database.setOnline(false)
+            fun batch(prefix: String) = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "$prefix-$it"); put("size", 2) }, path = source.path) }
+            AccountScope.current().uploadBatch(Asset, batch("old"), UploadBatchRequest(operation = "create_files"))
+            val old = Robolectric.buildService(UploadJobService::class.java).create().get()
+            val oldParams = org.robolectric.shadow.api.Shadow.newInstanceOf(android.app.job.JobParameters::class.java)
+            assertTrue("the old job starts", old.onStartJob(oldParams))
+            DBlayer.close()
+            val newDatabase = reopen(Config(null, null, 32u), modelsJSON, MockTransport(), operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            newDatabase.setUploadAcceptedSink(object : UploadAcceptedSink { override fun accepted(event: WireUploadAccepted) {} })
+            newDatabase.setOnline(false)
+            AccountScope.current().uploadBatch(Asset, batch("new"), UploadBatchRequest(operation = "create_files"))
+            val current = Robolectric.buildService(UploadJobService::class.java).create().get()
+            val currentParams = org.robolectric.shadow.api.Shadow.newInstanceOf(android.app.job.JobParameters::class.java)
+            assertTrue("the new job starts", current.onStartJob(currentParams))
             try {
-                assertEquals("""{"data":{}}""", transport.query(TransportRequest("query Probe { id }", "Probe", "{}", NetworkPurpose.STANDARD)))
-                refused { transport.query(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)) }
-                refused { OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e", NetworkPurpose.TRANSFER) }
+                old.onStopJob(oldParams)
+                MockWebServer().use { server ->
+                    repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
+                    server.start()
+                    val transport = OkHttpTransport(server.url("/graphql").toString())
+                    assertEquals("""{"data":{}}""", transport.query(TransportRequest("query Probe { id }", "Probe", "{}", NetworkPurpose.STANDARD)))
+                    refused { transport.query(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)) }
+                    refused { OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e", NetworkPurpose.TRANSFER) }
+                    current.onStopJob(currentParams)
+                    assertEquals("""{"data":{}}""", transport.mutate(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)))
+                }
             } finally {
-                UploadNetwork.ended(owner)
+                current.onStopJob(currentParams)
             }
-            assertEquals("""{"data":{}}""", transport.mutate(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)))
+        } finally {
+            DBlayer.close()
+            directory.deleteRecursively()
         }
     }
 
