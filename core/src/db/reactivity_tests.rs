@@ -3,7 +3,6 @@ use super::*;
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{ModelKey, ListKey};
 use crate::query::{Query, Where};
-use crate::schema::Coverage;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -150,7 +149,7 @@ fn inv_id_04_a_temp_id_swap_arrives_as_replaced() {
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Response, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: DestroyReason::Replaced { by: rid("m7") } });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
     db.land(&db.admit().unwrap(), envelope).unwrap();
@@ -428,10 +427,12 @@ fn work(db: Db, seed_value: u64) {
                 let _ = db.destroy(&db.admit().unwrap(), "moments", &rid(&id));
             }
             3 => {
-                let rows = (0..seed.below(8)).map(|_| random_row(&mut seed, 14)).map(|(_, row)| row).collect();
-                let mut request = ReplaceRequest::new(feed(), Coverage::Complete);
-                request.on_absent = if seed.below(2) == 0 { OnAbsent::Destroy } else { OnAbsent::Detach };
-                db.replace(&db.admit().unwrap(), &request, rows).unwrap();
+                let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+                for _ in 0..seed.below(8) {
+                    let (id, row) = random_row(&mut seed, 14);
+                    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&id), row });
+                }
+                db.land(&db.admit().unwrap(), envelope).unwrap();
             }
             4 => {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());

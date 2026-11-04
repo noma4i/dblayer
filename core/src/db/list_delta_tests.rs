@@ -158,7 +158,7 @@ fn inv_observe_18_a_replaced_pair_reaches_a_reader_that_never_saw_the_temporary_
         .unwrap();
     entered.recv_timeout(WAIT).unwrap();
     let temp = db.create(&db.admit().unwrap(), "moments", obj(json!({"text": "new"}))).unwrap();
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Response, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
     db.land(&db.admit().unwrap(), envelope).unwrap();
@@ -181,7 +181,7 @@ fn inv_observe_18_a_pair_replaced_while_the_group_is_evaluated_still_reaches_the
     let temp = crate::test_wait::join_within(std::thread::spawn(move || {
         let temp = writer.create(&writer.admit().unwrap(), "moments", obj(json!({"text": "new"}))).unwrap();
         crate::test_wait::spin_until("the dispatcher never took the create event", || writer.shared.dispatch.queued() == 0);
-        let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, writer.generation());
+        let mut envelope = CommitEnvelope::new(WriteOrigin::Response, writer.generation());
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new"})) });
         writer.land(&writer.admit().unwrap(), envelope).unwrap();
@@ -201,8 +201,8 @@ fn inv_observe_18_more_replaced_pairs_than_the_log_keeps_deliver_none_of_them() 
     let (log, callback) = recorder();
     let _observer = db.observe(Query::new("moments").limited(count as u32 + 10), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    let mut first = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
-    let mut second = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
+    let mut first = CommitEnvelope::new(WriteOrigin::Response, db.generation());
+    let mut second = CommitEnvelope::new(WriteOrigin::Response, db.generation());
     for n in 0..count {
         first.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid(&format!("t{n}")), row: obj(json!({"id": format!("t{n}"), "text": "new"})) });
         second.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: rid(&format!("t{n}")), reason: crate::commit::DestroyReason::Replaced { by: rid(&format!("m{n}")) } });

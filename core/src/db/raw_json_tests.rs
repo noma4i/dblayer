@@ -1,13 +1,26 @@
 use super::fixtures::{obj, put, rid};
 use super::*;
-use crate::commit::ScopeRef;
-use crate::identity::{ModelKey, ListKey};
 use crate::schema::{Coverage, EphemeralSpec, FieldSpec, MergeRule, ModelSpec, RelationSpec, Storage};
 use crate::value::ScalarKind;
 use serde_json::{json, Value};
 
 fn parsed(name: &str) -> FieldSpec {
     serde_json::from_value(json!({"name": name, "kind": {"type": "raw"}, "parse_json": true, "nullable": true})).unwrap()
+}
+
+fn samples(mut spec: ModelSpec) -> crate::sync::rig::Rig {
+    let mut all = RelationSpec::global("all");
+    all.remote = Some(crate::sync::rig::remote("Samples", crate::schema::RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    spec.relations.push(all);
+    let db = Db::open_in_memory(vec![spec], None).unwrap();
+    let rig = crate::sync::rig::rig_on(db, crate::transport::MockTransport::new(), Default::default());
+    rig.sync.register(crate::sync::OperationDef::new("Samples", "query Samples { samples { id } }", "samples"));
+    rig
+}
+
+async fn load_samples(rig: &crate::sync::rig::Rig, row: Value) {
+    rig.transport.enqueue("Samples", crate::transport::Reply::data(json!({"samples":[row]})));
+    crate::test_wait::within(rig.sync.load(&rig.db.admit().unwrap(), "samples", "all", &Default::default(), crate::sync::LoadOptions { force: true })).await.unwrap();
 }
 
 #[test]
@@ -41,8 +54,8 @@ fn json_text_fields_accept_only_valid_json_strings() {
     assert_ne!(crate::ffi::wire::wire_layout(&sample(field)), crate::ffi::wire::wire_layout(&sample(plain)));
 }
 
-#[test]
-fn parsed_values_survive_storage_canonical_normalization_and_other_field_patches() {
+#[tokio::test]
+async fn parsed_values_survive_storage_canonical_normalization_and_other_field_patches() {
     let mut meta = FieldSpec::object("meta");
     meta.app_type = Some("Meta".into());
     meta.fields = vec![parsed("data")];
@@ -50,8 +63,8 @@ fn parsed_values_survive_storage_canonical_normalization_and_other_field_patches
     items.app_type = Some("Item".into());
     items.fields = vec![parsed("data")];
     let spec = ModelSpec::new("samples", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("label", ScalarKind::Str), parsed("data"), meta, items]);
-    let db = Db::open_in_memory(vec![spec], None).unwrap();
-    let request = ReplaceRequest::new(ScopeRef::new(ModelKey::new("samples"), ListKey::from_raw("all")), Coverage::Complete);
+    let rig = samples(spec);
+    let db = &rig.db;
     for (i, (input, expected)) in [
         (json!("{\"values\":[1,null,{\"nested\":[true]}]}"), Some(json!({"values":[1,null,{"nested":[true]}]}))),
         (json!("\"text\""), Some(json!("text"))),
@@ -59,7 +72,7 @@ fn parsed_values_survive_storage_canonical_normalization_and_other_field_patches
         (json!("invalid"), None), (json!(""), None), (json!({"v": 1}), None), (json!(false), None), (Value::Null, None),
     ].into_iter().enumerate() {
         let id = format!("s{i}");
-        db.replace(&db.admit().unwrap(), &request, vec![obj(json!({"id":id,"label":"first","data":input,"meta":{"data":input},"items":[{"data":input}]}))]).unwrap();
+        load_samples(&rig, json!({"id":id,"label":"first","data":input,"meta":{"data":input},"items":[{"data":input}]})).await;
         let check = || {
             let row = db.find("samples", &rid(&id)).unwrap().unwrap();
             assert_eq!(row.get("data").filter(|v| !v.is_null()), expected.as_ref(), "top {input}");
@@ -67,7 +80,7 @@ fn parsed_values_survive_storage_canonical_normalization_and_other_field_patches
             assert_eq!(row.get("items").unwrap()[0].get("data").filter(|v| !v.is_null()), expected.as_ref(), "list {input}");
         };
         check();
-        db.replace(&db.admit().unwrap(), &request, vec![obj(json!({"id":id,"label":"second"}))]).unwrap();
+        load_samples(&rig, json!({"id":id,"label":"second"})).await;
         check();
         let saved = db.shared.store.point("samples", &id).unwrap().unwrap();
         put(&db, "samples", Value::Object(saved));
@@ -75,15 +88,15 @@ fn parsed_values_survive_storage_canonical_normalization_and_other_field_patches
     }
 }
 
-#[test]
-fn parsed_defaults_ephemeral_and_local_values_keep_their_decoded_objects() {
+#[tokio::test]
+async fn parsed_defaults_ephemeral_and_local_values_keep_their_decoded_objects() {
     let mut local = parsed("local");
     local.merge = Some(MergeRule::Local);
     let mut spec = ModelSpec::new("samples", vec![FieldSpec::scalar("id", ScalarKind::Id), parsed("data").with_default(json!({"enabled":true})), local]);
     spec.ephemeral.push(EphemeralSpec::new(parsed("live").with_default(json!({"enabled":false}))));
-    let db = Db::open_in_memory(vec![spec], None).unwrap();
-    let request = ReplaceRequest::new(ScopeRef::new(ModelKey::new("samples"), ListKey::from_raw("all")), Coverage::Complete);
-    db.replace(&db.admit().unwrap(), &request, vec![obj(json!({"id":"s1"}))]).unwrap();
+    let rig = samples(spec);
+    let db = &rig.db;
+    load_samples(&rig, json!({"id":"s1"})).await;
     assert_eq!(db.find("samples", &rid("s1")).unwrap().unwrap().get("data"), Some(&json!({"enabled":true})));
     assert_eq!(db.find("samples", &rid("s1")).unwrap().unwrap().get("live"), Some(&json!({"enabled":false})));
     db.set_ephemeral(&db.admit().unwrap(), "samples", &rid("s1"), obj(json!({"live":"{\"enabled\":true}"}))).unwrap();

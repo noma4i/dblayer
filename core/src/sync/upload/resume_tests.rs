@@ -16,7 +16,7 @@ async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts
         stage: UploadStage::Presign, total_bytes: 12, key: Some("key".into()), upload_id: Some("upload".into()), request: Some(request.clone()),
         ..UploadState::queued()
     };
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state)).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), state)).unwrap();
     rig.transport.enqueue("PresignParts", Reply::data(json!({"presignParts": {"parts": [
         {"partNumber": 1, "url": "https://s3/p1"}, {"partNumber": 3, "url": "https://s3/p3"}
     ]}})));
@@ -27,8 +27,10 @@ async fn a_resumed_presign_for_one_expired_part_keeps_the_other_unfinished_parts
     let owner = crate::transport::RequestOwner { seq, item_position: 0, stage: "presign".into() };
     let admitted = rig.db.admit().unwrap();
     let upload = rig.sync.inner.claim_upload_resume(&admitted, &owner).await.unwrap();
-    rig.sync.inner.settle_resumed(&admitted, &serial, upload, owner, Ok(resumed)).await.unwrap();
+    let effects = std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&rig.sync.inner)));
     drop(serial);
+    rig.sync.inner.settle_resumed(&admitted, effects.clone(), upload, owner, Ok(resumed)).await.unwrap();
+    effects.run();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.put_calls().len(), 3);
     let calls: Vec<_> = rig.transport.calls().into_iter().filter(|call| call.operation_name == "PresignParts").collect();

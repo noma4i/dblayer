@@ -188,18 +188,20 @@ impl Db {
     }
 
     pub(crate) fn create_held(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, action: &str, values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
-        self.create_held_claiming(admitted, generation, model, action, values, input, state, |_| ()).map(|(id, _, _, ())| id)
+        self.create_held_claiming(admitted, generation, model, action, values, input, state, |_| ()).map(|(row, _, _, ())| row.id.clone())
     }
 
-    pub(crate) fn create_held_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState, claim: impl FnOnce(i64) -> T) -> Result<(RowId, i64, i64, T), DbError> {
+    pub(crate) fn create_held_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState, claim: impl FnOnce(i64) -> T) -> Result<(Row, i64, i64, T), DbError> {
         let id = values.get("id").and_then(read_id).unwrap_or_else(|| RowId::generate_temp(None));
         values.insert("id".into(), Value::String(id.to_string()));
-        self.preparing_uploads(admitted, model, generation, |files, generation, committed| {
+        let (row, operation, revision, ticket) = self.preparing_uploads(admitted, model, generation, |files, generation, committed| {
             let item = files.prepare(model, id, uuid::Uuid::new_v4().to_string(), input, state)?;
             let (id, operation, revision) = self.insert_local(admitted, model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed))?;
             let operation = operation.ok_or_else(|| DbError::Internal("upload has no operation".into()))?;
-            Ok((id, operation, revision, claim(operation)))
-        })
+            let row = committed.as_ref().and_then(|commit| commit.result().snapshot.clone()).ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+            Ok::<_, DbError>((row, operation, revision, claim(operation)))
+        })?;
+        Ok((self.shared.overlay_snapshot(model, row)?, operation, revision, ticket))
     }
 
     pub(crate) fn declared_upload(&self, model: &str, action: &str) -> Result<String, DbError> {
@@ -208,7 +210,7 @@ impl Db {
         declared.mutation.clone().ok_or_else(|| DbError::InvalidUpload(format!("{model} {action} declares no mutation")))
     }
 
-    pub(crate) fn create_upload_batch(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput, uploads: &crate::upload::UploadOperations) -> Result<Vec<RowId>, DbError> {
+    pub(crate) fn create_upload_batch<T>(&self, admitted: &crate::lifecycle::Admitted, generation: crate::identity::Generation, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput, uploads: &crate::upload::UploadOperations, claim: impl FnOnce(i64) -> T) -> Result<(Vec<(String, Row)>, i64, i64, T), DbError> {
         let spec = self.shared.spec(model)?;
         let action = spec.actions.iter().find(|action| action.name == request.operation).ok_or_else(|| DbError::InvalidUpload("unknown upload operation".into()))?;
         let batch = action.batch.as_ref().ok_or_else(|| DbError::InvalidUpload("operation has no upload batch declaration".into()))?;
@@ -245,7 +247,7 @@ impl Db {
             base_revision: Some(self.revision_seq()?), created_at: now, dedupe_key: None, upload: None,
             rollback: Some(Prior { rows: ids.iter().map(|id| PriorRow::Created { model: model.into(), id: id.to_string() }).collect() }.to_value()),
         };
-        self.preparing_uploads(admitted, model, generation, |prepared, generation, pending| {
+        let (snapshots, operation, revision, ticket) = self.preparing_uploads(admitted, model, generation, |prepared, generation, pending| {
             let files = files.into_iter().map(|(row, key, input)| prepared.prepare(model, row, key, input, UploadState::queued())).collect::<Result<Vec<_>, _>>()?;
             let (committed, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
@@ -253,6 +255,7 @@ impl Db {
                     envelope.scope_ops.extend(local_scope_ops(reader, spec, id, data)?);
                     envelope.entity_ops.push(EntityOp::Upsert { model: spec.key.clone(), id: id.clone(), row: data.clone() });
                 }
+                envelope.item_snapshots = files.iter().map(|item| (item.client_key.clone(), RowRef::new(spec.key.clone(), item.row.clone()))).collect();
                 let mut record = record.clone();
                 let mut prior: Prior = serde_json::from_value(record.rollback.take().unwrap_or(Value::Null)).map_err(StoreError::from)?;
                 prior.rows.extend(created_members(&envelope.scope_ops, reader.revision_seq()? + 1));
@@ -260,9 +263,16 @@ impl Db {
                 envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record), items: files.clone() });
                 Ok(Some(envelope))
             }).map_err(plan_fault)?;
+            let result = committed.result();
+            let operation = result.operations.first().copied().ok_or_else(|| DbError::Internal("upload batch has no operation".into()))?;
+            let revision = result.revision.ok_or_else(|| DbError::Internal("upload batch has no revision".into()))?;
+            let snapshots = result.item_snapshots.iter().map(|(item, row)| row.clone().map(|row| (item.clone(), row)).ok_or_else(|| DbError::Internal("upload batch item is missing".into()))).collect::<Result<Vec<_>, _>>()?;
+            let ticket = claim(operation);
             *pending = Some(committed);
-            Ok(ids)
-        })
+            Ok::<_, DbError>((snapshots, operation, revision, ticket))
+        })?;
+        let snapshots = snapshots.into_iter().map(|(item, row)| self.shared.overlay_snapshot(model, row).map(|row| (item, row))).collect::<Result<Vec<_>, _>>()?;
+        Ok((snapshots, operation, revision, ticket))
     }
 
     fn insert_local<'a>(&'a self, admitted: &crate::lifecycle::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>, i64), DbError> {
@@ -458,16 +468,13 @@ impl Db {
             self.copy_receiver(reader, spec, copy, (own, args), now_ms, plan, rows, queued)?;
         }
         for effect in &declared.scope_effects {
-            match effect.kind {
-                crate::schema::ScopeEffectKind::Join => self.join_scope_rows(reader, effect, (own, args), rows, queued)?,
-                crate::schema::ScopeEffectKind::Leave => self.leave_scope_rows(reader, effect, (own, args), rows, queued)?,
-            }
+            plan_scope_effect(reader, self.shared.spec(&effect.model)?, effect, (own, args), rows, &mut queued.scope_ops)?;
         }
         Ok(())
     }
 
     fn remove_receiver(&self, reader: &Reader<'_>, own: &RowRef, rows: &mut Vec<PriorRow>, touches: &mut Vec<EntityOp>) -> Result<(), DbError> {
-        let destroyed = self.destroy_targets(reader, own, WriteOrigin::Optimistic)?;
+        let destroyed = self.destroy_targets(reader, own)?;
         for target in &destroyed {
             rows.extend(PriorRow::destroyed(reader, target.model.as_str(), target.id.as_str())?);
             touches.push(EntityOp::Destroy { model: target.model.clone(), id: target.id.clone(), reason: DestroyReason::Local });
@@ -499,14 +506,16 @@ impl Db {
         Ok(())
     }
 
-    /// The lists that a scope effect changes, one per value of the order parameter, and the ids of the rows it moves.
-    fn effect_lists(&self, effect: &crate::schema::ScopeEffect, (own, args): (&RowRef, &Map<String, Value>)) -> Result<EffectLists, DbError> {
-        let ids: Vec<String> = match args.get(&effect.rows) {
+}
+
+fn effect_lists(target: &ModelSpec, effect: &crate::schema::ScopeEffect, (own, args): (&RowRef, &Map<String, Value>)) -> Result<EffectLists, DbError> {
+        let mut ids: Vec<String> = match args.get(&effect.rows) {
             Some(Value::Array(items)) => items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect(),
             Some(Value::String(one)) => vec![one.clone()],
             _ => return Err(DbError::Internal(format!("the argument {} of the scope effect is missing", effect.rows))),
         };
-        let target = self.shared.spec(&effect.model)?;
+        let mut seen = HashSet::new();
+        ids.retain(|id| seen.insert(id.clone()));
         let mut lists = Vec::new();
         for order in &effect.orders {
             let mut params = Map::new();
@@ -521,44 +530,33 @@ impl Db {
         Ok((lists, ids))
     }
 
-    fn join_scope_rows(&self, reader: &Reader<'_>, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, queued: &mut Queued) -> Result<(), DbError> {
-        let (lists, ids) = self.effect_lists(effect, call)?;
+pub(super) fn plan_scope_effect(reader: &Reader<'_>, target: &ModelSpec, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, scope_ops: &mut Vec<ScopeOp>) -> Result<(), DbError> {
+        let (lists, ids) = effect_lists(target, effect, call)?;
         let owned = reader.revision_seq()? + 1;
         for (scope, key) in lists {
+            let mut last = reader.scope_last_key(&effect.model, &key)?;
             for id in &ids {
-                if reader.point(&effect.model, id)?.is_none() {
-                    rows.push(PriorRow::Join { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None, owned });
-                    continue;
+                let before = reader.scope_member_key(&effect.model, &key, id)?;
+                match effect.kind {
+                    crate::schema::ScopeEffectKind::Join => {
+                        if before.is_none() && reader.point(&effect.model, id)?.is_some() {
+                            let order_key = fractional_between(last.as_deref(), None).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
+                            last = Some(order_key.clone());
+                            scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id)?, order_key });
+                        }
+                        rows.push(PriorRow::Join { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before, owned });
+                    }
+                    crate::schema::ScopeEffectKind::Leave => {
+                        if before.is_some() { scope_ops.push(ScopeOp::Detach { scope: scope.clone(), row: RowId::new(id)? }); }
+                        rows.push(PriorRow::Leave { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before, owned });
+                    }
                 }
-                if let Some(held) = reader.scope_member_key(&effect.model, &key, id)? {
-                    rows.push(PriorRow::Join { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(held), owned });
-                    continue;
-                }
-                let last = reader.scope_last_key(&effect.model, &key)?;
-                let order_key = fractional_between(last.as_deref(), None).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
-                queued.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id)?, order_key });
-                rows.push(PriorRow::Join { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None, owned });
             }
         }
         Ok(())
-    }
+}
 
-    fn leave_scope_rows(&self, reader: &Reader<'_>, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, queued: &mut Queued) -> Result<(), DbError> {
-        let (lists, ids) = self.effect_lists(effect, call)?;
-        let owned = reader.revision_seq()? + 1;
-        for (scope, key) in lists {
-            for id in &ids {
-                let Some(order_key) = reader.scope_member_key(&effect.model, &key, id)? else {
-                    rows.push(PriorRow::Leave { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: None, owned });
-                    continue;
-                };
-                queued.scope_ops.push(ScopeOp::Detach { scope: scope.clone(), row: RowId::new(id)? });
-                rows.push(PriorRow::Leave { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before: Some(order_key), owned });
-            }
-        }
-        Ok(())
-    }
-
+impl Db {
     pub fn destroy(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {
         self.destroy_claiming(admitted, model, id, |_| ()).map(|(destroyed, _, _, ())| destroyed)
     }
@@ -576,7 +574,7 @@ impl Db {
                 if reader.point(model, id.as_str())?.is_none() {
                     return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
                 }
-                destroyed = self.destroy_targets(reader, &own, WriteOrigin::Optimistic)?;
+                destroyed = self.destroy_targets(reader, &own)?;
                 if let Some(unsent) = unsent_operations(reader, id, &destroyed)? {
                     let mut envelope = cascade_envelope(&destroyed, DestroyReason::Expired, WriteOrigin::Optimistic, generation);
                     envelope.operation_transitions.extend(unsent.iter().map(|entry| OperationTransition::Remove { seq: entry.operation.id.0, expected: None }));
@@ -717,10 +715,7 @@ impl Db {
         Ok(ops)
     }
 
-    pub(crate) fn destroy_targets(&self, reader: &Reader<'_>, own: &RowRef, origin: WriteOrigin) -> Result<Vec<RowRef>, DbError> {
-        if origin == WriteOrigin::Replace {
-            return Ok(vec![own.clone()]);
-        }
+    pub(crate) fn destroy_targets(&self, reader: &Reader<'_>, own: &RowRef) -> Result<Vec<RowRef>, DbError> {
         let mut descendants = Vec::new();
         self.descendants(reader, own, &mut HashSet::from([own.clone()]), &mut descendants)?;
         Ok(cascade_destroys(own, &descendants, true))

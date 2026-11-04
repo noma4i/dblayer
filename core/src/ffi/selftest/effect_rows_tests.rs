@@ -22,6 +22,28 @@ async fn remove_member(rig: &Rig, id: &str) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn joining_multiple_members_keeps_each_once_in_order() {
+    let world = World::new("server", "A", true);
+    let rig = Rig::plain(world.clone(), false).await;
+    let epoch = rig.database.session_epoch();
+    let group = confirmed_group(&rig).await;
+    let params = json!({"groupId": group.id, "order": "JOINED"});
+    world.set_members("JOINED", &["u1", "u2", "u3", "u4", "u5"]);
+    bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string())).await.unwrap();
+    let removed = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "remove_member".into(), "{}".into(), json!({"userIds":["u4","u5"]}).to_string())).await.unwrap();
+    assert!(matches!(bound(rig.database.outcome(removed)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    let hold = world.hold_next("AddMember");
+    let receipt = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u4","u5","u4"]}).to_string())).await.unwrap();
+    hold.entered_for("the join").await;
+    let query = json!({"model":"Member","relation":"group_members","params":params});
+    let ids: Vec<_> = bound(rig.database.read_query(epoch, query.to_string())).await.unwrap().into_iter().map(|row| row.id).collect();
+    assert_eq!(ids, ["u1", "u2", "u3", "u4", "u5"]);
+    hold.release();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    rig.database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_operation_outcome_can_be_read_twice_from_its_receipt() {
     let world = World::new("server", "A", true);
     let rig = Rig::plain(world.clone(), false).await;

@@ -3,7 +3,6 @@ mod attach_tests;
 #[cfg(test)]
 mod cascade_tests;
 #[cfg(test)]
-mod composition_tests;
 #[cfg(test)]
 mod discard_tests;
 #[cfg(test)]

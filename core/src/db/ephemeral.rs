@@ -342,7 +342,7 @@ impl Db {
             destroyed = expired.len();
             for (model, id) in expired {
                 let own = RowRef::new(ModelKey::new(model), RowId::new(id)?);
-                for target in self.destroy_targets(reader, &own, WriteOrigin::Event)? {
+                for target in self.destroy_targets(reader, &own)? {
                     if !targets.contains(&target) {
                         targets.push(target);
                     }

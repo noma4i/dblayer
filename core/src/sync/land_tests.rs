@@ -139,7 +139,6 @@ async fn a_list_response_started_before_create_preserves_the_confirmed_member() 
         let scope = ScopeRef::new(ModelKey::new("moments"), crate::identity::ListKey::from_raw(key.trim_end_matches(":forward")));
         let mut old = moment("m1", "old").as_object().unwrap().clone();
         old.insert("userId".into(), serde_json::json!("u42"));
-        rig.db.replace(&rig.db.admit().unwrap(), &crate::db::ReplaceRequest::new(scope.clone(), coverage), vec![old.clone()]).unwrap();
         let response = |issued| {
             let mut reply = landing(&rig, issued, &[]);
             reply.scope = scope.clone();
@@ -149,6 +148,7 @@ async fn a_list_response_started_before_create_preserves_the_confirmed_member() 
             reply.attempt = FetchAttempt::new(&key, issued, rig.db.generation(), rig.db.revision_seq().unwrap());
             reply
         };
+        (rig.sync.inner.land(&rig.sync.inner.db.admit().unwrap(), response(1))).unwrap();
         let stale = response(100);
         rig.db.create(&rig.db.admit().unwrap(), "moments", params(serde_json::json!({"text": "mine", "userId": "u42"}))).unwrap();
         rig.transport.enqueue("CreateMoment", crate::transport::Reply::data(serde_json::json!({"createMoment": {"id": "m2", "text": "mine", "userId": "u42"}})));

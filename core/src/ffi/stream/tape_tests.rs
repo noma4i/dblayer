@@ -158,8 +158,8 @@ impl Database {
 }
 
 impl Database {
-    pub(crate) async fn create_durable(&self, model: &str, values_json: &str) -> super::super::wire::WireRow {
+    pub(crate) async fn create_durable(&self, model: &str, values_json: &str) -> super::super::WireOperationReceipt {
         let request = crate::ffi::CommandRequest { epoch: self.session_epoch(), model: model.into(), values_json: values_json.into(), args_json: "{}".into(), upload: None };
-        self.send(request).await.unwrap().optimistic_value.unwrap()
+        self.send(request).await.unwrap()
     }
 }

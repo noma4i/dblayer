@@ -66,6 +66,7 @@ fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
 }
 
 pub(super) async fn resume(admitted: &crate::lifecycle::Admitted, client: Arc<EncryptedClient>, sync: Option<crate::sync::Sync>) -> Result<(Option<String>, core::encrypted::After), DbError> {
+    let effects = Arc::new(crate::sync::DeliveryEffects::new(sync.as_ref().map(|sync| &sync.inner)));
     let serial = match &sync {
         Some(sync) => Some(sync.inner.outbox_gate.lock().await),
         None => None,
@@ -83,13 +84,16 @@ pub(super) async fn resume(admitted: &crate::lifecycle::Admitted, client: Arc<En
         Err(error) if core::encrypted::permanently_refused(&error) => (None, Err(error), core::encrypted::After::Nothing),
         Err(error) => return Err(typed(error)),
     };
-    if let (Some(sync), Some(serial), Some(owner)) = (&sync, &serial, owner) {
-        if !matches!(&result, Ok(response) if core::missing_from_registry(response)) {
-            sync.inner.settle_resumed(admitted, serial, upload, owner, result).await?;
-        }
-    }
     drop(serial);
-    if let Some(sync) = &sync { sync.inner.reload_marked(); }
+    let settled = if let (Some(sync), Some(owner)) = (&sync, owner) {
+        if !matches!(&result, Ok(response) if core::missing_from_registry(response)) {
+            sync.inner.settle_resumed(admitted, effects.clone(), upload, owner, result).await.map_err(DbError::from)
+        } else {
+            Ok(())
+        }
+    } else { Ok(()) };
+    effects.run();
+    settled?;
     Ok((answer.map(refused).transpose()?.map(|answer| answer.body.to_string()), after))
 }
 

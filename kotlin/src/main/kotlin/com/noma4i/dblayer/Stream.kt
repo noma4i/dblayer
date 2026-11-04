@@ -327,8 +327,8 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
         return MutationReceipt(database, decoder, receipt)
     }
 
-    suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): List<Model> =
-        offCaller { database.uploadCreateBatch(epoch, decoder.modelName, items.map { it.wire() }, request.wire()).map { decoder.read(it) } }
+    suspend fun <Model : DBModel> uploadBatch(decoder: ModelDecoder<Model>, items: List<UploadItem>, request: UploadBatchRequest): OperationReceipt<Model> =
+        offCaller { OperationReceipt(database, decoder, database.uploadCreateBatch(epoch, decoder.modelName, items.map { it.wire() }, request.wire())) }
 
     companion object {
         fun current(): AccountScope {

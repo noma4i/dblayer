@@ -280,7 +280,7 @@ async fn wait_uploads_parks_while_resume_owns_the_upload() {
     }
     let rig = upload_rig(small());
     let source = file(b"abcdef");
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
     let owner = crate::transport::RequestOwner { seq, item_position: 0, stage: "prepare".into() };
     let resume = rig.sync.inner.claim_upload_resume(&rig.db.admit().unwrap(), &owner).await.unwrap().unwrap();
     let wakes = Arc::new(Wakes(std::sync::atomic::AtomicUsize::new(0)));
@@ -860,7 +860,7 @@ async fn an_orphaned_multipart_of_a_failed_upload_is_aborted_on_start() {
     let rig = upload_rig(small());
     rig.transport.enqueue("AbortMultipart", abort());
     let source = file(TWELVE);
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Response, rig.db.generation());
     envelope.operation_transitions.push(OperationTransition::Fail {
         seq,
@@ -905,7 +905,7 @@ async fn inv_upload_06_a_retry_that_lands_while_the_old_run_is_ending_still_star
     let rig = upload_rig(small());
     single_replies(&rig);
     let source = file(b"abcdef");
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
     let (run, _) = rig.sync.inner.register(seq, 0).unwrap();
     rig.sync.inner.start_uploads().unwrap();
     rig.sync.inner.finish_run(&rig.db.admit().unwrap(), seq, 0, run);
@@ -1044,7 +1044,7 @@ async fn inv_upload_19_discarding_a_failed_multipart_aborts_it_once_with_or_with
         let rig = upload_rig(small());
         rig.transport.enqueue("AbortMultipart", abort());
         let source = file(TWELVE);
-        let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(parts))).unwrap();
+        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(parts))).unwrap();
         fail_open_upload(&rig, seq);
         assert_eq!(rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), None).unwrap(), 1, "{name}");
         assert!(rig.db.outbox().unwrap().is_empty(), "{name}");
@@ -1062,7 +1062,7 @@ async fn an_orphaned_abort_waits_offline_and_is_sent_when_online() {
     let rig = upload_rig(small());
     rig.transport.enqueue("AbortMultipart", abort());
     let source = file(TWELVE);
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
     fail_open_upload(&rig, seq);
     rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), None).unwrap();
     rig.sync.set_online(false);
@@ -1080,7 +1080,7 @@ async fn inv_upload_20_a_failed_upload_older_than_seven_days_is_aborted_and_remo
         let rig = upload_rig(small());
         rig.transport.enqueue("AbortMultipart", abort());
         let source = file(TWELVE);
-        let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(parts))).unwrap();
+        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(parts))).unwrap();
         fail_open_upload(&rig, seq);
         rig.clock.advance(Duration::from_secs(7 * 24 * 3600 - 3600));
         crate::sync::rig::app(&rig.sync, rig.sync.inner.upload_housekeeping(&rig.db.admit().unwrap())).await.unwrap();
@@ -1100,7 +1100,7 @@ async fn upload_housekeeping_runs_at_the_first_flush_and_when_coming_online_neve
     rig.transport.enqueue("AbortMultipart", abort());
     rig.transport.enqueue("AbortMultipart", abort());
     let source = file(TWELVE);
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
     fail_open_upload(&rig, seq);
     rig.clock.advance(Duration::from_secs(8 * 24 * 3600));
     tokio::time::sleep(Duration::from_secs(60)).await;
@@ -1110,7 +1110,7 @@ async fn upload_housekeeping_runs_at_the_first_flush_and_when_coming_online_neve
     assert!(rig.db.outbox().unwrap().is_empty(), "boot flush");
     assert_eq!(rig.transport.call_count("AbortMultipart"), 1);
     let source = file(TWELVE);
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m2"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m2"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
     fail_open_upload(&rig, seq);
     rig.clock.advance(Duration::from_secs(8 * 24 * 3600));
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
@@ -1141,7 +1141,7 @@ async fn a_finished_multipart_upload_never_records_an_abort() {
 async fn committing_an_upload_whose_multipart_id_is_still_stored_never_records_an_abort() {
     let rig = upload_rig(small());
     let source = file(TWELVE);
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(confirmed_parts()))).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(confirmed_parts()))).unwrap();
     let mut envelope = CommitEnvelope::new(WriteOrigin::Response, rig.db.generation());
     envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::Committed });
     rig.db.shared.store.commit(envelope).unwrap();
@@ -1198,7 +1198,7 @@ async fn a_recorded_abort_survives_closing_and_reopening_the_database_and_waits_
         let rig = rig_on(crate::db::Db::open(&path, specs(), None).unwrap(), crate::transport::MockTransport::new(), upload_config(small()));
         register_upload_operations(&rig.sync);
         put(&rig, "moments", moment("m1", "x"));
-        let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(confirmed_parts()))).unwrap();
+        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(confirmed_parts()))).unwrap();
         fail_open_upload(&rig, seq);
         rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), None).unwrap();
         assert_eq!(orphan_count(&rig), 1);
@@ -1218,7 +1218,7 @@ async fn a_recorded_abort_survives_closing_and_reopening_the_database_and_waits_
 async fn expiry_skips_an_upload_that_was_retried_or_removed_after_it_was_selected() {
     let rig = upload_rig(small());
     let source = file(TWELVE);
-    let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
+    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), resumable(Vec::new()))).unwrap();
     fail_open_upload(&rig, seq);
     rig.clock.advance(Duration::from_secs(8 * 24 * 3600));
     let due = rig.sync.inner.now_ms() - 7 * 24 * 3600 * 1000;
@@ -1262,7 +1262,7 @@ async fn two_failed_uploads() -> (Rig, tempfile::NamedTempFile) {
     rig.sync.set_online(false);
     let source = file(TWELVE);
     for action in ["upload", "cover"] {
-        let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), action, &input(&source), resumable(Vec::new()))).unwrap();
+        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), action, &input(&source), resumable(Vec::new()))).unwrap();
         fail_open_upload(&rig, seq);
     }
     (rig, source)
@@ -1323,7 +1323,7 @@ async fn settled_for_one_action_reports_only_the_refusal_that_action_owns() {
     rig.sync.set_online(false);
     let source = file(TWELVE);
     for action in ["upload", "cover"] {
-        let seq = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), action, &input(&source), resumable(Vec::new()))).unwrap();
+        let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), action, &input(&source), resumable(Vec::new()))).unwrap();
         fail_open_upload_as(&rig, seq, &format!("{action}-lost"));
     }
     let cover = reason(&rig, Some("cover")).await.unwrap_err();

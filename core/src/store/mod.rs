@@ -33,7 +33,7 @@ mod write;
 
 pub use admission::{admit_upsert, UpsertAdmission};
 pub use apply::PlanCommitError;
-pub(crate) use apply::save_pending;
+pub(crate) use apply::{apply_envelope, save_pending};
 pub use boot::BootReport;
 pub use error::StoreError;
 pub use maintenance::{MaintenanceReport, TempRowPolicy};

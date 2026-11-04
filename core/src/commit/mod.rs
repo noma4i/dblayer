@@ -20,7 +20,6 @@ pub enum WriteOrigin {
     Event,
     Response,
     Patch,
-    Replace,
     Optimistic,
 }
 
@@ -237,6 +236,7 @@ pub struct CommitEnvelope {
     pub window: Option<WindowSave>,
     pub window_debts: Vec<WindowDebt>,
     pub snapshot: Option<RowRef>,
+    pub item_snapshots: Vec<(String, RowRef)>,
     pub origin: WriteOrigin,
     pub generation: Generation,
     pub writes_local: bool,
@@ -283,6 +283,7 @@ impl CommitEnvelope {
             window: None,
             window_debts: Vec::new(),
             snapshot: None,
+            item_snapshots: Vec::new(),
             origin,
             generation,
             writes_local: false,
@@ -369,6 +370,7 @@ pub struct CommitResult {
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
     pub(crate) snapshot: Option<crate::db::Row>,
+    pub(crate) item_snapshots: Vec<(String, Option<crate::db::Row>)>,
 }
 
 impl CommitResult {
@@ -385,6 +387,7 @@ impl CommitResult {
             replaced: Vec::new(),
             unknown_operation_acks: 0,
             snapshot: None,
+            item_snapshots: Vec::new(),
         }
     }
 

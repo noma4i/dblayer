@@ -140,6 +140,51 @@ pub enum WireOperationOutcome {
     Interrupted,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, uniffi::Record)]
+pub struct ItemId { pub value: String }
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct WireItemReceipt { pub item: ItemId, pub optimistic_value: WireRow }
+
+#[derive(uniffi::Object)]
+pub struct WireBatchTicket {
+    receipt: crate::sync::OperationReceipt,
+    model: String,
+    items: Vec<WireItemReceipt>,
+}
+
+impl std::fmt::Debug for WireBatchTicket {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("WireBatchTicket").finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct WireBatchReceipt {
+    pub epoch: u64,
+    pub operation: i64,
+    pub revision: i64,
+    pub items: Vec<WireItemReceipt>,
+    pub ticket: Arc<WireBatchTicket>,
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum WireItemOutcome {
+    Confirmed { item: ItemId, value: WireRow },
+    Discarded { item: ItemId },
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum WireBatchResult {
+    Confirmed,
+    Rejected { failure: super::wire::WireFailure },
+    DeliveryUnknown,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct WireBatchOutcome { pub result: WireBatchResult, pub items: Vec<WireItemOutcome> }
+
 #[derive(uniffi::Object)]
 pub struct TestClock { clock: Arc<ManualClock> }
 
@@ -453,8 +498,8 @@ impl Database {
         self.write_in_epoch(crate::lifecycle::Origin::Session, epoch, "retry", move |database, admitted| {
             let sync = database.sync()?.clone();
             let id = id(&row_id)?;
-            let (operation, revision, ticket) = database.db.retry_claiming(admitted, &model, &id, action.as_deref(), |operation| sync.claim_outcome(operation))?;
-            let row = database.db.find(&model, &id)?.map(|row| database.wire(&model).map(|wire| wire.row(&row))).transpose()?;
+            let (operation, revision, row, ticket) = database.db.retry_claiming(admitted, &model, &id, action.as_deref(), |operation| sync.claim_outcome(operation))?;
+            let row = row.map(|row| database.wire(&model).map(|wire| wire.row(&row))).transpose()?;
             database.send_writes();
             Ok(receipt(epoch, model, Some(operation), revision, row, Some(ticket), database.streams.clone()))
         }).await
@@ -517,15 +562,41 @@ impl Database {
             Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, Some(wire.row(&row)), Some(ticket), life))
         })).await
     }
-    pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<Vec<WireRow>, DbError> {
+    pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?.clone();
         self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "upload batch", false, |admitted| on_executor(async move {
             let items = items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?;
             let input = request.into_input()?;
-            let rows = sync.upload_create_batch(&admitted, &model, items, input).await?;
-            Ok::<_, DbError>(rows.iter().map(|row| wire.row(row)).collect())
+            let receipt = sync.upload_create_batch(&admitted, &model, items, input).await?;
+            let items: Vec<_> = receipt.items.iter().map(|item| WireItemReceipt { item: ItemId { value: item.item.0.clone() }, optimistic_value: wire.row(&item.optimistic_value) }).collect();
+            Ok::<_, DbError>(WireBatchReceipt { epoch: receipt.epoch, operation: receipt.operation, revision: receipt.revision, items: items.clone(), ticket: Arc::new(WireBatchTicket { receipt, model, items }) })
         })).await
+    }
+    pub async fn batch_outcome(&self, receipt: WireBatchReceipt) -> Result<WireBatchOutcome, DbError> {
+        let held = &receipt.ticket;
+        if !Arc::ptr_eq(&held.receipt.life, &self.streams) || receipt.epoch != held.receipt.epoch || receipt.operation != held.receipt.operation || receipt.revision != held.receipt.revision || receipt.items != held.items {
+            return Err(DbError::Invalid { detail: "the upload batch receipt was changed".into() });
+        }
+        if !self.admits(receipt.epoch) { return Ok(WireBatchOutcome { result: WireBatchResult::Interrupted, items: Vec::new() }); }
+        let outcome = match held.receipt.outcome().await {
+            Ok(outcome) => outcome,
+            Err(_) if !self.admits(receipt.epoch) => return Ok(WireBatchOutcome { result: WireBatchResult::Interrupted, items: Vec::new() }),
+            Err(error) => return Err(error.into()),
+        };
+        let wire = self.wire(&held.model)?;
+        let items = outcome.items.into_iter().map(|item| match item {
+            crate::sync::ItemOutcome::Confirmed { item, value } => WireItemOutcome::Confirmed { item: ItemId { value: item.0 }, value: wire.row(&value) },
+            crate::sync::ItemOutcome::Discarded { item } => WireItemOutcome::Discarded { item: ItemId { value: item.0 } },
+        }).collect();
+        let result = match outcome.result {
+            crate::sync::SendResult::Committed => WireBatchResult::Confirmed,
+            crate::sync::SendResult::Rejected(failure) => WireBatchResult::Rejected { failure: super::wire::failure(&failure) },
+            crate::sync::SendResult::DeliveryUnknown | crate::sync::SendResult::Quarantined => WireBatchResult::DeliveryUnknown,
+            crate::sync::SendResult::Discarded => WireBatchResult::Interrupted,
+            crate::sync::SendResult::Deferred | crate::sync::SendResult::Skipped(_) => return Err(DbError::Invalid { detail: "operation has not finished".into() }),
+        };
+        Ok(WireBatchOutcome { result, items })
     }
     pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
         let sync = self.sync()?.clone();

@@ -606,7 +606,7 @@ impl Feed {
                     operations.insert(key, EntityOp::Upsert { model: ModelKey::new(model), id: item.id.clone(), row });
                 } else {
                     let own = RowRef::new(ModelKey::new(model), item.id.clone());
-                    for target in db.destroy_targets(reader, &own, WriteOrigin::Event)? {
+                    for target in db.destroy_targets(reader, &own)? {
                         destroyed.insert((target.model.to_string(), target.id.to_string()));
                         operations.insert((target.model.to_string(), target.id.to_string()), EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Server });
                     }

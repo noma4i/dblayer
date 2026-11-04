@@ -27,7 +27,7 @@ async fn sending_uses_the_input_frozen_by_its_owner_instead_of_a_stale_snapshot(
     envelope.operation_transitions.push(stale.rewritten(stale.operation.row_ids.clone(), json!({"id": "m1", "text": "after"}), stale.rollback.clone()));
     (rig.sync.inner.commit(&rig.sync.inner.db.admit().unwrap(), generation, |_| Ok(Some(envelope.clone())))).unwrap();
     let operation = rig.sync.inner.operations.lock().unwrap()["UpdateMoment"].clone();
-    let sending = super::Sending { admitted: &rig.db.admit().unwrap(), entry: &stale, model: "moments".into(), action: "update".into(), generation, base_revision: rig.db.revision_seq().unwrap(), checked: None };
+    let sending = super::Sending { effects: std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&rig.sync.inner))), admitted: &rig.db.admit().unwrap(), entry: &stale, model: "moments".into(), action: "update".into(), generation, base_revision: rig.db.revision_seq().unwrap(), checked: None };
     rig.transport.enqueue("UpdateMoment", updated("m1", "after"));
     crate::sync::rig::app(&rig.sync, rig.sync.inner.send_owned(&sending, &operation, None)).await.unwrap();
     assert_eq!(rig.transport.calls()[0].variables["text"], "after");
@@ -551,7 +551,7 @@ async fn lands_joins_only_loaded_matching_threads_and_keeps_existing_places() {
         rig.db.act(&rig.db.admit().unwrap(), "moments", "star", &rid("m1"), params(json!({})), params(json!({}))).unwrap();
         let entry = rig.db.outbox().unwrap().remove(0);
         let before = rig.db.revision_seq().unwrap();
-        let sending = super::Sending { admitted: &rig.db.admit().unwrap(), entry: &entry, model: "moments".into(), action: "star".into(), generation: rig.db.generation(), base_revision: before, checked: None };
+        let sending = super::Sending { effects: std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&rig.sync.inner))), admitted: &rig.db.admit().unwrap(), entry: &entry, model: "moments".into(), action: "star".into(), generation: rig.db.generation(), base_revision: before, checked: None };
         let operation = rig.sync.inner.operations.lock().unwrap()["StarMoment"].clone();
         let response = crate::transport::Response::data(json!({"starMoment": {"message": message("atomic", Some(4), 4)}}));
         assert_eq!(crate::sync::rig::app(&rig.sync, rig.sync.inner.settle_response(&sending, &operation, response)).await.unwrap(), SendResult::Committed);
@@ -685,7 +685,7 @@ async fn settling_an_answer_for_an_unregistered_model_is_an_error_not_a_silent_f
     rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "new"}))).unwrap();
     let entry = rig.db.outbox().unwrap().remove(0);
     let operation = rig.sync.inner.operations.lock().unwrap()["UpdateMoment"].clone();
-    let sending = super::Sending { admitted: &rig.db.admit().unwrap(), entry: &entry, model: "ghosts".into(), action: "update".into(), generation: rig.db.generation(), base_revision: rig.db.revision_seq().unwrap(), checked: None };
+    let sending = super::Sending { effects: std::sync::Arc::new(crate::sync::DeliveryEffects::new(Some(&rig.sync.inner))), admitted: &rig.db.admit().unwrap(), entry: &entry, model: "ghosts".into(), action: "update".into(), generation: rig.db.generation(), base_revision: rig.db.revision_seq().unwrap(), checked: None };
     let outcome = crate::sync::rig::app(&rig.sync, rig.sync.inner.settle_response(&sending, &operation, crate::transport::Response::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})))).await;
     let error = outcome.unwrap_err();
     assert!(error.to_string().contains("ghosts"), "{error}");

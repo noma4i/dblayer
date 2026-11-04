@@ -254,11 +254,11 @@ async fn preload_limited_source() {
     vibes.relations.push(list);
     let rig = rig_on(Db::open_in_memory(vec![users_spec(), moments, vibes], None).unwrap(), MockTransport::new(), SyncConfig::default());
     rig.sync.register(OperationDef::new("VibesList", "operation VibesList { x }", "vibes"));
-    let scope = crate::commit::ScopeRef::new(crate::identity::ModelKey::new("vibes"), rig.db.spec("vibes").unwrap().selection_key("list", &Default::default()).unwrap());
-    let request = crate::db::ReplaceRequest::new(scope, Coverage::Complete);
     let rows: Vec<_> = (0..10_000).map(|n| params(json!({"id": format!("v{n:05}")}))).collect();
-    rig.db.replace(&rig.db.admit().unwrap(), &request, rows.clone()).unwrap();
-    rig.transport.respond_with(|_| Some(feed_reply(&["m1"], false, "c1")));
+    rig.transport.enqueue("VibesList", Reply::data(json!({"vibes": rows.clone()})));
+    rig.transport.enqueue("VibesList", Reply::data(json!({"vibes": rows.into_iter().skip(1).collect::<Vec<_>>()})));
+    rig.sync.load(&rig.db.admit().unwrap(), "vibes", "list", &Default::default(), LoadOptions { force: true }).await.unwrap();
+    rig.transport.respond_with(|request| (request.operation_name != "VibesList").then(|| feed_reply(&["m1"], false, "c1")));
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 40, "limit covers the product, not each parameter");
@@ -267,7 +267,7 @@ async fn preload_limited_source() {
     assert_eq!(crate::identity::touches::member_reads() - read_before, 40, "only the bounded source prefix is read from SQLite");
     let selected = feed_vibes(&rig);
     assert_eq!(selected, (0..20).flat_map(|n| [format!("v{n:05}"), format!("v{n:05}")]).collect::<Vec<_>>(), "declaration order chooses the first 20 sources twice");
-    rig.db.replace(&rig.db.admit().unwrap(), &request, rows.into_iter().skip(1).collect()).unwrap();
+    rig.sync.load(&rig.db.admit().unwrap(), "vibes", "list", &Default::default(), LoadOptions { force: true }).await.unwrap();
     rig.sync.inner.preload_on_source("vibes", "list");
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 42, "only the two incoming windows reach the transport");

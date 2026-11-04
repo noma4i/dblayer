@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.Asset
 import com.noma4i.dblayer.models.modelsJSON
 import java.nio.file.Files
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -24,14 +25,19 @@ class UploadBatchTest {
             adopt(database)
             database.setOnline(false)
             val items = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
-            val rows = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+            val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
+            val rows = receipt.items.map { it.optimisticValue }
             assertEquals(2, rows.size)
+            assertEquals(listOf("key-0", "key-1"), receipt.items.map { it.item.value })
             assertTrue(rows.all { it.id.startsWith("temp-") && it.sync.state == SyncState.Sending && it.uploads.isNotEmpty() })
             assertTrue(source.delete())
             repeat(2) { transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""") }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a1","clientKey":"key-1","size":2},{"id":"a0","clientKey":"key-0","size":2}]}}}""")
             database.setOnline(true)
-            rows.forEachIndexed { position, row -> assertEquals("a$position", row.confirmedId()) }
+            val outcome = withTimeout(5000) { receipt.outcome() }
+            assertTrue(outcome.result is BatchResult.Confirmed)
+            val ids = outcome.items.map { item -> (item as ItemOutcome.Confirmed<*>).let { "${it.item.value}:${it.value.id}" } }
+            assertEquals(listOf("key-0:a0", "key-1:a1"), ids)
             val calls = transport.calls.filter { it.operationName == "CreateAssets" }
             assertEquals(1, calls.size)
             val sent = Json.parseToJsonElement(calls.single().variablesJson).jsonObject.getValue("items").jsonArray

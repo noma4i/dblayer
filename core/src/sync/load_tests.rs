@@ -283,6 +283,17 @@ async fn list_load_replaces_membership_completely() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn consecutive_list_loads_keep_the_server_order() {
+    let rig = rig();
+    let params = params(json!({"userId": "u1"}));
+    for ids in [vec!["m3", "m0", "m6", "m2"], vec!["m2", "m3", "m4", "m5", "m7"], vec!["m0", "m5", "m2"], vec!["m7", "m6", "m1", "m3", "m2"]] {
+        rig.transport.enqueue("MomentsByUser", Reply::data(json!({"moments": ids.iter().map(|id| moment(id, id)).collect::<Vec<_>>()})));
+        crate::test_wait::within(rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "by_user", &params, LoadOptions { force: true })).await.unwrap();
+        assert_eq!(member_ids(&rig, "moments", "by_user", &params), ids);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn null_param_loads_its_own_list_and_sends_null() {
     let rig = rig();
     let unowned = params(json!({"userId": null}));

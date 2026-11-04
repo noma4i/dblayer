@@ -202,7 +202,7 @@ impl Inner {
             let plan = if plans_as_first {
                 let mut request = ReplaceRequest::new(scope.clone(), coverage);
                 request.replace_all = replace_window;
-                self.db.replace_plan(reader, &request, &roots, Some(attempt.base_revision)).map_err(|error| SyncError::Malformed(error.to_string()))?
+                self.db.replace_plan(reader, &request, &roots, attempt.base_revision).map_err(|error| SyncError::Malformed(error.to_string()))?
             } else {
                 let ids: Vec<String> = incoming_ids(&roots).iter().map(ToString::to_string).collect();
                 let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();

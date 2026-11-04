@@ -8,7 +8,7 @@ mod settle;
 #[cfg(test)] mod swap_window_tests;
 mod variables;
 
-pub(crate) use flush::{Sending, FinalAttempts};
+pub(crate) use flush::{DeliveryEffects, Sending, FinalAttempts};
 pub(crate) use outcomes::{FinishedOperation, OutcomeTicket, Outcomes};
 pub use report::{FlushReport, SendResult, SentOperation, SkipReason};
 
@@ -36,6 +36,11 @@ impl Inner {
 impl Sync {
     pub(crate) fn claim_outcome(&self, operation: i64) -> std::sync::Arc<OutcomeTicket> {
         locked(&self.inner.outcomes).claim(operation)
+    }
+
+    pub(crate) fn discard_item_outcome(&self, operation: i64, item: String) {
+        let ticket = locked(&self.inner.outcomes).ticket(operation);
+        if let Some(ticket) = ticket { ticket.discard_item(item); }
     }
 
     pub async fn flush(&self, admitted: &crate::lifecycle::Admitted) -> Result<FlushReport, SyncError> {

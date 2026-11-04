@@ -39,7 +39,7 @@ fn merged_events_keep_replaced_pairs_and_reset_flags() {
 fn an_event_of_a_commit_lists_models_rows_scopes_and_replaced_pairs() {
     let db = booted();
     let temp = db.create(&db.admit().unwrap(), "moments", obj(serde_json::json!({"text": "t"}))).unwrap();
-    let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Replace, db.generation());
+    let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Response, db.generation());
     envelope.entity_ops.push(crate::commit::EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: crate::commit::DestroyReason::Replaced { by: rid("m7") } });
     envelope.entity_ops.push(crate::commit::EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(serde_json::json!({"id": "m7", "text": "t"})) });
     let result: CommitResult = db.shared.store.commit(envelope).unwrap();

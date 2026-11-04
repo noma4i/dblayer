@@ -161,11 +161,10 @@ impl Database {
                 }
                 Some(upload) => {
                     let sync = this.sync()?.clone();
-                    let (db, wire, model) = (this.db.clone(), this.wire(&request.model)?.clone(), request.model.clone());
+                    let (wire, model) = (this.wire(&request.model)?.clone(), request.model.clone());
                     on_executor(async move {
                         let file = upload.request.into_file()?;
-                        let (id, operation, revision, ticket) = sync.upload_create_claiming(&admitted, &model, &upload.action, values, file).await?;
-                        let row = db.find(&model, &id)?.ok_or_else(|| DbError::Invalid { detail: format!("{model} {id} was not created") })?;
+                        let (row, operation, revision, ticket) = sync.upload_create_claiming(&admitted, &model, &upload.action, values, file).await?;
                         Ok::<_, DbError>((wire.row(&row), Some(operation), revision, Some(ticket)))
                     }).await?
                 }

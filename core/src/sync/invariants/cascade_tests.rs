@@ -8,10 +8,9 @@ use super::super::subscribe::{EventEffect, SubscriptionDef};
 use super::event_tests::event;
 use crate::commit::ScopeRef;
 use crate::db::fixtures::{all_specs, changes, obj, recorder, rid};
-use crate::db::{Db, ReplaceRequest};
+use crate::db::Db;
 use crate::identity::{ModelKey, ListKey};
 use crate::query::Query;
-use crate::schema::Coverage;
 use crate::sync::SyncConfig;
 use crate::transport::{EventSpec, MockTransport};
 
@@ -30,8 +29,12 @@ fn seeded(db: &Db) {
     for (id, moment) in [("v1", "m1"), ("v2", "m2"), ("v3", "m3")] {
         put_row("vibes", json!({"id": id, "momentId": moment, "kind": "like"}));
     }
-    let feed = ReplaceRequest::new(ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed")), Coverage::Complete);
-    db.replace(&db.admit().unwrap(), &feed, ["m1", "m2", "m3"].iter().map(|id| obj(json!({"id": id}))).collect()).unwrap();
+    let feed = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
+    let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, db.generation());
+    for id in ["m1", "m2", "m3"] {
+        envelope.scope_ops.push(crate::commit::ScopeOp::Append { scope: feed.clone(), row: rid(id), order_key: id.to_string() });
+    }
+    db.land(&db.admit().unwrap(), envelope).unwrap();
     db.attach(&db.admit().unwrap(), "moments", &rid("m1"), "media", b"m1 bytes", "a.bin", "a/b").unwrap();
     db.attach(&db.admit().unwrap(), "vibes", &rid("v1"), "media", b"v1 bytes", "b.bin", "a/b").unwrap();
 }

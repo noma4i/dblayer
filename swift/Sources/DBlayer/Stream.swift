@@ -455,8 +455,9 @@ public struct AccountScope: Sendable {
     return try MutationReceipt(database: database, wire: receipt)
   }
 
-  @concurrent public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> [Model] {
-    try await database.uploadCreateBatch(epoch: epoch, model: Model.modelName, items: items.map { try $0.wire }, request: request.wire).map(Model.decode)
+  @concurrent public func uploadBatch<Model: DBModel>(_: Model.Type, items: [UploadItem], request: UploadBatchRequest) async throws -> OperationReceipt<Model> {
+    let receipt = try await database.uploadCreateBatch(epoch: epoch, model: Model.modelName, items: items.map { try $0.wire }, request: request.wire)
+    return try OperationReceipt(database: database, wire: receipt)
   }
 }
 

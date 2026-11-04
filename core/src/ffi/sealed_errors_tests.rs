@@ -36,6 +36,7 @@ pub(super) fn moment_spec() -> ModelSpec {
     create.durable = true;
     create.has_optimistic = true;
     create.has_temp_row_retention = true;
+    create.on_failure = crate::schema::OnFailure::Keep;
     model.actions.push(create);
     let mut upload = crate::sync::rig::upload_declared("upload");
     upload.mutation = Some("MakeMoment".to_string());
@@ -93,13 +94,14 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             let rig = Rig::new();
             let database = signed_in(&rig).await;
             let credential = rig.credentials.inner.value();
-            let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
             rig.server.refuse_next(wire, confirmed);
+            let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
 
-            let error = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap_err();
+            let outcome = database.outcome(receipt).await.unwrap();
+            let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
 
             let case = format!("{wire} confirmed={confirmed}");
-            assert_eq!(session(error), (code, wire.to_string()), "{case}");
+            assert_eq!((failure.session_code, failure.message), (Some(code), wire.to_string()), "{case}");
             assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential, 0), "{case}");
         }
     }
@@ -128,12 +130,14 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_l
 
         let load = database.load(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
         let run = database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
-        let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
-        let settled = database.settled(database.session_epoch(), "Moment".into(), row.id, None).await.unwrap_err();
+        let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+        let outcome = database.outcome(receipt).await.unwrap();
+        let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
 
-        for error in [load, run, settled] {
+        for error in [load, run] {
             assert_eq!(session(error).0, code, "{code:?}");
         }
+        assert_eq!(failure.session_code, Some(code), "{code:?}");
     }
 }
 
@@ -146,12 +150,14 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
     for (wire, code) in [("UNAUTHENTICATED", SessionCode::Unauthenticated), ("ACCOUNT_UNAVAILABLE", SessionCode::AccountUnavailable)] {
         let rig = Rig::new();
         let database = signed_in(&rig).await;
-        let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
         rig.server.refuse_next(wire, false);
+        let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+        let row = receipt.optimistic_value.clone().unwrap();
 
-        let error = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap_err();
+        let outcome = database.outcome(receipt).await.unwrap();
+        let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
 
-        assert_eq!(session(error).0, code, "{wire}");
+        assert_eq!(failure.session_code, Some(code), "{wire}");
         let stored = database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
         assert_eq!(stored.and_then(|stored| stored.text("text").map(str::to_string)), Some("hello".to_string()), "{wire}");
         let states: Vec<_> = database.db.outbox().unwrap().iter().map(|entry| entry.operation.status).collect();
@@ -159,22 +165,22 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         database.session_resume().await.unwrap();
         let before = graphql_posts(&rig);
 
-        let retried = if wire == "UNAUTHENTICATED" { database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap() } else { database.retry_all(database.session_epoch()).await.unwrap() };
-        assert_eq!(retried, 1);
-        let _ = database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await;
+        let retried = database.retry(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap();
+        let _ = database.outcome(retried).await;
 
         assert_eq!(graphql_posts(&rig) - before, 1, "{wire}");
     }
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn any_other_session_refusal_rolls_the_queued_mutation_back() {
+async fn any_other_session_refusal_follows_the_same_keep_declaration() {
     let rig = Rig::new();
     let database = signed_in(&rig).await;
-    let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
     rig.server.refuse_next("RATE_LIMITED", true);
+    let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+    let row = receipt.optimistic_value.clone().unwrap();
 
-    database.settled(database.session_epoch(), "Moment".into(), row.id.clone(), None).await.unwrap_err();
+    assert!(matches!(database.outcome(receipt).await.unwrap(), super::WireOperationOutcome::Rejected { .. }));
 
-    assert!(database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap().is_none());
+    assert!(database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap().is_some());
 }

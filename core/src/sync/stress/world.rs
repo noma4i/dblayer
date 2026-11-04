@@ -119,20 +119,6 @@ impl World {
         Self::locked(&self.universe).insert((model.to_string(), id.to_string()));
     }
 
-    pub fn replace(&self, request: &crate::db::ReplaceRequest, rows: Vec<serde_json::Map<String, serde_json::Value>>) {
-        let outcome = self.rig.db.replace(&self.rig.db.admit().unwrap(), request, rows);
-        if request.on_absent == crate::db::OnAbsent::Destroy {
-            if let Ok(result) = &outcome {
-                for change in &result.rows {
-                    if change.kind == crate::commit::RowChangeKind::Destroyed {
-                        self.touch(change.row.id.as_str());
-                    }
-                }
-            }
-        }
-        self.expect("replace", outcome.map(|_| ()));
-    }
-
     pub fn reset(&self, models: &[&str]) {
         let issued = if models.contains(&"moments") { self.issued() } else { Vec::new() };
         let outcome = self.rig.db.reset(models);

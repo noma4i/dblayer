@@ -3,11 +3,9 @@ use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
-use crate::commit::ScopeRef;
-use crate::db::{OnAbsent, ReplaceRequest, Row};
-use crate::identity::{ModelKey, RowId};
+use crate::db::Row;
+use crate::identity::RowId;
 use crate::query::Query;
-use crate::schema::Coverage;
 use crate::sync::rig::params;
 use crate::sync::{LoadOptions, SyncError};
 use crate::transport::{Response, SubscriptionEvent};
@@ -28,7 +26,7 @@ pub enum Op {
     History,
     Complete,
     Refresh,
-    Replace,
+    Reload,
     Retry,
     RetryAll,
     Discard,
@@ -52,7 +50,7 @@ const TABLE: [(u64, Op); 21] = [
     (3, Op::History),
     (3, Op::Complete),
     (3, Op::Refresh),
-    (4, Op::Replace),
+    (4, Op::Reload),
     (4, Op::Retry),
     (2, Op::RetryAll),
     (3, Op::Discard),
@@ -77,7 +75,7 @@ pub fn name_of(op: Op) -> &'static str {
         Op::History => "history",
         Op::Complete => "complete_load",
         Op::Refresh => "refresh",
-        Op::Replace => "replace",
+        Op::Reload => "reload",
         Op::Retry => "retry",
         Op::RetryAll => "retry_all",
         Op::Discard => "discard",
@@ -209,7 +207,7 @@ impl Worker {
                     self.report("refresh", rig.sync.refresh(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &no_params()).await.map(|_| ()), world);
                 }
             }
-            Op::Replace => self.replace(world),
+            Op::Reload => self.load(world, "feed", LoadOptions { force: true }).await,
             Op::Retry => {
                 let Some(row) = self.pick_own(world) else { return };
                 let _call = world.server.note_retry();
@@ -276,21 +274,6 @@ impl Worker {
             world.touch(&id);
         }
         Some(id)
-    }
-
-    fn replace(&mut self, world: &World) {
-        let mut rows = Vec::new();
-        for _ in 0..1 + self.dice.below(4) {
-            let Some(id) = self.noise_target(world) else { break };
-            if let Some(Value::Object(node)) = world.server.node_of(&id) {
-                rows.push(node);
-            }
-        }
-        world.findings.trace(|| format!("replace rows {rows:?}"));
-        let scope = ScopeRef::new(ModelKey::new("moments"), super::scope_of(&world.rig.db, "feed"));
-        let mut request = ReplaceRequest::new(scope, if self.dice.percent(50) { Coverage::Page } else { Coverage::Complete });
-        request.on_absent = if self.dice.percent(50) { OnAbsent::Destroy } else { OnAbsent::Detach };
-        world.replace(&request, rows);
     }
 
     fn event(&mut self, world: &World) {

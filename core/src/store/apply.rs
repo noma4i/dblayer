@@ -690,6 +690,16 @@ pub(crate) fn apply_envelope(
             result.snapshot = Some(std::sync::Arc::new(crate::db::Record { id: stored.id, revision: stored.revision, data: stored.row, sync, ephemeral: 0 }));
         }
     }
+    for (item, target) in &envelope.item_snapshots {
+        let reader = Reader::new(connection, models);
+        let id = target.id.to_string();
+        let stored = reader.stored_rows(target.model.as_str(), &[id.clone()])?.remove(&id);
+        let row = if let Some(stored) = stored {
+            let sync = crate::syncstate::read_sync(connection, target.model.as_str(), &[id.clone()])?.remove(&id).unwrap_or_default();
+            Some(std::sync::Arc::new(crate::db::Record { id: stored.id, revision: stored.revision, data: stored.row, sync, ephemeral: 0 }))
+        } else { None };
+        result.item_snapshots.push((item.clone(), row));
+    }
 
     result.renewed = changes.renewed;
     if wrote {

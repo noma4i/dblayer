@@ -51,7 +51,7 @@ async fn batch_renumber_preserves_order_and_publishes_complete_rows() {
             path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
         }).collect();
         let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-        let rows = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap();
+        let rows = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.into_iter().map(|item| item.optimistic_value).collect::<Vec<_>>();
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = seen.clone();
         let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push(change.rows.clone())).unwrap();
@@ -104,7 +104,7 @@ async fn batch_renumber_delivery_unknown_discards_every_member_without_rewriting
         path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let rows = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap();
+    let rows = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.into_iter().map(|item| item.optimistic_value).collect::<Vec<_>>();
     sync.wait_uploads().await;
     assert_eq!(transport.call_count("CreateAssets"), 1);
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -159,7 +159,8 @@ async fn batch_sends_ordered_items_once_and_replaces_by_key() {
     });
     transport.enqueue("CreateAssets", crate::transport::Reply::data(json!({"createAssets":{"assets":[{"id":"a1","clientKey":"key-1","size":2},{"id":"a0","clientKey":"key-0","size":2}],"entry":{"id":"e1"}}})).after(std::time::Duration::from_secs(2)));
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    let receipt = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap();
+    let ids: Vec<_> = receipt.items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     let changes = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = changes.clone();
     let _subscription = db.observe(crate::query::Query::new("Asset"), move |change| sink.lock().unwrap().push((change.size, change.diff.replaced.len()))).unwrap();
@@ -187,9 +188,13 @@ async fn batch_sends_ordered_items_once_and_replaces_by_key() {
     let calls: Vec<_> = transport.calls().into_iter().filter(|call| call.operation_name == "CreateAssets").collect();
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].variables["items"], json!([{"clientKey":"key-0","signedId":"signed-0"},{"clientKey":"key-1","signedId":"signed-1"}]));
-    for (position, temp) in ids.iter().enumerate() {
+    let outcome = within(receipt.outcome()).await.unwrap();
+    assert_eq!(outcome.result, crate::sync::SendResult::Committed);
+    for (position, (temp, item)) in ids.iter().zip(&outcome.items).enumerate() {
         assert!(db.find("Asset", temp).unwrap().is_none());
-        assert_eq!(sync.confirmed(&sync.inner.db.admit().unwrap(), "Asset", temp).await.unwrap().as_str(), format!("a{position}"));
+        let crate::sync::ItemOutcome::Confirmed { item, value } = item else { panic!("item was not confirmed") };
+        assert_eq!(item.0, format!("key-{position}"));
+        assert_eq!(value.id.as_str(), format!("a{position}"));
     }
     assert!(db.outbox().unwrap().is_empty());
     }
@@ -245,7 +250,7 @@ async fn discard_while_the_final_mutation_waits_offline_uses_the_single_operatio
         values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(), path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let rows = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap();
+    let rows = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.into_iter().map(|item| item.optimistic_value).collect::<Vec<_>>();
     transport.await_put_calls(2).await;
     assert_eq!(transport.put_calls().len(), 2);
     assert_eq!(transport.call_count("CreateAssets"), 0);
@@ -273,7 +278,7 @@ async fn one_failed_file_does_not_fail_a_transferred_sibling() {
         values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(), path: path.into(), name: None, mime: None, variables: Default::default(),
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     sync.wait_uploads().await;
     assert_eq!(db.find("Asset", &ids[0]).unwrap().unwrap().sync.state, SyncState::Failed);
     assert_eq!(db.find("Asset", &ids[1]).unwrap().unwrap().sync.state, SyncState::Sending);
@@ -323,7 +328,7 @@ async fn cancelling_one_offline_item_keeps_the_other_item_and_both_local_rows() 
         values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(), path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     assert!(crate::sync::rig::app(&sync, sync.cancel_upload(&sync.inner.db.admit().unwrap(), "Asset", &ids[0], "create_files")).await.unwrap());
     assert!(db.find("Asset", &ids[0]).unwrap().unwrap().sync.uploads.is_empty());
     assert!(db.find("Asset", &ids[1]).unwrap().unwrap().sync.uploads.contains_key("create_files"));
@@ -349,7 +354,7 @@ async fn retry_of_one_failed_item_preserves_the_completed_transfer() {
         values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(), path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     sync.wait_uploads().await;
     let failed = ids.iter().find(|id| db.find("Asset", id).unwrap().unwrap().sync.state == SyncState::Failed).unwrap();
     assert_eq!(transport.put_calls().len(), 1);
@@ -384,7 +389,7 @@ async fn restart_preserves_files_and_unknown_delivery_keeps_the_request_or_disca
             values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(), path: source.to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
         }).collect();
         let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-        let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+        let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
         std::fs::remove_file(source).unwrap();
         if scenario != "offline" {
             sync.wait_uploads().await;
@@ -437,7 +442,7 @@ async fn batch_creates_all_rows_and_owns_each_file_before_returning() {
         items.push(UploadItem { values: json!({"clientKey":format!("key-{position}"),"size":3}).as_object().unwrap().clone(), path: source.to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default() });
     }
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     drop(directory);
     assert_eq!(ids.len(), count);
     for id in &ids {
@@ -476,7 +481,7 @@ async fn invalid_batch_answers_preserve_all_temporary_records() {
             values: json!({"clientKey":format!("key-{position}"),"size":2}).as_object().unwrap().clone(), path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
         }).collect();
         let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-        let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+        let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
         sync.wait_uploads().await;
         for id in &ids {
             assert_eq!(db.find("Asset", id).unwrap().unwrap().sync.state, SyncState::DeliveryUnknown, "{answer}");
@@ -498,7 +503,7 @@ async fn discarding_one_batch_member_keeps_its_multipart_abort_after_the_item_is
         path: source.path().to_string_lossy().into_owned(), name: None, mime: None, variables: Default::default(),
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     db.shared.store.lock().connection.execute("UPDATE op_item SET upload_id = 'u1', storage_key = 'k1' WHERE row_id = ?1", [ids[0].as_str()]).unwrap();
     assert_eq!(db.discard(&db.admit().unwrap(), "Asset", &ids[0], None).unwrap(), 1);
     let orphans = db.shared.store.upload_orphans().unwrap();
@@ -523,7 +528,7 @@ async fn failed_batch(whole_operation: bool) -> (Db, Sync, Arc<ManualClock>, Vec
         path: if whole_operation { source.path().to_str().unwrap() } else { paths[position] }.into(), name: None, mime: None, variables: Default::default(),
     }).collect();
     let request = UploadBatchInput { operation: "create_files".into(), variables: Default::default() };
-    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     sync.wait_uploads().await;
     crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await.ok();
     sync.wait_uploads().await;
@@ -584,7 +589,7 @@ async fn a_batch_item_that_fails_while_its_request_is_pending_is_aborted_once_th
         pending.shared.store.lock().connection.execute("INSERT OR REPLACE INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_seq, item_position, stage) VALUES (1, 'd', 'r', 'k', 1, '/graphql', '{}', ?1, ?2, 'presign')", rusqlite::params![seq, position]).unwrap();
         Some(crate::transport::Reply::graphql_error("denied", "FORBIDDEN"))
     });
-    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().iter().map(|row| row.id.clone()).collect();
+    let ids: Vec<_> = crate::sync::rig::app(&sync, sync.upload_create_batch(&sync.inner.db.admit().unwrap(), "Asset", items, request)).await.unwrap().items.iter().map(|item| item.optimistic_value.id.clone()).collect();
     sync.wait_uploads().await;
     let failed: Vec<_> = crate::operation::read_upload_items(&db.shared.store.lock().connection).unwrap().into_iter().filter(|(_, state)| state.phase == crate::upload::UploadStatus::Failed && state.upload_id.is_some()).collect();
     assert_eq!(failed.len(), 1, "one item failed while its request was pending: {ids:?}");

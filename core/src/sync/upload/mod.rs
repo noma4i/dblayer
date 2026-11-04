@@ -37,6 +37,55 @@ use crate::upload::{RunMode, UploadFile, UploadInput, UploadOperations, UploadSt
 use super::error::SyncError;
 use super::{locked, Inner, Sync};
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ItemId(pub String);
+
+#[derive(Debug, Clone)]
+pub struct ItemReceipt {
+    pub item: ItemId,
+    pub optimistic_value: crate::db::Row,
+}
+
+#[derive(Debug, Clone)]
+pub struct OperationReceipt {
+    pub epoch: u64,
+    pub operation: i64,
+    pub revision: i64,
+    pub items: Vec<ItemReceipt>,
+    pub(crate) ticket: Arc<crate::sync::OutcomeTicket>,
+    pub(crate) life: Arc<crate::lifecycle::Lifecycle>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemOutcome {
+    Confirmed { item: ItemId, value: crate::db::Row },
+    Discarded { item: ItemId },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperationOutcome {
+    pub result: crate::sync::SendResult,
+    pub items: Vec<ItemOutcome>,
+}
+
+impl OperationReceipt {
+    pub async fn outcome(&self) -> Result<OperationOutcome, SyncError> {
+        let admitted = self.life.admit_passive(crate::lifecycle::Origin::Explicit, "upload batch outcome", Some(self.epoch))?;
+        let result = admitted.run(self.ticket.result()).await?;
+        let mut items = Vec::new();
+        for receipt in &self.items {
+            let item = receipt.item.clone();
+            if result.discarded.contains(&item.0) {
+                items.push(ItemOutcome::Discarded { item });
+            } else if let Some((_, value)) = result.items.iter().find(|(key, _)| *key == item.0) {
+                items.push(ItemOutcome::Confirmed { item, value: value.clone() });
+            } else if result.result == crate::sync::SendResult::Committed {
+                return Err(SyncError::Store(format!("upload item {} has no confirmed value", item.0)));
+            }
+        }
+        Ok(OperationOutcome { result: result.result, items })
+    }
+}
 
 struct ActiveRun {
     run: u64,
@@ -417,7 +466,7 @@ impl Sync {
         }).await?
     }
 
-    pub(crate) async fn upload_create_claiming(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<(RowId, i64, i64, Arc<crate::sync::OutcomeTicket>), SyncError> {
+    pub(crate) async fn upload_create_claiming(&self, admitted: &crate::lifecycle::Admitted, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<(crate::db::Row, i64, i64, Arc<crate::sync::OutcomeTicket>), SyncError> {
         self.inner.require_session(admitted)?;
         let inner = self.inner.clone();
         let admitted = admitted.clone();
@@ -425,10 +474,10 @@ impl Sync {
         let (model, action) = (model.to_string(), action.to_string());
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
             let input = inner.upload_input(&model, &action, file)?;
-            let (id, seq, revision, ticket) = inner.db.create_held_claiming(&admitted, generation, &model, &action, values, input, UploadState::queued(), |seq| locked(&inner.outcomes).claim(seq))?;
+            let (row, seq, revision, ticket) = inner.db.create_held_claiming(&admitted, generation, &model, &action, values, input, UploadState::queued(), |seq| locked(&inner.outcomes).claim(seq))?;
             inner.start_uploads()?;
-            inner.db.report_upload_accepted(&admitted, &model, inner.db.accepted_items(std::slice::from_ref(&id))?);
-            Ok((id, seq, revision, ticket))
+            inner.db.report_upload_accepted(&admitted, &model, inner.db.accepted_items(std::slice::from_ref(&row.id))?);
+            Ok((row, seq, revision, ticket))
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 
@@ -437,18 +486,18 @@ impl Sync {
         Ok(())
     }
 
-    pub async fn upload_create_batch(&self, admitted: &crate::lifecycle::Admitted, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput) -> Result<Vec<crate::db::Row>, SyncError> {
+    pub async fn upload_create_batch(&self, admitted: &crate::lifecycle::Admitted, model: &str, items: Vec<crate::upload::UploadItem>, input: crate::upload::UploadBatchInput) -> Result<OperationReceipt, SyncError> {
         self.inner.require_session(admitted)?;
         let inner = self.inner.clone();
         let admitted = admitted.clone();
         let generation = inner.db.generation();
         let model = model.to_string();
         crate::task::spawn_blocking(crate::task::Carry::here(), move || {
-            let ids = inner.db.create_upload_batch(&admitted, generation, &model, items, input, inner.upload_operations()?)?;
-            let rows = ids.iter().map(|id| inner.db.find(&model, id)?.ok_or_else(|| crate::db::DbError::NotFound { model: model.clone(), id: id.to_string() })).collect::<Result<Vec<_>, _>>()?;
+            let (rows, operation, revision, ticket) = inner.db.create_upload_batch(&admitted, generation, &model, items, input, inner.upload_operations()?, |seq| locked(&inner.outcomes).claim(seq))?;
+            let ids: Vec<_> = rows.iter().map(|(_, row)| row.id.clone()).collect();
             inner.start_uploads()?;
             inner.db.report_upload_accepted(&admitted, &model, inner.db.accepted_items(&ids)?);
-            Ok(rows)
+            Ok(OperationReceipt { epoch: admitted.value(), operation, revision, items: rows.into_iter().map(|(item, optimistic_value)| ItemReceipt { item: ItemId(item), optimistic_value }).collect(), ticket, life: admitted.life().clone() })
         }).await.map_err(|error| SyncError::Store(error.to_string()))?
     }
 

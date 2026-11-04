@@ -53,6 +53,7 @@ enum Delivery {
 
 pub(crate) struct Sending<'a> {
     pub admitted: &'a crate::lifecycle::Admitted,
+    pub effects: std::sync::Arc<DeliveryEffects>,
     pub entry: &'a OutboxOperation,
     pub model: String,
     pub action: String,
@@ -67,6 +68,7 @@ pub(crate) type RefusalState = (i64, i64, bool);
 pub(crate) struct FinalAttempts {
     next: u64,
     active: HashMap<(Generation, i64), u64>,
+    next_start: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 struct Bound {
@@ -79,10 +81,56 @@ struct Bound {
 struct InFlight<'a> {
     admitted: &'a crate::lifecycle::Admitted,
     inner: &'a Inner,
+    effects: std::sync::Arc<DeliveryEffects>,
     seq: i64,
     generation: Generation,
     settled: bool,
     attempt: u64,
+    before: Option<tokio::sync::oneshot::Receiver<()>>,
+    started: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+pub(crate) struct DeliveryEffects {
+    pub(crate) pending: std::sync::Mutex<crate::db::dispatch::Effects>,
+    pub(crate) inner: std::sync::Weak<Inner>,
+}
+
+impl DeliveryEffects {
+    pub(crate) fn new(inner: Option<&std::sync::Arc<Inner>>) -> Self {
+        Self { pending: std::sync::Mutex::new(crate::db::dispatch::Effects::default()), inner: inner.map(std::sync::Arc::downgrade).unwrap_or_default() }
+    }
+
+    pub(crate) fn run(&self) {
+        let effects = std::mem::take(&mut *locked(&self.pending));
+        effects.run();
+    }
+}
+
+impl Drop for DeliveryEffects {
+    fn drop(&mut self) {
+        std::mem::take(self.pending.get_mut().unwrap_or_else(|error| error.into_inner())).run();
+    }
+}
+
+struct PassEffects<'a> {
+    serial: Option<tokio::sync::MutexGuard<'a, ()>>,
+    inner: &'a std::sync::Arc<Inner>,
+    effects: std::sync::Arc<DeliveryEffects>,
+}
+
+impl PassEffects<'_> {
+    fn release(&mut self) {
+        drop(self.serial.take());
+        self.effects.run();
+    }
+
+    async fn acquire(&mut self) {
+        self.serial = Some(self.inner.outbox_gate.lock().await);
+    }
+}
+
+impl Drop for PassEffects<'_> {
+    fn drop(&mut self) { self.release(); }
 }
 
 impl Drop for InFlight<'_> {
@@ -105,7 +153,7 @@ impl Drop for InFlight<'_> {
             Ok(Some(envelope))
         });
         match committed {
-            Ok(Some(_)) => self.inner.finish_ticket(seq, SendResult::DeliveryUnknown, None, None),
+            Ok(Some(_)) => self.inner.finish_ticket(&self.effects, seq, SendResult::DeliveryUnknown, None, None, Vec::new()),
             Ok(None) => {},
             Err(error) => self.inner.fail_commit(self.admitted, error),
         }
@@ -156,10 +204,10 @@ fn message_of(response: &Response) -> String {
 }
 
 impl Inner {
-    fn finish_ticket(&self, sequence: i64, result: SendResult, answer: Option<Value>, value: Option<crate::db::Row>) {
+    fn finish_ticket(&self, effects: &DeliveryEffects, sequence: i64, result: SendResult, answer: Option<Value>, value: Option<crate::db::Row>, items: Vec<(String, crate::db::Row)>) {
         let ticket = locked(&self.outcomes).take_ticket(sequence);
         if let Some(ticket) = ticket {
-            ticket.finish(super::FinishedOperation { result, answer, value });
+            locked(&effects.pending).push(move || ticket.finish(super::FinishedOperation { result, answer, value, items, discarded: Vec::new() }));
         }
     }
     pub(crate) fn fail_commit(&self, admitted: &crate::lifecycle::Admitted, error: SyncError) {
@@ -176,63 +224,86 @@ impl Inner {
     /// Boxed here once: the future of a pass is large in a debug build and must not sit inside the future of every caller.
     pub(crate) fn flush<'a>(self: &'a std::sync::Arc<Self>, admitted: &'a crate::lifecycle::Admitted) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FlushReport, SyncError>> + Send + 'a>> {
         Box::pin(async move {
-            admitted.run(async { let pass = self.flush_pass(admitted).await; self.reload_marked(); pass }).await.map_err(SyncError::from)?
+            admitted.run(self.flush_pass(admitted)).await.map_err(SyncError::from)?
         })
     }
 
-    async fn flush_pass(&self, admitted: &crate::lifecycle::Admitted) -> Result<FlushReport, SyncError> {
-        let _serial = self.outbox_gate.lock().await;
+    async fn flush_pass(self: &std::sync::Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<FlushReport, SyncError> {
+        let mut publish = PassEffects { serial: Some(self.outbox_gate.lock().await), inner: self, effects: std::sync::Arc::new(DeliveryEffects::new(Some(self))) };
         let mut report = FlushReport::default();
         if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(report); }
-        let mut checked = self.refuse_non_durable(admitted)?;
+        publish.release();
+        let mut checked = self.refuse_non_durable(admitted, &publish.effects)?;
+        publish.release();
+        publish.acquire().await;
         locked(self.operation_queue()?).begin_pass();
         let mut cursor = i64::MIN;
         let mut sends: Vec<SendFuture<'_>> = Vec::new();
         let mut changes = self.db.outbox_changes();
         loop {
             if self.refusal_state() != checked {
-                checked = self.refuse_non_durable(admitted)?;
+                publish.release();
+                checked = self.refuse_non_durable(admitted, &publish.effects)?;
+                publish.release();
+                publish.acquire().await;
             }
             changes.borrow_and_update();
             let Some(entry) = crate::blocking::blocking_unit(|| self.next_ready(&mut cursor, &mut report))? else {
                 if sends.is_empty() { break; }
-                tokio::select! {
-                    (entry, result) = next_finished(&mut sends) => self.record_send(&mut report, &mut cursor, checked, entry, result?)?,
-                    changed = changes.changed() => { if changed.is_err() { break; } }
-                }
+                publish.release();
+                let completed = tokio::select! {
+                    result = next_finished(&mut sends) => Some(result),
+                    changed = changes.changed() => { if changed.is_err() { break; } None }
+                };
+                publish.release();
+                publish.acquire().await;
+                if let Some((entry, result)) = completed { self.record_send(&publish.effects, &mut report, &mut cursor, checked, entry, result?)?; }
                 continue;
             };
             if !self.admitted(crate::lifecycle::Origin::Session) { break; }
             if self.refusal_state() != checked {
-                checked = self.refuse_non_durable(admitted)?;
+                publish.release();
+                checked = self.refuse_non_durable(admitted, &publish.effects)?;
+                publish.release();
+                publish.acquire().await;
                 if !locked(self.operation_queue()?).pending.contains(&entry.operation.id.0) { continue; }
             }
             locked(&self.backoff_released).remove(&entry.operation.id.0);
+            let effects = publish.effects.clone();
+            let Some(reserved) = self.reserve_send(admitted, entry.operation.id.0, self.db.generation(), effects.clone(), true) else { continue };
             let mut send: SendFuture<'_> = Box::pin(async move {
-                let result = self.send(admitted, &entry, None, Some(checked)).await;
+                let result = self.send(admitted, &entry, None, Some(checked), effects, Some(reserved)).await;
                 (entry, result)
             });
+            publish.release();
             let first = std::future::poll_fn(|cx| Poll::Ready(send.as_mut().poll(cx))).await;
+            publish.release();
+            publish.acquire().await;
             match first {
-                Poll::Ready((entry, result)) => self.record_send(&mut report, &mut cursor, checked, entry, result?)?,
+                Poll::Ready((entry, result)) => self.record_send(&publish.effects, &mut report, &mut cursor, checked, entry, result?)?,
                 Poll::Pending => sends.push(send),
             }
             if sends.len() >= MAX_IN_FLIGHT {
+                publish.release();
                 let (entry, result) = next_finished(&mut sends).await;
-                self.record_send(&mut report, &mut cursor, checked, entry, result?)?;
+                publish.release();
+                publish.acquire().await;
+                self.record_send(&publish.effects, &mut report, &mut cursor, checked, entry, result?)?;
             }
+            publish.release();
+            publish.acquire().await;
         }
         locked(self.operation_queue()?).begin_pass();
         Ok(report)
     }
 
-    fn record_send(&self, report: &mut FlushReport, cursor: &mut i64, checked: RefusalState, entry: OutboxOperation, result: SendResult) -> Result<(), SyncError> {
+    fn record_send(&self, effects: &DeliveryEffects, report: &mut FlushReport, cursor: &mut i64, checked: RefusalState, entry: OutboxOperation, result: SendResult) -> Result<(), SyncError> {
         if result == SendResult::Discarded && self.refusal_state() != checked {
             *cursor = (*cursor).min(entry.operation.id.0 - 1);
         }
         if !matches!(result, SendResult::Committed) { locked(self.operation_queue()?).attempted(entry.operation.id.0); }
         if result == SendResult::Discarded && self.outbox_operation(entry.operation.id.0)?.is_none() {
-            self.finish_ticket(entry.operation.id.0, SendResult::Discarded, None, None);
+            self.finish_ticket(effects, entry.operation.id.0, SendResult::Discarded, None, None, Vec::new());
         }
         report.operations.push(SentOperation { sequence: entry.operation.id.0, action_key: entry.operation.action_key, result });
         Ok(())
@@ -260,7 +331,7 @@ impl Inner {
     }
 
     /// Only sending a message and a media upload wait for the network (`specs/architecture.md` D). Any other action that needs the server is refused and rolled back when the network is away or when it was left over from before this open.
-    fn refuse_non_durable(&self, admitted: &crate::lifecycle::Admitted) -> Result<RefusalState, SyncError> {
+    fn refuse_non_durable(&self, admitted: &crate::lifecycle::Admitted, effects: &std::sync::Arc<DeliveryEffects>) -> Result<RefusalState, SyncError> {
         let state = self.refusal_state();
         let (lost, left, online) = state;
         let pending: Vec<i64> = locked(self.operation_queue()?).pending.iter().copied().collect();
@@ -270,9 +341,10 @@ impl Inner {
             let Some(entry) = self.outbox_operation(seq)? else { continue };
             let Some((model, action)) = Operation::split_action_key(&entry.operation.action_key) else { continue };
             if self.survives_offline(&model, &action) && !of_left_account { continue; }
-            let failure = OperationFailure::new(if of_left_account { FailureKind::Rejected } else { FailureKind::Network }, if of_left_account { format!("{model}.{action} belongs to the account that signed out") } else { format!("{model}.{action} needs the network") });
             let generation = self.db.generation();
-            let sending = Sending { admitted, entry: &entry, model, action, generation, base_revision: 0, checked: None };
+            let Some(_reservation) = self.reserve_send(admitted, seq, generation, effects.clone(), false) else { continue };
+            let failure = OperationFailure::new(if of_left_account { FailureKind::Rejected } else { FailureKind::Network }, if of_left_account { format!("{model}.{action} belongs to the account that signed out") } else { format!("{model}.{action} needs the network") });
+            let sending = Sending { admitted, effects: effects.clone(), entry: &entry, model, action, generation, base_revision: 0, checked: None };
             if self.keeps_on_refusal(&sending.model, &sending.action)? {
                 self.fail(&sending, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure))?;
             } else {
@@ -302,8 +374,8 @@ impl Inner {
     fn roll_back_refused(&self, sending: &Sending<'_>, generation: Generation, failure: &OperationFailure) -> Result<(), DbError> {
         let debts = if sending.action == "destroy" { self.refused_destroy_debts(&sending.model).map_err(|error| DbError::Internal(error.to_string()))? } else { Vec::new() };
         crate::blocking::blocking_unit(|| self.db.roll_back_if(sending.admitted, sending.entry.operation.id.0, generation, None, &debts))?;
-        self.queue_committed_debts(sending.admitted, &debts).map_err(|error| DbError::Internal(error.to_string()))?;
-        self.finish_ticket(sending.entry.operation.id.0, SendResult::Rejected(failure.clone()), None, None);
+        self.queue_committed_debts(sending.admitted, &sending.effects, &debts).map_err(|error| DbError::Internal(error.to_string()))?;
+        self.finish_ticket(&sending.effects, sending.entry.operation.id.0, SendResult::Rejected(failure.clone()), None, None, Vec::new());
         self.refused();
         Ok(())
     }
@@ -365,37 +437,50 @@ impl Inner {
         Ok(Some(Bound { model, action, mutation, variables }))
     }
 
-    async fn send(&self, admitted: &crate::lifecycle::Admitted, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>, checked: Option<RefusalState>) -> Result<SendResult, SyncError> {
+    async fn send<'a>(&'a self, admitted: &'a crate::lifecycle::Admitted, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>, checked: Option<RefusalState>, effects: std::sync::Arc<DeliveryEffects>, reserved: Option<InFlight<'a>>) -> Result<SendResult, SyncError> {
         let Some((Bound { model, action, mutation, .. }, generation, base_revision)) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
             let Some(bound) = self.bind(entry)? else { return Ok(None) };
             Ok(Some((bound, self.db.generation(), self.db.revision_seq()?)))
         })? else { return Ok(SendResult::Skipped(SkipReason::NotBound)) };
-        let sending = Sending { admitted, entry, model, action, generation, base_revision, checked };
+        let generation = reserved.as_ref().map_or(generation, |held| held.generation);
+        let sending = Sending { admitted, effects, entry, model, action, generation, base_revision, checked };
         let operation = locked(&self.operations).get(&mutation).cloned();
         let Some(operation) = operation else {
             let failure = OperationFailure::new(FailureKind::Rejected, format!("operation {mutation} is not registered"));
             return self.refuse(&sending, failure, self.keeps_on_refusal(&sending.model, &sending.action)?).await;
         };
-        self.send_owned(&sending, &operation, resumed).await
+        self.send_reserved(&sending, &operation, resumed, reserved).await
     }
 
-    pub(crate) async fn send_owned(&self, sending: &Sending<'_>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>) -> Result<SendResult, SyncError> {
+    pub(crate) async fn send_owned<'a>(&'a self, sending: &Sending<'a>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>) -> Result<SendResult, SyncError> {
+        self.send_reserved(sending, operation, resumed, None).await
+    }
+
+    fn reserve_send<'a>(&'a self, admitted: &'a crate::lifecycle::Admitted, seq: i64, generation: Generation, effects: std::sync::Arc<DeliveryEffects>, ordered: bool) -> Option<InFlight<'a>> {
+        let key = (generation, seq);
+        let mut attempts = locked(&self.final_attempts);
+        if attempts.active.contains_key(&key) { return None; }
+        attempts.next += 1;
+        let attempt = attempts.next;
+        attempts.active.insert(key, attempt);
+        let (before, started) = if ordered {
+            let before = attempts.next_start.take();
+            let (started, next_start) = tokio::sync::oneshot::channel();
+            attempts.next_start = Some(next_start);
+            (before, Some(started))
+        } else { (None, None) };
+        Some(InFlight { admitted, inner: self, effects, seq, generation, attempt, settled: true, before, started })
+    }
+
+    async fn send_reserved<'a>(&'a self, sending: &Sending<'a>, operation: &OperationDef, resumed: Option<Result<Response, TransportError>>, reserved: Option<InFlight<'a>>) -> Result<SendResult, SyncError> {
         let keep = self.keeps_on_refusal(&sending.model, &sending.action)?;
         let seq = sending.entry.operation.id.0;
         let key = (sending.generation, seq);
-        let attempt = {
-            let mut attempts = locked(&self.final_attempts);
-            if attempts.active.contains_key(&key) {
-                return Ok(SendResult::Discarded);
-            }
-            attempts.next += 1;
-            let attempt = attempts.next;
-            attempts.active.insert(key, attempt);
-            attempt
-        };
-        let mut in_flight = InFlight { admitted: sending.admitted, inner: self, seq, generation: sending.generation, attempt, settled: true };
+        let Some(mut in_flight) = reserved.or_else(|| self.reserve_send(sending.admitted, seq, sending.generation, sending.effects.clone(), true)) else { return Ok(SendResult::Discarded) };
+        let attempt = in_flight.attempt;
+        if let Some(before) = in_flight.before.take() { let _ = before.await; }
         let Some((entry, base_revision)) = self.start(sending)? else { return Ok(SendResult::Discarded) };
-        let sending = Sending { admitted: sending.admitted, entry: &entry, model: sending.model.clone(), action: sending.action.clone(), generation: sending.generation, base_revision, checked: sending.checked };
+        let sending = Sending { admitted: sending.admitted, effects: sending.effects.clone(), entry: &entry, model: sending.model.clone(), action: sending.action.clone(), generation: sending.generation, base_revision, checked: sending.checked };
         in_flight.settled = false;
         let mut request = match self.owned_request(&sending, operation) {
             Ok(request) => request,
@@ -406,14 +491,20 @@ impl Inner {
             }
         };
         request.owner = Some(crate::transport::RequestOwner { seq, item_position: -1, stage: "mutation".into() });
-        let delivery = if sending.entry.operation.upload.is_some() {
-            match tokio::time::timeout(self.config.upload.step_timeout, self.deliver_or_resume(sending.admitted, request, resumed)).await {
-                Ok(delivery) => delivery,
-                Err(_) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, "the mutation timed out")),
-            }
+        let admitted = sending.admitted;
+        let mut delivery: Pin<Box<dyn Future<Output = Delivery> + Send + '_>> = if sending.entry.operation.upload.is_some() {
+            Box::pin(async move {
+                match tokio::time::timeout(self.config.upload.step_timeout, self.deliver_or_resume(admitted, request, resumed)).await {
+                    Ok(delivery) => delivery,
+                    Err(_) => Delivery::Unknown(OperationFailure::new(FailureKind::Network, "the mutation timed out")),
+                }
+            })
         } else {
-            self.deliver_or_resume(sending.admitted, request, resumed).await
+            Box::pin(self.deliver_or_resume(admitted, request, resumed))
         };
+        let first = std::future::poll_fn(|cx| Poll::Ready(delivery.as_mut().poll(cx))).await;
+        if let Some(started) = in_flight.started.take() { let _ = started.send(()); }
+        let delivery = match first { Poll::Ready(delivery) => delivery, Poll::Pending => delivery.await };
         if locked(&self.final_attempts).active.get(&key) != Some(&attempt) {
             in_flight.settled = true;
             return Ok(SendResult::Discarded);
@@ -489,7 +580,7 @@ impl Inner {
         Ok(request)
     }
 
-    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, admitted: &crate::lifecycle::Admitted, _serial: &tokio::sync::MutexGuard<'_, ()>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
+    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, admitted: &crate::lifecycle::Admitted, effects: std::sync::Arc<DeliveryEffects>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
         let settled = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
             let Some(owner) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, request_owner.seq)?))? else { return Ok(None) };
             if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
@@ -502,7 +593,7 @@ impl Inner {
             if let Some(upload) = upload { self.resume_upload(upload, result).await; }
             return Ok(());
         }
-        self.send(admitted, &entry, Some(result), None).await?;
+        self.send(admitted, &entry, Some(result), None, effects, None).await?;
         Ok(())
     }
 
@@ -543,7 +634,7 @@ impl Inner {
                     Err(error) => return Err(error.into()),
                 }
             }
-            let current = Sending { generation, model: sending.model.clone(), action: sending.action.clone(), ..*sending };
+            let current = Sending { generation, effects: sending.effects.clone(), model: sending.model.clone(), action: sending.action.clone(), ..*sending };
             let result = match (deferred, rejected) {
                 (true, _) => self.postpone(&current, failure.clone())?,
                 (false, true) => self.fail(&current, OperationStatus::Failed, failure.clone(), SendResult::Rejected(failure.clone()))?,
@@ -665,6 +756,7 @@ impl Inner {
         };
         let batch_action = spec.actions.iter().find(|action| action.name == sending.action && action.batch.is_some());
         let mut replacements = Vec::new();
+        let mut batch_items = Vec::new();
         if let Some(action) = batch_action {
             let expected = crate::blocking::blocking_unit(|| self.db.shared.read(&[], |reader| {
                 let mut statement = reader.connection().prepare("SELECT row_id, client_key FROM op_item WHERE seq = ?1 ORDER BY position")?;
@@ -679,6 +771,7 @@ impl Inner {
                 let found = expected.iter().find(|(_, expected)| Some(expected.as_str()) == key);
                 let (Some((temp, _)), Some(real), Some(key)) = (found, real, key) else { return self.quarantine(sending, &data) };
                 if !seen.insert(key) || real.is_temp() || spec.normalize(row).is_err() { return self.quarantine(sending, &data); }
+                batch_items.push((key.to_string(), real.clone()));
                 replacements.push((RowId::new(temp).map_err(|error| SyncError::Malformed(error.to_string()))?, real));
             }
             if replacements.len() != expected.len() { return self.quarantine(sending, &data); }
@@ -704,6 +797,7 @@ impl Inner {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Response, generation);
                 envelope.window_debts = debts.clone();
                 envelope.snapshot = real.as_ref().or_else(|| entry.operation.row_ids.first()).map(|id| RowRef::new(ModelKey::new(&sending.model), id.clone()));
+                envelope.item_snapshots = batch_items.iter().map(|(item, id)| (item.clone(), RowRef::new(ModelKey::new(&sending.model), id.clone()))).collect();
                 envelope.entity_ops = response_ops(&self.db, reader, sending.base_revision, entry.operation.id.0, &sending.model, &normalized, &mut drops)?;
                 if let (Some(temp), Some(real)) = (&temp, &real) {
                     self.db.swap_temp(reader, &mut envelope, &outbox, TempReplacement { model: &sending.model, temp, real }, entry.operation.id.0)?;
@@ -746,9 +840,10 @@ impl Inner {
             generation = self.db.generation();
         }
         let Some(committed) = committed else { return Ok(SendResult::Discarded) };
-        self.queue_committed_debts(sending.admitted, &debts)?;
+        self.queue_committed_debts(sending.admitted, &sending.effects, &debts)?;
         let value = committed.snapshot.map(|row| self.db.shared.overlay_snapshot(&sending.model, row)).transpose()?;
-        self.finish_ticket(entry.operation.id.0, SendResult::Committed, answer, value);
+        let items = committed.item_snapshots.into_iter().filter_map(|(item, row)| row.map(|row| (item, row))).map(|(item, row)| self.db.shared.overlay_snapshot(&sending.model, row).map(|row| (item, row))).collect::<Result<Vec<_>, _>>()?;
+        self.finish_ticket(&sending.effects, entry.operation.id.0, SendResult::Committed, answer, value, items);
         #[cfg(test)]
         if let Some(probe) = locked(&self.landed_probe).as_ref() { probe(); }
         self.discard_files(sending.admitted, held.iter().map(|file| file.id.clone()).collect()).await?;
@@ -826,8 +921,8 @@ impl Inner {
         if committed.is_none() {
             return Ok(SendResult::Discarded);
         }
-        self.queue_committed_debts(sending.admitted, &debts)?;
-        self.finish_ticket(seq, result.clone(), None, None);
+        self.queue_committed_debts(sending.admitted, &sending.effects, &debts)?;
+        self.finish_ticket(&sending.effects, seq, result.clone(), None, None, Vec::new());
         self.refused();
         Ok(result)
     }

@@ -129,6 +129,64 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
   }
 }
 
+public struct ItemReceipt<Model: DBModel>: Sendable {
+  public let item: ItemId
+  public let optimisticValue: Model
+}
+
+public enum ItemOutcome<Model: DBModel>: Sendable {
+  case confirmed(item: ItemId, value: Model)
+  case discarded(item: ItemId)
+}
+
+public enum BatchResult: Sendable {
+  case confirmed
+  case rejected(failure: WireFailure)
+  case deliveryUnknown
+  case interrupted
+}
+
+public struct BatchOutcome<Model: DBModel>: Sendable {
+  public let result: BatchResult
+  public let items: [ItemOutcome<Model>]
+}
+
+public struct OperationReceipt<Model: DBModel>: Sendable {
+  public let epoch: UInt64
+  public let operation: Int64
+  public let revision: Int64
+  public let items: [ItemReceipt<Model>]
+  let database: Database
+  let wire: WireBatchReceipt
+
+  init(database: Database, wire: WireBatchReceipt) throws {
+    self.database = database
+    self.wire = wire
+    self.epoch = wire.epoch
+    self.operation = wire.operation
+    self.revision = wire.revision
+    self.items = try wire.items.map { ItemReceipt(item: $0.item, optimisticValue: try Model.decode($0.optimisticValue)) }
+  }
+
+  @concurrent public func outcome() async throws -> BatchOutcome<Model> {
+    let outcome = try await database.batchOutcome(receipt: wire)
+    let result: BatchResult
+    switch outcome.result {
+    case .confirmed: result = .confirmed
+    case let .rejected(failure): result = .rejected(failure: failure)
+    case .deliveryUnknown: result = .deliveryUnknown
+    case .interrupted: result = .interrupted
+    }
+    let items: [ItemOutcome<Model>] = try outcome.items.map {
+      switch $0 {
+      case let .confirmed(item, value): return .confirmed(item: item, value: try Model.decode(value))
+      case let .discarded(item): return .discarded(item: item)
+      }
+    }
+    return BatchOutcome(result: result, items: items)
+  }
+}
+
 public struct ModelEvent<Model: DBModel>: Sendable {
   public let area: String
   public let kind: String

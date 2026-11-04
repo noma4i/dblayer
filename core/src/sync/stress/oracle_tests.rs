@@ -17,28 +17,6 @@ async fn inv_stress_01_oracle_reports_unreadable_rows() {
 }
 
 #[tokio::test]
-async fn rows_removed_by_an_authoritative_replace_are_not_missing() {
-    let transport = MockTransport::new();
-    let findings = Findings::default();
-    let server = FakeServer::install(&transport, 7, findings.clone());
-    server.set_calm(true);
-    let rig = rig_on(Db::open_in_memory(specs(), None).unwrap(), transport, SyncConfig::default());
-    let scratch = scratch_dir();
-    let world = World::new(rig, server, findings.clone(), Universe::default(), Aliases::default(), scratch.path().to_path_buf());
-    let mut worker = Worker::new(0, 7);
-    worker.run(&world, Op::Create).await;
-    worker.run(&world, Op::Flush).await;
-    world.rig.sync.load(&world.rig.sync.inner.db.admit().unwrap(), "moments", "feed", &Map::new(), LoadOptions { force: true }).await.unwrap();
-    let mut request = crate::db::ReplaceRequest::new(crate::commit::ScopeRef::new(crate::identity::ModelKey::new("moments"), scope_of(&world.rig.db, "feed")), crate::schema::Coverage::Complete);
-    request.on_absent = crate::db::OnAbsent::Destroy;
-    world.replace(&request, Vec::new());
-    assert_eq!(world.server.state().len(), 1);
-    assert!(world.rig.db.query(&crate::query::Query::new("moments")).unwrap().is_empty());
-    oracle::settled_client(&world);
-    assert!(findings.all().is_empty(), "{:?}", findings.all());
-}
-
-#[tokio::test]
 async fn cancelled_local_writes_are_not_lost_but_pending_writes_are() {
     let transport = MockTransport::new();
     let findings = Findings::default();

@@ -339,6 +339,7 @@ impl Runner {
         let action = crate::operation::Operation::upload_action(&entry.operation.action_key).ok_or_else(|| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, "the upload has no declared action")))?.1;
         let sending = Sending {
             admitted: &self.admitted,
+            effects: Arc::new(crate::sync::DeliveryEffects::new(Some(&self.inner))),
             entry: &entry,
             model: self.model.clone(),
             action,
@@ -353,6 +354,7 @@ impl Runner {
                 envelope.operation_transitions.push(OperationTransition::Fail { seq: self.seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() })
             })?;
         }
+        sending.effects.run();
         self.inner.start_uploads().map_err(|error| Stop::failed(OperationFailure::new(FailureKind::Unrecognized, error.to_string())))?;
         Ok(())
     }

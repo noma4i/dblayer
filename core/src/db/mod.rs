@@ -55,7 +55,7 @@ pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
 pub(crate) use observe::ObserverControl;
 pub use open::{Db, DbConfig, OpenReport};
-pub use replace::{OnAbsent, ReplaceRequest};
+pub(crate) use replace::ReplaceRequest;
 pub use row::{Record, Row};
 pub use upload_accepted::{AcceptedUpload, UploadAccepted, UploadAcceptedCallback};
 pub use upload_round::RoundStep;
@@ -126,11 +126,7 @@ mod storage_tests;
 #[cfg(test)]
 mod reactivity_tests;
 #[cfg(test)]
-mod order_key_tests;
-#[cfg(test)]
 mod record_sync_tests;
-#[cfg(test)]
-mod replace_tests;
 #[cfg(test)]
 mod reset_tests;
 #[cfg(test)]

@@ -35,7 +35,7 @@ impl Db {
         Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, Some((model, id, key.as_deref())))?)
     }
 
-    pub(crate) fn retry_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>, claim: impl FnOnce(i64) -> T) -> Result<(i64, i64, T), DbError> {
+    pub(crate) fn retry_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>, claim: impl FnOnce(i64) -> T) -> Result<(i64, i64, Option<super::Row>, T), DbError> {
         let key = self.action_operation_key(model, action)?;
         let generation = self.generation();
         let mut sequence = None;
@@ -46,15 +46,17 @@ impl Db {
             let seq = entry.operation.id.0;
             sequence = Some(seq);
             let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+            envelope.snapshot = Some(crate::identity::RowRef::new(crate::identity::ModelKey::new(model), id.clone()));
             if is_failed_destroy(entry) { envelope.entity_ops = Prior::of(entry)?.map(|prior| prior.hiding()).unwrap_or_default(); }
             envelope.operation_transitions.push(OperationTransition::Retry { seq });
             Ok(Some(envelope))
         }).map_err(plan_fault)?;
         let seq = sequence.ok_or_else(|| DbError::Internal("retry has no operation".into()))?;
         let revision = committed.result().revision.ok_or_else(|| DbError::Internal("retry has no revision".into()))?;
+        let row = committed.result().snapshot.clone().map(|row| self.shared.overlay_snapshot(model, row)).transpose()?;
         let ticket = claim(seq);
         committed.publish();
-        Ok((seq, revision, ticket))
+        Ok((seq, revision, row, ticket))
     }
 
     pub fn retry_all(&self, admitted: &crate::lifecycle::Admitted) -> Result<usize, DbError> {

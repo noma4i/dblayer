@@ -69,7 +69,8 @@ pub use model_event::{ModelEvent, ModelEventItem, ModelEvents};
 pub use resume::{ResumeReport, Watch};
 pub(crate) use resume::Failures;
 pub use send::{FlushReport, SendResult, SentOperation, SkipReason};
-pub(crate) use send::OutcomeTicket;
+pub use upload::{ItemId, ItemOutcome, ItemReceipt, OperationOutcome, OperationReceipt};
+pub(crate) use send::{DeliveryEffects, OutcomeTicket};
 pub use subscribe::{EventEffect, Updates, SubscriptionDef, SubscriptionStatus};
 
 use std::collections::{BTreeMap, HashMap};
@@ -154,7 +155,6 @@ pub(crate) struct Inner {
     pub(crate) model_events: Mutex<Vec<std::sync::Weak<model_event::EventQueue>>>,
     pub owner: Arc<load_owner::LoadOwner>,
     pub outbox_gate: tokio::sync::Mutex<()>,
-    pub(crate) pending_reloads: Mutex<Vec<invalidate::StaleMark>>,
     pub queue: Result<Arc<Mutex<crate::operation::OperationQueue>>, String>,
     /// The newest operation the outbox held when this database opened. A pending action that is not durable and is this old or older does not survive the open.
     pub(crate) reopened_through: i64,
@@ -305,7 +305,6 @@ impl Sync {
             model_events: Mutex::new(Vec::new()),
             owner,
             outbox_gate: tokio::sync::Mutex::new(()),
-            pending_reloads: Mutex::new(Vec::new()),
             queue,
             reopened_through,
             account: Arc::new(Mutex::new((None, i64::MIN))),

@@ -31,10 +31,17 @@ impl Inner {
         }).collect())
     }
 
-    pub(crate) fn queue_committed_debts(&self, admitted: &crate::lifecycle::Admitted, debts: &[crate::commit::WindowDebt]) -> Result<(), SyncError> {
+    pub(crate) fn queue_committed_debts(&self, admitted: &crate::lifecycle::Admitted, effects: &super::super::send::DeliveryEffects, debts: &[crate::commit::WindowDebt]) -> Result<(), SyncError> {
         let retained = admitted.life().admit_passive(crate::lifecycle::Origin::Explicit, "reload", Some(admitted.value()))?;
-        let marks = debts.iter().map(|debt| StaleMark { model: debt.model.clone(), names: BTreeSet::from([debt.relation.clone()]), since: debt.since, admitted: retained.clone() });
-        locked(&self.pending_reloads).extend(marks);
+        for debt in debts {
+            let mark = StaleMark { model: debt.model.clone(), names: BTreeSet::from([debt.relation.clone()]), since: debt.since, admitted: retained.clone() };
+            let inner = effects.inner.clone();
+            locked(&effects.pending).push(move || {
+                let Some(inner) = inner.upgrade() else { return };
+                let carry = Carry::from(mark.admitted.clone());
+                crate::task::spawn(carry, async move { let _ = inner.reload_stale(&mark).await; });
+            });
+        }
         Ok(())
     }
 
@@ -45,15 +52,6 @@ impl Inner {
         }
         let admitted = admitted.life().admit_passive(crate::lifecycle::Origin::Explicit, "reload", Some(admitted.value()))?;
         Ok(StaleMark { model: model.to_string(), names, since, admitted })
-    }
-
-    pub(crate) fn reload_marked(self: &Arc<Self>) {
-        let marked = std::mem::take(&mut *locked(&self.pending_reloads));
-        for mark in marked {
-            let inner = self.clone();
-            let carry = Carry::from(mark.admitted.clone());
-            crate::task::spawn(carry, async move { let _ = inner.reload_stale(&mark).await; });
-        }
     }
 
     pub(crate) async fn reload_lists_of_absent_parent(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, model: &str) -> Result<(), SyncError> {

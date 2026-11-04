@@ -197,6 +197,31 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
+  func joiningMultipleMembersKeepsEachOnceInOrder() async throws {
+    let transport = MockTransport()
+    transport.enqueue("CreateClub", reply: clubCreated)
+    transport.enqueue("ClubMembers", reply: membersReply(["u1", "u2", "u3", "u4", "u5"]))
+    try await Self.openClubSession(transport)
+    let club = try await Self.confirmedClub()
+    let joined = try Person.clubMembers(club.id, "JOINED")
+    try await joined.load()
+    transport.enqueue("RemoveClubMember", reply: clubAnswer("removeClubMember"))
+    let removed = try await club.removeMember(userIds: ["u4", "u5"])
+    let removedOutcome = Task { try await removed.outcome() }
+    guard case .confirmed = try await valueBeforeDeadline(removedOutcome, release: {}) else { throw WaitFailure.unexpectedOutcome }
+    let hold = transport.hold("AddClubMember", reply: clubAnswer("addClubMember"))
+    defer { hold.release() }
+    let adding = Task { try await club.addMember(userIds: ["u4", "u5", "u4"]) }
+    try #require(await entered(hold), "join did not reach the transport")
+    let receipt = try await valueBeforeDeadline(adding) { hold.release() }
+    #expect(try await joined.read().map(\.id) == ["u1", "u2", "u3", "u4", "u5"])
+    hold.release()
+    let outcome = Task { try await receipt.outcome() }
+    guard case .confirmed = try await valueBeforeDeadline(outcome, release: {}) else { throw WaitFailure.unexpectedOutcome }
+  }
+
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
   func aMemberEventKeepsTheOpenJoinInTheList() async throws {
     let transport = MemberEventsTransport()
     transport.base.enqueue("CreateClub", reply: clubCreated)

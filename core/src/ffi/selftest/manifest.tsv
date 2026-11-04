@@ -1,5 +1,11 @@
 version	1
 id	aliases	lane	test	state	s1	provenance
+S315	batch-receipt	core	batch_sends_ordered_items_once_and_replaces_by_key	red-by-reading	one operation keeps stable item keys when answers arrive reversed	coordinator batch receipt decision
+S315	batch-receipt	swift	BridgeProbeTests.batchOwnsSourcesAndConfirmsEveryMemberWithOneRequest	red-by-reading	one operation keeps stable item keys when answers arrive reversed	coordinator batch receipt decision
+S315	batch-receipt	kotlin	com.noma4i.dblayer.UploadBatchTest.batchOwnsSourcesAndConfirmsEveryMemberWithOneRequest	red-by-reading	one operation keeps stable item keys when answers arrive reversed	coordinator batch receipt decision
+S314	multi-join	core	joining_multiple_members_keeps_each_once_in_order	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
+S314	multi-join	swift	BridgeProbeTests.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
+S314	multi-join	kotlin	com.noma4i.dblayer.ClubTest.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
 S312	format	core	a_pending_operation_survives_an_old_format_without_restoring_the_cached_row	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S312	format	swift	BridgeProbeTests.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S312	format	kotlin	com.noma4i.dblayer.ClubTest.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision

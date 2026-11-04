@@ -184,6 +184,30 @@ class ClubTest {
     }
 
     @Test
+    fun joiningMultipleMembersKeepsEachOnceInOrder() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("CreateClub", CLUB_CREATED)
+        transport.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3", "u4", "u5")))
+        openClubSession(transport)
+        val club = confirmedClub()
+        val joined = Person.clubMembers(club.id, "JOINED")
+        joined.load()
+        transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
+        val removed = club.removeMember(userIds = listOf("u4", "u5"))
+        check(withTimeout(5000) { removed.outcome() } is OperationOutcome.Confirmed)
+        val hold = transport.hold("AddClubMember", clubAnswer("addClubMember"))
+        try {
+            val receipt = withTimeout(5000) { club.addMember(userIds = listOf("u4", "u5", "u4")) }
+            withTimeout(5000) { hold.entered() }
+            assertEquals(listOf("u1", "u2", "u3", "u4", "u5"), joined.read().map { it.id })
+            hold.release()
+            assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        } finally {
+            hold.release()
+        }
+    }
+
+    @Test
     fun aMemberEventKeepsTheOpenJoinInTheList() = bounded {
         val transport = MemberEventsTransport()
         transport.base.enqueue("CreateClub", CLUB_CREATED)

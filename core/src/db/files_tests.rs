@@ -208,7 +208,7 @@ fn inv_file_04_temp_row_files_follow_the_row_to_its_real_id() {
     let db = booted();
     let temp = db.create(&db.admit().unwrap(), "moments", obj(json!({"text": "new"}))).unwrap();
     let descriptor = db.attach(&db.admit().unwrap(), "moments", &temp.id, "media", SMALL, "a", "b/c").unwrap();
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Replace, db.generation());
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Response, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: temp.id.clone(), reason: DestroyReason::Replaced { by: rid("m7") } });
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m7"), row: obj(json!({"id": "m7", "text": "new", "media": descriptor.to_value()})) });
     db.land(&db.admit().unwrap(), envelope).unwrap();
