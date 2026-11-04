@@ -418,7 +418,7 @@ extension BridgeProbeTests {
     withExtendedLifetime(thread) {}
   }
 
-  /// K16 (B8): a reader that falls behind keeps at most 256 deliveries, is told about the loss, and ends with the whole list after one new snapshot. The core merges commits that its delivery has not yet run for, so the loss is read from the numbering of the deliveries, not from the count of commands. The size of the reported count is not asserted: it also counts the markers that the full buffer drops.
+  /// K16 (B8): a reader that falls behind keeps at most 256 deliveries, is told about the loss, and ends with the whole list after one new snapshot. The core merges commits that its delivery has not yet run for, so the loss is read from the numbering of the deliveries, not from the count of commands.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList() async throws {
@@ -439,8 +439,29 @@ extension BridgeProbeTests {
     #expect(seen.rows == 300, "the reader did not end with the whole list")
     #expect(seen.received <= 260, "the reader received \(seen.received) deliveries of a burst of 300: the buffer bounded nothing")
     #expect(seen.inOrder, "the reader kept deliveries out of order")
-    #expect((seen.lastSeq - seen.kept > 0) == (seen.missed > 0), "the core numbered \(seen.lastSeq) deliveries and the reader kept \(seen.kept), but it was told about \(seen.missed) missed ones: a loss is reported when, and only when, a delivery was dropped")
     stream.cancel()
+  }
+
+  /// K16b: the missed counts plus the deliveries a paused reader receives equal the deliveries the core sent, also when the buffer evicts markers.
+  @Test(.timeLimit(.minutes(1)))
+  func missedCountsPlusReceivedDeliveriesEqualTheDeliveriesSentWhenMarkersAreEvicted() async {
+    let state = StreamState(phase: .loaded, initial: false, refreshing: false, fetchingMore: false, hasMore: false, complete: true, total: nil, loadedAt: nil, error: nil, errorKind: nil)
+    let (deliveries, continuation) = AsyncStream<StreamDelivery>.makeStream(bufferingPolicy: .bufferingNewest(256))
+    let sink = Forward(continuation)
+    let sent: UInt64 = 700
+    for seq in 1...sent { sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: seq, value: .state(state: state))) }
+    var received: UInt64 = 0
+    var missed: UInt64 = 0
+    var iterator = deliveries.makeAsyncIterator()
+    for _ in 0..<2 {
+      guard let delivery = await iterator.next() else { break }
+      if case let .missed(count) = delivery.value { missed += count } else { received += 1 }
+    }
+    sink.delivered(delivery: StreamDelivery(stream: 1, epoch: 1, seq: sent + 1, value: .ended(reason: .closed)))
+    while let delivery = await iterator.next() {
+      if case let .missed(count) = delivery.value { missed += count } else { received += 1 }
+    }
+    #expect(received + missed == sent + 1, "the core sent \(sent + 1) deliveries, the reader received \(received) and was told about \(missed) missed ones")
   }
 }
 

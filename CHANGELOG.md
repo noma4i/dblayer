@@ -54,6 +54,7 @@
 - The DSL refuses a name that ends with `_`.
 
 ### Fixed
+- A stream reader receives the exact count of dropped deliveries in `missed`.
 - A window opened after a failed load of its query no longer shows that error.
 - A parameter named like a query no longer captures the generated call.
 - A Kotlin parameter named `read`, `put` or `act` no longer captures a generated call.

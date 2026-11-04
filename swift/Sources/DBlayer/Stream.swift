@@ -36,16 +36,22 @@ public struct ValueStream: AsyncSequence, Sendable {
 /// A reader that falls behind keeps the newest deliveries only. The count of the dropped ones reaches the reader as `.missed`, and a list projection that misses a delta asks the core for a new snapshot. The core calls the sink one delivery at a time.
 private let streamBuffer = 256
 
-private final class Forward: ValueSink, @unchecked Sendable {
+final class Forward: ValueSink, @unchecked Sendable {
   private let continuation: AsyncStream<StreamDelivery>.Continuation
   private var dropped: UInt64 = 0
   init(_ continuation: AsyncStream<StreamDelivery>.Continuation) { self.continuation = continuation }
   func delivered(delivery: StreamDelivery) {
     if dropped > 0 {
-      if case .dropped = continuation.yield(StreamDelivery(stream: delivery.stream, epoch: delivery.epoch, seq: delivery.seq, value: .missed(count: dropped))) { dropped += 1 } else { dropped = 0 }
+      let marker = StreamDelivery(stream: delivery.stream, epoch: delivery.epoch, seq: delivery.seq, value: .missed(count: dropped))
+      dropped = 0
+      lose(continuation.yield(marker))
     }
-    if case .dropped = continuation.yield(delivery) { dropped += 1 }
+    lose(continuation.yield(delivery))
     if case .ended = delivery.value { continuation.finish() }
+  }
+  private func lose(_ result: AsyncStream<StreamDelivery>.Continuation.YieldResult) {
+    guard case let .dropped(old) = result else { return }
+    if case let .missed(count) = old.value { dropped += count } else { dropped += 1 }
   }
 }
 

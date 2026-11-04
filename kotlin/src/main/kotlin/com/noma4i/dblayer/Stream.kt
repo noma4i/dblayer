@@ -47,7 +47,7 @@ class ValueStream internal constructor(val id: ULong, val epoch: ULong, private 
 /** A reader that falls behind keeps the newest deliveries only. The count of the dropped ones reaches the reader as `Missed`, and a list projection that misses a delta asks the core for a new snapshot. */
 private const val STREAM_BUFFER = 256
 
-private class Forward(private val channel: Channel<StreamDelivery>, private val dropped: java.util.concurrent.atomic.AtomicLong) : ValueSink {
+internal class Forward(private val channel: Channel<StreamDelivery>, private val dropped: java.util.concurrent.atomic.AtomicLong) : ValueSink {
     override fun delivered(delivery: StreamDelivery) {
         val lost = dropped.getAndSet(0)
         if (lost > 0) channel.trySend(StreamDelivery(delivery.stream, delivery.epoch, delivery.seq, StreamValue.Missed(lost.toULong())))
@@ -56,9 +56,12 @@ private class Forward(private val channel: Channel<StreamDelivery>, private val 
     }
 }
 
+internal fun lossyChannel(dropped: java.util.concurrent.atomic.AtomicLong): Channel<StreamDelivery> =
+    Channel(STREAM_BUFFER, BufferOverflow.DROP_OLDEST) { old -> dropped.addAndGet((old.value as? StreamValue.Missed)?.count?.toLong() ?: 1L) }
+
 internal fun Database.openValueStream(epoch: ULong, request: StreamRequest): ValueStream {
     val dropped = java.util.concurrent.atomic.AtomicLong()
-    val channel = Channel<StreamDelivery>(STREAM_BUFFER, BufferOverflow.DROP_OLDEST) { dropped.incrementAndGet() }
+    val channel = lossyChannel(dropped)
     val id = subscribe(epoch, request, Forward(channel, dropped))
     return ValueStream(id, epoch, this, channel)
 }

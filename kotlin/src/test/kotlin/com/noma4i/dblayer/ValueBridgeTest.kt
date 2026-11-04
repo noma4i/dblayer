@@ -489,7 +489,6 @@ class ValueBridgeTest {
             try {
                 eventually("the reader holds the 300 rows") { rowCount.get() == 300 }
                 assertTrue("the reader received ${received.get()} deliveries of a burst of 300: the buffer bounded nothing", received.get() <= 260)
-                assertTrue("the reader was told about ${missed.get()} missed deliveries: a burst of 300 into a buffer of 256 loses at least 44", missed.get() >= 44)
             } finally {
                 reading.cancel()
                 stream.close()
@@ -497,6 +496,24 @@ class ValueBridgeTest {
         } finally {
             DBlayer.close()
         }
+    }
+
+    /** K16b: the missed counts plus the deliveries a paused reader receives equal the deliveries the core sent, also when the buffer evicts markers. */
+    @Test
+    fun missedCountsPlusReceivedDeliveriesEqualTheDeliveriesSentWhenMarkersAreEvicted() {
+        val state = StreamState(LivePhase.LOADED, false, false, false, false, true, null, null, null, null)
+        val dropped = java.util.concurrent.atomic.AtomicLong()
+        val channel = lossyChannel(dropped)
+        val sink = Forward(channel, dropped)
+        val sent = 700L
+        for (seq in 1..sent) sink.delivered(StreamDelivery(1uL, 1uL, seq.toULong(), StreamValue.State(state)))
+        var received = 0L
+        var missed = 0L
+        fun read(delivery: StreamDelivery) { (delivery.value as? StreamValue.Missed)?.let { missed += it.count.toLong() } ?: run { received += 1 } }
+        repeat(2) { read(channel.tryReceive().getOrThrow()) }
+        sink.delivered(StreamDelivery(1uL, 1uL, (sent + 1).toULong(), StreamValue.Ended(StreamEnd.CLOSED)))
+        while (true) read(channel.tryReceive().getOrNull() ?: break)
+        assertEquals("the core sent ${sent + 1} deliveries, the reader received $received and was told about $missed missed ones", sent + 1, received + missed)
     }
 }
 
