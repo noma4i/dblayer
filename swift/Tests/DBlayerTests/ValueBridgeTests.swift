@@ -418,7 +418,7 @@ extension BridgeProbeTests {
     withExtendedLifetime(thread) {}
   }
 
-  /// K16 (B8): a reader that falls behind keeps at most 256 deliveries, learns that it missed some, and ends with the whole list after one new snapshot.
+  /// K16 (B8): a reader that falls behind keeps at most 256 deliveries, is told about the loss, and ends with the whole list after one new snapshot. The core merges commits that its delivery has not yet run for, so the loss is read from the numbering of the deliveries, not from the count of commands. The size of the reported count is not asserted: it also counts the markers that the full buffer drops.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList() async throws {
@@ -428,14 +428,7 @@ extension BridgeProbeTests {
     let stream = try scope.stream(Moment.recent)
     try await stream.loaded()
     try DB.database.setOnline(online: false)
-    let gate = LossyReader()
-    gate.stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: gate)
-    try await DB.database.streamLoaded(stream: gate.stream)
-    for number in 1...300 {
-      _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")])
-      await eventually("the gate reader holds row \(number), so the burst made one delivery per command") { gate.rows == number }
-    }
-    try DB.database.cancelStream(stream: gate.stream)
+    for number in 1...300 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
     let seen = BufferedDeliveries()
     let cursor = Cursor(stream)
     for _ in 0..<400 {
@@ -445,7 +438,8 @@ extension BridgeProbeTests {
     }
     #expect(seen.rows == 300, "the reader did not end with the whole list")
     #expect(seen.received <= 260, "the reader received \(seen.received) deliveries of a burst of 300: the buffer bounded nothing")
-    #expect(seen.missed >= 44, "the reader was told about \(seen.missed) missed deliveries: a burst of 300 into a buffer of 256 loses at least 44")
+    #expect(seen.inOrder, "the reader kept deliveries out of order")
+    #expect((seen.lastSeq - seen.kept > 0) == (seen.missed > 0), "the core numbered \(seen.lastSeq) deliveries and the reader kept \(seen.kept), but it was told about \(seen.missed) missed ones: a loss is reported when, and only when, a delivery was dropped")
     stream.cancel()
   }
 }
@@ -454,6 +448,9 @@ private final class BufferedDeliveries: @unchecked Sendable {
   private let lock = NSLock()
   private var projection = ListProjection<Moment>()
   private(set) var received = 0
+  private(set) var kept: UInt64 = 0
+  private(set) var lastSeq: UInt64 = 0
+  private(set) var inOrder = true
   private(set) var missed: UInt64 = 0
 
   var rows: Int { lock.withLock { projection.rows.count } }
@@ -461,7 +458,11 @@ private final class BufferedDeliveries: @unchecked Sendable {
   func apply(_ delivery: StreamDelivery, stream: ValueStream) {
     let ask = lock.withLock { () -> Bool in
       received += 1
-      if case let .missed(count) = delivery.value { missed += count }
+      if case let .missed(count) = delivery.value { missed += count } else {
+        kept += 1
+        if delivery.seq <= lastSeq { inOrder = false }
+        lastSeq = max(lastSeq, delivery.seq)
+      }
       return projection.apply(delivery) == .resync
     }
     if ask { stream.resync() }

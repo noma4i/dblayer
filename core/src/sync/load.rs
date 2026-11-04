@@ -207,6 +207,11 @@ impl Inner {
         locked(&self.flights).coalescing.in_flight().iter().any(|key| key.starts_with(&prefix))
     }
 
+    pub(super) fn flight_pending(&self, resolved: &Resolved<'_>) -> bool {
+        let paged = format!("{}|", resolved.window_key);
+        locked(&self.flights).waiting.keys().any(|key| *key == resolved.window_key || key.starts_with(&paged))
+    }
+
     pub(super) async fn flights_settled(&self, resolved: &Resolved<'_>) {
         let paged = format!("{}|", resolved.window_key);
         loop {

@@ -853,6 +853,36 @@ fn ids_of(rows: Vec<WireRow>) -> Vec<String> { rows.into_iter().map(|row| row.id
 
 pub(super) fn strings(ids: &[&str]) -> Vec<String> { ids.iter().map(|id| id.to_string()).collect() }
 
+/// K32: a member added or removed ends with the member lists of the server in both orders: the added user appears in the lists the screen reads and the removed one leaves them, without a read by the app.
+#[tokio::test(flavor = "multi_thread")]
+async fn adding_and_removing_a_member_ends_with_the_member_lists_of_the_server_in_both_orders() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (values, args) = group("friends");
+    let created = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    let orders = [("JOINED", ["u1", "u2", "u3"]), ("OWNER_FIRST", ["u2", "u1", "u3"])];
+    for (order, ids) in orders { rig.world.set_members(order, &ids); }
+    let mut readers = Vec::new();
+    for (order, _) in orders {
+        let (reader, query) = (Reader::open(), json!({"model": "Member", "relation": "group_members", "params": {"groupId": created.id, "order": order}}).to_string());
+        let stream = rig.database.subscribe(epoch, StreamRequest::Query { query_json: query }, reader.clone());
+        bound(rig.database.stream_loaded(stream)).await.unwrap();
+        readers.push(reader);
+    }
+    let shown = |readers: &[Arc<Reader>]| readers.iter().map(|reader| reader.rows().into_iter().map(|row| row.id).collect::<Vec<_>>()).collect::<Vec<_>>();
+    assert_eq!(shown(&readers), [strings(&["u1", "u2", "u3"]), strings(&["u2", "u1", "u3"])], "the lists before the add");
+    type Case = (&'static str, [&'static [&'static str]; 2]);
+    let cases: [Case; 2] = [("add_member", [&["u1", "u2", "u3", "u9"], &["u2", "u1", "u3", "u9"]]), ("remove_member", [&["u1", "u2", "u3"], &["u2", "u1", "u3"]])];
+    for (action, ended) in cases {
+        for (index, (order, _)) in orders.iter().enumerate() { rig.world.set_members(order, ended[index]); }
+        let acted = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), action.into(), "{}".into(), json!({"userIds": ["u9"]}).to_string())).await;
+        assert!(acted.is_ok(), "{action}: the call failed: {:?}", acted.as_ref().err());
+        yield_until(&format!("{action}: both lists end with the lists of the server"), || shown(&readers) == [strings(ended[0]), strings(ended[1])]).await;
+    }
+    rig.database.close_now();
+}
+
 /// K13 (B6, C05; old lines: no rule for these actions): add member and remove member change both member lists (JOINED and OWNER_FIRST) at once, before the server answers. The answer keeps the change, a refusal restores the ids and the order of both lists.
 #[tokio::test(flavor = "multi_thread")]
 async fn member_actions_change_both_member_lists_before_the_answer_and_a_refusal_restores_them() {

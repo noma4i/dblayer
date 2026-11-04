@@ -7,11 +7,11 @@ private let clubCreated = #"{"data":{"createClub":{"__typename":"Club","id":"g1"
 private let letterSent = #"{"data":{"sendLetter":{"__typename":"Letter","id":"l1","chatId":"c1","text":"hello","at":1}}}"#
 private let clubDefs = #"[{"name":"CreateClub","document":"mutation CreateClub($name: String!) { createClub(name: $name) { id name } }"},{"name":"LeaveClub","document":"mutation LeaveClub($clubId: ID!) { leaveClub(clubId: $clubId) { id name } }"},{"name":"AddClubMember","document":"mutation AddClubMember($clubId: ID!, $userIds: [ID!]!) { addClubMember(clubId: $clubId, userIds: $userIds) { id name } }"},{"name":"RemoveClubMember","document":"mutation RemoveClubMember($clubId: ID!, $userIds: [ID!]!) { removeClubMember(clubId: $clubId, userIds: $userIds) { id name } }"},{"name":"ClubMembers","document":"query ClubMembers($clubId: ID!, $order: String!, $first: Int, $after: Cursor) { node(id: $clubId) { ... on Club { members(first: $first, after: $after, order: $order) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }"},{"name":"SendLetter","document":"mutation SendLetter($chatId: ID!, $text: String!, $at: Int!) { sendLetter(chatId: $chatId, text: $text, at: $at) { id chatId text at } }"},{"name":"ForwardLetter","document":"mutation ForwardLetter($letterId: ID!, $chatId: ID!) { forwardLetter(letterId: $letterId, chatId: $chatId) { letter { id chatId text at } } }"}]"#
 
-private func clubAnswer(_ root: String) -> String {
+func clubAnswer(_ root: String) -> String {
   #"{"data":{"\#(root)":{"__typename":"Club","id":"g1","name":"friends"}}}"#
 }
 
-private func membersReply(_ ids: [String]) -> String {
+func membersReply(_ ids: [String]) -> String {
   let edges = ids.map { #"{"cursor":"\#($0)","node":{"id":"\#($0)","name":"\#($0)"}}"# }.joined(separator: ",")
   return #"{"data":{"node":{"members":{"edges":[\#(edges)],"pageInfo":{"hasNextPage":false,"endCursor":"\#(ids.last ?? "")"}}}}}"#
 }
@@ -106,6 +106,31 @@ extension BridgeProbeTests {
     #expect(transport.calls.filter { $0.operationName == "AddClubMember" }.count == 1)
     #expect(try await joined.read().map(\.id) == ["u1", "u2", "u3", "u4"])
     #expect(try await owners.read().map(\.id) == ["u2", "u1", "u3", "u4"])
+  }
+
+  /// K32: a member added or removed ends with the member lists of the server in both orders. The added user appears in both lists and the removed one leaves them.
+  @MainActor
+  @Test(.timeLimit(.minutes(2)))
+  func anAddedAndARemovedMemberEndWithTheMemberListsOfTheServer() async throws {
+    let transport = MockTransport()
+    let (club, joined, owners) = try await Self.openClubWithMembers(transport)
+    func lists() async throws -> [[String]] { [try await joined.read().map(\.id), try await owners.read().map(\.id)] }
+    func readAgain(_ joinedIds: [String], _ ownerIds: [String]) async throws {
+      transport.enqueue("ClubMembers", reply: membersReply(joinedIds))
+      try await joined.load()
+      transport.enqueue("ClubMembers", reply: membersReply(ownerIds))
+      try await owners.load()
+    }
+    let added = [["u1", "u2", "u3", "u4", "u9"], ["u2", "u1", "u3", "u4", "u9"]]
+    transport.enqueue("AddClubMember", reply: clubAnswer("addClubMember"))
+    _ = try await club.addMember(userIds: ["u9"])
+    try await readAgain(added[0], added[1])
+    #expect(try await lists() == added, "the lists after the add")
+    let removed = [["u1", "u2", "u3", "u4"], ["u2", "u1", "u3", "u4"]]
+    transport.enqueue("RemoveClubMember", reply: clubAnswer("removeClubMember"))
+    _ = try await club.removeMember(userIds: ["u9"])
+    try await readAgain(removed[0], removed[1])
+    #expect(try await lists() == removed, "the lists after the removal")
   }
 
   /// K13 (B6, C05): leave removes the club from its list before the answer. The answer keeps it away, a refusal puts it back.

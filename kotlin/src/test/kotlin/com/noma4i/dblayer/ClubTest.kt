@@ -4,7 +4,10 @@ import com.noma4i.dblayer.models.Club
 import com.noma4i.dblayer.models.Letter
 import com.noma4i.dblayer.models.Person
 import com.noma4i.dblayer.models.modelsJSON
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -100,6 +103,60 @@ class ClubTest {
         assertEquals(1, transport.calls.count { it.operationName == "AddClubMember" })
         assertEquals(listOf("u1", "u2", "u3", "u4"), joined.read().map { it.id })
         assertEquals(listOf("u2", "u1", "u3", "u4"), owners.read().map { it.id })
+    }
+
+    /** K32: a member added or removed ends with the member lists of the server in both orders. The added user appears in both lists and the removed one leaves them. */
+    @Test
+    fun anAddedAndARemovedMemberEndWithTheMemberListsOfTheServer() = bounded {
+        val transport = MockTransport()
+        val (created, joined, owners) = openClubWithMembers(transport)
+        suspend fun lists() = listOf(joined.read().map { it.id }, owners.read().map { it.id })
+        suspend fun readAgain(joinedIds: List<String>, ownerIds: List<String>) {
+            transport.enqueue("ClubMembers", membersReply(joinedIds))
+            joined.load()
+            transport.enqueue("ClubMembers", membersReply(ownerIds))
+            owners.load()
+        }
+        val added = listOf(listOf("u1", "u2", "u3", "u4", "u9"), listOf("u2", "u1", "u3", "u4", "u9"))
+        transport.enqueue("AddClubMember", clubAnswer("addClubMember"))
+        created.addMember(userIds = listOf("u9"))
+        readAgain(added[0], added[1])
+        assertEquals("the lists after the add", added, lists())
+        val removed = listOf(listOf("u1", "u2", "u3", "u4"), listOf("u2", "u1", "u3", "u4"))
+        transport.enqueue("RemoveClubMember", clubAnswer("removeClubMember"))
+        created.removeMember(userIds = listOf("u9"))
+        readAgain(removed[0], removed[1])
+        assertEquals("the lists after the removal", removed, lists())
+    }
+
+    /** K33 (A1): a call that waits for the answer of a mutation returns with that answer while a load of the list the mutation refetches is held. The list is read again once that load ends. */
+    @Test
+    fun aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld() = bounded {
+        val transport = MockTransport()
+        val (created, joined, _) = openClubWithMembers(transport)
+        val scope = CoroutineScope(SupervisorJob())
+        val list = ListReader(joined, scope)
+        list.waitForInitialLoad()
+        val current = listOf("u1", "u2", "u3", "u4")
+        val loadHold = transport.hold("ClubMembers", membersReply(current))
+        val addHold = transport.hold("AddClubMember", clubAnswer("addClubMember"))
+        val rereadHold = transport.hold("ClubMembers", membersReply(current + "u9"))
+        val refreshing = async { list.refresh() }
+        withTimeout(5000) { loadHold.entered() }
+        val adding = async { created.addMember(userIds = listOf("u9")) }
+        withTimeout(5000) { addHold.entered() }
+        addHold.release()
+        try {
+            awaitWithin("the add to return with its answer while the list load is held") { adding.await() }
+        } finally {
+            loadHold.release()
+        }
+        refreshing.await()
+        withTimeout(5000) { rereadHold.entered() }
+        rereadHold.release()
+
+        eventually("the list is read again after the held load") { list.rows.value.map { it.id } == current + "u9" }
+        scope.cancel()
     }
 
     /** K13 (B6, C05): leave removes the club from its list before the answer. The answer keeps it away, a refusal puts it back. */

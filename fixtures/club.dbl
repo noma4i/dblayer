@@ -17,6 +17,7 @@ model Club do
     parameter :userIds, [:id]
     variables clubId: :id, userIds: :userIds
     joins_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: ["JOINED", "OWNER_FIRST"]
+    refetch :club_members, model: Person
     response from: "addClubMember"
   end
   operation :remove_member do
@@ -25,6 +26,7 @@ model Club do
     parameter :userIds, [:id]
     variables clubId: :id, userIds: :userIds
     leaves_scope :club_members, model: Person, rows: :userIds, with: { clubId: :id }, order: :order, orders: ["JOINED", "OWNER_FIRST"]
+    refetch :club_members, model: Person
     response from: "removeClubMember"
   end
 end

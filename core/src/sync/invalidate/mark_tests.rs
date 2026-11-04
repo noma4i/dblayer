@@ -9,8 +9,10 @@ fn none() -> Map<String, serde_json::Value> {
     Map::new()
 }
 
-async fn rereads_finished() {
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+async fn rereads_finished(rig: &Rig, operation: &str, calls: usize) {
+    rig.transport.await_calls(operation, calls).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    crate::test_wait::yield_until("a load of a window is still in flight", || super::super::locked(&rig.sync.inner.flights).waiting.is_empty()).await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -33,7 +35,7 @@ async fn a_refused_reread_leaves_the_call_of_the_mutation_successful() {
             rig.db.shared.store.lock().connection.execute("ALTER TABLE query_window RENAME COLUMN landed_at TO broken_landed_at", []).unwrap();
         }
         let report = crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
-        rereads_finished().await;
+        rereads_finished(&rig, "MomentsHistory", if case == "read" { 1 } else { 2 }).await;
         assert_eq!(report.committed(), 1, "{case}");
         assert_eq!(rig.transport.call_count("MomentsFeed"), if case == "read" { 1 } else { 2 }, "{case}");
         assert_eq!(rig.transport.call_count("MomentsHistory"), if case == "read" { 1 } else { 2 }, "{case}");
@@ -89,7 +91,7 @@ async fn watched_feed_is_reread_right_after_create() {
     rig.db.as_app().create("moments", params(json!({"text": "t"}))).unwrap();
     rig.transport.enqueue("CreateMoment", created());
     crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
-    rereads_finished().await;
+    rereads_finished(&rig, "MomentsFeed", 2).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 2);
     assert!(!invalidated(&rig, "feed"));
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m9", "m1"]);
@@ -197,7 +199,7 @@ async fn reload_after_a_commit_is_issued_after_the_load_that_was_in_flight_at_th
     };
     let (older, ()) = tokio::join!(older, commit);
     older.unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    rereads_finished(&rig, "MomentsFeed", 3).await;
     assert_eq!(rig.transport.call_count("MomentsFeed"), 3);
     assert_eq!(member_ids(&rig, "moments", "feed", &none()), ["m9", "m1"]);
 }
@@ -303,16 +305,47 @@ async fn an_older_answer_landing_after_the_mark_still_leads_to_the_reread() {
     let commits = async {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
-        rig.db.as_app().act("moments", "like", &rid("m2"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        rig.db.as_app().act("moments", "poke", &rid("m2"), params(json!({})), params(json!({}))).unwrap();
         rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
-        rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m2", "text": "t", "userId": null, "likedByMe": true}})).after(std::time::Duration::from_secs(10)));
+        rig.transport.enqueue("PokeMoment", Reply::data(json!({"pokeMoment": {"id": "m2", "text": "t", "userId": null}})).after(std::time::Duration::from_secs(10)));
         crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
     };
     let (older, ()) = tokio::join!(older, commits);
     older.unwrap();
-    rereads_finished().await;
+    rereads_finished(&rig, "MomentsHistory", 3).await;
     assert_eq!(rig.transport.call_count("MomentsHistory"), 3);
     assert_eq!(member_ids(&rig, "moments", "history", &none()), ["m3", "m1", "m2"]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_mutation_committed_during_the_first_load_of_its_refetched_list_leads_to_the_reread() {
+    let rig = rig();
+    let _watch = rig.sync.watch("moments", "history", &none()).unwrap();
+    put(&rig, "moments", moment("m1", "t"));
+    let history_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = history_calls.clone();
+    rig.transport.respond_with(move |request| {
+        if request.operation_name != "MomentsHistory" {
+            return None;
+        }
+        Some(match counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            0 => history_reply(&["m1"]).after(std::time::Duration::from_secs(5)),
+            _ => history_reply(&["m1", "m2"]),
+        })
+    });
+    let no_params = none();
+    let first = rig.sync.load("moments", "history", &no_params, LoadOptions::default());
+    let commit = async {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        rig.db.as_app().act("moments", "like", &rid("m1"), params(json!({"likedByMe": true})), params(json!({}))).unwrap();
+        rig.transport.enqueue("LikeMoment", Reply::data(json!({"likeMoment": {"id": "m1", "text": "t", "userId": null, "likedByMe": true}})));
+        crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
+    };
+    let (first, ()) = tokio::join!(first, commit);
+    first.unwrap();
+    rereads_finished(&rig, "MomentsHistory", 2).await;
+    assert_eq!(rig.transport.call_count("MomentsHistory"), 2);
+    assert_eq!(member_ids(&rig, "moments", "history", &none()), ["m1", "m2"]);
 }
 
 #[tokio::test(start_paused = true)]
@@ -336,11 +369,11 @@ async fn a_reread_queued_before_a_session_change_writes_nothing_in_the_next_sess
     let _watch = rig.sync.watch("moments", "history", &none()).unwrap();
     rig.transport.enqueue("MomentsHistory", history_reply(&["m1"]));
     load(&rig, "history").await;
-    rereads_finished().await;
+    rereads_finished(&rig, "MomentsHistory", 2).await;
     rig.db.shared.store.invalidate_family_now("moments", "history").unwrap();
     let before = rig.transport.call_count("MomentsHistory");
     crate::sync::rig::app(&rig.sync, rig.sync.flush()).await.unwrap();
-    rereads_finished().await;
+    rereads_finished(&rig, "MomentsHistory", before).await;
     assert_eq!(rig.transport.call_count("MomentsHistory"), before, "the reread of the ended epoch ran in the next session");
     assert!(invalidated(&rig, "history"));
 }

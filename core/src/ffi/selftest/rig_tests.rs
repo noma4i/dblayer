@@ -81,6 +81,7 @@ struct State {
     log: Vec<Entry>,
     script: Vec<(String, Fault)>,
     messages: Vec<(String, Value)>,
+    group_members: BTreeMap<String, Vec<String>>,
 }
 
 /// A held request first waits at its gate, then ends in the inner fault, if any.
@@ -112,6 +113,9 @@ impl World {
     /// A message of the thread `c1` that the server already holds for this account.
     pub(super) fn seed_message(&self, account: &str, id: &str, text: &str, at: i64) {
         self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at})));
+    }
+    pub(super) fn set_members(&self, order: &str, ids: &[&str]) {
+        self.state.lock().unwrap().group_members.insert(order.into(), ids.iter().map(|id| id.to_string()).collect());
     }
     pub(super) fn fail_next(&self, operation: &str, fault: Fault) { self.state.lock().unwrap().script.push((operation.into(), fault)); }
     pub(super) fn hold_then(&self, operation: &str, inner: Fault) -> Arc<Gate> {
@@ -182,6 +186,11 @@ impl World {
                 let variables = &body["variables"];
                 let group = json!({"__typename":"Group","id":format!("g{}", state.messages.len() + 1),"name":variables["name"]});
                 json!({"data":{"createGroup":group}})
+            }
+            "GroupMembers" => {
+                let order = body["variables"]["order"].as_str().unwrap_or_default();
+                let members: Vec<Value> = state.group_members.get(order).into_iter().flatten().map(|id| json!({"__typename":"Member","id":id,"name":id})).collect();
+                json!({"data":{"groupMembers":members}})
             }
             "LeaveGroup" | "AddMember" | "RemoveMember" => {
                 let (root, left, membership) = match operation {
@@ -319,6 +328,7 @@ const OPERATIONS: &str = r#"[
     {"name":"LeaveGroup","document":"mutation LeaveGroup($groupId: ID!) { leaveGroup(groupId: $groupId) { id name left membership } }"},
     {"name":"AddMember","document":"mutation AddMember($groupId: ID!, $userIds: [ID!]!) { addMember(groupId: $groupId, userIds: $userIds) { id name left membership } }"},
     {"name":"RemoveMember","document":"mutation RemoveMember($groupId: ID!, $userIds: [ID!]!) { removeMember(groupId: $groupId, userIds: $userIds) { id name left membership } }"},
+    {"name":"GroupMembers","document":"query GroupMembers($groupId: ID!, $order: String!) { groupMembers(groupId: $groupId, order: $order) { id name } }"},
     {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at } chat { id updatedAt } } }"}
 ]"#;
 
@@ -396,6 +406,7 @@ fn group_spec() -> crate::schema::ModelSpec {
         action.variables.insert("groupId".into(), "id".into());
         action.variables.insert("userIds".into(), "userIds".into());
         action.root = Some(root.into());
+        action.refetch.push("Member.group_members".into());
         action.scope_effects.push(crate::schema::ScopeEffect {
             kind,
             model: "Member".into(),
@@ -416,6 +427,7 @@ fn member_spec() -> crate::schema::ModelSpec {
     let mut member = crate::schema::ModelSpec::new("Member", vec![FieldSpec::scalar("id", crate::value::ScalarKind::Id), FieldSpec::scalar("name", crate::value::ScalarKind::Str)]);
     let mut members = RelationSpec::new("group_members", &[]);
     members.text_params = vec!["groupId".to_string(), "order".to_string()];
+    members.remote = Some(crate::sync::rig::remote("GroupMembers", crate::schema::RemoteShape::List { coverage: crate::schema::Coverage::Complete }, "5.minutes"));
     member.relations.push(members);
     member
 }
