@@ -76,7 +76,8 @@ lane_core() {
 lane_swift() {
   local log="$logs/swift.log" filters=() name
   while IFS= read -r name; do filters+=(--filter "${name/./\/}"); done < "$tmp/swift.tests"
-  bounded "${SEQ_SWIFT_LIMIT:-900}" sequences-swift swift test --package-path "$root/swift" "${filters[@]}" > "$log" 2>&1
+  /bin/rm -f "$logs"/swift*.xml
+  bounded "${SEQ_SWIFT_LIMIT:-900}" sequences-swift swift test --package-path "$root/swift" --xunit-output "$logs/swift.xml" "${filters[@]}" > "$log" 2>&1
 }
 
 lane_kotlin() {
@@ -91,15 +92,26 @@ lane_kotlin() {
 
 # Counts the listed tests that ran and passed in the lane log. Prints the count.
 count_passed() {
-  local lane="$1" log="$logs/$1.log" passed=0 name class func
+  local lane="$1" log="$logs/$1.log" passed=0 name
   case "$lane" in
     core)
       while IFS= read -r name; do grep -Eq "^test (.*::)?${name} \.\.\. ok$" "$log" && passed=$((passed + 1)); done < "$tmp/core.tests" ;;
     swift)
-      while IFS= read -r name; do
-        class="${name%%.*}"; func="${name#*.}"
-        grep -Eq "Test Case .*${class}[ .]${func}.* passed" "$log" && passed=$((passed + 1))
-      done < "$tmp/swift.tests" ;;
+      passed="$(python3 -I - "$logs" "$tmp/swift.tests" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+logs, listed = Path(sys.argv[1]), Path(sys.argv[2]).read_text().split()
+ok = set()
+for xml in logs.glob("swift*.xml"):
+    for case in ET.parse(xml).getroot().iter("testcase"):
+        if not any(case.find(tag) is not None for tag in ("failure", "error", "skipped")):
+            suite = case.get("classname").rsplit(".", 1)[-1]
+            ok.add(f"{suite}.{case.get('name').split('(')[0]}")
+print(sum(1 for name in listed if name in ok))
+PY
+)" ;;
     kotlin)
       passed="$(python3 -I - "$root/kotlin/build/test-results/testDebugUnitTest" "$tmp/kotlin.tests" <<'PY'
 import sys

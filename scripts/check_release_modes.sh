@@ -253,4 +253,50 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     assert any(line.startswith("check_consumers ") and "--maven " in line and "--package-swift " in line for line in green_events), green_events
     assert subprocess.check_output([real_git, "-C", str(green), "cat-file", "-t", version], text=True).strip() == "commit"
     print("ok green sequences and app suites tag the release and record the receipt")
+    sequences_script = release_script.parent / "check_sequences.sh"
+
+    def swift_lane(name, results):
+        root = base / name
+        for script in ("check_sequences.sh", "check_bounded.sh", "check_steps.sh"):
+            (root / "scripts").mkdir(parents=True, exist_ok=True)
+            shutil.copy2(release_script.parent / script, root / "scripts" / script)
+        (root / "core/src/ffi/selftest").mkdir(parents=True)
+        (root / "core/src/ffi/selftest/manifest.tsv").write_text("version\t1\nid\taliases\tlane\ttest\tstate\ts1\tprovenance\n" + "".join(f"{n}\t\tswift\tSuite.{n}\tx\tx\tx\n" for n, _ in results))
+        (root / "swift/Sources/DBlayer").mkdir(parents=True)
+        (root / "swift/Sources/DBlayer/dblayer.swift").write_text("bindings")
+        (root / "swift/DBlayerFFI.xcframework").mkdir()
+        (root / "swift/DBlayerFFI.xcframework/Info.plist").write_text("info")
+        for path, text in (("src/main/kotlin/com/noma4i/dblayer/dblayer.kt", "kt"), *((f"src/main/jniLibs/{abi}/libdblayer.so", abi) for abi in ("arm64-v8a", "armeabi-v7a", "x86_64", "x86"))):
+            (root / "kotlin" / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / "kotlin" / path).write_text(text)
+        stage = root / "stage"
+        stage.mkdir()
+        (stage / "dblayer.swift").write_text("bindings")
+        with zipfile.ZipFile(stage / "DBlayerFFI.xcframework.zip", "w") as archive:
+            archive.writestr("DBlayerFFI.xcframework/Info.plist", "info")
+        with zipfile.ZipFile(stage / "dblayer-android.zip", "w") as archive:
+            archive.writestr("src/main/kotlin/com/noma4i/dblayer/dblayer.kt", "kt")
+            for abi in ("arm64-v8a", "armeabi-v7a", "x86_64", "x86"):
+                archive.writestr(f"src/main/jniLibs/{abi}/libdblayer.so", abi)
+        bin_dir = root / "bin"
+        bin_dir.mkdir()
+        failure = '<failure message="x"/>'
+        cases = "".join(f'<testcase classname="DBlayerTests.Suite" name="{n}()">{"" if good else failure}</testcase>' for n, good in results)
+        swift = bin_dir / "swift"
+        swift.write_text(f"""#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do [ "$1" = --xunit-output ] && out="$2"; shift; done
+printf '<testsuites><testsuite name="s">{cases}</testsuite></testsuites>' > "${{out%.xml}}-swift-testing.xml"
+echo 'Test run passed'
+""")
+        swift.chmod(0o755)
+        env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}", BUILD_SLOT=str(root / "none"))
+        return root, stage, env
+
+    root, stage, env = swift_lane("swift-green", [("a", True), ("b", True)])
+    run(["bash", "scripts/check_sequences.sh", str(stage), "--lane", "swift"], root, env, contains="")
+    assert (stage / "sequences.tsv").read_text().split("\t")[:3] == ["swift", "2", "2"], (stage / "sequences.tsv").read_text()
+    root, stage, env = swift_lane("swift-red", [("a", True), ("b", False)])
+    run(["bash", "scripts/check_sequences.sh", str(stage), "--lane", "swift"], root, env, expected=1, contains="1 of 2 listed tests passed")
+    print("ok the Swift lane counts passed tests from the xunit report and fails a failed one")
 PY
