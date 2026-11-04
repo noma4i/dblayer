@@ -46,6 +46,13 @@ fn parameters(model: &ModelSpec, relation: &RelationSpec, decls: &[EnumDecl], sw
     (declared, passed)
 }
 
+fn visible_names(model: &ModelSpec, relation: &RelationSpec, printed: &str, class: &str, swift: bool) -> Vec<String> {
+    let parameters = relation.by_columns.iter().chain(&relation.text_params);
+    parameters.flat_map(|key| [key.clone(), identifier(key, swift)])
+        .chain([relation.name.clone(), printed.to_string(), class.to_string(), model.key.as_str().to_string(), "id".to_string()])
+        .collect()
+}
+
 pub(super) fn swift_accessors(out: &mut String, types: &mut String, model: &ModelSpec, relation: &RelationSpec, decls: &[EnumDecl]) {
     if relation.edge_fields.is_empty() {
         return;
@@ -53,7 +60,7 @@ pub(super) fn swift_accessors(out: &mut String, types: &mut String, model: &Mode
     let (method, class) = (name(&relation.name), type_name(model, relation));
     let (declared, passed) = parameters(model, relation, decls, true);
     let printed = identifier(&method, true);
-    let scope = super::free_name(relation.by_columns.iter().chain(&relation.text_params).chain(std::iter::once(&"id".to_string())), "scope");
+    let scope = super::free_name(visible_names(model, relation, &printed, &class, true), "scope");
     let query = if passed.is_empty() { printed } else { format!("{printed}({passed})") };
     writeln!(out, "    @concurrent public static func {method}Edge({declared}of id: String, in {scope}: AccountScope? = nil) async throws -> {class}? {{ try await {query}.edgeValues(of: id, in: {scope}).map({class}.init) }}").unwrap();
     writeln!(types, "public struct {class}: Sendable, Equatable {{").unwrap();
@@ -74,7 +81,7 @@ pub(super) fn kotlin_accessors(out: &mut String, types: &mut String, model: &Mod
     let (method, class) = (name(&relation.name), type_name(model, relation));
     let (declared, passed) = parameters(model, relation, decls, false);
     let printed = identifier(&method, false);
-    let account = super::free_name(relation.by_columns.iter().chain(&relation.text_params).chain(std::iter::once(&"id".to_string())), "account");
+    let account = super::free_name(visible_names(model, relation, &printed, &class, false), "account");
     let query = if passed.is_empty() { printed } else { format!("{printed}({passed})") };
     writeln!(out, "        suspend fun {method}Edge({declared}id: String, {account}: AccountScope? = null): {class}? = {query}.edgeValues(id, {account})?.let {{ {class}(it) }}").unwrap();
     let fields: Vec<String> = relation.edge_fields.iter().map(|field| format!("    val {}: {} = null", identifier(&field.name, false), field_type(field, false))).collect();

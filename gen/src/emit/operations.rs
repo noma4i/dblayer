@@ -39,7 +39,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
     for operation in operations {
         let method = identifier(&name(&operation.name), true);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
-        let scope = super::free_name(operation.args.iter().map(|(name, _)| name), "scope");
+        let scope = super::free_name(operation.args.iter().map(|(name, _)| name.clone()).chain([operation.name.clone(), method.clone()]), "scope");
         let params = super::swift_scope(&params, &scope);
         let returns = if operation.result.is_none() { String::new() } else { format!(" -> {}", returned(operation, true)) };
         let binding = if operation.args.is_empty() { "let" } else { "var" };
@@ -66,7 +66,7 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
     for operation in operations {
         let method = identifier(&name(&operation.name), false);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
-        let account = super::free_name(operation.args.iter().map(|(name, _)| name), "account");
+        let account = super::free_name(operation.args.iter().map(|(name, _)| name.clone()).chain([operation.name.clone(), method.clone()]), "account");
         let params = super::kotlin_scope(&params, &account);
         let returns = if operation.result.is_none() { String::new() } else { format!(": {}", returned(operation, false)) };
         writeln!(out, "    suspend fun {method}({params}){returns} {{\n        val variables = mutableMapOf<String, JsonElement>()").unwrap();

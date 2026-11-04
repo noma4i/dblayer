@@ -29,3 +29,24 @@ model LedgerFeed do
     end
   end
 end
+
+model Shadow do
+  attribute :title, :string
+  operation :create, durable: true do
+    mutation "CreateMoment"
+  end
+  scope :scope do
+    query "MomentsFeed"
+    paginate size: 20, direction: :forward
+    edge do
+      attribute :score, :int, null: true
+    end
+  end
+  scope :account do
+    query "MomentsFeed"
+    paginate size: 20, direction: :forward
+    edge do
+      attribute :rank, :int, null: true
+    end
+  end
+end

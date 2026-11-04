@@ -47,7 +47,7 @@
 
 ### Fixed
 - A window opened after a failed load of its query no longer shows that error.
-- The generated account parameter takes a free name (`scope_` in Swift, `account_` in Kotlin) when a `.dbl` parameter, field or action argument already uses `scope` or `account`.
+- The generated account parameter takes a free name (`scope_` in Swift, `account_` in Kotlin) when a `.dbl` parameter, field, action argument, query or relation already uses `scope` or `account`.
 - `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
 - Every terminal subscription failure reaches the query listener once.
 - A `create` with an id given by the caller returns the confirmed row.

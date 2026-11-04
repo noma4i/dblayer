@@ -70,6 +70,8 @@ pub(crate) struct ReadPool {
     outstanding: Arc<AtomicUsize>,
     #[cfg(test)]
     pub(crate) inline: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(crate) ran_on: Mutex<Vec<std::thread::ThreadId>>,
 }
 
 fn held<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -85,6 +87,8 @@ impl ReadPool {
             outstanding: Arc::new(AtomicUsize::new(0)),
             #[cfg(test)]
             inline: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            ran_on: Mutex::new(Vec::new()),
         })
     }
 
@@ -119,6 +123,8 @@ impl ReadPool {
 
     fn run(shared: &Shared, job: ReadJob) -> ReadResult {
         let ReadJob { target, run } = job;
+        #[cfg(test)]
+        held(&shared.reads.ran_on).push(std::thread::current().id());
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(shared))) {
             Ok(Ok(rows)) => ReadResult::ReadOk { target, rows },
             Ok(Err(error)) => ReadResult::ReadFailed { target, error },

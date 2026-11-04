@@ -154,14 +154,14 @@ fn key_of(field: &FieldSpec) -> &str {
 }
 
 fn local_name(model: &ModelSpec, stem: &str) -> String {
-    let used: std::collections::HashSet<_> = model.fields.iter().map(|field| field.name.as_str())
+    let used: Vec<&str> = model.fields.iter().map(|field| field.name.as_str())
         .chain(model.ephemeral.iter().map(|field| field.field.name.as_str()))
         .chain(model.actions.iter().flat_map(|action| action.args.keys().map(String::as_str)))
-        .chain(model.relations.iter().flat_map(|relation| relation.by_columns.iter().chain(&relation.text_params).map(String::as_str)))
+        .chain(model.actions.iter().map(|action| action.name.as_str()))
+        .chain(model.relations.iter().flat_map(|relation| relation.by_columns.iter().chain(&relation.text_params).chain(std::iter::once(&relation.name)).map(String::as_str)))
+        .chain(std::iter::once(model.key.as_str()))
         .collect();
-    let mut name = stem.to_string();
-    while used.contains(name.as_str()) { name.push('_'); }
-    name
+    free_name(used, stem)
 }
 
 fn create_fields<'a>(model: &ModelSpec, fields: &[&'a FieldSpec]) -> Vec<&'a FieldSpec> {

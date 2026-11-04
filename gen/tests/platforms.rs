@@ -349,3 +349,13 @@ fn the_account_parameter_never_takes_the_name_of_a_dbl_parameter() {
     assert!(kotlin.contains("suspend fun entriesEdge(scope: String, account: String, id: String, account_: AccountScope? = null)") && kotlin.contains("edgeValues(id, account_)"), "{kotlin}");
     assert!(kotlin.contains("suspend fun move(account: String, scope: String, account_: AccountScope? = null)") && kotlin.contains("onAccount(account_)"), "{kotlin}");
 }
+
+#[test]
+fn the_account_parameter_never_takes_the_name_of_the_called_query() {
+    let models = parse_models(include_str!("../../fixtures/account_names.dbl")).unwrap();
+    let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
+    assert!(swift.contains("scopeEdge(of id: String, in scope_: AccountScope? = nil)") && swift.contains("try await scope.edgeValues(of: id, in: scope_)"), "{swift}");
+    assert!(swift.contains("func create(title: String, in scope_: AccountScope? = nil)"), "{swift}");
+    assert!(kotlin.contains("suspend fun accountEdge(id: String, account_: AccountScope? = null)") && kotlin.contains("account.edgeValues(id, account_)"), "{kotlin}");
+    assert!(kotlin.contains("onAccount(account_)"), "{kotlin}");
+}

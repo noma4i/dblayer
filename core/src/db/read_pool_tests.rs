@@ -216,3 +216,24 @@ fn d3_a_commit_that_touches_no_group_notifies_no_feed_subscriber() {
     let notices = db.counters().reach_notices - before;
     assert_eq!(notices, 0, "feed subscribers told about a commit that touched none of their groups: {notices}");
 }
+
+#[test]
+fn the_first_delivery_of_a_warm_query_reads_sqlite_off_the_calling_thread() {
+    let db = booted();
+    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
+    let query = Query::new("users");
+    db.warm(&query).unwrap();
+    held_reads(&db).clear();
+    let caller = std::thread::current().id();
+    let (log, callback) = recorder();
+    let _observer = db.observe(query, callback).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
+    assert_eq!(calls(&log), [1], "the first delivery carries the stored row");
+    let ran_on = held_reads(&db).clone();
+    assert!(!ran_on.is_empty(), "the first delivery read nothing from SQLite");
+    assert!(ran_on.iter().all(|thread| *thread != caller), "the first delivery read SQLite on the calling thread");
+}
+
+fn held_reads(db: &super::Db) -> std::sync::MutexGuard<'_, Vec<std::thread::ThreadId>> {
+    db.shared.reads.ran_on.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
