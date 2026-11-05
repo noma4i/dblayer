@@ -1,7 +1,7 @@
 //! Tests of `specs/machines/window.md`. Names are the `Test` column.
 
 use super::harness::{states_of, loaded, sequences, Call, Gate, Outcome, Phase, Reply, Val, World};
-use super::ref_window::{Effect, Input, Result3, State, Window};
+use super::ref_window::{Effect, Failure, Input, Result3, State, Window};
 use crate::ffi::LoadMoreResult;
 
 fn res(outcome: Outcome) -> Result3 {
@@ -231,7 +231,7 @@ async fn win_loading_temp_error() {
     world.net.script(Reply::page(&["r1"], false));
     let mut reference = Window::new();
     reference.step(Input::InterestPlus { id: 1, force: false });
-    let effects = reference.step(Input::TransportError { request: 1, temporary: true });
+    let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Network });
     assert_eq!(effects, [Effect::ScheduleRetry]);
     let mut call = world.call();
     assert_eq!(call.outcome_within(300).await, Outcome::Pending, "a temporary error is retried, the call has no outcome yet");
@@ -246,13 +246,84 @@ async fn win_loading_temp_error() {
     assert_eq!(res(call.outcome().await), reference.take_outcomes()[0].1);
 }
 
+/// Network failures until the policy limit (3): the reference and the core both stop retrying and report `Failed`.
+#[tokio::test(flavor = "multi_thread")]
+async fn win_loading_attempts_exhausted() {
+    let world = World::open().await;
+    for _ in 0..3 { world.net.script(Reply::network()); }
+    let mut reference = Window::new();
+    reference.step(Input::InterestPlus { id: 1, force: false });
+    for attempt in 0..2 {
+        assert_eq!(reference.step(Input::TransportError { request: 1, failure: Failure::Network }), [Effect::ScheduleRetry], "attempt {attempt} is retried");
+        reference.step(Input::RetryDue);
+    }
+    let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Network });
+    assert_eq!(effects, [Effect::WindowState]);
+    assert_eq!(reference.state, State::Idle { fresh: false, stale: false, last_error: Some(true) });
+    let stream = world.rows_stream();
+    let mut call = world.call();
+    for _ in 0..120 {
+        if call.outcome_within(50).await != Outcome::Pending { break; }
+        world.clock.advance(30_000);
+        world.breathe().await;
+    }
+    assert_eq!(res(call.outcome().await), Result3::Failed);
+    assert_eq!(world.net.feed_requests(), 3, "three attempts, then the error is final");
+    let vals = stream.until(|vals| vals.iter().any(|val| matches!(val, Val::Snapshot { state, .. } | Val::StateOnly(state) if state.error))).await;
+    let last = vals.iter().rev().find_map(|val| match val { Val::Snapshot { state, .. } | Val::StateOnly(state) => Some(*state), _ => None }).unwrap();
+    assert_eq!(last.phase, reference.phase);
+    assert_eq!(reference.take_outcomes(), [(1, Result3::Failed)]);
+}
+
+/// A window that failed for the network with a reader open: the reference and the core after three failed attempts.
+async fn network_failed() -> (World, super::harness::Reading, Window) {
+    let world = World::open().await;
+    for _ in 0..3 { world.net.script(Reply::network()); }
+    let stream = world.rows_stream();
+    world.pump_until(&stream, |_| states_of(&stream).iter().any(|state| state.error)).await;
+    world.settle().await;
+    let mut reference = Window::new();
+    reference.step(Input::InterestPlus { id: 1, force: false });
+    for _ in 0..2 {
+        reference.step(Input::TransportError { request: 1, failure: Failure::Network });
+        reference.step(Input::RetryDue);
+    }
+    reference.step(Input::TransportError { request: 1, failure: Failure::Network });
+    reference.online = false;
+    (world, stream, reference)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn win_idle_online_retry() {
+    let (world, _stream, mut reference) = network_failed().await;
+    let before = world.net.feed_requests();
+    let effects = reference.online_idle(true);
+    go_offline(&world);
+    world.db.set_online(true).unwrap();
+    world.breathe().await;
+    world.settle().await;
+    assert_eq!(world.net.feed_requests(), before + requests_in(&effects), "coming online reloads a window with interest and a network error");
+}
+
+/// P-WIN-05: coming online reloads the window with a network error once, with no timer.
+#[tokio::test(flavor = "multi_thread")]
+async fn win_prop_online_once() {
+    let (world, _stream, _) = network_failed().await;
+    let before = world.net.feed_requests();
+    go_offline(&world);
+    world.db.set_online(true).unwrap();
+    world.breathe().await;
+    world.settle().await;
+    assert_eq!(world.net.feed_requests(), before + 1, "one reload for one change to online, without advancing the clock");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn win_loading_error() {
     let world = World::open().await;
     world.net.script(Reply::refused());
     let mut reference = Window::new();
     reference.step(Input::InterestPlus { id: 1, force: false });
-    let effects = reference.step(Input::TransportError { request: 1, temporary: false });
+    let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Permanent });
     assert_eq!(effects, [Effect::WindowState]);
     let stream = world.rows_stream();
     let mut call = world.call();

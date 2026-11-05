@@ -182,6 +182,18 @@ async fn feed_live_event() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn feed_live_event_now() {
+    let (world, stream, mut reference) = live().await;
+    reference.debounce = false;
+    assert_eq!(reference.step(event(1)), [Effect::Commit]);
+    reference.step(Input::Committed);
+    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
+    let got = stream.until(|vals| vals.iter().any(|val| matches!(val, Val::Event { .. }))).await;
+    assert_eq!(got.into_iter().filter(|val| matches!(val, Val::Event { .. })).count(), 1, "without a declared debounce the event lands at once, the clock does not move");
+    assert_eq!(obs_of(&stream), reference.take_obs());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn feed_live_flush() {
     let (world, stream, mut reference) = live().await;
     reference.step(event(1));

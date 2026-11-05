@@ -18,7 +18,14 @@ if allowlist_path.exists():
         if line:
             allowed.add(line)
 
-files = [path for path in source.rglob("*.rs") if not path.name.endswith("_tests.rs")]
+lib_text = (source / "lib.rs").read_text() if (source / "lib.rs").exists() else ""
+test_modules = set(re.findall(r"#\[cfg\(test\)\]\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;", lib_text))
+
+def in_test_module(path):
+    parts = path.relative_to(source).parts
+    return parts[0] in test_modules or (len(parts) == 1 and parts[0][:-3] in test_modules)
+
+files = [path for path in source.rglob("*.rs") if not path.name.endswith("_tests.rs") and not in_test_module(path)]
 contents = {path: path.read_text() for path in files}
 findings = []
 

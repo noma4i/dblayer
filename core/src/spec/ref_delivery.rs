@@ -48,7 +48,7 @@ pub(super) enum Pulled {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum State {
     Nothing,
-    Opening { kind: Kind, window: WState },
+    Opening { kind: Kind, window: WState, read: i64 },
     Live { kind: Kind, revision: i64, rows: Vec<String>, window: WState, next: u64 },
     Ended,
 }
@@ -105,27 +105,30 @@ impl Delivery {
         let state = std::mem::replace(&mut self.state, State::Ended);
         match (state, input) {
             (State::Nothing, Input::Open { kind, epoch_current: true }) => match kind {
-                Kind::Rows => { self.state = State::Opening { kind, window: WState::IDLE }; vec![Effect::Read(0), Effect::InterestPlus] }
+                Kind::Rows => { self.state = State::Opening { kind, window: WState::IDLE, read: 0 }; vec![Effect::Read(0), Effect::InterestPlus] }
                 Kind::Events => { self.state = State::Live { kind, revision: 0, rows: Vec::new(), window: WState::IDLE, next: 1 }; vec![Effect::WantPlus] }
             },
             (State::Nothing, Input::Open { epoch_current: false, .. }) => { self.end(Cause::SessionEnded); Vec::new() }
-            (State::Opening { kind, window }, Input::ReadDone { revision, rows }) => {
+            (State::Opening { kind, window, .. }, Input::ReadDone { revision, rows }) => {
                 self.push(Val::Snapshot { rows: rows.clone(), state: window });
                 self.state = State::Live { kind, revision, rows, window, next: 1 };
                 Vec::new()
             }
-            (State::Opening { kind, window }, Input::ReadFailed { revision }) => {
+            (State::Opening { kind, .. }, Input::ReadFailed { revision }) => {
                 let failed = WState { phase: super::harness::Phase::Failed, error: true, loaded: false };
                 self.push(Val::Snapshot { rows: Vec::new(), state: failed });
                 self.state = State::Live { kind, revision, rows: Vec::new(), window: failed, next: 1 };
-                let _ = window;
                 Vec::new()
             }
-            (State::Opening { kind, window }, Input::Committed { revision, touches }) => {
-                self.state = State::Opening { kind, window };
+            (State::Opening { kind, window, read }, Input::Committed { revision, touches }) => {
+                self.state = State::Opening { kind, window, read: if touches { revision } else { read } };
                 if touches { vec![Effect::Read(revision), Effect::DropOldRead] } else { Vec::new() }
             }
-            (State::Opening { kind, .. }, Input::WindowState(window)) => { self.state = State::Opening { kind, window }; Vec::new() }
+            (State::Opening { kind, read, .. }, Input::WindowState(window)) => { self.state = State::Opening { kind, window, read }; Vec::new() }
+            (State::Opening { kind, window, read }, Input::ModelsReset { own_model }) => {
+                self.state = State::Opening { kind, window, read };
+                if own_model { vec![Effect::Read(read), Effect::DropOldRead] } else { Vec::new() }
+            }
             (state @ State::Opening { .. }, Input::ModelEvent { .. } | Input::ModelLost { .. }) => { self.state = state; Vec::new() }
             (State::Opening { kind, .. } | State::Live { kind, .. }, Input::Cancel) => {
                 self.end(Cause::Cancelled);
@@ -150,7 +153,6 @@ impl Delivery {
                     self.push(Val::Delta { upserted, removed });
                     self.state = State::Live { kind, revision: at, rows: now, window, next };
                 } else {
-                    // Hole of the table (dlv_live_read_same): nothing is delivered, so `revision` stays that of the last delivered value (P-DLV-01).
                     self.state = State::Live { kind, revision, rows, window, next };
                 }
                 Vec::new()
@@ -192,7 +194,11 @@ impl Delivery {
                 if own_model { vec![Effect::Read(revision)] } else { Vec::new() }
             }
             (State::Ended, _) => { self.state = State::Ended; Vec::new() }
-            (state, input) => panic!("a row of delivery.md is missing: {state:?} x {input:?}"),
+            (state, _) => {
+                // The remaining pairs are cells that change nothing: `Open` on an open stream, a read input after `Ended`.
+                self.state = state;
+                Vec::new()
+            }
         }
     }
 }

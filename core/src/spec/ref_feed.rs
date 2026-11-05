@@ -1,6 +1,6 @@
 //! `specs/machines/feed.md` as code: one match arm per table row. No library code.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Reject {
@@ -19,6 +19,8 @@ pub(super) enum Input {
     Dropped,
     Committed,
     Rejected(Reject),
+    /// `Committed` or `Rejected` of a batch that is not in `landing`.
+    StrayBatch,
     Tick,
     Online(bool),
     ModelsReset { models: Vec<String> },
@@ -59,7 +61,11 @@ pub(super) struct Feed {
     pub(super) want: BTreeSet<String>,
     pub(super) position: BTreeMap<String, u64>,
     pub(super) pending: Vec<(String, String)>,
-    pub(super) landing: Vec<(String, String)>,
+    pub(super) landing: VecDeque<Vec<(String, String)>>,
+    /// Models with a window that rereads on events, besides `want`.
+    pub(super) windows: BTreeSet<String>,
+    /// `updates.debounce` of the model is declared: an event waits for a `Tick`.
+    pub(super) debounce: bool,
     pub(super) online: bool,
     pub(super) session: bool,
     pub(super) obs: Vec<Obs>,
@@ -67,7 +73,7 @@ pub(super) struct Feed {
 
 impl Feed {
     pub(super) fn new() -> Self {
-        Self { mode: Mode::Off, want: BTreeSet::new(), position: BTreeMap::new(), pending: Vec::new(), landing: Vec::new(), online: true, session: true, obs: Vec::new() }
+        Self { mode: Mode::Off, want: BTreeSet::new(), position: BTreeMap::new(), pending: Vec::new(), landing: VecDeque::new(), windows: BTreeSet::new(), debounce: true, online: true, session: true, obs: Vec::new() }
     }
 
     fn at(&self, model: &str) -> u64 { self.position.get(model).copied().unwrap_or(0) }
@@ -97,6 +103,26 @@ impl Feed {
             self.lose(model, count);
         }
         models
+    }
+
+    /// The Store answers the oldest batch of `landing`: delivered on `Committed`, lost on `Rejected`. No batch in `landing` is a stray answer.
+    fn verdict(&mut self, rejected: Option<Reject>) -> Vec<Effect> {
+        let Some(batch) = self.landing.pop_front() else { return Vec::new() };
+        match rejected {
+            None => { self.deliver(batch); Vec::new() }
+            Some(Reject::StaleGeneration(models)) => {
+                let lost = self.lose_events(batch.clone(), Some(&models));
+                let rest: Vec<_> = batch.into_iter().filter(|(model, _)| !models.contains(model)).collect();
+                let mut effects = vec![Effect::StaleWindows(lost)];
+                if !rest.is_empty() { self.landing.push_back(rest); effects.push(Effect::Commit); }
+                effects
+            }
+            Some(Reject::Storage) => {
+                let lost = self.lose_events(batch, None);
+                vec![Effect::StaleWindows(lost)]
+            }
+            Some(Reject::NoSession) => Vec::new(),
+        }
     }
 
     pub(super) fn take_obs(&mut self) -> Vec<Obs> { std::mem::take(&mut self.obs) }
@@ -133,6 +159,8 @@ impl Feed {
                 self.session = true;
                 if self.online && !self.want.is_empty() { self.mode = Mode::Opening { gap: false }; vec![Effect::Subscribe] } else { Vec::new() }
             }
+            (Mode::Off | Mode::Opening { .. }, Input::Committed) => self.verdict(None),
+            (Mode::Off | Mode::Opening { .. }, Input::Rejected(reason)) => self.verdict(Some(reason)),
             (Mode::Off, _) => Vec::new(),
             (Mode::Opening { gap }, Input::Ready) => {
                 self.mode = Mode::Live;
@@ -148,14 +176,13 @@ impl Feed {
             (Mode::Opening { .. }, Input::WantPlus { model }) => { let changed = self.want.insert(model); if changed { vec![Effect::Subscribe] } else { Vec::new() } }
             (Mode::Opening { .. }, Input::WantMinus { model }) => { let changed = self.want.remove(&model); if changed { vec![Effect::Subscribe] } else { Vec::new() } }
             (Mode::Opening { .. }, Input::Online(on)) => { self.online = on; Vec::new() }
-            (Mode::Opening { .. }, Input::Committed) => {
-                // Hole of the table: a batch committed after the connection broke. P-FEED-02 requires delivery.
-                let batch = std::mem::take(&mut self.landing);
-                self.deliver(batch);
-                Vec::new()
-            }
             (Mode::Opening { .. }, _) => Vec::new(),
             (Mode::Live, Input::Event { current: true, model, id }) => {
+                if !self.want.contains(&model) && !self.windows.contains(&model) { return Vec::new(); }
+                if !self.debounce {
+                    self.landing.push_back(vec![(model, id)]);
+                    return vec![Effect::Commit];
+                }
                 let first = self.pending.is_empty();
                 self.pending.push((model, id));
                 if first { vec![Effect::ScheduleTick] } else { Vec::new() }
@@ -164,36 +191,21 @@ impl Feed {
             (Mode::Live, Input::Tick) => {
                 if self.pending.is_empty() { return Vec::new(); }
                 let batch = std::mem::take(&mut self.pending);
-                self.landing.extend(batch);
+                self.landing.push_back(batch);
                 vec![Effect::Commit]
             }
-            (Mode::Live, Input::Committed) => {
-                let batch = std::mem::take(&mut self.landing);
-                self.deliver(batch);
+            (Mode::Live, Input::Committed) => self.verdict(None),
+            (Mode::Live, Input::Rejected(Reject::NoSession)) => {
+                self.landing.pop_front();
+                self.mode = Mode::Ended;
                 Vec::new()
             }
-            (Mode::Live, Input::Rejected(reason)) => {
-                let batch = std::mem::take(&mut self.landing);
-                match reason {
-                    Reject::StaleGeneration(models) => {
-                        let lost = self.lose_events(batch.clone(), Some(&models));
-                        let rest: Vec<_> = batch.into_iter().filter(|(model, _)| !models.contains(model)).collect();
-                        let mut effects = vec![Effect::StaleWindows(lost)];
-                        if !rest.is_empty() { self.landing.extend(rest); effects.push(Effect::Commit); }
-                        effects
-                    }
-                    Reject::Storage => {
-                        let lost = self.lose_events(batch, None);
-                        vec![Effect::StaleWindows(lost)]
-                    }
-                    Reject::NoSession => { self.mode = Mode::Ended; Vec::new() }
-                }
-            }
+            (Mode::Live, Input::Rejected(reason)) => self.verdict(Some(reason)),
             (Mode::Live, Input::ChannelLost { dropped, models }) => {
                 let pending = std::mem::take(&mut self.pending);
                 let mut effects = Vec::new();
                 if !pending.is_empty() {
-                    self.landing.extend(pending);
+                    self.landing.push_back(pending);
                     effects.push(Effect::Commit);
                 }
                 for model in &models { self.lose(model, dropped); }
@@ -203,7 +215,7 @@ impl Feed {
             (Mode::Live, Input::Dropped) => {
                 self.mode = Mode::Opening { gap: true };
                 let mut effects = Vec::new();
-                if !self.pending.is_empty() { self.landing.extend(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
+                if !self.pending.is_empty() { self.landing.push_back(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
                 effects.push(Effect::Subscribe);
                 effects
             }
@@ -212,7 +224,7 @@ impl Feed {
                 if on { return Vec::new(); }
                 self.mode = Mode::Opening { gap: true };
                 let mut effects = Vec::new();
-                if !self.pending.is_empty() { self.landing.extend(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
+                if !self.pending.is_empty() { self.landing.push_back(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
                 effects.push(Effect::Unsubscribe);
                 effects
             }
@@ -222,7 +234,7 @@ impl Feed {
                 if !self.want.is_empty() { return Vec::new(); }
                 self.mode = Mode::Off;
                 let mut effects = Vec::new();
-                if !self.pending.is_empty() { self.landing.extend(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
+                if !self.pending.is_empty() { self.landing.push_back(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
                 effects.push(Effect::Unsubscribe);
                 effects
             }

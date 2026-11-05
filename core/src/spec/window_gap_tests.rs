@@ -1,5 +1,5 @@
 //! Tests of `window.md` that need hooks the public API does not have (`api_gap.md`). Compiled only with the feature `spec_api`.
-//! Hooks used on `World`: `stale_window(model, relation)`, `reset_models(&[model])`, `reject_next_commit(reason)`, `hold_commit()`, `release_commit()`, `end_epoch(cause)`.
+//! Hooks used on `World`: `stale_window(model, relation)`, `stale_window_covered(model, relation)`, `reset_models(&[model])`, `reject_next_commit(reason)`, `hold_commit()`, `release_commit()`, `end_epoch(cause)`.
 
 use super::harness::{Gate, Outcome, Reply, World};
 use super::ref_window::{Effect, Input, Reject, Result3, State, Window};
@@ -48,12 +48,12 @@ async fn win_idle_models_reset() {
     world.load_ok().await;
     let _stream = world.rows_stream();
     let mut reference = Window::idle_fresh();
-    reference.step(Input::ModelsReset { own_model: true });
-    assert!(matches!(reference.state, State::Idle { fresh: false, .. }));
+    reference.watched = true;
+    let effects = reference.step(Input::ModelsReset { own_model: true });
     let before = world.net.feed_requests();
     world.reset_models(&["Moment"]).await;
     world.settle().await;
-    assert_eq!(world.net.feed_requests(), before + 1, "a reset window with interest loads again");
+    assert_eq!(world.net.feed_requests(), before + effects.iter().filter(|effect| matches!(effect, Effect::Request { .. })).count(), "a reset window with interest loads again");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -173,12 +173,12 @@ async fn win_landing_wait() {
     let mut reference = Window::new();
     reference.step(Input::InterestPlus { id: 1, force: false });
     reference.step(Input::Response { request: 1 });
-    for input in [Input::InterestMinus { id: 9 }, Input::Stale { newer_than_issue: true }, Input::Online(true), Input::ModelsReset { own_model: true }] {
+    for input in [Input::InterestMinus { id: 9 }, Input::Stale { newer_than_issue: false }, Input::Online(true), Input::ModelsReset { own_model: true }] {
         assert!(reference.step(input).is_empty());
     }
     let mut call = world.call();
     world.breathe().await;
-    world.stale_window("Moment", "feed");
+    world.stale_window_covered("Moment", "feed");
     world.db.set_online(true).unwrap();
     world.release_commit();
     assert_eq!(call.outcome().await, Outcome::Loaded);
@@ -213,41 +213,58 @@ async fn win_prop_generation() {
     assert!(world.feed_ids().await.iter().all(|id| id != "r1"), "the old answer is not in the base");
 }
 
-// Idle{last_error = network} is not reachable from the API: a temporary error is retried, and Online(false) moves Loading to Waiting.
-// Hook: `World::fail_window(model, relation, network)` puts the window of the key into Idle with a stored error.
-
 #[tokio::test(flavor = "multi_thread")]
-async fn win_idle_online_retry() {
+async fn win_loading_stale_covered() {
     let world = World::open().await;
-    world.fail_window("Moment", "feed", true);
-    let stream = world.rows_stream();
-    stream.first_screen().await;
-    world.settle().await;
-    let before = world.net.feed_requests();
+    let gate = held(&world);
     let mut reference = Window::new();
-    reference.state = State::Idle { fresh: false, stale: false, last_error: Some(true) };
-    reference.online = false;
-    let effects = reference.online_idle(true);
-    go_offline(&world);
-    world.db.set_online(true).unwrap();
-    world.breathe().await;
+    reference.step(Input::InterestPlus { id: 1, force: false });
+    assert!(reference.step(Input::Stale { newer_than_issue: false }).is_empty());
+    assert!(matches!(reference.state, State::Loading { again: false, .. }));
+    let mut call = world.call();
+    gate.entered().await;
+    world.stale_window_covered("Moment", "feed");
+    gate.release();
+    assert_eq!(call.outcome().await, Outcome::Loaded);
     world.settle().await;
-    assert_eq!(world.net.feed_requests(), before + requests_in(&effects), "coming online reloads a window with interest and a network error");
+    assert_eq!(world.net.feed_requests(), 1, "a stale mark the request already covers does not load again");
 }
 
-
-/// P-WIN-05: coming online reloads the window with a network error once, with no timer.
 #[tokio::test(flavor = "multi_thread")]
-async fn win_prop_online_once() {
+async fn win_landing_committed_again() {
     let world = World::open().await;
-    world.fail_window("Moment", "feed", true);
-    let stream = world.rows_stream();
-    stream.first_screen().await;
-    world.settle().await;
-    let before = world.net.feed_requests();
-    go_offline(&world);
-    world.db.set_online(true).unwrap();
+    world.hold_commit();
+    let mut reference = Window::new();
+    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::Response { request: 1 });
+    reference.step(Input::Stale { newer_than_issue: true });
+    let effects = reference.step(Input::Committed { request: 1 });
+    assert!(matches!(effects.as_slice(), [Effect::Request { request: 2, page: 1 }, Effect::WindowState]));
+    assert_eq!(reference.take_outcomes(), [(1, Result3::Loaded)]);
+    let mut call = world.call();
     world.breathe().await;
+    world.stale_window("Moment", "feed");
+    world.release_commit();
+    assert_eq!(call.outcome().await, Outcome::Loaded);
     world.settle().await;
-    assert_eq!(world.net.feed_requests(), before + 1, "one reload for one change to online, without advancing the clock");
+    assert_eq!(world.net.feed_requests(), 2, "a mark made while the answer lands loads once more");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn win_landing_stale() {
+    let world = World::open().await;
+    world.hold_commit();
+    let mut reference = Window::new();
+    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::Response { request: 1 });
+    assert!(reference.step(Input::Stale { newer_than_issue: true }).is_empty());
+    assert!(matches!(reference.state, State::Landing { again: true, .. }));
+    let _call = world.call();
+    world.breathe().await;
+    world.stale_window("Moment", "feed");
+    world.release_commit();
+    world.settle().await;
+    assert_eq!(world.net.feed_requests(), 2, "the mark is kept until the answer has landed");
+}
+
+// win_loading_attempts_exhausted makes `Idle{last_error = network}` reachable: win_idle_online_retry and win_prop_online_once run in window_tests.rs.

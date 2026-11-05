@@ -1,5 +1,5 @@
 //! Tests of `delivery.md` that need hooks the public API does not have (`api_gap.md`). Compiled only with the feature `spec_api`.
-//! Hooks used on `World`: `hold_reads()`, `release_reads()`, `fail_next_read()`, `end_epoch(cause)`, `reset_models(&[model])`, `inject_model_lost(first, last)`, `inject_model_event(position)`.
+//! Hooks used on `World`: `commit_other_model()`, `touch_rows()`, `inject_read_done(revision, rows)`, `end_other_epoch()`, `hold_reads()`, `release_reads()`, `fail_next_read()`, `end_epoch(cause)`, `reset_models(&[model])`, `inject_model_lost(first, last)`, `inject_model_event(position)`.
 
 use super::harness::{loaded, Cause, Val, World};
 use super::ref_delivery::{Delivery, Effect, Input, Kind, Pulled};
@@ -202,4 +202,38 @@ async fn dlv_prop_epoch() {
     let vals = stream.vals();
     assert_eq!(vals.last(), Some(&Val::Ended(Cause::SessionEnded)));
     assert_eq!(vals.iter().filter(|val| matches!(val, Val::Ended(_))).count(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dlv_opening_models_reset() {
+    let (world, stream, mut reference) = opening().await;
+    let effects = reference.step(Input::ModelsReset { own_model: true });
+    assert_eq!(effects, [Effect::Read(0), Effect::DropOldRead]);
+    world.reset_models(&["Moment"]).await;
+    world.release_reads();
+    reference.step(Input::WindowState(loaded()));
+    reference.step(Input::ReadDone { revision: 1, rows: Vec::new() });
+    assert_eq!(super::harness::canon(stream.first_screen().await), super::harness::canon(reference.drain()), "the first value shows the model after the reset");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dlv_opening_models_other() {
+    let (world, stream, mut reference) = opening().await;
+    assert!(reference.step(Input::ModelsReset { own_model: false }).is_empty());
+    world.reset_models(&["Chat"]).await;
+    stream.drain();
+    assert!(stream.vals().is_empty() && reference.drain().is_empty(), "a reset of another model gives no value while the stream opens");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dlv_live_event_rows_kind() {
+    let (world, stream, mut reference) = live().await;
+    reference.step(Input::ModelEvent { position: 1, id: "c1".into() });
+    reference.step(Input::ModelLost { first: 2, last: 3 });
+    world.inject_model_event(1);
+    world.inject_model_lost(2, 3);
+    world.settle().await;
+    stream.drain();
+    assert_eq!(stream.vals().len(), 1, "a rows stream takes no model events");
+    assert!(reference.drain().is_empty());
 }

@@ -1,5 +1,5 @@
 //! Tests of `feed.md` that need hooks the public API does not have (`api_gap.md`). Compiled only with the feature `spec_api`.
-//! Hooks used on `World`: `events_stream_of(model)` (a second model with a change feed), `reject_next_commit(reason)`, `inject_channel_lost(models, dropped)`, `reset_models(&[model])`, `end_epoch(cause)`.
+//! Hooks used on `World`: `events_stream_of(model)` (a second model with a change feed), `reject_next_commit(reason)`, `inject_channel_lost(models, dropped)`, `reset_models(&[model])`, `end_epoch(cause)`, `hold_commit()`, `release_commit()`, `inject_stray_commit_reply()`.
 
 use super::harness::{chat_entry, Cause, Reading, Val, World};
 use super::ref_feed::{Effect, Feed, Input, Mode, Obs, Reject};
@@ -145,4 +145,50 @@ async fn feed_prop_reset_other_model() {
     world.settle().await;
     stream.drain();
     assert!(obs_of(&stream).iter().any(|obs| matches!(obs, Obs::Event { id, .. } if id == "c1")), "the Chat event survives a reset of Post");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_landing_after_drop() {
+    let (world, stream, mut reference) = live().await;
+    world.hold_commit();
+    reference.debounce = false;
+    assert_eq!(reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() }), [Effect::Commit]);
+    reference.step(Input::Dropped);
+    assert!(matches!(reference.mode, Mode::Opening { gap: true }));
+    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
+    world.breathe().await;
+    world.net.drop_connection();
+    world.release_commit();
+    reference.step(Input::Committed);
+    world.clock.advance(60_000);
+    world.settle().await;
+    stream.drain();
+    assert!(obs_of(&stream).contains(&Obs::Event { model: "Chat".into(), position: 1, id: "c1".into() }), "a batch that lands after the break is still delivered");
+    assert_eq!(reference.take_obs()[0], Obs::Event { model: "Chat".into(), position: 1, id: "c1".into() });
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_stray_batch() {
+    let (world, stream, mut reference) = live().await;
+    assert!(reference.step(Input::StrayBatch).is_empty());
+    world.inject_stray_commit_reply();
+    world.settle().await;
+    stream.drain();
+    assert!(obs_of(&stream).is_empty(), "a reply for a batch the feed did not send changes nothing");
+    assert!(reference.take_obs().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_live_event_unwatched() {
+    let world = World::open().await;
+    let _post = world.events_stream_of("Post");
+    world.net.wait_subscribes(1).await;
+    let mut reference = Feed::new();
+    reference.step(Input::WantPlus { model: "Post".into() });
+    reference.step(Input::Ready);
+    assert!(reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() }).is_empty());
+    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
+    world.clock.advance(60_000);
+    world.settle().await;
+    assert!(world.chat_ids().await.is_empty(), "an event of a model with no reader and no window is not applied");
 }
