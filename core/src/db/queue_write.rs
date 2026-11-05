@@ -49,7 +49,7 @@ impl Db {
                     envelope.origin = WriteOrigin::Response;
                     envelope.entity_ops.extend(upserts(model, rows)?);
                 }
-                StoreOp::LocalRows { model, rows } => {
+                StoreOp::LocalRows { model, rows } | StoreOp::EphemeralRows { model, rows } | StoreOp::LocalPending { model, rows } => {
                     envelope.writes_local = true;
                     envelope.entity_ops.extend(upserts(model, rows)?);
                 }
@@ -65,6 +65,7 @@ impl Db {
                         None => OperationTransition::Retry { seq },
                     });
                 }
+                StoreOp::Attempt { .. } | StoreOp::Swap { .. } => {}
                 StoreOp::Upload { row, kind } => self.write_upload_row(row, *kind)?,
                 StoreOp::RemoveUpload { key } => self.remove_upload_row(key)?,
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
@@ -205,6 +206,7 @@ impl Db {
                         path,
                         body,
                         effects: IntentEffects::default(),
+                        durable: true,
                     },
                     steps: Steps { path: steps_path, body: steps_body },
                 })

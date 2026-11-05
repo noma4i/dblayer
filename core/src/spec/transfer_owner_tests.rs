@@ -99,7 +99,7 @@ fn world(seed: u64, slots: u32) -> (DetScheduler, Log<Emitted<Run>>) {
 }
 
 fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: KEY.into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default() }
+    NewOp { model: "Moment".into(), row_id: KEY.into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), durable: true }
 }
 
 fn steps() -> Steps { Steps { path: "/upload".into(), body: String::new() } }

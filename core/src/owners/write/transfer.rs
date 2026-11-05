@@ -395,7 +395,7 @@ impl TransferState {
         let copy_from = source.clone();
         self.create(&key, source, batch, None, now, TransferStage::Copying, mutation, steps);
         let seq = self.transfers[&key].seq;
-        reply(fx, rep, TransferAnswer::Receipt(Receipt { epoch, op_id: seq, revision: 0 }));
+        reply(fx, rep, TransferAnswer::Receipt(Receipt { epoch, op_id: seq, cycle_id: 1, revision: 0 }));
         Self::shows(fx, &key, Shown::Copying);
         run(fx, TransferEffect::Copy { key, source: copy_from });
         self.round_needed(epoch, fx);
@@ -609,7 +609,7 @@ impl TransferState {
         if stage == TransferStage::Done {
             return reply(fx, rep, TransferAnswer::Err(Fault::NotFound));
         }
-        reply(fx, rep, TransferAnswer::Receipt(Receipt { epoch: self.epoch, op_id: transfer.seq, revision: 0 }));
+        reply(fx, rep, TransferAnswer::Receipt(Receipt { epoch: self.epoch, op_id: transfer.seq, cycle_id: 1, revision: 0 }));
         if stage != TransferStage::Failed {
             return;
         }

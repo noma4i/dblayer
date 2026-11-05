@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use super::outbox::{Outbox, OutboxAnswer, OutboxEffect};
+use super::outbox::{Outbox, OutboxAnswer, OutboxEffect, OutboxInput};
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, EpochStamp};
 
@@ -11,13 +11,19 @@ pub struct OutboxExecutor {
     pub settle: Arc<dyn Fn(ReplyId, OutboxAnswer) + Send + Sync>,
     /// `Drained` goes to Lifecycle.
     pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
+    /// Copies a file into the directory of the files; `None` fails every copy.
+    pub copy: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
 }
 
 impl EffectRunner<Outbox> for OutboxExecutor {
-    fn run(&mut self, _stamp: EpochStamp, effect: OutboxEffect, _back: &Back<Outbox>) {
+    fn run(&mut self, stamp: EpochStamp, effect: OutboxEffect, back: &Back<Outbox>) {
         match effect {
             OutboxEffect::Reply { reply, answer } => (self.settle)(reply, answer),
             OutboxEffect::Drained(drained) => (self.drained)(drained),
+            OutboxEffect::Copy { id, source } => {
+                let copied = self.copy.as_ref().is_some_and(|copy| copy(&source));
+                back.reply(stamp, if copied { OutboxInput::CopyDone { id } } else { OutboxInput::CopyFailed { id } });
+            }
         }
     }
 }

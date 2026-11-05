@@ -1,0 +1,232 @@
+//! Owner `Outbox`: operations of the queue, optimism, receipts and local writes.
+//! One instance per epoch with an identity. Types of the table: inputs, effects, stages. The rows are in `step`.
+
+use std::collections::{BTreeMap};
+
+use super::transfer::{Transfers};
+use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
+use crate::owners::session::{SessionCalls};
+use crate::owners::store::{IntentEffects, RowValue, StoreWriter};
+
+use crate::schema::OnFailure;
+use crate::runtime::{Address, Epoch, Time};
+
+/// `purpose` of a `Mutate`: a call of the queue, and the final mutation of a transfer.
+pub(super) const PURPOSE_STANDARD: u8 = 0;
+pub(super) const PURPOSE_TRANSFER: u8 = 1;
+/// Timers of `Expire` use ids above the ids of the retry timers (`ScheduleId(op_id)`).
+pub(super) const EXPIRE_TIMER: u64 = 1 << 32;
+/// Attempts of an operation before the permanent error (`design.md` 1a).
+pub(super) const ATTEMPT_LIMIT: u32 = 40;
+
+/// The owners Outbox sends to.
+#[derive(Clone, Copy, Debug)]
+pub struct OutboxPeers {
+    pub store: Address<StoreWriter>,
+    pub session: Address<SessionCalls>,
+    /// `None` until the owner Transfer is installed: no operation of the origin `Transfer` exists then.
+    pub transfer: Option<Address<Transfers>>,
+}
+
+pub type OpId = u64;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Origin {
+    Api,
+    Transfer(String),
+}
+
+/// The action of a call: the row it changes and the rule on refusal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NewOp {
+    pub model: String,
+    pub row_id: String,
+    pub action: String,
+    pub on_failure: OnFailure,
+    pub origin: Origin,
+    /// The request of the mutation.
+    pub path: String,
+    pub body: String,
+    /// The optimistic changes of the operation. `RollBack` takes them back by `op_id`.
+    pub effects: IntentEffects,
+    /// A durable operation waits for the network in the queue, any other ends with `Rejected{network}` when the network goes away before it left.
+    pub durable: bool,
+}
+
+/// An intent kept in the base (`encrypted_pending` pair when a request left before the close).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoredOp {
+    /// The saved answer of the server to the request of this operation: `(request_id, answer)`.
+    pub answered: Option<(RequestId, crate::owners::session::StoredAnswer)>,
+    pub op_id: OpId,
+    pub op: NewOp,
+    pub error_mark: bool,
+    pub pending: Option<(RequestId, u64)>,
+    /// The durable attempt counter and the cycle of the intent (`0` = a layout without the columns).
+    pub attempts: u32,
+    pub cycle_id: u64,
+    /// The intent was dropped by the layout move or cannot be read: the operation is `Failed{RestoreFailed}`.
+    pub restore_failed: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Receipt {
+    pub epoch: Epoch,
+    pub op_id: OpId,
+    pub cycle_id: u64,
+    pub revision: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutboxOutcome {
+    Confirmed { revision: i64 },
+    Rejected { error: String },
+    Failed { error: String },
+    Discarded,
+    Interrupted,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fault {
+    NoSession,
+    NotFound,
+    InFlight,
+    Interrupted,
+    Offline,
+    Closed,
+    /// The intent was dropped by the layout move: only `discard` ends it.
+    RestoreFailed,
+    /// The session lost its pending state: `retry` waits for `session_reset`.
+    StateLost,
+    Internal,
+    Rejected(RejectReason),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutboxAnswer {
+    Receipt(Receipt),
+    Outcome(OutboxOutcome),
+    Ok,
+    Err(Fault),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocalWriteKind {
+    SetLocal,
+    /// The row is not in the base yet: the value sits on the row when it lands.
+    SetLocalPending,
+    SetEphemeral { expire_after: Option<u64> },
+    /// `source` is a file outside the directory of the files: it is copied first.
+    Attach { source: Option<String> },
+    Detach,
+}
+
+#[derive(Clone, Debug)]
+pub enum OutboxInput {
+    Submit { epoch: Epoch, op: NewOp, reply: ReplyId },
+    Restored { ops: Vec<StoredOp>, pending_lost: bool },
+    RestoreFailed { error: String },
+    RestoreReady { epoch: Epoch },
+    RegisterOperations { declarations: Vec<(String, String)> },
+    Committed(Committed),
+    Rejected(Rejected),
+    /// `errors = Some(temporary)`: the answer carries errors, the codec classified them.
+    Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, errors: Option<bool> },
+    TransportError { op_id: OpId, temporary: bool },
+    Dropped { op_id: OpId },
+    Retry { model: String, row_id: String, reply: ReplyId },
+    Discard { model: String, row_id: String, reply: ReplyId },
+    Outcome { receipt: Receipt, reply: ReplyId },
+    Online(Online),
+    /// The generation of every model at the start of the epoch.
+    EpochStarted(EpochStarted),
+    ModelsReset(ModelsReset),
+    EpochEnded(EpochEnded),
+    Closing,
+    /// `Tick(op_id, cycle_id)`: the retry timer of an operation (Backoff, repeat of a batch).
+    RetryDue { op_id: OpId, cycle_id: u64 },
+    LocalWrite { model: String, epoch: Epoch, write: LocalWriteKind, row: String, values: String, reply: ReplyId, now: Time },
+    CopyDone { id: u64 },
+    CopyFailed { id: u64 },
+    /// `Tick(expire)` of an ephemeral row, scheduled by the owner when the write commits: `due` is the expiry it was scheduled for.
+    Expire { model: String, row: String, due: Time },
+    Tick(Time),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitKind {
+    Intent,
+    Attempt,
+    Land,
+    Rollback,
+    ErrorMark,
+    ClearMark,
+    LocalWrite,
+    RemoveRow,
+}
+
+/// What the executor does. Store batches, `Mutate`, `MutationOutcome` and timers are `Effect::Send` and `Effect::Schedule` of the owner.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OutboxEffect {
+    Reply { reply: ReplyId, answer: OutboxAnswer },
+    Drained(Drained),
+    /// Copy `source` into the directory of the files in chunks, outside the writer of SQLite; the result is `CopyDone{id}` or `CopyFailed{id}`.
+    Copy { id: u64, source: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    Rejected,
+    Discarded,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    WaitingDeclaration,
+    Submitting,
+    Queued,
+    PersistingAttempt,
+    Sending,
+    Landing,
+    RollingBack(Why),
+    MarkingFailed,
+    MarkingRetry,
+    Failed,
+    Done,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Phase {
+    Restoring,
+    Classified,
+    Ready,
+}
+
+#[derive(Clone, Debug)]
+pub struct QueuedOperation {
+    pub op_id: OpId,
+    pub op: NewOp,
+    pub stage: Stage,
+    /// The durable attempt counter of the cycle.
+    pub attempts: u32,
+    pub cycle_id: u64,
+    pub request_id: RequestId,
+    pub sequence: u64,
+    pub sends: u32,
+    /// A `Mutate` of this operation left in this cycle.
+    pub sent: bool,
+    /// `Sending` after a temporary failure: the backoff timer is set.
+    pub waiting_retry: bool,
+    /// The rows of the server answer, kept for every attempt to land them.
+    pub landing: Vec<(String, Vec<RowValue>)>,
+    pub swap: Option<(String, String)>,
+    pub outcome: Option<OutboxOutcome>,
+    /// The error of the batch `MarkFailed` that is in flight, and the error shown on the row.
+    pub error: Option<String>,
+    /// The error of each cycle that ended with `Failed` (the outcome of a receipt is immutable).
+    pub failed_errors: BTreeMap<u64, String>,
+    pub reject_error: Option<String>,
+    /// A `destroy` that waits for the rollback of the unsent `create` it cancels.
+    pub cancels: Option<OpId>,
+}
+

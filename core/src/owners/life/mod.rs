@@ -405,6 +405,7 @@ impl Life {
             let executor = OutboxExecutor {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
+                copy: None,
             };
             builder.add::<Outbox>("outbox", OutboxState::new(0, peers), executor)
         });

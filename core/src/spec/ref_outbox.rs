@@ -4,7 +4,7 @@
 pub(super) enum Why { Rejected, Discarded }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum St { None, Submitting, Queued, Sending, Landing, RollingBack(Why), Failed, Done }
+pub(super) enum St { None, WaitingDeclaration, Submitting, Queued, PersistingAttempt, Sending, Landing, RollingBack(Why), MarkingFailed, MarkingRetry, Failed, Done }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Reason { StaleGeneration, NoSession, Storage, Closed }
@@ -54,7 +54,7 @@ pub(super) enum In {
 pub(super) enum Out { Confirmed, Rejected, Failed, Discarded, Interrupted }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Fault { NoSession, Reason(Reason), InFlight, NotFound, Interrupted }
+pub(super) enum Fault { NoSession, Reason(Reason), InFlight, NotFound, Interrupted, Offline, Closed, RestoreFailed, StateLost, Internal }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Obs {
@@ -75,7 +75,7 @@ pub(super) enum Obs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Commit { Intent, IntentNewBasis, Land, LandNewBasis, Rollback, RollbackNewBasis, ErrorMark, ClearMark }
+pub(super) enum Commit { Attempt, Intent, IntentNewBasis, Land, LandNewBasis, Rollback, RollbackNewBasis, ErrorMark, ClearMark }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Eff {
@@ -98,6 +98,12 @@ pub(super) enum Eff {
 pub(super) struct Step { pub next: St, pub obs: Vec<Obs>, pub eff: Vec<Eff> }
 
 fn step(next: St, obs: &[Obs], eff: &[Eff]) -> Option<Step> { Some(Step { next, obs: obs.to_vec(), eff: eff.to_vec() }) }
+
+fn done_marked(ctx: &Ctx) -> Option<Step> {
+    let mut eff = Vec::new();
+    if ctx.transfer { eff.push(Eff::TransferOutcome(Out::Failed)); }
+    Some(Step { next: St::Failed, obs: vec![Obs::RowCarriesError, Obs::Outcome(Out::Failed)], eff })
+}
 
 fn goes_out(ctx: &Ctx) -> bool { ctx.online && ctx.row_free }
 
@@ -138,13 +144,13 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
 
         (Sending, In::Response) if ctx.ours => step(Landing, &[], &[Store(Land)]),
         (Sending, In::Response | In::TransportError { .. } | In::Dropped) if !ctx.ours => step(Sending, &[], &[]),
-        (Sending, In::TransportError { temporary: true } | In::Dropped) if ctx.online && ctx.attempts_left => step(Sending, &[], &[ScheduleTick, ScheduleBackoffSend]),
-        (Sending, In::TransportError { temporary: true } | In::Dropped) if !ctx.online => step(Queued, &[], &[]),
-        (Sending, In::TransportError { temporary: true } | In::Dropped) if ctx.policy == Policy::Rollback => step(RollingBack(Why::Rejected), &[], &[Store(Rollback)]),
-        (Sending, In::TransportError { temporary: true } | In::Dropped) => step(Failed, &[RowCarriesError, Outcome(Out::Failed)], &[Store(ErrorMark)]),
+        (Sending, In::TransportError { temporary: true } | In::Dropped) if !ctx.attempts_left => step(MarkingFailed, &[], &[Store(ErrorMark)]),
+        (Sending, In::TransportError { temporary: true } | In::Dropped) if ctx.online => step(Sending, &[], &[ScheduleTick, ScheduleBackoffSend]),
+        (Sending, In::TransportError { temporary: true } | In::Dropped) => step(Queued, &[], &[]),
         (Sending, In::TransportError { temporary: false }) if ctx.policy == Policy::Rollback => step(RollingBack(Why::Rejected), &[], &[Store(Rollback)]),
-        (Sending, In::TransportError { temporary: false }) => step(Failed, &[RowCarriesError, Outcome(Out::Failed)], &[Store(ErrorMark)]),
-        (Sending, In::Tick) if ctx.ours && ctx.online => step(Sending, &[], &[SendSamePair]),
+        (Sending, In::TransportError { temporary: false }) => step(MarkingFailed, &[], &[Store(ErrorMark)]),
+        (Sending, In::Tick) if ctx.ours && ctx.online && ctx.attempts_left => step(PersistingAttempt, &[], &[Store(Attempt)]),
+        (Sending, In::Tick) if ctx.ours && ctx.online => step(MarkingFailed, &[], &[Store(ErrorMark)]),
         (Sending, In::Tick) if ctx.ours => step(Queued, &[], &[]),
         (Sending, In::Tick) => step(Sending, &[], &[]),
         (Sending, In::Online(_)) => step(Sending, &[], &[]),
@@ -173,8 +179,12 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (RollingBack(_), In::Retry) => step(state, &[Fails(Fault::InFlight)], &[]),
         (RollingBack(_), In::Online(_) | In::ModelsReset | In::Response | In::TransportError { .. } | In::Dropped) => step(state, &[], &[]),
 
-        (Failed, In::Retry) if ctx.ours && goes_out(ctx) => step(Sending, &[RowErrorCleared, Receipt], &[Store(ClearMark), Send]),
-        (Failed, In::Retry) if ctx.ours => step(Queued, &[RowErrorCleared, Receipt], &[Store(ClearMark)]),
+        (Failed, In::Retry) if ctx.ours => step(MarkingRetry, &[], &[Store(ClearMark)]),
+        (MarkingFailed, In::Committed) => done_marked(ctx),
+        (MarkingRetry, In::Committed) if goes_out(ctx) => step(Sending, &[RowErrorCleared, Receipt], &[Send]),
+        (MarkingRetry, In::Committed) => step(Queued, &[RowErrorCleared, Receipt], &[]),
+        (PersistingAttempt, In::Committed) if goes_out(ctx) => step(Sending, &[], &[SendSamePair]),
+        (PersistingAttempt, In::Committed) => step(Queued, &[], &[]),
         (Failed, In::Discard) if ctx.ours => step(RollingBack(Why::Discarded), &[], &[Store(Rollback)]),
         (Failed, In::Committed | In::Rejected(_)) => step(Failed, &[], &[]),
         (Failed, In::Online(_) | In::ModelsReset | In::Response | In::TransportError { .. } | In::Dropped | In::Tick) => step(Failed, &[], &[]),
@@ -185,11 +195,12 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (Done, In::Closing) => step(Done, &[], &[Drained]),
         (Done, _) => step(Done, &[], &[]),
 
-        (Submitting | Queued | Sending | Landing | RollingBack(_) | Failed, In::Outcome) if !ctx.epoch_current => step(state, &[Fails(Fault::NoSession)], &[]),
-        (Submitting | Queued | Sending | Landing | RollingBack(_) | Failed, In::Outcome) => step(state, &[OutcomeWaits], &[]),
-        (Submitting | Queued | Sending | Landing | RollingBack(_) | Failed, In::EpochEnded) if state == Sending => done_with(ctx, Out::Interrupted, &[Outcome(Out::Interrupted)], &[Cancel], &[]),
-        (Submitting | Queued | Sending | Landing | RollingBack(_) | Failed, In::EpochEnded) => done_with(ctx, Out::Interrupted, &[Outcome(Out::Interrupted)], &[], &[]),
-        (Submitting | Sending | Landing | RollingBack(_), In::Closing) => step(Done, &[Outcome(Out::Interrupted)], &[Cancel, Drained]),
+        (Submitting | Queued | PersistingAttempt | Sending | Landing | RollingBack(_) | MarkingFailed | MarkingRetry | Failed, In::Outcome) if !ctx.epoch_current => step(state, &[Fails(Fault::NoSession)], &[]),
+        (Submitting | Queued | PersistingAttempt | Sending | Landing | RollingBack(_) | MarkingFailed | MarkingRetry | Failed, In::Outcome) => step(state, &[OutcomeWaits], &[]),
+        (Submitting | Queued | PersistingAttempt | Sending | Landing | RollingBack(_) | MarkingFailed | MarkingRetry | Failed, In::EpochEnded) if state == Sending => done_with(ctx, Out::Interrupted, &[Outcome(Out::Interrupted)], &[Cancel], &[]),
+        (Submitting | Queued | PersistingAttempt | Sending | Landing | RollingBack(_) | MarkingFailed | MarkingRetry | Failed, In::EpochEnded) => done_with(ctx, Out::Interrupted, &[Outcome(Out::Interrupted)], &[], &[]),
+        (Submitting | PersistingAttempt | Landing | RollingBack(_) | MarkingFailed | MarkingRetry, In::Closing) => step(Done, &[Outcome(Out::Interrupted)], &[Drained]),
+        (Sending, In::Closing) => step(Done, &[Outcome(Out::Interrupted)], &[Cancel, Drained]),
         (Queued | Failed, In::Closing) => step(Done, &[Outcome(Out::Interrupted)], &[Drained]),
         _ => Option::None,
     }
@@ -250,9 +261,7 @@ pub fn open_step_of(kind: Restored, ctx: &OCtx) -> OStep {
     let out = ctx.online && ctx.row_free;
     let (next, obs, eff) = match (kind, out) {
         (Restored::ErrorMark, _) => (St::Failed, vec![Obs::RowCarriesError], vec![]),
-        (Restored::Pending, true) => (St::Sending, vec![], vec![Eff::SendStoredPair]),
-        (Restored::Pending, false) => (St::Queued, vec![], vec![]),
-        (_, true) => (St::Sending, vec![], vec![Eff::Send]),
+        (_, true) => (St::PersistingAttempt, vec![], vec![Eff::Store(Commit::Attempt)]),
         (_, false) => (St::Queued, vec![], vec![]),
     };
     OStep { next, obs, eff }

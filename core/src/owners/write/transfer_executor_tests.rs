@@ -81,7 +81,7 @@ struct World {
 }
 
 fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default() }
+    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default(), durable: true }
 }
 
 fn world() -> World {

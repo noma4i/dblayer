@@ -202,7 +202,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                     Err(error) => fail(wiring, error.to_string()),
                     Ok(restore) => {
                         match restore.ops {
-                            Ok(stored) => wiring.to_outbox(OutboxInput::Restored(stored)),
+                            Ok(stored) => wiring.to_outbox(OutboxInput::Restored { ops: stored, pending_lost: false }),
                             Err(error) => {
                                 wiring.restore_failed_for(Peer::Outbox, error.to_string());
                                 wiring.to_outbox(OutboxInput::RestoreFailed { error: error.to_string() });

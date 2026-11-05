@@ -101,6 +101,14 @@ pub enum StoreOp {
     Session { digest: Option<String>, sequence: Option<u64> },
     /// The intent of an operation with its optimistic `effects`.
     Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects },
+    /// The durable attempt counter and the cycle of an operation: written before the `Mutate` of that attempt.
+    Attempt { op_id: u64, attempts: u32, cycle_id: u64 },
+    /// A `create` with a temporary id landed: the row `temp` becomes `real` with its references and membership.
+    Swap { model: String, temp: String, real: String },
+    /// Rows of a `memory` model, written to the TEMP tables.
+    EphemeralRows { model: String, rows: Vec<RowValue> },
+    /// A local field of a row that is not in the base yet: it sits on the row when the row lands.
+    LocalPending { model: String, rows: Vec<RowValue> },
     /// Take back the `effects` of the operation.
     RollBack { op_id: u64 },
     /// The operation leaves the queue (its answer landed or it ended).
