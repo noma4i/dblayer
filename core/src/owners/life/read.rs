@@ -1,4 +1,4 @@
-//! Install of the owners of reading (`design.md` F2): `Windows`, `Deliveries` and `Feed` with the executors of their effects.
+//! Install of the owners of reading: `Windows`, `Deliveries` and `Feed` with the executors of their effects.
 //! An executor does IO and returns the result as an input; the platform side settles its waiters through `Outcomes`.
 
 use std::sync::Arc;

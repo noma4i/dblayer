@@ -123,7 +123,7 @@ impl Database {
         self.account_call(epoch)
     }
 
-    /// The rule of `lifecycle.md` for a call of account data: `Closed` after the close, `NoSession` when the epoch of the caller is not the current one or a database with a session has none.
+    /// The rule for a call of account data: `Closed` after the close, `NoSession` when the epoch of the caller is not the current one or a database with a session has none.
     pub(super) fn account_call(&self, epoch: u64) -> Result<(), DbError> {
         let state = self.streams.snapshot();
         if state.closed { return Err(closed()); }

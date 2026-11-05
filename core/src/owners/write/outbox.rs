@@ -87,7 +87,7 @@ impl OutboxState {
         }
     }
 
-    /// A new epoch: a fresh instance. The platform call gate (`lifecycle.md`) keeps calls out of an epoch without an identity.
+    /// A new epoch: a fresh instance. The platform call gate keeps calls out of an epoch without an identity.
     pub(super) fn begin_epoch(&mut self, epoch: Epoch) { *self = Self::new(epoch, self.peers); }
 
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }

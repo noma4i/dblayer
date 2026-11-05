@@ -1,5 +1,5 @@
 //! What the executors of direction C use to reach the world: tasks and the network. An executor does IO and returns the result as an input
-//! to its own owner (`design.md` F3). It never decides a transition.
+//! to its own owner. It never decides a transition.
 
 use std::future::Future;
 use std::pin::Pin;

@@ -1,4 +1,4 @@
-//! The loads of a relation through `Database` go through the owner `Windows` (`window.md`): win_idle_interest_load, win_idle_interest_fresh,
+//! The loads of a relation through `Database` go through the owner `Windows`: win_idle_interest_load, win_idle_interest_fresh,
 //! win_idle_load_more, win_idle_load_more_end, win_loading_join_waiter, win_loading_leave, win_idle_interest_offline (a refresh keeps its accepted fail-at-once rule).
 //! The observable values are the requests of the transport, the snapshot with its revision and phase, and the result of the call.
 

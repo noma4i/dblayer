@@ -1,4 +1,4 @@
-//! Test of `OutboxExecutor` (`design.md` F3): the answer of a call reaches the platform. Name `exec_out_reply_settles_call`.
+//! Test of `OutboxExecutor`: the answer of a call reaches the platform. Name `exec_out_reply_settles_call`.
 //! Store batches, Session `Mutate`, `MutationOutcome` and the retry timer are owner effects, tested in `spec::outbox_owner_tests`.
 
 use crate::schema::OnFailure;

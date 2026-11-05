@@ -24,7 +24,7 @@ pub enum Owner {
     Rounds,
 }
 
-/// `all owners` of `lifecycle.md`.
+/// All owners.
 pub const OWNERS: [Owner; 10] = [Owner::Network, Owner::Session, Owner::Window, Owner::Feed, Owner::Delivery, Owner::Outbox, Owner::Transfer, Owner::Calls, Owner::LocalWrites, Owner::Rounds];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -11,7 +11,7 @@ pub(crate) fn package_dir() -> std::path::PathBuf {
 }
 
 /// Seconds a single test may run. The runner starts one process per test (`--exact`): a test that is still running after this long is a hang, the process names it and aborts.
-const TEST_DEADLINE: u64 = 30;
+const TEST_DEADLINE: u64 = 20;
 
 #[used]
 #[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]

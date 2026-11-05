@@ -12,7 +12,7 @@ use crate::runtime::{Effects};
 
 
 impl OutboxState {
-    /// The class of a restored intent: every intent goes to exactly one row of the table «Открытие».
+    /// The class of a restored intent: every intent goes to exactly one class.
     pub(super) fn classify(&mut self, item: StoredOp, pending_lost: bool, fx: &mut Effects<Outbox>) {
         let op_id = item.op_id;
         let (model, action) = (item.op.model.clone(), item.op.action.clone());

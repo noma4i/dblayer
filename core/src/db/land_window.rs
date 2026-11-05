@@ -1,4 +1,4 @@
-//! The executor `Write` of `store.md` for `StoreOp::Window`: the rows of one page of a window, the membership of its scope and the window record, in one commit.
+//! The executor `Write` for `StoreOp::Window`: the rows of one page of a window, the membership of its scope and the window record, in one commit.
 //! Windows decides which page lands and when; this code turns the page into SQL through the commit path of `Db`.
 
 use std::collections::{BTreeMap, BTreeSet};

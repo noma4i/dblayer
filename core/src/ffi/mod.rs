@@ -94,7 +94,7 @@ pub enum DbError {
     Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     #[error("session {code:?}: {detail}")]
     Session { code: SessionCode, detail: String },
-    /// The database is closed (`lifecycle.md`: calls after `Close` get `Err(Closed)`).
+    /// The database is closed.
     #[error("closed: {detail}")]
     Closed { detail: String },
     #[error("corrupt manifest: {detail}")]

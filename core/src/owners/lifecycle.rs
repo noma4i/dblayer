@@ -331,7 +331,7 @@ impl StateOwner for Lifecycle {
 }
 
 impl LifecycleState {
-    /// One row of `lifecycle.md` per match arm, in table order.
+    /// One row of the table per match arm, in table order.
     fn run(&mut self, input: LifecycleInput, fx: &mut Vec<LifecycleEffect>) {
         match input {
             LifecycleInput::Open { saved_epoch, saved_generation, saved_identity, reply } => {

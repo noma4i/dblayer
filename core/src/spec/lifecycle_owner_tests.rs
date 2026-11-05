@@ -1128,7 +1128,7 @@ fn life_prop_publication_id() {
     assert_eq!(twin.publications().len(), 1);
 }
 
-/// The traces of the findings (`lifecycle.md`, "finding traces"), at the level of the owner.
+/// The traces of the findings, at the level of the owner.
 #[test]
 fn life_findings() {
     let mut identity = session(1);

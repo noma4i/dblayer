@@ -1,4 +1,4 @@
-//! Direction A install (`design.md` F1-F3): the owners Network, Lifecycle, Store and Calls on one `Runtime`, each with the executor of its effects.
+//! Direction A install: the owners Network, Lifecycle, Store and Calls on one `Runtime`, each with the executor of its effects.
 //! An executor does IO and returns the result as an input, it takes no transition. `Session` joins when its table gets `Mutate` and `GenerateCredential`.
 
 mod observers;
@@ -534,7 +534,7 @@ impl Life {
         waiter
     }
 
-    /// `run`: the platform call rule of `lifecycle.md`, then the owner Calls.
+    /// `run`: the platform call rule, then the owner Calls.
     pub fn run(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let published = self.published();

@@ -16,7 +16,7 @@ pub type ReplyId = u64;
 pub type BatchId = u64;
 pub type ConnectionId = u64;
 
-/// The owner that wrote a batch. Store answers the pair `(author, id)` (`store.md`): `id` is unique within one author.
+/// The owner that wrote a batch. Store answers the pair `(author, id)`: `id` is unique within one author.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BatchAuthor {
     Lifecycle,
@@ -221,7 +221,7 @@ pub struct ModelLost {
     pub last: u64,
 }
 
-/// `Published.state` of `lifecycle.md`: the one value the platform call rule reads.
+/// `Published.state`: the one value the platform call rule reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PublishedState {
     NoSession,

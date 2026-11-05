@@ -1,4 +1,4 @@
-//! Executors of the effects of Lifecycle, Store, Network and Calls (`design.md` F3). Each one runs the IO its owner asked for
+//! Executors of the effects of Lifecycle, Store, Network and Calls. Each one runs the IO its owner asked for
 //! and returns the result as an input. None of them decides a transition.
 
 use std::collections::HashMap;

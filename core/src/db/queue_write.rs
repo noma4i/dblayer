@@ -1,4 +1,4 @@
-//! The executor `Write` of `store.md` for the ops of the queue: `Intent`, `RollBack`, `RemoveIntent`, `MarkError`, `Rows`, `LocalRows`, `RemoveRows`,
+//! The executor `Write` for the ops of the queue: `Intent`, `RollBack`, `RemoveIntent`, `MarkError`, `Rows`, `LocalRows`, `RemoveRows`,
 //! `Upload`, `RemoveUpload`. The owners Outbox and Transfer decide, this code turns their ops into SQL through the commit path of `Db`.
 
 use serde_json::{Map, Value};
@@ -165,7 +165,7 @@ impl Db {
             .map_err(DbError::from)
     }
 
-    /// The transfers kept in the base, whole, for `Restored` (`transfer.md`). A row of the display without the value of a transfer (`seq` empty) is not one.
+    /// The transfers kept in the base, whole, for `Restored`. A row of the display without the value of a transfer (`seq` empty) is not one.
     pub(crate) fn read_transfers(&self) -> Result<Vec<StoredTransfer>, DbError> {
         let rows = self.shared.store.read_locked(upload_rows).map_err(|error| DbError::Internal(error.to_string()))?;
         self.stored_transfers(rows)

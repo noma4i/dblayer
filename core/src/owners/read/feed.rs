@@ -1,4 +1,4 @@
-//! Owner `Feed` (`specs/machines/feed.md`): the server subscription of the epoch, the connection protocol, the model events and their positions.
+//! Owner `Feed`: the server subscription of the epoch, the connection protocol, the model events and their positions.
 //! Timers are `Effect::Schedule` of the owner (`after` = the debounce or the backoff). Inputs for other owners
 //! (`Commit`, `Stale`, `Joined`, `ModelReady`, `ModelEvent`, `ModelLost`, `ModelGap`) are `Effect::Send` to the addresses of the state.
 //! The executor opens connections, encrypts and decrypts: it answers with `HandshakeDone`, `FrameOpened` and `ProtocolError`. The inputs

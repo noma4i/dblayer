@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/feed.md`: the owner `Feed` on `DetScheduler`, every row of the table and every property.
+//! Owner-level tests of the `feed` machine: the owner `Feed` on `DetScheduler`, every row of the table and every property.
 //! A row test feeds the same input to the reference (`ref_feed.rs`) and to the owner through its address, then compares the effects,
 //! the observable (`ModelEvent`, `ModelLost`, `ModelGap`) and the state. Names are the `Test` column of the spec.
 

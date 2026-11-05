@@ -132,7 +132,7 @@ impl OutboxState {
         }
     }
 
-    /// `(нет) x Submit`: an unsent `create` that a `destroy` of the same row cancels ends with it, the network is not called.
+    /// `(none) x Submit`: an unsent `create` that a `destroy` of the same row cancels ends with it, the network is not called.
     pub(super) fn submit(&mut self, epoch: Epoch, op: NewOp, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));

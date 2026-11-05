@@ -1,4 +1,4 @@
-//! `specs/machines/delivery.md` as code: one match arm per table row. No library code.
+//! The `delivery` machine as code: one match arm per table row. No library code.
 //! A row is `(id, stamp)`: the stamp changes when the content of the row changes. The reference gives an effect list, a value a `Pull` reads is the effect `Answer`.
 
 use std::collections::VecDeque;

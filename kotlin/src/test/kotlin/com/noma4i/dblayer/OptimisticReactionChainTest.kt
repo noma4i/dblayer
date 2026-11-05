@@ -51,7 +51,7 @@ class OptimisticReactionChainTest {
         assertEquals(listOf("u2" to "B"), reacted.reactions.map { it.userId to it.body })
     }
 
-    /** A database opened without a transport holds no session, so a send is refused (`docs/value-bridge.md`: a send needs a signed-in session). */
+    /** A database opened without a transport holds no session, so a send is refused. */
     @Test
     fun aSendOnADatabaseWithoutATransportIsRefusedAsNoSession() = bounded {
         try {

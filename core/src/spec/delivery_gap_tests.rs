@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/delivery.md`: the owner `Deliveries` on `DetScheduler`, every row of the table and every property.
+//! Owner-level tests of the `delivery` machine: the owner `Deliveries` on `DetScheduler`, every row of the table and every property.
 //! A row test feeds the same input to the reference (`ref_delivery.rs`) and to the owner through its address, then compares the effects.
 //! The values a reader gets are the `Answer` effects of `Pull`. Names are the `Test` column.
 

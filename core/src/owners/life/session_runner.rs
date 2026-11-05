@@ -1,4 +1,4 @@
-//! Executor of the effects of Session (`design.md` F3): the HTTP exchange of `EncryptedClient` (encoding only), the random credential,
+//! Executor of the effects of Session: the HTTP exchange of `EncryptedClient` (encoding only), the random credential,
 //! the `CredentialStore` calls and the writes of `encrypted_*` that go to Store as batches by value. It does IO and returns the result as an input; it takes no transition.
 
 use std::collections::HashMap;

@@ -718,7 +718,7 @@ fn store_prop_reply_once() {
     }
 }
 
-/// `store.md` batch: the id is unique within the author, the answer goes to the pair `(author, id)`.
+/// Store batch: the id is unique within the author, the answer goes to the pair `(author, id)`.
 #[test]
 fn store_commit_author_pair() {
     let mut twin = Twin::live();

@@ -1,4 +1,4 @@
-//! Owner `Windows`: a dictionary of `Window` machines by key (`specs/machines/window.md`, one machine per key, `statig`).
+//! Owner `Windows`: a dictionary of `Window` machines by key.
 //! A table row applies to the machine of the key an input names. Inputs that name a request (`Response`, `Failure`, `Dropped`, `RetryDue`,
 //! `Committed`, `Rejected`) go to the machine that owns the request. `Online`, `EpochStarted`, `EpochEnded`, `ModelsReset`, `Closing` apply to
 //! every machine, `Stale` to the machines of its model named in `keys`. Request ids are unique in the owner. The retry timer is `Effect::Schedule`
@@ -208,7 +208,7 @@ pub enum WindowStage {
     Ended,
 }
 
-/// Attempts of a window per error class (`design.md` 1a).
+/// Attempts of a window per error class.
 fn attempt_limit(class: ErrorClass) -> u32 {
     match class {
         ErrorClass::Network => 3,
@@ -693,7 +693,7 @@ impl Facts {
     }
 }
 
-/// One machine of `window.md`.
+/// One machine of a window.
 struct Window {
     machine: InitializedStateMachine<Facts>,
 }

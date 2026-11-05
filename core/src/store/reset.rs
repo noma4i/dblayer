@@ -326,7 +326,7 @@ pub(crate) fn identity_of(digest: &str) -> Option<u64> {
 }
 
 impl Store {
-    /// `saved_epoch`, `saved_generation` and the identity of the stored session, read at open (`store.md` Boot).
+    /// `saved_epoch`, `saved_generation` and the identity of the stored session, read at open.
     pub(crate) fn saved(&self) -> Result<(u64, u64, Option<u64>), StoreError> {
         let inner = self.lock();
         let read = |key: &str| -> Result<u64, StoreError> {
@@ -339,7 +339,7 @@ impl Store {
         Ok((read(SAVED_EPOCH_KEY)?, read(SAVED_GENERATION_KEY)?, identity))
     }
 
-    /// The effect `SavePublished` of `store.md`.
+    /// The effect `SavePublished`.
     pub(crate) fn save_published(&self, epoch: u64, generation: u64) -> Result<(), StoreError> {
         let inner = self.lock();
         let transaction = inner.connection.unchecked_transaction()?;
@@ -418,7 +418,7 @@ pub(crate) enum RowOp {
 }
 
 impl Store {
-    /// The effect `Write` of `store.md`: the writes of one batch in one transaction. Returns the new revision.
+    /// The effect `Write`: the writes of one batch in one transaction. Returns the new revision.
     pub(crate) fn write_ops(&self, ops: Vec<RowOp>) -> Result<i64, StoreError> {
         let inner = self.lock();
         let transaction = inner.connection.unchecked_transaction()?;

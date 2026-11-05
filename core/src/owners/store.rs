@@ -20,7 +20,7 @@ pub struct EffectRow {
     pub values: String,
 }
 
-/// Membership of a row in a list with the revision of the operation (`outbox.md`, membership by revision).
+/// Membership of a row in a list with the revision of the operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectMember {
     pub list: String,
@@ -50,7 +50,7 @@ pub struct RowValue {
     pub values: String,
 }
 
-/// Why the batch writes the row of `sync_upload` (`transfer.md`, effects of the table).
+/// Why the batch writes the row of `sync_upload`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UploadKind {
     SyncUpload,
@@ -85,7 +85,7 @@ pub struct UploadRow {
     pub steps_body: String,
 }
 
-/// One write of a batch, by value (R3). The writer executor turns it into SQL (`store.md`, the batch).
+/// One write of a batch, by value (R3). The writer executor turns it into SQL.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreOp {
     /// `encrypted_pending` = this row. `credential_digest` is the full digest of the credential, `response_key` seals the answer.
@@ -324,7 +324,7 @@ impl StateOwner for StoreWriter {
 }
 
 impl StoreState {
-    /// One row of `store.md` per match arm, in table order.
+    /// One row of the table per match arm, in table order.
     fn run(&mut self, input: StoreInput, fx: &mut Vec<StoreEffect>) {
         if let StoreInput::Boot(found) = input {
             self.boot(found, fx);

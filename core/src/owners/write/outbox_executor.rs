@@ -1,4 +1,4 @@
-//! Executor of the effects of `Outbox` (`design.md` F3): it settles the answer of a call.
+//! Executor of the effects of `Outbox`: it settles the answer of a call.
 //! Store batches, Session `Mutate`, `MutationOutcome` and timers are `Effect::Send` and `Effect::Schedule` of the owner.
 
 use std::sync::Arc;

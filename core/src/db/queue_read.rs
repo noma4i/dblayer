@@ -1,4 +1,4 @@
-//! The intents of the queue as `Restored` gives them to the owner Outbox (`outbox.md`, section Open).
+//! The intents of the queue as `Restored` gives them to the owner Outbox.
 
 use crate::operation::OperationStatus;
 use crate::owners::write::outbox::{NewOp, Origin, StoredOp};

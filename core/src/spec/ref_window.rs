@@ -24,7 +24,7 @@ pub(super) enum Failure {
 }
 
 impl Failure {
-    /// `design.md` 1a: attempts of a window per class.
+    /// Attempts of a window per class.
     pub(super) fn retry_limit(self) -> u32 {
         match self {
             Failure::Network => 3,
