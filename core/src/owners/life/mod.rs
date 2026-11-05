@@ -2,9 +2,11 @@
 //! An executor does IO and returns the result as an input, it takes no transition. `Session` joins when its table gets `Mutate` and `GenerateCredential`.
 
 mod runners;
-mod session_runner;
+pub(crate) mod session_runner;
 #[cfg(test)]
 mod life_tests;
+#[cfg(test)]
+mod session_exchange_tests;
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,6 +77,10 @@ pub(crate) struct Wiring {
     open_failed: Mutex<Option<String>>,
     /// Where the answer to a `Mutate` goes, by author: `Transport{req_id, Response/Error}`.
     mutate_sinks: Mutex<HashMap<AuthorId, Arc<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>>>,
+    /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here.
+    store_sinks: Mutex<HashMap<BatchAuthor, Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>>>,
+    /// The answer of a sign-in waits for the publication of its identity: a caller that heard it finds the new epoch.
+    after_publish: Mutex<Vec<(u64, crate::runtime::OutcomeId, LifeReply)>>,
 }
 
 impl Wiring {
@@ -89,6 +95,8 @@ impl Wiring {
             faults: Mutex::new(Vec::new()),
             open_failed: Mutex::new(None),
             mutate_sinks: Mutex::new(HashMap::new()),
+            store_sinks: Mutex::new(HashMap::new()),
+            after_publish: Mutex::new(Vec::new()),
         }
     }
 
@@ -96,8 +104,36 @@ impl Wiring {
     pub fn addresses(&self) -> Option<Addresses> { self.addresses.get().copied() }
 
     pub fn publish(&self, published: Published) {
+        let identity = published.identity;
         *self.published.value.lock().unwrap_or_else(PoisonError::into_inner) = Some(published);
         self.published.changed.notify_all();
+        let due: Vec<_> = {
+            let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
+            let (due, rest): (Vec<_>, Vec<_>) = held.drain(..).partition(|(waiting, ..)| Some(*waiting) == identity);
+            *held = rest;
+            due
+        };
+        for (_, id, reply) in due {
+            self.outcomes.settle(id, reply);
+        }
+    }
+
+    /// Settles the answer of a sign-in once `identity` is the published one.
+    pub fn settle_after_publish(&self, identity: u64, id: crate::runtime::OutcomeId, reply: LifeReply) {
+        let published = self.published.value.lock().unwrap_or_else(PoisonError::into_inner).as_ref().and_then(|published| published.identity);
+        if published == Some(identity) {
+            self.outcomes.settle(id, reply);
+        } else {
+            self.after_publish.lock().unwrap_or_else(PoisonError::into_inner).push((identity, id, reply));
+        }
+    }
+
+    /// The close answers every held answer: no publication follows.
+    pub fn release_held(&self) {
+        let held: Vec<_> = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner).drain(..).collect();
+        for (_, id, reply) in held {
+            self.outcomes.settle(id, reply);
+        }
     }
 
     pub fn set_ending(&self, ending: bool) { self.ending.store(ending, Ordering::SeqCst); }
@@ -139,7 +175,15 @@ impl Wiring {
             });
             return;
         }
-        self.fault(format!("no owner installed for the batches of {author:?}"));
+        let sink = self.store_sinks.lock().unwrap_or_else(PoisonError::into_inner).get(&author).cloned();
+        match sink {
+            Some(sink) => sink(batch, reply),
+            None => self.fault(format!("no owner installed for the batches of {author:?}")),
+        }
+    }
+
+    pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) {
+        self.store_sinks.lock().unwrap_or_else(PoisonError::into_inner).insert(author, Arc::new(sink));
     }
 
     pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) {
@@ -280,6 +324,8 @@ impl Life {
     }
 
     pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) { self.wiring.on_mutate_answer(author, sink); }
+
+    pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) { self.wiring.on_store_reply(author, sink); }
 
     pub fn declare(&self, names: Vec<String>) { self.wiring.to_calls(CallsInput::Declare(names)); }
 

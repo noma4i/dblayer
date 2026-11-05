@@ -89,18 +89,11 @@ pub fn store_pending(connection: &Connection, pending: &Pending) -> rusqlite::Re
     Ok(())
 }
 
+#[cfg(test)]
 pub fn commit(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
     let transaction = connection.unchecked_transaction()?;
     transaction.execute("UPDATE encrypted_session SET sequence = ?1 WHERE id = 1", [sequence])?;
     transaction.execute("DELETE FROM encrypted_pending", [])?;
-    transaction.commit()
-}
-
-pub fn retry_confirmed(connection: &Connection, pending: &Pending) -> rusqlite::Result<()> {
-    let transaction = connection.unchecked_transaction()?;
-    transaction.execute("UPDATE encrypted_session SET sequence = ?1 WHERE id = 1", [pending.sequence - 1])?;
-    transaction.execute("DELETE FROM encrypted_pending", [])?;
-    store_pending(&transaction, pending)?;
     transaction.commit()
 }
 
@@ -111,7 +104,3 @@ pub fn clear(connection: &Connection) -> rusqlite::Result<()> {
     transaction.commit()
 }
 
-pub fn drop_pending(connection: &Connection) -> rusqlite::Result<()> {
-    connection.execute("DELETE FROM encrypted_pending", [])?;
-    Ok(())
-}

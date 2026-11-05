@@ -35,7 +35,7 @@ fn inv_event_07_inv_fresh_03_an_event_held_in_the_debounce_window_does_not_creat
     let _subscription = rig.sync.subscribe(upserts(spec)).await.unwrap();
     rig.transport.emit("MomentChanged", event(json!({"id": "m9", "text": "before the reset"})));
     crate::test_wait::pass(Duration::from_millis(100)).await;
-    rig.db.reset(&["moments"]).unwrap();
+    rig.db.clear_models(&["moments"]).unwrap();
     crate::test_wait::pass(Duration::from_millis(600)).await;
     assert_eq!(text_of(&rig, "moments", "m9"), None);
     assert_eq!(rig.db.count(&Query::new("moments")).unwrap(), 0);

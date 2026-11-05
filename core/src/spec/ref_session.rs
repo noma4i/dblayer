@@ -92,6 +92,7 @@ pub enum Input {
     Response { request_id: RequestId, body: String, sequence: Option<u64>, credential: Option<Digest>, revoked: bool },
     HttpError { request_id: RequestId, temporary: bool, auth: bool },
     Dropped { request_id: RequestId },
+    Cancel { req_id: RequestId },
     Committed(BatchId),
     Rejected(BatchId, Reason),
     Tick,
@@ -362,6 +363,14 @@ impl Session {
                 } else {
                     self.state = State::Calling { pending, attempts, sent: false };
                 }
+            }
+            (State::Calling { pending, attempts, sent }, Input::Cancel { req_id }) if req_id == pending.request_id => {
+                if sent { out.effects.push(Effect::HttpCancel { request_id: pending.request_id }); }
+                self.state = State::Calling { pending, attempts, sent: false };
+            }
+            (state, Input::Cancel { req_id }) => {
+                self.queue.retain(|queued| !matches!(queued, Queued::Mutate { req_id: queued_id, .. } if *queued_id == req_id));
+                self.state = state;
             }
             (State::Calling { pending, attempts, .. }, Input::Tick) => {
                 let sent = self.online;

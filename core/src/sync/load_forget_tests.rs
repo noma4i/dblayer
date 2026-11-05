@@ -19,7 +19,7 @@ fn inv_loadm_19_unobserved_windows_are_forgotten_without_waiting_for_reset() { c
     let second = kept.clone();
     drop(kept);
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
     assert_eq!(second.borrow().phase, super::load_machine::LoadPhase::NotLoaded);
     drop(second);
@@ -33,7 +33,7 @@ fn inv_loadm_19_a_reset_keeps_a_window_with_a_flight() { crate::test_wait::pause
     let sync = rig.sync.clone();
     let flight = tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "vibe_feed", &vibe(1), LoadOptions::default()).await });
     crate::test_wait::pass(std::time::Duration::from_millis(1)).await;
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
     assert_eq!(rig.sync.inner.owner.tracked_windows(), 1);
     flight.abort();
     assert!(flight.await.unwrap_err().is_cancelled());

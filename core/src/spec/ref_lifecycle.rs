@@ -374,7 +374,7 @@ pub struct LifecycleRef {
 
 impl LifecycleRef {
     pub fn new(full: bool) -> Self {
-        Self { machine: Lifecycle::new(), full, held: false, store: VecDeque::new(), rows: BTreeSet::new(), step: 0 }
+        Self { machine: Lifecycle::open(0, 0, None, Default::default()).0, full, held: false, store: VecDeque::new(), rows: BTreeSet::new(), step: 0 }
     }
 
     fn gate(&self, epoch_current: bool) -> Result<(), &'static str> {

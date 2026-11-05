@@ -140,7 +140,7 @@ fn entity_if_missing_shared() { crate::test_wait::paused(async {
     assert!(rig.sync.inner.entity_due.lock().unwrap().is_empty());
     rig.sync.refresh_entities(&rig.sync.inner.db.admit().unwrap(), "chats", &ids("c3"), super::EntityFetch::IfMissing, sink).unwrap();
     told(&got, 4).await;
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
     rig.sync.set_online(true);
     tokio::task::yield_now().await;
     assert_eq!(rig.transport.call_count("ChatNode"), 1);

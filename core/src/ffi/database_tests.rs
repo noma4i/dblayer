@@ -63,3 +63,15 @@ async fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
     }
     assert_eq!(rejected, [true; 6]);
 }
+
+impl Database {
+    /// The part of `close` that does not wait: for a caller that cannot await.
+    pub(super) fn close_now(&self) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let waiter = self.life.close();
+        let handle = super::database::executor().expect("the executor").handle().clone();
+        handle.spawn(async move { let _ = sender.send(waiter.wait().await); });
+        receiver.recv_timeout(std::time::Duration::from_secs(10)).expect("the owners closed within 10 s");
+        if let Some(lease) = self.lease.get() { lease.release(); }
+    }
+}

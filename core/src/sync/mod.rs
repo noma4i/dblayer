@@ -374,6 +374,12 @@ impl Sync {
         this.inner.preload.attach(preloads.clone());
         let _ = this.inner.this.set(preloads.clone());
         this.inner.owner.on_reload(Arc::new(move |target, since| { if let Some(inner) = preloads.upgrade() { inner.spawn_retry(target, load_machine::LoadKind::Refresh, Some(since)); } }));
+        #[cfg(test)]
+        if this.inner.db.shared.store.lifecycle.snapshot().revision == 0 {
+            if let (Ok(session), Ok(admitted)) = (this.inner.transport.session(), this.inner.db.admit()) {
+                let _ = this.inner.db.shared.store.lifecycle.start_session_in_tests(session, admitted);
+            }
+        }
         locked(&this.inner.account).0 = this.inner.db.shared.store.lifecycle.snapshot().session;
         this.inner.db.shared.store.lifecycle.enroll(&this.inner);
         this

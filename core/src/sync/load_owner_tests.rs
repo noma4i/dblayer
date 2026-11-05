@@ -171,7 +171,7 @@ fn inv_loadm_09_a_cache_reset_returns_the_window_to_not_loaded() { crate::test_w
     let state = feed_state(&rig).await;
     rig.sync.load(&rig.sync.inner.db.admit().unwrap(), "moments", "feed", &none(), LoadOptions::default()).await.unwrap();
     assert_eq!(state.borrow().phase, LoadPhase::Loaded);
-    rig.db.reset(&["moments"]).unwrap();
+    rig.db.clear_models(&["moments"]).unwrap();
     assert_eq!(summary(&state.borrow()), (LoadPhase::NotLoaded, None));
     assert_eq!(state.borrow().loaded_at, None);
 }) }

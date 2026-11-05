@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -19,19 +18,24 @@ pub(super) struct Rig {
     pub(super) credentials: Arc<MemoryCredentials>,
     pub(super) clock: Arc<ManualClock>,
     pub(super) db: Db,
+    owned: std::sync::OnceLock<Arc<EncryptedClient>>,
 }
 
 impl Rig {
     pub(super) async fn signed_in() -> Self {
         let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
-        let rig = Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock, db: Db::open_in_memory(Vec::new(), None).unwrap() };
-        rig.client().mutate(&rig.client().admit("test call").unwrap(), "/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+        let rig = Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock, db: Db::open_in_memory(Vec::new(), None).unwrap(), owned: std::sync::OnceLock::new() };
+        rig.client().session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
         rig
     }
 
     pub(super) fn client(&self) -> Arc<EncryptedClient> {
-        let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
-        Arc::new(EncryptedClient::new(&config, self.server.clone(), self.credentials.clone(), self.db.clone(), self.clock.clone()).unwrap())
+        self.owned.get_or_init(|| {
+            let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
+            let client = Arc::new(EncryptedClient::new(&config, self.server.clone(), self.credentials.clone(), self.db.clone(), self.clock.clone()).unwrap());
+            client.start_owners_in_tests(&self.db);
+            client
+        }).clone()
     }
 
     pub(super) fn transport(&self) -> EncryptedTransport {
@@ -144,39 +148,3 @@ async fn a_registered_mutation_is_sent_once_as_the_next_sequence() {
     assert_eq!((documents(&sent), sent[0]["sequence"].clone()), (vec![false], json!(2)));
 }
 
-#[tokio::test]
-async fn a_restart_between_the_miss_and_the_answer_to_the_second_send_resumes_the_stored_document() {
-    let rig = Rig::signed_in().await;
-    let server = rig.server.clone();
-    let count = Arc::new(AtomicUsize::new(0));
-    let seen = count.clone();
-    rig.server.on_request(move || {
-        if seen.fetch_add(1, Ordering::SeqCst) == 1 {
-            server.lose_next_answer();
-        }
-    });
-
-    super::client_tests::cancel_pending(rig.transport().mutate(&rig.db.admit().unwrap(), request(WRITE)));
-    assert_eq!(rig.pending_sequence(), Some(3));
-    let answer = rig.client().resume(&rig.client().admit("test call").unwrap()).await.unwrap().unwrap();
-
-    assert_eq!(answer.body, json!({ "data": { "done": WRITE } }));
-    let sent = rig.graphql_requests();
-    assert_eq!(documents(&sent), [false, true, true]);
-    assert_eq!(sent[2]["requestId"], sent[1]["requestId"]);
-    assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (2, None));
-}
-
-#[tokio::test]
-async fn a_restart_between_the_miss_and_the_second_send_leaves_no_effect_and_the_resent_mutation_runs_once() {
-    let rig = Rig::signed_in().await;
-    let miss = rig.client().mutate(&rig.client().admit("test call").unwrap(), "/api/graphql", super::graphql::graphql_body(&request(WRITE), false)).await.unwrap();
-    assert_eq!(miss.body["errors"][0]["extensions"]["code"], "PERSISTED_QUERY_NOT_FOUND");
-    assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (1, None));
-
-    assert_eq!(rig.client().resume(&rig.client().admit("test call").unwrap()).await, Ok(None));
-    rig.transport().mutate(&rig.db.admit().unwrap(), request(WRITE)).await.unwrap();
-
-    assert_eq!(rig.server.executed().len(), 2);
-    assert_eq!(rig.graphql_requests().iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(2), json!(3), json!(4)]);
-}

@@ -382,7 +382,7 @@ fn inv_observe_11_reset_moves_every_observer_to_the_empty_state_and_keeps_the_su
     let (log, callback) = recorder();
     let _subscription = db.observe(Query::new("moments"), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
-    db.reset_all().unwrap();
+    db.clear_account().unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(calls(&log), vec![2, 0]);
     assert_eq!(changes(&log)[1].diff.removed.len(), 2);

@@ -101,45 +101,6 @@ fn connect(db: &Db, server: Arc<Mutex<Server>>) -> Sync {
 }
 
 #[test]
-fn idempotency_survives_reopen_and_reuses_the_successful_answer() { crate::test_wait::paused(async {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("outbox.sqlite");
-    let server = Arc::new(Mutex::new(Server { lose_answer: true, ..Server::default() }));
-    let exchange = Arc::new(Exchange { server: server.clone(), requests: Mutex::new(Vec::new()) });
-    let credentials = Arc::new(MemoryCredentials::default());
-    let (id, key) = {
-        let db = Db::open(&path, models(true), None).unwrap();
-        let row = db.create(&db.admit().unwrap(), "moments", params(json!({"text": "hello"}))).unwrap();
-        let key = db.outbox().unwrap()[0].operation.client_mutation_id.clone();
-        let (sync, client) = encrypted(&db, exchange.clone(), credentials.clone());
-        client.mutate(&db.admit().unwrap(), "/api/auth/social", json!({"provider": "test"})).await.unwrap();
-        sync.commit_session_for_test();
-        crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await.unwrap();
-        assert_eq!(db.outbox().unwrap()[0].operation.status, OperationStatus::DeliveryUnknown);
-        (row.id.clone(), key)
-    };
-    let db = Db::open(&path, models(true), None).unwrap();
-    assert_eq!(db.outbox().unwrap()[0].operation.client_mutation_id, key);
-    let (sync, client) = encrypted(&db, exchange.clone(), credentials);
-    client.clear_credential_for_test().unwrap();
-    client.mutate(&db.admit().unwrap(), "/api/auth/social", json!({"provider": "test"})).await.unwrap();
-    sync.commit_session_for_test();
-    crate::sync::rig::app(&sync, sync.retry(&sync.inner.db.admit().unwrap(), "moments", &id, None)).await.unwrap();
-    assert!(db.outbox().unwrap().is_empty());
-    assert!(db.find("moments", &id).unwrap().is_none());
-    assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_some());
-    let server = server.lock().unwrap();
-    assert_eq!(server.effects, 1);
-    assert_eq!(server.calls.len(), 2);
-    assert_eq!(server.calls[0]["input"]["clientMutationId"], server.calls[1]["input"]["clientMutationId"]);
-    assert!(server.calls[0]["input"]["clientMutationId"].as_str().is_some());
-    assert_eq!(server.calls[0]["input"]["clientMutationId"], key);
-    let requests = exchange.requests.lock().unwrap();
-    assert_ne!(requests[0].0["requestId"], requests[1].0["requestId"]);
-    assert_ne!(requests[0].1, requests[1].1);
-}) }
-
-#[test]
 fn idempotency_selects_distinct_or_explicit_keys_only_for_supported_inputs() { crate::test_wait::paused(async {
     for (accepts, explicit) in [(true, None), (true, Some("app-key")), (false, None)] {
         let db = Db::open_in_memory(models(accepts), None).unwrap();

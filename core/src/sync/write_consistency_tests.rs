@@ -97,7 +97,7 @@ fn stale_generation_preserves_the_undelivered_attempt_budget() { crate::test_wai
             let reset = async {
                 if attempt == attempts {
                     crate::test_wait::pass(Duration::from_secs(1)).await;
-                    db.reset(&["Folder"]).unwrap();
+                    db.clear_models(&["Folder"]).unwrap();
                     assert_ne!(db.generation(), sending.generation);
                     assert_eq!(db.outbox().unwrap().len(), 1, "operation survives unrelated reset");
                 }

@@ -14,14 +14,8 @@ use crate::pacing::ManualClock;
 use crate::test_wait::{join_within, recv_within};
 use crate::transport::TransportError;
 
-fn reset_blocking(client: &EncryptedClient) -> Result<(), TransportError> {
-    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(client.reset())
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
-    ResetInGet,
-    ResetInSet,
     BlockInGet,
 }
 
@@ -35,19 +29,10 @@ struct Slot {
     release: Mutex<Receiver<()>>,
 }
 
-impl Slot {
-    fn reset_once(&self) -> Result<(), TransportError> {
-        if self.fired.swap(true, Ordering::SeqCst) { return Ok(()); }
-        let client = self.client.lock().unwrap().upgrade().expect("the client is alive");
-        reset_blocking(&client)
-    }
-}
-
 impl CredentialSlot for Slot {
     fn get(&self) -> Result<Option<String>, TransportError> {
         let value = self.memory.get()?;
         match self.mode {
-            Mode::ResetInGet => self.reset_once()?,
             Mode::BlockInGet if !self.fired.swap(true, Ordering::SeqCst) => {
                 self.entered.lock().unwrap().send(()).unwrap();
                 recv_within(&self.release.lock().unwrap());
@@ -60,7 +45,6 @@ impl CredentialSlot for Slot {
     fn set(&self, credential: &str) -> Result<(), TransportError> {
         self.sets.fetch_add(1, Ordering::SeqCst);
         self.memory.set(credential)?;
-        if self.mode == Mode::ResetInSet { self.reset_once()?; }
         Ok(())
     }
 
@@ -97,45 +81,6 @@ fn session_digest(db: &Db) -> Option<String> {
 fn load_on_thread(client: &Arc<EncryptedClient>) -> std::thread::JoinHandle<Result<String, TransportError>> {
     let client = client.clone();
     std::thread::spawn(move || client.credential(&client.admit("test credential").unwrap()))
-}
-
-#[test]
-fn credential_callback_reenters_reset() {
-    for mode in [Mode::ResetInGet, Mode::ResetInSet] {
-        let rig = rig(mode);
-        let stale = "s".repeat(43);
-        if mode == Mode::ResetInGet {
-            rig.slot.memory.set(&stale).unwrap();
-            let inner = rig.db.shared.store.lock();
-            state::start(&inner.connection, &digest_of(&stale)).unwrap();
-        }
-
-        let outcome = join_within(load_on_thread(&rig.client));
-
-        assert!(outcome.is_err(), "{mode:?} committed a credential that a reset ended");
-        assert_eq!(rig.slot.memory.value(), None, "{mode:?} left a stale credential in the slot");
-        assert_eq!(session_digest(&rig.db), None, "{mode:?} left a stale session");
-
-        let fresh = join_within(load_on_thread(&rig.client)).unwrap();
-        assert_ne!(fresh, stale);
-        assert_eq!(rig.slot.memory.value().as_deref(), Some(fresh.as_str()));
-        assert_eq!(session_digest(&rig.db), Some(digest_of(&fresh)));
-    }
-}
-
-#[test]
-fn reset_is_not_blocked_by_a_slow_credential_callback() {
-    let rig = rig(Mode::BlockInGet);
-    let load = load_on_thread(&rig.client);
-    recv_within(&rig.entered);
-
-    let client = rig.client.clone();
-    join_within(std::thread::spawn(move || reset_blocking(&client).unwrap()));
-    rig.release.send(()).unwrap();
-
-    assert!(join_within(load).is_err());
-    assert_eq!(rig.slot.memory.value(), None);
-    assert_eq!(session_digest(&rig.db), None);
 }
 
 #[test]

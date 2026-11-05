@@ -175,7 +175,7 @@ fn payload_events_use_current_readers_and_reject_the_connection_after_reset() { 
     let HeardItem::Event(event) = item else { panic!("expected event") };
     assert_eq!(event.before.unwrap().text("title"), Some("before reader"));
     assert_eq!(event.after.unwrap().text("title"), Some("after reader"));
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
     emit(&rig, message(chat("c1", "stale connection", 99, "PRIMARY"), json!({"id":"m1", "chatId":"c1", "text":"stale"})));
     rig.transport.await_consumed("Changes").await;
     assert!(stored(&rig, "chats", "c1").is_none());

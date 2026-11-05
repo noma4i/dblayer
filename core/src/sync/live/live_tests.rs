@@ -340,7 +340,7 @@ async fn subscriptions_reopen_and_deliver_after_a_data_reset() {
         let mut old = Some(rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": "a"}))).unwrap());
         crate::test_wait::within_secs(5, rig.transport.await_calls("VibeEvents", 1)).await;
         if !keep_old { drop(old.take()); }
-        rig.db.reset_all().unwrap();
+        rig.db.clear_account().unwrap();
         let _new = rig.sync.watch("moments", "vibe_feed", &params(json!({"vibeId": next}))).unwrap();
         crate::test_wait::within_secs(5, rig.transport.await_calls("VibeEvents", if next == "a" { 2 } else { 3 })).await;
         assert!(vibe_sub_variables(&rig).contains(&json!({"vibeId": next})), "{next}, {keep_old}");

@@ -221,6 +221,9 @@ pub(crate) struct Leases {
     activity: watch::Sender<Activity>,
     #[cfg(test)]
     work: std::sync::atomic::AtomicUsize,
+    /// Epoch ends that reached the commit line, for the tests that hold the line.
+    #[cfg(test)]
+    pub(crate) line_waits: (Mutex<usize>, std::sync::Condvar),
     #[cfg(test)]
     pub(crate) writes_entered: std::sync::atomic::AtomicUsize,
 }
@@ -236,6 +239,8 @@ impl Default for Leases {
             activity: watch::channel(Activity::default()).0,
             #[cfg(test)]
             work: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            line_waits: (Mutex::new(0), std::sync::Condvar::new()),
             #[cfg(test)]
             writes_entered: std::sync::atomic::AtomicUsize::new(0),
         }
@@ -273,9 +278,6 @@ struct Admission {
     life: Arc<Leases>,
     id: u64,
     epoch: u64,
-    origin: Origin,
-    target: &'static str,
-    passive: bool,
 }
 
 impl Admitted {
@@ -336,7 +338,7 @@ impl Leases {
             let (id, epoch) = (state.next_lease, state.snapshot.session_epoch);
             state.next_lease += 1;
             state.leases.insert(id, LeaseInfo { target, passive });
-            (Admitted { inner: Arc::new(Admission { life: self.clone(), id, epoch, origin, target, passive }) }, state.activity())
+            (Admitted { inner: Arc::new(Admission { life: self.clone(), id, epoch }) }, state.activity())
         };
         self.publish_activity(activity);
         Ok(admitted)
@@ -431,11 +433,6 @@ impl Leases {
         let _ = activity.wait_for(|activity| activity.held == 0 && !activity.ending).await;
     }
 
-    /// Returns when the change with this ticket reached its holders.
-    pub(crate) fn delivered(&self, ticket: u64) -> bool {
-        self.effects.run_until(ticket)
-    }
-
     /// Registers a holder and returns the state at that moment. Every change after it reaches the holder.
     pub(crate) fn enroll<M: Holder + 'static>(self: &Arc<Self>, holder: &Arc<M>) -> Snapshot {
         assert!(holder.registration().get().is_none());
@@ -474,6 +471,11 @@ impl Leases {
     /// `EpochEnded` of Lifecycle: every lease of the epoch ends, nothing is admitted until the next `Publish`. The clearing causes also end the session of the snapshot and move the generation, as `ClearAccount` does in the Store.
     pub(crate) fn epoch_ended(&self, cause: Cause) {
         if cause == Cause::Close { return; }
+        #[cfg(test)]
+        {
+            *self.line_waits.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
+            self.line_waits.1.notify_all();
+        }
         let line = crate::db::locked(&self.commit_line);
         let (ticket, activity) = {
             let mut state = crate::db::locked(&self.state);
@@ -606,11 +608,10 @@ impl Leases {
         let snapshot = self.snapshot();
         if snapshot.closed || snapshot.session_epoch != admitted.value() { return Err(Ended); }
         if snapshot.session == session && (!snapshot.ended || session.is_none()) { return Ok(admitted); }
-        let (origin, target, passive) = (admitted.inner.origin, admitted.inner.target, admitted.inner.passive);
         drop(admitted);
         self.epoch_ended(Cause::SessionStarted);
         self.published_as(snapshot.session_epoch + 1, session, snapshot.generation.value());
-        self.admit_as(origin, target, passive, Some(snapshot.session_epoch + 1))
+        self.admit_as(Origin::Explicit, "test session", false, Some(snapshot.session_epoch + 1))
     }
 
     #[cfg(test)]

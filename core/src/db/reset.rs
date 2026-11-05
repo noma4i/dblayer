@@ -1,4 +1,6 @@
+#[cfg(test)]
 use super::error::DbError;
+#[cfg(test)]
 use super::open::Db;
 
 #[cfg(test)]

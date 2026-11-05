@@ -159,6 +159,7 @@ impl Twin {
             Input::Mutate { author, owner, req_id, path, body, purpose } => SessionInput::Mutate { author, owner, req_id, path, body, purpose },
             Input::CredentialGenerated(credential) => SessionInput::CredentialGenerated { credential },
             Input::Dropped { request_id } => SessionInput::Dropped { request_id },
+            Input::Cancel { req_id } => SessionInput::Cancel { req_id },
             Input::Response { request_id, body, sequence, credential, revoked } => SessionInput::Response { request_id, body, sequence, credential, revoked },
             Input::HttpError { request_id, temporary, auth } => SessionInput::HttpError { request_id, temporary, auth },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: if batch == 0 { current } else { batch }, revision: 1, tables: vec![], models: vec![] }),
@@ -729,4 +730,17 @@ fn sess_prop_unauthorized_keeps_session() {
     twin.feed(error(id, false, true));
     assert_eq!(twin.reference.credential, before, "the credential is the same");
     assert!(!twin.history.iter().any(|e| matches!(e, SessionEffect::ServerEnded(_))));
+}
+
+#[test]
+fn sess_cancel_calling_and_queue() {
+    let mut twin = Twin::new();
+    twin.feed_all([mutate(7, 11), committed()]);
+    twin.feed(mutate(7, 12));
+    twin.feed(Input::Cancel { req_id: 12 });
+    assert_eq!(twin.reference.queue.len(), 0, "a cancelled entry of the queue is removed without an answer");
+    let effects = twin.feed(Input::Cancel { req_id: 11 });
+    assert_eq!(effects, vec![RefEffect::HttpCancel { request_id: 11 }]);
+    assert!(matches!(twin.reference.state, RefState::Calling { sent: false, .. }), "the pending stays for the repeat with the same request id");
+    twin.feed(Input::Online(true));
 }

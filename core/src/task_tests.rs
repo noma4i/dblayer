@@ -3,14 +3,14 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 use super::*;
-use crate::ffi::legacy::{Lifecycle, Origin};
+use crate::ffi::legacy::{Leases, Origin};
 
 fn held() -> Option<u64> { admitted().map(|admitted| admitted.value()) }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn every_boundary_carries_the_epoch_it_is_given_and_a_detached_one_carries_none() {
     let handle = Handle::current();
-    let admission = Arc::new(Lifecycle::default()).admit(Origin::Explicit, "test call").unwrap();
+    let admission = Arc::new(Leases::default()).admit(Origin::Explicit, "test call").unwrap();
     let carried = Some(admission.value());
     let carry = || Carry::from(admission.clone());
     let mut children = Children::new();

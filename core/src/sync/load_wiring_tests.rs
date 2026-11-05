@@ -52,7 +52,7 @@ fn inv_loadm_17_the_state_of_a_real_sync_equals_the_oracle_over_random_commands(
                 3 if !flights.is_empty() => flights.remove(random.below(flights.len())).abort(),
                 4 => rig.sync.set_online(false),
                 5 => rig.sync.set_online(true),
-                6 => rig.db.reset(&["moments"]).unwrap(),
+                6 => rig.db.clear_models(&["moments"]).unwrap(),
                 7 => rig.clock.advance(Duration::from_secs(400)),
                 _ => {}
             }

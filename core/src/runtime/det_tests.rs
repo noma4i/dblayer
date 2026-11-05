@@ -35,6 +35,19 @@ fn one_input_per_step_and_effect_result_returns_as_input() {
 }
 
 #[test]
+fn an_answer_of_the_executor_in_the_inbox_makes_the_owner_ready_and_runs_a_step() {
+    let (mut det, toy) = single(1);
+    det.start_epoch(1);
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::WorkRequest(7));
+    assert!(det.step());
+    assert_eq!(det.ready(), vec![0], "the answer that came through Back is a pending input of the owner");
+    assert!(det.state(toy).unwrap().results.is_empty(), "the answer did not run a step yet");
+    assert_eq!(det.run_until_quiet(5), Ok(1), "the answer is one more step");
+    assert_eq!(det.state(toy).unwrap().results, vec![14]);
+    assert!(det.ready().is_empty());
+}
+
+#[test]
 fn owners_exchange_values_and_share_no_state() {
     let (mut det, ledger) = race(3);
     assert_eq!(det.run_until_quiet(20), Ok(4));

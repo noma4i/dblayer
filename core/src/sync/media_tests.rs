@@ -145,7 +145,7 @@ fn media_marker_commit() { crate::test_wait::paused(async {
                 locked(&server).slow = true;
                 let (result, ()) = tokio::join!(load(&rig, true), async {
                     rig.transport.await_calls("Tail", 1).await;
-                    rig.db.reset(&["media"]).unwrap();
+                    rig.db.clear_models(&["media"]).unwrap();
                 });
                 assert!(result.is_err());
                 assert!(ids(&rig).is_empty());

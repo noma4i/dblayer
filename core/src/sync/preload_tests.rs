@@ -80,7 +80,7 @@ fn a_reset_loads_the_declared_windows_again() { crate::test_wait::paused(async {
     let rig = preloading();
     rig.sync.commit_session_for_test();
     rig.sync.preload_settled().await;
-    rig.db.reset(&["moments"]).unwrap();
+    rig.db.clear_models(&["moments"]).unwrap();
     rig.sync.preload_settled().await;
     assert_eq!(requests(&rig), 6);
 }) }

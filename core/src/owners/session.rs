@@ -128,6 +128,8 @@ pub enum SessionInput {
     Response { request_id: RequestId, body: String, sequence: Option<u64>, credential: Option<Digest>, revoked: bool },
     HttpError { request_id: RequestId, temporary: bool, auth: bool },
     Dropped { request_id: RequestId },
+    /// Outbox and Transfer take their request back: the one in the network stops and is repeated with the same `request_id`, the one in the queue is removed.
+    Cancel { req_id: RequestId },
     Committed(Committed),
     Rejected(Rejected),
     Tick(Time),
@@ -432,6 +434,16 @@ impl SessionState {
                 } else {
                     self.phase = SessionPhase::Calling { pending, attempts, sent: false };
                 }
+            }
+            (SessionPhase::Calling { pending, attempts, sent }, SessionInput::Cancel { req_id }) if req_id == pending.request_id => {
+                if sent {
+                    fx.push(SessionEffect::HttpCancel { request_id: pending.request_id });
+                }
+                self.phase = SessionPhase::Calling { pending, attempts, sent: false };
+            }
+            (phase, SessionInput::Cancel { req_id }) => {
+                self.queue.retain(|queued| !matches!(queued, Queued::Mutate { req_id: queued_id, .. } if *queued_id == req_id));
+                self.phase = phase;
             }
             (SessionPhase::Calling { pending, attempts, .. }, SessionInput::Tick(_)) => {
                 let sent = self.online;

@@ -204,7 +204,7 @@ fn an_interrupted_session_end_wipes_the_data_at_the_next_open_and_asks_for_the_c
     {
         let (store, _) = reopen(&path, &models, None);
         seed(&store);
-        store.write_session_end_intent(&store.lifecycle.begin_blocking(crate::ffi::legacy::Boundary::SessionEnd(crate::ffi::legacy::End::Local), None).unwrap()).unwrap();
+        store.mark_session_end_in_tests().unwrap();
     }
     let (store, report) = reopen(&path, &models, None);
     assert!(report.finished_interrupted_reset);

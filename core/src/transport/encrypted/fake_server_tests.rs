@@ -228,16 +228,8 @@ impl FakeServer {
         self.state.lock().unwrap().faults.status_next = Some(status);
     }
 
-    pub fn replay_next_read(&self) {
-        self.state.lock().unwrap().faults.replay_next_read = true;
-    }
-
     pub fn refuse_next(&self, code: &str, confirmed: bool) {
         self.state.lock().unwrap().faults.refuse_next = Some((code.to_string(), confirmed));
-    }
-
-    pub fn reply_to_other_request(&self) {
-        self.state.lock().unwrap().faults.reply_to_other_request = true;
     }
 
     fn answer(&self, state: &mut State, path: &str, data: &Value) -> String {

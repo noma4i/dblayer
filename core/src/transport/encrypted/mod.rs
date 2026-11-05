@@ -18,7 +18,6 @@ pub(crate) mod state;
 pub(crate) mod vectors_tests;
 
 pub use client::{Answer, EncryptedClient, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation};
-pub(crate) use client::permanently_refused;
 pub use config::{AppPlatform, ConfigCode, Country, SecurityCode, ServerConfig};
 pub use graphql::{missing_from_registry, repeats, response_of, EncryptedTransport};
 pub(crate) use graphql::pending_matches;

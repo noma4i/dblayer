@@ -11,11 +11,11 @@ fn none() -> Map<String, serde_json::Value> {
 }
 
 fn reset_everything(rig: &Rig) {
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
 }
 
 fn reset_chats_cache(rig: &Rig) {
-    rig.db.reset(&["chats"]).unwrap();
+    rig.db.clear_models(&["chats"]).unwrap();
 }
 
 async fn nodes_answered_after(wipe: fn(&Rig)) {

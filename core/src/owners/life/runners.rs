@@ -50,6 +50,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             }
             LifecycleEffect::ModelsReset { generation, models, .. } => self.leases.models_reset(generation, &models.into_iter().collect::<Vec<_>>()),
             LifecycleEffect::Closing => {
+                wiring.release_held();
                 wiring.handle.close();
                 for peer in &self.absent {
                     wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: peer.name() }));
@@ -102,7 +103,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::OpenFailed(error) => wiring.open_failed(error),
             StoreEffect::Write { batch } => {
                 let result = if batch.rows.is_empty() {
-                    store.write_ops(batch.ops.iter().map(row_op).collect()).map(drop).map_err(|error| error.to_string())
+                    batch.ops.iter().map(row_op).collect::<Result<Vec<_>, _>>().and_then(|ops| store.write_ops(ops).map(drop).map_err(|error| error.to_string()))
                 } else {
                     Err("`rows` are written by the owners of Window and Feed: their executors extend `Write`".to_string())
                 };
@@ -249,11 +250,11 @@ impl EffectRunner<Calls> for CallsRunner {
 }
 
 /// The batch op as the tables hold it: ids as text, the purpose as the enum of the transport.
-fn row_op(op: &StoreOp) -> crate::store::RowOp {
-    match op {
-        StoreOp::PutPending { pending, credential_digest, response_key } => crate::store::RowOp::PutPending(crate::transport::encrypted::state::Pending {
+fn row_op(op: &StoreOp) -> Result<crate::store::RowOp, String> {
+    Ok(match op {
+        StoreOp::Pending { pending, credential_digest, response_key } => crate::store::RowOp::PutPending(crate::transport::encrypted::state::Pending {
             credential_digest: credential_digest.clone(),
-            request_id: pending.request_id.to_string(),
+            request_id: super::session_runner::wire_request_id(pending.request_id),
             response_key: response_key.clone(),
             sequence: i64::try_from(pending.sequence).unwrap_or(i64::MAX),
             path: pending.path.clone(),
@@ -262,6 +263,9 @@ fn row_op(op: &StoreOp) -> crate::store::RowOp {
             purpose: if pending.purpose == 0 { crate::transport::NetworkPurpose::Standard } else { crate::transport::NetworkPurpose::Transfer },
         }),
         StoreOp::RemovePending => crate::store::RowOp::RemovePending,
-        StoreOp::PutSession { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
-    }
+        StoreOp::Session { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
+        StoreOp::RemoveIntent { op_id } => crate::store::RowOp::RemoveIntent(*op_id),
+        StoreOp::RemoveRows { model, ids } => crate::store::RowOp::RemoveRows { model: model.clone(), ids: ids.clone() },
+        StoreOp::Rows { .. } | StoreOp::Intent { .. } | StoreOp::Upload { .. } | StoreOp::RemoveUpload { .. } => return Err(format!("{op:?} is written by the executor of its owner (Window, Feed, Outbox, Transfer): their payload types extend `Write`")),
+    })
 }

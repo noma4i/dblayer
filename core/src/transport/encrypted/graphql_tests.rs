@@ -15,9 +15,11 @@ async fn transport(rest: MockTransport) -> (EncryptedTransport, Arc<FakeServer>)
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let server = FakeServer::new(clock.clone());
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
-    let client = EncryptedClient::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), Db::open_in_memory(Vec::new(), None).unwrap(), clock).unwrap();
-    client.mutate(&client.admit("test call").unwrap(), "/api/auth/social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
-    (EncryptedTransport::new(Arc::new(client), Arc::new(rest)), server)
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let client = Arc::new(EncryptedClient::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), db.clone(), clock).unwrap());
+    client.start_owners_in_tests(&db);
+    client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    (EncryptedTransport::new(client, Arc::new(rest)), server)
 }
 
 #[tokio::test]

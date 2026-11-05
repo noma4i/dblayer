@@ -18,6 +18,18 @@ use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::{CredentialSlot, EncryptedClient};
 use crate::transport::{NetworkPurpose, TransportError};
 
+/// The request id of the owner as the wire carries it: a UUID of version 4 that holds the 64 bits of the id.
+pub(crate) fn wire_request_id(id: RequestId) -> String {
+    format!("{:08x}-0000-4000-8000-{:012x}", id >> 48, id & 0xffff_ffff_ffff)
+}
+
+/// The request id of the owner that a wire id holds.
+pub(crate) fn request_id_of_wire(wire: &str) -> Option<RequestId> {
+    let (high, rest) = wire.split_once('-')?;
+    let node = rest.rsplit('-').next()?;
+    Some((u64::from_str_radix(high, 16).ok()? << 48) | u64::from_str_radix(node, 16).ok()?)
+}
+
 /// A credential the executor generated: the secret, its full digest and the 8 bytes the owners compare.
 struct Minted {
     credential: String,
@@ -32,11 +44,13 @@ pub(super) struct SessionRunner {
     running: HashMap<RequestId, AbortHandle>,
     minted: HashMap<u64, Minted>,
     keys: HashMap<RequestId, String>,
+    /// The identity that the last step committed: the `Reply` of the same step waits for its publication.
+    committing: Option<u64>,
 }
 
 impl SessionRunner {
     pub fn new(wiring: Arc<Wiring>, client: Arc<EncryptedClient>, credentials: Arc<dyn CredentialSlot>, executor: tokio::runtime::Handle) -> Self {
-        Self { wiring, client, credentials, executor, running: HashMap::new(), minted: HashMap::new(), keys: HashMap::new() }
+        Self { wiring, client, credentials, executor, running: HashMap::new(), minted: HashMap::new(), keys: HashMap::new(), committing: None }
     }
 
     /// What `Open` of the owner takes: the stored `encrypted_session` (signed in when its sequence is above 0) and the stored `encrypted_pending`.
@@ -44,7 +58,7 @@ impl SessionRunner {
         let credential = client.stored_session()?.filter(|session| session.sequence > 0).and_then(|session| crate::store::identity_of(&session.credential_digest).map(|digest| Credential { digest, sequence: u64::try_from(session.sequence).unwrap_or(0) }));
         let operations = client.session_operations();
         let pending = client.stored_pending()?.and_then(|row| {
-            let request_id = row.request_id.parse().ok()?;
+            let request_id = request_id_of_wire(&row.request_id)?;
             let sessionless = row.credential_digest.is_empty();
             let operation = operations.iter().find(|def| def.path == row.path && row.owner.is_none()).map(|def| def.name.clone()).unwrap_or_default();
             Some(PendingCall {
@@ -103,7 +117,7 @@ fn input_of(request_id: RequestId, logout: &str, path: &str, result: Result<crat
             SessionInput::Response { request_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), credential: None, revoked }
         }
         Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, temporary: false, auth: true },
-        Err(error) if permanently_refused(&error) => SessionInput::HttpError { request_id, temporary: false, auth: false },
+        Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_)) => SessionInput::HttpError { request_id, temporary: false, auth: false },
         Err(TransportError::Interrupted(_)) => SessionInput::Dropped { request_id },
         Err(_) => SessionInput::HttpError { request_id, temporary: true, auth: false },
     }
@@ -126,15 +140,15 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             SessionEffect::CommitPending { batch, epoch, pending } => {
                 let response_key = self.keys.entry(pending.request_id).or_insert_with(random_token).clone();
                 let credential_digest = self.digest_for(&pending);
-                self.commit(back, batch, epoch, vec![StoreOp::PutPending { pending, credential_digest, response_key }]);
+                self.commit(back, batch, epoch, vec![StoreOp::Pending { pending, credential_digest, response_key }]);
             }
             SessionEffect::CommitLanding { batch, epoch, digest, sequence } => {
                 let digest = digest.and_then(|identity| self.minted.get(&identity)).map(|minted| minted.digest.clone());
-                self.commit(back, batch, epoch, vec![StoreOp::PutSession { digest, sequence }, StoreOp::RemovePending]);
+                self.commit(back, batch, epoch, vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending]);
             }
             SessionEffect::RemovePending { batch, epoch } => self.commit(back, batch, epoch, vec![StoreOp::RemovePending]),
             SessionEffect::HttpRequest { pending } => {
-                let stored_key = self.client.stored_pending().ok().flatten().filter(|row| row.request_id == pending.request_id.to_string()).map(|row| row.response_key);
+                let stored_key = self.client.stored_pending().ok().flatten().filter(|row| row.request_id == wire_request_id(pending.request_id)).map(|row| row.response_key);
                 let (credential, key) = match self.secret_for(&pending, stored_key) {
                     Ok(secret) => secret,
                     Err(_) => return back.reply(EpochStamp::Control, SessionInput::HttpError { request_id: pending.request_id, temporary: true, auth: false }),
@@ -146,7 +160,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let sequence = (!pending.sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
                 let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
                     crate::db::lock::assert_no_library_lock("HttpExchange::post");
-                    let result = client.send_once(credential.as_deref(), &request_id.to_string(), &key, sequence, &pending.path, &body, purpose).await;
+                    let result = client.send_once(credential.as_deref(), &wire_request_id(request_id), &key, sequence, &pending.path, &body, purpose).await;
                     let input = input_of(request_id, client.logout_path(), &pending.path, result);
                     back.reply(EpochStamp::Control, input);
                 });
@@ -161,10 +175,17 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 }
             }
             SessionEffect::ScheduleTick { .. } => {}
-            SessionEffect::CredentialCommitted(committed) => self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(committed)),
+            SessionEffect::CredentialCommitted(committed) => {
+                self.committing = Some(committed.identity);
+                self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(committed));
+            }
             SessionEffect::ServerEnded(ended) => self.wiring.to_lifecycle(LifecycleInput::ServerEnded(ended)),
             SessionEffect::Reply { id, answer } => {
-                self.wiring.outcomes.settle(OutcomeId::from_raw(id as ReplyId), LifeReply::Session(answer));
+                let (id, reply) = (OutcomeId::from_raw(id as ReplyId), LifeReply::Session(answer));
+                match self.committing.take() {
+                    Some(identity) => self.wiring.settle_after_publish(identity, id, reply),
+                    None => { self.wiring.outcomes.settle(id, reply); }
+                }
             }
             SessionEffect::Answer { author, req_id, outcome } => self.wiring.answer_author(author, req_id, outcome),
             SessionEffect::Drained(drained) => self.wiring.to_lifecycle(LifecycleInput::Drained(drained)),

@@ -105,7 +105,7 @@ fn the_values_survive_a_restart_and_a_cache_reset_clears_them() { crate::test_wa
     }
     let rig = rig_on(Db::open(&path, specs(), None).unwrap(), transport, SyncConfig::default());
     assert_eq!(read(&rig, "feed", &none(), "m1"), values("imp-1", 5));
-    rig.db.reset(&["moments"]).unwrap();
+    rig.db.clear_models(&["moments"]).unwrap();
     assert_eq!(read(&rig, "feed", &none(), "m1"), None);
 }) }
 

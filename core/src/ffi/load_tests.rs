@@ -52,7 +52,7 @@ async fn a_data_reset_ends_the_held_stream_with_its_epoch_and_a_new_stream_reloa
     let live = db.watch_query(query, listener.clone());
     within(live.wait_for_initial_load()).await.unwrap();
     crate::test_wait::yield_until("the first row", || listener.heard().iter().any(|seen| seen.size == 1)).await;
-    db.db.reset_all().unwrap();
+    db.db.clear_account().unwrap();
     let ended = Arc::new(Rows::default());
     let _watching = db.watch_query(query, ended.clone());
     crate::test_wait::yield_until("the reset and the reloaded row", || ended.last().is_some_and(|seen| seen.size == 1)).await;
@@ -184,7 +184,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     let (db, transport, _) = open_rig(Some(clock), Some(hold.clone()), None).await;
     let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
-    db.db.reset_all().unwrap();
+    db.db.clear_account().unwrap();
     assert!(within(load).await.unwrap().is_err(), "the explicit load waited for its request after the reset");
     within(crate::ffi::settled(&db)).await.unwrap();
     assert!(db.streams.quiet(), "the ended load left a lease: {:?}", db.streams.held());
@@ -408,7 +408,7 @@ async fn a_failure_after_a_confirmed_reset_reaches_the_query_opened_after_it_onc
     within(entered_rx).await.unwrap();
     let held = within(subscriptions.recv()).await.unwrap();
     let resetting = database.clone();
-    within(tokio::task::spawn_blocking(move || resetting.db.reset_all())).await.unwrap().unwrap();
+    within(tokio::task::spawn_blocking(move || resetting.db.clear_account())).await.unwrap().unwrap();
     match within(received.recv()).await.expect("the first query ends with the reset") {
         Heard::Ended => {}
         Heard::Failure(error) => panic!("the first query heard {error:?} before its end"),

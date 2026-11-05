@@ -75,12 +75,14 @@ pub struct EncryptedClient {
     audience: String,
     key: ServerKey,
     http: Arc<dyn HttpExchange>,
-    credentials: Arc<dyn CredentialSlot>,
+    pub(super) credentials: Arc<dyn CredentialSlot>,
     db: Db,
     pub(super) clock: Arc<dyn Clock>,
     pub(crate) online: Arc<crate::transport::Connectivity>,
     credential: Arc<CredentialCell>,
-    life: std::sync::OnceLock<std::sync::Weak<crate::owners::life::Life>>,
+    pub(super) life: std::sync::OnceLock<std::sync::Weak<crate::owners::life::Life>>,
+    #[cfg(test)]
+    pub(super) kept: Mutex<Vec<Arc<crate::owners::life::Life>>>,
     progress: Arc<RetryCalls>,
 }
 
@@ -95,28 +97,6 @@ struct CredentialState {
 struct CredentialCell {
     state: Mutex<CredentialState>,
     settled: Condvar,
-    #[cfg(test)]
-    parked: Mutex<Option<Arc<ResetPark>>>,
-}
-
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct ResetPark {
-    pub(crate) entered: std::sync::atomic::AtomicBool,
-    pub(crate) release: std::sync::atomic::AtomicBool,
-}
-
-#[cfg(test)]
-impl CredentialCell {
-    fn park(&self) {
-        use std::sync::atomic::Ordering::SeqCst;
-        let Some(park) = crate::db::locked(&self.parked).take() else { return };
-        park.entered.store(true, SeqCst);
-        for _ in 0..10_000 {
-            if park.release.load(SeqCst) { break; }
-            thread::sleep(std::time::Duration::from_millis(1));
-        }
-    }
 }
 
 struct Loading<'a>(&'a CredentialCell);
@@ -153,7 +133,7 @@ fn storage(error: rusqlite::Error) -> TransportError {
     }
 }
 
-fn session_failure(error: crate::owners::session::SessionError) -> TransportError {
+pub(super) fn session_failure(error: crate::owners::session::SessionError) -> TransportError {
     use crate::owners::session::SessionError as Failed;
     match error {
         Failed::Revoked => TransportError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },
@@ -238,7 +218,7 @@ impl EncryptedClient {
         }
         let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Decode(error.to_string()))?;
         let online = db.connectivity();
-        let client = Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Arc::default(), life: std::sync::OnceLock::new(), progress: Arc::default() };
+        let client = Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Arc::default(), life: std::sync::OnceLock::new(), #[cfg(test)] kept: Mutex::new(Vec::new()), progress: Arc::default() };
         if client.db.shared.store.take_session_end_replay() {
             client.credentials.clear()?;
             let admitted = client.admit("open encrypted state")?;
@@ -265,7 +245,7 @@ impl EncryptedClient {
         check_path(path)?;
         let life = self.life.get().and_then(std::sync::Weak::upgrade).ok_or_else(|| TransportError::Interrupted("the database closed".into()))?;
         let waiter = life.mutate_wait(owner, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
-        match admitted.run(waiter.wait()).await? {
+        match admitted.run(async { waiter.wait().await }).await? {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
                 crate::owners::session::AuthorOutcome::Response(text) => Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
                 crate::owners::session::AuthorOutcome::Error(error) => Err(session_failure(error)),
@@ -279,10 +259,6 @@ impl EncryptedClient {
             let body = serde_json::from_str(&pending.body).map_err(|error| TransportError::Decode(error.to_string()))?;
             Ok((pending.path, body))
         }).transpose()
-    }
-
-    pub(crate) fn logout_pending(&self) -> Result<bool, TransportError> {
-        Ok(self.read_connection(state::pending)?.is_some_and(|pending| pending.path == self.config.endpoints.logout))
     }
 
     pub(crate) fn pending_owner(&self) -> Result<Option<crate::transport::RequestOwner>, TransportError> {
@@ -406,21 +382,6 @@ impl EncryptedClient {
         }
         state.cached = Some(credential.clone());
         Ok(credential)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn park_next_reset_for_test(&self) -> Arc<ResetPark> {
-        let park = Arc::new(ResetPark::default());
-        *crate::db::locked(&self.credential.parked) = Some(park.clone());
-        park
-    }
-
-    /// Clears the credential and the session state without ending the session of the database.
-    #[cfg(test)]
-    pub(crate) fn clear_credential_for_test(&self) -> Result<(), TransportError> {
-        self.credentials.clear()?;
-        crate::db::locked(&self.credential.state).cached = None;
-        self.write_as(&Authority::Internal(crate::ffi::legacy::Internal::for_tests()), state::clear)
     }
 
     #[cfg(test)]

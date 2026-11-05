@@ -13,7 +13,6 @@ use crate::read::LoadMoreVerdict;
 use crate::sync::{LoadOptions, LoadStatus, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
 use crate::upload::UploadOperations;
-use crate::ffi::legacy::Leases;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
@@ -229,7 +228,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -256,10 +255,12 @@ impl Database {
         if uploads.is_some() && transport.is_none() {
             return Err(DbError::Invalid { detail: "upload operations require a transport".into() });
         }
+        let operations: Arc<OnceLock<crate::sync::WeakSync>> = Arc::default();
+        let life = Self::build_life(&db, transport.clone(), &session, operations.clone())?;
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
+        if let Some(sync) = &sync { let _ = operations.set(sync.downgrade()); }
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        let life = Self::build_life(&db, &sync, &session)?;
         Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), testing: false, wires: Arc::new(wires) }))
     }
 
@@ -307,17 +308,16 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Db`. It returns after the first `Publish`.
-    fn build_life(db: &Db, sync: &Option<Sync>, session: &Option<Arc<EncryptedClient>>) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, lookup: Arc<OnceLock<crate::sync::WeakSync>>) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
-        let lookup = sync.as_ref().map(Sync::downgrade);
         let operations: crate::owners::life::OperationLookup = Arc::new(move |name| {
-            let sync = lookup.as_ref()?.upgrade()?;
+            let sync = lookup.get()?.upgrade()?;
             let definition = crate::db::locked(&sync.inner.operations).get(name).cloned()?;
             Some((definition.document.clone(), definition.root_path.clone()))
         });
         let ports = crate::owners::life::Ports {
             db: db.clone(),
-            transport: sync.as_ref().map(|sync| sync.inner.transport.clone()),
+            transport,
             executor,
             operations,
             credentials: session.as_ref().map(|client| client.credential_slot()),
@@ -707,7 +707,7 @@ impl Database {
     pub async fn close_database(&self) -> Result<(), DbError> {
         let waiter = self.life.close();
         let answered = on_executor(async move {
-            tokio::time::timeout(Duration::from_secs(10), waiter.wait()).await.map(drop).map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
+            tokio::time::timeout(Duration::from_secs(10), async { waiter.wait().await }).await.map(drop).map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
         }).await;
         let life = self.life.clone();
         let stored = blocking(move || Ok(life.wait_store_closed(Duration::from_secs(10)))).await;
@@ -734,13 +734,6 @@ impl Database {
     #[cfg(test)]
     pub(crate) async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
         self.begin_load_all(epoch, model, relation, params_json, force)?.result().await
-    }
-
-    /// The part of `close` that does not wait: for a caller that cannot await.
-    #[cfg(test)]
-    pub(super) fn close_now(&self) {
-        let _ = futures_lite_block(self.life.close().wait());
-        if let Some(lease) = self.lease.get() { lease.release(); }
     }
 
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() }) }
@@ -795,10 +788,3 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
     }
 }
 
-#[cfg(test)]
-fn futures_lite_block<T>(future: impl std::future::Future<Output = T>) -> T {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let handle = executor().expect("the executor").handle().clone();
-    handle.spawn(async move { let _ = sender.send(future.await); });
-    receiver.recv_timeout(Duration::from_secs(10)).expect("the owners answered within 10 s")
-}

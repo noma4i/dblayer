@@ -37,7 +37,7 @@ fn a_reset_gives_the_order_of_the_server_back() { crate::test_wait::paused(async
     let (log, _window) = watch_thread(&rig, 50);
     assert_eq!(shown(&log), ["m1", "m2", "m5", "m9"]);
 
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
     rig.db.await_revision(rig.db.revision_seq().unwrap());
     assert_eq!(shown(&log), Vec::<String>::new());
 

@@ -72,11 +72,8 @@ async fn a_flush_woken_during_a_model_reset_sends_the_queued_write_once_after_th
     rig.sync.set_online(false);
     rig.db.update(&rig.db.admit().unwrap(), "moments", &crate::identity::RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
-    let lifecycle = rig.db.shared.store.lifecycle.clone();
-    let permit = lifecycle.begin_blocking(crate::ffi::legacy::Boundary::Models, None).unwrap();
     rig.sync.set_online(true);
-    rig.db.reset_in(&permit, &["users"]).unwrap();
-    permit.finish();
+    rig.db.clear_models(&["users"]).unwrap();
     crate::test_wait::within(rig.transport.await_calls("UpdateMoment", 1)).await;
     crate::test_wait::yield_until("the update left the outbox", || rig.db.outbox().unwrap().is_empty()).await;
     assert_eq!(rig.transport.call_count("UpdateMoment"), 1);

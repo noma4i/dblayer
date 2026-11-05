@@ -43,7 +43,7 @@ async fn an_old_subscription_admission_cannot_land_an_event_in_the_next_session(
     let life = db.shared.store.lifecycle.clone();
     assert!(life.start_session_in_tests(Some("A".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     let admitted = life.admit(crate::ffi::legacy::Origin::Session, "subscription event").unwrap();
-    db.end_session::<crate::transport::TransportError>(crate::ffi::legacy::End::Local, None, |_| Ok(())).await.unwrap();
+    life.lose_session_in_tests();
     assert!(life.start_session_in_tests(Some("B".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     let event = upsert_envelope(&db, WriteOrigin::Event, "u1", "A");
 

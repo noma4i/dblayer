@@ -12,9 +12,9 @@ fn inv_fresh_04_resets_close_only_the_selected_models_operations() {
         db.update(&db.admit().unwrap(), "users", &rid("u1"), obj(json!({"name": "Bea"}))).unwrap();
         db.create(&db.admit().unwrap(), "moments", obj(json!({"userId": "u1", "text": "new"}))).unwrap();
         if all {
-            db.reset_all().unwrap();
+            db.clear_account().unwrap();
         } else {
-            db.reset(&["moments"]).unwrap();
+            db.clear_models(&["moments"]).unwrap();
         }
         let left: Vec<String> = db.outbox().unwrap().into_iter().map(|entry| entry.operation.action_key).collect();
         assert_eq!(left, if all { Vec::new() } else { vec!["users:update".to_string()] }, "all={all}");
@@ -69,7 +69,7 @@ fn inv_fresh_04_a_full_reset_leaves_no_row_in_any_data_table() {
         .store
         .save_window(&crate::store::WindowRecord { key: format!("{}:forward", scope.key.as_str()), cursor: None, has_next: false, total: None, pages: 1, issued: 0, applied: 0, generation: 0 })
         .unwrap();
-    db.reset_all().unwrap();
+    db.clear_account().unwrap();
     let kept = ["manifest", "quarantine", "quarantine_value", "encrypted_session", "encrypted_pending"];
     let inner = db.shared.store.lock();
     let tables: Vec<String> = {

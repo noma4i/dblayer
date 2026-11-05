@@ -1033,7 +1033,6 @@ async fn a_missed_revision_gives_one_new_snapshot() {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::await_holding_lock)]
 async fn a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row() {
-    use crate::ffi::legacy::{Boundary, End};
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
@@ -1043,13 +1042,12 @@ async fn a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row()
     let writer = store.lock();
     let sender = { let database = rig.database.clone(); tokio::spawn(async move { database.send(message(epoch, "late", 9)).await }) };
     yield_until("the send reached the writer", || store.lifecycle.writes_entered.load(Ordering::SeqCst) > pinned).await;
-    let permit = store.lifecycle.try_begin(Boundary::SessionEnd(End::Local), Some(epoch)).ok().and_then(Result::ok).expect("the epoch of the caller is current");
+    store.lifecycle.epoch_ended(crate::runtime::Cause::SessionReset);
     drop(writer);
     let sent = bound(sender).await.unwrap();
     assert!(matches!(sent, Err(DbError::Interrupted { .. })), "a send of the ended session ran: {sent:?}");
     yield_until("the admitted write finished", || store.lifecycle.writes_entered.load(Ordering::SeqCst) == pinned).await;
     assert_eq!(store.row_count("Message").unwrap(), 0, "the send wrote its row after its session ended");
-    drop(permit);
     rig.database.close_now();
 }
 
@@ -1204,10 +1202,10 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     }));
     let sender = { let database = rig.database.clone(); tokio::spawn(async move { database.send(message(epoch, "late", 9)).await }) };
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
-    let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
+    let waits = *store.lifecycle.line_waits.0.lock().unwrap();
     assert_eq!(rig.database.session_epoch(), epoch);
     let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session_in_tests(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
-    yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
+    yield_until("the session start reached the commit line", || *store.lifecycle.line_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while the commit of the send was held");
     release_tx.send(()).unwrap();
     tokio::task::spawn_blocking(move || committed_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
@@ -1231,7 +1229,6 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::await_holding_lock)]
 async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing() {
-    use crate::ffi::legacy::{Boundary, End};
     let rig = Rig::encrypted().await;
     rig.world.seed_message("B", "b1", "hello", 1);
     rig.login_ios("A").await;
@@ -1256,10 +1253,9 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     let writer = store.lock();
     let late = { let database = rig.database.clone(); tokio::spawn(async move { database.update(current, "User".into(), "user".into(), json!({"name":"late"}).to_string(), "{}".into()).await }) };
     yield_until("the update reached the writer", || store.lifecycle.writes_entered.load(Ordering::SeqCst) > pinned).await;
-    let permit = store.lifecycle.try_begin(Boundary::SessionEnd(End::Local), Some(current)).ok().and_then(Result::ok).expect("the epoch of the caller is current");
+    store.lifecycle.epoch_ended(crate::runtime::Cause::SessionReset);
     drop(writer);
     assert!(refused(bound(late).await.unwrap().map(|_| ())), "an update that waited for the writer while the session ended ran");
-    drop(permit);
     rig.database.close_now();
 }
 
@@ -1840,39 +1836,6 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     rig.database.close_now();
 }
 
-/// Fable review 1 (old lines lifecycle/mod.rs finish_transition, sync/mod.rs changed): a message of A queued offline never goes out when another identity takes the session without a session reset, also when a flush of the new epoch runs at the first moment the epoch admits work. The app waiting for its outcome hears Interrupted.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_queued_message_of_a_never_goes_out_when_another_identity_takes_the_session_without_a_reset() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
-    let receipt = bound(rig.database.send(message(epoch, "of A", 9))).await.unwrap();
-    assert_eq!(rig.world.count("SendMessage"), 0, "the offline send reached the server");
-    let waiting = { let database = rig.database.clone(); tokio::spawn(async move { database.outcome(receipt).await }) };
-    let (opened, opened_rx) = std::sync::mpsc::channel();
-    let (release_tx, release) = std::sync::mpsc::channel::<()>();
-    let expired = Arc::new(AtomicBool::new(false));
-    let release_expired = expired.clone();
-    *rig.database.db.shared.store.lifecycle.after_publish.lock().unwrap() = Some(Box::new(move || { opened.send(()).unwrap(); if release.recv_timeout(std::time::Duration::from_secs(20)).is_err() { release_expired.store(true, Ordering::SeqCst); } }));
-    let switched = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || { let lifecycle = &database.db.shared.store.lifecycle; lifecycle.start_session_in_tests(Some("another-account".into()), lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok() }) };
-    tokio::task::spawn_blocking(move || opened_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
-    assert_ne!(rig.database.session_epoch(), epoch, "the new epoch was not published");
-    rig.database.set_online(true).unwrap();
-    bound(rig.database.flush()).await.unwrap();
-    release_tx.send(()).unwrap();
-    assert!(bound(switched).await.unwrap(), "the session start of the other identity did not finish");
-    assert!(!expired.load(Ordering::SeqCst), "the held session start ran out of time and was not released by the test");
-    let outcome = bound(waiting).await.unwrap().unwrap();
-    assert!(matches!(outcome, WireOperationOutcome::Interrupted), "the outcome of the message of A was {outcome:?}");
-    settle(&rig).await;
-    bound(rig.database.flush()).await.unwrap();
-    settle(&rig).await;
-    assert_eq!(rig.world.count("SendMessage"), 0, "the message of the account that left went out for the next one");
-    assert!(rig.database.db.outbox().unwrap().is_empty(), "an operation of the account that left is still queued");
-    rig.database.close_now();
-}
-
 /// Fable review 3 (old lines sync/send/flush.rs land_response): a create the server confirmed keeps its row when the cache of another model clears between the answer and its landing. The epoch stays, only the generation moves.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_lands() {
@@ -1883,7 +1846,7 @@ async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_la
     let receipt = bound(rig.database.send(message(epoch, "kept", 9))).await.unwrap();
     gate.entered_for("the send").await;
     let generation = rig.database.db.generation();
-    let reset = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.reset(&["User"])) };
+    let reset = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.clear_models(&["User"])) };
     bound(reset).await.unwrap().unwrap();
     assert_ne!(rig.database.db.generation(), generation, "the reset of another model did not move the generation");
     assert_eq!(rig.database.session_epoch(), epoch, "the reset of another model ended the epoch");
@@ -2069,9 +2032,9 @@ async fn a_public_flush_holds_the_commit_line_of_its_epoch_while_it_commits() {
     rig.database.db.connectivity().set_online(true);
     let flushing = { let database = rig.database.clone(); tokio::spawn(async move { database.flush().await }) };
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
-    let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
+    let waits = *store.lifecycle.line_waits.0.lock().unwrap();
     let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session_in_tests(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
-    yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
+    yield_until("the session start reached the commit line", || *store.lifecycle.line_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while a commit of the flush was held");
     release_tx.send(()).unwrap();
     let _ = bound(flushing).await.unwrap();

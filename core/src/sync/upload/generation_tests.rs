@@ -11,7 +11,7 @@ fn inv_fresh_03_a_step_answered_after_reset_all_sends_nothing_and_leaves_nothing
     let source = file(b"abcdef");
     crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     rig.transport.await_calls("CreateBlob", 1).await;
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!((rig.transport.put_calls().len(), rig.transport.call_count("CreateMoment")), (0, 0));
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -27,7 +27,7 @@ fn inv_fresh_03_the_mutation_answered_after_reset_all_does_not_bring_the_row_bac
     crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     crate::test_wait::pass(Duration::from_secs(1)).await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 1);
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(text_of(&rig, "moments", "m9"), None);
     assert!(rig.db.outbox().unwrap().is_empty());
@@ -41,7 +41,7 @@ fn inv_upload_04_a_transfer_in_flight_during_a_reset_does_not_send_its_mutation_
     let source = file(b"abcdef");
     crate::sync::rig::app(&rig.sync, rig.sync.upload(&rig.sync.inner.db.admit().unwrap(), "moments", &rid("m1"), "upload", input(&source))).await.unwrap();
     rig.transport.await_put_calls(1).await;
-    rig.db.reset(&["moments"]).unwrap();
+    rig.db.clear_models(&["moments"]).unwrap();
     rig.sync.wait_uploads().await;
     assert_eq!(rig.transport.call_count("CreateMoment"), 0);
     assert!(rig.db.outbox().unwrap().is_empty());

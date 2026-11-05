@@ -360,7 +360,7 @@ fn logout_leaves_no_refused_operation_able_to_block_the_next_one_of_the_row() { 
     rig.transport.enqueue("UpdateMoment", updated("m1", "later"));
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(statuses(&rig), [OperationStatus::Failed]);
-    rig.db.reset_all().unwrap();
+    rig.db.clear_account().unwrap();
     assert!(rig.db.outbox().unwrap().is_empty());
     put(&rig, "moments", moment("m1", "old"));
     rig.db.update(&rig.db.admit().unwrap(), "moments", &rid("m1"), params(json!({"text": "later"}))).unwrap();

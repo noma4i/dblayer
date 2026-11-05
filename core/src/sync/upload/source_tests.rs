@@ -48,7 +48,7 @@ fn reset_rejects_upload_admission_waiting_for_a_blocking_thread() {
         let admitted = rig.db.admit().unwrap();
         let mut upload = Box::pin(crate::sync::rig::app(&rig.sync, rig.sync.upload_create(&admitted, "moments", "upload", params(json!({"id":"old-upload","text":"old account"})), input(&source))));
         let pending = matches!(upload.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Pending);
-        rig.db.reset_all().unwrap();
+        rig.db.clear_account().unwrap();
         release_tx.send(()).unwrap();
         occupied.await.unwrap();
         let result = upload.await;

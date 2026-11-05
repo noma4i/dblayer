@@ -221,7 +221,7 @@ fn inv_ephemeral_06_destroying_a_row_removes_its_values() {
 fn inv_ephemeral_06_reset_forgets_every_value() {
     let (db, _) = rig();
     typing(&db, true);
-    db.reset_all().unwrap();
+    db.clear_account().unwrap();
     put(&db, "people", json!({"id": "p1", "name": "Ann"}));
     assert_eq!(value_of(&db, "typing"), json!(false));
 }
@@ -232,7 +232,7 @@ async fn an_old_admission_cannot_write_ephemeral_data_in_the_next_session() {
     let life = db.shared.store.lifecycle.clone();
     assert!(life.start_session_in_tests(Some("A".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     let admitted = life.admit(crate::ffi::legacy::Origin::Session, "ephemeral write").unwrap();
-    db.end_session::<crate::transport::TransportError>(crate::ffi::legacy::End::Local, None, |_| Ok(())).await.unwrap();
+    life.lose_session_in_tests();
     assert!(life.start_session_in_tests(Some("B".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     put(&db, "people", json!({"id": "p1", "name": "B"}));
 

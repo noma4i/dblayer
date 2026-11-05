@@ -249,40 +249,6 @@ async fn a_confirmed_logout_that_reaches_the_commit_after_the_close_clears_nothi
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ending_the_session_of_an_older_epoch_ends_nothing() {
-    use crate::ffi::legacy::{Boundary, End, Refused};
-    let database = open(Arc::new(Server::default())).await;
-    let lifecycle = database.db.shared.store.lifecycle.clone();
-    database.session_reset().await.unwrap();
-    let epoch = lifecycle.snapshot().session_epoch;
-    assert!(matches!(lifecycle.try_begin(Boundary::SessionEnd(End::Server), Some(epoch - 1)), Err(Refused::Stale)));
-    assert_eq!(lifecycle.snapshot().session_epoch, epoch, "an answer of an older session ended the newer one");
-    drop(lifecycle.try_begin(Boundary::SessionEnd(End::Server), Some(epoch)).ok().and_then(Result::ok).expect("the epoch of the caller is current"));
-    assert_eq!(lifecycle.snapshot().session_epoch, epoch + 1);
-    database.close_now();
-    assert!(matches!(lifecycle.try_begin(Boundary::SessionEnd(End::Server), Some(epoch + 1)), Err(Refused::Closed)), "a closed database accepted the end of a session");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_credential_created_while_a_reset_clears_keeps_its_session_state() {
-    let server = Arc::new(Server::default());
-    let database = open(server.clone()).await;
-    sign_in(&database, "A").await;
-    let park = database.session.as_ref().unwrap().park_next_reset_for_test();
-    let resetting = database.clone();
-    let reset = tokio::spawn(async move { resetting.session_reset().await });
-    crate::test_wait::yield_until("the reset is parked after the generation moved", || park.entered.load(std::sync::atomic::Ordering::SeqCst)).await;
-    let reading = database.clone();
-    let epoch = reading.session_epoch();
-    let mut read = tokio::spawn(async move { reading.refresh(epoch, "User".into(), "all".into(), "{}".into()).await });
-    assert!(within(&mut read).await.unwrap().is_err(), "an explicit read ran while the reset was clearing");
-    park.release.store(true, std::sync::atomic::Ordering::SeqCst);
-    within(reset).await.unwrap().unwrap();
-    within(database.refresh(database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap();
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation() {
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;

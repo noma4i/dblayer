@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
-use crate::ffi::legacy::{Holder, Lifecycle};
+use crate::ffi::legacy::{Holder, Leases};
 use super::open_slot::OpenSlot;
 use super::stream::tape::Rows;
 use super::{Config, Database, DbError, StreamEnd, StreamRequest};
@@ -13,7 +13,7 @@ use crate::test_wait::{join_within, within, yield_until};
 use crate::transport::{MockTransport, SubscriptionEvent};
 use crate::value::ScalarKind;
 
-struct Counting(AtomicUsize, Option<Arc<Lifecycle>>, Mutex<Vec<usize>>, std::sync::OnceLock<crate::ffi::legacy::Registration>);
+struct Counting(AtomicUsize, Option<Arc<Leases>>, Mutex<Vec<usize>>, std::sync::OnceLock<crate::ffi::legacy::Registration>);
 impl Holder for Counting {
     fn close(&self) {
         self.0.fetch_add(1, Ordering::SeqCst);
@@ -42,7 +42,7 @@ fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) 
 
 #[test]
 fn the_open_streams_close_each_member_once_and_refuses_late_members() {
-    let streams = Arc::new(Lifecycle::default());
+    let streams = Arc::new(Leases::default());
     let first = Arc::new(Counting(AtomicUsize::new(0), Some(streams.clone()), Mutex::default(), Default::default()));
     let dropped = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()));
     streams.enroll(&first);
@@ -61,7 +61,7 @@ fn the_open_streams_close_each_member_once_and_refuses_late_members() {
 
 #[test]
 fn enrolling_a_stream_does_the_same_work_with_existing_streams() {
-    let streams = Arc::new(Lifecycle::default());
+    let streams = Arc::new(Leases::default());
     let members: Vec<_> = (0..128).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
     for member in &members { streams.enroll(member); }
     let before = streams.work();
@@ -174,37 +174,34 @@ impl Holder for Journal {
 
 #[test]
 fn a_transition_returns_after_its_callbacks_ran_even_while_another_thread_delivers() {
-    use crate::ffi::legacy::Change;
-    let streams = Arc::new(Lifecycle::default());
+    let streams = Arc::new(Leases::default());
     let (entered, entered_receiver) = std::sync::mpsc::channel();
     let (release, release_receiver) = std::sync::mpsc::channel();
     let journal = Arc::new(Journal { log: Mutex::default(), hold: Mutex::new(Some(release_receiver)), entered, registration: Default::default() });
     let at_enrollment = streams.enroll(&journal);
     assert!(at_enrollment.session.is_none() && !at_enrollment.closed);
-    let content = |models: Option<Vec<String>>| { let streams = streams.clone(); std::thread::spawn(move || { let permit = streams.begin_blocking(crate::ffi::legacy::Boundary::Content, None).unwrap(); permit.defer(Change::Cleared(models)); permit.finish(); }) };
-    let delivering = content(None);
+    let content = |models: Vec<String>| { let streams = streams.clone(); std::thread::spawn(move || streams.models_reset(1, &models)) };
+    let delivering = content(vec!["a".into()]);
     entered_receiver.recv_timeout(std::time::Duration::from_secs(5)).expect("the first callback started");
-    let ending = content(Some(Vec::new()));
+    let ending = content(Vec::new());
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(!ending.is_finished(), "the end of the session returned before its callbacks ran");
     release.send(()).unwrap();
     join_within(delivering);
     join_within(ending);
-    assert_eq!(*journal.log.lock().unwrap(), ["Cleared(None)", "Cleared(Some([]))"]);
+    assert_eq!(*journal.log.lock().unwrap(), ["Cleared(Some([\"a\"]))", "Cleared(Some([]))"]);
 }
 
 #[test]
 fn a_transition_walks_only_the_holders_open_now() {
-    let streams = Arc::new(Lifecycle::default());
+    let streams = Arc::new(Leases::default());
     let crowd: Vec<_> = (0..4096).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
     for member in &crowd { streams.enroll(member); }
     drop(crowd);
     let open: Vec<_> = (0..3).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
     for member in &open { streams.enroll(member); }
     let before = streams.work();
-    let permit = streams.begin_blocking(crate::ffi::legacy::Boundary::Content, None).unwrap();
-    permit.defer(crate::ffi::legacy::Change::Cleared(None));
-    permit.finish();
+    streams.models_reset(1, &[]);
     assert_eq!(streams.work() - before, 3, "a reset visited holders that were closed long ago");
 }
 

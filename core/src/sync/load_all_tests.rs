@@ -113,7 +113,7 @@ fn load_all_reads_the_connection_to_the_confirmed_end() { crate::test_wait::paus
                 assert_eq!(flight_count(&rig), 0, "{}: the cancelled call left a flight", case.name);
                 load(false).await
             }
-            Run::ResetWhileTheFirstPageIsInFlight => tokio::join!(load(false), async { rig.db.reset(&["moments"]).unwrap() }).0,
+            Run::ResetWhileTheFirstPageIsInFlight => tokio::join!(load(false), async { rig.db.clear_models(&["moments"]).unwrap() }).0,
             Run::NewerWindowStored { cursor, has_next } => {
                 let key = rig.sync.window_key("moments", case.relation, &query_params).unwrap();
                 let newer = rig.sync.inner.next_issued().unwrap() + 1_000;

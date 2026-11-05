@@ -14,7 +14,7 @@ fn rid(text: &str) -> RowId {
 async fn reset_during_flush(rig: &Rig, models: &[&str]) {
     let reset = async {
         crate::test_wait::pass(Duration::from_secs(1)).await;
-        rig.db.reset(models).unwrap();
+        rig.db.clear_models(models).unwrap();
     };
     let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), reset);
     flushed.unwrap();
@@ -60,7 +60,7 @@ fn a_create_answered_after_a_reset_of_another_model_leaves_no_temp_row_behind() 
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m77", "text": "hello", "userId": null}})).after(Duration::from_secs(5)));
     let reset = async {
         crate::test_wait::pass(Duration::from_secs(1)).await;
-        rig.db.reset(&["vibes"]).unwrap();
+        rig.db.clear_models(&["vibes"]).unwrap();
     };
     let (flushed, ()) = tokio::join!(crate::sync::rig::app(&rig.sync, async { rig.sync.flush(&rig.sync.inner.db.admit().unwrap()).await }), reset);
     flushed.unwrap();

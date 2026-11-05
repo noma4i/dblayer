@@ -9,15 +9,24 @@ use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 use super::lifecycle::Identity;
 
-/// One write of a batch to the tables `encrypted_*`, by value (R3).
+/// One write of a batch, by value (R3), typed by the kind of data (`store.md`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreOp {
+    /// Rows of the cache of a server model, as JSON objects.
+    Rows { model: String, rows: Vec<String> },
+    RemoveRows { model: String, ids: Vec<String> },
+    /// An operation of the queue, as the JSON of its record.
+    Intent { op: String },
+    RemoveIntent { op_id: i64 },
+    /// A row of `sync_upload`, as JSON.
+    Upload { row: String },
+    RemoveUpload { key: String },
     /// `encrypted_pending` = this row. `credential_digest` is the full digest of the credential, `response_key` seals the answer.
-    PutPending { pending: PendingCall, credential_digest: String, response_key: String },
+    Pending { pending: PendingCall, credential_digest: String, response_key: String },
     /// Remove the row `encrypted_pending`.
     RemovePending,
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
-    PutSession { digest: Option<String>, sequence: Option<u64> },
+    Session { digest: Option<String>, sequence: Option<u64> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

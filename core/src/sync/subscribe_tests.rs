@@ -139,7 +139,7 @@ fn refused_shared_batch_rereads_every_model_and_records_each_failed_recovery() {
         let users_events = super::model_event_tests::open_heard(&rig.sync, "users").await.unwrap();
         let moments_events = super::model_event_tests::open_heard(&rig.sync, "moments").await.unwrap();
         let shared = rig.db.shared.clone();
-        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.clear_models_in_tests()));
+        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { let _ = shared.store.clear_models_in_tests(&[]); }));
         rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"u", "name":"event"}, "second":{"id":"m9", "text":"event", "userId":"u"}}))));
         rig.transport.await_consumed("Signal").await;
         assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByUser")), (2, 2));
@@ -852,7 +852,7 @@ fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_a_gap_
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         let shared = rig.db.shared.clone();
         *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || {
-            shared.store.clear_models_in_tests();
+            shared.store.clear_models_in_tests(&[]);
         }));
         rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
         crate::test_wait::pass(Duration::from_secs(3)).await;
@@ -1212,7 +1212,7 @@ fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() { cr
     rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
     rig.transport.await_consumed("MomentChanged").await;
     let shared = rig.db.shared.clone();
-    *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.clear_models_in_tests()));
+    *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { let _ = shared.store.clear_models_in_tests(&[]); }));
     rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(SubscriptionFailure::new(SubscriptionFailureKind::Graphql, "refused")));
     crate::test_wait::pass(Duration::from_secs(1)).await;
     let status = updates.status();

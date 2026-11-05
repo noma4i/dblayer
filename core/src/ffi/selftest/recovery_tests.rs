@@ -77,7 +77,7 @@ async fn a_data_reset_between_a_refused_pending_request_and_the_session_reset_ke
     let refused = bound(database.refusal_of(row)).await;
     assert_eq!(refused.session_code, Some(SessionCode::Unauthenticated));
 
-    database.db.reset_all().unwrap();
+    database.db.clear_account().unwrap();
     let blocked = bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap_err();
 
     assert!(matches!(blocked, DbError::Network { .. }), "the data reset dropped the pending request: {blocked:?}");
