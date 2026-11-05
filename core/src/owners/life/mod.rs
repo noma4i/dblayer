@@ -93,6 +93,8 @@ pub(crate) struct Wiring {
     pub outcomes: Outcomes<LifeReply>,
     /// The answers of `Pull`: the registry of the platform calls that wait for the next value of a stream.
     pub pulls: Outcomes<super::read::deliveries::PullAnswer>,
+    /// The ids of streams: they stay below the bit that marks the waiters of platform calls in `Windows`.
+    pub next_stream: std::sync::atomic::AtomicU64,
     published: PublishedCell,
     ending: AtomicBool,
     store_closed: (Mutex<bool>, Condvar),
@@ -120,6 +122,7 @@ impl Wiring {
             addresses: OnceLock::new(),
             outcomes: Outcomes::new(),
             pulls: Outcomes::new(),
+            next_stream: std::sync::atomic::AtomicU64::new(1),
             published: PublishedCell::default(),
             ending: AtomicBool::new(false),
             store_closed: (Mutex::new(false), Condvar::new()),

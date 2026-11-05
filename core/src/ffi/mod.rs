@@ -31,6 +31,9 @@ mod database_tests;
 mod encrypted;
 pub(crate) mod stream;
 mod command;
+mod read;
+#[cfg(test)]
+mod read_tests;
 mod related;
 #[cfg(test)]
 mod related_tests;
@@ -59,6 +62,7 @@ pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use stream::{CachedQuery, EntityFetch, LivePhase, LoadMoreResult, Placement, Replacement, StreamCensus, StreamDelivery, StreamEnd, StreamRequest, StreamState, StreamValue, ValueSink};
 pub use command::CommandRequest;
+pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowPlace, RowRename};
 pub use upload_accepted::{UploadAcceptedSink, WireAcceptedUpload, WireRoundStep, WireUploadAccepted};
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
 pub use crate::transport::PutFile;

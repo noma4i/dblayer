@@ -148,6 +148,8 @@ impl super::Life {
     /// The caller of `id` gives up: the window decides whether the request goes on for the others.
     pub fn leave_load(&self, key: WindowKey, id: u64) { self.wiring.to_windows(WindowsInput::InterestMinus { key, id }); }
 
+    pub fn next_stream_id(&self) -> StreamId { self.wiring.next_stream.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
+
     pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, revision: i64, valid: bool) {
         let identity = self.published().identity.is_some();
         self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, revision, identity, valid });
