@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::transfer::{file_id, ShowSink, Shown, Source, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
+use super::transfer::{file_id, ShowSink, Shown, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, Wire};
 use crate::files::{CopiedSource, FileDirectories};
 use crate::lifecycle::Admitted;
@@ -57,7 +57,7 @@ pub struct StepDone {
 #[async_trait]
 pub(crate) trait StepCodec: Send + Sync + 'static {
     /// Step `part` (`None` = a single PUT). The first step of a multipart upload creates it and returns `upload_id`.
-    async fn step(&self, link: &Link, key: &str, part: Option<u32>, upload_id: Option<&str>, source: &Source) -> Result<StepDone, TransportError>;
+    async fn step(&self, link: &Link, key: &str, part: Option<u32>, upload_id: Option<&str>, source: &Source, steps: &Steps) -> Result<StepDone, TransportError>;
     /// The answer of `complete` carries `signed_id` of the file on the server.
     async fn complete(&self, link: &Link, key: &str, upload_id: Option<&str>, parts: &[(u32, Option<String>)]) -> Result<Option<String>, TransportError>;
     async fn discard_upload(&self, link: &Link, key: &str, upload_id: Option<&str>) -> Result<(), TransportError>;
@@ -80,6 +80,7 @@ struct StepAsk {
     part: Option<u32>,
     upload_id: Option<String>,
     source: Source,
+    steps: Steps,
 }
 
 /// What the owner asks of Lifecycle and Network.
@@ -125,7 +126,10 @@ impl TransferExecutor {
                 None
             } else {
                 Some(match result {
-                    Ok(CopiedSource::Ready { size, sha256, location, .. }) => TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place: location },
+                    Ok(CopiedSource::Ready { size, sha256, location, data }) => match keep_small_copy(&files, &id, location, &data) {
+                        Ok(location) => TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place: location },
+                        Err(error) => TransferInput::CopyFailed { transfer_id, attempt_id, error: error.to_string() },
+                    },
                     Ok(CopiedSource::Unreadable(error)) => TransferInput::CopyFailed { transfer_id, attempt_id, error },
                     Err(error) => TransferInput::CopyFailed { transfer_id, attempt_id, error: error.to_string() },
                 })
@@ -139,6 +143,16 @@ impl TransferExecutor {
             cancelled.store(true, Ordering::SeqCst);
             running.cancel();
         }));
+    }
+
+    /// The copy of the library when it exists: the original file may be gone after the call of `upload`.
+    fn local(&self, key: &str, source: Source) -> Source {
+        let id = file_id(key);
+        let copy = self.files.path(&id).filter(|path| path.exists()).or_else(|| Some(self.files.cache_target(&id, "source")).filter(|path| path.exists()));
+        match copy {
+            Some(path) => Source { path: path.to_string_lossy().into_owned(), ..source },
+            None => source,
+        }
     }
 
     fn link(&self) -> Option<Link> {
@@ -174,13 +188,14 @@ impl TransferExecutor {
     }
 
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
-        let StepAsk { key, part, upload_id, source } = ask;
+        let StepAsk { key, part, upload_id, source, steps } = ask;
+        let source = self.local(&key, source);
         self.task(
             stamp,
             back,
             transfer_id,
             TransferInput::StepError { transfer_id, attempt_id, temporary: true },
-            move |codec, link| Box::pin(async move { codec.step(&link, &key, part, upload_id.as_deref(), &source).await }),
+            move |codec, link| Box::pin(async move { codec.step(&link, &key, part, upload_id.as_deref(), &source, &steps).await }),
             move |result| match result {
                 Ok(done) => TransferInput::StepOk { transfer_id, attempt_id, part, upload_id: done.upload_id, etag: done.etag },
                 Err(error) => TransferInput::StepError { transfer_id, attempt_id, temporary: temporary(&error) },
@@ -219,6 +234,18 @@ impl TransferExecutor {
     }
 }
 
+/// A copy below the limit of the table also lies in the directory (or in the cache without one): the bytes of the steps come from one place.
+fn keep_small_copy(files: &FileDirectories, id: &str, location: crate::files::Location, data: &[u8]) -> std::io::Result<crate::files::Location> {
+    if location == crate::files::Location::Directory { return Ok(location); }
+    if files.has_directory() {
+        files.write(id, data)?;
+        Ok(crate::files::Location::Directory)
+    } else {
+        files.materialize(id, "source", data)?;
+        Ok(crate::files::Location::Table)
+    }
+}
+
 fn temporary(error: &TransportError) -> bool { RetryClass::of_error(error) != RetryClass::Fatal }
 
 impl EffectRunner<Transfers> for TransferExecutor {
@@ -226,9 +253,9 @@ impl EffectRunner<Transfers> for TransferExecutor {
         match effect {
             TransferEffect::Copy { transfer_id, attempt_id, key, source } => self.copy(stamp, back, transfer_id, attempt_id, key, source),
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
-            TransferEffect::Step { transfer_id, attempt_id, key, part, purpose, upload_id, source, .. } => {
+            TransferEffect::Step { transfer_id, attempt_id, key, part, purpose, upload_id, source, steps, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);
-                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { key, part, upload_id, source });
+                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { key, part, upload_id, source, steps });
             }
             TransferEffect::Complete { transfer_id, attempt_id, key, upload_id, parts, .. } => self.complete(stamp, back, (transfer_id, attempt_id), key, upload_id, parts),
             TransferEffect::Abort { key, upload_id, .. } => self.drop_upload(key, upload_id),

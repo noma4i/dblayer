@@ -97,9 +97,10 @@ impl Db {
     pub(super) fn write_upload_row(&self, row: &UploadRow, kind: UploadKind) -> Result<(), DbError> {
         let [model, id, action] = key_parts(&row.key)?;
         let (status, stage) = match kind {
-            UploadKind::Failed => ("failed", "failed"),
-            UploadKind::Completed => ("uploading", "mutating"),
-            UploadKind::SyncUpload | UploadKind::ConfirmedParts | UploadKind::Retrying => ("uploading", "uploading"),
+            UploadKind::Failed => ("failed", "prepare"),
+            UploadKind::Completed => ("sending", "mutation"),
+            UploadKind::ConfirmedParts => ("uploading", "part"),
+            UploadKind::SyncUpload | UploadKind::Retrying => ("queued", "prepare"),
         };
         let on_failure = match row.on_failure {
             OnFailure::Rollback => "rollback",

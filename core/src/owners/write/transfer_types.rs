@@ -14,6 +14,8 @@ use crate::transport::NetworkPurpose;
 
 /// The reply id of the final mutation Transfer hands to Outbox: Transfer waits for `MutationOutcome`, not for a reply.
 pub const NO_REPLY: ReplyId = ReplyId::MAX;
+/// Where the signed id of the file goes in the body of the final mutation: Transfer puts the id there when the file is on the server.
+pub const SIGNED_ID_SENTINEL: &str = "__dblayer_signed_id__";
 pub const EXPIRY_MS: u64 = 7 * 86_400_000;
 pub const ATTEMPT_LIMIT: u32 = 50;
 pub(super) const RETRY_TIMER: u64 = 1 << 32;
@@ -165,7 +167,7 @@ pub enum TransferEffect {
     Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source },
     CopyCancel { transfer_id: TransferId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, place: Option<Location> },
+    Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location> },
     Complete { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location> },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
     CancelStep { transfer_id: TransferId },

@@ -41,10 +41,11 @@ mod related;
 #[cfg(test)]
 mod related_tests;
 mod transport;
-mod upload_accepted;
-mod blob;
+mod upload;
+mod upload_rounds;
+mod transfer_status;
+pub use transfer_status::{WireTransferState, WireTransferStatus};
 mod event;
-pub use blob::WireBlobSnapshot;
 pub use event::WireModelEvent;
 pub mod upload_wire;
 pub mod wire;
@@ -59,7 +60,7 @@ pub fn user_agent(application: Option<String>) -> String {
 }
 
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
-pub use receipt::{ItemId, WireBatchOutcome, WireBatchReceipt, WireBatchResult, WireBatchTicket, WireItemOutcome, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
+pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 pub use opening::{OpenDatabase, OpenOptions};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
@@ -67,7 +68,7 @@ pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEn
 pub use stream::{CachedQuery, EntityFetch, LivePhase, LoadMoreResult, Placement, Replacement, StreamCensus, StreamDelivery, StreamEnd, StreamRequest, StreamState, StreamValue, ValueSink};
 pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowPlace, RowRename};
-pub use upload_accepted::{UploadAcceptedSink, WireAcceptedUpload, WireRoundStep, WireUploadAccepted};
+pub use upload_rounds::RoundJobsSink;
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
 pub use crate::transport::PutFile;
 pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
@@ -160,7 +161,6 @@ mod session_guards_tests;
 #[cfg(test)]
 mod open_layout_tests;
 #[cfg(test)]
-mod upload_process_tests;
 #[cfg(test)]
 mod executor_tests;
 #[cfg(test)]

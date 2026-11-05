@@ -114,26 +114,6 @@ impl Database {
         if request.upload.is_none() {
             return self.create_row(request.epoch, request.model, serde_json::from_str(&request.values_json)?, serde_json::from_str(&request.args_json)?).await;
         }
-        let this = self.clone();
-        let epoch = request.epoch;
-        let model = request.model.clone();
-        let work = move |admitted: crate::ffi::legacy::Admitted| async move {
-            let values: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&request.values_json)?;
-            let (row, operation, revision, ticket) = match request.upload {
-                None => return Err(DbError::Invalid { detail: "a command without a file goes through the owners".into() }),
-                Some(upload) => {
-                    let sync = this.sync()?.clone();
-                    let (wire, model) = (this.wire(&request.model)?.clone(), request.model.clone());
-                    on_executor(async move {
-                        let file = upload.request.into_file()?;
-                        let (row, operation, revision, ticket) = sync.upload_create_claiming(&admitted, &model, &upload.action, values, file).await?;
-                        Ok::<_, DbError>((wire.row(&row), Some(operation), revision, Some(ticket)))
-                    }).await?
-                }
-            };
-            Ok((row, operation, revision, ticket))
-        };
-        let (row, operation, revision, ticket) = self.in_epoch_as(Origin::Session, epoch, "send", false, work).await?;
-        Ok(receipt(epoch, model, operation, revision, Some(row), ticket, self.streams.clone()))
+        self.send_upload(request).await
     }
 }

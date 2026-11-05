@@ -10,7 +10,7 @@ use crate::transport::CancelToken;
 use super::super::database::executor;
 use super::super::related::RelatedProjection;
 use super::super::wire::WireModel;
-use super::super::{Database, DbError, WireBlobSnapshot, WireModelEvent};
+use super::super::{Database, DbError, WireTransferStatus, WireModelEvent};
 use super::{Frame, Stream, StreamRequest, StreamValue};
 
 /// What keeps a stream's reads alive. Dropping it stops them.
@@ -188,24 +188,19 @@ impl Database {
         Ok(handles)
     }
 
-    fn connect_blob(&self, stream: &Arc<Stream>, id: &str) -> Result<Handles, DbError> {
-        let sync = self.sync()?.clone();
-        let mut changes = self.db.outbox_changes();
-        let (weak, id) = (Arc::downgrade(stream), id.to_string());
+    fn connect_blob(&self, stream: &Arc<Stream>, key: &str) -> Result<Handles, DbError> {
+        let shows = self.shows.clone();
+        let mut changes = shows.watch();
+        let (weak, key) = (Arc::downgrade(stream), key.to_string());
         let task = crate::task::spawn_on(stream.admitted()?.into(), executor()?.handle(), async move {
-            let mut last: Option<WireBlobSnapshot> = None;
+            let mut last: Option<WireTransferStatus> = None;
             loop {
                 changes.borrow_and_update();
                 let Some(stream) = weak.upgrade() else { return };
-                match sync.blob_snapshot(&id) {
-                    Ok(blob) => {
-                        let next = WireBlobSnapshot::from(blob);
-                        if last.as_ref() != Some(&next) {
-                            last = Some(next.clone());
-                            stream.push(StreamValue::Status { blob: next });
-                        }
-                    }
-                    Err(error) => { stream.invalid(DbError::from(error)); return; }
+                let next = shows.status(&key);
+                if last.as_ref() != Some(&next) {
+                    last = Some(next.clone());
+                    stream.push(StreamValue::Status { blob: next });
                 }
                 drop(stream);
                 if changes.changed().await.is_err() { return; }

@@ -39,7 +39,7 @@ struct Codec {
 
 #[async_trait]
 impl StepCodec for Codec {
-    async fn step(&self, link: &Link, _key: &str, part: Option<u32>, upload_id: Option<&str>, source: &Source) -> Result<StepDone, TransportError> {
+    async fn step(&self, link: &Link, _key: &str, part: Option<u32>, upload_id: Option<&str>, source: &Source, _steps: &Steps) -> Result<StepDone, TransportError> {
         lock(&self.asked).push(("Step".into(), part, upload_id.map(str::to_string), source.path.clone()));
         link.mutate(GraphQLRequest::new("mutation Step", "Step", json!({ "part": part }))).await?;
         Ok(StepDone { upload_id: (part == Some(1)).then(|| "u1".to_string()), etag: None })
@@ -149,7 +149,7 @@ fn exec_xfer_copies_big_file_to_directory() {
     w.accept(big_key, big_path, 2);
     w.accept(small_key, small_path, 1);
     assert_eq!(w.files.read(&file_id(big_key)).expect("copy in the directory"), big);
-    assert_eq!(w.files.directory_entries().expect("entries"), vec![file_id(big_key)], "a file over 256 KiB is on disk, a small one stays in the table");
+    assert_eq!(w.files.directory_entries().expect("entries"), vec![file_id(big_key), file_id(small_key)], "every copy lies in the directory: the steps read one place");
     assert_eq!((w.stage(big_key), w.stage(small_key)), (Some(TransferStage::Uploading), Some(TransferStage::Uploading)));
 }
 
@@ -189,7 +189,8 @@ fn exec_xfer_steps_carry_transfer_purpose() {
     assert_eq!(w.stage(KEY), Some(TransferStage::Mutating));
     let (step, complete) = (("Step".to_string(), NetworkPurpose::Transfer), ("Complete".to_string(), NetworkPurpose::Transfer));
     assert_eq!(w.calls(), vec![step.clone(), step, complete]);
-    let source = path.to_string_lossy().into_owned();
+    let source = w.files.path(&file_id(KEY)).expect("directory").to_string_lossy().into_owned();
+    let _ = path;
     assert_eq!(
         w.asked(),
         vec![

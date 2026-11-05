@@ -23,7 +23,7 @@ impl TransferState {
 
     fn step_effect(transfer: &Transfer) -> TransferEffect {
         let NextStep::Part(part) = transfer.next_step else { return Self::complete_effect(transfer) };
-        TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, key: transfer.key.clone(), part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone(), place: transfer.place }
+        TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, key: transfer.key.clone(), part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone(), steps: transfer.steps.clone(), place: transfer.place }
     }
 
     fn complete_effect(transfer: &Transfer) -> TransferEffect {

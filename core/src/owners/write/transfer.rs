@@ -272,6 +272,13 @@ impl TransferState {
         }
     }
 
+    /// A new epoch starts a new instance of the table: the declarations of the operations and the counters of ids stay, the rest of the state of the older epoch goes.
+    fn begin_epoch(&mut self, epoch: Epoch) {
+        let fresh = Self::new(epoch, self.slots, self.peers);
+        let kept = Self { declarations: std::mem::take(&mut self.declarations), next_id: self.next_id, next_seq: self.next_seq, next_group: self.next_group, next_batch: self.next_batch, next_attempt: self.next_attempt, next_timer: self.next_timer, now: self.now, ..fresh };
+        *self = kept;
+    }
+
     fn in_epoch(input: &TransferInput, epoch: Epoch) -> bool { matches!(input, TransferInput::Accept { epoch: found, .. } | TransferInput::AcceptBatch { epoch: found, .. } if *found == epoch) }
 
     pub(super) fn replay_held(&mut self, fx: &mut Fx) {
@@ -294,7 +301,8 @@ impl TransferState {
     /// The final mutation goes to Outbox as an operation of the origin `Transfer{key}`.
     pub(super) fn submit_mutation(&self, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get(&id) else { return };
-        let op = NewOp { origin: Origin::Transfer(transfer.key.clone()), ..transfer.mutation.clone() };
+        let signed = transfer.signed_id.clone().unwrap_or_default();
+        let op = NewOp { origin: Origin::Transfer(transfer.key.clone()), body: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, &signed), ..transfer.mutation.clone() };
         fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Submit { epoch: self.epoch, op, reply: NO_REPLY })));
     }
 }
@@ -310,6 +318,9 @@ impl StateOwner for Transfers {
 
     fn step(state: &mut TransferState, input: TransferInput) -> Effects<Self> {
         let mut fx: Fx = Vec::new();
+        if let TransferInput::EpochStarted(started) = &input {
+            state.begin_epoch(started.epoch);
+        }
         if state.phase == Phase::Restoring {
             state.restoring(input, &mut fx);
         } else {

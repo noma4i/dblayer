@@ -15,7 +15,7 @@ use crate::runtime::Time;
 use crate::transport::GraphQLRequest;
 
 /// The error of a call that an owner refused.
-fn refused(fault: Fault, what: &str) -> DbError {
+pub(super) fn refused(fault: Fault, what: &str) -> DbError {
     use crate::owners::contract::RejectReason;
     match fault {
         Fault::NoSession => DbError::NoSession { detail: "the database has no session in this epoch".into() },
@@ -36,7 +36,7 @@ fn refused(fault: Fault, what: &str) -> DbError {
     }
 }
 
-fn failure_of(error: &str) -> super::wire::WireFailure { super::wire::failure(&crate::owners::write::failure::parse(error)) }
+pub(super) fn failure_of(error: &str) -> super::wire::WireFailure { super::wire::failure(&crate::owners::write::failure::parse(error)) }
 
 impl Database {
     async fn outbox_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<OutboxAnswer, DbError> {
@@ -48,7 +48,7 @@ impl Database {
     }
 
     /// The id a row has now: a temporary id of a `create` that landed gives the real one.
-    async fn resolved(&self, epoch: u64, model: &str, row: crate::identity::RowId) -> Result<crate::identity::RowId, DbError> {
+    pub(super) async fn resolved(&self, epoch: u64, model: &str, row: crate::identity::RowId) -> Result<crate::identity::RowId, DbError> {
         if !row.is_temp() { return Ok(row); }
         match self.await_life(self.life.resolve_row(epoch, model.to_string(), row.to_string())).await? {
             LifeReply::Outbox(OutboxAnswer::Resolved(resolved)) => id(&resolved),
@@ -56,9 +56,9 @@ impl Database {
         }
     }
 
-    fn now(&self) -> Time { Time(u64::try_from(self.db.shared.store.lock().now_ms()).unwrap_or(0)) }
+    pub(super) fn now(&self) -> Time { Time(u64::try_from(self.db.shared.store.lock().now_ms()).unwrap_or(0)) }
 
-    fn optimistic(&self, model: &str, row: &crate::identity::RowId) -> Result<Option<super::wire::WireRow>, DbError> {
+    pub(super) fn optimistic(&self, model: &str, row: &crate::identity::RowId) -> Result<Option<super::wire::WireRow>, DbError> {
         Ok(self.db.find(model, row)?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()?)
     }
 
@@ -197,14 +197,15 @@ impl Database {
                 if receipt.operation.is_some() { return Err(DbError::Invalid { detail: "the operation has no sender".into() }); }
                 Ok(WireOperationOutcome::Confirmed { value: receipt.optimistic_value, answer_json: None })
             }
-            Some(Ticket::Sync(ticket)) => self.upload_outcome(receipt, ticket).await,
+            Some(Ticket::Sync(_)) => Err(DbError::Invalid { detail: "the receipt of the old stack".into() }),
+            Some(Ticket::Transfer(ticket)) => self.transfer_outcome(receipt, ticket).await,
             Some(Ticket::Outbox(ticket)) => self.operation_outcome(receipt, ticket).await,
         }
     }
 
     pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
         self.account_call(epoch)?;
-        let _ = action;
+        if self.discard_transfer(epoch, &model, &row_id, action.as_deref()).await? { return Ok(()); }
         let waiter = self.life.discard_operation(epoch, model, row_id);
         self.outbox_answer(waiter, "discard").await.map(drop)
     }
@@ -257,27 +258,6 @@ impl Database {
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: failure_of(&error) },
             OutboxOutcome::Discarded | OutboxOutcome::Interrupted => WireOperationOutcome::Interrupted,
         })
-    }
-
-    /// The outcome of an upload operation, which the old stack still sends.
-    async fn upload_outcome(&self, receipt: WireOperationReceipt, ticket: Arc<crate::sync::OutcomeTicket>) -> Result<WireOperationOutcome, DbError> {
-        let result = self.in_epoch(receipt.epoch, "operation outcome", async move { Ok::<_, DbError>(ticket.result().await) }).await;
-        let result = match result {
-            Ok(result) => result,
-            Err(DbError::NoSession { .. } | DbError::Interrupted { .. }) => return Ok(WireOperationOutcome::Interrupted),
-            Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),
-            Err(error) => return Err(error),
-        };
-        match result.result {
-            crate::sync::SendResult::Committed => {
-                let value = result.value.map(|row| self.wire(&receipt.model).map(|wire| wire.row(&row))).transpose()?;
-                Ok(WireOperationOutcome::Confirmed { value, answer_json: result.answer.map(|answer| answer.to_string()) })
-            }
-            crate::sync::SendResult::Rejected(failure) => Ok(WireOperationOutcome::Rejected { failure: super::wire::failure(&failure) }),
-            crate::sync::SendResult::DeliveryUnknown | crate::sync::SendResult::Quarantined => Ok(WireOperationOutcome::DeliveryUnknown),
-            crate::sync::SendResult::Discarded => Ok(WireOperationOutcome::Interrupted),
-            crate::sync::SendResult::Deferred | crate::sync::SendResult::Skipped(_) => Err(DbError::Invalid { detail: "operation has not finished".into() }),
-        }
     }
 
     /// `retry` of a failed mutation: the owner gives the receipt of the new cycle.

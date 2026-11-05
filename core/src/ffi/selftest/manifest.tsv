@@ -236,7 +236,7 @@ S107		kotlin	com.noma4i.dblayer.OldSinkTest.oldSubscriptionSinkIsClosedBeforeThe
 S108		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the cable	arch-audit Astra A1
 S108		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
 S108		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
-S109		core	ending_an_upload_round_keeps_the_epoch_of_each_accepted_group	red-by-reading	S1: session reset; S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
+S109		core	a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_after_it_ends	red-by-reading	S1: session reset; S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
 S109		swift	BridgeProbeTests.uploadRoundKeepsEachGroupsOriginalEpoch	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
 S109		kotlin	com.noma4i.dblayer.UploadSessionTest.uploadRoundKeepsEachGroupsOriginalEpoch	red-by-reading	S4: adapt roundEnd consumers	coordinator msg_5bf3e2eac6f8
 S110		core	upload_without_a_session_refuses_before_accepting_a_file	red-by-reading	core admission	arch-audit Fable K8
@@ -311,41 +311,29 @@ S222	window-chain	kotlin	com.noma4i.dblayer.TestClockTest.aMutationDuringTheFirs
 S223	media-debt	core	a_media_refetch_after_mutation_reads_the_whole_stale_window	red-by-reading	-	window media marker and mutation
 S223	media-debt	swift	BridgeProbeTests.aMediaRefetchAfterMutationReadsTheWholeStaleWindow	red-by-reading	-	window media marker and mutation
 S223	media-debt	kotlin	com.noma4i.dblayer.MediaPreloadTest.aMediaRefetchAfterMutationReadsTheWholeStaleWindow	red-by-reading	-	window media marker and mutation
-T01	H6	core	an_offline_discard_routes_its_reopened_abort_as_a_transfer	red-by-reading	-	arch-audit/astra.md A6
 T01	H6	swift	BridgeProbeTests.anOfflineDiscardRoutesItsReopenedAbortAsATransfer	red-by-reading	-	arch-audit/astra.md A6
 T01	H6	kotlin	com.noma4i.dblayer.TransferTest.anOfflineDiscardRoutesItsReopenedAbortAsATransfer	red-by-reading	-	arch-audit/astra.md A6
-T04		core	attached_files_survive_reopen_and_detaching_one_keeps_the_other	regression	-	arch-audit/astra.md A6
 T04		swift	BridgeProbeTests.attachedFilesSurviveReopenAndDetachingOneKeepsTheOther	regression	-	arch-audit/astra.md A6
 T04		kotlin	com.noma4i.dblayer.TransferTest.attachedFilesSurviveReopenAndDetachingOneKeepsTheOther	regression	-	arch-audit/astra.md A6
-T02		core	complete_failure_then_retry_keeps_the_confirmed_parts	regression	-	arch-audit/astra.md A6
 T02		swift	BridgeProbeTests.completeFailureThenRetryKeepsTheConfirmedParts	regression	-	arch-audit/astra.md A6
 T02		kotlin	com.noma4i.dblayer.TransferTest.completeFailureThenRetryKeepsTheConfirmedParts	regression	-	arch-audit/astra.md A6
-T05		core	a_failed_blob_expires_when_the_network_returns_after_seven_days	regression	-	arch-audit/astra.md A6
 T05		swift	BridgeProbeTests.aFailedBlobExpiresWhenTheNetworkReturnsAfterSevenDays	regression	-	arch-audit/astra.md A6
 T05		kotlin	com.noma4i.dblayer.TransferTest.aFailedBlobExpiresWhenTheNetworkReturnsAfterSevenDays	regression	-	arch-audit/astra.md A6
-T03		core	cancelling_the_middle_file_keeps_the_other_files_in_order	regression	-	ChatAlbumSendTest.kt cancellingATileRenumbersTheRemainingTilesAndTheAnswerStillReplacesThem
 T03		swift	BridgeProbeTests.cancellingTheMiddleFileKeepsTheOtherFilesInOrder	regression	-	ChatAlbumSendTest.kt cancellingATileRenumbersTheRemainingTilesAndTheAnswerStillReplacesThem
 T03		kotlin	com.noma4i.dblayer.TransferTest.cancellingTheMiddleFileKeepsTheOtherFilesInOrder	regression	-	ChatAlbumSendTest.kt cancellingATileRenumbersTheRemainingTilesAndTheAnswerStillReplacesThem
-T03R		core	retrying_a_refused_file_keeps_the_other_album_files	regression	-	ChatAlbumSendTest.kt aRefusedFileFailsOnlyItsTileAndRetryLetsTheWholeAlbumGoInOrder
 T03R		swift	BridgeProbeTests.retryingARefusedFileKeepsTheOtherAlbumFiles	regression	-	ChatAlbumSendTest.kt aRefusedFileFailsOnlyItsTileAndRetryLetsTheWholeAlbumGoInOrder
 T03R		kotlin	com.noma4i.dblayer.TransferTest.retryingARefusedFileKeepsTheOtherAlbumFiles	regression	-	ChatAlbumSendTest.kt aRefusedFileFailsOnlyItsTileAndRetryLetsTheWholeAlbumGoInOrder
-T03S		core	discarding_a_refused_file_sends_the_remaining_file_as_single	regression	-	ChatAlbumSendTest.kt discardingDownToOneTileSendsItAsASingleMessageWithItsClientKey
 T03S		swift	BridgeProbeTests.discardingARefusedFileSendsTheRemainingFileAsSingle	regression	-	ChatAlbumSendTest.kt discardingDownToOneTileSendsItAsASingleMessageWithItsClientKey
 T03S		kotlin	com.noma4i.dblayer.TransferTest.discardingARefusedFileSendsTheRemainingFileAsSingle	regression	-	ChatAlbumSendTest.kt discardingDownToOneTileSendsItAsASingleMessageWithItsClientKey
-T01G	H6	core	discarding_a_queued_photo_offline_routes_the_abort_after_reopen	red-by-reading	-	GroupPhotoSend.swift queueCreate and dismiss
 T01G	H6	swift	BridgeProbeTests.discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen	red-by-reading	-	GroupPhotoSend.swift queueCreate and dismiss
 T01G	H6	kotlin	com.noma4i.dblayer.TransferTest.discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen	red-by-reading	-	GroupPhotoSend.swift queueCreate and dismiss
-T02G	C5	core	an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard	regression	-	UploadMultipartTests.swift HTTP 422
 T02G	C5	swift	BridgeProbeTests.anHttpRefusalOfAPhotoKeepsTheFailedRecordUntilDiscard	regression	-	UploadMultipartTests.swift HTTP 422
 T02G	C5	kotlin	com.noma4i.dblayer.TransferTest.anHttpRefusalOfAPhotoKeepsTheFailedRecordUntilDiscard	regression	-	UploadMultipartTests.swift HTTP 422
-T05S		core	reopening_after_seven_days_expires_a_failed_blob	hypothesis	-	arch-audit/astra.md A6 startup expiry
 T05S		swift	BridgeProbeTests.reopeningAfterSevenDaysExpiresAFailedBlob	hypothesis	-	arch-audit/astra.md A6 startup expiry
 T05S		kotlin	com.noma4i.dblayer.TransferTest.reopeningAfterSevenDaysExpiresAFailedBlob	hypothesis	-	arch-audit/astra.md A6 startup expiry
-T06		core	shifting_a_batch_during_a_held_encrypted_request_keeps_the_file_owner	hypothesis	-	arch-audit/astra.md A6 transfer identity
 T06		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
 T06		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
 T09		kotlin	com.noma4i.dblayer.UploadWorkTest.aLateBackgroundRefusalDoesNotChangeTheNextSession	red-by-reading	-	late Android scheduler refusal after session reset
-T10		core	multipart_batch_accepts_a_correlation_key_with_path_characters	regression	-	multipart transfer identity range file
 T10		swift	BridgeProbeTests.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
 T10		kotlin	com.noma4i.dblayer.TransferTest.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
 T11		core	subscription_overflow_reports_the_lost_range_before_failure	red-by-reading	-	bounded subscription intake
@@ -356,6 +344,10 @@ T16		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsWhenThe
 T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 S216	A3-lost	core	a_lost_event_range_reads_the_open_window_once	red-by-reading	lost subscription range marks the windows and reads the open one once	s2/design.md S216
-T18		core	records_below_the_minimum_go_as_single_steps_of_the_same_operation	red-by-reading	batch below minimum keeps one operation and receipt	coordinator S4 item 1
 K36		core	a_queued_message_of_a_never_goes_out_when_another_identity_takes_the_session_without_a_reset	green	core-only: the proof pins the interval between the epoch publish and the session start end with a core hook	final review Fable 1
 K37		core	a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_lands	green	core-only: the proof holds a server request through the fake world gate and resets a model through the core database	final review Fable 3
+T04		core	attached_files_survive_reopen_and_detaching_one_keeps_the_other	regression	-	arch-audit/astra.md A6
+T20		core	a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id	regression	-	Transfer owner through Database
+T20		core	a_large_file_uploads_in_parts_and_completes_before_its_mutation	regression	-	Transfer owner through Database
+T20		core	a_cancelled_upload_sends_nothing	regression	-	Transfer owner through Database
+T20		core	a_send_with_a_file_confirms_the_row_the_server_answers	regression	-	Transfer owner through Database

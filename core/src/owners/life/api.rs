@@ -126,7 +126,10 @@ impl Life {
         waiter
     }
 
-    pub fn register_operations(&self, declarations: Vec<(String, String)>) { self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations }); }
+    pub fn register_operations(&self, declarations: Vec<(String, String)>) {
+        self.wiring.to_transfer(crate::owners::write::transfer::TransferInput::RegisterOperations { declarations: declarations.clone() });
+        self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations });
+    }
 
     pub fn declare(&self, names: Vec<(String, CallKind)>) { self.wiring.to_calls(CallsInput::Declare(names)); }
 

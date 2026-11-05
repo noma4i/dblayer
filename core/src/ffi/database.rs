@@ -16,7 +16,7 @@ use crate::upload::UploadOperations;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
-use super::receipt::{receipt, ItemId, WireBatchOutcome, WireBatchReceipt, WireBatchResult, WireBatchTicket, WireItemOutcome, WireItemReceipt, WireOperationOutcome, WireOperationReceipt};
+use super::receipt::{receipt, ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt};
 use super::wire::{WireModel, WireRow};
 use super::{DbError, LoadMoreResult, OnlineSink, Transport};
 use crate::owners::life::LifeReply;
@@ -162,7 +162,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, pub(super) reads: crate::owners::read::ReadOperations, pub(super) outcomes: Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, pub(super) reads: crate::owners::read::ReadOperations, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -196,12 +196,14 @@ impl Database {
         }
         let operations: Arc<OnceLock<crate::sync::WeakSync>> = Arc::default();
         let reads = crate::owners::read::ReadOperations::default();
-        let life = Self::build_life(&db, transport.clone(), &session, operations.clone(), reads.clone())?;
-        let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
+        let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
+        let shows: Arc<super::transfer_status::Shows> = Arc::default();
+        let life = Self::build_life(&db, transport.clone(), &session, operations.clone(), reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
+        let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads: uploads.clone(), ..SyncConfig::default() }));
         if let Some(sync) = &sync { let _ = operations.set(sync.downgrade()); }
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), reads, outcomes: Arc::default(), wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), reads, uploads, jobs, shows, outcomes: Arc::default(), wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -248,12 +250,18 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Db`. It returns after the first `Publish`.
-    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, lookup: Arc<OnceLock<crate::sync::WeakSync>>, read_operations: crate::owners::read::ReadOperations) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, lookup: Arc<OnceLock<crate::sync::WeakSync>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations: crate::owners::life::OperationLookup = Arc::new(move |name| {
             let sync = lookup.get()?.upgrade()?;
             let definition = crate::db::locked(&sync.inner.operations).get(name).cloned()?;
             Some((definition.document.clone(), definition.root_path.clone()))
+        });
+        let transfer = uploads.filter(|_| session.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
+            codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), crate::upload::UploadConfig::default())),
+            jobs,
+            shows: Arc::new(move |key, shown| shows.put(key, shown)),
+            slots: 1,
         });
         let ports = crate::owners::life::Ports {
             db: db.clone(),
@@ -262,7 +270,7 @@ impl Database {
             operations,
             credentials: session.as_ref().map(|client| client.credential_slot()),
             session: session.clone(),
-            transfer: None,
+            transfer,
             read_operations: Some(read_operations),
         };
         let _entered = executor_enter()?;
@@ -279,6 +287,11 @@ impl Database {
     pub(super) fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
         self.wires.get(model).ok_or_else(|| DbError::Invalid { detail: format!("model {model} is not registered") })
     }
+}
+
+fn operations_lookup(reads: &crate::owners::read::ReadOperations) -> crate::owners::life::OperationLookup {
+    let reads = reads.clone();
+    Arc::new(move |name| reads.get(name).map(|operation| (operation.document.clone(), operation.root_path.clone())))
 }
 
 pub(super) fn id(value: &str) -> Result<RowId, DbError> {
@@ -403,73 +416,16 @@ impl Database {
         Ok(rows.iter().map(|row| wire.row(row)).collect())
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
-        if let Some(source) = source {
-            let sync = self.sync()?.clone();
-            let wire = self.wire(&model)?.clone();
-            let life = self.streams.clone();
-            return self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "retry", false, |admitted| on_executor(async move {
-                let file = source.into_file()?;
-                let (operation, revision, row, ticket) = sync.retry_upload_source(&admitted, &model, &row_id, action.as_deref(), file).await?;
-                Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, row.map(|row| wire.row(&row)), Some(ticket), life))
-            })).await;
+        if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
+            return self.retry_transfer(epoch, model, row_id, action, source).await;
         }
+        self.account_call(epoch)?;
+        if let Some(receipt) = self.retry_declared_transfer(epoch, &model, &row_id).await? { return Ok(receipt); }
         self.retry_operation(epoch, model, row_id).await
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
 
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.as_ref().map(Sync::downgrade), online: self.db.connectivity(), life: Arc::downgrade(&self.life) })) }
-    pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
-        let sync = self.sync()?.clone();
-        let wire = self.wire(&model)?.clone();
-        let life = self.streams.clone();
-        let row = id(&row_id)?;
-        self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "upload", false, |admitted| on_executor(async move {
-            let file = request.into_file()?;
-            let (operation, revision, row, ticket) = sync.upload(&admitted, &model, &row, &action, file).await?;
-            Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, row.map(|row| wire.row(&row)), Some(ticket), life))
-        })).await
-    }
-    pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
-        let sync = self.sync()?.clone();
-        let wire = self.wire(&model)?.clone();
-        self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "upload batch", false, |admitted| on_executor(async move {
-            let items = items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?;
-            let input = request.into_input()?;
-            let receipt = sync.upload_create_batch(&admitted, &model, items, input).await?;
-            let items: Vec<_> = receipt.items.iter().map(|item| WireItemReceipt { item: ItemId { value: item.item.0.clone() }, optimistic_value: wire.row(&item.optimistic_value) }).collect();
-            Ok::<_, DbError>(WireBatchReceipt { epoch: receipt.epoch, operation: receipt.operation, revision: receipt.revision, items: items.clone(), ticket: Arc::new(WireBatchTicket { receipt, model, items }) })
-        })).await
-    }
-    pub async fn batch_outcome(&self, receipt: WireBatchReceipt) -> Result<WireBatchOutcome, DbError> {
-        let held = &receipt.ticket;
-        if !Arc::ptr_eq(&held.receipt.life, &self.streams) || receipt.epoch != held.receipt.epoch || receipt.operation != held.receipt.operation || receipt.revision != held.receipt.revision || receipt.items != held.items {
-            return Err(DbError::Invalid { detail: "the upload batch receipt was changed".into() });
-        }
-        if !self.admits(receipt.epoch) { return Ok(WireBatchOutcome { result: WireBatchResult::Interrupted, items: Vec::new() }); }
-        let outcome = match held.receipt.outcome().await {
-            Ok(outcome) => outcome,
-            Err(_) if !self.admits(receipt.epoch) => return Ok(WireBatchOutcome { result: WireBatchResult::Interrupted, items: Vec::new() }),
-            Err(error) => return Err(error.into()),
-        };
-        let wire = self.wire(&held.model)?;
-        let items = outcome.items.into_iter().map(|item| match item {
-            crate::sync::ItemOutcome::Confirmed { item, value } => WireItemOutcome::Confirmed { item: ItemId { value: item.0 }, value: wire.row(&value) },
-            crate::sync::ItemOutcome::Discarded { item } => WireItemOutcome::Discarded { item: ItemId { value: item.0 } },
-        }).collect();
-        let result = match outcome.result {
-            crate::sync::SendResult::Committed => WireBatchResult::Confirmed,
-            crate::sync::SendResult::Rejected(failure) => WireBatchResult::Rejected { failure: super::wire::failure(&failure) },
-            crate::sync::SendResult::DeliveryUnknown | crate::sync::SendResult::Quarantined => WireBatchResult::DeliveryUnknown,
-            crate::sync::SendResult::Discarded => WireBatchResult::Interrupted,
-            crate::sync::SendResult::Deferred | crate::sync::SendResult::Skipped(_) => return Err(DbError::Invalid { detail: "operation has not finished".into() }),
-        };
-        Ok(WireBatchOutcome { result, items })
-    }
-    pub async fn cancel_upload(&self, epoch: u64, model: String, row_id: String, action: String) -> Result<bool, DbError> {
-        let sync = self.sync()?.clone();
-        let row = id(&row_id)?;
-        self.serve_in_epoch(epoch, "cancel upload", |admitted| async move { sync.cancel_upload(&admitted, &model, &row, &action).await }).await
-    }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
         if self.life.is_shut() { return Err(super::command::closed()); }

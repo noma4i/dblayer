@@ -3,11 +3,12 @@ use std::sync::Arc;
 use super::wire::WireRow;
 use super::DbError;
 
-/// What a receipt waits on: the old stack (uploads) or the owner Outbox.
+/// What a receipt waits on: the old stack, the owner Outbox or the owner Transfer.
 #[derive(Clone)]
 pub(super) enum Ticket {
     Sync(Arc<crate::sync::OutcomeTicket>),
     Outbox(crate::owners::write::outbox::Receipt),
+    Transfer(crate::owners::write::outbox::Receipt),
 }
 
 #[derive(uniffi::Object)]
@@ -46,6 +47,10 @@ pub(super) fn receipt_of(epoch: u64, model: String, operation: Option<i64>, revi
     held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Outbox), streams)
 }
 
+pub(super) fn receipt_of_transfer(epoch: u64, model: String, held: crate::owners::write::outbox::Receipt, optimistic_value: Option<WireRow>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
+    held_receipt(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, optimistic_value, Some(Ticket::Transfer(held)), streams)
+}
+
 fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Ticket>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
     let held = WireReceiptTicket { ticket, streams, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone() };
     WireOperationReceipt { epoch, model, operation, revision, optimistic_value, ticket: Arc::new(held) }
@@ -62,44 +67,12 @@ pub enum WireOperationOutcome {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, uniffi::Record)]
 pub struct ItemId { pub value: String }
 
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
-pub struct WireItemReceipt { pub item: ItemId, pub optimistic_value: WireRow }
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct WireItemReceipt { pub item: ItemId, pub optimistic_value: WireRow, pub receipt: WireOperationReceipt }
 
-#[derive(uniffi::Object)]
-pub struct WireBatchTicket {
-    pub(super) receipt: crate::sync::OperationReceipt,
-    pub(super) model: String,
-    pub(super) items: Vec<WireItemReceipt>,
-}
-
-impl std::fmt::Debug for WireBatchTicket {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("WireBatchTicket").finish_non_exhaustive()
-    }
-}
-
+/// The receipts of the items of a batch, in the order of the items. Each item has its own outcome.
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct WireBatchReceipt {
     pub epoch: u64,
-    pub operation: i64,
-    pub revision: i64,
     pub items: Vec<WireItemReceipt>,
-    pub ticket: Arc<WireBatchTicket>,
 }
-
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
-pub enum WireItemOutcome {
-    Confirmed { item: ItemId, value: WireRow },
-    Discarded { item: ItemId },
-}
-
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
-pub enum WireBatchResult {
-    Confirmed,
-    Rejected { failure: super::wire::WireFailure },
-    DeliveryUnknown,
-    Interrupted,
-}
-
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
-pub struct WireBatchOutcome { pub result: WireBatchResult, pub items: Vec<WireItemOutcome> }

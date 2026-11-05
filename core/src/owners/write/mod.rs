@@ -19,6 +19,7 @@ pub mod rounds;
 pub(crate) mod rounds_executor;
 pub(crate) mod transfer_executor;
 pub mod wire;
+pub(crate) mod upload_codec;
 
 #[cfg(test)]
 mod rig;

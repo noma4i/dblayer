@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use crate::db::locked;
 use crate::ffi::legacy::{Admitted, Origin};
 use super::wire::{WireModel, WireRow};
-use super::{Database, DbError, WireBlobSnapshot, WireModelEvent};
+use super::{Database, DbError, WireTransferStatus, WireModelEvent};
 
 mod frame;
 mod journal;
@@ -128,7 +128,7 @@ pub enum StreamValue {
     /// The events at these positions are lost: the reader was slow and the journal of the stream was full, or the event could not be read. `first` and `last` are included.
     Lost { first: u64, last: u64 },
     /// The status of a media upload when it changed.
-    Status { blob: WireBlobSnapshot },
+    Status { blob: WireTransferStatus },
     /// The last value of a stream that ended by itself. Exactly one per stream.
     Ended { reason: StreamEnd },
 }

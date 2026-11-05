@@ -9,6 +9,7 @@ mod attempt_tests;
 #[cfg(test)]
 mod call_rule_tests;
 mod api;
+mod transfer_api;
 mod calls_runner;
 mod runners;
 pub(crate) mod session_runner;

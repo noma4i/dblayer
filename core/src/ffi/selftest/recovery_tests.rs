@@ -64,14 +64,17 @@ impl Transport for HeldPut {
     }
 }
 
-struct AcceptUploads;
+#[derive(Default)]
+struct Jobs(std::sync::Mutex<Vec<(u64, u64)>>);
 
-impl crate::ffi::UploadAcceptedSink for AcceptUploads {
-    fn accepted(&self, _: crate::ffi::WireUploadAccepted) {}
+impl crate::ffi::RoundJobsSink for Jobs {
+    fn schedule_job(&self, request_id: u64, epoch: u64) { self.0.lock().unwrap().push((request_id, epoch)); }
+    fn end_job(&self, _: u32) {}
 }
 
+/// P-XFER-05, xfer_round_needed_new_epoch: a round that runs while the session ends asks for the job of the next epoch only when the platform ends the running one.
 #[tokio::test(flavor = "multi_thread")]
-async fn ending_an_upload_round_keeps_the_epoch_of_each_accepted_group() {
+async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_after_it_ends() {
     let rig = SessionRig::new();
     let gate = Gate::new();
     let directory = tempfile::tempdir().unwrap();
@@ -86,23 +89,26 @@ async fn ending_an_upload_round_keeps_the_epoch_of_each_accepted_group() {
     }).collect();
     database.register_operations(json!(registered).to_string()).unwrap();
     database.set_online(true).unwrap();
-    database.set_upload_accepted_sink(Arc::new(AcceptUploads));
+    let jobs = Arc::new(Jobs::default());
+    database.set_round_jobs(jobs.clone());
     named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let first = database.session_epoch();
-    let owner = database.round_begin(first).unwrap().unwrap();
-    assert_eq!(database.round_next(first, owner).unwrap(), crate::ffi::WireRoundStep::Done);
     let file = || WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
     named_bound("upload in A", database.upload(first, "Moment".into(), "42".into(), "upload".into(), file())).await.unwrap();
+    let asked = jobs.0.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].1, first);
+    database.round_started(asked[0].0, 7, first);
     named_bound("reset A", database.session_reset()).await.unwrap();
-    assert!(matches!(database.round_next(first, owner), Err(DbError::Interrupted { .. })));
     named_bound("second sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let second = database.session_epoch();
     assert_ne!(first, second);
     named_bound("upload in B", database.upload(second, "Moment".into(), "43".into(), "upload".into(), file())).await.unwrap();
-    let groups = database.round_end(second, owner).unwrap().unwrap();
-    assert_eq!(groups.len(), 2);
-    assert_eq!((groups[0].epoch, groups[0].items.len()), (first, 1));
-    assert_eq!((groups[1].epoch, groups[1].items.len()), (second, 1));
+    assert_eq!(jobs.0.lock().unwrap().len(), 1, "the running round of A asked for a second job");
+    database.round_ended(7, first);
+    crate::test_wait::within_secs(10, async { while jobs.0.lock().unwrap().len() < 2 { tokio::task::yield_now().await; } }).await;
+    let asked = jobs.0.lock().unwrap().clone();
+    assert_eq!(asked[1].1, second);
     database.close_now();
 }
 
