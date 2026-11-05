@@ -114,6 +114,7 @@ pub struct DatabaseSut {
     loads: HashMap<String, Cancel>,
     streams: HashMap<String, Pulled>,
     calls: Vec<JoinHandle<Done>>,
+    started: Vec<tokio::sync::oneshot::Receiver<()>>,
 }
 
 impl Default for DatabaseSut {
@@ -128,6 +129,7 @@ impl Default for DatabaseSut {
             loads: HashMap::new(),
             streams: HashMap::new(),
             calls: Vec::new(),
+            started: Vec::new(),
         }
     }
 }
@@ -158,7 +160,7 @@ impl DatabaseSut {
         if let Some(at) = state.loaded { into.insert("loaded".into(), at.into()); }
     }
 
-    fn value(&self, stream: &str, seq: u64, value: &ReadValue) -> Observation {
+    fn value(&self, stream: &str, value: &ReadValue) -> Observation {
         let mut out = Map::new();
         match value {
             ReadValue::Snapshot { revision, rows, state } => {
@@ -199,11 +201,14 @@ impl DatabaseSut {
     }
 
     fn launch(&mut self, work: impl std::future::Future<Output = Done> + Send + 'static) {
-        self.calls.push(crate::task::spawn(crate::task::Carry::here(), work));
+        let (entered, started) = tokio::sync::oneshot::channel();
+        self.started.push(started);
+        self.calls.push(crate::task::spawn(crate::task::Carry::here(), async move { let _ = entered.send(()); work.await }));
     }
 
     /// Waits until requests, finished calls and stream notices stop changing for 80 ms, then observes everything that finished.
     async fn settle(&mut self) -> Vec<Observation> {
+        for started in std::mem::take(&mut self.started) { let _ = started.await; }
         let mut quiet = 0;
         let mut last = (usize::MAX, usize::MAX, u64::MAX);
         if let Some(database) = self.database.clone() { let owners = database.life_handle(); let _ = tokio::task::spawn_blocking(move || owners.barrier(Duration::from_secs(2))).await; }
@@ -573,7 +578,7 @@ impl Sut for DatabaseSut {
                 let Some(pulled) = self.streams.get(name) else { return error("unknown_stream") };
                 let next = pulled.queue.lock().unwrap().pop_front();
                 match next {
-                    Some((seq, value)) => vec![self.value(name, seq, &value)],
+                    Some((_, value)) => vec![self.value(name, &value)],
                     None => vec![Observation::new("empty", json!({ "stream": name }))],
                 }
             }
