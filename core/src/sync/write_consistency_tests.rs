@@ -378,7 +378,7 @@ fn related_admission_reads_pending_ownership_once() {
     db.shared.store.lock().connection.trace_v2(TraceEventCodes::SQLITE_TRACE_STMT, Some(count_queue_reads));
     db.shared.read(&[], |reader| {
         for _ in 0..4 {
-            let admitted = super::land::admit(&db, reader, reader.revision_seq()?, None, "Record", &[fields(json!({"id":"r1","body":"server"}))], &mut 0).unwrap();
+            let admitted = db.admit_rows(reader, reader.revision_seq()?, None, "Record", &[fields(json!({"id":"r1","body":"server"}))], &mut 0).unwrap();
             assert_eq!(admitted.rows[0]["body"], "pending");
         }
         Ok(())

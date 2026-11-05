@@ -16,6 +16,7 @@ mod upload_round;
 #[cfg(test)]
 mod upload_round_tests;
 mod land;
+mod land_window;
 mod listeners;
 pub(crate) mod lock;
 mod local_field;
@@ -61,6 +62,7 @@ pub use observe::ObserverHandle;
 pub(crate) use observe::ObserverControl;
 pub use open::{Db, DbConfig, OpenReport};
 pub(crate) use replace::ReplaceRequest;
+pub(crate) use land::AcceptedRows;
 pub use row::{Record, Row};
 pub use upload_accepted::{AcceptedUpload, UploadAccepted, UploadAcceptedCallback};
 pub use upload_round::RoundStep;

@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, EdgeValue, EdgeWrite, EntityOp, EnvelopeFault, ScopeOp, ScopeRef, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
-use crate::db::{Admission, Db, ReplaceRequest};
+use crate::db::{AcceptedRows, Db, ReplaceRequest};
 use crate::schema::{Coverage, FieldKind, FieldSpec};
 use crate::value::ScalarKind;
 use crate::read::{incoming_ids, plan_landing, StoredScope};
@@ -68,27 +68,6 @@ pub(crate) enum Landed {
     Discarded(DiscardReason),
 }
 
-pub(crate) struct AcceptedRows {
-    pub rows: Vec<Map<String, Value>>,
-    pub invalid: usize,
-}
-
-pub(crate) fn admit(db: &Db, reader: &Reader<'_>, base: i64, closing: Option<i64>, model: &str, rows: &[Map<String, Value>], drops: &mut usize) -> Result<AcceptedRows, SyncError> {
-    db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
-    let mut admitted = AcceptedRows { rows: Vec::with_capacity(rows.len()), invalid: 0 };
-    for row in rows {
-        if row.get("id").and_then(read_id).is_none() { continue; }
-        let origin = if closing.is_some() { WriteOrigin::Response } else { WriteOrigin::Snapshot };
-        let before = *drops;
-        match db.admitted(reader, origin, Admission { base: Some(base), closing }, model, row, drops)? {
-            Some(row) => admitted.rows.push(row),
-            None if *drops == before => admitted.invalid += 1,
-            None => {}
-        }
-    }
-    Ok(admitted)
-}
-
 fn edge_writes(scope: &ScopeRef, fields: &[FieldSpec], roots: &[Map<String, Value>], edges: &std::collections::BTreeMap<String, Map<String, Value>>) -> Vec<EdgeWrite> {
     if fields.is_empty() {
         return Vec::new();
@@ -114,19 +93,6 @@ fn edge_value(kind: &FieldKind, value: &Value) -> Option<EdgeValue> {
 }
 
 impl Inner {
-    fn related_upserts(&self, reader: &Reader<'_>, base_revision: i64, related: &[(ModelKey, Map<String, Value>)], planned: &BTreeSet<(ModelKey, RowId)>, drops: &mut usize) -> Result<Vec<EntityOp>, SyncError> {
-        let mut ops = Vec::new();
-        for (related_model, row) in related {
-            for row in admit(&self.db, reader, base_revision, None, related_model.as_str(), std::slice::from_ref(row), drops)?.rows {
-                let Some(id) = row.get("id").and_then(read_id) else { continue };
-                if !planned.contains(&(related_model.clone(), id.clone())) {
-                    ops.push(EntityOp::Upsert { model: related_model.clone(), id, row });
-                }
-            }
-        }
-        Ok(ops)
-    }
-
     pub(crate) fn land_rows(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
         crate::blocking::blocking_unit(|| self.land_rows_unit(admitted, model, normalized, attempt))
     }
@@ -137,11 +103,11 @@ impl Inner {
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
         let committed = self.db.commit_following_deferred(&admitted.authority(), attempt.generation, |reader| {
             drops = 0;
-            let AcceptedRows { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, model, &normalized.roots, &mut drops)?;
+            let AcceptedRows { rows: roots, invalid } = self.db.admit_rows(reader, attempt.base_revision, None, model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
             invalid_roots = invalid;
             let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, attempt.generation);
-            envelope.entity_ops = self.related_upserts(reader, attempt.base_revision, &normalized.related, &BTreeSet::new(), &mut drops)?;
+            envelope.entity_ops = self.db.related_upserts(reader, attempt.base_revision, &normalized.related, &BTreeSet::new(), &mut drops)?;
             for row in roots {
                 let Some(id) = row.get("id").and_then(read_id) else { continue };
                 envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
@@ -195,7 +161,7 @@ impl Inner {
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
         let committed = self.db.commit_following_deferred(&admitted.authority(), generation, |reader| {
             drops = 0;
-            let AcceptedRows { rows: roots, invalid } = admit(&self.db, reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
+            let AcceptedRows { rows: roots, invalid } = self.db.admit_rows(reader, attempt.base_revision, None, &model, &normalized.roots, &mut drops)?;
             admitted_roots = roots.len();
             invalid_roots = invalid;
             if marker.is_some() && invalid != 0 { return Err(SyncError::Malformed("media coverage contains invalid rows".into())); }
@@ -221,7 +187,7 @@ impl Inner {
                 (row.model, row.id)
             }).collect();
             let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, generation);
-            envelope.entity_ops = self.related_upserts(reader, attempt.base_revision, &normalized.related, &planned, &mut drops)?;
+            envelope.entity_ops = self.db.related_upserts(reader, attempt.base_revision, &normalized.related, &planned, &mut drops)?;
             envelope.entity_ops.extend(plan.entity_ops);
             envelope.node_reread = node_reread;
             envelope.scope_ops = plan.scope_ops;

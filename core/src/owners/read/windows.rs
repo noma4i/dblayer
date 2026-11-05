@@ -31,6 +31,37 @@ impl WindowKey {
     pub fn nodes(model: &str, ids: &[&str]) -> Self { Self { model: model.into(), name: format!("{}{}", Self::NODES, ids.join(",")) } }
 
     fn is_empty_nodes(&self) -> bool { self.name == Self::NODES }
+
+    const NODE: &'static str = "node:";
+
+    /// The key `(model, relation, params)`: `params` in the canonical form, keys in alphabetical order.
+    pub fn relation(model: &str, relation: &str, params: &serde_json::Map<String, serde_json::Value>) -> Self {
+        let canonical: BTreeMap<&String, &serde_json::Value> = params.iter().collect();
+        Self { model: model.into(), name: format!("{relation}|{}", serde_json::to_string(&canonical).unwrap_or_default()) }
+    }
+
+    /// The key `(model, node, id)`.
+    pub fn node(model: &str, id: &str) -> Self { Self { model: model.into(), name: format!("{}{id}", Self::NODE) } }
+
+    pub fn kind(&self) -> WindowKind {
+        if let Some(id) = self.name.strip_prefix(Self::NODE) {
+            return WindowKind::Node { id: id.to_string() };
+        }
+        if let Some(ids) = self.name.strip_prefix(Self::NODES) {
+            return WindowKind::Nodes { ids: ids.split(',').filter(|id| !id.is_empty()).map(str::to_string).collect() };
+        }
+        let (relation, params) = self.name.split_once('|').unwrap_or((self.name.as_str(), "{}"));
+        let params = serde_json::from_str(params).unwrap_or_default();
+        WindowKind::Relation { relation: relation.to_string(), params }
+    }
+}
+
+/// What a key names: a relation with params, one node or several nodes of the root of the model.
+#[derive(Clone, Debug, PartialEq)]
+pub enum WindowKind {
+    Relation { relation: String, params: serde_json::Map<String, serde_json::Value> },
+    Node { id: String },
+    Nodes { ids: Vec<String> },
 }
 
 /// An id of a stream that watches the window or of a caller that waits for it. `PRELOAD` is the interest of a key declared `preload`.

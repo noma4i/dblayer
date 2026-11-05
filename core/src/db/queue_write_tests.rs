@@ -61,3 +61,43 @@ fn the_base_keeps_the_whole_value_of_a_transfer() {
     assert_eq!((transfer.steps.path.as_str(), transfer.steps.body.as_str()), ("/presign", "{\"b\":2}"));
     assert!(!transfer.file_present);
 }
+
+fn paged_moments() -> super::Db {
+    let mut moments = moments_spec();
+    let mut mine = crate::schema::RelationSpec::new("mine", &["userId"]);
+    mine.remote = Some(crate::schema::RemoteSpec {
+        shape: crate::schema::RemoteShape::Connection { direction: crate::schema::PageDirection::Forward, coverage: crate::schema::Coverage::Page, max_pages: None, cursor: None },
+        operation: "Mine".into(),
+        stale_time: "1.minute".into(),
+        empty_stale_time: None,
+        selects_page_info: true,
+        page_size: None,
+        variables: Default::default(),
+        root: None,
+        total_from: None,
+    });
+    moments.relations.push(mine);
+    let specs = all_specs().into_iter().map(|spec| if spec.key.as_str() == "moments" { moments.clone() } else { spec }).collect();
+    let db = super::Db::open_in_memory(specs, None).unwrap();
+    db.set_clock(std::sync::Arc::new(crate::pacing::ManualClock::new(std::time::Duration::from_millis(1_000_000))));
+    db
+}
+
+fn page(key: &crate::owners::read::windows::WindowKey, number: u32, ids: &[&str], cursor: Option<&str>) -> StoreOp {
+    let roots = ids.iter().map(|id| crate::owners::store::RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": "u1", "text": id}).to_string() }).collect();
+    StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all: false, cursor: cursor.map(str::to_string), roots, related: Vec::new(), total: None, base_revision: 0 }
+}
+
+/// win_landing_committed (P-WIN-02): a landed page puts its rows into the membership of the scope in order and the window record keeps the cursor and the page count.
+#[test]
+fn a_landed_page_gives_rows_membership_and_the_window_record() {
+    let db = paged_moments();
+    let key = crate::owners::read::windows::WindowKey::relation("moments", "mine", &obj(json!({"userId": "u1"})));
+    db.write_queue_ops(&[page(&key, 1, &["m1", "m2"], Some("c1"))]).unwrap();
+    db.write_queue_ops(&[page(&key, 2, &["m3"], None)]).unwrap();
+    let scope = db.spec("moments").unwrap().selection_key("mine", &obj(json!({"userId": "u1"}))).unwrap();
+    let members = db.shared.store.read(&["moments"], |reader| Ok(reader.scope_members("moments", scope.as_str())?)).unwrap();
+    assert_eq!(members.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["m1", "m2", "m3"]);
+    let window = db.shared.store.window(&crate::store::window_key(scope.as_str(), crate::schema::PageDirection::Forward)).unwrap().unwrap();
+    assert_eq!((window.cursor.as_deref(), window.has_next, window.pages), (None, false, 2));
+}
