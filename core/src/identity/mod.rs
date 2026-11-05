@@ -209,6 +209,10 @@ impl Generation {
         self.0
     }
 
+    pub(crate) fn from_value(value: u64) -> Generation {
+        Generation(value)
+    }
+
     pub fn next(self) -> Generation {
         Generation(self.0 + 1)
     }

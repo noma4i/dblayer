@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -54,6 +54,35 @@ type Body = Box<dyn FnOnce(Arc<Router>, Instant) + Send>;
 pub struct RuntimeBuilder {
     boxes: Vec<Arc<Mailbox>>,
     bodies: Vec<(String, Body)>,
+    handle: Handle,
+}
+
+/// A clonable address book of the running owners. An effect runner takes it before `start` and uses it after.
+#[derive(Clone, Default)]
+pub struct Handle {
+    router: Arc<OnceLock<Arc<Router>>>,
+}
+
+impl Handle {
+    fn router(&self) -> Option<&Arc<Router>> { self.router.get() }
+
+    pub fn post<O: StateOwner>(&self, to: Address<O>, stamp: EpochStamp, input: O::Input) {
+        if let Some(router) = self.router() {
+            router.boxes[to.index].push(Command::Deliver(stamp, Box::new(input)));
+        }
+    }
+
+    pub fn start_epoch(&self, epoch: Epoch) {
+        if let Some(router) = self.router() { router.broadcast(Control::EpochStarted(epoch)); }
+    }
+
+    pub fn end_epoch(&self, epoch: Epoch, cause: Cause) {
+        if let Some(router) = self.router() { router.broadcast(Control::EpochEnded(epoch, cause)); }
+    }
+
+    pub fn close(&self) {
+        if let Some(router) = self.router() { router.broadcast(Control::Closing); }
+    }
 }
 
 pub struct Runtime {
@@ -73,8 +102,11 @@ impl RuntimeBuilder {
         Address::new(self.boxes.len() - 1)
     }
 
+    pub fn handle(&self) -> Handle { self.handle.clone() }
+
     pub fn start(self) -> std::io::Result<Runtime> {
         let router = Arc::new(Router { boxes: self.boxes });
+        let _ = self.handle.router.set(router.clone());
         let origin = Instant::now();
         let mut joins = Vec::new();
         for (name, body) in self.bodies {

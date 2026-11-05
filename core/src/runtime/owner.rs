@@ -50,6 +50,8 @@ pub trait StateOwner: Sized + 'static {
     type Effect: Debug + Send + 'static;
 
     fn step(state: &mut Self::State, input: Self::Input) -> Effects<Self>;
+    /// Called when the owner of an epoch meets `EpochStarted(epoch)`: the state of the new epoch instance.
+    fn epoch_started(_state: &mut Self::State, _epoch: Epoch) {}
     fn tick(now: Time) -> Self::Input;
     fn epoch_ended(epoch: Epoch, cause: Cause) -> Self::Input;
     fn closing() -> Self::Input;

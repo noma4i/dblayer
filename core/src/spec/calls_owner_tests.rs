@@ -42,7 +42,7 @@ impl Twin {
     /// Feeds both sides and compares effects, replies and the state of every call.
     fn feed(&mut self, input: Input) -> Out {
         match input.clone() {
-            Input::Run { epoch, operation, reply } => self.det.post(self.addr, EpochStamp::Control, CallsInput::Run { epoch, operation, reply }),
+            Input::Run { epoch, operation, reply } => self.det.post(self.addr, EpochStamp::Control, CallsInput::Run { epoch, operation, variables: String::new(), reply }),
             Input::Response { call_id, body, errors } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body, errors }),
             Input::TransportError { call_id, error } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id, error: fail(&error) }),
             Input::Dropped { call_id } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id }),
@@ -55,7 +55,7 @@ impl Twin {
         self.history.extend(raw.iter().cloned());
         let want = self.reference.step(input);
         let effects: Vec<RefEffect> = raw.iter().filter_map(|effect| match effect {
-            CallsEffect::Request { call_id, request_id, operation } => Some(RefEffect::Request { call_id: *call_id, request_id: *request_id, operation: operation.clone() }),
+            CallsEffect::Request { call_id, request_id, operation, .. } => Some(RefEffect::Request { call_id: *call_id, request_id: *request_id, operation: operation.clone() }),
             CallsEffect::Cancel { request_id } => Some(RefEffect::Cancel { request_id: *request_id }),
             CallsEffect::Drained(_) => Some(RefEffect::Drained),
             CallsEffect::Reply { .. } => None,

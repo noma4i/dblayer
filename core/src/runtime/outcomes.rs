@@ -8,6 +8,12 @@ use super::owner::{Cause, Epoch};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OutcomeId(u64);
 
+impl OutcomeId {
+    pub fn raw(self) -> u64 { self.0 }
+
+    pub fn from_raw(raw: u64) -> Self { Self(raw) }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome<T> {
     Value(T),

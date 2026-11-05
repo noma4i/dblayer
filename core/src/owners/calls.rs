@@ -29,7 +29,7 @@ pub enum CallPhase {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallsEffect {
-    Request { call_id: CallId, request_id: RequestId, operation: String },
+    Request { call_id: CallId, request_id: RequestId, operation: String, variables: String },
     Cancel { request_id: RequestId },
     Reply { id: ReplyId, answer: CallAnswer },
     Drained(Drained),
@@ -38,7 +38,9 @@ pub enum CallsEffect {
 #[derive(Clone, Debug)]
 pub enum CallsInput {
     /// `epoch` is the epoch of the caller: the table answers `NoSession` when it is not the current one.
-    Run { epoch: Epoch, operation: String, reply: ReplyId },
+    Run { epoch: Epoch, operation: String, variables: String, reply: ReplyId },
+    /// Operations declared by `register_operations` after the open.
+    Declare(Vec<String>),
     Response { call_id: CallId, body: String, errors: Vec<String> },
     TransportError { call_id: CallId, error: CallError },
     Dropped { call_id: CallId },
@@ -100,11 +102,11 @@ impl StateOwner for Calls {
             CallsInput::Run { epoch, reply, .. } if epoch != state.epoch => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::NoSession) }),
             CallsInput::Run { reply, ref operation, .. } if !state.declared.contains(operation) => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) }),
             CallsInput::Run { reply, .. } if !state.online => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Offline) }),
-            CallsInput::Run { reply, operation, .. } => {
+            CallsInput::Run { reply, operation, variables, .. } => {
                 let id = state.next;
                 state.next += 1;
                 state.calls.insert(id, (CallPhase::Sending { request_id: id }, reply));
-                fx.push(CallsEffect::Request { call_id: id, request_id: id, operation });
+                fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables });
             }
             CallsInput::Response { call_id, body, errors } if state.sending(call_id) => {
                 let answer = if errors.is_empty() { Ok(body) } else { Err(CallError::Graphql(errors)) };
@@ -112,6 +114,7 @@ impl StateOwner for Calls {
             }
             CallsInput::TransportError { call_id, error } if state.sending(call_id) => state.finish(call_id, Err(error), &mut fx),
             CallsInput::Dropped { call_id } if state.sending(call_id) => state.finish(call_id, Err(CallError::Network), &mut fx),
+            CallsInput::Declare(names) => state.declared.extend(names),
             CallsInput::Online(Online(online)) => state.online = online,
             CallsInput::EpochEnded => state.interrupt(&mut fx),
             CallsInput::Closing => {
@@ -124,6 +127,11 @@ impl StateOwner for Calls {
             CallsInput::Response { .. } | CallsInput::TransportError { .. } | CallsInput::Dropped { .. } | CallsInput::Idle => {}
         }
         fx.into_iter().map(Effect::Run).collect()
+    }
+
+    fn epoch_started(state: &mut CallsState, epoch: Epoch) {
+        state.epoch = epoch;
+        state.calls.clear();
     }
 
     fn tick(_now: Time) -> CallsInput { CallsInput::Idle }

@@ -5,6 +5,8 @@ use super::owner::{Back, Cause, Control, Effect, Epoch, Message, Outbound, State
 
 pub trait EffectRunner<O: StateOwner>: Send + 'static {
     fn run(&mut self, stamp: EpochStamp, effect: O::Effect, back: &Back<O>);
+    /// Called once after all effects of one `step` ran: the results of a step become visible together.
+    fn step_done(&mut self) {}
 }
 
 enum Item<O: StateOwner> {
@@ -62,6 +64,7 @@ impl<O: StateOwner> Cell<O> {
 
     pub fn start_epoch(&mut self, epoch: Epoch) {
         self.epoch = Some(epoch);
+        O::epoch_started(&mut self.state, epoch);
         self.purge_schedule(|stamp| stamp != EpochStamp::Epoch(epoch) && stamp != EpochStamp::Control);
     }
 
@@ -123,6 +126,7 @@ impl<O: StateOwner> Cell<O> {
                 Effect::Run(effect) => runner.run(out, effect, back),
             }
         }
+        runner.step_done();
         if ended {
             self.last_epoch = self.epoch.take();
             self.purge_schedule(|stamp| stamp != EpochStamp::Control);

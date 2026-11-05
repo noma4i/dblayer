@@ -362,3 +362,86 @@ impl Store {
         pending_intent(&inner.connection)
     }
 }
+
+const SAVED_EPOCH_KEY: &str = "saved_epoch";
+const SAVED_GENERATION_KEY: &str = "saved_generation";
+
+/// The first 8 bytes of the stored credential digest: the identity the owners compare.
+pub(crate) fn identity_of(digest: &str) -> Option<u64> {
+    u64::from_str_radix(digest.get(..16)?, 16).ok()
+}
+
+impl Store {
+    /// `saved_epoch`, `saved_generation` and the identity of the stored session, read at open (`store.md` Boot).
+    pub(crate) fn saved(&self) -> Result<(u64, u64, Option<u64>), StoreError> {
+        let inner = self.lock();
+        let read = |key: &str| -> Result<u64, StoreError> { Ok(crate::ddl::manifest_read(&inner.connection, key)?.and_then(|value| value.parse().ok()).unwrap_or(0)) };
+        let identity = crate::transport::encrypted::state::session(&inner.connection)?.filter(|session| session.sequence > 0).and_then(|session| identity_of(&session.credential_digest));
+        Ok((read(SAVED_EPOCH_KEY)?, read(SAVED_GENERATION_KEY)?, identity))
+    }
+
+    /// The effect `SavePublished` of `store.md`.
+    pub(crate) fn save_published(&self, epoch: u64, generation: u64) -> Result<(), StoreError> {
+        let inner = self.lock();
+        let transaction = inner.connection.unchecked_transaction()?;
+        manifest_write(&transaction, SAVED_EPOCH_KEY, &epoch.to_string())?;
+        manifest_write(&transaction, SAVED_GENERATION_KEY, &generation.to_string())?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// The effect `EraseAccount`: the data of the account goes in one transaction. Returns the new revision.
+    pub(crate) fn erase_account(&self, generation: crate::identity::Generation, erase_encrypted: bool) -> Result<i64, StoreError> {
+        let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
+        let mut inner = self.lock();
+        inner.generation = generation;
+        let now = inner.now_ms();
+        write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "incompatible" }, &[], now)?;
+        let transaction = inner.connection.unchecked_transaction()?;
+        wipe_all_cache(&transaction, false)?;
+        retire_operations(&transaction, None, None)?;
+        if erase_encrypted {
+            transaction.execute_batch("DELETE FROM encrypted_pending; DELETE FROM encrypted_session;")?;
+        }
+        manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
+        let revision = bump_revision(&transaction)?;
+        clear_intent(&transaction)?;
+        let operations = crate::operation::read_queue(&transaction)?;
+        transaction.commit()?;
+        *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
+        drop(readers);
+        let event = StoreEvent::Reset { revision, models: None, operations: operations.clone() };
+        if let Some(log) = self.commit_log.get() { log(&event); }
+        let ticket = self.line.ticket();
+        drop(inner);
+        ResetCommitted { store: self, ticket: Some(ticket), revision, models: None, operations }.run();
+        Ok(revision)
+    }
+
+    /// The effect `EraseModels`: the cache of the models goes, intents and `encrypted_*` stay. Returns the new revision.
+    pub(crate) fn erase_models(&self, generation: crate::identity::Generation, models: &[String]) -> Result<i64, StoreError> {
+        let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
+        let mut inner = self.lock();
+        let tables: Vec<(String, String)> = models.iter().map(|model| inner.model(model).map(|info| (model.clone(), info.table.clone()))).collect::<Result<_, _>>()?;
+        inner.generation = generation;
+        let now = inner.now_ms();
+        write_intent(&inner.connection, "cache_only", models, now)?;
+        let transaction = inner.connection.unchecked_transaction()?;
+        for (model, table) in &tables {
+            wipe_model_cache(&transaction, model, table, false)?;
+        }
+        retire_operations(&transaction, Some(models), None)?;
+        let revision = bump_revision(&transaction)?;
+        clear_intent(&transaction)?;
+        let operations = crate::operation::read_queue(&transaction)?;
+        transaction.commit()?;
+        *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
+        drop(readers);
+        let event = StoreEvent::Reset { revision, models: Some(models.to_vec()), operations: operations.clone() };
+        if let Some(log) = self.commit_log.get() { log(&event); }
+        let ticket = self.line.ticket();
+        drop(inner);
+        ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(models.to_vec()), operations }.run();
+        Ok(revision)
+    }
+}
