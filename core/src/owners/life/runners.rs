@@ -199,6 +199,7 @@ impl EffectRunner<Network> for NetworkRunner {
             NetworkEffect::Snapshot { owner: SnapshotOwner::Windows, epoch, online } => wiring.to_windows_in(epoch, WindowsInput::Online(Online(online))),
             NetworkEffect::EpochOnline(online) => {
                 wiring.to_feed(FeedInput::Online(Online(online)));
+                self.db.connectivity().change(online);
                 wiring.to_calls(CallsInput::Online(Online(online)));
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));

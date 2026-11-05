@@ -36,6 +36,7 @@ impl World {
     async fn open(&self, db: &Db) -> (Arc<EncryptedClient>, Arc<crate::owners::life::Life>) {
         let client = Arc::new(EncryptedClient::new(&config(), self.server.clone(), self.credentials.clone(), db.clone(), self.clock.clone()).unwrap());
         let life = client.start_owners_in_tests(db);
+        life.set_online(true).wait().await;
         (client, life)
     }
 }
