@@ -140,11 +140,87 @@ impl Handle {
         if let Some(router) = self.router() { router.broadcast(Control::Closing); }
     }
 
+    /// Returns once nothing is in flight, also after the owner threads ended, or false after `limit`.
+    #[cfg(test)]
+    pub fn barrier(&self, limit: Duration) -> bool { self.router().is_none_or(|router| router.inflight.wait_idle(limit)) }
+
+    #[cfg(test)]
+    pub fn pending(&self) -> usize { self.router().map_or(0, |router| *lock(&router.inflight.count)) }
+
     /// Counts an effect task as in flight from its spawn until its first poll, so the barrier covers the request it is about to make.
     pub fn launch(&self) -> Launch { Launch(self.router().cloned().inspect(|router| router.inflight.add())) }
 }
 
 pub struct Launch(Option<Arc<Router>>);
+
+/// The count of one effect task in the barrier: held while the task can run (spawned, woken or polled), released while it waits for the outside.
+struct Gate {
+    router: Arc<Router>,
+    held: std::sync::atomic::AtomicBool,
+    woken: std::sync::atomic::AtomicBool,
+}
+
+impl Gate {
+    fn arm(&self) {
+        if !self.held.swap(true, Ordering::SeqCst) { self.router.inflight.add(); }
+    }
+
+    fn disarm(&self) {
+        if self.held.swap(false, Ordering::SeqCst) { self.router.inflight.done(1); }
+    }
+}
+
+struct GateWake {
+    gate: Arc<Gate>,
+    waker: std::task::Waker,
+}
+
+impl std::task::Wake for GateWake {
+    fn wake(self: Arc<Self>) { self.wake_by_ref(); }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.gate.woken.store(true, Ordering::SeqCst);
+        self.gate.arm();
+        self.waker.wake_by_ref();
+    }
+}
+
+/// A task that the barrier of the owners waits for whenever it can run: from its spawn to its first wait and again from each wake to the next wait.
+pub struct Counted<F> {
+    work: std::pin::Pin<Box<F>>,
+    gate: Option<Arc<Gate>>,
+}
+
+impl<F: std::future::Future> std::future::Future for Counted<F> {
+    type Output = F::Output;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<F::Output> {
+        let Some(gate) = self.gate.clone() else { return self.work.as_mut().poll(cx) };
+        gate.woken.store(false, Ordering::SeqCst);
+        gate.arm();
+        let waker = std::task::Waker::from(Arc::new(GateWake { gate: gate.clone(), waker: cx.waker().clone() }));
+        let polled = self.work.as_mut().poll(&mut std::task::Context::from_waker(&waker));
+        if polled.is_ready() || !gate.woken.load(Ordering::SeqCst) {
+            gate.disarm();
+            if polled.is_pending() && gate.woken.load(Ordering::SeqCst) { gate.arm(); }
+        }
+        polled
+    }
+}
+
+impl<F> Drop for Counted<F> {
+    fn drop(&mut self) {
+        if let Some(gate) = &self.gate { gate.disarm(); }
+    }
+}
+
+/// Wraps `work` so the barrier counts it whenever it can run. The launch taken before the spawn covers the time until the first poll.
+pub fn counted<F: std::future::Future>(launch: Option<Launch>, work: F) -> Counted<F> {
+    let gate = launch.and_then(|mut launch| launch.0.take()).map(|router| {
+        Arc::new(Gate { router, held: std::sync::atomic::AtomicBool::new(true), woken: std::sync::atomic::AtomicBool::new(false) })
+    });
+    Counted { work: Box::pin(work), gate }
+}
 
 impl Drop for Launch {
     fn drop(&mut self) {

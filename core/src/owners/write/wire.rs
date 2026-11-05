@@ -25,10 +25,7 @@ pub struct TokioTasks(pub tokio::runtime::Handle, pub Option<crate::runtime::Han
 impl Tasks for TokioTasks {
     fn start(&self, task: Task) -> Running {
         let launch = self.1.as_ref().map(crate::runtime::Handle::launch);
-        let handle = crate::task::spawn_on(crate::task::Carry::Internal, &self.0, async move {
-            drop(launch);
-            task.await
-        });
+        let handle = crate::task::spawn_on(crate::task::Carry::Internal, &self.0, crate::runtime::counted(launch, task));
         Running::new(move || crate::db::lock::effect(|| handle.abort()))
     }
 

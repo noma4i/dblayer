@@ -558,17 +558,14 @@ impl Life {
 
     /// Returns once every input posted to an owner was handled, or false after `limit`.
     #[cfg(test)]
-    pub fn barrier(&self, limit: std::time::Duration) -> bool {
-        let runtime = self.runtime.lock().unwrap_or_else(PoisonError::into_inner);
-        runtime.as_ref().is_none_or(|runtime| runtime.barrier(limit))
-    }
+    pub fn barrier(&self, limit: std::time::Duration) -> bool { self.wiring.handle.barrier(limit) }
 
     /// Counts a platform call as in flight until it registered with the owners.
     pub fn launch(&self) -> crate::runtime::Launch { self.wiring.handle.launch() }
 
     /// The inputs and started effect tasks that still hold the barrier.
     #[cfg(test)]
-    pub fn pending(&self) -> usize { self.runtime.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map_or(0, |runtime| runtime.pending()) }
+    pub fn pending(&self) -> usize { self.wiring.handle.pending() }
 
     /// Whether `shutdown` ran: the database is closed for good.
     pub fn is_shut(&self) -> bool { self.shut.load(Ordering::SeqCst) }

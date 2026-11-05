@@ -78,14 +78,13 @@ impl FeedIo {
             }
         };
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        spawn_on(Carry::Detached, &self.handle, async move {
-            drop(launch);
+        spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
             Self::run(lines, codec, connection, (cancel, closing, established), queued, reply).await;
             let mut open = open.lock().unwrap_or_else(PoisonError::into_inner);
             if open.get(&connection).is_some_and(|entry| entry.attempt == attempt) {
                 open.remove(&connection);
             }
-        });
+        }));
     }
 
     async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, connection: ConnectionId, (cancel, closing, established): (CancelToken, CancelToken, Arc<AtomicBool>), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {

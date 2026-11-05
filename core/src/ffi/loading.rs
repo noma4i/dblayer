@@ -25,6 +25,15 @@ pub enum LoadMoreResult {
 pub struct LoadRequest {
     outcome: tokio::sync::watch::Receiver<Option<Result<(), DbError>>>,
     held: Mutex<Option<tokio::task::AbortHandle>>,
+    life: Arc<crate::owners::life::Life>,
+    /// The count of the owners barrier while an aborted task is still being dropped: the task lets it go with its last field.
+    dropping: Arc<Mutex<Option<crate::runtime::Launch>>>,
+}
+
+struct ReleaseBarrier(Arc<Mutex<Option<crate::runtime::Launch>>>);
+
+impl Drop for ReleaseBarrier {
+    fn drop(&mut self) { drop(crate::db::locked(&self.0).take()); }
 }
 
 fn load_cancelled() -> DbError { DbError::Interrupted { detail: "the load was cancelled".into() } }
@@ -42,6 +51,7 @@ impl LoadRequest {
     pub fn cancel(&self) {
         let held = crate::db::locked(&self.held).take();
         let Some(task) = held else { return };
+        *crate::db::locked(&self.dropping) = Some(self.life.launch());
         crate::db::lock::effect(|| task.abort());
     }
 }
@@ -153,7 +163,12 @@ impl Database {
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
         let launch = self.life.launch();
+        let dropping: Arc<Mutex<Option<crate::runtime::Launch>>> = Arc::default();
+        let release = ReleaseBarrier(dropping.clone());
         let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
+            let _release = release;
+            let sender = sender;
+            let this = this;
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
             let started = this.start_load(epoch, &model, &relation, &params_json, goal, force).await;
             drop(launch);
@@ -164,7 +179,7 @@ impl Database {
             crate::db::lock::effect(|| sender.send_replace(Some(result)));
             drop(held);
         });
-        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
+        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())), life: self.life.clone(), dropping }))
     }
 
     #[cfg(test)]

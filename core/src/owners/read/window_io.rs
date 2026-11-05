@@ -54,8 +54,7 @@ impl WindowIo {
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
         let (transport, codec, admit, open, back) = (self.transport.clone(), self.codec.clone(), self.admit.clone(), self.open.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        spawn_on(Carry::Detached, &self.handle, async move {
-            drop(launch);
+        spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
             let outcome = tokio::select! {
                 () = token.cancelled() => None,
                 outcome = ask(transport.as_deref(), codec.as_ref(), &admit, &key, page, cursor.as_deref()) => Some(outcome),
@@ -68,7 +67,7 @@ impl WindowIo {
                     TransportOutcome::Dropped => WindowsInput::Dropped { request, attempt },
                 });
             }
-        });
+        }));
     }
 
     fn cancel(&self, request: RequestId, attempt: u32) {

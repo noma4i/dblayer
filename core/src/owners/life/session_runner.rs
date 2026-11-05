@@ -282,8 +282,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let sequence = (pending.class != OperationClass::Sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
                 let watch = back.watch(crate::owners::session::http_id(attempt_id));
                 let launch = self.wiring.handle.launch();
-                let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
-                    drop(launch);
+                let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
                     let _watch = watch;
                     crate::db::lock::assert_no_library_lock("HttpExchange::post");
                     let credential = match secret_for(credentials.as_ref(), expected.as_deref()) {
@@ -292,7 +291,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     };
                     let result = client.send_once(credential.as_deref(), &wire, &key, sequence, &pending.path, &body, purpose).await;
                     back.reply(EpochStamp::Control, input_of(request_id, attempt_id, logout, result));
-                });
+                }));
                 if let Some(previous) = self.running.insert(attempt_id, task.abort_handle()) {
                     crate::db::lock::effect(|| previous.abort());
                 }

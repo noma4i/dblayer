@@ -340,6 +340,7 @@ impl Database {
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
         if self.life.is_shut() { return Err(super::command::closed()); }
+        let _launch = self.life.launch();
         let waiter = self.life.close();
         let answered = on_executor(async move {
             tokio::time::timeout(Duration::from_secs(10), async { waiter.wait().await }).await.map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
