@@ -193,13 +193,13 @@ class BootstrapConfigTest {
     }
 
     @Test
-    fun actualHttpOmitsSecretsAndRefusesRedirects() = bounded {
+    fun actualHttpKeepsTheAppClientAndRefusesRedirects() = bounded {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/redirect"))
             server.enqueue(MockResponse().setBody("followed"))
             server.start()
             val polluted = OkHttpClient.Builder().addInterceptor { chain ->
-                chain.proceed(chain.request().newBuilder().header("Authorization", "secret").header("Cookie", "secret").header("X-Payload-Encryption", "old").header("X-Request-Signature", "old").build())
+                chain.proceed(chain.request().newBuilder().header("X-App", "kept").build())
             }.build()
             val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), polluted).post("/api/bootstrap", "jwe", NetworkPurpose.STANDARD)
             assertEquals(302.toUShort(), reply.status)
@@ -208,7 +208,7 @@ class BootstrapConfigTest {
             assertEquals(listOf(userAgent(null)), request.headers.values("User-Agent"))
             assertEquals("POST /api/bootstrap", "${request.method} ${request.path}")
             val applicationHeaders = request.headers.names().filter { it.lowercase() !in listOf("host", "content-length", "transfer-encoding", "connection", "user-agent", "accept-encoding") }
-            assertEquals(listOf("Content-Type"), applicationHeaders)
+            assertEquals(setOf("X-App", "Content-Type"), applicationHeaders.toSet())
             assertEquals("application/jose", request.getHeader("Content-Type"))
             assertEquals("jwe", request.body.readUtf8())
         }

@@ -121,11 +121,9 @@ try await moment.attach(.media, data: bytes, name: "a.png", mime: "image/png")  
 ### Kotlin
 
 ```kotlin
-@Composable
-fun FeedScreen(me: User, scope: AccountScope) {
-  val moments = rememberProjected(scope, Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc()).limit(20))
-  val state by moments.projection.collectAsState()
-  LazyColumn { items(state.rows) { MomentRow(it) } }
+class FeedModel(me: User, scope: AccountScope) : ViewModel() {
+  private val query = Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc()).limit(20)
+  val moments = Projected(scope.stream(query), query.decoder, viewModelScope)   // rows: moments.projection
 }
 
 val moment = Moment.send(scope, text = "hello").row            // shown at once, queued, synced

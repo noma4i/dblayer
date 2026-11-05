@@ -1,7 +1,6 @@
 plugins {
   id("com.android.library") version "9.4.1"
   id("org.jetbrains.kotlin.plugin.serialization") version "2.4.21"
-  id("org.jetbrains.kotlin.plugin.compose") version "2.4.21"
   id("maven-publish")
 }
 
@@ -16,12 +15,16 @@ android {
     minSdk = 33
     consumerProguardFiles("consumer-rules.pro")
     ndk {
-      abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+      abiFilters += listOf("arm64-v8a", "armeabi-v7a")
     }
   }
 
   publishing {
     singleVariant("release")
+  }
+
+  testFixtures {
+    enable = true
   }
 
   buildTypes {
@@ -42,11 +45,9 @@ android {
 
 dependencies {
   api("androidx.compose.runtime:runtime-annotation:1.11.4")
-  api("androidx.compose.runtime:runtime:1.11.4")
   api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
   api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
   implementation("com.squareup.okhttp3:okhttp:5.5.0")
-  implementation("com.google.android.gms:play-services-auth:22.0.0")
   implementation("androidx.lifecycle:lifecycle-process:2.11.0")
   implementation("net.java.dev.jna:jna:5.19.1@aar")
   testImplementation("net.java.dev.jna:jna:5.19.1")

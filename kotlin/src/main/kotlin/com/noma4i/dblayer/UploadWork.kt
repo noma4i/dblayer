@@ -40,7 +40,10 @@ internal object UploadNotifications {
 
     private fun stored(context: Context): UploadNotification {
         val file = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
-        return UploadNotification(file.getString("title", null) ?: "Uploading", file.getString("text", null) ?: "Files are on their way", file.getInt("icon", android.R.drawable.stat_sys_upload))
+        val title = file.getString("title", null)
+        val text = file.getString("text", null)
+        check(title != null && text != null && file.contains("icon")) { "the upload notification is not declared: pass uploadNotification to DBlayer.open" }
+        return UploadNotification(title, text, file.getInt("icon", 0))
     }
 
     fun build(context: Context): Notification {

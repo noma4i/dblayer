@@ -19,8 +19,7 @@ internal object Reachability {
             service.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) = relay.set(isOnline(service))
                 override fun onLost(network: Network) = relay.set(isOnline(service))
-                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
-                    relay.set(capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = relay.set(isOnline(service))
             })
             service
         }

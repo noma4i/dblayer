@@ -9,6 +9,13 @@ fi
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$(ls -d "$HOME"/Library/Android/sdk/ndk/* | sort -V | tail -1)}"
 abis="$(DBLAYER_BUILD_TARGETS_ONLY=1 bash "$root/scripts/build_kotlin.sh" "${1:---release}")"
+if [ "${1:---release}" = --release ]; then
+  declared="$(sed -n 's/^ *abiFilters += listOf(\(.*\))$/\1/p' "$root/kotlin/build.gradle.kts" | tr -d '" ' | tr ',' '\n' | sort)"
+  if [ "$declared" != "$(printf '%s\n' "$abis" | sort)" ]; then
+    echo "abiFilters in kotlin/build.gradle.kts differ from the release ABIs of build_kotlin.sh: $(echo $declared) vs $(echo $abis)" >&2
+    exit 1
+  fi
+fi
 while IFS= read -r abi; do
   if [ ! -f "$root/kotlin/src/main/jniLibs/$abi/libdblayer.so" ]; then
     echo "android artifact missing: $abi/libdblayer.so" >&2

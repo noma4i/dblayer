@@ -9,23 +9,15 @@ import androidx.lifecycle.ProcessLifecycleOwner
 
 internal class ForegroundEvents(private val lifecycle: Lifecycle, private val deliver: () -> Unit) {
     @Volatile private var active = true
-    private var stopped = false
 
     private val observer = object : DefaultLifecycleObserver {
-        override fun onStop(owner: LifecycleOwner) {
-            stopped = true
-        }
-
         override fun onStart(owner: LifecycleOwner) {
-            if (!active || !stopped) return
-            stopped = false
-            deliver()
+            if (active) deliver()
         }
     }
 
     fun start() {
         if (!active) return
-        stopped = !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
         lifecycle.addObserver(observer)
     }
 

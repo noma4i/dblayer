@@ -14,8 +14,8 @@ import kotlinx.coroutines.sync.withLock
 object DBlayer {
     private val opening = Mutex()
     private val opener = OpenDatabase()
-    private var opened: Database? = null
-    private var ready = CompletableDeferred<Database>()
+    @Volatile private var opened: Database? = null
+    @Volatile private var ready = CompletableDeferred<Database>()
 
     internal suspend fun awaitDatabase(): Database = ready.await()
 
@@ -38,9 +38,12 @@ object DBlayer {
         ForegroundEvents.stop()
         PowerSaving.stop()
         Reachability.disconnect()
-        val closing = opened
-        opened = null
-        ready = CompletableDeferred()
+        val closing = opening.withLock {
+            opened.also {
+                opened = null
+                ready = CompletableDeferred()
+            }
+        }
         closing?.let { offCaller { it.closeDatabase() } }
     }
 
@@ -80,8 +83,7 @@ object DBlayer {
         try {
             openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, uploads, http, retries, uploadNotification)
         } catch (error: Throwable) {
-            ready.completeExceptionally(error)
-            ready = CompletableDeferred()
+            if (ready.completeExceptionally(error)) ready = CompletableDeferred()
             throw error
         }
     }
@@ -103,7 +105,7 @@ object DBlayer {
     ) {
         UploadNotifications.store(context, uploadNotification)
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire(), PowerSaving.saving(context), PowerSaving.lowRam(context))
+        val options = OpenOptions(operations = JsonArray(definitions).jsonText(), uploads = uploads?.wire(), powerSaving = PowerSaving.saving(context), lowRam = PowerSaving.lowRam(context))
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }, retries)
