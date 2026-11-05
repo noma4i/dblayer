@@ -23,6 +23,7 @@ steps=(
   "cheap|docs|120|*|bash scripts/check_docs.sh"
   "cheap|waits|120|*|bash scripts/check_waits.sh"
   "cheap|waits-selftest|120|*|bash scripts/check_waits_test.sh"
+  "cheap|steps-selftest|120|*|bash scripts/check_steps_test.sh"
   "cheap|check-lock-selftest|120|*|bash scripts/check_lock_test.sh"
   "cheap|check-logs-selftest|120|*|bash scripts/check_logs_test.sh"
   "cheap|silent|120|*|bash scripts/check_silent.sh"

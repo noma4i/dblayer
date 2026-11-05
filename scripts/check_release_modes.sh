@@ -34,8 +34,9 @@ def fixture(base, touch=None, manifest=True):
     repo = base / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy2(release_script, repo / "scripts/release.sh")
-    for name in ("check_docs.sh", "check_zoo.sh", "check_legacy.sh"):
+    for name in ("check_docs.sh", "check_zoo.sh"):
         (repo / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
+    shutil.copy2(source / "scripts/check_legacy.sh", repo / "scripts/check_legacy.sh")
     (repo / "scripts/check_sequences.sh").write_text("""#!/bin/sh
 echo "check_sequences $*" >> "$TEST_EVENTS"
 S="${STUB_SHA:-$RELEASE_SOURCE_SHA}"; R="${STUB_RUN:-$RELEASE_RUN_ID}"
@@ -243,14 +244,33 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     run(["bash", "scripts/release.sh", version], dirty, dirty_env, expected=1, contains="working tree is not clean")
     assert not (dirty / "target/release.lock").exists(), "the lock stayed after a refusal"
     print("ok dirty tracked file is rejected and releases the lock")
-    legacy_repo, legacy_env = fixture(base / "legacy")
-    shutil.copy2(source / "scripts/check_legacy.sh", legacy_repo / "scripts/check_legacy.sh")
-    run(["bash", "scripts/check_legacy.sh", "check"], legacy_repo, legacy_env, expected=0)
-    (legacy_repo / "core/src/extra.rs").write_text("// one legacy line\n")
-    subprocess.run([real_git, "-C", str(legacy_repo), "add", "core/src/extra.rs"], check=True)
-    subprocess.run([real_git, "-C", str(legacy_repo), "commit", "-q", "--amend", "--no-edit"], check=True, capture_output=True)
-    run(["bash", "scripts/check_legacy.sh", "check"], legacy_repo, legacy_env, expected=1, contains="1 legacy lines, 0 development-file references")
-    print("ok check_legacy goes red at one match")
+    def amend_with(repo, name, text):
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text(text)
+        subprocess.run([real_git, "-C", str(repo), "add", name], check=True)
+        subprocess.run([real_git, "-C", str(repo), "commit", "-q", "--amend", "--no-edit"], check=True, capture_output=True)
+
+    for label, name, text, message in (
+        ("a legacy line", "core/src/extra.rs", "// one legacy line\n", "1 legacy lines or files, 0 development-file references or files"),
+        ("a legacy file name", "core/src/shim.rs", "pub fn a() {}\n", "1 legacy lines or files, 0 development-file references or files"),
+        ("a development file", "CLAUDE.md", "notes\n", "0 legacy lines or files, 1 development-file references or files"),
+        ("a plans reference", "core/src/p.rs", "// see .claude/plans/a.md\n", "0 legacy lines or files, 1 development-file references or files"),
+        ("COMPAT", "core/src/c.rs", "// COMPAT\n", "1 legacy lines or files, 0 development-file references or files"),
+        ("a spaced flush", "core/src/f.rs", "pub fn flush () {}\n", "1 legacy lines or files, 0 development-file references or files"),
+        ("a sync root import", "core/src/s.rs", "use crate::sync;\n", "1 legacy lines or files, 0 development-file references or files"),
+    ):
+        repo_red, env_red = fixture(base / ("red-" + name.replace("/", "-")))
+        amend_with(repo_red, name, text)
+        run(["bash", "scripts/release.sh", version], repo_red, env_red, expected=1, contains=message)
+        assert not (repo_red / "target/release-1.2.3").exists(), f"{label}: the stage was built after a red check_legacy"
+        print(f"ok release refuses {label} before any build")
+    compatible, compatible_env = fixture(base / "compatible")
+    amend_with(compatible, "core/src/ok.rs", "// Compatible with the server\n")
+    run(["bash", "scripts/release.sh", version], compatible, compatible_env, contains="check_legacy: ok")
+    print("ok release continues on a clean tree and Compatible is allowed")
+    broken, broken_env = fixture(base / "broken")
+    run(["bash", "scripts/check_legacy.sh", "count", str(broken), "no-such-ref"], broken, broken_env, expected=2, contains="git grep failed")
+    print("ok a git failure is not a zero count")
     incomplete, incomplete_env = fixture(base / "incomplete")
     stage = incomplete / "target/release-1.2.3"
     stage.mkdir(parents=True)
