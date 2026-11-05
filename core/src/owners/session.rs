@@ -1,27 +1,23 @@
 //! Owner `SessionCalls`: the credential, `sequence`, `encrypted_session` and `encrypted_pending`.
 
-use std::collections::VecDeque;
-
-use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, Online, Published, RejectReason, Rejected, RequestId, ServerEnded};
+use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
+use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected, ReplyId, RequestId, ServerEnded};
 use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
 
-use super::contract::ReplyId;
 pub type Digest = u64;
-
-/// The author of a `Mutate`: the address the answer `Transport{req_id, ..}` goes to.
 pub type AuthorId = u64;
+pub type AttemptId = u64;
+pub type SecretOpId = u64;
+pub type StreamId = u64;
 
-/// The address of Outbox: the author of a `Mutate` whose owner is an operation.
 pub const OUTBOX_AUTHOR: AuthorId = 1;
-/// The address of Transfer: the author of a `Mutate` whose owner is a transfer step.
 pub const TRANSFER_AUTHOR: AuthorId = 2;
 
 /// The owner of a `Mutate`: `encrypted_pending` keeps it, and a pending restored at open answers the author this owner names.
 pub type MutateOwner = crate::transport::RequestOwner;
 
-/// The author an owner names: Outbox for an operation, Transfer for a transfer step.
 pub fn author_of(owner: &MutateOwner) -> AuthorId {
     match owner {
         MutateOwner::Operation { .. } | MutateOwner::Unmatched { .. } => OUTBOX_AUTHOR,
@@ -33,9 +29,11 @@ pub fn author_of(owner: &MutateOwner) -> AuthorId {
 pub enum SessionError {
     Invalid,
     Rejected(RejectReason),
-    Revoked,
-    /// A call that needs the session while there is none.
+    Session(crate::transport::SessionCode),
+    Storage(String),
+    SessionExists,
     NoCredential,
+    Revoked,
     StateLost,
     SequenceConflict,
     Protocol,
@@ -54,12 +52,19 @@ pub struct Credential {
     pub sequence: u64,
 }
 
-/// A session operation declared by the config: its path and whether it carries no session. A call that carries the session while `credential = None` is the sign-in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OperationClass {
+    Login,
+    Authenticated,
+    Sessionless,
+    Logout,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionOperation {
     pub name: String,
     pub path: String,
-    pub sessionless: bool,
+    pub class: OperationClass,
 }
 
 /// `pending` of the table: the row `encrypted_pending`, by value.
@@ -67,84 +72,148 @@ pub struct SessionOperation {
 pub struct PendingCall {
     pub request_id: RequestId,
     pub sequence: u64,
+    pub class: OperationClass,
     pub operation: String,
     pub path: String,
     pub body: String,
-    pub sessionless: bool,
     pub credential: Option<Digest>,
     pub purpose: u8,
     pub author: Option<AuthorId>,
     pub owner: Option<MutateOwner>,
+    pub epoch: Epoch,
     pub reply: Option<ReplyId>,
 }
 
-/// An entry of `queue`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Queued {
     Call { operation: String, body: String, reply: ReplyId },
-    Mutate { author: AuthorId, owner: Option<MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8 },
+    Mutate { author: AuthorId, owner: Option<MutateOwner>, req_id: RequestId, epoch: Epoch, path: String, body: String, purpose: u8 },
+}
+
+/// What `CredentialStore.get` found: the digest of the secret, nothing, or an access error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SecretState {
+    Present(Digest),
+    Missing,
+    Error(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallPhase {
+    InFlight(AttemptId),
+    WaitingRetry,
+    WaitingNetwork,
+    WaitingSecret,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Block {
+    Storage,
+    SequenceConflict,
+    Protocol,
+    StateLost,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AfterStore {
+    Persist,
+    Clear(SessionError),
+    Drain,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AfterClear {
+    Idle,
+    Drain,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionPhase {
     Idle,
-    Generating { call: Queued },
+    Generating { call: Queued, op: SecretOpId },
+    Storing { call: Queued, credential_new: Digest, op: SecretOpId, after: AfterStore },
+    ClearingSecret { call: Option<Queued>, reason: Option<SessionError>, op: SecretOpId, after: AfterClear },
+    PendingHeld { pending: PendingCall },
+    SecretMismatch,
+    SecretUnavailable { error: String, read: Option<SecretOpId> },
     Persisting { pending: PendingCall, batch: BatchId },
-    Calling { pending: PendingCall, attempts: u64, sent: bool },
-    Landing { pending: PendingCall, batch: BatchId, answer: SessionAnswer, identity: Option<Digest>, ended: bool },
-    /// The outcome of the stored `pending` is not settled: no new `sequence` is issued until the same request is repeated or the session ends. `retry` = the repeat is allowed.
-    Blocked { pending: PendingCall, attempts: u64, retry: bool },
+    Calling { pending: PendingCall, attempts: u64, phase: CallPhase, document_sent: bool },
+    Landing { pending: PendingCall, batch: BatchId, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
+    Blocked { pending: Option<PendingCall>, reason: Block },
     Closed,
 }
 
-/// What the author of a `Mutate` hears: `Transport{req_id, Response(body)}` or `Transport{req_id, Error{Permanent, X}}`.
+/// What the author of a `Mutate` hears: `Transport{req_id, Response(body) / Error{class, X} / Dropped}`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthorOutcome {
     Response(String),
-    Error(SessionError),
+    Error { class: ErrorClass, error: SessionError },
+    Dropped,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RetryPhase {
+    Idle,
+    InFlight,
+    WaitingRetry,
+    WaitingNetwork,
+    WaitingSecret,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionEffect {
-    /// Store `Commit{encrypted_pending = pending}`.
-    CommitPending { batch: BatchId, epoch: Epoch, pending: PendingCall },
-    /// Store `Commit{encrypted_session{digest or the previous one, sequence}, remove pending}`; no `sequence` for a call without a session.
-    CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64> },
-    /// Store `Commit{remove pending}`.
-    RemovePending { batch: BatchId, epoch: Epoch },
-    HttpRequest { pending: PendingCall },
-    HttpCancel { request_id: RequestId },
+    /// Store `Commit{encrypted_pending = pending}`, with `Session{digest, 0}` at the first sign-in.
+    CommitPending { batch: BatchId, epoch: Epoch, pending: PendingCall, session: Option<Digest> },
+    /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`; no `sequence` for a call without a session.
+    CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)> },
+    HttpRequest { pending: PendingCall, attempt_id: AttemptId, full_document: bool },
+    HttpCancel { attempt_id: AttemptId },
     /// `Schedule Tick` by the Backoff of Http for the attempt number `attempts`. `step` turns it into the Runtime effect `Schedule` (R5).
     ScheduleTick { attempts: u64 },
-    GenerateCredential,
+    GenerateCredential { secret_op_id: SecretOpId },
+    StoreSecret { credential: Digest, secret_op_id: SecretOpId },
+    ClearSecret { secret_op_id: SecretOpId },
+    ReadSecret { secret_op_id: SecretOpId },
     CredentialCommitted(CredentialCommitted),
     ServerEnded(ServerEnded),
+    /// Lifecycle `SessionReset{reply = None}`.
+    SessionReset,
+    /// Lifecycle `RestoreClassified{Session, epoch}`.
+    RestoreClassified { epoch: Epoch },
     Reply { id: ReplyId, answer: SessionAnswer },
     Answer { author: AuthorId, req_id: RequestId, outcome: AuthorOutcome },
+    RetryState { stream_id: StreamId, attempts: u64, phase: RetryPhase },
     Drained(Drained),
 }
 
 #[derive(Clone, Debug)]
 pub enum SessionInput {
-    Open { credential: Option<Credential>, pending: Option<PendingCall> },
+    Open { credential: Option<Credential>, pending: Option<PendingCall>, dropped_pending: bool, secret: SecretState },
     SessionCall { operation: String, body: String, reply: ReplyId },
-    Mutate { author: AuthorId, owner: Option<MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8 },
-    CredentialGenerated { credential: Digest },
-    Response { request_id: RequestId, body: String, sequence: Option<u64>, credential: Option<Digest> },
-    Revoked { request_id: RequestId, body: String },
-    CredentialFailed { detail: String },
-    CredentialUnavailable { request_id: RequestId, lost: bool, detail: String },
-    Idle,
-    HttpError { request_id: RequestId, temporary: bool, auth: bool },
-    Dropped { request_id: RequestId },
-    /// Outbox and Transfer take their request back: the one in the network stops and is repeated with the same `request_id`, the one in the queue is removed.
+    Mutate { author: AuthorId, owner: Option<MutateOwner>, req_id: RequestId, epoch: Epoch, path: String, body: String, purpose: u8 },
+    /// Outbox, Transfer and Calls take their request back: the one in the network goes on, the one in the queue is removed.
     Cancel { req_id: RequestId },
+    CredentialGenerated { secret_op_id: SecretOpId, credential: Digest },
+    SecretStored { secret_op_id: SecretOpId, ok: bool },
+    SecretCleared { secret_op_id: SecretOpId, ok: bool },
+    SecretRead { secret_op_id: SecretOpId, read: SecretState },
+    SecretMissing { request_id: RequestId, attempt_id: AttemptId, lost: bool },
+    Foreground { seq: u64 },
+    InterestPlus { stream_id: StreamId },
+    InterestMinus { stream_id: StreamId },
+    RestoreReady { epoch: Epoch },
+    Restored { epoch: Epoch, pending: Option<PendingCall> },
+    Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
+    Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
+    HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, persisted_missing: bool },
+    Dropped { request_id: RequestId, attempt_id: AttemptId },
     Committed(Committed),
     Rejected(Rejected),
     Tick(Time),
     Online(Online),
     Published(Published),
     EpochEnded(EpochEnded),
+    Idle,
     Closing,
 }
 
@@ -152,114 +221,37 @@ pub struct SessionState {
     phase: SessionPhase,
     credential: Option<Credential>,
     queue: VecDeque<Queued>,
-    online: bool,
+    online: Option<bool>,
     epoch: Epoch,
-    call_epoch: Epoch,
+    published: PublishedState,
+    after_publish: Option<(ReplyId, String)>,
+    subscribers: BTreeSet<StreamId>,
+    restored_direct: Option<PendingCall>,
     operations: Vec<SessionOperation>,
-    /// The path of the logout of the client: the call that ends the session on the server.
-    logout_path: String,
     next_request: RequestId,
     next_batch: BatchId,
-    /// A pending restored at open waits for the first `Published`: it belongs to that epoch.
-    restored: bool,
+    next_attempt: AttemptId,
+    next_secret: SecretOpId,
+    restore_ready: bool,
+    adopt: bool,
+    held: Option<SessionPhase>,
+    reported: (u64, RetryPhase),
 }
 
-impl SessionState {
-    pub fn new(declared: &[&str], online: bool) -> Self {
-        let operations = declared.iter().map(|name| SessionOperation { name: name.to_string(), path: format!("/{name}"), sessionless: false }).collect();
-        Self::with_operations(operations, "/logout".into(), online)
-    }
+fn is_ended(cause: Cause) -> bool { matches!(cause, Cause::SessionReset | Cause::ServerEnded) }
 
-    pub fn with_operations(operations: Vec<SessionOperation>, logout_path: String, online: bool) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, call_epoch: 0, operations, logout_path, next_request: 1, next_batch: 1, restored: false }
-    }
-
-    pub fn phase(&self) -> &SessionPhase { &self.phase }
-
-    pub fn credential(&self) -> Option<&Credential> { self.credential.as_ref() }
-
-    pub fn queued(&self) -> usize { self.queue.len() }
-
-    fn batch(&mut self) -> BatchId {
-        self.next_batch += 1;
-        self.next_batch - 1
-    }
-
-    fn request(&mut self) -> RequestId {
-        self.next_request += 1;
-        self.next_request - 1
-    }
-
-    /// `Idle`, then the next queued entry as `Idle x` its input.
-    fn idle(&mut self, fx: &mut Vec<SessionEffect>) {
-        self.phase = SessionPhase::Idle;
-        if let Some(queued) = self.queue.pop_front() {
-            self.begin(queued, fx);
-        }
-    }
-
-    fn begin(&mut self, queued: Queued, fx: &mut Vec<SessionEffect>) {
-        match queued {
-            Queued::Call { operation, body, reply } => {
-                let Some(def) = self.operations.iter().find(|def| def.name == operation).cloned() else {
-                    fx.push(SessionEffect::Reply { id: reply, answer: Err(SessionError::Invalid) });
-                    self.idle(fx);
-                    return;
-                };
-                self.call_epoch = self.epoch;
-                if !def.sessionless && self.credential.is_none() && def.path == self.logout_path {
-                    fx.push(SessionEffect::Reply { id: reply, answer: Err(SessionError::NoCredential) });
-                    self.idle(fx);
-                    return;
-                }
-                if !def.sessionless && self.credential.is_none() {
-                    fx.push(SessionEffect::GenerateCredential);
-                    self.phase = SessionPhase::Generating { call: Queued::Call { operation, body, reply } };
-                    return;
-                }
-                let sequence = if def.sessionless { 0 } else { self.credential.as_ref().map_or(1, |credential| credential.sequence + 1) };
-                let request_id = self.request();
-                let pending = PendingCall { request_id, sequence, operation, path: def.path, body, sessionless: def.sessionless, credential: None, purpose: 0, author: None, owner: None, reply: Some(reply) };
-                self.persist(pending, fx);
-            }
-            Queued::Mutate { author, owner, req_id, path, body, purpose } => {
-                let Some(credential) = self.credential.clone() else {
-                    fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error(SessionError::NoSession) });
-                    self.idle(fx);
-                    return;
-                };
-                self.call_epoch = self.epoch;
-                let pending = PendingCall { request_id: req_id, sequence: credential.sequence + 1, operation: String::new(), path, body, sessionless: false, credential: None, purpose, author: Some(author), owner, reply: None };
-                self.persist(pending, fx);
-            }
-        }
-    }
-
-    fn persist(&mut self, pending: PendingCall, fx: &mut Vec<SessionEffect>) {
-        let batch = self.batch();
-        fx.push(SessionEffect::CommitPending { batch, epoch: self.call_epoch, pending: pending.clone() });
-        self.phase = SessionPhase::Persisting { pending, batch };
-    }
+fn author_error(fx: &mut Vec<SessionEffect>, author: AuthorId, req_id: RequestId, class: ErrorClass, error: SessionError) {
+    fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error { class, error } });
 }
 
-/// The result of the pending request goes to its call (`reply`) and to its `Mutate` author.
-fn finish(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer) {
-    if let Some(id) = pending.reply {
-        fx.push(SessionEffect::Reply { id, answer: result.clone() });
-    }
-    if let Some(author) = pending.author {
-        let outcome = match result {
-            Ok(body) => AuthorOutcome::Response(body),
-            Err(error) => AuthorOutcome::Error(error),
-        };
-        fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome });
-    }
-}
+fn reply(fx: &mut Vec<SessionEffect>, id: ReplyId, answer: SessionAnswer) { fx.push(SessionEffect::Reply { id, answer }); }
 
-fn refuse(fx: &mut Vec<SessionEffect>, queued: Queued, error: SessionError) {
-    match queued {
-        Queued::Call { reply, .. } => fx.push(SessionEffect::Reply { id: reply, answer: Err(error) }),
-        Queued::Mutate { author, req_id, .. } => fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error(error) }),
+fn blocked_error(reason: Block) -> SessionError {
+    match reason {
+        Block::Storage => SessionError::Storage("the stored request is not confirmed".into()),
+        Block::SequenceConflict => SessionError::SequenceConflict,
+        Block::Protocol => SessionError::Protocol,
+        Block::StateLost => SessionError::StateLost,
     }
 }
 
@@ -267,6 +259,25 @@ fn pending_of(phase: &SessionPhase) -> Option<PendingCall> {
     match phase {
         SessionPhase::Persisting { pending, .. } | SessionPhase::Calling { pending, .. } | SessionPhase::Landing { pending, .. } => Some(pending.clone()),
         _ => None,
+    }
+}
+
+/// The result of the pending request goes to its call (`reply`) and to its `Mutate` author.
+fn finish(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer) {
+    if let Some(id) = pending.reply { reply(fx, id, result.clone()); }
+    if let Some(author) = pending.author {
+        let outcome = match result {
+            Ok(body) => AuthorOutcome::Response(body),
+            Err(error) => AuthorOutcome::Error { class: ErrorClass::Permanent, error },
+        };
+        fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome });
+    }
+}
+
+fn refuse(fx: &mut Vec<SessionEffect>, queued: Queued, error: SessionError) {
+    match queued {
+        Queued::Call { reply: id, .. } => reply(fx, id, Err(error)),
+        Queued::Mutate { author, req_id, .. } => author_error(fx, author, req_id, ErrorClass::Permanent, error),
     }
 }
 
@@ -289,7 +300,16 @@ impl StateOwner for SessionCalls {
 
     fn step(state: &mut SessionState, input: SessionInput) -> Effects<Self> {
         let mut fx = Vec::new();
+        let interest = if let SessionInput::InterestPlus { stream_id } = &input { Some(*stream_id) } else { None };
         state.run(input, &mut fx);
+        let view = state.view();
+        if view != state.reported {
+            state.reported = view;
+            for stream_id in &state.subscribers { fx.push(SessionEffect::RetryState { stream_id: *stream_id, attempts: view.0, phase: view.1 }); }
+        }
+        if let Some(stream_id) = interest {
+            if !matches!(state.phase, SessionPhase::Closed) { fx.push(SessionEffect::RetryState { stream_id, attempts: view.0, phase: view.1 }); }
+        }
         fx.into_iter().map(|effect| match effect {
             SessionEffect::ScheduleTick { attempts } => Effect::Schedule { id: RETRY_TICK, after: http_delay(attempts), input: SessionInput::Tick(Time(0)) },
             other => Effect::Run(other),
@@ -304,242 +324,627 @@ impl StateOwner for SessionCalls {
 }
 
 impl SessionState {
+    pub fn new(declared: &[&str], online: bool) -> Self {
+        let operations = declared.iter().map(|name| SessionOperation { name: name.to_string(), path: format!("/{name}"), class: OperationClass::Authenticated }).collect();
+        Self::with_operations(operations, Some(online))
+    }
+
+    pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
+        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+    }
+
+    pub fn phase(&self) -> &SessionPhase { &self.phase }
+
+    pub fn credential(&self) -> Option<&Credential> { self.credential.as_ref() }
+
+    pub fn queued(&self) -> usize { self.queue.len() }
+
+    pub fn subscribers(&self) -> usize { self.subscribers.len() }
+
+    pub fn awaiting_publication(&self) -> Option<&(ReplyId, String)> { self.after_publish.as_ref() }
+
+    pub fn restored_direct(&self) -> Option<&PendingCall> { self.restored_direct.as_ref() }
+
+    fn batch(&mut self) -> BatchId {
+        self.next_batch += 1;
+        self.next_batch - 1
+    }
+
+    fn request(&mut self) -> RequestId {
+        self.next_request += 1;
+        self.next_request - 1
+    }
+
+    fn attempt(&mut self) -> AttemptId {
+        self.next_attempt += 1;
+        self.next_attempt - 1
+    }
+
+    fn secret_op(&mut self) -> SecretOpId {
+        self.next_secret += 1;
+        self.next_secret - 1
+    }
+
+    fn is_online(&self) -> bool { self.online == Some(true) }
+
+    fn def(&self, operation: &str) -> Option<SessionOperation> { self.operations.iter().find(|def| def.name == operation).cloned() }
+
+    fn refuse_queue(&mut self, fx: &mut Vec<SessionEffect>, error: SessionError) {
+        for queued in self.queue.drain(..) { refuse(fx, queued, error.clone()); }
+    }
+
+    fn view(&self) -> (u64, RetryPhase) {
+        match &self.phase {
+            SessionPhase::Calling { attempts, phase, .. } => (*attempts, match phase {
+                CallPhase::InFlight(_) => RetryPhase::InFlight,
+                CallPhase::WaitingRetry => RetryPhase::WaitingRetry,
+                CallPhase::WaitingNetwork => RetryPhase::WaitingNetwork,
+                CallPhase::WaitingSecret => RetryPhase::WaitingSecret,
+            }),
+            _ => (0, RetryPhase::Idle),
+        }
+    }
+
+    fn idle(&mut self, fx: &mut Vec<SessionEffect>) {
+        self.phase = SessionPhase::Idle;
+        if let Some(held) = self.held.take() {
+            let error = if matches!(held, SessionPhase::SecretMismatch) { SessionError::StateLost } else { SessionError::Storage("the secret is unavailable".into()) };
+            self.refuse_queue(fx, error);
+            self.phase = held;
+            return;
+        }
+        if self.restore_ready {
+            if let Some(pending) = self.restored_direct.take() {
+                self.start_calling(pending, fx);
+                return;
+            }
+        }
+        self.drain(fx);
+    }
+
+    fn drain(&mut self, fx: &mut Vec<SessionEffect>) {
+        while matches!(self.phase, SessionPhase::Idle) {
+            match self.published {
+                PublishedState::EndingFailed | PublishedState::StorageFailed => {
+                    self.refuse_queue(fx, SessionError::Storage("the session could not be saved".into()));
+                    return;
+                }
+                PublishedState::Ending | PublishedState::Closing => return,
+                _ => {}
+            }
+            let Some(queued) = self.queue.pop_front() else { return };
+            self.begin(queued, fx);
+        }
+    }
+
+    fn begin(&mut self, queued: Queued, fx: &mut Vec<SessionEffect>) {
+        match queued {
+            Queued::Call { operation, body, reply: id } => {
+                let Some(def) = self.def(&operation) else {
+                    reply(fx, id, Err(SessionError::Invalid));
+                    return;
+                };
+                let call = Queued::Call { operation: operation.clone(), body: body.clone(), reply: id };
+                let epoch = self.epoch;
+                let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);
+                match def.class {
+                    OperationClass::Login if self.credential.is_some() => reply(fx, id, Err(SessionError::SessionExists)),
+                    OperationClass::Login => self.generate(call, fx),
+                    OperationClass::Authenticated if self.credential.is_none() => self.generate(call, fx),
+                    OperationClass::Logout if self.credential.is_none() => reply(fx, id, Err(SessionError::NoCredential)),
+                    OperationClass::Sessionless => {
+                        let request_id = self.request();
+                        self.persist(PendingCall { request_id, sequence: 0, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, None, fx);
+                    }
+                    OperationClass::Authenticated | OperationClass::Logout => {
+                        let request_id = self.request();
+                        self.persist(PendingCall { request_id, sequence, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, None, fx);
+                    }
+                }
+            }
+            Queued::Mutate { author, owner, req_id, epoch, path, body, purpose } => {
+                if self.published == PublishedState::Closing || epoch != self.epoch || self.credential.is_none() {
+                    author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::NoSession);
+                    return;
+                }
+                let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);
+                self.persist(PendingCall { request_id: req_id, sequence, class: OperationClass::Authenticated, operation: String::new(), path, body, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, None, fx);
+            }
+        }
+    }
+
+    fn generate(&mut self, call: Queued, fx: &mut Vec<SessionEffect>) {
+        let op = self.secret_op();
+        fx.push(SessionEffect::GenerateCredential { secret_op_id: op });
+        self.phase = SessionPhase::Generating { call, op };
+    }
+
+    fn persist(&mut self, pending: PendingCall, session: Option<Digest>, fx: &mut Vec<SessionEffect>) {
+        let batch = self.batch();
+        fx.push(SessionEffect::CommitPending { batch, epoch: pending.epoch, pending: pending.clone(), session });
+        self.phase = SessionPhase::Persisting { pending, batch };
+    }
+
+    fn send(&mut self, pending: PendingCall, attempts: u64, document_sent: bool, fx: &mut Vec<SessionEffect>) {
+        let attempt_id = self.attempt();
+        fx.push(SessionEffect::HttpRequest { pending: pending.clone(), attempt_id, full_document: document_sent });
+        self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id), document_sent };
+    }
+
+    fn start_calling(&mut self, pending: PendingCall, fx: &mut Vec<SessionEffect>) {
+        if self.is_online() {
+            self.send(pending, 0, false, fx);
+        } else {
+            self.phase = SessionPhase::Calling { pending, attempts: 0, phase: CallPhase::WaitingNetwork, document_sent: false };
+        }
+    }
+
+    fn land(&mut self, pending: PendingCall, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, fx: &mut Vec<SessionEffect>) {
+        let batch = self.batch();
+        let record = pending.author.map(|_| (pending.request_id, answer.clone()));
+        fx.push(SessionEffect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record });
+        self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
+    }
+
+    fn clearing(&mut self, call: Option<Queued>, reason: Option<SessionError>, after: AfterClear, fx: &mut Vec<SessionEffect>) {
+        let op = self.secret_op();
+        fx.push(SessionEffect::ClearSecret { secret_op_id: op });
+        self.phase = SessionPhase::ClearingSecret { call, reason, op, after };
+    }
+
+    fn drained(&mut self, fx: &mut Vec<SessionEffect>) {
+        self.refuse_queue(fx, SessionError::Closed);
+        self.held = None;
+        self.restored_direct = None;
+        self.phase = SessionPhase::Closed;
+        fx.push(SessionEffect::Drained(Drained { owner: "session" }));
+    }
+
+    fn answer_publication(&mut self, fx: &mut Vec<SessionEffect>, state: PublishedState, identity: Option<Digest>) {
+        let Some((id, body)) = self.after_publish.take() else { return };
+        let digest = self.credential.as_ref().map(|credential| credential.digest);
+        if state == PublishedState::Session && identity.is_some() && identity == digest {
+            reply(fx, id, Ok(body));
+        } else if matches!(state, PublishedState::StorageFailed | PublishedState::EndingFailed) {
+            reply(fx, id, Err(SessionError::Storage("the session could not be saved".into())));
+        } else if state == PublishedState::Ending {
+            reply(fx, id, Err(SessionError::Interrupted));
+        } else {
+            self.after_publish = Some((id, body));
+        }
+    }
+
+    fn adopt_epoch(&mut self, epoch: Epoch) {
+        if let Some(pending) = &mut self.restored_direct { pending.epoch = epoch; }
+        if let SessionPhase::PendingHeld { pending } | SessionPhase::Calling { pending, .. } = &mut self.phase { pending.epoch = epoch; }
+    }
+
+    fn queue_mutate(&mut self, queued: Queued) {
+        let Queued::Mutate { req_id, .. } = &queued else { return };
+        if !self.queue.iter().any(|entry| matches!(entry, Queued::Mutate { req_id: seen, .. } if seen == req_id)) { self.queue.push_back(queued); }
+    }
+
     /// One row of the table per match arm, in table order.
     fn run(&mut self, input: SessionInput, fx: &mut Vec<SessionEffect>) {
         let phase = std::mem::replace(&mut self.phase, SessionPhase::Closed);
-        match (phase, input) {
-            (SessionPhase::Closed, SessionInput::SessionCall { reply: id, .. }) => fx.push(SessionEffect::Reply { id, answer: Err(SessionError::Closed) }),
-            (SessionPhase::Closed, SessionInput::Mutate { author, req_id, .. }) => fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error(SessionError::Closed) }),
-            (SessionPhase::Closed, _) => {}
-            (phase, SessionInput::Closing) => {
-                if let Some(pending) = pending_of(&phase) {
-                    finish(fx, &pending, Err(SessionError::Closed));
-                    fx.push(SessionEffect::HttpCancel { request_id: pending.request_id });
-                }
-                if let SessionPhase::Generating { call } = phase {
-                    refuse(fx, call, SessionError::Closed);
-                }
-                for queued in self.queue.drain(..) {
-                    refuse(fx, queued, SessionError::Closed);
-                }
-                fx.push(SessionEffect::Drained(Drained { owner: "session" }));
+        if matches!(phase, SessionPhase::Closed) {
+            match input {
+                SessionInput::SessionCall { reply: id, .. } => reply(fx, id, Err(SessionError::Closed)),
+                SessionInput::Mutate { author, req_id, .. } => author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::Closed),
+                _ => {}
             }
-            (phase, SessionInput::Online(Online(online))) => {
-                self.online = online;
-                self.phase = phase;
-                if let SessionPhase::Calling { pending, sent, .. } = &mut self.phase {
-                    if online && !*sent {
-                        *sent = true;
-                        fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
-                    } else if !online && *sent {
-                        *sent = false;
-                        fx.push(SessionEffect::HttpCancel { request_id: pending.request_id });
-                    }
-                } else if let SessionPhase::Blocked { pending, retry: true, .. } = &self.phase {
-                    if online && pending.author.is_none() {
-                        let pending = pending.clone();
-                        fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
-                        self.phase = SessionPhase::Calling { pending, attempts: 0, sent: true };
-                    }
-                }
-            }
-            (phase, SessionInput::Published(published)) => {
-                self.epoch = published.epoch;
-                if std::mem::take(&mut self.restored) { self.call_epoch = published.epoch; }
+            return;
+        }
+        match input {
+            SessionInput::Closing => self.closing(phase, fx),
+            SessionInput::InterestPlus { stream_id } => {
+                self.subscribers.insert(stream_id);
                 self.phase = phase;
             }
-            (SessionPhase::Idle, SessionInput::Open { credential, pending }) => {
-                self.credential = credential;
+            SessionInput::InterestMinus { stream_id } => {
+                self.subscribers.remove(&stream_id);
+                self.phase = phase;
+            }
+            SessionInput::Online(Online(online)) => self.online_changed(phase, online, fx),
+            SessionInput::Published(Published { epoch, identity, state, .. }) => {
+                self.epoch = epoch;
+                self.published = state;
+                self.phase = phase;
+                if std::mem::take(&mut self.adopt) { self.adopt_epoch(epoch); }
+                self.answer_publication(fx, state, identity);
+                if matches!(self.phase, SessionPhase::Idle) { self.drain(fx); }
+            }
+            SessionInput::Restored { epoch, pending } => {
+                self.phase = phase;
+                fx.push(SessionEffect::RestoreClassified { epoch });
+                if let (SessionPhase::Idle, Some(pending)) = (&self.phase, pending) {
+                    if pending.owner.is_none() { self.restored_direct = Some(PendingCall { epoch, ..pending }); }
+                }
+            }
+            SessionInput::RestoreReady { .. } => {
+                self.phase = phase;
+                self.restore_ready = true;
+                if matches!(self.phase, SessionPhase::Idle) {
+                    if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, fx); }
+                }
+            }
+            SessionInput::Cancel { req_id } => {
+                self.phase = phase;
+                if let Some(at) = self.queue.iter().position(|queued| matches!(queued, Queued::Mutate { req_id: queued_id, .. } if *queued_id == req_id)) {
+                    if let Some(removed) = self.queue.remove(at) { refuse(fx, removed, SessionError::Interrupted); }
+                }
+            }
+            SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
+                self.restored_direct = None;
+                if is_ended(cause) {
+                    if let Some((id, _)) = self.after_publish.take() { reply(fx, id, Err(SessionError::Interrupted)); }
+                    self.held = None;
+                }
+                self.on_epoch_ended(phase, epoch, cause, fx);
+            }
+            input => self.by_phase(phase, input, fx),
+        }
+    }
+
+    fn on_epoch_ended(&mut self, phase: SessionPhase, epoch: Epoch, cause: Cause, fx: &mut Vec<SessionEffect>) {
+        match phase {
+            SessionPhase::Idle => {
+                if is_ended(cause) { self.credential = None; }
                 self.phase = SessionPhase::Idle;
-                if let Some(pending) = pending {
-                    self.next_request = self.next_request.max(pending.request_id + 1);
-                    let author = pending.owner.as_ref().map(author_of).or(pending.author);
-                    let pending = PendingCall { reply: None, author, ..pending };
-                    if self.online {
-                        fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
-                    }
-                    self.phase = SessionPhase::Calling { pending, attempts: 0, sent: self.online };
-                    if self.epoch == 0 { self.restored = true; } else { self.call_epoch = self.epoch; }
-                }
             }
-            (phase, SessionInput::Open { .. }) => self.phase = phase,
-            (phase @ SessionPhase::Blocked { .. }, SessionInput::SessionCall { reply, .. }) => {
-                self.phase = phase;
-                fx.push(SessionEffect::Reply { id: reply, answer: Err(SessionError::StateLost) });
+            SessionPhase::Generating { call, .. } if is_ended(cause) => {
+                refuse(fx, call, SessionError::Interrupted);
+                self.refuse_queue(fx, SessionError::NoSession);
+                self.credential = None;
+                self.phase = SessionPhase::Idle;
             }
-            (SessionPhase::Blocked { pending, retry: true, .. }, SessionInput::Mutate { req_id, .. }) if pending.request_id == req_id => {
-                let sent = self.online;
-                if sent {
-                    fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
-                }
-                self.phase = SessionPhase::Calling { pending, attempts: 0, sent };
+            SessionPhase::Storing { call, credential_new, op, after } if is_ended(cause) => {
+                self.credential = None;
+                let after = if matches!(after, AfterStore::Drain) { AfterStore::Drain } else { AfterStore::Clear(SessionError::Interrupted) };
+                self.phase = SessionPhase::Storing { call, credential_new, op, after };
             }
-            (phase @ SessionPhase::Blocked { .. }, SessionInput::Mutate { author, req_id, .. }) => {
-                if !matches!(&phase, SessionPhase::Blocked { pending, .. } if pending.request_id == req_id) {
-                    fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error(SessionError::StateLost) });
-                }
-                self.phase = phase;
+            SessionPhase::ClearingSecret { call, reason, op, after } => {
+                if is_ended(cause) { self.credential = None; }
+                self.phase = SessionPhase::ClearingSecret { call, reason, op, after };
             }
-            (SessionPhase::Idle, SessionInput::SessionCall { operation, body, reply }) => self.begin(Queued::Call { operation, body, reply }, fx),
-            (SessionPhase::Idle, SessionInput::Mutate { author, owner, req_id, path, body, purpose }) => self.begin(Queued::Mutate { author, owner, req_id, path, body, purpose }, fx),
-            (phase @ (SessionPhase::Generating { .. } | SessionPhase::Persisting { .. } | SessionPhase::Calling { .. } | SessionPhase::Landing { .. }), SessionInput::SessionCall { operation, body, reply }) => {
-                self.phase = phase;
-                self.queue.push_back(Queued::Call { operation, body, reply });
-            }
-            (phase @ (SessionPhase::Generating { .. } | SessionPhase::Persisting { .. } | SessionPhase::Calling { .. } | SessionPhase::Landing { .. }), SessionInput::Mutate { author, owner, req_id, path, body, purpose }) => {
-                self.phase = phase;
-                self.queue.push_back(Queued::Mutate { author, owner, req_id, path, body, purpose });
-            }
-            (SessionPhase::Generating { call: Queued::Call { operation, body, reply } }, SessionInput::CredentialGenerated { credential }) => {
-                let Some(def) = self.operations.iter().find(|def| def.name == operation).cloned() else {
-                    fx.push(SessionEffect::Reply { id: reply, answer: Err(SessionError::Invalid) });
-                    self.idle(fx);
-                    return;
-                };
-                let request_id = self.request();
-                let pending = PendingCall { request_id, sequence: 1, operation, path: def.path, body, sessionless: false, credential: Some(credential), purpose: 0, author: None, owner: None, reply: Some(reply) };
-                self.persist(pending, fx);
-            }
-            (SessionPhase::Generating { call }, SessionInput::CredentialFailed { detail }) => {
-                refuse(fx, call, SessionError::Rejected(RejectReason::Storage(detail)));
+            SessionPhase::PendingHeld { .. } | SessionPhase::Blocked { .. } | SessionPhase::SecretMismatch | SessionPhase::SecretUnavailable { .. } if is_ended(cause) => {
+                self.credential = None;
+                self.refuse_queue(fx, SessionError::NoSession);
                 self.idle(fx);
             }
-            (SessionPhase::Idle, SessionInput::EpochEnded(EpochEnded { cause, .. })) => {
-                if matches!(cause, Cause::SessionReset | Cause::ServerEnded) {
-                    self.credential = None;
-                }
-                self.phase = SessionPhase::Idle;
-            }
-            (SessionPhase::Generating { call }, SessionInput::EpochEnded(EpochEnded { epoch, cause })) if epoch == self.call_epoch && matches!(cause, Cause::SessionReset | Cause::ServerEnded) => {
-                refuse(fx, call, SessionError::Interrupted);
-                for queued in self.queue.drain(..) {
-                    refuse(fx, queued, SessionError::NoSession);
-                }
-                self.credential = None;
-                self.phase = SessionPhase::Idle;
-            }
-            (SessionPhase::Blocked { .. }, SessionInput::EpochEnded(EpochEnded { epoch, cause })) if epoch == self.call_epoch && matches!(cause, Cause::SessionReset | Cause::ServerEnded) => {
-                for queued in self.queue.drain(..) {
-                    refuse(fx, queued, SessionError::NoSession);
-                }
-                self.credential = None;
-                self.phase = SessionPhase::Idle;
-            }
-            (phase, SessionInput::EpochEnded(EpochEnded { epoch, cause })) => {
-                let pending = pending_of(&phase).filter(|_| epoch == self.call_epoch && matches!(cause, Cause::SessionReset | Cause::ServerEnded));
-                let Some(pending) = pending else {
+            phase @ (SessionPhase::Persisting { .. } | SessionPhase::Calling { .. } | SessionPhase::Landing { .. }) => {
+                let Some(pending) = pending_of(&phase).filter(|pending| epoch == pending.epoch && is_ended(cause)) else {
                     self.phase = phase;
                     return;
                 };
                 finish(fx, &pending, Err(SessionError::Interrupted));
-                fx.push(SessionEffect::HttpCancel { request_id: pending.request_id });
-                for queued in self.queue.drain(..) {
-                    refuse(fx, queued, SessionError::NoSession);
-                }
+                if let SessionPhase::Calling { phase: CallPhase::InFlight(attempt_id), .. } = phase { fx.push(SessionEffect::HttpCancel { attempt_id }); }
+                self.refuse_queue(fx, SessionError::NoSession);
                 self.credential = None;
-                self.phase = SessionPhase::Idle;
+                self.idle(fx);
             }
-            (SessionPhase::Persisting { pending, batch }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
-                let sent = self.online;
-                if sent {
-                    fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
+            other => self.phase = other,
+        }
+    }
+
+    fn closing(&mut self, phase: SessionPhase, fx: &mut Vec<SessionEffect>) {
+        if let Some((id, _)) = self.after_publish.take() { reply(fx, id, Err(SessionError::Closed)); }
+        match phase {
+            SessionPhase::Persisting { pending, .. } | SessionPhase::Landing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
+            SessionPhase::Calling { pending, phase, .. } => {
+                finish(fx, &pending, Err(SessionError::Closed));
+                if let CallPhase::InFlight(attempt_id) = phase { fx.push(SessionEffect::HttpCancel { attempt_id }); }
+            }
+            SessionPhase::Generating { call, .. } => refuse(fx, call, SessionError::Closed),
+            SessionPhase::Storing { call, credential_new, op, .. } => {
+                self.refuse_queue(fx, SessionError::Closed);
+                self.phase = SessionPhase::Storing { call, credential_new, op, after: AfterStore::Drain };
+                return;
+            }
+            SessionPhase::ClearingSecret { call, reason, op, .. } => {
+                self.refuse_queue(fx, SessionError::Closed);
+                self.phase = SessionPhase::ClearingSecret { call, reason, op, after: AfterClear::Drain };
+                return;
+            }
+            _ => {}
+        }
+        self.drained(fx);
+    }
+
+    fn online_changed(&mut self, phase: SessionPhase, online: bool, fx: &mut Vec<SessionEffect>) {
+        self.online = Some(online);
+        match phase {
+            SessionPhase::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id), document_sent } if !online => {
+                fx.push(SessionEffect::HttpCancel { attempt_id });
+                if let Some(author) = pending.author {
+                    fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Dropped });
+                    self.phase = SessionPhase::PendingHeld { pending };
+                } else {
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
                 }
-                self.phase = SessionPhase::Calling { pending, attempts: 0, sent };
             }
+            SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent } if online => self.send(pending, attempts, document_sent, fx),
+            SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage } if online && pending.author.is_none() => self.send(pending, 0, false, fx),
+            other => self.phase = other,
+        }
+    }
+
+    fn open(&mut self, credential: Option<Credential>, pending: Option<PendingCall>, dropped_pending: bool, secret: SecretState, fx: &mut Vec<SessionEffect>) {
+        self.credential = credential.clone();
+        if dropped_pending {
+            self.phase = SessionPhase::Blocked { pending: None, reason: Block::StateLost };
+            return;
+        }
+        let secret = match secret {
+            SecretState::Error(error) => {
+                self.phase = SessionPhase::SecretUnavailable { error, read: None };
+                return;
+            }
+            other => other,
+        };
+        self.phase = SessionPhase::Idle;
+        match (credential, secret) {
+            (None, SecretState::Missing) => {}
+            (None, _) => self.clearing(None, None, AfterClear::Idle, fx),
+            (Some(_), SecretState::Missing) => self.missing_secret(fx),
+            (Some(credential), SecretState::Present(digest)) if digest != credential.digest => self.phase = SessionPhase::SecretMismatch,
+            (Some(_), _) => {
+                match pending {
+                    Some(pending) if pending.owner.is_some() => {
+                        let author = pending.owner.as_ref().map(author_of).or(pending.author);
+                        self.adopt = true;
+                        self.phase = SessionPhase::PendingHeld { pending: PendingCall { reply: None, author, ..pending } };
+                    }
+                    Some(pending) if pending.class == OperationClass::Login => {
+                        self.adopt = true;
+                        self.start_calling(PendingCall { reply: None, ..pending }, fx);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn missing_secret(&mut self, fx: &mut Vec<SessionEffect>) {
+        self.credential = None;
+        fx.push(SessionEffect::SessionReset);
+    }
+
+    fn idle_call(&mut self, operation: String, body: String, id: ReplyId, fx: &mut Vec<SessionEffect>) {
+        self.phase = SessionPhase::Idle;
+        if self.def(&operation).is_none() {
+            reply(fx, id, Err(SessionError::Invalid));
+            return;
+        }
+        match self.published {
+            PublishedState::EndingFailed | PublishedState::StorageFailed => reply(fx, id, Err(SessionError::Storage("the session could not be saved".into()))),
+            PublishedState::Ending => self.queue.push_back(Queued::Call { operation, body, reply: id }),
+            _ => self.begin(Queued::Call { operation, body, reply: id }, fx),
+        }
+    }
+
+    fn held_call(&mut self, held: SessionPhase, operation: String, body: String, id: ReplyId, error: SessionError, fx: &mut Vec<SessionEffect>) {
+        match self.def(&operation) {
+            None => {
+                reply(fx, id, Err(SessionError::Invalid));
+                self.phase = held;
+            }
+            Some(def) if def.class != OperationClass::Sessionless => {
+                reply(fx, id, Err(error));
+                self.phase = held;
+            }
+            Some(_) => {
+                self.held = Some(held);
+                self.phase = SessionPhase::Idle;
+                self.begin(Queued::Call { operation, body, reply: id }, fx);
+            }
+        }
+    }
+
+    fn by_phase(&mut self, phase: SessionPhase, input: SessionInput, fx: &mut Vec<SessionEffect>) {
+        match (phase, input) {
+            (SessionPhase::Idle, SessionInput::Open { credential, pending, dropped_pending, secret }) => self.open(credential, pending, dropped_pending, secret, fx),
+            (phase, SessionInput::Open { .. }) => self.phase = phase,
+            (SessionPhase::Idle, SessionInput::SessionCall { operation, body, reply: id }) => self.idle_call(operation, body, id, fx),
+            (SessionPhase::Idle, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
+                self.phase = SessionPhase::Idle;
+                self.begin(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose }, fx);
+            }
+            (SessionPhase::SecretMismatch, SessionInput::SessionCall { operation, body, reply: id }) => self.held_call(SessionPhase::SecretMismatch, operation, body, id, SessionError::StateLost, fx),
+            (SessionPhase::SecretMismatch, SessionInput::Mutate { author, req_id, .. }) => {
+                self.phase = SessionPhase::SecretMismatch;
+                author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::StateLost);
+            }
+            (phase @ SessionPhase::SecretUnavailable { .. }, SessionInput::SessionCall { operation, body, reply: id }) => {
+                let error = SessionError::Storage("the secret is unavailable".into());
+                self.held_call(phase, operation, body, id, error, fx);
+            }
+            (SessionPhase::SecretUnavailable { error, read }, SessionInput::Mutate { author, req_id, .. }) => {
+                self.phase = SessionPhase::SecretUnavailable { error, read };
+                author_error(fx, author, req_id, ErrorClass::Network, SessionError::Storage("the secret is unavailable".into()));
+            }
+            (SessionPhase::SecretUnavailable { error, .. }, SessionInput::Foreground { .. }) => {
+                let op = self.secret_op();
+                fx.push(SessionEffect::ReadSecret { secret_op_id: op });
+                self.phase = SessionPhase::SecretUnavailable { error, read: Some(op) };
+            }
+            (SessionPhase::SecretUnavailable { error, read }, SessionInput::SecretRead { secret_op_id, read: found }) if read == Some(secret_op_id) => match found {
+                SecretState::Present(digest) if self.credential.as_ref().is_some_and(|credential| credential.digest == digest) => self.idle(fx),
+                SecretState::Present(_) => self.phase = SessionPhase::SecretMismatch,
+                SecretState::Missing => {
+                    self.phase = SessionPhase::Idle;
+                    self.missing_secret(fx);
+                }
+                SecretState::Error(_) => self.phase = SessionPhase::SecretUnavailable { error, read: None },
+            },
+            (SessionPhase::Generating { call, op }, SessionInput::CredentialGenerated { secret_op_id, credential }) if secret_op_id == op => {
+                let next = self.secret_op();
+                fx.push(SessionEffect::StoreSecret { credential, secret_op_id: next });
+                self.phase = SessionPhase::Storing { call, credential_new: credential, op: next, after: AfterStore::Persist };
+            }
+            (SessionPhase::Storing { call, credential_new, op, after }, SessionInput::SecretStored { secret_op_id, ok }) if secret_op_id == op => match (after, ok) {
+                (AfterStore::Persist, true) => {
+                    let Queued::Call { operation, body, reply: id } = call else { unreachable!("a generating call is a call") };
+                    let def = self.def(&operation).expect("a generating call is declared");
+                    let request_id = self.request();
+                    let epoch = self.epoch;
+                    self.persist(PendingCall { request_id, sequence: 1, class: OperationClass::Login, operation, path: def.path, body, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, Some(credential_new), fx);
+                }
+                (AfterStore::Persist, false) => self.clearing(Some(call), Some(SessionError::Storage("the secret could not be stored".into())), AfterClear::Idle, fx),
+                (AfterStore::Clear(reason), _) => self.clearing(Some(call), Some(reason), AfterClear::Idle, fx),
+                (AfterStore::Drain, _) => {
+                    refuse(fx, call, SessionError::Closed);
+                    self.drained(fx);
+                }
+            },
+            (SessionPhase::ClearingSecret { call, reason, op, after }, SessionInput::SecretCleared { secret_op_id, .. }) if secret_op_id == op => {
+                if let (Some(call), Some(reason)) = (call, reason) { refuse(fx, call, reason); }
+                match after {
+                    AfterClear::Idle => self.idle(fx),
+                    AfterClear::Drain => self.drained(fx),
+                }
+            }
+            (phase @ (SessionPhase::Generating { .. } | SessionPhase::Storing { .. } | SessionPhase::ClearingSecret { .. }), SessionInput::SessionCall { operation, body, reply: id }) => {
+                self.phase = phase;
+                self.queue.push_back(Queued::Call { operation, body, reply: id });
+            }
+            (phase @ (SessionPhase::Generating { .. } | SessionPhase::Storing { .. } | SessionPhase::ClearingSecret { .. }), SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
+                self.phase = phase;
+                self.queue.push_back(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
+            }
+            (SessionPhase::PendingHeld { pending }, SessionInput::Mutate { req_id, .. }) if req_id == pending.request_id => self.start_calling(pending, fx),
+            (SessionPhase::PendingHeld { pending }, SessionInput::SessionCall { operation, body, reply: id }) => {
+                self.queue.push_back(Queued::Call { operation, body, reply: id });
+                self.phase = SessionPhase::PendingHeld { pending };
+            }
+            (SessionPhase::PendingHeld { pending }, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
+                self.phase = SessionPhase::PendingHeld { pending };
+                self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
+            }
+            (SessionPhase::Blocked { pending, reason }, SessionInput::SessionCall { reply: id, .. }) => {
+                self.phase = SessionPhase::Blocked { pending, reason };
+                reply(fx, id, Err(SessionError::StateLost));
+            }
+            (SessionPhase::Blocked { pending, reason }, SessionInput::Mutate { author, req_id, .. }) => {
+                let same = pending.as_ref().is_some_and(|pending| pending.request_id == req_id);
+                match (same, pending, reason) {
+                    (true, Some(pending), Block::Storage) => self.start_calling(pending, fx),
+                    (true, pending, reason) => {
+                        author_error(fx, author, req_id, ErrorClass::Permanent, blocked_error(reason));
+                        self.phase = SessionPhase::Blocked { pending, reason };
+                    }
+                    (false, pending, reason) => {
+                        author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::StateLost);
+                        self.phase = SessionPhase::Blocked { pending, reason };
+                    }
+                }
+            }
+            (SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage }, SessionInput::Tick(_)) if self.is_online() && pending.author.is_none() => self.send(pending, 0, false, fx),
+            (SessionPhase::Persisting { pending, batch }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => self.start_calling(pending, fx),
             (SessionPhase::Persisting { pending, batch }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => {
                 finish(fx, &pending, Err(SessionError::Rejected(reason)));
                 self.idle(fx);
             }
-            (SessionPhase::Calling { pending, .. }, SessionInput::Revoked { request_id, body }) if request_id == pending.request_id => {
-                let confirmed_logout = pending.path == self.logout_path;
-                let batch = self.batch();
-                fx.push(SessionEffect::RemovePending { batch, epoch: self.call_epoch });
-                let answer = if confirmed_logout { Ok(body) } else { Err(SessionError::Revoked) };
-                self.phase = SessionPhase::Landing { pending, batch, answer, identity: None, ended: true };
-            }
-            (SessionPhase::Calling { pending, .. }, SessionInput::Response { request_id, body, sequence, credential }) if request_id == pending.request_id => {
-                if pending.sessionless || sequence == Some(pending.sequence) {
-                    let batch = self.batch();
-                    let identity = pending.credential.or(credential);
-                    fx.push(SessionEffect::CommitLanding { batch, epoch: self.call_epoch, digest: identity, sequence: (!pending.sessionless).then_some(pending.sequence) });
-                    self.phase = SessionPhase::Landing { pending, batch, answer: Ok(body), identity, ended: false };
-                } else {
-                    let error = if sequence.is_none() { SessionError::Protocol } else { SessionError::SequenceConflict };
-                    finish(fx, &pending, Err(error));
-                    self.idle(fx);
-                }
-            }
-            (SessionPhase::Calling { pending, attempts, .. }, SessionInput::CredentialUnavailable { request_id, lost, detail }) if request_id == pending.request_id => {
-                finish(fx, &pending, Err(if lost { SessionError::StateLost } else { SessionError::Rejected(RejectReason::Storage(detail)) }));
-                if !lost && self.online {
-                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                }
-                self.phase = SessionPhase::Blocked { pending: PendingCall { reply: None, ..pending }, attempts: attempts + 1, retry: !lost };
-            }
-            (SessionPhase::Calling { pending, attempts, .. }, SessionInput::HttpError { request_id, temporary, auth }) if request_id == pending.request_id => {
-                if temporary && self.online {
-                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, sent: false };
-                } else if temporary {
-                    self.phase = SessionPhase::Calling { pending, attempts, sent: false };
-                } else {
-                    let batch = self.batch();
-                    fx.push(SessionEffect::RemovePending { batch, epoch: self.call_epoch });
-                    let answer = Err(if auth { SessionError::Unauthorized } else { SessionError::Http });
-                    self.phase = SessionPhase::Landing { pending, batch, answer, identity: None, ended: false };
-                }
-            }
-            (SessionPhase::Calling { pending, attempts, .. }, SessionInput::Dropped { request_id }) if request_id == pending.request_id => {
-                if self.online {
-                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, sent: false };
-                } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, sent: false };
-                }
-            }
-            (phase, SessionInput::Cancel { req_id }) => {
-                if let Some(at) = self.queue.iter().position(|queued| matches!(queued, Queued::Mutate { req_id: queued_id, .. } if *queued_id == req_id)) {
-                    if let Some(removed) = self.queue.remove(at) {
-                        refuse(fx, removed, SessionError::Interrupted);
-                    }
-                }
+            (phase @ (SessionPhase::Persisting { .. } | SessionPhase::Calling { .. } | SessionPhase::Landing { .. }), SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
+                let current = pending_of(&phase).is_some_and(|pending| pending.request_id == req_id);
                 self.phase = phase;
+                if !current { self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose }); }
             }
-            (SessionPhase::Calling { pending, attempts, sent: false }, SessionInput::Tick(_)) if self.online => {
-                fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
-                self.phase = SessionPhase::Calling { pending, attempts, sent: true };
+            (phase @ (SessionPhase::Persisting { .. } | SessionPhase::Calling { .. } | SessionPhase::Landing { .. }), SessionInput::SessionCall { operation, body, reply: id }) => {
+                self.phase = phase;
+                self.queue.push_back(Queued::Call { operation, body, reply: id });
             }
-            (SessionPhase::Blocked { pending, retry: true, .. }, SessionInput::Tick(_)) if self.online && pending.author.is_none() => {
-                fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
-                self.phase = SessionPhase::Calling { pending, attempts: 0, sent: true };
-            }
-            (SessionPhase::Landing { pending, batch, answer, identity, ended }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
+            (SessionPhase::Calling { pending, attempts, phase, document_sent }, input) => self.calling(pending, attempts, phase, document_sent, input, fx),
+            (SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => {
                 match identity.filter(|_| answer.is_ok()) {
                     Some(digest) => {
                         self.credential = Some(Credential { digest, sequence: pending.sequence });
+                        if let (Some(id), Ok(body)) = (pending.reply, &answer) { self.after_publish = Some((id, body.clone())); }
                         fx.push(SessionEffect::CredentialCommitted(CredentialCommitted { identity: digest }));
                     }
-                    None if !pending.sessionless && answer.is_ok() => {
-                        if let Some(credential) = &mut self.credential {
-                            credential.sequence = pending.sequence;
-                        }
+                    None => {
+                        if let (Some(sequence), Some(credential)) = (sequence, &mut self.credential) { credential.sequence = sequence; }
+                        if server_ended { fx.push(SessionEffect::ServerEnded(ServerEnded { epoch: pending.epoch })); }
+                        finish(fx, &pending, answer);
                     }
-                    None => {}
                 }
-                if ended {
-                    fx.push(SessionEffect::ServerEnded(ServerEnded { epoch: self.call_epoch }));
-                }
-                finish(fx, &pending, answer);
                 self.idle(fx);
             }
             (SessionPhase::Landing { pending, batch, .. }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => {
                 finish(fx, &pending, Err(SessionError::Rejected(reason)));
-                if self.online {
-                    fx.push(SessionEffect::ScheduleTick { attempts: 1 });
-                }
-                self.phase = SessionPhase::Blocked { pending: PendingCall { reply: None, ..pending }, attempts: 1, retry: true };
+                self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::Storage };
             }
             (phase, _) => self.phase = phase,
+        }
+    }
+
+    fn calling(&mut self, pending: PendingCall, attempts: u64, phase: CallPhase, document_sent: bool, input: SessionInput, fx: &mut Vec<SessionEffect>) {
+        let mine = |request_id: RequestId, attempt_id: AttemptId| pending.request_id == request_id && phase == CallPhase::InFlight(attempt_id);
+        match input {
+            SessionInput::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
+                if let Some(code) = refusal {
+                    let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
+                    self.land(pending, Err(SessionError::Session(code)), None, confirmed, false, fx);
+                } else if pending.class == OperationClass::Sessionless {
+                    self.land(pending, Ok(body), None, None, false, fx);
+                } else if sequence == Some(pending.sequence) {
+                    let identity = pending.credential;
+                    let sequence = pending.sequence;
+                    self.land(pending, Ok(body), identity, Some(sequence), false, fx);
+                } else {
+                    let (reason, error) = if sequence.is_none() { (Block::Protocol, SessionError::Protocol) } else { (Block::SequenceConflict, SessionError::SequenceConflict) };
+                    finish(fx, &pending, Err(error));
+                    self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason };
+                }
+            }
+            SessionInput::Revoked { request_id, attempt_id, body } if mine(request_id, attempt_id) => {
+                let answer = if pending.class == OperationClass::Logout { Ok(body) } else { Err(SessionError::Revoked) };
+                self.land(pending, answer, None, None, true, fx);
+            }
+            SessionInput::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.send(pending, attempts, true, fx),
+            SessionInput::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, .. } if mine(request_id, attempt_id) => {
+                if let Some(author) = pending.author {
+                    author_error(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http);
+                    self.phase = SessionPhase::PendingHeld { pending };
+                } else if self.is_online() {
+                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
+                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry, document_sent };
+                } else {
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                }
+            }
+            SessionInput::HttpError { request_id, attempt_id, auth, .. } if mine(request_id, attempt_id) => {
+                let error = if auth { SessionError::Unauthorized } else { SessionError::Http };
+                self.land(pending, Err(error), None, None, false, fx);
+            }
+            SessionInput::Dropped { request_id, attempt_id } if mine(request_id, attempt_id) => {
+                if let Some(author) = pending.author {
+                    fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Dropped });
+                    self.phase = SessionPhase::PendingHeld { pending };
+                } else if self.is_online() {
+                    fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
+                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry, document_sent };
+                } else {
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                }
+            }
+            SessionInput::SecretMissing { request_id, attempt_id, lost } if mine(request_id, attempt_id) => {
+                if lost {
+                    finish(fx, &pending, Err(SessionError::StateLost));
+                    self.phase = SessionPhase::SecretMismatch;
+                } else {
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingSecret, document_sent };
+                }
+            }
+            SessionInput::Tick(_) if phase == CallPhase::WaitingRetry && self.is_online() => self.send(pending, attempts, document_sent, fx),
+            SessionInput::Foreground { .. } if phase == CallPhase::WaitingSecret => {
+                if self.is_online() {
+                    self.send(pending, attempts, document_sent, fx);
+                } else {
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                }
+            }
+            _ => self.phase = SessionPhase::Calling { pending, attempts, phase, document_sent },
         }
     }
 }

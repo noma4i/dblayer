@@ -177,6 +177,9 @@ fn session_failure(error: crate::owners::session::SessionError) -> DbError {
         Failed::Unauthorized => DbError::Http { status: 401, detail: String::new() },
         Failed::Http => DbError::Network { detail: "the request was refused".into() },
         Failed::Rejected(reason) => DbError::Database { detail: format!("the request was not stored: {reason:?}") },
+        Failed::Session(code) => DbError::Session { code, detail: code.name().to_string() },
+        Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
+        Failed::Storage(detail) => DbError::Database { detail },
         Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },
         Failed::Interrupted | Failed::Closed => super::command::ended(),
     }

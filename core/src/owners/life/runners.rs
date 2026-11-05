@@ -51,7 +51,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 self.held_published = Some(published.clone());
                 wiring.to_session(SessionInput::Published(published));
             }
-            LifecycleEffect::RestoreReady { .. } => {}
+            LifecycleEffect::RestoreReady { epoch } => wiring.to_session(SessionInput::RestoreReady { epoch }),
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
                 wiring.handle.start_epoch(epoch);
                 let started = crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation };
@@ -181,7 +181,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::ClearFailed { erase_id, error } => wiring.to_lifecycle(LifecycleInput::ClearFailed { erase_id, error }),
             StoreEffect::Saved { publication_id } => wiring.to_lifecycle(LifecycleInput::Saved { publication_id }),
             StoreEffect::SaveFailed { publication_id, error } => wiring.to_lifecycle(LifecycleInput::SaveFailed { publication_id, error }),
-            StoreEffect::ReadIntents { .. } => {
+            StoreEffect::ReadIntents { epoch } => {
                 match self.db.read_intents() {
                     Ok(stored) => wiring.to_outbox(OutboxInput::Restored(stored)),
                     Err(error) => wiring.restore_failed_for(Peer::Outbox, error.to_string()),
@@ -191,6 +191,13 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                         Ok(stored) => wiring.to_transfer(TransferInput::Restored(stored)),
                         Err(error) => wiring.restore_failed_for(Peer::Transfer, error.to_string()),
                     }
+                }
+                match &self.client {
+                    Some(client) => match super::session_runner::SessionRunner::stored(client) {
+                        Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending }),
+                        Err(error) => wiring.restore_failed_for(Peer::Session, error.to_string()),
+                    },
+                    None => wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Session, epoch }),
                 }
             }
             StoreEffect::CloseReads => self.db.shared.store.reads().close(),

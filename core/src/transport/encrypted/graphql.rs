@@ -91,15 +91,7 @@ impl Transport for EncryptedTransport {
     }
 
     async fn mutate(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
-        let stored = graphql_body(&request, true);
-        if self.client.pending_call()?.is_some_and(|(path, body)| path == self.client.config.endpoints.graphql && body == stored) {
-            return response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, stored, request.owner, request.purpose).await?);
-        }
-        let response = response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, false), request.owner.clone(), request.purpose).await?)?;
-        if !missing_from_registry(&response) {
-            return Ok(response);
-        }
-        response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner.clone(), request.purpose).await?)
+        response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?)
     }
 
     async fn subscribe(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {

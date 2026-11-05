@@ -106,7 +106,7 @@ pub(crate) struct Wiring {
     mutate_sinks: Mutex<HashMap<AuthorId, Arc<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>>>,
     /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here.
     store_sinks: Mutex<HashMap<BatchAuthor, Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>>>,
-    /// The answer of a sign-in waits for the publication of its identity: a caller that heard it finds the new epoch.
+    /// The answer of a call that ended the session waits for the next epoch: a caller that heard it finds the new epoch.
     after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
     network_sinks: Mutex<Vec<(Peer, Arc<dyn Fn(NetworkEvent) + Send + Sync>)>>,
     session_open: Mutex<Option<SessionInput>>,
@@ -119,10 +119,9 @@ struct OpenWait {
     answer: Option<Result<(), LifecycleError>>,
 }
 
-/// What a held answer waits for.
+/// What a held answer waits for: the epoch to move past the one that ended.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Awaited {
-    Identity(u64),
     EpochAbove(u64),
 }
 
@@ -151,14 +150,12 @@ impl Wiring {
     pub fn addresses(&self) -> Option<Addresses> { self.addresses.get().copied() }
 
     pub fn publish(&self, published: Published) {
-        let identity = published.identity;
         let published_epoch = published.epoch;
         *self.published.value.lock().unwrap_or_else(PoisonError::into_inner) = Some(published);
         self.published.changed.notify_all();
         let due: Vec<_> = {
             let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
             let (due, rest): (Vec<_>, Vec<_>) = held.drain(..).partition(|(waiting, ..)| match waiting {
-                Awaited::Identity(waiting) => Some(*waiting) == identity,
                 Awaited::EpochAbove(epoch) => published_epoch > *epoch,
             });
             *held = rest;
@@ -166,16 +163,6 @@ impl Wiring {
         };
         for (_, id, reply) in due {
             self.outcomes.settle(id, reply);
-        }
-    }
-
-    /// Settles the answer of a sign-in once `identity` is the published one.
-    pub fn settle_after_publish(&self, identity: u64, id: crate::runtime::OutcomeId, reply: LifeReply) {
-        let published = self.published.value.lock().unwrap_or_else(PoisonError::into_inner).as_ref().and_then(|published| published.identity);
-        if published == Some(identity) {
-            self.outcomes.settle(id, reply);
-        } else {
-            self.after_publish.lock().unwrap_or_else(PoisonError::into_inner).push((Awaited::Identity(identity), id, reply));
         }
     }
 
@@ -357,6 +344,7 @@ pub struct Life {
     /// The database has a session client: the rule of the calls reads `Published`. A database without one hands the calls to the owners.
     with_session: bool,
     alive: Arc<std::sync::atomic::AtomicUsize>,
+    legacy_requests: std::sync::atomic::AtomicU64,
 }
 
 const RESTORE_ACKS: [Peer; 0] = [];
@@ -390,7 +378,7 @@ impl Life {
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((client, credentials), restored)| {
-            let state = SessionState::with_operations(client.session_operations(), client.logout_path().to_string(), false);
+            let state = SessionState::with_operations(client.session_operations(), None);
             let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
@@ -442,12 +430,18 @@ impl Life {
                 crate::store::reads::ReadEvent::Finished(read_id) => StoreInput::ReadFinished { read_id },
             }));
         }
+        if session_address.is_some() {
+            let weak = Arc::downgrade(&wiring);
+            wiring.on_network(Peer::Session, move |event| {
+                if let (NetworkEvent::Foreground(seq), Some(wiring)) = (event, weak.upgrade()) { wiring.to_session(SessionInput::Foreground { seq }); }
+            });
+        }
         let last = [Some(calls.index()), session_address.as_ref().map(|(address, _)| address.index()), outbox.map(|address| address.index()), transfer.map(|address| address.index())].into_iter().flatten().max().unwrap_or(0);
         let read = read::add(&mut builder, &wiring, &ports, store, last + 1);
         let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer, windows: None, deliveries: None, feed: None }.with_read(&read));
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, restored)) = session_address {
-            *wiring.session_open.lock().unwrap_or_else(PoisonError::into_inner) = Some(SessionInput::Open { credential: restored.credential, pending: restored.pending });
+            *wiring.session_open.lock().unwrap_or_else(PoisonError::into_inner) = Some(SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });
         }
         wiring.open.lock().unwrap_or_else(PoisonError::into_inner).id = Some(open_wait.id().raw());
         wiring.to_store(StoreInput::Boot(found));
@@ -464,7 +458,7 @@ impl Life {
         drop(guard);
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
-        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), alive })
+        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), alive, legacy_requests: std::sync::atomic::AtomicU64::new(LEGACY_REQUESTS) })
     }
 
     /// Stops the owner threads and joins them. The caller is not an owner thread. A second call does nothing.
@@ -559,20 +553,23 @@ impl Life {
 
     /// `Mutate` of Outbox and Transfer: the answer comes to the sink the author registered with `on_mutate_answer`.
     pub fn mutate(&self, author: AuthorId, owner: Option<super::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) {
-        self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, path, body, purpose });
+        self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, epoch: self.published().epoch, path, body, purpose });
     }
 
-    /// A `Mutate` of the old stack: the answer comes to the waiter. Its request ids start high, apart from the ids Session gives to its own calls.
-    pub fn mutate_wait(&self, owner: Option<super::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
+    /// The request id of a caller of the old stack: it starts high, apart from the ids of Outbox and Transfer.
+    pub fn legacy_request(&self) -> RequestId { self.legacy_requests.fetch_add(1, Ordering::SeqCst) }
+
+    /// One attempt of a `Mutate` of the old stack: the outcome comes to the waiter. A repeat after `Dropped` or a temporary error is the same `req_id`.
+    pub fn mutate_wait(&self, req_id: RequestId, owner: Option<super::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        let author = LEGACY_AUTHORS + waiter.id().raw();
+        let author = LEGACY_AUTHORS + req_id;
         let (wiring, id) = (self.wiring.clone(), waiter.id());
         self.wiring.on_mutate_answer(author, move |_, outcome| {
             wiring.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).remove(&author);
             wiring.outcomes.settle(id, LifeReply::Mutated(outcome));
         });
-        self.mutate(author, owner, LEGACY_REQUESTS + waiter.id().raw(), path, body, purpose);
+        self.mutate(author, owner, req_id, path, body, purpose);
         waiter
     }
 

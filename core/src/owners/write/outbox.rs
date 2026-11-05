@@ -261,7 +261,7 @@ impl OutboxState {
         operation.sends += 1;
         let purpose = if matches!(operation.op.origin, Origin::Transfer(_)) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
         let owner = Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) });
-        let mutate = SessionInput::Mutate { author: OUTBOX_AUTHOR, owner, req_id: operation.request_id, path: operation.op.path.clone(), body: operation.op.body.clone(), purpose };
+        let mutate = SessionInput::Mutate { author: OUTBOX_AUTHOR, owner, req_id: operation.request_id, epoch: self.epoch, path: operation.op.path.clone(), body: operation.op.body.clone(), purpose };
         fx.push(Effect::Send(Outbound::new(self.peers.session, mutate)));
     }
 

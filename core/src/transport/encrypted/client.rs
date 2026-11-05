@@ -151,6 +151,9 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Tr
         Failed::Unauthorized => TransportError::Http { status: 401, body: String::new() },
         Failed::Http => TransportError::Network("the request was refused".into()),
         Failed::Rejected(reason) => TransportError::Network(format!("the request was not stored: {reason:?}")),
+        Failed::Session(code) => TransportError::Session { code, detail: code.name().to_string() },
+        Failed::SessionExists => TransportError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
+        Failed::Storage(detail) => TransportError::Network(detail),
         Failed::Interrupted | Failed::NoSession | Failed::Closed => TransportError::Interrupted("the session ended while its answer was pending".into()),
     }
 }
@@ -196,8 +199,9 @@ impl EncryptedClient {
 
     /// The declared session operations and `logout`, as the owner Session takes them.
     pub(crate) fn session_operations(&self) -> Vec<crate::owners::session::SessionOperation> {
-        let declared = self.config.endpoints.session_operations.iter().map(|(name, operation)| crate::owners::session::SessionOperation { name: name.clone(), path: operation.path.clone(), sessionless: operation.sessionless });
-        declared.chain(std::iter::once(crate::owners::session::SessionOperation { name: "logout".into(), path: self.config.endpoints.logout.clone(), sessionless: false })).collect()
+        use crate::owners::session::OperationClass;
+        let declared = self.config.endpoints.session_operations.iter().map(|(name, operation)| crate::owners::session::SessionOperation { name: name.clone(), path: operation.path.clone(), class: if operation.sessionless { OperationClass::Sessionless } else { OperationClass::Authenticated } });
+        declared.chain(std::iter::once(crate::owners::session::SessionOperation { name: "logout".into(), path: self.config.endpoints.logout.clone(), class: OperationClass::Logout })).collect()
     }
 
     pub(crate) fn stored_session(&self) -> Result<Option<state::Session>, TransportError> { self.read_connection(state::session) }
@@ -253,13 +257,21 @@ impl EncryptedClient {
         self.validate(admitted)?;
         check_path(path)?;
         let life = self.life.get().and_then(std::sync::Weak::upgrade).ok_or_else(|| TransportError::Interrupted("the database closed".into()))?;
-        let waiter = life.mutate_wait(owner, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
-        match admitted.run(async { waiter.wait().await }).await? {
-            crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
-                crate::owners::session::AuthorOutcome::Response(text) => Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
-                crate::owners::session::AuthorOutcome::Error(error) => Err(session_failure(error)),
-            },
-            _ => Err(TransportError::Interrupted("the session ended while its answer was pending".into())),
+        let req_id = life.legacy_request();
+        let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
+        loop {
+            self.online.online().await;
+            let waiter = life.mutate_wait(req_id, owner.clone(), path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
+            let failure = match admitted.run(async { waiter.wait().await }).await? {
+                crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
+                    crate::owners::session::AuthorOutcome::Response(text) => return Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
+                    crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error } => return Err(session_failure(error)),
+                    crate::owners::session::AuthorOutcome::Error { error, .. } => session_failure(error),
+                    crate::owners::session::AuthorOutcome::Dropped => TransportError::Network("the answer was not received".into()),
+                },
+                _ => return Err(TransportError::Interrupted("the session ended while its answer was pending".into())),
+            };
+            retry.failed(failure).await?;
         }
     }
 
