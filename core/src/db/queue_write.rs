@@ -166,25 +166,11 @@ impl Db {
 
     /// The transfers kept in the base, whole, for `Restored` (`transfer.md`). A row of the display without the value of a transfer (`seq` empty) is not one.
     pub(crate) fn read_transfers(&self) -> Result<Vec<StoredTransfer>, DbError> {
-        let rows = self
-            .shared
-            .store
-            .read_locked(|connection| {
-                let mut statement = connection.prepare(
-                    "SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body \
-                     FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
-                )?;
-                let rows = statement.query_map([], |row| {
-                    Ok((
-                        [row.get::<_, String>(0)?, row.get(1)?, row.get(2)?],
-                        row.get::<_, i64>(3)?, row.get::<_, String>(4)?, row.get::<_, i64>(5)?, row.get::<_, bool>(6)?, row.get::<_, Option<String>>(7)?, row.get::<_, i64>(8)?,
-                        row.get::<_, bool>(9)?, row.get::<_, Option<String>>(10)?, row.get::<_, i64>(11)?, row.get::<_, bool>(12)?, row.get::<_, i64>(13)?, row.get::<_, String>(14)?,
-                        row.get::<_, String>(15)?, row.get::<_, String>(16)?, row.get::<_, String>(17)?, row.get::<_, String>(18)?, row.get::<_, String>(19)?,
-                    ))
-                })?;
-                rows.collect::<Result<Vec<_>, _>>()
-            })
-            .map_err(|error| DbError::Internal(error.to_string()))?;
+        let rows = self.shared.store.read_locked(upload_rows).map_err(|error| DbError::Internal(error.to_string()))?;
+        self.stored_transfers(rows)
+    }
+
+    pub(crate) fn stored_transfers(&self, rows: Vec<UploadRaw>) -> Result<Vec<StoredTransfer>, DbError> {
         Ok(rows
             .into_iter()
             .map(|([model, id, action], seq, source, total, batch, upload_id, sent, completed, failed, created_at, inline, size, sha256, path, body, on_failure, steps_path, steps_body)| {
@@ -236,6 +222,26 @@ impl Db {
             })
             .map_err(DbError::from)
     }
+}
+
+pub(crate) type UploadRaw = (
+    [String; 3], i64, String, i64, bool, Option<String>, i64, bool, Option<String>, i64, bool, i64, String, String, String, String, String, String,
+);
+
+pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result<Vec<UploadRaw>> {
+    let mut statement = connection.prepare(
+        "SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body \
+         FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            [row.get::<_, String>(0)?, row.get(1)?, row.get(2)?],
+            row.get::<_, i64>(3)?, row.get::<_, String>(4)?, row.get::<_, i64>(5)?, row.get::<_, bool>(6)?, row.get::<_, Option<String>>(7)?, row.get::<_, i64>(8)?,
+            row.get::<_, bool>(9)?, row.get::<_, Option<String>>(10)?, row.get::<_, i64>(11)?, row.get::<_, bool>(12)?, row.get::<_, i64>(13)?, row.get::<_, String>(14)?,
+            row.get::<_, String>(15)?, row.get::<_, String>(16)?, row.get::<_, String>(17)?, row.get::<_, String>(18)?, row.get::<_, String>(19)?,
+        ))
+    })?;
+    rows.collect()
 }
 
 fn unsigned<T: TryFrom<i64>>(value: i64, column: &str) -> Result<T, DbError> {

@@ -357,3 +357,34 @@ async fn an_unreadable_queue_is_reported_for_outbox_and_open_still_ends() {
     assert_eq!(life.published().identity, Some(IDENTITY));
     closed(&life).await;
 }
+
+#[test]
+fn outbox_and_transfer_answer_storage_while_their_queue_is_unreadable() {
+    use crate::owners::contract::RejectReason;
+    use crate::owners::write::outbox::{Fault, Outbox, OutboxAnswer, OutboxEffect, OutboxInput, OutboxPeers, OutboxState};
+    use crate::owners::write::transfer::{TransferAnswer, TransferEffect, TransferInput, TransferPeers, TransferState, Transfers};
+    use crate::runtime::{Address, Effect, StateOwner};
+    let mut outbox = OutboxState::new(1, OutboxPeers { store: Address::new(0), session: Address::new(1), transfer: None });
+    assert!(Outbox::step(&mut outbox, OutboxInput::RestoreFailed { error: "disk".into() }).is_empty());
+    let effects = Outbox::step(&mut outbox, OutboxInput::Retry { model: "moments".into(), row_id: "m1".into(), reply: 5 });
+    assert!(matches!(effects.as_slice(), [Effect::Run(OutboxEffect::Reply { reply: 5, answer: OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error))) })] if error == "disk"), "{effects:?}");
+    let mut transfer = TransferState::new(1, 1, TransferPeers { store: Address::new(0), outbox: Address::new(2) });
+    assert!(Transfers::step(&mut transfer, TransferInput::RestoreFailed { error: "disk".into() }).is_empty());
+    let effects = Transfers::step(&mut transfer, TransferInput::Cancel { key: "k".into(), reply: 6 });
+    assert!(matches!(effects.as_slice(), [Effect::Run(TransferEffect::Reply { reply: 6, answer: TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error))) })] if error == "disk"), "{effects:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn read_intents_gives_session_the_pending_row_of_the_same_read() {
+    let transport = Arc::new(MockTransport::new());
+    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
+    session_row(&db);
+    let life = start(&db, &transport).await;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    life.on_restored(move |snapshot| { let _ = sender.send(snapshot); });
+    life.credential_committed(2);
+    let snapshot = tokio::task::spawn_blocking(move || receiver.recv_timeout(LIMIT).expect("Session got its snapshot")).await.unwrap();
+    assert_eq!(snapshot.epoch, life.published().epoch);
+    assert!(snapshot.pending.is_none() && !snapshot.pending_lost);
+    closed(&life).await;
+}

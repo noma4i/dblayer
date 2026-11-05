@@ -103,6 +103,7 @@ pub enum LocalWriteKind {
 pub enum OutboxInput {
     Submit { epoch: Epoch, op: NewOp, reply: ReplyId },
     Restored(Vec<StoredOp>),
+    RestoreFailed { error: String },
     Committed(Committed),
     Rejected(Rejected),
     Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)> },
@@ -204,6 +205,7 @@ pub struct OutboxState {
     outcome_waiters: Vec<(OpId, ReplyId)>,
     ephemeral: BTreeMap<String, Time>,
     drained: bool,
+    queue_error: Option<String>,
 }
 
 impl OutboxState {
@@ -226,6 +228,7 @@ impl OutboxState {
             outcome_waiters: Vec::new(),
             ephemeral: BTreeMap::new(),
             drained: false,
+            queue_error: None,
         }
     }
 
@@ -649,6 +652,10 @@ impl StateOwner for Outbox {
 
     fn step(state: &mut OutboxState, input: OutboxInput) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
+        if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. }) = (&state.queue_error, &input) {
+            OutboxState::reply(&mut fx, *reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
+            return fx;
+        }
         match input {
             OutboxInput::Submit { epoch, op, reply } => {
                 if epoch != state.epoch {
@@ -661,6 +668,7 @@ impl StateOwner for Outbox {
                 }
             }
             OutboxInput::Restored(stored) => state.restored(stored, &mut fx),
+            OutboxInput::RestoreFailed { error } => state.queue_error = Some(error),
             OutboxInput::Committed(committed) => state.committed(committed, &mut fx),
             OutboxInput::Rejected(rejected) => state.rejected(rejected, &mut fx),
             OutboxInput::Response { op_id, rows } => {

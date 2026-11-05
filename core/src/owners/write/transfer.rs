@@ -73,6 +73,7 @@ pub enum TransferTick {
 pub enum TransferInput {
     Accept { epoch: Epoch, key: Key, source: Source, batch: bool, reply: ReplyId, now: Time, mutation: NewOp, steps: Steps },
     Restored(Vec<StoredTransfer>),
+    RestoreFailed { error: String },
     /// The answer of Store to a batch of Transfer.
     Committed(Committed),
     Rejected(Rejected),
@@ -206,10 +207,11 @@ pub struct TransferState {
     next_timer: u64,
     pub now: Time,
     pub drained: bool,
+    queue_error: Option<String>,
 }
 
 impl TransferState {
-    pub fn new(epoch: Epoch, slots: u32, peers: TransferPeers) -> Self { Self { peers, epoch, online: true, slots, transfers: BTreeMap::new(), round: RoundState::None, next_seq: 1, next_batch: 1, batches: BTreeMap::new(), next_timer: 1, now: Time(0), drained: false } }
+    pub fn new(epoch: Epoch, slots: u32, peers: TransferPeers) -> Self { Self { peers, epoch, online: true, slots, transfers: BTreeMap::new(), round: RoundState::None, next_seq: 1, next_batch: 1, batches: BTreeMap::new(), next_timer: 1, now: Time(0), drained: false, queue_error: None } }
 
     pub fn stage_of(&self, key: &str) -> Option<TransferStage> { self.transfers.get(key).map(|transfer| transfer.stage) }
 }
@@ -731,9 +733,14 @@ impl StateOwner for Transfers {
 
     fn step(state: &mut TransferState, input: TransferInput) -> Effects<Self> {
         let mut fx: Fx = Vec::new();
+        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. }) = (&state.queue_error, &input) {
+            reply(&mut fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
+            return fx;
+        }
         match input {
             TransferInput::Accept { epoch, key, source, batch, reply, now, mutation, steps } => state.accept(epoch, key, source, batch, reply, now, mutation, steps, &mut fx),
             TransferInput::Restored(rows) => state.restored(rows, &mut fx),
+            TransferInput::RestoreFailed { error } => state.queue_error = Some(error),
             TransferInput::Committed(committed) => {
                 state.batches.remove(&committed.batch);
             }

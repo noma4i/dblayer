@@ -10,6 +10,13 @@ use super::error::DbError;
 use super::local_write::read_outbox;
 use super::open::Db;
 
+pub(crate) struct Restore {
+    pub ops: Result<Vec<StoredOp>, DbError>,
+    pub transfers: Result<Vec<crate::owners::write::transfer::StoredTransfer>, DbError>,
+    pub pending: Option<crate::transport::encrypted::state::Pending>,
+    pub pending_lost: bool,
+}
+
 impl Db {
     pub fn restore_failed(&self) -> Result<Vec<super::open::DroppedRecord>, DbError> {
         Ok(self.shared.store.restore_failed()?.into_iter().map(|row| super::open::DroppedRecord { table: row.table, key: row.key, reason: row.reason }).collect())
@@ -21,6 +28,21 @@ impl Db {
     /// the base has no column for them. An operation whose action declares no mutation is an error that names it: nothing is guessed.
     pub(crate) fn read_intents(&self) -> Result<Vec<StoredOp>, DbError> {
         let (entries, pending) = self.shared.read(&[], |reader| Ok((read_outbox(reader)?, crate::transport::encrypted::state::pending(reader.connection()).map_err(crate::store::StoreError::from)?)))?;
+        self.stored_intents(entries, pending)
+    }
+
+    pub(crate) fn read_restore(&self) -> Result<Restore, DbError> {
+        let (entries, pending, uploads) = self.shared.read(&[], |reader| {
+            let pending = crate::transport::encrypted::state::pending(reader.connection()).map_err(crate::store::StoreError::from)?;
+            let uploads = super::queue_write::upload_rows(reader.connection()).map_err(crate::store::StoreError::from)?;
+            Ok((read_outbox(reader)?, pending, uploads))
+        })?;
+        let ops = self.stored_intents(entries, pending.clone());
+        let transfers = self.stored_transfers(uploads);
+        Ok(Restore { ops, transfers, pending, pending_lost: self.open_report().dropped.iter().any(|row| row.table == "encrypted_pending") })
+    }
+
+    fn stored_intents(&self, entries: Vec<super::local_write::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>) -> Result<Vec<StoredOp>, DbError> {
         let mut stored = Vec::with_capacity(entries.len());
         for entry in entries {
             let operation = &entry.operation;

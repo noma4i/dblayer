@@ -182,14 +182,34 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::Saved { publication_id } => wiring.to_lifecycle(LifecycleInput::Saved { publication_id }),
             StoreEffect::SaveFailed { publication_id, error } => wiring.to_lifecycle(LifecycleInput::SaveFailed { publication_id, error }),
             StoreEffect::ReadIntents { epoch } => {
-                match self.db.read_intents() {
-                    Ok(stored) => wiring.to_outbox(OutboxInput::Restored(stored)),
-                    Err(error) => wiring.restore_failed_for(Peer::Outbox, error.to_string()),
-                }
-                if wiring.has_transfer() {
-                    match self.db.read_transfers() {
-                        Ok(stored) => wiring.to_transfer(TransferInput::Restored(stored)),
-                        Err(error) => wiring.restore_failed_for(Peer::Transfer, error.to_string()),
+                let restore = self.db.read_restore();
+                let fail = |wiring: &Wiring, error: String| {
+                    wiring.restore_failed_for(Peer::Outbox, error.clone());
+                    wiring.to_outbox(OutboxInput::RestoreFailed { error: error.clone() });
+                    if wiring.has_transfer() {
+                        wiring.restore_failed_for(Peer::Transfer, error.clone());
+                        wiring.to_transfer(TransferInput::RestoreFailed { error });
+                    }
+                };
+                match restore {
+                    Err(error) => fail(wiring, error.to_string()),
+                    Ok(restore) => {
+                        match restore.ops {
+                            Ok(stored) => wiring.to_outbox(OutboxInput::Restored(stored)),
+                            Err(error) => {
+                                wiring.restore_failed_for(Peer::Outbox, error.to_string());
+                                wiring.to_outbox(OutboxInput::RestoreFailed { error: error.to_string() });
+                            }
+                        }
+                        if wiring.has_transfer() {
+                            match restore.transfers {
+                                Ok(stored) => wiring.to_transfer(TransferInput::Restored(stored)),
+                                Err(error) => {
+                                    wiring.restore_failed_for(Peer::Transfer, error.to_string());
+                                    wiring.to_transfer(TransferInput::RestoreFailed { error: error.to_string() });
+                                }
+                            }
+                        }
                     }
                 }
                 match &self.client {

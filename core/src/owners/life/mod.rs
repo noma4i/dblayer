@@ -82,6 +82,13 @@ pub(crate) struct Addresses {
     pub feed: Option<Address<super::read::feed::Feed>>,
 }
 
+#[derive(Clone, Debug)]
+pub struct SessionSnapshot {
+    pub epoch: Epoch,
+    pub pending: Option<crate::transport::encrypted::state::Pending>,
+    pub pending_lost: bool,
+}
+
 #[derive(Default)]
 struct PublishedCell {
     value: Mutex<Option<Published>>,
@@ -109,6 +116,7 @@ pub(crate) struct Wiring {
     /// The answer of a call that ended the session waits for the next epoch: a caller that heard it finds the new epoch.
     after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
     network_sinks: Mutex<Vec<(Peer, Arc<dyn Fn(NetworkEvent) + Send + Sync>)>>,
+    restored_sink: Mutex<Option<Arc<dyn Fn(SessionSnapshot) + Send + Sync>>>,
     session_open: Mutex<Option<SessionInput>>,
     restore_failures: Mutex<Vec<(Peer, String)>>,
 }
@@ -141,6 +149,7 @@ impl Wiring {
             store_sinks: Mutex::new(HashMap::new()),
             after_publish: Mutex::new(Vec::new()),
             network_sinks: Mutex::new(Vec::new()),
+            restored_sink: Mutex::new(None),
             session_open: Mutex::new(None),
             restore_failures: Mutex::new(Vec::new()),
         }
@@ -243,6 +252,17 @@ impl Wiring {
         let sinks: Vec<_> = self.network_sinks.lock().unwrap_or_else(PoisonError::into_inner).iter().filter(|(owner, _)| owners.contains(owner)).map(|(_, sink)| sink.clone()).collect();
         for sink in sinks {
             crate::db::lock::effect(|| sink(event));
+        }
+    }
+
+    pub fn on_restored(&self, sink: impl Fn(SessionSnapshot) + Send + Sync + 'static) {
+        *self.restored_sink.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(sink));
+    }
+
+    pub fn tell_restored(&self, snapshot: SessionSnapshot) {
+        let sink = self.restored_sink.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some(sink) = sink {
+            crate::db::lock::effect(|| sink(snapshot));
         }
     }
 
@@ -483,6 +503,8 @@ impl Life {
     pub fn restore_failures(&self) -> Vec<(Peer, String)> { self.wiring.restore_failures.lock().unwrap_or_else(PoisonError::into_inner).clone() }
 
     pub fn on_network(&self, owner: Peer, sink: impl Fn(NetworkEvent) + Send + Sync + 'static) { self.wiring.on_network(owner, sink); }
+
+    pub fn on_restored(&self, sink: impl Fn(SessionSnapshot) + Send + Sync + 'static) { self.wiring.on_restored(sink); }
 
     fn settled(&self, reply: LifeReply) -> Waiter<LifeReply> {
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
