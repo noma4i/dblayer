@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use super::ref_transfer::{round_step, step_of, Ctx, Eff, In, Obs, Round, RoundIn, Shown, St, Step};
-use super::rig::{quiet, until, within, Kind, Reply, Rig, Server};
+use super::rig::{bounded, quiet, until, within, Kind, Reply, Rig, Server};
 use crate::ffi::{DbError, UploadAcceptedSink, WireOperationOutcome, WireOperationReceipt, WireUploadAccepted, WireUploadStatus};
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::schema::OnFailure;
@@ -81,8 +81,10 @@ impl UploadAcceptedSink for Events {
 
 fn multipart_ctx() -> Ctx { Ctx { has_upload_id: true, ..Ctx::ready() } }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_accept() {
+#[test]
+fn xfer_accept() { bounded("xfer_accept", xfer_accept_run) }
+
+async fn xfer_accept_run() {
     let cell = want(St::None, &Ctx::ready(), In::Accept);
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -96,8 +98,10 @@ async fn xfer_accept() {
     assert!(shown(&rig).await.is_some());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_accept_stale() {
+#[test]
+fn xfer_accept_stale() { bounded("xfer_accept_stale", xfer_accept_stale_run) }
+
+async fn xfer_accept_stale_run() {
     let cell = want(St::None, &Ctx { epoch_current: false, ..Ctx::ready() }, In::Accept);
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -111,8 +115,10 @@ async fn xfer_accept_stale() {
     assert_eq!(rig.server.mutations(), before);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_ready_start() {
+#[test]
+fn xfer_ready_start() { bounded("xfer_ready_start", xfer_ready_start_run) }
+
+async fn xfer_ready_start_run() {
     let cell = want(St::Ready, &Ctx::ready(), In::Start);
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -125,8 +131,10 @@ async fn xfer_ready_start() {
     assert_eq!(shown(&rig).await, shows(&cell).unwrap());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_ready_cancel() {
+#[test]
+fn xfer_ready_cancel() { bounded("xfer_ready_cancel", xfer_ready_cancel_run) }
+
+async fn xfer_ready_cancel_run() {
     let cell = want(St::Ready, &Ctx::ready(), In::Cancel);
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -149,8 +157,10 @@ async fn multipart_rig(directory: &Path) -> (Rig, String) {
     (rig, path)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_step_ok() {
+#[test]
+fn xfer_step_ok() { bounded("xfer_step_ok", xfer_step_ok_run) }
+
+async fn xfer_step_ok_run() {
     let cell = want(St::Uploading, &multipart_ctx(), In::StepOk { parts_left: true });
     let directory = tempfile::tempdir().unwrap();
     let (rig, path) = multipart_rig(directory.path()).await;
@@ -167,8 +177,10 @@ async fn xfer_step_ok() {
     assert_eq!(rig.server.count("CompleteMultipart"), 0);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_all_parts() {
+#[test]
+fn xfer_all_parts() { bounded("xfer_all_parts", xfer_all_parts_run) }
+
+async fn xfer_all_parts_run() {
     let cell = want(St::Uploading, &multipart_ctx(), In::StepOk { parts_left: false });
     let directory = tempfile::tempdir().unwrap();
     let (rig, path) = multipart_rig(directory.path()).await;
@@ -187,8 +199,10 @@ async fn xfer_all_parts() {
     assert_eq!(upload.total_bytes, 11 * MEBIBYTE);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_step_temp() {
+#[test]
+fn xfer_step_temp() { bounded("xfer_step_temp", xfer_step_temp_run) }
+
+async fn xfer_step_temp_run() {
     let cell = want(St::Uploading, &Ctx::ready(), In::StepError { temporary: true });
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -203,8 +217,10 @@ async fn xfer_step_temp() {
     until("the backoff step", || { rig.clock.advance(60_000); rig.server.seen().iter().filter(|seen| seen.kind == Kind::Put).count() >= 2 }).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_step_fail() {
+#[test]
+fn xfer_step_fail() { bounded("xfer_step_fail", xfer_step_fail_run) }
+
+async fn xfer_step_fail_run() {
     let cell = want(St::Uploading, &multipart_ctx(), In::StepError { temporary: false });
     let directory = tempfile::tempdir().unwrap();
     let (rig, path) = multipart_rig(directory.path()).await;
@@ -218,8 +234,10 @@ async fn xfer_step_fail() {
     rig.server.wait_seen("AbortMultipart", 1).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_step_offline() {
+#[test]
+fn xfer_step_offline() { bounded("xfer_step_offline", xfer_step_offline_run) }
+
+async fn xfer_step_offline_run() {
     let cell = want(St::Uploading, &Ctx::ready(), In::Online(false));
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -234,8 +252,10 @@ async fn xfer_step_offline() {
     until("the step is cancelled", || rig.server.cancelled() >= 1).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_uploading_cancel() {
+#[test]
+fn xfer_uploading_cancel() { bounded("xfer_uploading_cancel", xfer_uploading_cancel_run) }
+
+async fn xfer_uploading_cancel_run() {
     let cell = want(St::Uploading, &multipart_ctx(), In::Cancel);
     let directory = tempfile::tempdir().unwrap();
     let (rig, path) = multipart_rig(directory.path()).await;
@@ -251,8 +271,10 @@ async fn xfer_uploading_cancel() {
     wait_shown(&rig, None).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_completed() {
+#[test]
+fn xfer_completed() { bounded("xfer_completed", xfer_completed_run) }
+
+async fn xfer_completed_run() {
     let cell = want(St::Completing, &multipart_ctx(), In::Completed);
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -267,8 +289,10 @@ async fn xfer_completed() {
     assert!(mutation.variables["signedId"].is_string(), "{}", mutation.variables);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_complete_fail() {
+#[test]
+fn xfer_complete_fail() { bounded("xfer_complete_fail", xfer_complete_fail_run) }
+
+async fn xfer_complete_fail_run() {
     let cell = want(St::Completing, &multipart_ctx(), In::CompleteError);
     let directory = tempfile::tempdir().unwrap();
     let (rig, path) = multipart_rig(directory.path()).await;
@@ -283,8 +307,10 @@ async fn xfer_complete_fail() {
     assert_eq!(rig.server.seen().iter().filter(|seen| seen.kind == Kind::Put).count(), 3);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_mutation_confirmed() {
+#[test]
+fn xfer_mutation_confirmed() { bounded("xfer_mutation_confirmed", xfer_mutation_confirmed_run) }
+
+async fn xfer_mutation_confirmed_run() {
     let cell = want(St::Mutating, &Ctx::ready(), In::MutationOutcome { confirmed: true });
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -297,8 +323,10 @@ async fn xfer_mutation_confirmed() {
     assert!(cell.obs.contains(&Obs::RowWithServerFile) && rig.row("srv1").await.is_some());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_mutation_failed() {
+#[test]
+fn xfer_mutation_failed() { bounded("xfer_mutation_failed", xfer_mutation_failed_run) }
+
+async fn xfer_mutation_failed_run() {
     let cell = want(St::Mutating, &Ctx::ready(), In::MutationOutcome { confirmed: false });
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Keep).await;
@@ -309,8 +337,10 @@ async fn xfer_mutation_failed() {
     wait_shown(&rig, shows(&cell).unwrap()).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_mutating_cancel() {
+#[test]
+fn xfer_mutating_cancel() { bounded("xfer_mutating_cancel", xfer_mutating_cancel_run) }
+
+async fn xfer_mutating_cancel_run() {
     let cell = want(St::Mutating, &Ctx::ready(), In::Cancel);
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -331,8 +361,10 @@ async fn failed_after_all_parts(directory: &Path) -> Rig {
     rig
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_retry_complete() {
+#[test]
+fn xfer_retry_complete() { bounded("xfer_retry_complete", xfer_retry_complete_run) }
+
+async fn xfer_retry_complete_run() {
     let cell = want(St::Failed, &Ctx { parts_all_confirmed: true, ..multipart_ctx() }, In::Retry);
     let directory = tempfile::tempdir().unwrap();
     let rig = failed_after_all_parts(directory.path()).await;
@@ -345,8 +377,10 @@ async fn xfer_retry_complete() {
     let _ = rig.outcome(&retried).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_retry() {
+#[test]
+fn xfer_retry() { bounded("xfer_retry", xfer_retry_run) }
+
+async fn xfer_retry_run() {
     let cell = want(St::Failed, &Ctx::ready(), In::Retry);
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -366,8 +400,10 @@ async fn kind_count(rig: &Rig) -> usize {
     rig.server.seen().iter().filter(|seen| seen.kind == Kind::Put).count()
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_discard() {
+#[test]
+fn xfer_discard() { bounded("xfer_discard", xfer_discard_run) }
+
+async fn xfer_discard_run() {
     let cell = want(St::Failed, &Ctx { parts_all_confirmed: true, ..multipart_ctx() }, In::Discard);
     let directory = tempfile::tempdir().unwrap();
     let rig = failed_after_all_parts(directory.path()).await;
@@ -379,8 +415,10 @@ async fn xfer_discard() {
     wait_shown(&rig, shows(&cell).unwrap()).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_expired() {
+#[test]
+fn xfer_expired() { bounded("xfer_expired", xfer_expired_run) }
+
+async fn xfer_expired_run() {
     let cell = want(St::Failed, &Ctx { age_days: 8, ..multipart_ctx() }, In::Expire);
     let directory = tempfile::tempdir().unwrap();
     let rig = failed_after_all_parts(directory.path()).await;
@@ -394,8 +432,10 @@ async fn xfer_expired() {
     rig.server.wait_seen("AbortMultipart", 1).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_closing() {
+#[test]
+fn xfer_closing() { bounded("xfer_closing", xfer_closing_run) }
+
+async fn xfer_closing_run() {
     let cell = want(St::Uploading, &Ctx::ready(), In::Closing);
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite").to_string_lossy().to_string();
@@ -416,8 +456,10 @@ async fn xfer_closing() {
     drop(reopened);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_round_request() {
+#[test]
+fn xfer_round_request() { bounded("xfer_round_request", xfer_round_request_run) }
+
+async fn xfer_round_request_run() {
     let cell = round_step(Round::None, 1, RoundIn::Needed(1), true).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -432,8 +474,10 @@ async fn xfer_round_request() {
     assert_eq!(events.0.lock().unwrap()[0].epoch, rig.epoch());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_round_started() {
+#[test]
+fn xfer_round_started() { bounded("xfer_round_started", xfer_round_started_run) }
+
+async fn xfer_round_started_run() {
     let cell = round_step(Round::Requested(1), 1, RoundIn::Started(7, 1), true).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -446,8 +490,10 @@ async fn xfer_round_started() {
     assert!(owner.is_some());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_round_refused() {
+#[test]
+fn xfer_round_refused() { bounded("xfer_round_refused", xfer_round_refused_run) }
+
+async fn xfer_round_refused_run() {
     let cell = round_step(Round::Requested(1), 1, RoundIn::Refused(1), true).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -465,8 +511,10 @@ async fn xfer_round_refused() {
     assert!(entry.upload.error.is_some(), "the refusal is not on the accepted operation");
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_round_end() {
+#[test]
+fn xfer_round_end() { bounded("xfer_round_end", xfer_round_end_run) }
+
+async fn xfer_round_end_run() {
     let cell = round_step(Round::Running { id: 7, epoch: 1, next: None }, 1, RoundIn::Ended(7, 1), false).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -480,8 +528,10 @@ async fn xfer_round_end() {
     assert!(late.map_or(true, |groups| groups.is_empty()));
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_round_end_stale() {
+#[test]
+fn xfer_round_end_stale() { bounded("xfer_round_end_stale", xfer_round_end_stale_run) }
+
+async fn xfer_round_end_stale_run() {
     let cell = round_step(Round::Running { id: 7, epoch: 1, next: None }, 1, RoundIn::Ended(8, 1), false).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
@@ -495,8 +545,10 @@ async fn xfer_round_end_stale() {
     assert_ne!(rig.db.round_next(rig.epoch(), owner).unwrap(), crate::ffi::WireRoundStep::Stale, "a stale end stopped the running round");
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_prop_outcome() {
+#[test]
+fn xfer_prop_outcome() { bounded("xfer_prop_outcome", xfer_prop_outcome_run) }
+
+async fn xfer_prop_outcome_run() {
     for refuse in [false, true] {
         let directory = tempfile::tempdir().unwrap();
         let rig = seeded(OnFailure::Keep).await;
@@ -516,8 +568,10 @@ async fn xfer_prop_outcome() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_prop_abort_rule() {
+#[test]
+fn xfer_prop_abort_rule() { bounded("xfer_prop_abort_rule", xfer_prop_abort_rule_run) }
+
+async fn xfer_prop_abort_rule_run() {
     let directory = tempfile::tempdir().unwrap();
     let (rig, path) = multipart_rig(directory.path()).await;
     rig.server.auto(Kind::Put, Reply::Refuse);
@@ -534,8 +588,10 @@ async fn xfer_prop_abort_rule() {
     rig.server.wait_seen("AbortMultipart", 1).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_prop_round_covers() {
+#[test]
+fn xfer_prop_round_covers() { bounded("xfer_prop_round_covers", xfer_prop_round_covers_run) }
+
+async fn xfer_prop_round_covers_run() {
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
     let events = Arc::new(Events(Mutex::new(vec![])));
@@ -551,8 +607,10 @@ async fn xfer_prop_round_covers() {
     assert!(events.0.lock().unwrap().iter().all(|event| event.epoch == rig.epoch()));
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_prop_order() {
+#[test]
+fn xfer_prop_order() { bounded("xfer_prop_order", xfer_prop_order_run) }
+
+async fn xfer_prop_order_run() {
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
     rig.server.hold(Kind::Put, true);
@@ -569,8 +627,10 @@ async fn xfer_prop_order() {
     assert_eq!(order, names);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn xfer_prop_idle() {
+#[test]
+fn xfer_prop_idle() { bounded("xfer_prop_idle", xfer_prop_idle_run) }
+
+async fn xfer_prop_idle_run() {
     let directory = tempfile::tempdir().unwrap();
     let rig = seeded(OnFailure::Rollback).await;
     let receipt = accept(&rig, &source(directory.path(), "a.mp4", 1024), "a.mp4").await;

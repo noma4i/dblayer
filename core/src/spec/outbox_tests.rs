@@ -1,5 +1,5 @@
 use super::ref_outbox::{step_of, Ctx, Eff, In, Obs, Out, Policy, St, Step};
-use super::rig::{quiet, until, within, Kind, Reply, Rig, Server};
+use super::rig::{bounded, quiet, step, until, within, Kind, Reply, Rig, Server};
 use crate::ffi::{CommandRequest, WireOperationOutcome, WireOperationReceipt, WireSyncState};
 use crate::schema::OnFailure;
 
@@ -28,8 +28,10 @@ fn kind_of(outcome: &WireOperationOutcome) -> &'static str {
 
 fn temp_id(receipt: &WireOperationReceipt) -> String { receipt.optimistic_value.clone().expect("the receipt carries the optimistic row").id }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_submit() {
+#[test]
+fn out_submit() { bounded("out_submit", out_submit_run) }
+
+async fn out_submit_run() {
     let submitted = want(St::None, &offline(), In::Submit);
     let committed = want(submitted.next, &offline(), In::Committed);
     let rig = Rig::open(OnFailure::Rollback).await;
@@ -44,8 +46,10 @@ async fn out_submit() {
     assert_eq!(sends(&committed), rig.server.mutations() > 0);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_submit_stale() {
+#[test]
+fn out_submit_stale() { bounded("out_submit_stale", out_submit_stale_run) }
+
+async fn out_submit_stale_run() {
     let cell = want(St::None, &Ctx { epoch_current: false, ..Ctx::ready() }, In::Submit);
     let rig = Rig::open(OnFailure::Rollback).await;
     let request = CommandRequest { epoch: rig.epoch() + 1, model: "Moment".into(), values_json: r#"{"text":"x"}"#.into(), args_json: "{}".into(), upload: None };
@@ -57,8 +61,10 @@ async fn out_submit_stale() {
     assert_eq!(rig.server.mutations(), 0);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_submitting_committed() {
+#[test]
+fn out_submitting_committed() { bounded("out_submitting_committed", out_submitting_committed_run) }
+
+async fn out_submitting_committed_run() {
     let cell = want(St::Submitting, &Ctx::ready(), In::Committed);
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.hold(Kind::Mutate, true);
@@ -74,8 +80,10 @@ async fn out_submitting_committed() {
     assert_eq!(rig.server.count("MakeMoment"), 1);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_queued_send() {
+#[test]
+fn out_queued_send() { bounded("out_queued_send", out_queued_send_run) }
+
+async fn out_queued_send_run() {
     let from_online = want(St::Queued, &offline(), In::Online(true));
     let from_online_ready = want(St::Queued, &Ctx::ready(), In::Online(true));
     let from_row = want(St::Queued, &Ctx::ready(), In::RowFreed);
@@ -103,8 +111,10 @@ async fn out_queued_send() {
     assert_eq!(kind_of(&rig.outcome(&second).await), wire_of(Out::Confirmed));
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_queued_offline() {
+#[test]
+fn out_queued_offline() { bounded("out_queued_offline", out_queued_offline_run) }
+
+async fn out_queued_offline_run() {
     let cell = want(St::Queued, &Ctx::ready(), In::Online(false));
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.db.set_online(false).unwrap();
@@ -119,8 +129,10 @@ async fn out_queued_offline() {
     assert!(rig.row(&temp_id(&receipt)).await.is_some());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_sending_response() {
+#[test]
+fn out_sending_response() { bounded("out_sending_response", out_sending_response_run) }
+
+async fn out_sending_response_run() {
     let cell = want(St::Sending, &Ctx::ready(), In::Response);
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.hold(Kind::Mutate, true);
@@ -135,8 +147,10 @@ async fn out_sending_response() {
     assert!(rig.row("srv1").await.is_some());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_sending_temp() {
+#[test]
+fn out_sending_temp() { bounded("out_sending_temp", out_sending_temp_run) }
+
+async fn out_sending_temp_run() {
     let cell = want(St::Sending, &Ctx::ready(), In::TransportError { temporary: true });
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.script("MakeMoment", Reply::Temp);
@@ -152,8 +166,10 @@ async fn out_sending_temp() {
     assert_eq!(kind_of(&rig.outcome(&receipt).await), "Confirmed");
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_sending_reject_rollback() {
+#[test]
+fn out_sending_reject_rollback() { bounded("out_sending_reject_rollback", out_sending_reject_rollback_run) }
+
+async fn out_sending_reject_rollback_run() {
     let ctx = Ctx { policy: Policy::Rollback, ..Ctx::ready() };
     let cell = want(St::Sending, &ctx, In::TransportError { temporary: false });
     let rig = Rig::open(OnFailure::Rollback).await;
@@ -167,8 +183,10 @@ async fn out_sending_reject_rollback() {
     assert!(rig.row(&temp_id(&receipt)).await.is_none());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_sending_offline() {
+#[test]
+fn out_sending_offline() { bounded("out_sending_offline", out_sending_offline_run) }
+
+async fn out_sending_offline_run() {
     let cell = want(St::Sending, &Ctx::ready(), In::Online(false));
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.hold(Kind::Mutate, true);
@@ -188,8 +206,10 @@ async fn out_sending_offline() {
     assert_eq!(kind_of(&rig.outcome(&receipt).await), "Confirmed");
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_landing_committed() {
+#[test]
+fn out_landing_committed() { bounded("out_landing_committed", out_landing_committed_run) }
+
+async fn out_landing_committed_run() {
     let cell = want(St::Landing, &Ctx::ready(), In::Committed);
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.hold(Kind::Mutate, true);
@@ -207,8 +227,10 @@ async fn out_landing_committed() {
     assert_eq!(kind_of(&rig.outcome(&second).await), "Confirmed");
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_rollback_committed() {
+#[test]
+fn out_rollback_committed() { bounded("out_rollback_committed", out_rollback_committed_run) }
+
+async fn out_rollback_committed_run() {
     let cell = want(St::RollingBack(super::ref_outbox::Why::Rejected), &Ctx::ready(), In::Committed);
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.hold(Kind::Mutate, true);
@@ -226,8 +248,10 @@ async fn out_rollback_committed() {
     let _ = rig.outcome(&second).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_failed_retry() {
+#[test]
+fn out_failed_retry() { bounded("out_failed_retry", out_failed_retry_run) }
+
+async fn out_failed_retry_run() {
     let ctx = Ctx { policy: Policy::Keep, ..Ctx::ready() };
     let failed = want(St::Sending, &ctx, In::TransportError { temporary: false });
     let cell = want(St::Failed, &ctx, In::Retry);
@@ -253,8 +277,10 @@ async fn out_failed_retry() {
     assert_eq!(rig.server.count("MakeMoment"), 2);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_closing() {
+#[test]
+fn out_closing() { bounded("out_closing", out_closing_run) }
+
+async fn out_closing_run() {
     let sending = want(St::Sending, &Ctx::ready(), In::Closing);
     let queued = want(St::Queued, &Ctx::ready(), In::Closing);
     let rig = Rig::open(OnFailure::Rollback).await;
@@ -272,8 +298,10 @@ async fn out_closing() {
     until("the request is cancelled", || rig.server.cancelled() >= 1).await;
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_outcome_done() {
+#[test]
+fn out_outcome_done() { bounded("out_outcome_done", out_outcome_done_run) }
+
+async fn out_outcome_done_run() {
     let rig = Rig::open(OnFailure::Rollback).await;
     let receipt = rig.create("a").await;
     let first = rig.outcome(&receipt).await;
@@ -284,8 +312,10 @@ async fn out_outcome_done() {
     assert_eq!(first, again);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_outcome_wait() {
+#[test]
+fn out_outcome_wait() { bounded("out_outcome_wait", out_outcome_wait_run) }
+
+async fn out_outcome_wait_run() {
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.hold(Kind::Mutate, true);
     let receipt = rig.create("a").await;
@@ -297,8 +327,10 @@ async fn out_outcome_wait() {
     assert_eq!(kind_of(&rig.outcome(&receipt).await), "Confirmed");
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_open_restores() {
+#[test]
+fn out_open_restores() { bounded("out_open_restores", out_open_restores_run) }
+
+async fn out_open_restores_run() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite").to_string_lossy().to_string();
     let first = Rig::open_at(OnFailure::Rollback, Some(path.clone()), Server::new()).await;
@@ -317,8 +349,10 @@ async fn out_open_restores() {
     drop(second);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_open_format_change() {
+#[test]
+fn out_open_format_change() { bounded("out_open_format_change", out_open_format_change_run) }
+
+async fn out_open_format_change_run() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite").to_string_lossy().to_string();
     let first = Rig::open_full(OnFailure::Rollback, Some(path.clone()), Server::new(), Some("1".into())).await;
@@ -409,6 +443,7 @@ async fn run_trace(trace: &[Act], check: Check) {
     let mut model = Model { ops: vec![], online: true };
     let label = format!("{trace:?}");
     for (index, act) in trace.iter().enumerate() {
+        step(&format!("{label} step {index} {act:?}"));
         match act {
             Act::Create => {
                 let ctx = ctx_of(&model);
@@ -483,23 +518,32 @@ fn traces() -> Vec<Vec<Act>> {
 async fn run_all(check: Check) {
     for trace in traces() {
         let trace: Vec<Act> = trace.into_iter().flat_map(|act| if matches!(act, Act::Create) { vec![act] } else { vec![Act::Create, act] }).take(8).collect();
-        let label = format!("{trace:?}");
-        tokio::time::timeout(std::time::Duration::from_secs(30), run_trace(&trace, check)).await.unwrap_or_else(|_| panic!("{label}: the trace did not finish within 30 seconds"));
+        step(&format!("{trace:?} start"));
+        run_trace(&trace, check).await;
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_prop_outcome_once() { run_all(Check::Outcomes).await }
+#[test]
+fn out_prop_outcome_once() { bounded("out_prop_outcome_once", out_prop_outcome_once_run) }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_prop_rollback_clean() { run_all(Check::RollbackClean).await }
+async fn out_prop_outcome_once_run() { run_all(Check::Outcomes).await }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_prop_idle() { run_all(Check::Idle).await }
+#[test]
+fn out_prop_rollback_clean() { bounded("out_prop_rollback_clean", out_prop_rollback_clean_run) }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_prop_row_order() {
+async fn out_prop_rollback_clean_run() { run_all(Check::RollbackClean).await }
+
+#[test]
+fn out_prop_idle() { bounded("out_prop_idle", out_prop_idle_run) }
+
+async fn out_prop_idle_run() { run_all(Check::Idle).await }
+
+#[test]
+fn out_prop_row_order() { bounded("out_prop_row_order", out_prop_row_order_run) }
+
+async fn out_prop_row_order_run() {
     for first_reply in [Reply::Ok, Reply::Refuse] {
+        step(&format!("row order {first_reply:?}"));
         let rig = Rig::open(OnFailure::Rollback).await;
         rig.server.hold(Kind::Mutate, true);
         let first = rig.create("a").await;
@@ -522,9 +566,12 @@ async fn out_prop_row_order() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn out_prop_intent_kept() {
+#[test]
+fn out_prop_intent_kept() { bounded("out_prop_intent_kept", out_prop_intent_kept_run) }
+
+async fn out_prop_intent_kept_run() {
     for acts in [vec![Act::Off, Act::Create, Act::Create], vec![Act::Create, Act::Off, Act::Create, Act::On]] {
+        step(&format!("intent kept {acts:?}"));
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("db.sqlite").to_string_lossy().to_string();
         let first = Rig::open_at(OnFailure::Rollback, Some(path.clone()), Server::new()).await;

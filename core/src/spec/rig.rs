@@ -1,4 +1,6 @@
 use std::collections::{HashMap, VecDeque};
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -12,6 +14,7 @@ use crate::upload::{MultipartOperations, UploadOperation, UploadOperations};
 use crate::value::ScalarKind;
 
 pub const LIMIT_SECS: u64 = 10;
+const STEP_SECS: u64 = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Reply { Ok, Temp, Refuse }
@@ -292,3 +295,42 @@ pub async fn until(what: &str, mut condition: impl FnMut() -> bool) {
 }
 
 pub async fn quiet() { tokio::time::sleep(Duration::from_millis(150)).await }
+
+struct Steps { count: AtomicU64, label: Mutex<String> }
+
+thread_local! { static STEPS: RefCell<Option<Arc<Steps>>> = const { RefCell::new(None) }; }
+
+pub fn step(label: &str) {
+    STEPS.with(|steps| {
+        if let Some(steps) = steps.borrow().as_ref() {
+            *steps.label.lock().unwrap() = label.to_string();
+            steps.count.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+}
+
+pub fn bounded<Fut: std::future::Future<Output = ()>>(name: &'static str, make: impl FnOnce() -> Fut + Send + 'static) {
+    let steps = Arc::new(Steps { count: AtomicU64::new(0), label: Mutex::new("start".into()) });
+    let (done, finished) = std::sync::mpsc::channel();
+    let own = steps.clone();
+    std::thread::spawn(move || {
+        STEPS.with(|slot| *slot.borrow_mut() = Some(own));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().unwrap();
+            runtime.block_on(make());
+        }));
+        let _ = done.send(result);
+    });
+    let mut seen = u64::MAX;
+    loop {
+        match finished.recv_timeout(Duration::from_secs(STEP_SECS)) {
+            Ok(Ok(())) => return,
+            Ok(Err(panic)) => std::panic::resume_unwind(panic),
+            Err(_) => {
+                let count = steps.count.load(Ordering::SeqCst);
+                assert!(count != seen, "{name}: step {count} ({}) did not finish within {STEP_SECS} seconds: the event did not come", steps.label.lock().unwrap());
+                seen = count;
+            }
+        }
+    }
+}
