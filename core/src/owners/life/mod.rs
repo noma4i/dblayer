@@ -383,7 +383,6 @@ fn absent(session: bool, transfer: bool) -> Vec<Peer> {
     peers.push(Peer::LocalWrites);
     if !session {
         peers.push(Peer::Session);
-        peers.push(Peer::Outbox);
     }
     if !transfer {
         peers.push(Peer::Transfer);
@@ -413,8 +412,8 @@ impl Life {
         });
         let transfer_at = session_address.as_ref().zip(ports.transfer.as_ref()).map(|((session, _), _)| Address::<Transfers>::new(session.index() + 2));
         let rounds_at = transfer_at.map(|at| Address::<Rounds>::new(at.index() + 1));
-        let outbox = session_address.as_ref().map(|(session, _)| {
-            let peers = OutboxPeers { store, session: *session, transfer: transfer_at };
+        let outbox = Some(()).map(|()| {
+            let peers = OutboxPeers { store, session: session_address.as_ref().map(|(session, _)| *session), transfer: transfer_at };
             let (settle_wiring, drained_wiring) = (wiring.clone(), wiring.clone());
             let executor = OutboxExecutor {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
@@ -609,6 +608,29 @@ impl Life {
     pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) { self.wiring.on_mutate_answer(author, sink); }
 
     pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) { self.wiring.on_store_reply(author, sink); }
+
+    /// A call of the platform to the owner Outbox: the answer is `LifeReply::Outbox` or the end of the epoch.
+    fn outbox_call(&self, epoch: Epoch, input: impl FnOnce(u64) -> OutboxInput) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(epoch);
+        self.wiring.to_outbox_at(EpochStamp::Epoch(epoch), input(waiter.id().raw()));
+        waiter
+    }
+
+    pub fn submit(&self, epoch: Epoch, op: super::write::outbox::NewOp) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Submit { epoch, op, reply }) }
+
+    pub fn retry_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Retry { model, row_id, reply }) }
+
+    pub fn discard_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Discard { model, row_id, reply }) }
+
+    pub fn operation_outcome(&self, epoch: Epoch, receipt: super::write::outbox::Receipt) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Outcome { receipt, reply }) }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn local_write(&self, epoch: Epoch, model: String, write: super::write::outbox::LocalWriteKind, row: String, values: String, now: crate::runtime::Time) -> Waiter<LifeReply> {
+        self.outbox_call(epoch, |reply| OutboxInput::LocalWrite { model, epoch, write, row, values, reply, now })
+    }
+
+    pub fn register_operations(&self, declarations: Vec<(String, String)>) { self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations }); }
 
     pub fn declare(&self, names: Vec<(String, CallKind)>) { self.wiring.to_calls(CallsInput::Declare(names)); }
 

@@ -138,7 +138,7 @@ impl OutboxState {
         let purpose = if matches!(operation.op.origin, Origin::Transfer(_)) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
         let owner = Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) });
         let mutate = SessionInput::Mutate { author: OUTBOX_AUTHOR, owner, req_id: operation.request_id, epoch: self.epoch, path: operation.op.path.clone(), body: operation.op.body.clone(), purpose };
-        fx.push(Effect::Send(Outbound::new(self.peers.session, mutate)));
+        if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, mutate))); }
     }
 
     pub(super) fn store(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
@@ -319,7 +319,7 @@ impl OutboxState {
             let Some(stage) = self.stage_of(op_id) else { continue };
             if stage == Stage::Sending {
                 let req_id = self.ops[&op_id].request_id;
-                fx.push(Effect::Send(Outbound::new(self.peers.session, SessionInput::Cancel { req_id })));
+                if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Cancel { req_id }))); }
             }
             self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Interrupted), fx);
             if let Some(operation) = self.ops.get_mut(&op_id) {

@@ -20,16 +20,25 @@ pub struct EffectRow {
     pub values: String,
 }
 
-/// Membership of a row in a list with the revision of the operation.
+/// Membership of a row in a list: `Join` puts it at `order_key`, `Leave` takes it out.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectMember {
+    pub model: String,
     pub list: String,
     pub row_id: String,
-    pub revision: i64,
+    pub order_key: String,
+    pub leave: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectTombstone {
+    pub model: String,
+    pub row_id: String,
+}
+
+/// The parent row changes its `updated_at`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectTouch {
     pub model: String,
     pub row_id: String,
 }
@@ -40,6 +49,7 @@ pub struct IntentEffects {
     pub rows: Vec<EffectRow>,
     pub members: Vec<EffectMember>,
     pub tombstones: Vec<EffectTombstone>,
+    pub touches: Vec<EffectTouch>,
 }
 
 /// A row of the server answer or of a local write.
@@ -111,6 +121,8 @@ pub enum StoreOp {
     Attempt { op_id: u64, attempts: u32, cycle_id: u64 },
     /// A `create` with a temporary id landed: the row `temp` becomes `real` with its references and membership.
     Swap { model: String, temp: String, real: String },
+    /// The rows, membership, tombstones and touches of a call that has no operation (a local model, an action without a mutation): final at once.
+    Planned { effects: IntentEffects },
     /// Rows of a `memory` model, written to the TEMP tables.
     EphemeralRows { model: String, rows: Vec<RowValue> },
     /// A local field of a row that is not in the base yet: it sits on the row when the row lands.

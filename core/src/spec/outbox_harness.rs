@@ -88,7 +88,7 @@ pub(super) fn world(seed: u64) -> (DetScheduler, Log<Emitted<Run>>, Address<Spy<
     let peer = |det: &mut DetScheduler, name: &'static str| -> usize { det.add::<Sink<StoreWriter>>(name, new_log(), crate::owners::support::Silent).index() };
     let (store, session, transfer) = (peer(&mut det, "store"), det.add::<Sink<SessionCalls>>("session", new_log(), crate::owners::support::Silent).index(), det.add::<Sink<Transfers>>("transfer", new_log(), crate::owners::support::Silent).index());
     assert_eq!((store, session, transfer), (STORE_AT, SESSION_AT, TRANSFER_AT));
-    let peers = OutboxPeers { store: Address::new(store), session: Address::new(session), transfer: Some(Address::new(transfer)) };
+    let peers = OutboxPeers { store: Address::new(store), session: Some(Address::new(session)), transfer: Some(Address::new(transfer)) };
     let log = new_log();
     let addr = det.add::<Spy<Outbox>>("outbox", SpyState::new(OutboxState::new(EPOCH, peers), &log), Discard);
     assert_eq!(addr.index(), OUTBOX_AT);

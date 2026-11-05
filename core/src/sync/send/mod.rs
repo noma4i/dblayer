@@ -5,7 +5,6 @@ mod pause;
 mod report;
 mod settle;
 #[cfg(test)] mod swap_window_tests;
-mod variables;
 
 pub(crate) use flush::{DeliveryEffects, Sending, FinalAttempts};
 pub(crate) use outcomes::{FinishedOperation, OutcomeTicket, Outcomes};
@@ -84,8 +83,6 @@ mod reset_tests;
 mod timer_tests;
 #[cfg(test)]
 mod rollback_tests;
-#[cfg(test)]
-mod variables_tests;
 #[cfg(test)]
 mod idempotency_tests;
 #[cfg(test)]

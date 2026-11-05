@@ -24,7 +24,7 @@ use super::super::registry::OperationDef;
 use super::super::{locked, Inner};
 use super::report::{FlushReport, SendResult, SentOperation, SkipReason};
 use super::settle::response_ops;
-use super::variables::{idempotent_variables, mutation_variables};
+use crate::write::variables::{idempotent_variables, mutation_variables};
 
 const SETTLE_ATTEMPTS: usize = 3;
 const MAX_IN_FLIGHT: usize = 16;
@@ -608,7 +608,7 @@ impl Inner {
             let mut variables = entry.input.as_object().cloned().ok_or_else(|| SyncError::Malformed("upload variables must be an object".into()))?;
             variables.extend(input.variables);
             variables.insert(input.steps.signed_id_variable, Value::String(signed));
-            let variables = super::variables::upload_variables(declaration, Value::Object(variables), &format!("{}:{}", entry.operation.client_mutation_id, step.key));
+            let variables = crate::write::variables::upload_variables(declaration, Value::Object(variables), &format!("{}:{}", entry.operation.client_mutation_id, step.key));
             let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
             request.purpose = crate::transport::NetworkPurpose::Transfer;
             state.apply(crate::upload::UploadEvent::MutationBegan { request: crate::upload::UploadRequest { document: request.document.clone(), name: request.operation_name.clone(), variables: request.variables.clone() } }).map_err(|error| SyncError::Malformed(error.to_string()))?;
@@ -635,7 +635,7 @@ impl Inner {
             }
             let mut variables = entry.input.as_object().cloned().ok_or_else(|| SyncError::Malformed("upload variables must be an object".into()))?;
             variables.insert(batch.items.clone(), Value::Array(items));
-            let variables = super::variables::upload_variables(declaration, Value::Object(variables), &entry.operation.client_mutation_id);
+            let variables = crate::write::variables::upload_variables(declaration, Value::Object(variables), &entry.operation.client_mutation_id);
             let mut request = GraphQLRequest::new(&operation.document, &operation.name, variables);
             request.purpose = crate::transport::NetworkPurpose::Transfer;
             self.commit(sending.admitted, sending.generation, |_| {
@@ -661,7 +661,7 @@ impl Inner {
                 let declaration = spec.actions.iter().find(|action| action.mutation.as_deref() == Some(&operation.name));
                 let variables = Value::Object(variables);
                 match declaration {
-                    Some(declaration) => super::variables::upload_variables(declaration, variables, &entry.operation.client_mutation_id),
+                    Some(declaration) => crate::write::variables::upload_variables(declaration, variables, &entry.operation.client_mutation_id),
                     None => variables,
                 }
             }

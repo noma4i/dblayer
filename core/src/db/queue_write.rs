@@ -74,6 +74,7 @@ impl Db {
                 StoreOp::Swap { model, temp, real } => swaps.push((model.as_str(), row_id(temp)?, row_id(real)?)),
                 StoreOp::Upload { row, kind } => self.write_upload_row(row, *kind)?,
                 StoreOp::RemoveUpload { key } => self.remove_upload_row(key)?,
+                StoreOp::Planned { effects } => return self.write_planned(effects),
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
                 StoreOp::Window { key, model, page, replace_all, cursor, roots, related, total, base_revision } => {
                     let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
@@ -112,32 +113,14 @@ impl Db {
         let owner = row_id(id)?;
         let (result, _) = self
             .commit_following_deferred(&Authority::Owner, generation, |reader| {
-                let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-                let mut prior = Prior::default();
-                for EffectRow { model: row_model, row_id: row_key, values: text } in &effects.rows {
-                    let next = values(text)?;
-                    prior.rows.push(match reader.point(row_model, row_key)? {
-                        Some(current) => PriorRow::edited(reader, row_model, row_key, &current, &next)?,
-                        None => PriorRow::Created { model: row_model.clone(), id: row_key.clone() },
-                    });
-                    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(row_model), id: row_id(row_key)?, row: next });
-                }
-                for tombstone in &effects.tombstones {
-                    if let Some(destroyed) = PriorRow::destroyed(reader, &tombstone.model, &tombstone.row_id)? {
-                        prior.rows.push(destroyed);
-                    }
-                    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&tombstone.model), id: row_id(&tombstone.row_id)?, reason: DestroyReason::Local });
-                }
-                for member in &effects.members {
-                    envelope.scope_ops.push(ScopeOp::Append { scope: ScopeRef::new(ModelKey::new(model), ListKey::from_raw(&member.list)), row: row_id(&member.row_id)?, order_key: format!("{:020}", member.revision) });
-                }
+                let (mut envelope, prior) = effects_envelope(reader, effects, generation)?;
                 envelope.snapshot = Some(crate::identity::RowRef::new(ModelKey::new(model), owner.clone()));
                 envelope.operation_transitions.push(OperationTransition::Begin(Box::new(OperationRecord {
                     seq: Some(seq),
                     action_key: Operation::action_key(model, action),
                     status: OperationStatus::Pending,
                     row_ids: vec![owner.clone()],
-                    temp_id: None,
+                    temp_id: owner.is_temp().then(|| owner.clone()),
                     input: input.clone(),
                     transport_started: false,
                     base_revision: Some(reader.revision_seq()?),
@@ -153,4 +136,61 @@ impl Db {
         Ok(())
     }
 
+    /// `Planned`: a write without an operation (a local model, an action without a mutation): the rows are final, nothing is queued and nothing is rolled back.
+    fn write_planned(&self, effects: &IntentEffects) -> Result<(), DbError> {
+        let generation = self.generation();
+        let (result, _) = self
+            .commit_following_deferred(&Authority::Owner, generation, |reader| {
+                let (mut envelope, _) = effects_envelope(reader, effects, generation)?;
+                envelope.writes_local = true;
+                Ok::<_, DbError>(Some(envelope))
+            })
+            .map_err(plan_fault)?;
+        result.publish();
+        Ok(())
+    }
+}
+
+/// The envelope of the effects of one call and the prior state of everything it changes. A row that exists takes the fields of the effect over its own.
+fn effects_envelope(reader: &crate::store::Reader<'_>, effects: &IntentEffects, generation: crate::identity::Generation) -> Result<(CommitEnvelope, Prior), DbError> {
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
+    let mut prior = Prior::default();
+    let owned = reader.revision_seq()? + 1;
+    for EffectRow { model: row_model, row_id: row_key, values: text } in &effects.rows {
+        let fields = values(text)?;
+        let next = match reader.point(row_model, row_key)? {
+            Some(current) => {
+                let mut merged = current.clone();
+                merged.extend(fields);
+                prior.rows.push(PriorRow::edited(reader, row_model, row_key, &current, &merged)?);
+                merged
+            }
+            None => {
+                prior.rows.push(PriorRow::Created { model: row_model.clone(), id: row_key.clone() });
+                fields
+            }
+        };
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(row_model), id: row_id(row_key)?, row: next });
+    }
+    for tombstone in &effects.tombstones {
+        if let Some(destroyed) = PriorRow::destroyed(reader, &tombstone.model, &tombstone.row_id)? {
+            prior.rows.push(destroyed);
+        }
+        envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(&tombstone.model), id: row_id(&tombstone.row_id)?, reason: DestroyReason::Local });
+    }
+    for touch in &effects.touches {
+        envelope.entity_ops.push(EntityOp::Touch { model: ModelKey::new(&touch.model), id: row_id(&touch.row_id)? });
+    }
+    for member in &effects.members {
+        let scope = ScopeRef::new(ModelKey::new(&member.model), ListKey::from_raw(&member.list));
+        let before = reader.scope_member_key(&member.model, &member.list, &member.row_id)?;
+        if member.leave {
+            if before.is_some() { envelope.scope_ops.push(ScopeOp::Detach { scope, row: row_id(&member.row_id)? }); }
+            prior.rows.push(PriorRow::Leave { model: member.model.clone(), id: member.row_id.clone(), scope_key: member.list.clone(), before, owned });
+        } else {
+            if before.is_none() { envelope.scope_ops.push(ScopeOp::Append { scope, row: row_id(&member.row_id)?, order_key: member.order_key.clone() }); }
+            prior.rows.push(PriorRow::Join { model: member.model.clone(), id: member.row_id.clone(), scope_key: member.list.clone(), before, owned });
+        }
+    }
+    Ok((envelope, prior))
 }

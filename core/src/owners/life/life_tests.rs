@@ -90,7 +90,7 @@ async fn close_stops_every_owner_thread_of_the_database() {
     let transport = Arc::new(MockTransport::new());
     let db = open(&path);
     let life = Arc::new(start(&db, &transport).await);
-    assert_eq!(life.owners_alive(), 7, "lifecycle, store, network, calls, windows, deliveries and feed run");
+    assert_eq!(life.owners_alive(), 8, "lifecycle, store, network, calls, outbox, windows, deliveries and feed run");
     closed(&life).await;
     let stopping = life.clone();
     tokio::task::spawn_blocking(move || stopping.shutdown()).await.unwrap();
@@ -413,7 +413,7 @@ fn outbox_and_transfer_answer_storage_while_their_queue_is_unreadable() {
     use crate::owners::write::outbox::{Fault, Outbox, OutboxAnswer, OutboxEffect, OutboxInput, OutboxPeers, OutboxState};
     use crate::owners::write::transfer::{TransferAnswer, TransferEffect, TransferInput, TransferPeers, TransferState, Transfers};
     use crate::runtime::{Address, Effect, StateOwner};
-    let mut outbox = OutboxState::new(1, OutboxPeers { store: Address::new(0), session: Address::new(1), transfer: None });
+    let mut outbox = OutboxState::new(1, OutboxPeers { store: Address::new(0), session: Some(Address::new(1)), transfer: None });
     assert!(Outbox::step(&mut outbox, OutboxInput::RestoreFailed { error: "disk".into() }).is_empty());
     let effects = Outbox::step(&mut outbox, OutboxInput::Retry { model: "moments".into(), row_id: "m1".into(), reply: 5 });
     assert!(matches!(effects.as_slice(), [Effect::Run(OutboxEffect::Reply { reply: 5, answer: OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error))) })] if error == "disk"), "{effects:?}");

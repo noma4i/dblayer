@@ -23,7 +23,8 @@ pub(super) const ATTEMPT_LIMIT: u32 = 40;
 #[derive(Clone, Copy, Debug)]
 pub struct OutboxPeers {
     pub store: Address<StoreWriter>,
-    pub session: Address<SessionCalls>,
+    /// `None` in a database without a session: only local writes run, a mutation answers `NoSession`.
+    pub session: Option<Address<SessionCalls>>,
     /// `None` until the owner Transfer is installed: no operation of the origin `Transfer` exists then.
     pub transfer: Option<Address<Transfers>>,
 }
