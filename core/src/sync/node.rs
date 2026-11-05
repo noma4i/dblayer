@@ -21,6 +21,7 @@ impl Sync {
 
     pub async fn nodes(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, relation: &str, ids: &[&str]) -> Result<Vec<Row>, SyncError> {
         self.inner.ensure_admitted(admitted)?;
+        if ids.is_empty() { return Ok(Vec::new()); }
         let _app = self.app_load();
         let resolved = self.inner.resolve_node(crate::ffi::legacy::Origin::Explicit, model, relation, NodeRead::Many, Map::new())?;
         let attempt = self.inner.begin_attempt(&resolved.window_key, self.inner.db.generation())?;

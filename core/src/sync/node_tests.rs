@@ -196,3 +196,10 @@ fn nodes_accepts_duplicate_ids_and_keeps_response_order() { crate::test_wait::pa
     assert_eq!(rows.iter().map(|row| row.text("title")).collect::<Vec<_>>(), [Some("last"), Some("middle"), Some("last")]);
     assert_eq!(stored(&rig, "chats", "c2").unwrap().text("shareUrl"), Some("kept"));
 }) }
+
+#[test]
+fn nodes_without_ids_answer_empty_with_no_request() { crate::test_wait::paused(async {
+    let rig = node_rig();
+    let rows = crate::sync::rig::app(&rig.sync, rig.sync.nodes(&rig.sync.inner.db.admit().unwrap(), "chats", "batch", &[])).await.unwrap();
+    assert_eq!((rows.len(), rig.transport.calls().len()), (0, 0));
+}) }
