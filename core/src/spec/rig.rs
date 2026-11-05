@@ -233,7 +233,20 @@ pub fn upload_operations() -> UploadOperations {
 pub(super) struct Rig { pub db: Arc<Database>, pub server: Arc<Server>, pub clock: Arc<TestClock>, pub models: String }
 
 impl Drop for Rig {
-    fn drop(&mut self) { self.server.release_all(); }
+    fn drop(&mut self) {
+        self.server.release_all();
+        let db = self.db.clone();
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+            let closed = runtime.block_on(tokio::time::timeout(Duration::from_secs(LIMIT_SECS), db.close_database()));
+            let _ = done.send(closed.is_ok());
+        });
+        let closed = finished.recv_timeout(Duration::from_secs(LIMIT_SECS + 5));
+        if !std::thread::panicking() {
+            assert!(matches!(closed, Ok(true)), "the database did not close within the limit: a holder close still waits");
+        }
+    }
 }
 
 impl Rig {

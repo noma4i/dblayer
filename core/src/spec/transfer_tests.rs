@@ -48,13 +48,15 @@ async fn shown(rig: &Rig) -> Option<WireUploadStatus> {
 }
 
 async fn wait_shown(rig: &Rig, wanted: Option<WireUploadStatus>) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        let now = shown(rig).await;
-        if now == wanted { return; }
-        assert!(std::time::Instant::now() < deadline, "uploads[upload] is {now:?}, expected {wanted:?}");
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    let mut now = None;
+    let reached = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            now = shown(rig).await;
+            if now == wanted { return; }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }).await;
+    assert!(reached.is_ok(), "uploads[upload] is {now:?}, expected {wanted:?}");
 }
 
 fn shown_of(shape: Shown) -> Option<WireUploadStatus> {
@@ -355,18 +357,13 @@ async fn xfer_retry() {
     let retried = within(rig.db.retry(rig.epoch(), "Moment".into(), ROW.into(), Some("upload".into()), None)).await.unwrap();
 
     assert_eq!(cell.next, St::Ready);
-    assert_eq!(kind_count(&rig), 2);
+    assert_eq!(kind_count(&rig).await, 2);
     assert!(matches!(rig.outcome(&retried).await, WireOperationOutcome::Confirmed { .. }));
 }
 
-fn kind_count(rig: &Rig) -> usize {
-    let server: &Arc<Server> = &rig.server;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while server.seen().iter().filter(|seen| seen.kind == Kind::Put).count() < 2 {
-        assert!(std::time::Instant::now() < deadline, "the second step did not come");
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    server.seen().iter().filter(|seen| seen.kind == Kind::Put).count()
+async fn kind_count(rig: &Rig) -> usize {
+    until("the second step", || rig.server.seen().iter().filter(|seen| seen.kind == Kind::Put).count() >= 2).await;
+    rig.server.seen().iter().filter(|seen| seen.kind == Kind::Put).count()
 }
 
 #[tokio::test(flavor = "multi_thread")]

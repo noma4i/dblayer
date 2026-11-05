@@ -507,7 +507,7 @@ async fn out_prop_row_order() {
         rig.server.answer(Kind::Mutate, first_reply);
         for receipt in [&first, &second, &third] {
             rig.server.hold(Kind::Mutate, false);
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), rig.db.outcome(receipt.clone())).await;
+            tokio::time::timeout(std::time::Duration::from_secs(5), rig.db.outcome(receipt.clone())).await.unwrap_or_else(|_| panic!("the outcome of {:?} did not come after {first_reply:?}", receipt.operation)).unwrap();
         }
 
         assert!(!rig.server.overlapped(), "two operations of one row were in the network together");
