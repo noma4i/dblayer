@@ -137,6 +137,19 @@ pub enum StaleKeys {
     Set(BTreeSet<WindowKey>),
 }
 
+impl StaleKeys {
+    pub fn none() -> Self { Self::Set(BTreeSet::new()) }
+
+    pub fn is_empty(&self) -> bool { matches!(self, Self::Set(set) if set.is_empty()) }
+
+    pub fn union(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Set(mut left), Self::Set(right)) => { left.extend(right); Self::Set(left) }
+            _ => Self::All,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum WindowsInput {
     /// A stream opened the key (Delivery open) or the preload of the key began.

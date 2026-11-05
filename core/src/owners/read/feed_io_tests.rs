@@ -20,7 +20,7 @@ use super::{FeedCodec, FeedIo};
 use crate::owners::contract::Online;
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::feed::{self as f, Feed, FeedInput, Mode};
-use crate::owners::read::windows::Windows;
+use crate::owners::read::windows::{StaleKeys, Windows};
 use crate::owners::store::StoreWriter;
 use crate::owners::support::{Discard, Sink};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
@@ -36,7 +36,7 @@ impl FeedCodec for Models {
     fn events(&self, response: Response) -> Vec<FramedEvent> {
         let Some(data) = response.data else { return Vec::new() };
         match (data["model"].as_str(), data["payload"].as_str()) {
-            (Some(model), Some(payload)) => vec![FramedEvent { model: model.into(), payload: payload.into(), reread: Default::default() }],
+            (Some(model), Some(payload)) => vec![FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none() }],
             _ => Vec::new(),
         }
     }

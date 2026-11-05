@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
-use crate::owners::read::windows::{StaleKeys, WindowKey, Windows, WindowsInput};
+use crate::owners::read::windows::{StaleKeys, Windows, WindowsInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
 use crate::pacing::RetryPolicy;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
@@ -33,7 +33,7 @@ pub const FIRST_RECV_COUNTER: u64 = 1;
 pub struct FramedEvent {
     pub model: String,
     pub payload: String,
-    pub reread: BTreeSet<WindowKey>,
+    pub reread: StaleKeys,
 }
 
 /// An accepted event: its position is fixed when the frame arrives, its basis never changes.
@@ -41,7 +41,7 @@ pub struct FramedEvent {
 struct FeedEvent {
     model: String,
     payload: String,
-    reread: BTreeSet<WindowKey>,
+    reread: StaleKeys,
     /// `model_generation` of the model when the frame arrived.
     basis: u64,
     position: u64,
@@ -462,9 +462,9 @@ impl FeedState {
             }
         }
         for model in models {
-            let keys: BTreeSet<WindowKey> = events.iter().filter(|event| event.model == model).flat_map(|event| event.reread.iter().cloned()).collect();
+            let keys = events.iter().filter(|event| event.model == model).fold(StaleKeys::none(), |keys, event| keys.union(event.reread.clone()));
             if !keys.is_empty() {
-                fx.push(Fx::Stale { model, keys: StaleKeys::Set(keys) });
+                fx.push(Fx::Stale { model, keys });
             }
         }
     }

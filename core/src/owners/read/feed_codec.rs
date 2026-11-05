@@ -9,7 +9,7 @@ use serde_json::{json, Map, Value};
 
 use super::feed::FramedEvent;
 use super::feed_io::FeedCodec;
-use super::windows::WindowKey;
+use super::windows::{StaleKeys, WindowKey};
 use crate::db::Db;
 use crate::identity::RowId;
 use crate::schema::{ChangeRead, ModelSpec, NodeRead, SubscriptionAction, UpdatesSpec, NODE_PARAM};
@@ -35,11 +35,11 @@ fn truthy(value: &Value) -> bool {
     }
 }
 
-fn event(model: &str, payload: Value, reread: BTreeSet<WindowKey>) -> FramedEvent { FramedEvent { model: model.into(), payload: payload.to_string(), reread } }
+fn event(model: &str, payload: Value, reread: StaleKeys) -> FramedEvent { FramedEvent { model: model.into(), payload: payload.to_string(), reread } }
 
-fn invalid(model: &str, reason: impl std::fmt::Display) -> FramedEvent { event(model, json!({"op":"invalid", "model":model, "reason":reason.to_string()}), BTreeSet::new()) }
+fn invalid(model: &str, reason: impl std::fmt::Display) -> FramedEvent { event(model, json!({"op":"invalid", "model":model, "reason":reason.to_string()}), StaleKeys::none()) }
 
-fn delete(model: &str, id: &RowId) -> FramedEvent { event(model, json!({"op":"delete", "model":model, "id":id.as_str()}), BTreeSet::new()) }
+fn delete(model: &str, id: &RowId) -> FramedEvent { event(model, json!({"op":"delete", "model":model, "id":id.as_str()}), StaleKeys::none()) }
 
 impl SchemaFeedCodec {
     /// Fails when the schema declares no subscription or the operation of it is not registered.
@@ -89,7 +89,7 @@ impl SchemaFeedCodec {
             if direct.iter().any(|read| read.removes_on.iter().any(|removal| removal == kind)) {
                 events.push(delete(model, id));
             } else if !direct.is_empty() {
-                let keys = direct.iter().flat_map(|read| self.reread_keys(spec, read, id)).collect();
+                let keys = direct.iter().fold(StaleKeys::none(), |keys, read| keys.union(self.reread_keys(spec, read, id)));
                 events.push(event(model, json!({"op":"reread", "model":model, "id":id.as_str()}), keys));
             }
             for read in reads.iter().filter(|read| read.id_of.is_some()) {
@@ -105,7 +105,7 @@ impl SchemaFeedCodec {
         let path = read.payload.as_deref().unwrap_or_default();
         let Some(node) = root_value(change, path).and_then(Value::as_object) else { return invalid(model, format!("missing full payload {model}.{path}")) };
         match self.upsert(model, node.clone(), &Map::new()) {
-            Ok(Some(payload)) => event(model, payload, BTreeSet::new()),
+            Ok(Some(payload)) => event(model, payload, StaleKeys::none()),
             Ok(None) => invalid(model, "payload without id"),
             Err(error) => invalid(model, error),
         }
@@ -119,19 +119,19 @@ impl SchemaFeedCodec {
             Ok(row) => row.and_then(|row| row.get(&source.field).and_then(read_id)),
             Err(error) => return invalid(model, error),
         };
-        let keys = target.map(|target| self.reread_keys(spec, &ChangeRead { id_of: None, ..read.clone() }, &target)).unwrap_or_default();
+        let keys = target.map(|target| self.reread_keys(spec, &ChangeRead { id_of: None, ..read.clone() }, &target)).unwrap_or_else(StaleKeys::none);
         event(model, json!({"op":"reread", "model":model, "id":event_id.as_str()}), keys)
     }
 
-    fn reread_keys(&self, spec: &ModelSpec, read: &ChangeRead, id: &RowId) -> BTreeSet<WindowKey> {
+    fn reread_keys(&self, spec: &ModelSpec, read: &ChangeRead, id: &RowId) -> StaleKeys {
         let model = spec.key.as_str();
         if read.observed {
-            return self.db.observed_reads().into_iter().filter(|entry| entry.model == model).map(|entry| WindowKey::relation(model, &entry.relation, &entry.params)).collect();
+            return StaleKeys::All;
         }
-        let Some(relation) = spec.relations.iter().find(|relation| relation.name == read.relation) else { return BTreeSet::new() };
+        let Some(relation) = spec.relations.iter().find(|relation| relation.name == read.relation) else { return StaleKeys::none() };
         let parameter = if relation.node == Some(NodeRead::One) { Some(NODE_PARAM) } else { read.parameter.as_deref().or_else(|| relation.text_params.iter().chain(&relation.by_columns).next().map(String::as_str)) };
         let params = parameter.map(|parameter| Map::from_iter([(parameter.to_string(), json!(id.as_str()))])).unwrap_or_default();
-        BTreeSet::from([WindowKey::relation(model, &read.relation, &params)])
+        StaleKeys::Set(BTreeSet::from([WindowKey::relation(model, &read.relation, &params)]))
     }
 
     fn listen_events(&self, data: &Value) -> Vec<FramedEvent> {
@@ -163,7 +163,7 @@ impl SchemaFeedCodec {
             Some(SubscriptionAction::Ephemeral { fields }) => {
                 let values: Option<Map<String, Value>> = fields.iter().map(|(name, path)| root_value(node, path).cloned().map(|value| (name.clone(), value))).collect();
                 match values {
-                    Some(values) => event(model, json!({"op":"ephemeral", "model":model, "id":id.as_str(), "values":values}), BTreeSet::new()),
+                    Some(values) => event(model, json!({"op":"ephemeral", "model":model, "id":id.as_str(), "values":values}), StaleKeys::none()),
                     None => invalid(model, "missing event fields"),
                 }
             }
@@ -177,7 +177,7 @@ impl SchemaFeedCodec {
                 let mut fields = fields.clone();
                 fields.insert("id".into(), Value::String(id.to_string()));
                 match self.upsert(model, fields, &updates.set) {
-                    Ok(Some(payload)) => event(model, payload, BTreeSet::new()),
+                    Ok(Some(payload)) => event(model, payload, StaleKeys::none()),
                     Ok(None) => invalid(model, "event without id"),
                     Err(error) => invalid(model, error),
                 }

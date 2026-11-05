@@ -2,6 +2,7 @@
 //! feed_codec_payload_upsert: a change with a full payload -> an `upsert` event of the declared model with the normalized row.
 //! feed_codec_removes_on: a change of a `removes_on` kind -> a `delete` event of the event id.
 //! feed_codec_direct_reread: a direct read -> the `reread` key of the relation with the event id as its parameter.
+//! feed_codec_observed_reread: an `observed` read -> `StaleKeys::All` of the model, so Windows decides which windows are live; the codec reads no registry.
 //! feed_codec_listens: `listens` -> `apply`, `deleted_by`, `deleted_unless`, `id`, `matches` decide the op of the event.
 //! feed_codec_invalid: a change that misses its kind -> an `invalid` event, never a silent drop.
 //! feed_codec_joins: an upserted row joins the relations `joins_events` by its columns.
@@ -13,7 +14,7 @@ use std::sync::Arc;
 use serde_json::{json, Map, Value};
 
 use super::feed::FramedEvent;
-use super::windows::WindowKey;
+use super::windows::{StaleKeys, WindowKey};
 use super::{FeedCodec, SchemaFeedCodec};
 use crate::db::fixtures::{chats_spec, messages_spec};
 use crate::db::Db;
@@ -39,6 +40,7 @@ fn specs(with_feed: bool) -> Vec<ModelSpec> {
     list.text_params.push("list".into());
     chats.relations.push(list);
     chats.changes.push(read(json!({"area":"CHAT", "relation":"list", "removes_on":["DELETED"]})));
+    chats.changes.push(read(json!({"area":"CHATSEEN", "relation":"list", "observed":true})));
     let mut messages = messages_spec();
     messages.changes.push(read(json!({"area":"MESSAGE", "relation":"x", "payload":"message", "removes_on":["DELETED"]})));
     let mut by_chat = RelationSpec::new("by_chat", &["chatId"]);
@@ -79,10 +81,16 @@ fn feed_codec_removes_on() {
 #[test]
 fn feed_codec_direct_reread() {
     let events = codec(true).events(frame(change("CHAT", "UPDATED", "c1", Value::Null)));
-    let expected = BTreeSet::from([WindowKey::relation("chats", "list", &Map::from_iter([("list".to_string(), json!("c1"))]))]);
+    let expected = StaleKeys::Set(BTreeSet::from([WindowKey::relation("chats", "list", &Map::from_iter([("list".to_string(), json!("c1"))]))]));
     assert_eq!((events.len(), events[0].model.as_str(), &events[0].reread), (1, "chats", &expected));
     assert_eq!(payloads(&events)[0]["op"], "reread");
     assert_eq!(payloads(&codec(true).events(frame(change("CHAT", "DELETED", "c1", Value::Null)))), [json!({"op":"delete", "model":"chats", "id":"c1"})]);
+}
+
+#[test]
+fn feed_codec_observed_reread() {
+    let events = codec(true).events(frame(change("CHATSEEN", "UPDATED", "c1", Value::Null)));
+    assert_eq!((events.len(), events[0].model.as_str(), &events[0].reread), (1, "chats", &StaleKeys::All));
 }
 
 #[test]

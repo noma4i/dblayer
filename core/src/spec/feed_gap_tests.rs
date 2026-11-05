@@ -12,7 +12,7 @@ use super::ref_feed::{Counter, Effect, Feed as Ref, Input, Kind, Mode, Obs, Reje
 use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
-use crate::owners::read::windows::{WindowKey, Windows};
+use crate::owners::read::windows::{StaleKeys, WindowKey, Windows};
 use crate::owners::store::StoreWriter;
 use crate::owners::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Landing, Log, NoEffect, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
@@ -50,7 +50,7 @@ fn names(models: &[&str]) -> Vec<String> { models.iter().map(|model| model.to_st
 
 fn key() -> BTreeSet<WindowKey> { BTreeSet::from([WindowKey { model: "Chat".into(), name: "all".into() }]) }
 
-fn framed(model: &str, payload: &str, reread: bool) -> FramedEvent { FramedEvent { model: model.into(), payload: payload.into(), reread: if reread { key() } else { BTreeSet::new() } } }
+fn framed(model: &str, payload: &str, reread: bool) -> FramedEvent { FramedEvent { model: model.into(), payload: payload.into(), reread: if reread { StaleKeys::Set(key()) } else { StaleKeys::none() } } }
 
 fn add_feed(det: &mut DetScheduler, log: &Spied, state: f::FeedState, runner: impl EffectRunner<Spy<Feed>>) -> Address<Spy<Feed>> {
     det.add::<Sink<StoreWriter>>("store", new_log(), Discard);
