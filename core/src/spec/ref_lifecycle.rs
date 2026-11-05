@@ -10,21 +10,25 @@ pub type Id = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Owner {
+    Network,
+    Session,
     Window,
     Feed,
     Delivery,
     Outbox,
     Transfer,
-    Network,
+    Calls,
 }
 
-pub const OWNERS: [Owner; 6] = [Owner::Window, Owner::Feed, Owner::Delivery, Owner::Outbox, Owner::Transfer, Owner::Network];
+/// `all owners` of `lifecycle.md`.
+pub const OWNERS: [Owner; 8] = [Owner::Network, Owner::Session, Owner::Window, Owner::Feed, Owner::Delivery, Owner::Outbox, Owner::Transfer, Owner::Calls];
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cause {
     SessionReset,
     ServerEnded,
     IdentityChanged,
+    SessionStarted,
     Close,
 }
 
@@ -40,10 +44,11 @@ pub enum State {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
+    Open { saved_epoch: u64, saved_generation: u64, saved_identity: Option<Identity>, changed_models: BTreeSet<String> },
     Credential(Identity),
     SessionReset(Id),
     ServerEnded(u64),
-    ResetModels(BTreeSet<String>, Id),
+    ResetModels(BTreeSet<String>, Option<Id>),
     Cleared,
     ModelsCleared(u64),
     ClearFailed,
@@ -53,14 +58,16 @@ pub enum Event {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
-    Publish,
-    EpochStarted(u64, Identity),
+    Publish(Published),
+    EpochStarted(u64, Option<Identity>, u64),
     EpochEnded(u64, Cause),
-    ModelsReset(u64, u64),
+    ModelsReset(u64, u64, BTreeSet<String>),
     Closing,
-    ClearAccount(u64),
+    ClearAccount(u64, Cause, u64),
     ClearModels(u64, u64, BTreeSet<String>),
     StoreClose,
+    /// `Self ResetModels(changed_models, None)` of `life_open_changed_models`.
+    ResetModelsSelf(BTreeSet<String>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,7 +77,7 @@ pub enum Answer {
     Closed,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Published {
     pub epoch: u64,
     pub identity: Option<Identity>,
@@ -89,107 +96,104 @@ pub struct Out {
     pub replies: Vec<(Id, Answer)>,
 }
 
-fn closing(replies: Vec<Id>, clearing: bool, out: &mut Out, with_end: Option<u64>) -> State {
-    out.effects.push(Effect::Publish);
-    if let Some(epoch) = with_end { out.effects.push(Effect::EpochEnded(epoch, Cause::Close)); }
-    out.effects.push(Effect::Closing);
-    State::Closing { waiting: OWNERS.into_iter().collect(), clearing, replies }
-}
-
 impl Lifecycle {
     pub fn new() -> Self {
         Self { state: State::NoSession { epoch: 0 }, published: Published { epoch: 0, identity: None, generation: 0, closed: false } }
     }
 
-    fn start_ending(&mut self, epoch: u64, cause: Cause, next: Option<Identity>, replies: Vec<Id>, out: &mut Out) {
+    fn publish(&self, out: &mut Out) { out.effects.push(Effect::Publish(self.published.clone())); }
+
+    fn closing(&mut self, replies: Vec<Id>, clearing: bool, out: &mut Out, with_end: Option<u64>) -> State {
+        self.published.closed = true;
+        self.publish(out);
+        if let Some(epoch) = with_end { out.effects.push(Effect::EpochEnded(epoch, Cause::Close)); }
+        out.effects.push(Effect::Closing);
+        State::Closing { waiting: OWNERS.into_iter().collect(), clearing, replies }
+    }
+
+    fn ending(&mut self, epoch: u64, cause: Cause, next: Option<Identity>, replies: Vec<Id>, out: &mut Out) {
         out.effects.push(Effect::EpochEnded(epoch, cause));
-        out.effects.push(Effect::ClearAccount(epoch));
+        out.effects.push(Effect::ClearAccount(epoch, cause, self.published.generation + 1));
         self.state = State::Ending { epoch_old: epoch, cause, next, replies, failed: false };
+    }
+
+    fn started(&mut self, epoch: u64, identity: Option<Identity>, generation: u64, out: &mut Out) {
+        self.published.epoch = epoch;
+        self.published.identity = identity;
+        self.published.generation = generation;
+        self.publish(out);
+        out.effects.push(Effect::EpochStarted(epoch, identity, generation));
     }
 
     /// One row of `specs/machines/lifecycle.md` per match arm, in table order.
     pub fn step(&mut self, event: Event) -> Out {
         let mut out = Out::default();
         let state = std::mem::replace(&mut self.state, State::Closed);
+        let generation = self.published.generation;
         self.state = match (state, event) {
             (State::NoSession { epoch }, Event::Credential(identity)) => {
-                self.published.epoch = epoch + 1;
-                self.published.identity = Some(identity);
-                out.effects.extend([Effect::Publish, Effect::EpochStarted(epoch + 1, identity)]);
+                out.effects.push(Effect::EpochEnded(epoch, Cause::SessionStarted));
+                self.started(epoch + 1, Some(identity), generation, &mut out);
                 State::Session { epoch: epoch + 1, identity }
             }
             (State::NoSession { epoch }, Event::SessionReset(reply)) => {
-                self.state = State::NoSession { epoch };
-                self.start_ending(epoch, Cause::SessionReset, None, vec![reply], &mut out);
+                self.ending(epoch, Cause::SessionReset, None, vec![reply], &mut out);
                 return out;
             }
             (State::NoSession { epoch }, Event::ResetModels(models, reply)) => {
-                out.effects.push(Effect::ClearModels(epoch, self.published.generation + 1, models.clone()));
-                State::Resetting { epoch, identity: None, models, queued: BTreeSet::new(), replies: vec![reply], pending: None }
+                out.effects.push(Effect::ClearModels(epoch, generation + 1, models.clone()));
+                State::Resetting { epoch, identity: None, models, queued: BTreeSet::new(), replies: reply.into_iter().collect(), pending: None }
             }
-            (State::NoSession { .. }, Event::Close(reply)) => {
-                self.published.closed = true;
-                closing(vec![reply], false, &mut out, None)
-            }
+            (State::NoSession { epoch }, Event::Close(reply)) => self.closing(vec![reply], false, &mut out, Some(epoch)),
             (state @ State::NoSession { .. }, _) => state,
 
             (State::Session { epoch, identity }, Event::Credential(other)) if other == identity => State::Session { epoch, identity },
-            (State::Session { epoch, identity }, Event::Credential(other)) => {
-                self.state = State::Session { epoch, identity };
-                self.start_ending(epoch, Cause::IdentityChanged, Some(other), vec![], &mut out);
+            (State::Session { epoch, .. }, Event::Credential(other)) => {
+                self.ending(epoch, Cause::IdentityChanged, Some(other), vec![], &mut out);
                 return out;
             }
-            (State::Session { epoch, identity }, Event::SessionReset(reply)) => {
-                self.state = State::Session { epoch, identity };
-                self.start_ending(epoch, Cause::SessionReset, None, vec![reply], &mut out);
+            (State::Session { epoch, .. }, Event::SessionReset(reply)) => {
+                self.ending(epoch, Cause::SessionReset, None, vec![reply], &mut out);
                 return out;
             }
-            (State::Session { epoch, identity }, Event::ServerEnded(request_epoch)) if request_epoch == epoch => {
-                self.state = State::Session { epoch, identity };
-                self.start_ending(epoch, Cause::ServerEnded, None, vec![], &mut out);
+            (State::Session { epoch, .. }, Event::ServerEnded(request_epoch)) if request_epoch == epoch => {
+                self.ending(epoch, Cause::ServerEnded, None, vec![], &mut out);
                 return out;
             }
             (State::Session { epoch, identity }, Event::ResetModels(models, reply)) => {
-                out.effects.push(Effect::ClearModels(epoch, self.published.generation + 1, models.clone()));
-                State::Resetting { epoch, identity: Some(identity), models, queued: BTreeSet::new(), replies: vec![reply], pending: None }
+                out.effects.push(Effect::ClearModels(epoch, generation + 1, models.clone()));
+                State::Resetting { epoch, identity: Some(identity), models, queued: BTreeSet::new(), replies: reply.into_iter().collect(), pending: None }
             }
-            (State::Session { epoch, .. }, Event::Close(reply)) => {
-                self.published.closed = true;
-                closing(vec![reply], false, &mut out, Some(epoch))
-            }
+            (State::Session { epoch, .. }, Event::Close(reply)) => self.closing(vec![reply], false, &mut out, Some(epoch)),
             (state @ State::Session { .. }, _) => state,
 
             (State::Ending { epoch_old, cause, replies, failed, .. }, Event::Credential(identity)) => {
-                if failed { out.effects.push(Effect::ClearAccount(epoch_old)); }
+                if failed { out.effects.push(Effect::ClearAccount(epoch_old, cause, generation + 1)); }
                 State::Ending { epoch_old, cause, next: Some(identity), replies, failed: false }
             }
-            (State::Ending { epoch_old, cause, mut replies, failed, .. }, Event::SessionReset(reply)) => {
+            (State::Ending { epoch_old, mut cause, mut replies, failed, .. }, Event::SessionReset(reply)) => {
                 if failed {
                     replies = vec![reply];
-                    out.effects.push(Effect::ClearAccount(epoch_old));
+                    cause = Cause::SessionReset;
+                    out.effects.push(Effect::ClearAccount(epoch_old, cause, generation + 1));
                 } else {
                     replies.push(reply);
                 }
                 State::Ending { epoch_old, cause, next: None, replies, failed: false }
             }
             (State::Ending { epoch_old, cause, next, mut replies, failed }, Event::ResetModels(_, reply)) => {
-                replies.push(reply);
+                replies.extend(reply);
                 State::Ending { epoch_old, cause, next, replies, failed }
             }
             (State::Ending { epoch_old, next, replies, .. }, Event::Cleared) => {
                 out.replies.extend(replies.into_iter().map(|id| (id, Answer::Ok)));
-                self.published.generation += 1;
-                out.effects.push(Effect::Publish);
                 match next {
                     None => {
-                        self.published.epoch = epoch_old + 1;
-                        self.published.identity = None;
+                        self.started(epoch_old + 1, None, generation + 1, &mut out);
                         State::NoSession { epoch: epoch_old + 1 }
                     }
                     Some(identity) => {
-                        self.published.epoch = epoch_old + 2;
-                        self.published.identity = Some(identity);
-                        out.effects.push(Effect::EpochStarted(epoch_old + 2, identity));
+                        self.started(epoch_old + 2, Some(identity), generation + 1, &mut out);
                         State::Session { epoch: epoch_old + 2, identity }
                     }
                 }
@@ -199,75 +203,85 @@ impl Lifecycle {
                 State::Ending { epoch_old, cause, next, replies: vec![], failed: true }
             }
             (State::Ending { replies, .. }, Event::Close(reply)) => {
-                self.published.closed = true;
                 let mut all = replies;
                 all.push(reply);
-                closing(all, true, &mut out, None)
+                self.closing(all, true, &mut out, None)
             }
             (state @ State::Ending { .. }, _) => state,
 
-            (State::Resetting { epoch, identity, models, queued, replies, pending }, Event::Credential(other)) => {
-                if identity.is_none() {
-                    State::Resetting { epoch, identity, models, queued, replies, pending: Some(other) }
-                } else if identity == Some(other) {
-                    State::Resetting { epoch, identity, models, queued, replies, pending }
-                } else {
-                    self.state = State::Resetting { epoch, identity, models, queued, replies: replies.clone(), pending };
-                    self.start_ending(epoch, Cause::IdentityChanged, Some(other), replies, &mut out);
+            (State::Resetting { epoch, identity, models, queued, mut replies, pending }, Event::Credential(other)) => match identity {
+                None => State::Resetting { epoch, identity, models, queued, replies, pending: Some(other) },
+                Some(current) if current == other => State::Resetting { epoch, identity, models, queued, replies, pending },
+                Some(_) => {
+                    self.ending(epoch, Cause::IdentityChanged, Some(other), std::mem::take(&mut replies), &mut out);
                     return out;
                 }
-            }
-            (State::Resetting { epoch, identity, models, queued, mut replies, pending }, Event::SessionReset(reply)) => {
+            },
+            (State::Resetting { epoch, mut replies, .. }, Event::SessionReset(reply)) => {
                 replies.push(reply);
-                self.state = State::Resetting { epoch, identity, models, queued, replies: replies.clone(), pending };
-                self.start_ending(epoch, Cause::SessionReset, None, replies, &mut out);
+                self.ending(epoch, Cause::SessionReset, None, replies, &mut out);
                 return out;
             }
             (State::Resetting { epoch, identity, models, queued, replies, pending }, Event::ServerEnded(request_epoch)) => {
                 if request_epoch == epoch && identity.is_some() {
-                    self.state = State::Resetting { epoch, identity, models, queued, replies: replies.clone(), pending };
-                    self.start_ending(epoch, Cause::ServerEnded, None, replies, &mut out);
+                    self.ending(epoch, Cause::ServerEnded, None, replies, &mut out);
                     return out;
                 }
                 State::Resetting { epoch, identity, models, queued, replies, pending }
             }
             (State::Resetting { epoch, identity, models, mut queued, mut replies, pending }, Event::ResetModels(more, reply)) => {
                 queued.extend(more);
-                replies.push(reply);
+                replies.extend(reply);
                 State::Resetting { epoch, identity, models, queued, replies, pending }
             }
-            (State::Resetting { epoch, identity, queued, replies, pending, .. }, Event::ModelsCleared(generation)) => {
-                self.published.generation = generation;
-                out.effects.extend([Effect::Publish, Effect::ModelsReset(epoch, generation)]);
+            (State::Resetting { epoch, identity, models, queued, replies, pending }, Event::ModelsCleared(generation_new)) => {
+                self.published.generation = generation_new;
                 if !queued.is_empty() {
-                    out.effects.push(Effect::ClearModels(epoch, generation + 1, queued.clone()));
+                    self.publish(&mut out);
+                    out.effects.push(Effect::ModelsReset(epoch, generation_new, models));
+                    out.effects.push(Effect::ClearModels(epoch, generation_new + 1, queued.clone()));
                     State::Resetting { epoch, identity, models: queued, queued: BTreeSet::new(), replies, pending }
                 } else {
                     out.replies.extend(replies.into_iter().map(|id| (id, Answer::Ok)));
-                    match (pending, identity) {
-                        (Some(next), _) => {
+                    match pending {
+                        Some(next) => {
                             self.published.epoch = epoch + 1;
                             self.published.identity = Some(next);
-                            out.effects.push(Effect::EpochStarted(epoch + 1, next));
+                            self.publish(&mut out);
+                            out.effects.extend([Effect::ModelsReset(epoch, generation_new, models), Effect::EpochEnded(epoch, Cause::SessionStarted), Effect::EpochStarted(epoch + 1, Some(next), generation_new)]);
                             State::Session { epoch: epoch + 1, identity: next }
                         }
-                        (None, Some(identity)) => State::Session { epoch, identity },
-                        (None, None) => State::NoSession { epoch },
+                        None => {
+                            self.publish(&mut out);
+                            out.effects.push(Effect::ModelsReset(epoch, generation_new, models));
+                            match identity {
+                                Some(identity) => State::Session { epoch, identity },
+                                None => State::NoSession { epoch },
+                            }
+                        }
                     }
                 }
             }
-            (State::Resetting { epoch, identity, replies, .. }, Event::ClearFailed) => {
+            (State::Resetting { epoch, identity, replies, pending, .. }, Event::ClearFailed) => {
                 out.replies.extend(replies.into_iter().map(|id| (id, Answer::Storage)));
-                match identity {
-                    Some(identity) => State::Session { epoch, identity },
-                    None => State::NoSession { epoch },
+                match pending {
+                    Some(next) => {
+                        out.effects.push(Effect::EpochEnded(epoch, Cause::SessionStarted));
+                        self.started(epoch + 1, Some(next), generation, &mut out);
+                        // `Publish` precedes `EpochEnded` in the table.
+                        out.effects.swap(0, 1);
+                        State::Session { epoch: epoch + 1, identity: next }
+                    }
+                    None => match identity {
+                        Some(identity) => State::Session { epoch, identity },
+                        None => State::NoSession { epoch },
+                    },
                 }
             }
             (State::Resetting { epoch, replies, .. }, Event::Close(reply)) => {
-                self.published.closed = true;
                 let mut all = replies;
                 all.push(reply);
-                closing(all, true, &mut out, Some(epoch))
+                self.closing(all, true, &mut out, Some(epoch))
             }
             (state @ State::Resetting { .. }, _) => state,
 
@@ -294,19 +308,38 @@ impl Lifecycle {
                 replies.push(reply);
                 State::Closing { waiting, clearing, replies }
             }
-            (State::Closing { waiting, clearing, replies }, Event::SessionReset(reply) | Event::ResetModels(_, reply)) => {
+            (State::Closing { waiting, clearing, replies }, Event::SessionReset(reply)) => {
                 out.replies.push((reply, Answer::Closed));
+                State::Closing { waiting, clearing, replies }
+            }
+            (State::Closing { waiting, clearing, replies }, Event::ResetModels(_, reply)) => {
+                out.replies.extend(reply.map(|id| (id, Answer::Closed)));
                 State::Closing { waiting, clearing, replies }
             }
             (state @ State::Closing { .. }, _) => state,
 
-            (State::Closed, Event::SessionReset(reply) | Event::ResetModels(_, reply) | Event::Close(reply)) => {
+            (State::Closed, Event::SessionReset(reply) | Event::Close(reply)) => {
                 out.replies.push((reply, Answer::Closed));
+                State::Closed
+            }
+            (State::Closed, Event::ResetModels(_, reply)) => {
+                out.replies.extend(reply.map(|id| (id, Answer::Closed)));
                 State::Closed
             }
             (State::Closed, _) => State::Closed,
         };
         out
+    }
+
+    /// `Open` rows of the table: the initial state, `Publish`, `EpochStarted`, and the self-sent `ResetModels` for changed models.
+    pub fn open(saved_epoch: u64, saved_generation: u64, saved_identity: Option<Identity>, changed_models: BTreeSet<String>) -> (Self, Out) {
+        let mut life = Self { state: State::NoSession { epoch: saved_epoch + 1 }, published: Published { epoch: saved_epoch + 1, identity: saved_identity, generation: saved_generation, closed: false } };
+        if let Some(identity) = saved_identity { life.state = State::Session { epoch: saved_epoch + 1, identity }; }
+        let mut out = Out::default();
+        life.publish(&mut out);
+        out.effects.push(Effect::EpochStarted(saved_epoch + 1, saved_identity, saved_generation));
+        if !changed_models.is_empty() { out.effects.push(Effect::ResetModelsSelf(changed_models)); }
+        (life, out)
     }
 }
 
@@ -361,7 +394,7 @@ impl LifecycleRef {
         replies.extend(out.replies);
         for effect in out.effects {
             match effect {
-                Effect::ClearAccount(_) | Effect::ClearModels(..) | Effect::StoreClose => self.store.push_back(effect),
+                Effect::ClearAccount(..) | Effect::ClearModels(..) | Effect::StoreClose => self.store.push_back(effect),
                 _ => {}
             }
         }
@@ -370,7 +403,7 @@ impl LifecycleRef {
     fn deliver_store(&mut self, ok: bool, replies: &mut Vec<(Id, Answer)>) {
         let Some(request) = self.store.pop_front() else { return };
         match request {
-            Effect::ClearAccount(_) => {
+            Effect::ClearAccount(..) => {
                 if ok {
                     self.rows.clear();
                     self.feed(Event::Cleared, replies);
@@ -452,7 +485,7 @@ impl RefModel for LifecycleRef {
                 self.feed(Event::SessionReset(id), &mut replies);
             }
             "reset_models" => {
-                self.feed(Event::ResetModels(names(input, "models"), id), &mut replies);
+                self.feed(Event::ResetModels(names(input, "models"), Some(id)), &mut replies);
             }
             "close" => self.feed(Event::Close(id), &mut replies),
             "store_hold" => self.held = true,
