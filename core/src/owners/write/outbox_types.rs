@@ -16,7 +16,7 @@ pub(super) const PURPOSE_STANDARD: u8 = 0;
 pub(super) const PURPOSE_TRANSFER: u8 = 1;
 /// Timers of `Expire` use ids above the ids of the retry timers (`ScheduleId(op_id)`).
 pub(super) const EXPIRE_TIMER: u64 = 1 << 32;
-/// Attempts of an operation before the permanent error (`design.md` 1a).
+/// Attempts of an operation before the permanent error.
 pub(super) const ATTEMPT_LIMIT: u32 = 40;
 
 /// The owners Outbox sends to.
@@ -99,6 +99,8 @@ pub enum Fault {
     /// The session lost its pending state: `retry` waits for `session_reset`.
     StateLost,
     Internal,
+    Invalid,
+    Copy(String),
     Rejected(RejectReason),
 }
 

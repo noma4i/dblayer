@@ -49,6 +49,11 @@ fn the_base_keeps_the_whole_value_of_a_transfer() {
         on_failure: OnFailure::Keep,
         steps_path: "/presign".into(),
         steps_body: "{\"b\":2}".into(),
+        transfer_id: 9,
+        cycle_id: 2,
+        signed_id: Some("sig".into()),
+        aborted: true,
+        etags: vec![Some("e1".into()), None],
     };
     db.write_queue_ops(&[StoreOp::Upload { row, kind: UploadKind::SyncUpload }]).unwrap();
     let stored = db.read_transfers().unwrap();
@@ -59,6 +64,7 @@ fn the_base_keeps_the_whole_value_of_a_transfer() {
     assert_eq!((transfer.created_at.0, transfer.size, transfer.sha256.as_str()), (1234, 4096, "abc"));
     assert_eq!((transfer.mutation.path.as_str(), transfer.mutation.body.as_str(), transfer.mutation.on_failure), ("/moments", "{\"a\":1}", OnFailure::Keep));
     assert_eq!((transfer.steps.path.as_str(), transfer.steps.body.as_str()), ("/presign", "{\"b\":2}"));
+    assert_eq!((transfer.transfer_id, transfer.cycle_id, transfer.signed_id.as_deref(), transfer.aborted, transfer.etags.clone()), (9, 2, Some("sig"), true, vec![Some("e1".to_string()), None]));
     assert!(!transfer.file_present);
 }
 

@@ -17,7 +17,7 @@ pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 3] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY];
 /// The tables a format change moves into the new layout (`store_boot_format_change`).
-pub(crate) const CARRIED_TABLES: [&str; 19] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_error", "local_pending", "file", "restore_failed"];
+pub(crate) const CARRIED_TABLES: [&str; 20] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_part", "sync_upload_error", "local_pending", "file", "restore_failed"];
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
@@ -115,7 +115,7 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 44] = [
+const CORE_STATEMENTS: [&str; 45] = [
     "CREATE TABLE IF NOT EXISTS blob_upload (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
@@ -311,7 +311,19 @@ const CORE_STATEMENTS: [&str; 44] = [
   on_failure TEXT,
   steps_path TEXT,
   steps_body TEXT,
+  transfer_id INTEGER,
+  cycle_id INTEGER,
+  signed_id TEXT,
+  aborted INTEGER,
   PRIMARY KEY (model, row_id, action)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS sync_upload_part (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  etag TEXT,
+  PRIMARY KEY (model, row_id, action, number)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS sync_action (
   model TEXT NOT NULL,

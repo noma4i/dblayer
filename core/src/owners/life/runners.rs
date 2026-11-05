@@ -20,6 +20,7 @@ use crate::owners::read::windows::WindowsInput;
 use crate::owners::session::SessionInput;
 use crate::owners::store::{Done, StoreEffect, StoreInput, StoreOp, StoreWriter};
 use crate::owners::write::outbox::OutboxInput;
+use crate::owners::write::rounds::RoundsInput;
 use crate::owners::write::transfer::TransferInput;
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
@@ -51,6 +52,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             }
             LifecycleEffect::RestoreReady { epoch } => {
                 wiring.to_outbox(OutboxInput::RestoreReady { epoch });
+                wiring.to_transfer(TransferInput::RestoreReady { epoch });
                 wiring.to_session(SessionInput::RestoreReady { epoch });
             }
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
@@ -60,14 +62,16 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));
                 wiring.to_feed(FeedInput::EpochStarted(started.clone()));
                 wiring.to_outbox(OutboxInput::EpochStarted(started.clone()));
+                wiring.to_rounds(RoundsInput::EpochStarted(started.clone()));
                 wiring.to_transfer(TransferInput::EpochStarted(started));
-                for owner in [Peer::Feed, Peer::Outbox, Peer::Transfer, Peer::Calls, Peer::Session] {
+                for owner in [Peer::Feed, Peer::Outbox, Peer::Calls, Peer::Session] {
                     wiring.to_network(NetworkInput::SnapshotRequest { owner, epoch });
                 }
             }
             LifecycleEffect::ReadIntents { epoch } => wiring.to_store(StoreInput::ReadIntents { epoch }),
             LifecycleEffect::EpochEnded { epoch, cause } => {
                 self.leases.epoch_ended(cause);
+                wiring.to_rounds(RoundsInput::EpochEnded(crate::owners::contract::EpochEnded { epoch, cause }));
                 wiring.handle.end_epoch(epoch, cause);
                 wiring.outcomes.end_epoch(epoch, cause);
             }
@@ -216,7 +220,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                         }
                         if wiring.has_transfer() {
                             match restore.transfers {
-                                Ok(stored) => wiring.to_transfer(TransferInput::Restored(stored)),
+                                Ok(stored) => wiring.to_transfer(TransferInput::Restored { uploads: stored, outcomes: Default::default() }),
                                 Err(error) => {
                                     wiring.restore_failed_for(Peer::Transfer, error.to_string());
                                     wiring.to_transfer(TransferInput::RestoreFailed { error: error.to_string() });
@@ -286,6 +290,7 @@ impl EffectRunner<Network> for NetworkRunner {
             }
             NetworkEffect::Foreground(seq) => {
                 wiring.to_windows(WindowsInput::Foreground(seq));
+                wiring.to_rounds(RoundsInput::Foreground);
                 wiring.tell_network(&[Peer::Rounds, Peer::Session, Peer::Windows], NetworkEvent::Foreground(seq));
             }
             NetworkEffect::PowerSaving(saving) => wiring.tell_network(&[Peer::Transfer], NetworkEvent::PowerSaving { saving, epoch: None }),

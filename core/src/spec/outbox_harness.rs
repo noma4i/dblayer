@@ -151,6 +151,7 @@ pub(super) fn fault_of(fault: &Fault) -> RFault {
         Fault::RestoreFailed => RFault::RestoreFailed,
         Fault::StateLost => RFault::StateLost,
         Fault::Internal => RFault::Internal,
+        Fault::Invalid | Fault::Copy(_) => panic!("a fault of Transfer"),
         Fault::Rejected(RejectReason::NoSession) => RFault::Reason(RReason::NoSession),
         Fault::Rejected(RejectReason::StaleGeneration { .. }) => RFault::Reason(RReason::StaleGeneration),
         Fault::Rejected(RejectReason::Storage(_)) => RFault::Reason(RReason::Storage),

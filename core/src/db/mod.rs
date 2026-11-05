@@ -27,6 +27,7 @@ mod queue_read;
 #[cfg(test)]
 mod queue_read_tests;
 mod queue_write;
+mod upload_rows;
 #[cfg(test)]
 mod queue_write_tests;
 mod merge;

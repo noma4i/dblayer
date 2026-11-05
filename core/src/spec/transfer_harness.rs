@@ -1,413 +1,436 @@
-//! Harness of the owner-level tests of the `transfer` machine: the owner `Transfers` on `DetScheduler`, the twin of the reference and the book of what it sent.
+//! Harness of the owner-level tests of the owner `Transfer`: the owner on `DetScheduler` with typed peers (Store, Outbox, Rounds) and the book of what it gave out.
 
+use std::marker::PhantomData;
+use std::sync::PoisonError;
 
-use crate::schema::OnFailure;
-use super::ref_transfer::{step_of, Ctx, Eff, In, Kind, Noise, Obs, Shown, St, Step};
-use crate::owners::contract::{Online};
-use crate::owners::write::outbox::{Fault, OutboxOutcome};
 use crate::files::Location;
-use crate::owners::support::{new_log, text_after, Discard, Emitted, Log, Silent, Sink, Spy, SpyState};
-use crate::owners::store::StoreWriter;
-use crate::owners::write::outbox::{NewOp, Origin, Outbox};
-use crate::owners::write::transfer::{self as t, Source, StoreKind, StoredTransfer, Steps, TransferAnswer, TransferEffect as Run, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
-use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
-use crate::transport::NetworkPurpose;
+use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId};
+use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadKind, UploadRow};
+use crate::owners::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
+use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxInput, OutboxOutcome, Origin, Receipt};
+use crate::owners::write::rounds::{Rounds, RoundsInput};
+use crate::owners::write::transfer::{BatchItem, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
+use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
+use crate::schema::OnFailure;
 
-/// The slots of the peers and of the owner in every test: the peers first.
-pub(super) const STORE_AT: usize = 0;
-pub(super) const OUTBOX_AT: usize = 1;
-pub(super) const TRANSFER_AT: usize = 2;
-
-/// What the owner gave out in a step, in the terms the rows of the table use: the executor effects (`Run`) and the inputs for the Store and
-/// Outbox (`Send`), read from the `Debug` form the `Spy` keeps. `Schedule` is a timer of the owner.
-#[derive(Clone, Debug)]
-pub(super) enum TransferEffect {
-    Copy { key: String },
-    CopyCancel { key: String },
-    Store { key: String, kind: StoreKind },
-    Step { key: String, purpose: NetworkPurpose },
-    Complete { key: String },
-    Abort { key: String },
-    CancelStep { key: String },
-    DeleteFile { key: String },
-    SubmitMutation { key: String },
-    DiscardMutation { key: String },
-    Reply { reply: u64, answer: TransferAnswer },
-    Shows { key: String, shown: t::Shown },
-    Refused { key: String },
-    ScheduleJob { epoch: u64 },
-    EndJob { round_id: u32 },
-    Schedule,
-    Drained,
-}
-
-/// The kind of an `Upload` batch: the op names it.
-pub(super) fn upload_kind(input: &str) -> StoreKind {
-    let kind = input.rsplit("kind: ").next().unwrap_or_default();
-    [("SyncUpload", StoreKind::SyncUpload), ("ConfirmedParts", StoreKind::ConfirmedParts), ("Completed", StoreKind::Completed), ("Failed", StoreKind::Failed), ("Retrying", StoreKind::Retrying)]
-        .into_iter()
-        .find(|(name, _)| kind.starts_with(name))
-        .map(|(_, kind)| kind)
-        .unwrap_or_else(|| panic!("an Upload without a kind: {input}"))
-}
-
-pub(super) fn lower(emitted: Emitted<Run>) -> Option<TransferEffect> {
-    Some(match emitted {
-        Emitted::Run(Run::Copy { key, .. }) => TransferEffect::Copy { key },
-        Emitted::Run(Run::CopyCancel { key }) => TransferEffect::CopyCancel { key },
-        Emitted::Run(Run::Step { key, purpose, .. }) => TransferEffect::Step { key, purpose },
-        Emitted::Run(Run::Complete { key, .. }) => TransferEffect::Complete { key },
-        Emitted::Run(Run::Abort { key, .. }) => TransferEffect::Abort { key },
-        Emitted::Run(Run::CancelStep { key }) => TransferEffect::CancelStep { key },
-        Emitted::Run(Run::DeleteFile { path }) => TransferEffect::DeleteFile { key: path },
-        Emitted::Run(Run::Reply { reply, answer }) => TransferEffect::Reply { reply, answer },
-        Emitted::Run(Run::Shows { key, shown }) => TransferEffect::Shows { key, shown },
-        Emitted::Run(Run::Refused { key }) => TransferEffect::Refused { key },
-        Emitted::Run(Run::ScheduleJob { epoch }) => TransferEffect::ScheduleJob { epoch },
-        Emitted::Run(Run::EndJob { round_id }) => TransferEffect::EndJob { round_id },
-        Emitted::Run(Run::Drained(_)) => TransferEffect::Drained,
-        Emitted::Send { to: STORE_AT, input } => {
-            let key = text_after(&input, "key: ")?;
-            let kind = if input.contains("RemoveUpload {") { StoreKind::Removed } else { upload_kind(&input) };
-            TransferEffect::Store { key, kind }
-        }
-        Emitted::Send { to: OUTBOX_AT, input } if input.starts_with("Submit") => TransferEffect::SubmitMutation { key: text_after(&input, "origin: Transfer(")? },
-        Emitted::Send { to: OUTBOX_AT, input } => TransferEffect::DiscardMutation { key: text_after(&input, "row_id: ")? },
-        Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
-        Emitted::Schedule { .. } => TransferEffect::Schedule,
-        Emitted::Cancel(_) | Emitted::Broadcast(_) => return None,
-    })
-}
-
-pub(super) fn take_fx(log: &Log<Emitted<Run>>) -> Vec<TransferEffect> { crate::owners::support::take(log).into_iter().filter_map(lower).collect() }
-
-pub(super) fn state_of(det: &DetScheduler) -> Result<&TransferState, String> { det.state(Address::<Spy<Transfers>>::new(TRANSFER_AT)).map(|spy: &SpyState<Transfers>| &spy.inner).ok_or_else(|| "no state".to_string()) }
-
-/// The owner with its two peers: the Store and Outbox keep what they receive.
-pub(super) fn world(seed: u64, slots: u32) -> (DetScheduler, Log<Emitted<Run>>) {
-    let mut det = DetScheduler::new(seed);
-    let store = det.add::<Sink<StoreWriter>>("store", new_log(), Silent).index();
-    let outbox = det.add::<Sink<Outbox>>("outbox", new_log(), Silent).index();
-    assert_eq!((store, outbox), (STORE_AT, OUTBOX_AT));
-    let log = new_log();
-    let peers = TransferPeers { store: Address::new(store), outbox: Address::new(outbox) };
-    let addr = det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard);
-    assert_eq!(addr.index(), TRANSFER_AT);
-    (det, log)
-}
-
-pub(super) fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: KEY.into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), durable: true }
-}
-
-pub(super) fn steps() -> Steps { Steps { path: "/upload".into(), body: String::new() } }
-
-pub(super) const EPOCH: u64 = 1;
-pub(super) const KEY: &str = "k1";
-pub(super) const PARTS: u32 = 3;
+pub(super) const EPOCH: Epoch = 1;
 pub(super) const DAY: u64 = 86_400_000;
+const STORE_AT: usize = 0;
+const OUTBOX_AT: usize = 1;
+const TRANSFER_AT: usize = 2;
+const ROUNDS_AT: usize = 3;
 
-pub(super) fn stage_of(stage: TransferStage) -> St {
-    match stage {
-        TransferStage::Copying => St::Copying,
-        TransferStage::Ready => St::Ready,
-        TransferStage::Uploading => St::Uploading,
-        TransferStage::Completing => St::Completing,
-        TransferStage::Mutating => St::Mutating,
-        TransferStage::Failed => St::Failed,
-        TransferStage::Done => St::Done,
+/// A peer that keeps the typed inputs it receives.
+pub(super) struct Tap<O: StateOwner>(PhantomData<fn() -> O>);
+
+impl<O: StateOwner> StateOwner for Tap<O>
+where
+    O::Input: Clone,
+{
+    const EPOCHED: bool = false;
+
+    type State = Log<O::Input>;
+    type Input = O::Input;
+    type Effect = NoEffect;
+
+    fn step(state: &mut Log<O::Input>, input: O::Input) -> Effects<Self> {
+        state.lock().unwrap_or_else(PoisonError::into_inner).push(input);
+        Vec::new()
     }
+
+    fn tick(now: Time) -> O::Input { O::tick(now) }
+
+    fn epoch_ended(epoch: Epoch, cause: Cause) -> O::Input { O::epoch_ended(epoch, cause) }
+
+    fn closing() -> O::Input { O::closing() }
 }
 
-pub(super) fn source() -> Source { Source { path: "a.mp4".into(), parts: PARTS } }
-
-pub(super) struct Twin {
-    pub(super) det: DetScheduler,
-    pub(super) addr: Address<Transfers>,
-    pub(super) log: Log<Emitted<Run>>,
-    pub(super) reply: u64,
+/// What the owner gave out in one or more steps.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Out {
+    pub runs: Vec<Run>,
+    pub batches: Vec<StoreBatch>,
+    pub outbox: Vec<OutboxInput>,
+    pub rounds: Vec<RoundsInput>,
+    pub timers: usize,
 }
 
-impl Twin {
-    pub(super) fn new() -> Self {
-        let (mut det, log) = world(7, 1);
-        det.start_epoch(EPOCH);
-        Self { det, addr: Address::new(TRANSFER_AT), log, reply: 100 }
+impl Out {
+    fn merge(&mut self, other: Out) {
+        self.runs.extend(other.runs);
+        self.batches.extend(other.batches);
+        self.outbox.extend(other.outbox);
+        self.rounds.extend(other.rounds);
+        self.timers += other.timers;
     }
 
-    pub(super) fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
+    pub fn replies(&self, reply: ReplyId) -> Vec<TransferAnswer> { self.runs.iter().filter_map(|run| if let Run::Reply { reply: found, answer } = run { (*found == reply).then(|| answer.clone()) } else { None }).collect() }
 
-    pub(super) fn post(&mut self, input: TransferInput) -> Vec<TransferEffect> {
-        take_fx(&self.log);
-        self.det.post(self.addr, EpochStamp::Epoch(EPOCH), input);
-        self.run();
-        take_fx(&self.log)
+    pub fn all_replies(&self) -> usize { self.runs.iter().filter(|run| matches!(run, Run::Reply { .. })).count() }
+
+    pub fn shows(&self) -> Vec<Shown> { self.runs.iter().filter_map(|run| if let Run::Shows { shown, .. } = run { Some(shown.clone()) } else { None }).collect() }
+
+    pub fn steps(&self) -> Vec<(Option<u32>, u64)> { self.runs.iter().filter_map(|run| if let Run::Step { part, attempt_id, .. } = run { Some((*part, *attempt_id)) } else { None }).collect() }
+
+    pub fn count(&self, pick: fn(&Run) -> bool) -> usize { self.runs.iter().filter(|run| pick(run)).count() }
+
+    pub fn completes(&self) -> usize { self.count(|run| matches!(run, Run::Complete { .. })) }
+
+    pub fn aborts(&self) -> usize { self.count(|run| matches!(run, Run::Abort { .. })) }
+
+    pub fn cancel_steps(&self) -> usize { self.count(|run| matches!(run, Run::CancelStep { .. })) }
+
+    pub fn copies(&self) -> usize { self.count(|run| matches!(run, Run::Copy { .. })) }
+
+    pub fn copy_cancels(&self) -> usize { self.count(|run| matches!(run, Run::CopyCancel { .. })) }
+
+    pub fn deletes(&self) -> usize { self.count(|run| matches!(run, Run::DeleteFile { .. })) }
+
+    pub fn drained(&self) -> usize { self.count(|run| matches!(run, Run::Drained(_))) }
+
+    pub fn classified(&self) -> usize { self.count(|run| matches!(run, Run::RestoreClassified { .. })) }
+
+    pub fn refused(&self) -> Vec<Option<String>> { self.runs.iter().filter_map(|run| if let Run::Refused { reason, .. } = run { Some(reason.clone()) } else { None }).collect() }
+
+    pub fn statuses(&self) -> Vec<(u64, Shown)> { self.runs.iter().filter_map(|run| if let Run::Status { stream_id, shown, .. } = run { Some((*stream_id, shown.clone())) } else { None }).collect() }
+
+    pub fn submits(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Submit { .. })).count() }
+
+    pub fn outbox_discards(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Discard { .. })).count() }
+
+    pub fn rows(&self) -> Vec<(&UploadRow, UploadKind)> {
+        self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Upload { row, kind } = op { Some((row, *kind)) } else { None }).collect()
     }
 
-    pub(super) fn control(&mut self, input: TransferInput) -> Vec<TransferEffect> {
-        take_fx(&self.log);
-        self.det.post(self.addr, EpochStamp::Control, input);
-        self.run();
-        take_fx(&self.log)
-    }
+    pub fn kinds(&self) -> Vec<UploadKind> { self.rows().into_iter().map(|(_, kind)| kind).collect() }
 
-    pub(super) fn state(&self) -> &TransferState { state_of(&self.det).expect("the owner state") }
+    pub fn removed(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RemoveUpload { key } = op { Some(key.clone()) } else { None }).collect() }
 
-    pub(super) fn stage(&self, key: &str) -> St { self.state().stage_of(key).map_or(St::Done, stage_of) }
+    pub fn writes(&self) -> usize { self.batches.len() }
 
-    pub(super) fn reply(&mut self) -> u64 {
-        self.reply += 1;
-        self.reply
-    }
+    pub fn round_needed(&self) -> Vec<Vec<TransferId>> { self.rounds.iter().filter_map(|input| if let RoundsInput::Needed { ids, .. } = input { Some(ids.clone()) } else { None }).collect() }
 
-    pub(super) fn accept(&mut self, key: &str, batch: bool) -> Vec<TransferEffect> {
-        let reply = self.reply();
-        self.post(TransferInput::Accept { epoch: EPOCH, key: key.into(), source: source(), batch, reply, now: Time(0), mutation: mutation(), steps: steps() })
-    }
+    pub fn round_idle(&self) -> Vec<TransferId> { self.rounds.iter().filter_map(|input| if let RoundsInput::Idle { transfer_id, .. } = input { Some(*transfer_id) } else { None }).collect() }
 }
 
-pub(super) fn stored(key: &str, ctx: &Ctx, failed: bool, completed: bool, confirmed: u32) -> StoredTransfer {
+pub(super) fn mutation(key: &str) -> NewOp {
+    let mut parts = key.splitn(3, ':');
+    let (model, row, action) = (parts.next().unwrap_or("Moment"), parts.next().unwrap_or("r"), parts.next().unwrap_or("upload"));
+    NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), durable: true }
+}
+
+pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), source: Source { path: format!("/src/{key}"), parts }, mutation: mutation(key), steps: Steps { path: "/upload".into(), body: String::new() } } }
+
+pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
     StoredTransfer {
+        transfer_id: id,
         key: key.into(),
-        seq: 1,
-        source: source(),
-        batch: ctx.kind == Kind::Batch,
-        upload_id: ctx.has_upload_id.then(|| "u1".to_string()),
-        confirmed_parts: confirmed,
-        completed,
-        failed: failed.then(|| "e".to_string()),
+        seq: id,
+        source: Source { path: format!("/src/{key}"), parts },
+        batch: false,
+        upload_id: None,
+        confirmed_parts: 0,
+        etags: Vec::new(),
+        completed: false,
+        signed_id: None,
+        failed: None,
+        aborted: false,
+        copying: false,
         file_present: true,
         created_at: Time(0),
         place: Location::Directory,
         size: 1,
         sha256: "h".into(),
-        mutation: mutation(),
-        steps: steps(),
+        cycle_id: 1,
+        has_intent: false,
+        mutation: mutation(key),
+        steps: Steps { path: "/upload".into(), body: String::new() },
+        restore_failed: None,
     }
 }
 
-/// Brings the owner to `state` of the transfer `k1` under the conditions of `ctx`.
-pub(super) fn reach(state: St, ctx: &Ctx) -> Twin {
-    let mut twin = Twin::new();
-    let batch = ctx.kind == Kind::Batch;
-    let last_part = if ctx.parts_all_confirmed { PARTS - 1 } else { 0 };
-    match state {
-        St::None => {}
-        St::Copying => { twin.accept(KEY, batch); }
-        St::Ready => {
-            twin.post(TransferInput::Online(Online(false)));
-            if !ctx.first_to_start {
-                twin.accept("k0", false);
-                twin.post(TransferInput::CopyDone { key: "k0".into(), size: 1, sha256: "h".into(), place: Location::Directory });
-            }
-            twin.accept(KEY, batch);
-            twin.post(TransferInput::CopyDone { key: KEY.into(), size: 1, sha256: "h".into(), place: Location::Directory });
-        }
-        St::Uploading => {
-            twin.post(TransferInput::Restored(vec![stored(KEY, ctx, false, false, last_part)]));
-            if !ctx.attempts_left {
-                for _ in 0..49 {
-                    twin.post(TransferInput::StepError { key: KEY.into(), part: Some(1), temporary: true });
-                    twin.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { key: KEY.into() } });
-                }
-            }
-        }
-        St::Completing => {
-            twin.post(TransferInput::Restored(vec![stored(KEY, ctx, false, false, PARTS)]));
-            twin.post(TransferInput::CompleteError { key: KEY.into(), temporary: true });
-        }
-        St::Mutating => { twin.post(TransferInput::Restored(vec![stored(KEY, ctx, false, true, PARTS)])); }
-        St::Failed => {
-            let confirmed = if ctx.parts_all_confirmed { PARTS } else { 0 };
-            twin.post(TransferInput::Restored(vec![stored(KEY, ctx, true, false, confirmed)]));
-        }
-        St::Done => {
-            twin.accept(KEY, batch);
-            let reply = twin.reply();
-            twin.post(TransferInput::Discard { key: KEY.into(), reply });
+pub(super) struct Twin {
+    pub det: DetScheduler,
+    log: Log<Emitted<Run>>,
+    store: Log<StoreInput>,
+    outbox: Log<OutboxInput>,
+    rounds: Log<RoundsInput>,
+    reply: ReplyId,
+    unanswered: Vec<BatchId>,
+}
+
+impl Twin {
+    /// The owner in the phase `Restoring`: nothing restored, no network signal.
+    pub fn bare(slots: u32) -> Self {
+        let mut det = DetScheduler::new(7);
+        let (store, outbox, rounds) = (new_log(), new_log(), new_log());
+        assert_eq!(det.add::<Tap<StoreWriter>>("store", store.clone(), Silent).index(), STORE_AT);
+        assert_eq!(det.add::<Tap<Outbox>>("outbox", outbox.clone(), Silent).index(), OUTBOX_AT);
+        let log = new_log();
+        let peers = TransferPeers { store: Address::new(STORE_AT), outbox: Address::new(OUTBOX_AT), rounds: Some(Address::new(ROUNDS_AT)) };
+        assert_eq!(det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard).index(), TRANSFER_AT);
+        assert_eq!(det.add::<Tap<Rounds>>("rounds", rounds.clone(), Silent).index(), ROUNDS_AT);
+        det.start_epoch(EPOCH);
+        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new() }
+    }
+
+    /// The owner after `Restored` of `rows`: the operations of the rows are declared, the network has not spoken yet.
+    pub fn opened(rows: Vec<StoredTransfer>, outcomes: std::collections::BTreeMap<TransferId, OutboxOutcome>) -> (Self, Out) {
+        let mut twin = Self::bare(1);
+        let declarations = rows.iter().map(|row| (row.mutation.model.clone(), row.mutation.action.clone())).collect();
+        twin.post(TransferInput::RegisterOperations { declarations });
+        let out = twin.post(TransferInput::Restored { uploads: rows, outcomes });
+        (twin, out)
+    }
+
+    /// Every input in `inputs` leaves the owner quiet and the state of `id` as it was.
+    pub fn ignores(&mut self, id: TransferId, inputs: Vec<TransferInput>) {
+        let stage = self.stage(id);
+        for input in inputs {
+            let label = format!("{input:?}");
+            let out = self.post(input);
+            assert!(Self::quiet(&out), "{label}: {out:?}");
+            assert_eq!(self.stage(id), stage, "{label}");
         }
     }
-    if !ctx.online && state != St::Ready {
+
+    /// The five inputs a state of the table ignores for other inputs: results of other states and timers.
+    pub fn stray_results(&self, id: TransferId) -> Vec<TransferInput> {
+        let attempt_id = self.attempt(id) + 1000;
+        vec![
+            TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
+            TransferInput::StepError { transfer_id: id, attempt_id, temporary: true },
+            TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
+            TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true },
+            TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id } },
+        ]
+    }
+
+    /// The owner after `Restored` and `RestoreReady`, with the network up.
+    pub fn new() -> Self { Self::with_slots(1) }
+
+    pub fn with_slots(slots: u32) -> Self {
+        let mut twin = Self::bare(slots);
+        twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default() });
+        twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+        twin.post(TransferInput::Online(Online(true)));
+        twin
+    }
+
+    pub fn offline() -> Self {
+        let mut twin = Self::new();
         twin.post(TransferInput::Online(Online(false)));
+        twin
     }
-    if state != St::None {
-        assert_eq!(twin.stage(KEY), if state == St::Done { St::Done } else { state }, "the owner reached {state:?}");
-    }
-    twin
-}
 
-pub(super) fn input_of(twin: &mut Twin, ctx: &Ctx, input: In) -> Vec<TransferEffect> {
-    let key: String = KEY.into();
-    let part = if ctx.stray_step { Some(99) } else { Some(if ctx.parts_all_confirmed { PARTS } else { 1 }) };
-    let reply = twin.reply();
-    match input {
-        In::Accept => {
-            let epoch = if ctx.epoch_current { EPOCH } else { EPOCH + 1 };
-            twin.post(TransferInput::Accept { epoch, key, source: source(), batch: ctx.kind == Kind::Batch, reply, now: Time(0), mutation: mutation(), steps: steps() })
-        }
-        In::CopyDone => twin.post(TransferInput::CopyDone { key, size: 1, sha256: "h".into(), place: Location::Directory }),
-        In::CopyFailed => twin.post(TransferInput::CopyFailed { key, error: "e".into() }),
-        In::Cancel => twin.post(TransferInput::Cancel { key, reply }),
-        In::Start => twin.post(TransferInput::Online(Online(true))),
-        In::StepOk { parts_left } => twin.post(TransferInput::StepOk { key, part: if ctx.stray_step { Some(99) } else if parts_left { Some(1) } else { Some(PARTS) }, upload_id: None }),
-        In::StepError { temporary } => twin.post(TransferInput::StepError { key, part, temporary }),
-        In::Online(on) => twin.post(TransferInput::Online(Online(on))),
-        In::Completed => twin.post(TransferInput::Completed { key }),
-        In::CompleteError => twin.post(TransferInput::CompleteError { key, temporary: false }),
-        In::CompleteTemp => twin.post(TransferInput::CompleteError { key, temporary: true }),
-        In::MutationOutcome { confirmed } => twin.post(TransferInput::MutationOutcome { key, outcome: if confirmed { OutboxOutcome::Confirmed { revision: 1 } } else { OutboxOutcome::Rejected { error: "e".into() } } }),
-        In::MutationDiscarded => twin.post(TransferInput::MutationOutcome { key, outcome: OutboxOutcome::Discarded }),
-        In::MutationInterrupted => twin.post(TransferInput::MutationOutcome { key, outcome: OutboxOutcome::Interrupted }),
-        In::Retry => twin.post(TransferInput::Retry { key, reply }),
-        In::Discard => twin.post(TransferInput::Discard { key, reply }),
-        In::Expire => twin.post(TransferInput::Tick { now: Time(ctx.age_days * DAY), kind: TransferTick::Expire }),
-        In::TickRetry => twin.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { key } }),
-        In::SlotFreed => twin.post(TransferInput::SlotFreed),
-        In::EpochEnded => {
-            take_fx(&twin.log);
-            twin.det.end_epoch(EPOCH, Cause::SessionReset);
-            twin.run();
-            take_fx(&twin.log)
-        }
-        In::Closing => {
-            take_fx(&twin.log);
-            twin.det.close();
-            twin.run();
-            take_fx(&twin.log)
-        }
-        In::Noise(noise) => twin.post(match noise {
-            Noise::StepOk => TransferInput::StepOk { key, part: Some(1), upload_id: None },
-            Noise::StepError => TransferInput::StepError { key, part: Some(1), temporary: true },
-            Noise::Completed => TransferInput::Completed { key },
-            Noise::CompleteError => TransferInput::CompleteError { key, temporary: false },
-            Noise::MutationOutcome => TransferInput::MutationOutcome { key, outcome: OutboxOutcome::Confirmed { revision: 1 } },
-            Noise::TickRetry => TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { key } },
-            Noise::OnlineTrue => TransferInput::Online(Online(true)),
-            Noise::OnlineFalse => TransferInput::Online(Online(false)),
-            Noise::SlotFreed => TransferInput::SlotFreed,
-        }),
-    }
-}
-
-pub(super) fn effect_key(effect: &TransferEffect) -> Option<&str> {
-    match effect {
-        TransferEffect::Copy { key } | TransferEffect::CopyCancel { key } | TransferEffect::Store { key, .. } | TransferEffect::Step { key, .. } | TransferEffect::Complete { key } | TransferEffect::Abort { key } | TransferEffect::CancelStep { key } | TransferEffect::DeleteFile { key } | TransferEffect::SubmitMutation { key } | TransferEffect::DiscardMutation { key } | TransferEffect::Shows { key, .. } | TransferEffect::Refused { key } => Some(key),
-        TransferEffect::Reply { .. } | TransferEffect::ScheduleJob { .. } | TransferEffect::EndJob { .. } | TransferEffect::Schedule | TransferEffect::Drained => None,
-    }
-}
-
-pub(super) fn shown_of(shown: &t::Shown) -> Shown {
-    match shown {
-        t::Shown::Copying => Shown::Copying,
-        t::Shown::Queued => Shown::Queued,
-        t::Shown::Uploading { .. } => Shown::Uploading,
-        t::Shown::Failed { .. } => Shown::Failed,
-        t::Shown::Gone => Shown::Gone,
-    }
-}
-
-pub(super) fn translate(input: In, effects: Vec<TransferEffect>, scheduled: bool) -> (Vec<Obs>, Vec<Eff>) {
-    let mut obs = Vec::new();
-    let mut eff: Vec<Eff> = Vec::new();
-    for effect in effects {
-        if effect_key(&effect).is_some_and(|key| key != KEY) {
-            continue;
-        }
-        match effect {
-            TransferEffect::Copy { .. } => eff.push(Eff::Copy),
-            TransferEffect::CopyCancel { .. } => eff.push(Eff::CopyCancelled),
-            TransferEffect::Store { kind, .. } => {
-                if kind == StoreKind::Removed && eff.last() == Some(&Eff::DeleteFile) {
-                    eff.pop();
-                }
-                eff.push(match kind {
-                    StoreKind::SyncUpload => Eff::StoreSyncUpload,
-                    StoreKind::ConfirmedParts => Eff::StoreConfirmedParts,
-                    StoreKind::Completed => Eff::StoreCompleted,
-                    StoreKind::Failed => Eff::StoreFailed,
-                    StoreKind::Retrying => Eff::StoreRetrying,
-                    StoreKind::Removed => Eff::DeleteFileAndOperation,
-                });
+    fn collect(&mut self) -> Out {
+        let mut out = Out::default();
+        for emitted in take(&self.log) {
+            match emitted {
+                Emitted::Run(run) => out.runs.push(run),
+                Emitted::Schedule { .. } => out.timers += 1,
+                Emitted::Send { .. } | Emitted::Cancel(_) | Emitted::Broadcast(_) => {}
             }
-            TransferEffect::Step { purpose, .. } => {
-                assert_eq!(purpose, NetworkPurpose::Transfer, "P-XFER-03: a step carries the purpose Transfer");
-                eff.push(if matches!(input, In::StepOk { .. }) { Eff::NextStep } else { Eff::TransportStep });
-            }
-            TransferEffect::Complete { .. } => eff.push(Eff::Complete),
-            TransferEffect::Schedule => {}
-            TransferEffect::Abort { .. } => eff.push(Eff::Abort),
-            TransferEffect::CancelStep { .. } => eff.push(if matches!(input, In::EpochEnded | In::Closing) { Eff::TransportCancel } else { Eff::StepCancelled }),
-            TransferEffect::DeleteFile { .. } => eff.push(if matches!(input, In::MutationOutcome { confirmed: true }) { Eff::DeleteLocalCopy } else { Eff::DeleteFile }),
-            TransferEffect::SubmitMutation { .. } => eff.push(Eff::SubmitFinalMutation),
-            TransferEffect::DiscardMutation { .. } => eff.push(Eff::DiscardMutation),
-            TransferEffect::Reply { answer, .. } => obs.push(match answer {
-                TransferAnswer::Receipt(_) => Obs::Receipt,
-                TransferAnswer::Ok => Obs::DiscardOk,
-                TransferAnswer::Cancelled(true) => Obs::CancelTrue,
-                TransferAnswer::Cancelled(false) => Obs::CancelFalse,
-                TransferAnswer::Err(Fault::InFlight) => Obs::CancelInFlight,
-                TransferAnswer::Err(Fault::NotFound) => Obs::NotFound,
-                TransferAnswer::Err(Fault::NoSession) => Obs::NoSession,
-                TransferAnswer::Err(other) => panic!("a fault outside the table: {other:?}"),
-            }),
-            TransferEffect::Shows { shown: t::Shown::Uploading { progress }, .. } if matches!(input, In::StepOk { .. }) => obs.push(if progress == 100 { Obs::Progress100 } else { Obs::Progress }),
-            TransferEffect::Shows { shown, .. } => obs.push(Obs::Shows(shown_of(&shown))),
-            TransferEffect::Refused { .. } | TransferEffect::EndJob { .. } => {}
-            TransferEffect::ScheduleJob { .. } => eff.push(Eff::RoundNeeded),
-            TransferEffect::Drained => eff.push(Eff::Drained),
         }
+        for input in take(&self.store) {
+            if let StoreInput::Commit(batch) = input {
+                self.unanswered.push(batch.id);
+                out.batches.push(batch);
+            }
+        }
+        out.outbox = take(&self.outbox);
+        out.rounds = take(&self.rounds);
+        out
     }
-    if scheduled {
-        eff.push(if matches!(input, In::Online(true)) { Eff::ScheduleExpire } else { Eff::ScheduleBackoff });
+
+    pub fn post(&mut self, input: TransferInput) -> Out {
+        self.det.post(Address::<Transfers>::new(TRANSFER_AT), EpochStamp::Epoch(EPOCH), input);
+        self.det.run_until_quiet(10_000).expect("the owner is quiet");
+        self.collect()
     }
-    (obs, eff)
-}
 
-/// The part of the reference that the owner shows: `SlotFreed` and `StartInOrder` are inside the owner, progress is the `Shows` value.
-pub(super) fn visible(step: &Step) -> (Vec<Obs>, Vec<Eff>) {
-    let obs = step.obs.iter().copied().filter(|obs| !matches!(obs, Obs::Progress | Obs::Progress100 | Obs::Interrupted | Obs::RowWithServerFile)).collect();
-    let eff = step.eff.iter().copied().filter(|eff| !matches!(eff, Eff::SlotFreed | Eff::StartInOrder)).collect();
-    (obs, eff)
-}
+    pub fn state(&self) -> &TransferState { self.det.state(Address::<Spy<Transfers>>::new(TRANSFER_AT)).map(|spy: &SpyState<Transfers>| &spy.inner).expect("the owner state") }
 
-pub(super) fn sorted(mut obs: Vec<Obs>) -> Vec<String> {
-    let mut named: Vec<String> = obs.drain(..).map(|obs| format!("{obs:?}")).collect();
-    named.sort();
-    named
-}
+    pub fn t(&self, id: TransferId) -> &Transfer { &self.state().transfers[&id] }
 
-pub(super) fn row_check(state: St, ctx: Ctx, input: In) {
-    let want = step_of(state, &ctx, input).unwrap_or_else(|| panic!("no table cell for {state:?} x {input:?}"));
-    let mut twin = reach(state, &ctx);
-    let before = twin.det.trace().len();
-    let effects = input_of(&mut twin, &ctx, input);
-    let scheduled = twin.det.trace()[before..].iter().any(|entry| entry.effects.contains("Schedule {") || entry.effects.contains("ScheduleRetry"));
-    let (mut obs, mut eff) = translate(input, effects, scheduled);
-    obs.retain(|obs| !matches!(obs, Obs::Progress | Obs::Progress100));
-    let (want_obs, want_eff) = visible(&want);
-    let mut next = twin.state().stage_of(KEY).map_or(want.next, stage_of);
-    // `Self SlotFreed` runs inside the owner: a Ready transfer that starts at once shows `Uploading` and a step.
-    let internal_start = want.eff.contains(&Eff::SlotFreed) || want.eff.contains(&Eff::StartInOrder);
-    if want.next == St::Ready && next == St::Uploading && internal_start {
-        next = St::Ready;
-        if let Some(at) = obs.iter().position(|obs| *obs == Obs::Shows(Shown::Uploading)) { obs.remove(at); }
-        if let Some(at) = eff.iter().position(|eff| *eff == Eff::TransportStep) { eff.remove(at); }
+    pub fn stage(&self, id: TransferId) -> TransferStage { self.t(id).stage }
+
+    pub fn reply(&mut self) -> ReplyId {
+        self.reply += 1;
+        self.reply
     }
-    assert_eq!(next, want.next, "{state:?} x {input:?}: the next state");
-    assert_eq!(sorted(obs), sorted(want_obs), "{state:?} x {input:?}: the replies and the values");
-    assert_eq!(eff, want_eff, "{state:?} x {input:?}: the effects");
+
+    pub fn attempt(&self, id: TransferId) -> u64 { self.t(id).attempt_id }
+
+    pub fn answer(&mut self, reply: impl FnOnce(BatchId) -> TransferInput) -> Out {
+        let batch = self.unanswered.remove(0);
+        self.post(reply(batch))
+    }
+
+    /// `Committed` for the oldest batch the Store has not answered.
+    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Default::default() })) }
+
+    pub fn reject(&mut self, reason: RejectReason) -> Out { self.answer(|batch| TransferInput::Rejected(Rejected { batch, reason })) }
+
+    pub fn pending_batches(&self) -> usize { self.unanswered.len() }
+
+    pub fn accepting(&mut self, key: &str, parts: u32) -> (TransferId, ReplyId, Out) {
+        let reply = self.reply();
+        let out = self.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply, now: Time(0) });
+        let id = self.state().open_id(key).expect("an accepting transfer");
+        (id, reply, out)
+    }
+
+    pub fn copying(&mut self, key: &str, parts: u32) -> TransferId {
+        let (id, ..) = self.accepting(key, parts);
+        self.commit();
+        assert_eq!(self.stage(id), TransferStage::Copying);
+        id
+    }
+
+    pub fn copy_done(&mut self, id: TransferId) -> Out {
+        let attempt_id = self.attempt(id);
+        self.post(TransferInput::CopyDone { transfer_id: id, attempt_id, size: 10, sha256: "h".into(), place: Location::Directory })
+    }
+
+    pub fn copy_failed(&mut self, id: TransferId) -> Out {
+        let attempt_id = self.attempt(id);
+        self.post(TransferInput::CopyFailed { transfer_id: id, attempt_id, error: "unreadable".into() })
+    }
+
+    pub fn persisting_copy(&mut self, key: &str, parts: u32) -> TransferId {
+        let id = self.copying(key, parts);
+        self.copy_done(id);
+        assert_eq!(self.stage(id), TransferStage::PersistingCopy);
+        id
+    }
+
+    /// `Ready` (offline) or `Uploading` (online) after the common write of the acceptance.
+    pub fn accepted(&mut self, key: &str, parts: u32) -> TransferId {
+        let id = self.persisting_copy(key, parts);
+        self.commit();
+        id
+    }
+
+    pub fn step_ok(&mut self, id: TransferId, part: u32, upload_id: Option<&str>) -> Out {
+        let attempt_id = self.attempt(id);
+        self.post(TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(part), upload_id: upload_id.map(str::to_string), etag: Some(format!("e{part}")) })
+    }
+
+    pub fn step_error(&mut self, id: TransferId, temporary: bool) -> Out {
+        let attempt_id = self.attempt(id);
+        self.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary })
+    }
+
+    pub fn completed(&mut self, id: TransferId) -> Out {
+        let attempt_id = self.attempt(id);
+        self.post(TransferInput::Completed { transfer_id: id, attempt_id, signed_id: Some("signed".into()) })
+    }
+
+    pub fn complete_error(&mut self, id: TransferId, temporary: bool) -> Out {
+        let attempt_id = self.attempt(id);
+        self.post(TransferInput::CompleteError { transfer_id: id, attempt_id, temporary })
+    }
+
+    pub fn tick_retry(&mut self, id: TransferId) -> Out {
+        let attempt_id = self.attempt(id);
+        self.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id } })
+    }
+
+    pub fn online(&mut self, on: bool) -> Out { self.post(TransferInput::Online(Online(on))) }
+
+    pub fn cancel(&mut self, key: &str) -> (ReplyId, Out) {
+        let reply = self.reply();
+        (reply, self.post(TransferInput::Cancel { key: key.into(), reply }))
+    }
+
+    pub fn discard(&mut self, key: &str) -> (ReplyId, Out) {
+        let reply = self.reply();
+        (reply, self.post(TransferInput::Discard { key: key.into(), reply }))
+    }
+
+    pub fn retry(&mut self, key: &str, source: Option<Source>) -> (ReplyId, Out) {
+        let reply = self.reply();
+        (reply, self.post(TransferInput::Retry { key: key.into(), source, reply }))
+    }
+
+    pub fn outcome(&mut self, id: TransferId, cycle_id: u64) -> (ReplyId, Out) {
+        let reply = self.reply();
+        let receipt = Receipt { epoch: EPOCH, op_id: id, cycle_id, revision: 0 };
+        (reply, self.post(TransferInput::Outcome { receipt, reply }))
+    }
+
+    pub fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome) -> Out { self.post(TransferInput::MutationOutcome { key: key.into(), outcome }) }
+
+    pub fn end_epoch(&mut self) -> Out {
+        self.det.end_epoch(EPOCH, Cause::SessionReset);
+        self.det.run_until_quiet(10_000).expect("the owner is quiet");
+        self.collect()
+    }
+
+    pub fn close(&mut self) -> Out {
+        self.det.close();
+        self.det.run_until_quiet(10_000).expect("the owner is quiet");
+        self.collect()
+    }
+
+    /// `Uploading` with a multipart upload: `parts` parts, the first step done.
+    pub fn uploading(&mut self, key: &str, parts: u32) -> TransferId {
+        let id = self.accepted(key, parts);
+        assert_eq!(self.stage(id), TransferStage::Uploading);
+        id
+    }
+
+    /// `PersistingFailure` after a permanent error of the first step.
+    pub fn persisting_failure(&mut self, key: &str) -> TransferId {
+        let id = self.uploading(key, 2);
+        self.step_error(id, false);
+        assert_eq!(self.stage(id), TransferStage::PersistingFailure);
+        id
+    }
+
+    pub fn failed(&mut self, key: &str) -> TransferId {
+        let id = self.persisting_failure(key);
+        self.commit();
+        assert_eq!(self.stage(id), TransferStage::Failed);
+        id
+    }
+
+    /// `Completing`: the only part is confirmed and written.
+    pub fn completing(&mut self, key: &str) -> TransferId {
+        let id = self.uploading(key, 1);
+        self.step_ok(id, 1, None);
+        self.commit();
+        assert_eq!(self.stage(id), TransferStage::Completing);
+        id
+    }
+
+    pub fn persisting_complete(&mut self, key: &str) -> TransferId {
+        let id = self.completing(key);
+        self.completed(id);
+        assert_eq!(self.stage(id), TransferStage::PersistingComplete);
+        id
+    }
+
+    pub fn mutating(&mut self, key: &str) -> TransferId {
+        let id = self.persisting_complete(key);
+        self.commit();
+        assert_eq!(self.stage(id), TransferStage::Mutating);
+        id
+    }
+
+    /// A `Ready` transfer behind a full slot: the network is up, the slot is held by another transfer.
+    pub fn ready_behind(&mut self, key: &str) -> TransferId {
+        self.accepted("busy:r:upload", 2);
+        let id = self.accepted(key, 2);
+        assert_eq!(self.stage(id), TransferStage::Ready);
+        id
+    }
+
+    pub fn next_step(&self, id: TransferId) -> NextStep { self.t(id).next_step }
+
+    pub fn fault(out: &Out, reply: ReplyId) -> Option<Fault> { out.replies(reply).into_iter().find_map(|answer| if let TransferAnswer::Err(fault) = answer { Some(fault) } else { None }) }
+
+    /// The effects of the owner in a trace as a count of its outputs (a quiet step gives nothing).
+    pub fn quiet(out: &Out) -> bool { out.runs.is_empty() && out.batches.is_empty() && out.outbox.is_empty() && out.rounds.is_empty() && out.timers == 0 }
 }
-
-pub(super) fn ready() -> Ctx { Ctx::ready() }
-
-pub(super) fn multipart() -> Ctx { Ctx { has_upload_id: true, ..Ctx::ready() } }
-
-pub(super) fn batch() -> Ctx { Ctx { kind: Kind::Batch, ..Ctx::ready() } }
-
-pub(super) fn offline() -> Ctx { Ctx { online: false, ..Ctx::ready() } }
-
-pub(super) fn queued_behind() -> Ctx { Ctx { first_to_start: false, ..Ctx::ready() } }
-
-pub(super) fn all_parts() -> Ctx { Ctx { parts_all_confirmed: true, ..multipart() } }
-
-pub(super) fn stray() -> Ctx { Ctx { stray_step: true, ..Ctx::ready() } }

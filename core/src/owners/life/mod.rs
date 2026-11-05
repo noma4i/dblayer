@@ -25,7 +25,9 @@ use super::network::{Network, NetworkInput, NetworkState};
 use super::write::outbox::{Outbox, OutboxAnswer, OutboxInput, OutboxPeers, OutboxState};
 use super::write::outbox_executor::OutboxExecutor;
 use super::write::transfer::{TransferAnswer, TransferInput, TransferPeers, TransferState, Transfers};
-use super::write::transfer_executor::{TransferExecutor, TransferPort};
+use super::write::rounds::{Rounds, RoundsInput, RoundsState};
+use super::write::rounds_executor::RoundsExecutor;
+use super::write::transfer_executor::{LifeSignal, TransferExecutor, TransferPort};
 use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::db::Db;
 use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
@@ -79,6 +81,7 @@ pub(crate) struct Addresses {
     /// Installed with the session: an operation needs the sequence of the session.
     pub outbox: Option<Address<Outbox>>,
     pub transfer: Option<Address<Transfers>>,
+    pub rounds: Option<Address<Rounds>>,
     pub windows: Option<Address<super::read::windows::Windows>>,
     pub deliveries: Option<Address<super::read::deliveries::Deliveries>>,
     pub feed: Option<Address<super::read::feed::Feed>>,
@@ -311,6 +314,10 @@ impl Wiring {
         }
     }
 
+    pub fn to_rounds(&self, input: RoundsInput) {
+        if let Some(Addresses { rounds: Some(rounds), .. }) = self.addresses() { self.handle.post(rounds, EpochStamp::Control, input); }
+    }
+
     pub fn to_transfer(&self, input: TransferInput) { self.to_transfer_at(EpochStamp::Control, input); }
 
     pub fn to_transfer_at(&self, stamp: EpochStamp, input: TransferInput) {
@@ -368,13 +375,13 @@ fn restore_participants(session: bool) -> Vec<Peer> {
 fn absent(session: bool, transfer: bool) -> Vec<Peer> {
     let mut peers: Vec<Peer> = Vec::new();
     peers.push(Peer::LocalWrites);
-    peers.push(Peer::Rounds);
     if !session {
         peers.push(Peer::Session);
         peers.push(Peer::Outbox);
     }
     if !transfer {
         peers.push(Peer::Transfer);
+        peers.push(Peer::Rounds);
     }
     peers
 }
@@ -399,6 +406,7 @@ impl Life {
             (address, restored)
         });
         let transfer_at = session_address.as_ref().zip(ports.transfer.as_ref()).map(|((session, _), _)| Address::<Transfers>::new(session.index() + 2));
+        let rounds_at = transfer_at.map(|at| Address::<Rounds>::new(at.index() + 1));
         let outbox = session_address.as_ref().map(|(session, _)| {
             let peers = OutboxPeers { store, session: *session, transfer: transfer_at };
             let (settle_wiring, drained_wiring) = (wiring.clone(), wiring.clone());
@@ -411,7 +419,7 @@ impl Life {
         });
         let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref()) {
             (Some(outbox), Some(port), Some(transport)) => {
-                let (settle_wiring, drained_wiring, admit_db, admit_wiring) = (wiring.clone(), wiring.clone(), ports.db.clone(), wiring.clone());
+                let (settle_wiring, drained_wiring, admit_db, admit_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), ports.db.clone(), wiring.clone(), wiring.clone());
                 let wire = super::write::wire::Wire {
                     transport: transport.clone(),
                     admit: Arc::new(move || match admit_db.admit() {
@@ -427,16 +435,25 @@ impl Life {
                     wire,
                     port.codec.clone(),
                     ports.db.shared.files.clone(),
-                    port.jobs.clone(),
                     Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Transfer(answer)); }),
                     port.shows.clone(),
                     Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
+                    Arc::new(move |signal| match signal {
+                        LifeSignal::Started(epoch) => signal_wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch }),
+                        LifeSignal::SnapshotRequest(epoch) => signal_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch }),
+                        LifeSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Transfer, epoch }),
+                    }),
                 );
-                let address = builder.add::<Transfers>("transfer", TransferState::new(0, port.slots, TransferPeers { store, outbox }), executor);
+                let address = builder.add::<Transfers>("transfer", TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at }), executor);
                 if Some(address.index()) != transfer_at.map(|at| at.index()) {
                     return Err(LifeError::Storage("the address of Transfer is not the one Outbox was given".into()));
                 }
-                Some(address)
+                let rounds_drained = wiring.clone();
+                let rounds = builder.add::<Rounds>("rounds", RoundsState::new(address), RoundsExecutor::new(port.jobs.clone(), Arc::new(move |drained| rounds_drained.to_lifecycle(LifecycleInput::Drained(drained)))));
+                if Some(rounds.index()) != rounds_at.map(|at| at.index()) {
+                    return Err(LifeError::Storage("the address of Rounds is not the one Transfer was given".into()));
+                }
+                Some((address, rounds))
             }
             _ => None,
         };
@@ -453,9 +470,9 @@ impl Life {
                 if let (NetworkEvent::Foreground(seq), Some(wiring)) = (event, weak.upgrade()) { wiring.to_session(SessionInput::Foreground { seq }); }
             });
         }
-        let last = [Some(calls.index()), session_address.as_ref().map(|(address, _)| address.index()), outbox.map(|address| address.index()), transfer.map(|address| address.index())].into_iter().flatten().max().unwrap_or(0);
+        let last = [Some(calls.index()), session_address.as_ref().map(|(address, _)| address.index()), outbox.map(|address| address.index()), transfer.map(|(address, _)| address.index())].into_iter().flatten().max().unwrap_or(0);
         let read = read::add(&mut builder, &wiring, &ports, store, last + 1);
-        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer, windows: None, deliveries: None, feed: None }.with_read(&read));
+        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read));
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, restored)) = session_address {
             *wiring.session_open.lock().unwrap_or_else(PoisonError::into_inner) = Some(SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });

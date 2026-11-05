@@ -38,7 +38,7 @@ impl Db {
             let connection = reader.connection();
             let pending = crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?;
             let answers = crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
-            let uploads = super::queue_write::upload_rows(connection).map_err(crate::store::StoreError::from)?;
+            let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
             Ok((read_outbox(reader)?, pending, uploads, answers))
         })?;
         let ops = self.stored_intents(entries, pending.clone(), answers);

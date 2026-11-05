@@ -1,50 +1,100 @@
-//! Owner `Transfer`: file upload steps and the background round.
-//! One instance per epoch with an identity. The types are in `transfer_types`, the rows of the table for the steps and the rounds in `transfer_flow`.
+//! Owner `Transfer`: file upload steps. One instance per epoch with an identity.
+//! The types are in `transfer_types`, the rows of the table in `transfer_{open,accept,steps,end}`; this file holds the helpers of the rows and the dispatch of the inputs.
 
 use std::collections::BTreeMap;
 
-use super::outbox::{Fault, NewOp, Origin, OutboxInput, Receipt};
-use crate::files::Location;
-use crate::owners::contract::ReplyId;
-use crate::owners::contract::{BatchAuthor, Drained, EpochEnded, Online, RejectReason, Rejected};
-use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
+pub use super::transfer_types::*;
+use super::outbox::{Fault, NewOp, Origin, OutboxInput, OutboxOutcome, Receipt};
+use super::outbox_types::Phase;
+use super::rounds::RoundsInput;
+use crate::owners::contract::{BatchAuthor, Drained, EpochEnded, Online, RejectReason, ReplyId};
+use crate::owners::store::{StoreBatch, StoreInput, StoreOp, UploadKind};
 use crate::pacing::RetryPolicy;
 use crate::runtime::{Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
-use crate::transport::NetworkPurpose;
-pub use super::transfer_types::*;
 
 impl TransferState {
-    pub(super) fn shows(fx: &mut Fx, key: &str, shown: Shown) { run(fx, TransferEffect::Shows { key: key.into(), shown }); }
+    pub(super) fn shown_now(&self, id: TransferId) -> Shown {
+        let Some(transfer) = self.transfers.get(&id) else { return Shown::Gone };
+        let progress = transfer.confirmed_parts * 100 / transfer.source.parts.max(1);
+        match transfer.stage {
+            TransferStage::Accepting | TransferStage::Copying | TransferStage::CopyReady => Shown::Copying,
+            TransferStage::Failed => Shown::Failed { error: transfer.error.clone().unwrap_or_default() },
+            TransferStage::Done => Shown::Gone,
+            TransferStage::Completing | TransferStage::PersistingComplete | TransferStage::Mutating => Shown::Uploading { progress: 100 },
+            TransferStage::Uploading | TransferStage::PersistingPart => Shown::Uploading { progress },
+            _ => Shown::Queued,
+        }
+    }
 
-    pub(super) fn store(&mut self, key: &str, kind: StoreKind, fx: &mut Fx) {
+    /// `uploads[action]` and every `Blob` stream of the transfer get `shown`.
+    pub(super) fn show(&self, id: TransferId, shown: Shown, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get(&id) else { return };
+        run(fx, TransferEffect::Shows { key: transfer.key.clone(), shown: shown.clone() });
+        for stream_id in self.subscribers.get(&id).into_iter().flatten() {
+            run(fx, TransferEffect::Status { stream_id: *stream_id, transfer_id: id, shown: shown.clone() });
+        }
+    }
+
+    pub(super) fn set(&mut self, id: TransferId, stage: TransferStage) {
+        if let Some(transfer) = self.transfers.get_mut(&id) {
+            transfer.stage = stage;
+        }
+    }
+
+    /// One Store batch for `ids`: a row of `sync_upload` per transfer, or its removal.
+    pub(super) fn store(&mut self, ids: &[TransferId], kind: StoreKind, fx: &mut Fx) {
+        let ops: Vec<StoreOp> = ids
+            .iter()
+            .filter_map(|id| self.transfers.get(id))
+            .map(|transfer| if kind == StoreKind::Removed { StoreOp::RemoveUpload { key: transfer.key.clone() } } else { StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind(kind) } })
+            .collect();
         let id = self.next_batch;
         self.next_batch += 1;
-        let ops = match (kind, self.transfers.get(key)) {
-            (StoreKind::Removed, _) | (_, None) => vec![StoreOp::RemoveUpload { key: key.into() }],
-            (kind, Some(transfer)) => vec![StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind(kind) }],
-        };
-        let intents = u64::from(kind == StoreKind::SyncUpload);
-        self.batches.insert(id, key.into());
+        self.pending.insert(id, Pending { ids: ids.to_vec() });
+        let intents = if kind == StoreKind::SyncUpload { ids.len() as u64 } else { 0 };
         let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
-    /// `Rejected(NoSession | Closed)` ends the transfer as interrupted, `Rejected(Storage)` leaves it failed with the error shown. Nothing is written again.
-    pub(super) fn store_rejected(&mut self, rejected: Rejected, fx: &mut Fx) {
-        let Some(key) = self.batches.remove(&rejected.batch) else { return };
-        let Some(stage) = self.stage_of(&key) else { return };
-        if stage == TransferStage::Done {
-            return;
+    pub(super) fn rounds_needed(&self, ids: Vec<TransferId>, fx: &mut Fx) {
+        if let (Some(rounds), false) = (self.peers.rounds, ids.is_empty()) {
+            fx.push(Effect::Send(Outbound::new(rounds, RoundsInput::Needed { epoch: self.epoch, ids })));
         }
-        match rejected.reason {
-            RejectReason::Storage(error) => {
-                self.set(&key, TransferStage::Failed);
-                if let Some(transfer) = self.transfers.get_mut(&key) {
-                    transfer.error = Some(error.clone());
-                }
-                Self::shows(fx, &key, Shown::Failed { error });
+    }
+
+    pub(super) fn rounds_idle(&self, id: TransferId, fx: &mut Fx) {
+        if let Some(rounds) = self.peers.rounds {
+            fx.push(Effect::Send(Outbound::new(rounds, RoundsInput::Idle { epoch: self.epoch, transfer_id: id })));
+        }
+    }
+
+    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: 0 } }
+
+    /// The immutable outcome of the current cycle: every waiter of the cycle gets it once.
+    pub(super) fn settle(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let cycle = transfer.cycle_id;
+        transfer.outcomes.entry(cycle).or_insert_with(|| outcome.clone());
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut transfer.outcome_waiters).into_iter().partition(|(waits, _)| *waits == cycle);
+        transfer.outcome_waiters = rest;
+        let outcome = transfer.outcomes[&cycle].clone();
+        for (_, waiter) in mine {
+            reply(fx, waiter, TransferAnswer::Outcome(outcome.clone()));
+        }
+    }
+
+    /// The transfer ends: `Done`, `uploads[action]` gone, the copy file goes by `DeleteFile`.
+    pub(super) fn finish(&mut self, id: TransferId, fx: &mut Fx) {
+        self.show(id, Shown::Gone, fx);
+        self.set(id, TransferStage::Done);
+        self.rounds_idle(id, fx);
+    }
+
+    pub(super) fn delete_copy(&self, id: TransferId, fx: &mut Fx) {
+        if let Some(transfer) = self.transfers.get(&id) {
+            if transfer.place != Some(crate::files::Location::Table) {
+                run(fx, TransferEffect::DeleteFile { path: file_id(&transfer.key) });
             }
-            RejectReason::NoSession | RejectReason::Closed | RejectReason::Invalid | RejectReason::StaleGeneration { .. } => self.interrupt(&key, fx),
         }
     }
 
@@ -53,110 +103,200 @@ impl TransferState {
         ScheduleId(self.next_timer)
     }
 
-    pub(super) fn upload_id_of(&self, key: &str) -> Option<String> { self.transfers.get(key).and_then(|transfer| transfer.upload_id.clone()) }
-
-    pub(super) fn active(&self) -> u32 { self.transfers.values().filter(|transfer| matches!(transfer.stage, TransferStage::Uploading | TransferStage::Completing)).count() as u32 }
-
-    pub(super) fn progress(transfer: &Transfer) -> u32 { transfer.confirmed_parts * 100 / transfer.source.parts.max(1) }
-
-    pub(super) fn set(&mut self, key: &str, stage: TransferStage) {
-        if let Some(transfer) = self.transfers.get_mut(key) {
-            transfer.stage = stage;
-        }
-    }
-
-    pub(super) fn step_effect(transfer: &Transfer) -> TransferEffect { TransferEffect::Step { key: transfer.key.clone(), part: Some(transfer.confirmed_parts + 1), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone() } }
-
-    /// Ready transfers start by `(seq, position)` while a slot is free and the network is up.
-    pub(super) fn start_in_order(&mut self, fx: &mut Fx) {
-        while self.online && self.active() < self.slots {
-            let next = self.transfers.values().filter(|transfer| transfer.stage == TransferStage::Ready).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.key.clone());
-            let Some(key) = next else { return };
-            let Some(transfer) = self.transfers.get_mut(&key) else { return };
-            transfer.stage = TransferStage::Uploading;
-            transfer.attempts = 0;
-            let progress = Self::progress(transfer);
-            let step = Self::step_effect(transfer);
-            Self::shows(fx, &key, Shown::Uploading { progress });
-            run(fx, step);
-        }
-    }
-
     pub(super) fn schedule_expire(&mut self, fx: &mut Fx) {
         let id = self.timer();
         fx.push(Effect::Schedule { id, after: std::time::Duration::ZERO, input: TransferInput::Tick { now: self.now, kind: TransferTick::Expire } });
     }
 
-    pub(super) fn end_transfer(&mut self, key: &str, fx: &mut Fx) {
-        self.set(key, TransferStage::Done);
-        Self::shows(fx, key, Shown::Gone);
-    }
-
-    /// The copy of `key` goes: the file of the directory by `DeleteFile`, the inline bytes (and with `rows` the row of `sync_upload` and the operation) by a Store batch.
-    pub(super) fn drop_file(&mut self, key: &str, rows: bool, fx: &mut Fx) {
-        let place = self.transfers.get(key).and_then(|transfer| transfer.place);
-        if place != Some(Location::Table) {
-            run(fx, TransferEffect::DeleteFile { path: file_id(key) });
-        }
-        if rows || place == Some(Location::Table) {
-            self.store(key, StoreKind::Removed, fx);
-        }
-    }
-
-    pub(super) fn retry_timer(&mut self, key: &str, attempt: u32, fx: &mut Fx) {
-        let id = ScheduleId(RETRY_TIMER + self.next_timer);
-        self.next_timer += 1;
+    pub(super) fn schedule_retry(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.waiting_retry = true;
+        transfer.retry_due = false;
+        transfer.in_flight = false;
+        let attempt_id = self.next_attempt;
+        self.next_attempt += 1;
+        let attempt = transfer.attempts;
+        transfer.attempt_id = attempt_id;
         let after = RetryPolicy::Upload.backoff().delay(attempt.saturating_sub(1));
-        fx.push(Effect::Schedule { id, after, input: TransferInput::Tick { now: self.now, kind: TransferTick::Retry { key: key.into() } } });
+        let timer = ScheduleId(RETRY_TIMER + attempt_id);
+        fx.push(Effect::Schedule { id: timer, after, input: TransferInput::Tick { now: self.now, kind: TransferTick::Retry { transfer_id: id, attempt_id } } });
+    }
+
+    /// Everything that waits for the call answers `answer`; `Interrupted` for the end of the epoch and for the close.
+    pub(super) fn interrupt(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let fault = |fault: Fault| TransferAnswer::Err(fault);
+        let mut replies: Vec<ReplyId> = Vec::new();
+        replies.extend(transfer.accept_reply.take());
+        replies.extend(transfer.cancel_reply.take().map(|(reply, _)| reply));
+        replies.extend(transfer.retry_reply.take());
+        replies.append(&mut transfer.discard_waiters);
+        let in_flight = std::mem::replace(&mut transfer.in_flight, false);
+        let grouped = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
+        for reply_id in replies.into_iter().chain(grouped) {
+            reply(fx, reply_id, fault(Fault::Interrupted));
+        }
+        if in_flight {
+            run(fx, TransferEffect::CancelStep { transfer_id: id });
+        }
+        self.settle(id, OutboxOutcome::Interrupted, fx);
+        self.set(id, TransferStage::Done);
+        self.show(id, Shown::Gone, fx);
+    }
+
+    pub(super) fn maybe_drained(&mut self, fx: &mut Fx) {
+        let accepting = self.transfers.values().any(|transfer| transfer.stage == TransferStage::Accepting);
+        if self.closing && !accepting && !std::mem::replace(&mut self.drained, true) {
+            run(fx, TransferEffect::Drained(Drained { owner: "transfer" }));
+        }
+    }
+
+    fn committed(&mut self, batch: crate::owners::contract::BatchId, fx: &mut Fx) {
+        let Some(pending) = self.pending.remove(&batch) else { return };
+        let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
+        match stage {
+            Some(TransferStage::Accepting) => self.accepting_committed(&pending.ids, fx),
+            Some(TransferStage::PersistingCopy) => self.copy_committed(&pending.ids, fx),
+            Some(TransferStage::PersistingPart) => self.part_committed(pending.ids[0], fx),
+            Some(TransferStage::PersistingComplete) => self.complete_committed(pending.ids[0], fx),
+            Some(TransferStage::PersistingRetry) => self.retry_committed(pending.ids[0], fx),
+            Some(TransferStage::PersistingFailure) => self.failure_committed(pending.ids[0], fx),
+            Some(TransferStage::Removing) => self.removing_committed(&pending.ids, fx),
+            _ => {}
+        }
+        self.maybe_drained(fx);
+    }
+
+    fn rejected(&mut self, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
+        let Some(pending) = self.pending.remove(&rejected.batch) else { return };
+        let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
+        let interrupts = !matches!(rejected.reason, RejectReason::Storage(_));
+        match (stage, interrupts) {
+            (Some(TransferStage::Accepting), _) => self.accepting_rejected(&pending.ids, rejected.reason, fx),
+            (Some(TransferStage::Removing), _) => self.removing_rejected(&pending.ids, rejected.reason, fx),
+            (Some(TransferStage::PersistingRetry), false) => self.retry_rejected(pending.ids[0], rejected.reason, fx),
+            (Some(TransferStage::PersistingFailure), false) => self.failure_rejected(pending.ids[0], fx),
+            (Some(TransferStage::PersistingCopy), false) => self.copy_rejected(&pending.ids, fx),
+            (Some(TransferStage::PersistingPart | TransferStage::PersistingComplete), false) => self.persist_failed(pending.ids[0], rejected.reason, fx),
+            (Some(_), true) => {
+                for id in pending.ids {
+                    self.interrupt(id, fx);
+                }
+            }
+            _ => {}
+        }
+        self.maybe_drained(fx);
+    }
+
+    /// The prologue of `Online` and `PowerSaving`: the fields first, then the row.
+    fn network_changed(&mut self, online: Option<bool>, saving: Option<bool>, fx: &mut Fx) {
+        let was_online = self.online;
+        if online.is_some() {
+            self.online = online;
+        }
+        if let Some(saving) = saving {
+            self.saving = saving;
+        }
+        self.leave_network(fx);
+        if online == Some(true) && was_online != Some(true) {
+            self.expire_failed(fx);
+        }
+        self.start_in_order(fx);
+    }
+
+    fn handle(&mut self, input: TransferInput, fx: &mut Fx) {
+        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. }) = (&self.queue_error, &input) {
+            return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
+        }
+        match input {
+            TransferInput::Accept { epoch, item, reply, now } => self.accept(epoch, vec![*item], false, reply, now, fx),
+            TransferInput::AcceptBatch { epoch, items, reply, now } => self.accept(epoch, items, true, reply, now, fx),
+            TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } => {}
+            TransferInput::RegisterOperations { declarations } => self.register(declarations, fx),
+            TransferInput::RestoreReady { epoch } => self.restore_ready(epoch, fx),
+            TransferInput::RoundStatus { epoch, transfer_ids, refused } => self.round_status(epoch, &transfer_ids, refused, fx),
+            TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place } => self.copy_done(transfer_id, attempt_id, size, sha256, place, fx),
+            TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
+            TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
+            TransferInput::StepError { transfer_id, attempt_id, temporary } => self.step_error(transfer_id, attempt_id, temporary, fx),
+            TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(transfer_id, attempt_id, signed_id, fx),
+            TransferInput::CompleteError { transfer_id, attempt_id, temporary } => self.complete_error(transfer_id, attempt_id, temporary, fx),
+            TransferInput::MutationOutcome { key, outcome } => self.mutation_outcome(&key, outcome, fx),
+            TransferInput::DiscardOutcome { key, result } => self.discard_outcome(&key, result, fx),
+            TransferInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
+            TransferInput::InterestPlus { transfer_id, stream_id } => self.interest_plus(transfer_id, stream_id, fx),
+            TransferInput::InterestMinus { transfer_id, stream_id } => self.interest_minus(transfer_id, stream_id),
+            TransferInput::Committed(committed) => self.committed(committed.batch, fx),
+            TransferInput::Rejected(rejected) => self.rejected(rejected, fx),
+            TransferInput::Cancel { key, reply } => self.cancel(&key, reply, true, fx),
+            TransferInput::Discard { key, reply } => self.cancel(&key, reply, false, fx),
+            TransferInput::Retry { key, source, reply } => self.retry(&key, source, reply, fx),
+            TransferInput::SlotFreed => self.start_in_order(fx),
+            TransferInput::Online(Online(on)) => self.network_changed(Some(on), None, fx),
+            TransferInput::PowerSaving(saving) => self.network_changed(None, Some(saving), fx),
+            TransferInput::EpochStarted(started) => self.epoch = started.epoch,
+            TransferInput::Tick { now, kind } => self.tick(now, kind, fx),
+            TransferInput::EpochEnded(_) => self.epoch_ended(fx),
+            TransferInput::Closing => self.close(fx),
+            TransferInput::Clock(now) => self.now = self.now.max(now),
+        }
+    }
+
+    /// `Restoring`: the calls on the keys of the base wait for `Restored`, the rest of the table works as in the other phases.
+    fn restoring(&mut self, input: TransferInput, fx: &mut Fx) {
+        match input {
+            TransferInput::Restored { uploads, outcomes } if !self.ended => self.restored(uploads, outcomes, fx),
+            TransferInput::RestoreFailed { error } if !self.ended => {
+                self.queue_error = Some(error);
+                self.phase = Phase::Classified;
+                run(fx, TransferEffect::RestoreClassified { epoch: self.epoch });
+                self.replay_held(fx);
+            }
+            held @ (TransferInput::Accept { .. } | TransferInput::AcceptBatch { .. }) if Self::in_epoch(&held, self.epoch) => self.held.push(held),
+            held @ (TransferInput::Cancel { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::Outcome { .. }) => self.held.push(held),
+            TransferInput::EpochStarted(started) => {
+                self.epoch = started.epoch;
+                run(fx, TransferEffect::Started { epoch: started.epoch });
+                run(fx, TransferEffect::SnapshotRequest { epoch: started.epoch });
+            }
+            TransferInput::Closing => {
+                self.answer_held(fx);
+                self.close(fx);
+            }
+            TransferInput::EpochEnded(_) => {
+                self.ended = true;
+                self.answer_held(fx);
+                self.epoch_ended(fx);
+            }
+            other => self.handle(other, fx),
+        }
+    }
+
+    fn in_epoch(input: &TransferInput, epoch: Epoch) -> bool { matches!(input, TransferInput::Accept { epoch: found, .. } | TransferInput::AcceptBatch { epoch: found, .. } if *found == epoch) }
+
+    pub(super) fn replay_held(&mut self, fx: &mut Fx) {
+        for input in std::mem::take(&mut self.held) {
+            self.handle(input, fx);
+        }
+    }
+
+    /// Every held call gets exactly one answer.
+    pub(super) fn answer_held(&mut self, fx: &mut Fx) {
+        for input in std::mem::take(&mut self.held) {
+            match input {
+                TransferInput::Accept { reply: id, .. } | TransferInput::AcceptBatch { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Retry { reply: id, .. } | TransferInput::Discard { reply: id, .. } => reply(fx, id, TransferAnswer::Err(Fault::Interrupted)),
+                TransferInput::Outcome { reply: id, .. } => reply(fx, id, TransferAnswer::Outcome(OutboxOutcome::Interrupted)),
+                _ => {}
+            }
+        }
     }
 
     /// The final mutation goes to Outbox as an operation of the origin `Transfer{key}`.
-    pub(super) fn submit_mutation(&mut self, key: &str, fx: &mut Fx) {
-        let Some(transfer) = self.transfers.get(key) else { return };
-        let op = NewOp { origin: Origin::Transfer(key.into()), ..transfer.mutation.clone() };
+    pub(super) fn submit_mutation(&self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get(&id) else { return };
+        let op = NewOp { origin: Origin::Transfer(transfer.key.clone()), ..transfer.mutation.clone() };
         fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Submit { epoch: self.epoch, op, reply: NO_REPLY })));
     }
-
-    pub(super) fn round_needed(&mut self, epoch: Epoch, fx: &mut Fx) {
-        match self.round {
-            RoundState::None if epoch == self.epoch => {
-                self.round = RoundState::Requested { epoch };
-                run(fx, TransferEffect::ScheduleJob { epoch });
-            }
-            RoundState::Running { round_id, epoch: running, .. } if epoch != running => self.round = RoundState::Running { round_id, epoch: running, next: Some(epoch) },
-            _ => {}
-        }
-    }
-
-    pub(super) fn open_in_epoch(&self, epoch: Epoch) -> bool { self.transfers.values().any(|transfer| transfer.epoch == epoch && transfer.stage != TransferStage::Done) }
-
-    pub(super) fn create(&mut self, key: &str, source: Source, batch: bool, seq: Option<u64>, created_at: Time, stage: TransferStage, mutation: NewOp, steps: Steps) {
-        let seq = seq.unwrap_or_else(|| {
-            self.next_seq += 1;
-            self.next_seq - 1
-        });
-        self.next_seq = self.next_seq.max(seq + 1);
-        self.transfers.insert(key.into(), Transfer { key: key.into(), seq, source, batch, epoch: self.epoch, stage, attempts: 0, upload_id: None, confirmed_parts: 0, created_at, error: None, complete_in_flight: false, place: None, size: 0, sha256: String::new(), mutation, steps });
-    }
-
-    pub(super) fn accept(&mut self, epoch: Epoch, key: Key, source: Source, batch: bool, rep: ReplyId, now: Time, mutation: NewOp, steps: Steps, fx: &mut Fx) {
-        if epoch != self.epoch {
-            return reply(fx, rep, TransferAnswer::Err(Fault::NoSession));
-        }
-        self.now = self.now.max(now);
-        let copy_from = source.clone();
-        self.create(&key, source, batch, None, now, TransferStage::Copying, mutation, steps);
-        let seq = self.transfers[&key].seq;
-        reply(fx, rep, TransferAnswer::Receipt(Receipt { epoch, op_id: seq, cycle_id: 1, revision: 0 }));
-        Self::shows(fx, &key, Shown::Copying);
-        run(fx, TransferEffect::Copy { key, source: copy_from });
-        self.round_needed(epoch, fx);
-    }
-
-}
-
-impl TransferAnswer {
-    pub(super) fn or_in_flight(self, batch: bool) -> Self { if batch { Self::Err(Fault::InFlight) } else { self } }
 }
 
 pub struct Transfers;
@@ -170,76 +310,10 @@ impl StateOwner for Transfers {
 
     fn step(state: &mut TransferState, input: TransferInput) -> Effects<Self> {
         let mut fx: Fx = Vec::new();
-        if let (Some(error), TransferInput::Accept { reply: id, .. } | TransferInput::Cancel { reply: id, .. } | TransferInput::Discard { reply: id, .. } | TransferInput::Retry { reply: id, .. }) = (&state.queue_error, &input) {
-            reply(&mut fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
-            return fx;
-        }
-        match input {
-            TransferInput::Accept { epoch, key, source, batch, reply, now, mutation, steps } => state.accept(epoch, key, source, batch, reply, now, mutation, steps, &mut fx),
-            TransferInput::Restored(rows) => state.restored(rows, &mut fx),
-            TransferInput::RestoreFailed { error } => state.queue_error = Some(error),
-            TransferInput::Committed(committed) => {
-                state.batches.remove(&committed.batch);
-            }
-            TransferInput::Rejected(rejected) => state.store_rejected(rejected, &mut fx),
-            TransferInput::CopyDone { key, size, sha256, place } => {
-                if state.stage_of(&key) == Some(TransferStage::Copying) {
-                    if let Some(transfer) = state.transfers.get_mut(&key) {
-                        transfer.size = size;
-                        transfer.sha256 = sha256;
-                        transfer.place = Some(place);
-                    }
-                    state.set(&key, TransferStage::Ready);
-                    TransferState::shows(&mut fx, &key, Shown::Queued);
-                    state.store(&key, StoreKind::SyncUpload, &mut fx);
-                    state.start_in_order(&mut fx);
-                }
-            }
-            TransferInput::CopyFailed { key, error } => {
-                if state.stage_of(&key) == Some(TransferStage::Copying) {
-                    state.set(&key, TransferStage::Failed);
-                    TransferState::shows(&mut fx, &key, Shown::Failed { error });
-                    state.store(&key, StoreKind::Failed, &mut fx);
-                }
-            }
-            TransferInput::StepOk { key, part, upload_id } => state.step_ok(&key, part, upload_id, &mut fx),
-            TransferInput::StepError { key, part, temporary } => state.step_error(&key, part, temporary, &mut fx),
-            TransferInput::Completed { key } => {
-                if state.stage_of(&key) == Some(TransferStage::Completing) {
-                    state.set(&key, TransferStage::Mutating);
-                    state.store(&key, StoreKind::Completed, &mut fx);
-                    state.submit_mutation(&key, &mut fx);
-                    state.start_in_order(&mut fx);
-                }
-            }
-            TransferInput::CompleteError { key, temporary } => state.complete_error(&key, temporary, &mut fx),
-            TransferInput::MutationOutcome { key, outcome } => state.mutation_outcome(&key, outcome, &mut fx),
-            TransferInput::Cancel { key, reply } => state.cancel(&key, reply, true, &mut fx),
-            TransferInput::Discard { key, reply } => state.cancel(&key, reply, false, &mut fx),
-            TransferInput::Retry { key, reply } => state.retry(&key, reply, &mut fx),
-            TransferInput::SlotFreed => state.start_in_order(&mut fx),
-            TransferInput::RoundNeeded { epoch } => state.round_needed(epoch, &mut fx),
-            TransferInput::RoundStarted { round_id, epoch } => state.round_started(round_id, epoch, &mut fx),
-            TransferInput::RoundRefused { .. } => state.round_refused(&mut fx),
-            TransferInput::RoundEnded { round_id, epoch } => state.round_ended(round_id, epoch, &mut fx),
-            TransferInput::Online(Online(on)) => state.online_changed(on, &mut fx),
-            TransferInput::EpochStarted(started) => state.epoch = started.epoch,
-            TransferInput::Tick { now, kind } => match kind {
-                TransferTick::Retry { key } => state.tick_retry(&key, &mut fx),
-                TransferTick::Expire => state.expire(now, &mut fx),
-            },
-            TransferInput::EpochEnded(_) => state.interrupt_all(false, &mut fx),
-            TransferInput::Closing => {
-                state.interrupt_all(true, &mut fx);
-                if let RoundState::Running { round_id, .. } = state.round {
-                    run(&mut fx, TransferEffect::EndJob { round_id });
-                }
-                state.round = RoundState::None;
-                if !std::mem::replace(&mut state.drained, true) {
-                    run(&mut fx, TransferEffect::Drained(Drained { owner: "transfer" }));
-                }
-            }
-            TransferInput::Clock(now) => state.now = state.now.max(now),
+        if state.phase == Phase::Restoring {
+            state.restoring(input, &mut fx);
+        } else {
+            state.handle(input, &mut fx);
         }
         fx
     }
@@ -249,4 +323,14 @@ impl StateOwner for Transfers {
     fn epoch_ended(epoch: Epoch, cause: Cause) -> TransferInput { TransferInput::EpochEnded(EpochEnded { epoch, cause }) }
 
     fn closing() -> TransferInput { TransferInput::Closing }
+}
+
+pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
+    match kind {
+        StoreKind::SyncUpload | StoreKind::Removed => UploadKind::SyncUpload,
+        StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
+        StoreKind::Completed => UploadKind::Completed,
+        StoreKind::Failed => UploadKind::Failed,
+        StoreKind::Retrying => UploadKind::Retrying,
+    }
 }

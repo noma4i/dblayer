@@ -83,6 +83,12 @@ pub struct UploadRow {
     /// The request the steps of the file are built from.
     pub steps_path: String,
     pub steps_body: String,
+    pub transfer_id: u64,
+    pub cycle_id: u64,
+    pub signed_id: Option<String>,
+    pub aborted: bool,
+    /// The etag of each confirmed part, in the order of the parts (`sync_upload_part`).
+    pub etags: Vec<Option<String>>,
 }
 
 /// One write of a batch, by value (R3). The writer executor turns it into SQL.
