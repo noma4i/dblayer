@@ -308,7 +308,7 @@ impl EffectRunner<Network> for NetworkRunner {
 
 /// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
 pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
-    let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. }));
+    let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Attempt { .. } | StoreOp::Session { .. }));
     let (removals, encrypted): (Vec<&StoreOp>, Vec<&StoreOp>) = encrypted.into_iter().partition(|op| matches!(op, StoreOp::RemoveAnswer { .. }));
     let row_ops = if batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) { Vec::new() } else { row_ops(&batch.rows)? };
     if !encrypted.is_empty() {
@@ -356,6 +356,7 @@ fn row_op(op: &StoreOp) -> Option<crate::store::RowOp> {
         StoreOp::EraseSession => crate::store::RowOp::RemoveSession,
         StoreOp::Answer { request_id, operation, result } => crate::store::RowOp::PutAnswer { request_id: *request_id, operation: *operation, answer: result.clone() },
         StoreOp::RemoveAnswer { request_id } => crate::store::RowOp::RemoveAnswer { request_id: *request_id },
+        StoreOp::Attempt { op_id, attempts, .. } => crate::store::RowOp::PutAttempts { op_id: i64::try_from(*op_id).unwrap_or(i64::MAX), attempts: i64::from(*attempts) },
         StoreOp::Session { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
         _ => return None,
     })

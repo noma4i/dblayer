@@ -415,6 +415,8 @@ pub(crate) enum RowOp {
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     PutSession { digest: Option<String>, sequence: Option<i64> },
     DiscardRestoreFailed { table: String, key: String },
+    /// The durable attempt counter of an operation of the queue.
+    PutAttempts { op_id: i64, attempts: i64 },
 }
 
 impl Store {
@@ -436,6 +438,9 @@ impl Store {
                 }
                 RowOp::PutAnswer { request_id, operation, answer } => state::store_answer(&transaction, request_id, operation, &answer)?,
                 RowOp::RemoveAnswer { request_id } => state::remove_answer(&transaction, request_id)?,
+                RowOp::PutAttempts { op_id, attempts } => {
+                    transaction.execute("UPDATE op SET attempts = ?2 WHERE seq = ?1", params![op_id, attempts])?;
+                }
                 RowOp::DiscardRestoreFailed { table, key } => {
                     transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?;
                 }

@@ -65,7 +65,7 @@ impl Db {
                         None => OperationTransition::Retry { seq },
                     });
                 }
-                StoreOp::Attempt { .. } | StoreOp::Swap { .. } => {}
+                StoreOp::Swap { .. } => {}
                 StoreOp::Upload { row, kind } => self.write_upload_row(row, *kind)?,
                 StoreOp::RemoveUpload { key } => self.remove_upload_row(key)?,
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
@@ -73,7 +73,7 @@ impl Db {
                     let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
                     return self.land_window_page(&super::land_window::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision });
                 }
-                StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. } => {}
+                StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. } | StoreOp::Attempt { .. } => {}
             }
         }
         for seq in rolled_back {

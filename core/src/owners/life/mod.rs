@@ -5,6 +5,8 @@ mod observers;
 mod read;
 mod call_rule;
 #[cfg(test)]
+mod attempt_tests;
+#[cfg(test)]
 mod call_rule_tests;
 mod calls_runner;
 mod runners;
