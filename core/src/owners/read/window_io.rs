@@ -9,7 +9,7 @@ use tokio::runtime::Handle;
 use super::ports::{Admit, Rest};
 use crate::owners::contract::{ErrorClass, RequestError, RequestId, TransportOutcome};
 use crate::owners::read::windows::{AnswerPage, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
-use crate::runtime::{Back, EffectRunner, EpochStamp};
+use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 use crate::task::{spawn_on, Carry};
 use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Transport, TransportError};
 
@@ -54,10 +54,15 @@ impl WindowIo {
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
         let (transport, codec, admit, open, back) = (self.transport.clone(), self.codec.clone(), self.admit.clone(), self.open.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
+        let epoch = match stamp {
+            EpochStamp::Epoch(epoch) => Some(epoch),
+            EpochStamp::Control => None,
+        };
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
             let outcome = tokio::select! {
+                biased;
                 () = token.cancelled() => None,
-                outcome = ask(transport.as_deref(), codec.as_ref(), &admit, &key, page, cursor.as_deref()) => Some(outcome),
+                outcome = ask(transport.as_deref(), codec.as_ref(), &admit, epoch, &key, page, cursor.as_deref()) => Some(outcome),
             };
             open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
             if let Some(outcome) = outcome.filter(|_| !token.is_cancelled()) {
@@ -88,11 +93,12 @@ impl EffectRunner<Windows> for WindowIo {
     }
 }
 
-async fn ask(transport: Option<&dyn Transport>, codec: &dyn WindowCodec, admit: &Admit, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
+async fn ask(transport: Option<&dyn Transport>, codec: &dyn WindowCodec, admit: &Admit, epoch: Option<Epoch>, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
     let admitted = match admit() {
         Ok(admitted) => admitted,
         Err(refused) => return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent, source: None }),
     };
+    if epoch.is_some_and(|epoch| epoch != admitted.value()) { return TransportOutcome::Dropped; }
     let request = match codec.request(key, page, cursor) {
         Ok(request) => request,
         Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),

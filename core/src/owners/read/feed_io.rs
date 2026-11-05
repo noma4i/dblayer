@@ -90,6 +90,7 @@ impl FeedIo {
     async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, connection: ConnectionId, (cancel, closing, established): (CancelToken, CancelToken, Arc<AtomicBool>), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
         {
             let line = tokio::select! {
+                biased;
                 () = cancel.cancelled() => return,
                 line = lines.connect() => line,
             };
