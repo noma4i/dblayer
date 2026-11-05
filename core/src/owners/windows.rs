@@ -9,8 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use statig::prelude::*;
 
-use super::contract::{Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, Stale, Transport, TransportOutcome};
-use super::deliveries::{LoadState, Phase};
+use super::contract::{Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, Stale, Transport, TransportOutcome, WindowPhase as Phase, WindowState};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 /// `(model, relation, params)`, `(model, node, id)` or `(model, node, ids)` as one name; `model` is the model of the window.
@@ -55,7 +54,7 @@ pub enum WindowEffect {
     Cancel { request: RequestId },
     Commit { request: RequestId, basis: u64, page: AnswerPage },
     ScheduleRetry { request: RequestId, attempt: u32 },
-    Announce(LoadState),
+    Announce(WindowState),
     Outcome { id: InterestId, outcome: WindowOutcome },
 }
 
@@ -68,7 +67,8 @@ pub enum WindowsEffect {
 #[derive(Clone, Debug)]
 pub enum WindowsInput {
     /// `all` marks `begin_load_all`: its outcome comes after the last page. `stream` keeps the id in the interest after the outcome.
-    InterestPlus { key: WindowKey, id: InterestId, force: bool, all: bool, stream: bool },
+    /// `store_revision` is the Published revision of the Store at the entry: the outcome of a `nodes` key without ids.
+    InterestPlus { key: WindowKey, id: InterestId, force: bool, all: bool, stream: bool, store_revision: i64 },
     InterestMinus { key: WindowKey, id: InterestId },
     LoadMore { key: WindowKey, id: InterestId },
     Transport(Transport<AnswerPage>),
@@ -156,7 +156,8 @@ struct Facts {
     has_rows: bool,
     phase: Phase,
     error: Option<String>,
-    loaded: Option<i64>,
+    /// The revision of the last `Committed` of a landing of this machine, 0 before the first.
+    landed_revision: i64,
     fx: RefCell<Vec<WindowEffect>>,
 }
 
@@ -187,7 +188,7 @@ impl Facts {
         self.all.remove(&id);
     }
 
-    fn load_state(&self) -> LoadState { LoadState { phase: self.phase, error: self.error.clone(), loaded: self.loaded } }
+    fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0).then_some(self.landed_revision) } }
 
     fn announce(&mut self) { self.push_fx(WindowEffect::Announce(self.load_state())); }
 
@@ -210,8 +211,6 @@ impl Facts {
     }
 
     fn failed_phase(&self) -> Phase { if self.has_rows { Phase::Loaded } else { Phase::Failed } }
-
-    fn loaded_revision(&self) -> i64 { self.loaded.unwrap_or(0) }
 
     fn begin(&mut self, ctx: &mut Ctx<'_>, page: u32) -> RequestId {
         let request = ctx.fresh();
@@ -267,7 +266,7 @@ impl Facts {
                 self.join(*id, *all, *stream);
                 if *fresh && !*force && !(*all && self.cursor.is_some()) {
                     self.phase = Phase::Loaded;
-                    let revision = self.loaded_revision();
+                    let revision = self.landed_revision;
                     self.answer_one(*id, WindowOutcome::Loaded { revision });
                     self.announce();
                     Handled
@@ -286,7 +285,7 @@ impl Facts {
                     self.join(*id, false, false);
                     self.load(context, self.page + 1, false, true)
                 } else {
-                    let revision = self.loaded_revision();
+                    let revision = self.landed_revision;
                     self.answer_one(*id, WindowOutcome::Loaded { revision });
                     Handled
                 }
@@ -338,9 +337,6 @@ impl Facts {
                 Transition(WinState::landing(*request, *page, *again, *more, answer.cursor.clone(), !answer.rows.is_empty()))
             }
             Ev::Failure { request: got, error } if got == request => {
-                if error.temporary() && !self.online {
-                    return Transition(WinState::waiting(*force, *page));
-                }
                 if error.temporary() && *attempts + 1 < attempt_limit(error.class) {
                     *attempts += 1;
                     self.push_fx(WindowEffect::ScheduleRetry { request: *request, attempt: *attempts });
@@ -354,12 +350,8 @@ impl Facts {
                 self.fail(&error.message, last)
             }
             Ev::RetryDue { request: got } if got == request => {
-                if self.online {
-                    self.push_fx(WindowEffect::Request { request: *request, page: *page, cursor: self.page_cursor(*page), basis: *basis });
-                    Handled
-                } else {
-                    Transition(WinState::waiting(*force, *page))
-                }
+                self.push_fx(WindowEffect::Request { request: *request, page: *page, cursor: self.page_cursor(*page), basis: *basis });
+                Handled
             }
             Ev::Online(false) => {
                 self.push_fx(WindowEffect::Cancel { request: *request });
@@ -388,7 +380,7 @@ impl Facts {
                 self.has_rows |= *rows;
                 self.cursor = cursor.clone();
                 self.page = *page;
-                self.loaded = Some(*revision);
+                self.landed_revision = *revision;
                 self.error = None;
                 let watched = !self.interest.is_empty();
                 let waiting_all = self.interest.iter().any(|id| self.all.contains(id)) && self.cursor.is_some();
@@ -512,7 +504,7 @@ impl Window {
             has_rows: false,
             phase: Phase::Idle,
             error: None,
-            loaded: None,
+            landed_revision: 0,
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { next_request };
@@ -549,15 +541,13 @@ pub struct WindowsState {
     online: bool,
     generations: BTreeMap<String, u64>,
     base_generation: u64,
-    /// The revision of the last landing of any key.
-    revision: i64,
     preload: Vec<WindowKey>,
     next_request: RequestId,
     windows: BTreeMap<WindowKey, Window>,
 }
 
 impl WindowsState {
-    pub fn new(epoch: Epoch, online: bool) -> Self { Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, revision: 0, preload: Vec::new(), next_request: 1, windows: BTreeMap::new() } }
+    pub fn new(epoch: Epoch, online: bool) -> Self { Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), next_request: 1, windows: BTreeMap::new() } }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
     pub fn with_preload(mut self, keys: Vec<WindowKey>) -> Self {
@@ -569,7 +559,7 @@ impl WindowsState {
 
     pub fn interest(&self, key: &WindowKey) -> Vec<InterestId> { self.windows.get(key).map(|window| window.machine.interest.iter().copied().collect()).unwrap_or_default() }
 
-    pub fn load_state(&self, key: &WindowKey) -> Option<LoadState> { self.windows.get(key).map(|window| window.machine.load_state()) }
+    pub fn load_state(&self, key: &WindowKey) -> Option<WindowState> { self.windows.get(key).map(|window| window.machine.load_state()) }
 
     pub fn windows(&self) -> usize { self.windows.len() }
 
@@ -605,9 +595,9 @@ impl Windows {
         }
     }
 
-    fn interest_plus(state: &mut WindowsState, key: WindowKey, id: InterestId, force: bool, all: bool, stream: bool, out: &mut Vec<WindowsEffect>) {
+    fn interest_plus(state: &mut WindowsState, key: WindowKey, id: InterestId, force: bool, all: bool, stream: bool, store_revision: i64, out: &mut Vec<WindowsEffect>) {
         if key.is_empty_nodes() {
-            let effect = WindowEffect::Outcome { id, outcome: WindowOutcome::Loaded { revision: state.revision } };
+            let effect = WindowEffect::Outcome { id, outcome: WindowOutcome::Loaded { revision: store_revision } };
             out.push(WindowsEffect::Window { key, effect });
             return;
         }
@@ -626,7 +616,7 @@ impl StateOwner for Windows {
     fn step(state: &mut WindowsState, input: WindowsInput) -> Effects<Self> {
         let mut out = Vec::new();
         match input {
-            WindowsInput::InterestPlus { key, id, force, all, stream } => Self::interest_plus(state, key, id, force, all, stream, &mut out),
+            WindowsInput::InterestPlus { key, id, force, all, stream, store_revision } => Self::interest_plus(state, key, id, force, all, stream, store_revision, &mut out),
             WindowsInput::InterestMinus { key, id } => Self::on(state, &key, Ev::InterestMinus { id }, &mut out),
             WindowsInput::LoadMore { key, id } => {
                 state.ensure(&key);
@@ -648,7 +638,6 @@ impl StateOwner for Windows {
                 Self::by_request(state, request, event, &mut out);
             }
             WindowsInput::Committed(committed) => {
-                state.revision = state.revision.max(committed.revision);
                 Self::by_request(state, committed.batch, Ev::Committed { request: committed.batch, revision: committed.revision }, &mut out);
             }
             WindowsInput::Rejected(rejected) => Self::by_request(state, rejected.batch, Ev::Rejected { request: rejected.batch, reason: rejected.reason }, &mut out),
@@ -662,7 +651,7 @@ impl StateOwner for Windows {
                 state.base_generation = started.generation;
                 if started.identity.is_some() {
                     for key in state.preload.clone() {
-                        Self::interest_plus(state, key, PRELOAD, false, false, true, &mut out);
+                        Self::interest_plus(state, key, PRELOAD, false, false, true, 0, &mut out);
                     }
                 }
             }

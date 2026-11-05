@@ -149,6 +149,10 @@ pub struct WindowState {
     pub loaded: Option<i64>,
 }
 
+impl WindowState {
+    pub fn idle() -> Self { Self { phase: WindowPhase::Idle, error: None, loaded: None } }
+}
+
 /// `Want+(model)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WantPlus {

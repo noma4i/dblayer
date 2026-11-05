@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use super::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset};
+use super::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, WindowPhase, WindowState};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 pub const JOURNAL_LIMIT: usize = 256;
@@ -13,10 +13,39 @@ pub const DELTA_LIMIT: usize = 256;
 
 pub type StreamId = u64;
 
+/// How an `Entity` stream asks the window of its node (`delivery.md`, kinds of streams).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fetch {
+    Never,
+    Stale,
+    Force,
+    IfMissing,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    Rows,
+    List,
+    Entity { fetch: Fetch },
+    Count,
     Events,
+}
+
+impl Kind {
+    /// `Some(force)` when `open` sends `Interest+` to the window.
+    fn interest_at_open(self) -> Option<bool> {
+        match self {
+            Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale } => Some(false),
+            Kind::Entity { fetch: Fetch::Force } => Some(true),
+            Kind::Entity { .. } | Kind::Events => None,
+        }
+    }
+}
+
+/// What a read gives back: the rows of a `List` or `Entity`, the number of a `Count`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReadData {
+    Rows(Vec<StreamRow>),
+    Count(u64),
 }
 
 /// What a stream shows: `tables` are the tables of its rows, `model` is the model of its rows or events.
@@ -37,25 +66,6 @@ pub struct StreamRow {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Phase {
-    Idle,
-    Loading,
-    Loaded,
-    Failed,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LoadState {
-    pub phase: Phase,
-    pub error: Option<String>,
-    pub loaded: Option<i64>,
-}
-
-impl LoadState {
-    pub fn idle() -> Self { Self { phase: Phase::Idle, error: None, loaded: None } }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EndCause {
     SessionEnded,
     Closed,
@@ -65,10 +75,11 @@ pub enum EndCause {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
-    Snapshot { revision: i64, rows: Vec<StreamRow>, state: LoadState },
+    Snapshot { revision: i64, rows: Vec<StreamRow>, state: WindowState },
     Delta { base: i64, revision: i64, upserted: Vec<StreamRow>, removed: Vec<String> },
+    Count { revision: i64, count: u64, state: WindowState },
     /// The window changed, the rows of `revision` are the same.
-    State { revision: i64, state: LoadState },
+    State { revision: i64, state: WindowState },
     /// The server subscription is alive: once per `Events` stream.
     Ready,
     Event { position: u64, payload: String },
@@ -78,9 +89,8 @@ pub enum Value {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamEffect {
-    Read(i64),
-    DropOldRead,
-    InterestPlus,
+    Read { read_id: u64, revision: i64 },
+    InterestPlus { force: bool },
     InterestMinus,
     WantPlus,
     WantMinus,
@@ -105,9 +115,9 @@ pub enum DeliveryInput {
     /// `identity` = the published value has an identity, `valid` = the model, relation and params of the request are valid.
     Open { stream: StreamId, view: View, epoch: Epoch, revision: i64, identity: bool, valid: bool },
     Committed(Committed),
-    ReadDone { stream: StreamId, revision: i64, rows: Vec<StreamRow> },
-    ReadFailed { stream: StreamId, revision: i64, error: String },
-    WindowState { stream: StreamId, state: LoadState },
+    ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
+    ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
+    WindowState { stream: StreamId, state: WindowState },
     Joined { stream: StreamId, position: u64 },
     ModelReady { stream: StreamId },
     ModelEvent { stream: StreamId, position: u64, payload: String },
@@ -134,10 +144,13 @@ struct Delivery {
     epoch: Epoch,
     view: View,
     stage: DeliveryStage,
+    /// The revision the current read asks for.
     read: i64,
+    read_id: u64,
     revision: i64,
     rows: Vec<StreamRow>,
-    window: LoadState,
+    count: Option<u64>,
+    window: WindowState,
     /// The next expected position of the Feed (`Joined.position + 1`), `None` before `Joined`.
     next_feed: Option<u64>,
     /// The last position given to the stream.
@@ -149,19 +162,26 @@ struct Delivery {
 
 impl Delivery {
     fn open(view: View, epoch: Epoch, revision: i64, fx: &mut Vec<StreamEffect>) -> Self {
-        let mut machine = Self { epoch, view, stage: DeliveryStage::Opening, read: revision, revision: 0, rows: Vec::new(), window: LoadState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false };
-        match machine.view.kind {
-            Kind::Rows => fx.extend([StreamEffect::Read(revision), StreamEffect::InterestPlus]),
-            Kind::Events => {
-                machine.stage = DeliveryStage::Live;
-                fx.push(StreamEffect::WantPlus);
-            }
+        let mut machine = Self { epoch, view, stage: DeliveryStage::Opening, read: revision, read_id: 0, revision: 0, rows: Vec::new(), count: None, window: WindowState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false };
+        if machine.view.kind == Kind::Events {
+            machine.stage = DeliveryStage::Live;
+            fx.push(StreamEffect::WantPlus);
+            return machine;
+        }
+        fx.push(machine.new_read(revision));
+        if let Some(force) = machine.view.kind.interest_at_open() {
+            fx.push(StreamEffect::InterestPlus { force });
         }
         machine
     }
 
+    fn new_read(&mut self, revision: i64) -> StreamEffect {
+        self.read_id += 1;
+        StreamEffect::Read { read_id: self.read_id, revision }
+    }
+
     fn stale(view: View, epoch: Epoch, cause: EndCause, fx: &mut Vec<StreamEffect>) -> Self {
-        let mut machine = Self { epoch, view, stage: DeliveryStage::Ended, read: 0, revision: 0, rows: Vec::new(), window: LoadState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false };
+        let mut machine = Self { epoch, view, stage: DeliveryStage::Ended, read: 0, read_id: 0, revision: 0, rows: Vec::new(), count: None, window: WindowState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false };
         machine.push(Value::Ended(cause), fx);
         machine
     }
@@ -171,7 +191,7 @@ impl Delivery {
             fx.push(StreamEffect::Wake);
         }
         match value {
-            Value::Snapshot { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta { .. } | Value::Snapshot { .. } | Value::State { .. })),
+            Value::Snapshot { .. } | Value::Count { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta { .. } | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
             Value::State { .. } => self.journal.retain(|kept| !matches!(kept, Value::State { .. })),
             _ => {}
         }
@@ -207,8 +227,8 @@ impl Delivery {
 
     fn leave(&self) -> StreamEffect {
         match self.view.kind {
-            Kind::Rows => StreamEffect::InterestMinus,
             Kind::Events => StreamEffect::WantMinus,
+            _ => StreamEffect::InterestMinus,
         }
     }
 
@@ -232,22 +252,36 @@ impl Delivery {
         match self.stage {
             DeliveryStage::Opening => {
                 self.read = committed.revision;
-                fx.extend([StreamEffect::Read(committed.revision), StreamEffect::DropOldRead]);
+                fx.push(self.new_read(committed.revision));
             }
-            DeliveryStage::Live => fx.push(StreamEffect::Read(committed.revision)),
+            DeliveryStage::Live => fx.push(self.new_read(committed.revision)),
             DeliveryStage::Ended => {}
         }
     }
 
-    fn read_done(&mut self, revision: i64, rows: Vec<StreamRow>, fx: &mut Vec<StreamEffect>) {
-        match self.stage {
-            DeliveryStage::Opening => {
+    fn read_done(&mut self, read_id: u64, revision: i64, data: ReadData, fx: &mut Vec<StreamEffect>) {
+        if read_id != self.read_id || self.view.kind == Kind::Events {
+            return;
+        }
+        let count = self.view.kind == Kind::Count;
+        match (self.stage, data) {
+            (DeliveryStage::Opening, ReadData::Rows(rows)) if !count => {
+                let missing = rows.is_empty() && self.view.kind == (Kind::Entity { fetch: Fetch::IfMissing });
                 self.push(Value::Snapshot { revision, rows: rows.clone(), state: self.window.clone() }, fx);
                 self.revision = revision;
                 self.rows = rows;
                 self.stage = DeliveryStage::Live;
+                if missing {
+                    fx.push(StreamEffect::InterestPlus { force: false });
+                }
             }
-            DeliveryStage::Live if revision > self.revision && rows != self.rows => {
+            (DeliveryStage::Opening, ReadData::Count(now)) if count => {
+                self.push(Value::Count { revision, count: now, state: self.window.clone() }, fx);
+                self.revision = revision;
+                self.count = Some(now);
+                self.stage = DeliveryStage::Live;
+            }
+            (DeliveryStage::Live, ReadData::Rows(rows)) if !count && revision > self.revision && rows != self.rows => {
                 let upserted: Vec<StreamRow> = rows.iter().filter(|row| !self.rows.contains(row)).cloned().collect();
                 let removed: Vec<String> = self.rows.iter().filter(|row| !rows.iter().any(|now| now.id == row.id)).map(|row| row.id.clone()).collect();
                 let base = self.revision;
@@ -259,31 +293,39 @@ impl Delivery {
                 self.revision = revision;
                 self.rows = rows;
             }
-            DeliveryStage::Live | DeliveryStage::Ended => {}
+            (DeliveryStage::Live, ReadData::Count(now)) if count && revision > self.revision && self.count != Some(now) => {
+                self.push(Value::Count { revision, count: now, state: self.window.clone() }, fx);
+                self.revision = revision;
+                self.count = Some(now);
+            }
+            _ => {}
         }
     }
 
-    fn read_failed(&mut self, revision: i64, error: String, fx: &mut Vec<StreamEffect>) {
+    fn read_failed(&mut self, read_id: u64, revision: i64, error: String, fx: &mut Vec<StreamEffect>) {
+        if read_id != self.read_id {
+            return;
+        }
         match self.stage {
             DeliveryStage::Opening => {
-                let state = LoadState { phase: Phase::Failed, error: Some(error), loaded: None };
+                let state = WindowState { phase: WindowPhase::Failed, error: Some(error), loaded: None };
                 self.push(Value::Snapshot { revision, rows: Vec::new(), state: state.clone() }, fx);
                 self.revision = revision;
                 self.rows = Vec::new();
                 self.window = state;
                 self.stage = DeliveryStage::Live;
             }
-            DeliveryStage::Live => {
-                let phase = if self.rows.is_empty() { Phase::Failed } else { Phase::Loaded };
-                let state = LoadState { phase, error: Some(error), loaded: self.window.loaded };
+            DeliveryStage::Live if revision > self.revision => {
+                let phase = if self.rows.is_empty() { WindowPhase::Failed } else { WindowPhase::Loaded };
+                let state = WindowState { phase, error: Some(error), loaded: self.window.loaded };
                 self.push(Value::State { revision: self.revision, state: state.clone() }, fx);
                 self.window = state;
             }
-            DeliveryStage::Ended => {}
+            DeliveryStage::Live | DeliveryStage::Ended => {}
         }
     }
 
-    fn window_state(&mut self, state: LoadState, fx: &mut Vec<StreamEffect>) {
+    fn window_state(&mut self, state: WindowState, fx: &mut Vec<StreamEffect>) {
         match self.stage {
             DeliveryStage::Opening => self.window = state,
             DeliveryStage::Live => {
@@ -338,12 +380,12 @@ impl Delivery {
     }
 
     fn models_reset(&mut self, reset: &ModelsReset, fx: &mut Vec<StreamEffect>) {
-        if self.view.kind != Kind::Rows || !reset.models.contains(&self.view.model) {
+        if self.view.kind == Kind::Events || !reset.models.contains(&self.view.model) {
             return;
         }
         match self.stage {
-            DeliveryStage::Opening => fx.extend([StreamEffect::Read(self.read), StreamEffect::DropOldRead]),
-            DeliveryStage::Live => fx.push(StreamEffect::Read(self.revision)),
+            DeliveryStage::Opening => fx.push(self.new_read(self.read)),
+            DeliveryStage::Live => fx.push(self.new_read(self.revision)),
             DeliveryStage::Ended => {}
         }
     }
@@ -386,6 +428,8 @@ impl DeliveriesState {
 
     pub fn journal_len(&self, stream: StreamId) -> usize { self.streams.get(&stream).map_or(0, |machine| machine.journal.len()) }
 
+    pub fn read_id(&self, stream: StreamId) -> u64 { self.streams.get(&stream).map_or(0, |machine| machine.read_id) }
+
     pub fn streams(&self) -> usize { self.streams.len() }
 
     /// The unread values of a stream, oldest first.
@@ -423,8 +467,8 @@ impl StateOwner for Deliveries {
                 state.streams.insert(stream, machine);
                 out.extend(keyed(stream, fx));
             }
-            DeliveryInput::ReadDone { stream, revision, rows } => on(state, stream, &mut out, |machine, fx| machine.read_done(revision, rows, fx)),
-            DeliveryInput::ReadFailed { stream, revision, error } => on(state, stream, &mut out, |machine, fx| machine.read_failed(revision, error, fx)),
+            DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
+            DeliveryInput::ReadFailed { stream, read_id, revision, error } => on(state, stream, &mut out, |machine, fx| machine.read_failed(read_id, revision, error, fx)),
             DeliveryInput::WindowState { stream, state: window } => on(state, stream, &mut out, |machine, fx| machine.window_state(window, fx)),
             DeliveryInput::Joined { stream, position } => on(state, stream, &mut out, |machine, _| machine.joined(position)),
             DeliveryInput::ModelReady { stream } => on(state, stream, &mut out, |machine, fx| machine.model_ready(fx)),

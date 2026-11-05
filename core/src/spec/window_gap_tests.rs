@@ -11,7 +11,7 @@ use std::sync::{Arc, PoisonError};
 use super::harness::Phase;
 use super::ref_window::{Effect, Failure, Input, Reject, Result3, State, Window};
 use crate::owners::contract::{Committed, EpochStarted, ErrorClass, Stale, ModelsReset, Online, RejectReason, Rejected, Transport, RequestError, TransportOutcome};
-use crate::owners::deliveries::{LoadState, Phase as OwnerPhase};
+use crate::owners::contract::{WindowPhase as OwnerPhase, WindowState};
 use crate::owners::support::{new_log, snapshot, take, Log, Recorder, Reset, ResetState, Silent, Source, SourceInput, SourceState, StoreGeneration};
 use crate::owners::windows::{self as w, WindowOutcome, AnswerPage, WindowStage, WindowEffect, WindowKey, Windows, WindowsEffect};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, EffectRunner, EpochStamp, Limits};
@@ -103,7 +103,7 @@ impl Twin {
         match &input {
             Input::InterestPlus { id, force, all } => {
                 self.reference.stream_mode = self.streams;
-                self.post_call(w::WindowsInput::InterestPlus { key: k, id: *id, force: *force, all: *all, stream: self.streams });
+                self.post_call(w::WindowsInput::InterestPlus { key: k, id: *id, force: *force, all: *all, stream: self.streams, store_revision: 0 });
             }
             Input::InterestMinus { id } => self.post_call(w::WindowsInput::InterestMinus { key: k, id: *id }),
             Input::LoadMore { id } => self.post_call(w::WindowsInput::LoadMore { key: k, id: *id }),
@@ -180,7 +180,7 @@ impl Twin {
         (modelled, outcomes)
     }
 
-    fn load_state(&self) -> LoadState { self.state().load_state(&key()).expect("the window exists") }
+    fn load_state(&self) -> WindowState { self.state().load_state(&key()).expect("the window exists") }
 
     fn phase(&self) -> Phase { phase_of(self.load_state().phase) }
 }
@@ -642,8 +642,8 @@ fn explore_rig() -> DetScheduler {
     let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true), Executor { log: log.clone(), store_generation: generation.clone(), revision: 0 });
     det.start_epoch(EPOCH);
     let callers = det.add::<Source<Windows>>("callers", SourceState { to: windows, script: vec![
-        w::WindowsInput::InterestPlus { key: key(), id: 1, force: false, all: false, stream: false },
-        w::WindowsInput::InterestPlus { key: key(), id: 2, force: false, all: false, stream: false },
+        w::WindowsInput::InterestPlus { key: key(), id: 1, force: false, all: false, stream: false, store_revision: 0 },
+        w::WindowsInput::InterestPlus { key: key(), id: 2, force: false, all: false, stream: false, store_revision: 0 },
     ] }, Silent);
     let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale(Stale { model: "Moment".into() })] }, Silent);
     let network = det.add::<Source<Windows>>("network", SourceState { to: windows, script: vec![w::WindowsInput::Online(Online(false)), w::WindowsInput::Online(Online(true))] }, Silent);
@@ -821,7 +821,7 @@ fn win_dictionary_owner() {
     det.start_epoch(EPOCH);
     let other = WindowKey { model: "Chat".into(), name: "room".into() };
     for (key, id) in [(key(), 1), (other.clone(), 2)] {
-        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::InterestPlus { key, id, force: false, all: false, stream: false });
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::InterestPlus { key, id, force: false, all: false, stream: false, store_revision: 0 });
     }
     det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Transport(Transport { req_id: 2, outcome: TransportOutcome::Response(AnswerPage { page: 1, rows: vec!["c1".into()], cursor: None }) }));
     det.run_until_quiet(100).expect("quiet");
@@ -869,8 +869,8 @@ fn win_nodes_empty_owner() {
     let mut twin = Twin::new();
     take(&twin.log);
     let empty = WindowKey::nodes("Moment", &[]);
-    twin.post_call(w::WindowsInput::InterestPlus { key: empty.clone(), id: 1, force: false, all: false, stream: false });
-    assert_eq!(take(&twin.log), [WindowsEffect::Window { key: empty, effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 0 } } }]);
+    twin.post_call(w::WindowsInput::InterestPlus { key: empty.clone(), id: 1, force: false, all: false, stream: false, store_revision: 7 });
+    assert_eq!(take(&twin.log), [WindowsEffect::Window { key: empty, effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 7 } } }], "the revision of the Store at the entry");
     assert_eq!(twin.state().windows(), 0, "an empty list of ids creates no machine");
 }
 
@@ -1133,7 +1133,7 @@ fn win_wait_nodes_owner() {
     let mut twin = Twin::new();
     let nodes = WindowKey::nodes("Moment", &["m1", "m2"]);
     take(&twin.log);
-    twin.post_call(w::WindowsInput::InterestPlus { key: nodes.clone(), id: 1, force: false, all: false, stream: false });
+    twin.post_call(w::WindowsInput::InterestPlus { key: nodes.clone(), id: 1, force: false, all: false, stream: false, store_revision: 0 });
     assert!(matches!(take(&twin.log).as_slice(), [WindowsEffect::Window { effect: WindowEffect::Request { page: 1, .. }, .. }, WindowsEffect::Window { effect: WindowEffect::Announce(_), .. }]));
     twin.post(w::WindowsInput::Transport(Transport { req_id: 1, outcome: TransportOutcome::Response(AnswerPage { page: 1, rows: vec!["m1".into()], cursor: None }) }));
     twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 11, tables: Vec::new(), models: Vec::new() }));
@@ -1209,4 +1209,27 @@ fn win_landing_stale_generation_unwatched_owner() {
     twin.step(Input::Response { request: 2 });
     assert!(twin.step(Input::Rejected { request: 2, reason: Reject::StaleGeneration }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+/// `landed_revision` belongs to the machine: a key answers a fresh `Interest+` with its own last landing, not the last landing of any key.
+#[test]
+fn win_landed_revision_per_machine() {
+    let mut det = DetScheduler::new(5);
+    let log = new_log();
+    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true), Recorder::<Windows>::new(&log));
+    det.start_epoch(EPOCH);
+    let other = WindowKey { model: "Chat".into(), name: "room".into() };
+    let page = |rows: &[&str]| AnswerPage { page: 1, rows: rows.iter().map(|id| id.to_string()).collect(), cursor: None };
+    for (key, id) in [(key(), 1), (other.clone(), 2)] {
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::InterestPlus { key, id, force: false, all: false, stream: false, store_revision: 0 });
+    }
+    for (request, rows, revision) in [(1, page(&["r1"]), 5), (2, page(&["c1"]), 9)] {
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Transport(Transport { req_id: request, outcome: TransportOutcome::Response(rows) }));
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Committed(Committed { batch: request, revision, tables: Vec::new(), models: Vec::new() }));
+    }
+    det.run_until_quiet(100).expect("quiet");
+    take(&log);
+    det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::InterestPlus { key: key(), id: 3, force: false, all: false, stream: false, store_revision: 99 });
+    det.run_until_quiet(100).expect("quiet");
+    assert!(take(&log).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 3, outcome: WindowOutcome::Loaded { revision: 5 } }, .. })), "the fresh key answers with its own landing");
 }

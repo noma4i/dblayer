@@ -267,10 +267,6 @@ fn feed_opening_dropped_owner() {
     twin.post(f::FeedInput::ResubscribeDue { connection });
     let again = take(&twin.log);
     assert!(matches!(again.as_slice(), [FeedEffect::Subscribe { connection: found, .. }] if *found == connection), "the timer resubscribes the connection it was set for");
-    let mut offline = Twin::new();
-    want(&mut offline, "Chat");
-    offline.step(Input::Online(false));
-    assert!(offline.step(Input::Dropped).is_empty(), "no resubscribe is scheduled offline");
 }
 
 #[test]

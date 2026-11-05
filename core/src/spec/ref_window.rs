@@ -244,9 +244,7 @@ impl Window {
             }
             Input::TransportError { request: got, failure } if got == request => self.failed(request, page, force, again, more, attempts, failure),
             Input::Dropped { request: got } if got == request => self.failed(request, page, force, again, more, attempts, Failure::Network),
-            Input::RetryDue => {
-                if self.online { vec![Effect::Request { request, page }] } else { self.state = State::Waiting { force, page }; Vec::new() }
-            }
+            Input::RetryDue => vec![Effect::Request { request, page }],
             Input::Online(false) => {
                 self.state = State::Waiting { force, page };
                 vec![Effect::Cancel { request }]
@@ -264,10 +262,7 @@ impl Window {
     #[allow(clippy::too_many_arguments)]
     fn failed(&mut self, request: u64, page: u32, force: bool, again: bool, more: bool, attempts: u32, failure: Failure) -> Vec<Effect> {
         let temporary = failure != Failure::Permanent;
-        if temporary && !self.online {
-            self.state = State::Waiting { force, page };
-            Vec::new()
-        } else if temporary && attempts + 1 < failure.retry_limit() {
+        if temporary && attempts + 1 < failure.retry_limit() {
             self.state = State::Loading { request, page, force, again, more, attempts: attempts + 1 };
             vec![Effect::ScheduleRetry]
         } else {

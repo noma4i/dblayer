@@ -39,7 +39,7 @@ async fn dlv_open_rows() {
     world.load_ok().await;
     let mut reference = Delivery::new();
     let effects = reference.step(Input::Open { kind: Kind::Rows, epoch_current: true });
-    assert!(effects.contains(&Effect::InterestPlus));
+    assert!(effects.contains(&Effect::InterestPlus { force: false }));
     let stream = world.rows_stream();
     reference.step(Input::WindowState(loaded()));
     reference.step(Input::ReadDone { revision: 1, rows: ids(&["r1"]) });

@@ -50,6 +50,7 @@ pub(super) enum Cause {
 pub(super) enum Val {
     Snapshot { rows: Vec<String>, state: WState },
     Delta { upserted: Vec<String>, removed: Vec<String> },
+    Count { count: u64, state: WState },
     StateOnly(WState),
     Ready,
     Event { position: u64, id: String },

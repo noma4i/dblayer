@@ -7,9 +7,30 @@ use super::harness::{Cause, Val, WState};
 pub(super) const JOURNAL_LIMIT: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Fetch {
+    Never,
+    Stale,
+    Force,
+    IfMissing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
+    /// `List`.
     Rows,
+    Entity(Fetch),
+    Count,
     Events,
+}
+
+impl Kind {
+    fn interest_at_open(self) -> Option<bool> {
+        match self {
+            Kind::Rows | Kind::Count | Kind::Entity(Fetch::Stale) => Some(false),
+            Kind::Entity(Fetch::Force) => Some(true),
+            Kind::Entity(_) | Kind::Events => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -21,6 +42,10 @@ pub(super) enum Input {
     OpenInvalid,
     Committed { revision: i64, touches: bool },
     ReadDone { revision: i64, rows: Vec<String> },
+    /// A `Count` read.
+    CountDone { revision: i64, count: u64 },
+    /// A read of another `read_id`: the cell changes nothing.
+    ReadStale { revision: i64, rows: Vec<String> },
     ReadFailed { revision: i64 },
     WindowState(WState),
     Joined { position: u64 },
@@ -36,8 +61,7 @@ pub(super) enum Input {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Effect {
     Read(i64),
-    DropOldRead,
-    InterestPlus,
+    InterestPlus { force: bool },
     InterestMinus,
     WantPlus,
     WantMinus,
@@ -55,7 +79,7 @@ pub(super) enum Pulled {
 pub(super) enum State {
     Nothing,
     Opening { kind: Kind, window: WState, read: i64 },
-    Live { kind: Kind, revision: i64, rows: Vec<String>, window: WState, next_feed: Option<u64>, position: u64, ready: bool },
+    Live { kind: Kind, revision: i64, rows: Vec<String>, count: Option<u64>, window: WState, next_feed: Option<u64>, position: u64, ready: bool },
     Ended,
 }
 
@@ -70,7 +94,7 @@ impl Delivery {
 
     fn push(&mut self, value: Val) {
         match value {
-            Val::Snapshot { .. } => self.journal.retain(|kept| !matches!(kept, Val::Delta { .. } | Val::Snapshot { .. } | Val::StateOnly(_))),
+            Val::Snapshot { .. } | Val::Count { .. } => self.journal.retain(|kept| !matches!(kept, Val::Delta { .. } | Val::Snapshot { .. } | Val::Count { .. } | Val::StateOnly(_))),
             Val::StateOnly(_) => self.journal.retain(|kept| !matches!(kept, Val::StateOnly(_))),
             _ => {}
         }
@@ -115,71 +139,96 @@ impl Delivery {
         let state = std::mem::replace(&mut self.state, State::Ended);
         match (state, input) {
             (State::Nothing, Input::Open { kind, epoch_current: true }) => match kind {
-                Kind::Rows => { self.state = State::Opening { kind, window: WState::IDLE, read: 0 }; vec![Effect::Read(0), Effect::InterestPlus] }
-                Kind::Events => { self.state = State::Live { kind, revision: 0, rows: Vec::new(), window: WState::IDLE, next_feed: None, position: 0, ready: false }; vec![Effect::WantPlus] }
+                Kind::Rows | Kind::Count | Kind::Entity(_) => {
+                    self.state = State::Opening { kind, window: WState::IDLE, read: 0 };
+                    let mut effects = vec![Effect::Read(0)];
+                    effects.extend(kind.interest_at_open().map(|force| Effect::InterestPlus { force }));
+                    effects
+                }
+                Kind::Events => { self.state = State::Live { kind, revision: 0, rows: Vec::new(), count: None, window: WState::IDLE, next_feed: None, position: 0, ready: false }; vec![Effect::WantPlus] }
             },
             (State::Nothing, Input::Open { epoch_current: false, .. } | Input::OpenNoSession) => { self.end(Cause::SessionEnded); Vec::new() }
             (State::Nothing, Input::OpenInvalid) => { self.end(Cause::Invalid); Vec::new() }
             (State::Opening { kind, window, .. }, Input::ReadDone { revision, rows }) => {
+                let missing = rows.is_empty() && kind == Kind::Entity(Fetch::IfMissing);
                 self.push(Val::Snapshot { rows: rows.clone(), state: window });
-                self.state = State::Live { kind, revision, rows, window, next_feed: None, position: 0, ready: false };
+                self.state = State::Live { kind, revision, rows, count: None, window, next_feed: None, position: 0, ready: false };
+                if missing { vec![Effect::InterestPlus { force: false }] } else { Vec::new() }
+            }
+            (State::Opening { kind, window, .. }, Input::CountDone { revision, count }) => {
+                self.push(Val::Count { count, state: window });
+                self.state = State::Live { kind, revision, rows: Vec::new(), count: Some(count), window, next_feed: None, position: 0, ready: false };
                 Vec::new()
             }
+            (state @ (State::Opening { .. } | State::Live { .. }), Input::ReadStale { .. }) => { self.state = state; Vec::new() }
             (State::Opening { kind, .. }, Input::ReadFailed { revision }) => {
                 let failed = WState { phase: super::harness::Phase::Failed, error: true, loaded: false };
                 self.push(Val::Snapshot { rows: Vec::new(), state: failed });
-                self.state = State::Live { kind, revision, rows: Vec::new(), window: failed, next_feed: None, position: 0, ready: false };
+                self.state = State::Live { kind, revision, rows: Vec::new(), count: None, window: failed, next_feed: None, position: 0, ready: false };
                 Vec::new()
             }
             (State::Opening { kind, window, read }, Input::Committed { revision, touches }) => {
                 self.state = State::Opening { kind, window, read: if touches { revision } else { read } };
-                if touches { vec![Effect::Read(revision), Effect::DropOldRead] } else { Vec::new() }
+                if touches { vec![Effect::Read(revision)] } else { Vec::new() }
             }
             (State::Opening { kind, read, .. }, Input::WindowState(window)) => { self.state = State::Opening { kind, window, read }; Vec::new() }
             (State::Opening { kind, window, read }, Input::ModelsReset { own_model }) => {
                 self.state = State::Opening { kind, window, read };
-                if own_model { vec![Effect::Read(read), Effect::DropOldRead] } else { Vec::new() }
+                if own_model { vec![Effect::Read(read)] } else { Vec::new() }
             }
             (state @ State::Opening { .. }, Input::ModelEvent { .. } | Input::ModelLost { .. }) => { self.state = state; Vec::new() }
             (State::Opening { kind, .. } | State::Live { kind, .. }, Input::Cancel) => {
                 self.end(Cause::Cancelled);
-                vec![if kind == Kind::Rows { Effect::InterestMinus } else { Effect::WantMinus }]
+                vec![if kind != Kind::Events { Effect::InterestMinus } else { Effect::WantMinus }]
             }
             (State::Opening { kind, .. } | State::Live { kind, .. }, Input::EpochEnded { own: true }) => {
                 self.end(Cause::SessionEnded);
-                vec![if kind == Kind::Rows { Effect::InterestMinus } else { Effect::WantMinus }]
+                vec![if kind != Kind::Events { Effect::InterestMinus } else { Effect::WantMinus }]
             }
             (state @ (State::Opening { .. } | State::Live { .. }), Input::EpochEnded { own: false }) => { self.state = state; Vec::new() }
             (State::Opening { .. } | State::Live { .. }, Input::Closing) => { self.end(Cause::Closed); vec![Effect::Drained] }
-            (State::Live { kind, revision, rows, window, next_feed, position, ready }, Input::Committed { revision: at, touches }) => {
-                self.state = State::Live { kind, revision, rows, window, next_feed, position, ready };
-                if touches { vec![Effect::Read(at)] } else { Vec::new() }
+            (State::Live { kind, revision, rows, count, window, next_feed, position, ready }, Input::Committed { revision: at, touches }) => {
+                self.state = State::Live { kind, revision, rows, count, window, next_feed, position, ready };
+                if touches && kind != Kind::Events { vec![Effect::Read(at)] } else { Vec::new() }
             }
-            (State::Live { kind, revision, rows, window, next_feed, position, ready }, Input::ReadDone { revision: at, rows: now }) => {
+            (State::Live { kind, revision, rows, count, window, next_feed, position, ready }, Input::ReadDone { revision: at, rows: now }) => {
                 if at <= revision {
-                    self.state = State::Live { kind, revision, rows, window, next_feed, position, ready };
+                    self.state = State::Live { kind, revision, rows, count, window, next_feed, position, ready };
                 } else if now != rows {
                     let upserted = now.iter().filter(|id| !rows.contains(id)).cloned().collect();
                     let removed = rows.iter().filter(|id| !now.contains(id)).cloned().collect();
                     self.push(Val::Delta { upserted, removed });
-                    self.state = State::Live { kind, revision: at, rows: now, window, next_feed, position, ready };
+                    self.state = State::Live { kind, revision: at, rows: now, count, window, next_feed, position, ready };
                 } else {
-                    self.state = State::Live { kind, revision, rows, window, next_feed, position, ready };
+                    self.state = State::Live { kind, revision, rows, count, window, next_feed, position, ready };
                 }
                 Vec::new()
             }
-            (State::Live { kind, revision, rows, window, next_feed, position, ready }, Input::ReadFailed { .. }) => {
+            (State::Live { kind, revision, rows, count, window, next_feed, position, ready }, Input::CountDone { revision: at, count: now }) => {
+                if at > revision && count != Some(now) {
+                    self.push(Val::Count { count: now, state: window });
+                    self.state = State::Live { kind, revision: at, rows, count: Some(now), window, next_feed, position, ready };
+                } else {
+                    self.state = State::Live { kind, revision, rows, count, window, next_feed, position, ready };
+                }
+                Vec::new()
+            }
+            (State::Live { kind, revision, rows, count, window, next_feed, position, ready }, Input::ReadFailed { revision: at }) if at <= revision => {
+                self.state = State::Live { kind, revision, rows, count, window, next_feed, position, ready };
+                Vec::new()
+            }
+            (State::Live { kind, revision, rows, count, window, next_feed, position, ready }, Input::ReadFailed { .. }) => {
                 let state = WState { phase: if rows.is_empty() { super::harness::Phase::Failed } else { super::harness::Phase::Loaded }, error: true, loaded: window.loaded };
                 self.push(Val::StateOnly(state));
-                self.state = State::Live { kind, revision, rows, window: state, next_feed, position, ready };
+                self.state = State::Live { kind, revision, rows, count, window: state, next_feed, position, ready };
                 Vec::new()
             }
-            (State::Live { kind, revision, rows, window, next_feed, position, ready }, Input::WindowState(now)) => {
+            (State::Live { kind, revision, rows, count, window, next_feed, position, ready }, Input::WindowState(now)) => {
                 if now != window { self.push(Val::StateOnly(now)); }
-                self.state = State::Live { kind, revision, rows, window: now, next_feed, position, ready };
+                self.state = State::Live { kind, revision, rows, count, window: now, next_feed, position, ready };
                 Vec::new()
             }
-            (State::Live { kind, revision, rows, window, mut next_feed, mut position, mut ready }, input @ (Input::Joined { .. } | Input::ModelReady | Input::ModelEvent { .. } | Input::ModelLost { .. })) => {
+            (State::Live { kind, revision, rows, count, window, mut next_feed, mut position, mut ready }, input @ (Input::Joined { .. } | Input::ModelReady | Input::ModelEvent { .. } | Input::ModelLost { .. })) => {
                 if kind == Kind::Events {
                     match (input, next_feed) {
                         (Input::Joined { position: at }, None) => next_feed = Some(at + 1),
@@ -203,11 +252,11 @@ impl Delivery {
                         _ => {}
                     }
                 }
-                self.state = State::Live { kind, revision, rows, window, next_feed, position, ready };
+                self.state = State::Live { kind, revision, rows, count, window, next_feed, position, ready };
                 Vec::new()
             }
-            (State::Live { kind, revision, rows, window, next_feed, position, ready }, Input::ModelsReset { own_model }) => {
-                self.state = State::Live { kind, revision, rows, window, next_feed, position, ready };
+            (State::Live { kind, revision, rows, count, window, next_feed, position, ready }, Input::ModelsReset { own_model }) => {
+                self.state = State::Live { kind, revision, rows, count, window, next_feed, position, ready };
                 if own_model { vec![Effect::Read(revision)] } else { Vec::new() }
             }
             (State::Ended, _) => { self.state = State::Ended; Vec::new() }
