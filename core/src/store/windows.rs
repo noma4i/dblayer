@@ -92,19 +92,6 @@ pub(super) fn mark_families(connection: &Connection, families: &[(String, String
 }
 
 impl Store {
-    pub(crate) fn marker(&self, key: &str, generation: i64) -> Result<Option<crate::commit::WindowMarker>, StoreError> {
-        let inner = self.lock();
-        inner.ensure_healthy()?;
-        let mut statement = inner.connection.prepare_cached("SELECT m.sequence, m.field, m.value FROM window_marker m JOIN query_window w ON w.key = m.window_key AND w.generation = m.generation WHERE m.window_key = ?1 AND m.generation = ?2 AND w.has_next = 0")?;
-        let mut rows = statement.query(params![key, generation])?;
-        let mut marker = None;
-        while let Some(row) = rows.next()? {
-            let found = marker.get_or_insert_with(|| crate::commit::WindowMarker { sequence: 0, values: Default::default() });
-            found.sequence = row.get(0)?;
-            found.values.insert(row.get(1)?, row.get(2)?);
-        }
-        Ok(marker)
-    }
 
     #[cfg(test)]
     pub fn save_window(&self, record: &WindowRecord) -> Result<(), StoreError> {
@@ -148,6 +135,9 @@ impl Store {
             .optional()?)
     }
 
+
+
+    #[cfg(test)]
     pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::authority::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
         self.write_store(authority, |inner| {
             if let crate::lifecycle::authority::Authority::Admitted(admitted) = authority {
@@ -157,19 +147,9 @@ impl Store {
         })
     }
 
-    pub(crate) fn invalidate_windows(&self, authority: &crate::lifecycle::authority::Authority, keys: &[String], since: i64) -> Result<usize, StoreError> {
-        self.write_store(authority, |inner| {
-            let mut marked = 0;
-            for key in keys {
-                marked += inner.connection.execute("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key = ?1 AND applied < ?2", params![key, since])?;
-            }
-            Ok(marked)
-        })
-    }
-
     #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
-        let admitted = self.lifecycle.admit(crate::ffi::legacy::Origin::Explicit, "test invalidate").map_err(|_| StoreError::Refused)?;
+        let admitted = self.lifecycle.admit(crate::ffi::admission::Origin::Explicit, "test invalidate").map_err(|_| StoreError::Refused)?;
         let since = self.max_window_sequence()? + 1;
         self.invalidate_family(&admitted.authority(), model, relation, since)
     }

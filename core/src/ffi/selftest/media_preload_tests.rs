@@ -86,44 +86,7 @@ fn models() -> String {
     serde_json::to_string(&vec![presence, media]).unwrap()
 }
 
-#[derive(Default)]
-struct MarkedMediaTransport {
-    requests: Mutex<Vec<String>>,
-}
 
-#[async_trait::async_trait]
-impl Transport for MarkedMediaTransport {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
-    async fn query(&self, request: TransportRequest) -> Result<String, DbError> {
-        let count = {
-            let mut requests = self.requests.lock().unwrap();
-            let count = requests.iter().filter(|name| name.as_str() == request.operation_name.as_str()).count();
-            requests.push(request.operation_name.clone());
-            count
-        };
-        match request.operation_name.as_str() {
-            "MediaMarker" => {
-                let visual = if count < 2 { 0 } else { 1 };
-                Ok(json!({"data":{"node":{"mediaLibrary":{"revision":1,"visualCount":visual,"audioCount":0,"giftCount":0,"latestSequence":1}}}}).to_string())
-            }
-            "ChatMedia" => {
-                let id = if count == 0 { "v1" } else { "v2" };
-                Ok(json!({"data":{"node":{"messages":{"edges":[{"cursor":id,"node":{"id":id,"chatId":"c1","kind":"TEXT","mediaKind":"IMAGE","sequenceNumber":1}}],"pageInfo":{"hasNextPage":false,"endCursor":id}}}}}).to_string())
-            }
-            other => Err(DbError::Invalid { detail: format!("unexpected operation {other}") }),
-        }
-    }
-    async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> {
-        if request.operation_name != "LikeMoment" { return Err(DbError::Invalid { detail: format!("unexpected operation {}", request.operation_name) }); }
-        Ok(json!({"data":{"likeMoment":{"id":"v1","chatId":"c1","kind":"TEXT","mediaKind":"IMAGE","sequenceNumber":1}}}).to_string())
-    }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> { unreachable!() }
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn preloads_and_three_media_loads_finish_on_empty_pages() {

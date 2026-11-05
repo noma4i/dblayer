@@ -32,7 +32,7 @@ impl EncryptedTransport {
     }
 
     #[cfg(test)]
-    pub(super) fn test_admission(&self) -> Result<crate::ffi::legacy::Admitted, TransportError> { self.client.admit("test transport") }
+    pub(super) fn test_admission(&self) -> Result<crate::ffi::admission::Admitted, TransportError> { self.client.admit("test transport") }
 }
 
 pub fn graphql_body(request: &GraphQLRequest, with_document: bool) -> Value {
@@ -55,6 +55,7 @@ pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: 
     path == config.endpoints.graphql && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
 }
 
+#[cfg(test)]
 pub(crate) fn pending_matches(db: &crate::db::Db, owner: &crate::transport::RequestOwner) -> Result<bool, crate::store::StoreError> {
     Ok(db.shared.store.read_locked(super::state::pending)?.is_some_and(|pending| {
         pending.owner.as_ref() == Some(owner)
@@ -82,7 +83,7 @@ impl Transport for EncryptedTransport {
     fn resume_subscriptions(&self) { self.cable.resume(); }
     fn session(&self) -> Result<Option<String>, TransportError> { self.client.signed_in() }
 
-    async fn query(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
+    async fn query(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
         let response = response_of(self.client.read(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, false)).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
@@ -90,16 +91,16 @@ impl Transport for EncryptedTransport {
         response_of(self.client.read(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, true)).await?)
     }
 
-    async fn mutate(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
+    async fn mutate(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
         response_of(self.client.mutate_owned(admitted, &self.client.config.endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?)
     }
 
-    async fn subscribe(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
+    async fn subscribe(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         self.client.validate(admitted)?;
         self.cable.subscribe(admitted, request).await
     }
 
-    async fn put(&self, admitted: &crate::ffi::legacy::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
+    async fn put(&self, admitted: &crate::ffi::admission::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
         self.client.validate(admitted)?;
         crate::db::lock::assert_no_library_lock("Transport::put");
         self.rest.put(admitted, request).await

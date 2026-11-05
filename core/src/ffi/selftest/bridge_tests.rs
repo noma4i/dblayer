@@ -88,7 +88,6 @@ impl Reader {
     fn ended(&self) -> Vec<ReadEnd> {
         self.deliveries().into_iter().filter_map(|delivery| if let ReadValue::Ended { cause } = delivery.value { Some(cause) } else { None }).collect()
     }
-    fn snapshots(&self) -> usize { self.deliveries().iter().filter(|delivery| matches!(delivery.value, ReadValue::Snapshot { .. })).count() }
     fn texts(&self) -> Vec<String> {
         self.rows().iter().map(|row| row.cells.iter().filter_map(|cell| if let crate::ffi::Cell::Text { value } = cell { Some(value.clone()) } else { None }).collect::<Vec<_>>().join("|")).collect()
     }
@@ -163,61 +162,9 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
     database.close_now();
 }
 
-#[derive(Default)]
-struct MomentTransport { reads: std::sync::atomic::AtomicUsize }
 
-#[async_trait::async_trait]
-impl crate::ffi::Transport for MomentTransport {
-    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
-    async fn query(&self, request: crate::ffi::TransportRequest) -> Result<String, DbError> {
-        if request.operation_name != "MomentsFeed" { return Err(DbError::Invalid { detail: format!("unexpected query {}", request.operation_name) }); }
-        let id = if self.reads.fetch_add(1, Ordering::SeqCst) == 0 { "1" } else { "2" };
-        Ok(json!({"data":{"moments":[{"id":id,"text":id}]}}).to_string())
-    }
-    async fn mutate(&self, request: crate::ffi::TransportRequest) -> Result<String, DbError> {
-        if request.operation_name == "LikeMoment" { return Ok(json!({"data":{"likeMoment":{"id":"1","text":"1"}}}).to_string()); }
-        if request.operation_name == "DeleteMoment" { return Ok(json!({"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]}).to_string()); }
-        Err(DbError::Invalid { detail: format!("unexpected mutation {}", request.operation_name) })
-    }
-    async fn subscribe(&self, _: crate::ffi::TransportRequest, _: Arc<crate::ffi::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
-}
 
-struct PagedMomentTransport {
-    reads: std::sync::atomic::AtomicUsize,
-    first_page: Arc<super::rig_tests::Gate>,
-}
 
-#[async_trait::async_trait]
-impl crate::ffi::Transport for PagedMomentTransport {
-    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
-    async fn query(&self, request: crate::ffi::TransportRequest) -> Result<String, DbError> {
-        if request.operation_name != "MomentsFeed" { return Err(DbError::Invalid { detail: format!("unexpected query {}", request.operation_name) }); }
-        let index = self.reads.fetch_add(1, Ordering::SeqCst);
-        if index == 1 { self.first_page.pass().await; }
-        let (id, more, cursor) = match index {
-            0 => ("1", false, "seed"),
-            1 => ("1", true, "first"),
-            2 => ("2", false, "second"),
-            3 => ("2", false, "fresh"),
-            _ => return Err(DbError::Invalid { detail: "unexpected feed request".into() }),
-        };
-        Ok(json!({"data":{"feed":{"nodes":[{"id":id,"text":id}],"pageInfo":{"hasNextPage":more,"endCursor":cursor}}}}).to_string())
-    }
-    async fn mutate(&self, request: crate::ffi::TransportRequest) -> Result<String, DbError> {
-        <MomentTransport as crate::ffi::Transport>::mutate(&MomentTransport::default(), request).await
-    }
-    async fn subscribe(&self, _: crate::ffi::TransportRequest, _: Arc<crate::ffi::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
-}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {

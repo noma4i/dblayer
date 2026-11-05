@@ -83,8 +83,6 @@ pub(super) enum Eff {
     Send,
     /// The same `request_id` and `sequence` as the first `Send`.
     SendSamePair,
-    /// The first `Send` after `open` carries the stored pair.
-    SendStoredPair,
     Cancel,
     ScheduleTick,
     ScheduleLanding,

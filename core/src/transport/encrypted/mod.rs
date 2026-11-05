@@ -60,10 +60,6 @@ mod persisted_query_tests;
 mod refused_sequence_tests;
 #[cfg(test)]
 mod sealed_errors_tests;
-#[cfg(test)]
-mod session_guards_tests;
-#[cfg(test)]
-mod retry_tests;
 
 #[cfg(test)]
 pub(crate) mod protocol_tests;

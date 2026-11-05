@@ -33,7 +33,7 @@ fn iso_millis(milliseconds: i64) -> Option<String> {
 }
 
 impl Store {
-    pub(crate) fn maintain(&self, admitted: &crate::ffi::legacy::Admitted, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, StoreError> {
+        pub(crate) fn maintain(&self, admitted: &crate::ffi::admission::Admitted, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, StoreError> {
         let authority = admitted.authority();
         let (tombstone_drops, ids, generation) = self.write_store(&authority, |inner| {
             let now = inner.now_ms();

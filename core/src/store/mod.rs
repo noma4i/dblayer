@@ -17,6 +17,7 @@ pub(crate) mod blob;
 mod boot;
 mod error;
 mod file_ops;
+#[cfg(test)]
 mod maintenance;
 mod open;
 mod restore;
@@ -41,6 +42,7 @@ pub use apply::PlanCommitError;
 pub(crate) use apply::save_pending;
 pub use boot::BootReport;
 pub use error::StoreError;
+#[cfg(test)]
 pub use maintenance::{MaintenanceReport, TempRowPolicy};
 pub use rows::{EdgeRead, Reader, StoredRow};
 pub(crate) use response::coalesce_rows;
@@ -190,7 +192,7 @@ impl Drop for Committed<'_> {
 
 pub struct Store {
     inner: Mutex<Inner>,
-    pub(crate) lifecycle: Arc<crate::ffi::legacy::Leases>,
+    pub(crate) lifecycle: Arc<crate::ffi::admission::Leases>,
     models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
     poison: Arc<Mutex<Option<String>>>,
     readers: Option<readers::Readers>,
@@ -200,8 +202,6 @@ pub struct Store {
     newest_operation: std::sync::atomic::AtomicI64,
     line: AnnounceLine,
     session_end_replay: std::sync::atomic::AtomicBool,
-    #[cfg(test)]
-    failing_entity_reads: std::sync::atomic::AtomicUsize,
     #[cfg(test)]
     pub(crate) read_threads: Mutex<Vec<std::thread::ThreadId>>,
     #[cfg(test)]
@@ -214,8 +214,6 @@ pub struct Store {
     pub(crate) after_network_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
-    #[cfg(test)]
-    pub(crate) before_freshness: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
 impl Store {
@@ -255,11 +253,7 @@ impl Store {
             after_network_check: Mutex::new(None),
             #[cfg(test)]
             after_commit: Mutex::new(None),
-            #[cfg(test)]
-            before_freshness: Mutex::new(None),
             session_end_replay: std::sync::atomic::AtomicBool::new(false),
-            #[cfg(test)]
-            failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 

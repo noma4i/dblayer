@@ -3,7 +3,7 @@
 //! and tells their holders what changed. It takes no transition of its own. Sub-direction B and C delete it with the last old module that takes a lease.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use tokio::sync::watch;
 
@@ -38,12 +38,6 @@ pub(crate) struct Snapshot {
     pub change: Change,
 }
 
-/// What a call saw when it was admitted. A write that carries an older stamp belongs to a database state that no longer exists.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Stamp {
-    pub generation: Generation,
-    pub session_epoch: u64,
-}
 
 /// The lease of a call ended because the database closed or its epoch ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +56,6 @@ impl Default for Snapshot {
 impl Snapshot {
     pub(crate) fn signed_in(&self) -> bool { self.session.is_some() && !self.ended }
 
-    pub(crate) fn stamp(&self) -> Stamp { Stamp { generation: self.generation, session_epoch: self.session_epoch } }
 
     /// Whether work of this kind may start now. An ending epoch admits nothing: the work of the old epoch ended, and the next work waits for the next epoch.
     pub(crate) fn admits(&self, origin: Origin) -> bool {
@@ -72,74 +65,22 @@ impl Snapshot {
         }
     }
 
-    pub(crate) fn concerns(&self, _model: &str) -> bool { true }
 
-    pub(crate) fn rereads(&self, model: &str) -> bool {
-        match &self.change {
-            Change::Cleared(models) => models.as_ref().is_none_or(|models| models.iter().any(|name| name == model)),
-            Change::SessionStarted(Some(_)) => true,
-            _ => false,
-        }
-    }
 }
 
-pub(crate) enum Invalidated {
-    Ended,
-    Rebound,
-}
 
-/// Follows the latest settled change. A receiver that falls behind sees the newest change only, and compares the epoch and generation it holds.
-pub(crate) struct Watch {
-    state: watch::Receiver<Snapshot>,
-    seen: u64,
-    generation: Generation,
-    session_epoch: u64,
-}
 
-impl Watch {
-    pub(crate) fn current(&self) -> Snapshot { self.state.borrow().clone() }
-
-    pub(crate) async fn invalidated(&mut self) -> Option<Invalidated> {
-        loop {
-            let next = self.changed().await?;
-            let moved = std::mem::replace(&mut self.generation, next.generation) != next.generation;
-            let epoch_moved = std::mem::replace(&mut self.session_epoch, next.session_epoch) != next.session_epoch;
-            if moved || !matches!(next.change, Change::SessionStarted(_)) { return Some(Invalidated::Ended); }
-            if epoch_moved { return Some(Invalidated::Rebound); }
-        }
-    }
-
-    pub(crate) async fn changed(&mut self) -> Option<Snapshot> {
-        let seen = self.seen;
-        let snapshot = self.state.wait_for(|snapshot| snapshot.notice > seen).await.ok()?.clone();
-        self.seen = snapshot.notice;
-        Some(snapshot)
-    }
-}
 
 /// An object that lives as long as the database and must hear its closing and its changes.
 pub(crate) trait Holder: Send + Sync {
     fn close(&self);
-    fn registration(&self) -> &OnceLock<Registration>;
     fn changed(&self, _snapshot: &Snapshot) {}
     /// Runs before any work of the new epoch is admitted.
     fn session_starting(&self, _session: Option<&str>) {}
 }
 
-pub(crate) struct Registration { owner: Weak<Leases>, id: usize }
 
-impl Registration {
-    pub(crate) fn remove(&self) {
-        if let Some(owner) = self.owner.upgrade() {
-            let removed = crate::db::locked(&owner.state).holders.remove(&self.id);
-            drop(removed);
-        }
-    }
-}
 
-impl Drop for Registration {
-    fn drop(&mut self) { self.remove(); }
-}
 
 /// Open holders in a vector without gaps, so a walk costs the number of open holders however many were open before.
 #[derive(Default)]
@@ -149,22 +90,10 @@ struct Holders {
 }
 
 impl Holders {
-    fn insert(&mut self, id: usize, holder: Weak<dyn Holder>) {
-        self.index.insert(id, self.order.len());
-        self.order.push((id, holder));
-    }
 
-    fn remove(&mut self, id: &usize) -> Option<Weak<dyn Holder>> {
-        let at = self.index.remove(id)?;
-        let (_, removed) = self.order.swap_remove(at);
-        if let Some((moved, _)) = self.order.get(at) { self.index.insert(*moved, at); }
-        Some(removed)
-    }
 
     fn open(&self) -> Vec<Weak<dyn Holder>> { self.order.iter().map(|(_, holder)| holder.clone()).collect() }
 
-    #[cfg(test)]
-    fn len(&self) -> usize { self.order.len() }
 
     fn clear(&mut self) {
         self.order = Vec::new();
@@ -294,12 +223,11 @@ impl Leases {
         self.admit_as(origin, target, false, None)
     }
 
+
+
+    #[cfg(test)]
     pub(crate) fn admit_passive(self: &Arc<Self>, origin: Origin, target: &'static str, expected: Option<u64>) -> Result<Admitted, Ended> {
         self.admit_as(origin, target, true, expected)
-    }
-
-    pub(crate) fn admit_session_at(self: &Arc<Self>, origin: Origin, target: &'static str, expected: u64) -> Result<Admitted, Ended> {
-        self.admit_as(origin, target, false, Some(expected))
     }
 
     fn admit_as(self: &Arc<Self>, origin: Origin, target: &'static str, passive: bool, expected: Option<u64>) -> Result<Admitted, Ended> {
@@ -327,11 +255,6 @@ impl Leases {
     /// The line a pinned SQL commit holds from its epoch check to the end of the commit. The end of an epoch cannot happen meanwhile.
     pub(crate) fn commit_line(&self) -> crate::db::lock::Guard<'_, ()> { crate::db::locked(&self.commit_line) }
 
-    pub(crate) fn watch(&self) -> Watch {
-        let state = self.changed.subscribe();
-        let (seen, generation, session_epoch) = { let published = state.borrow(); (published.notice, published.generation, published.session_epoch) };
-        Watch { state, seen, generation, session_epoch }
-    }
 
     fn release(&self, id: u64) {
         let activity = {
@@ -364,33 +287,8 @@ impl Leases {
         state.leases.values().all(|lease| lease.passive) && !state.snapshot.ending
     }
 
-    /// Waits until work of this kind may start. False when the database closed first.
-    pub(crate) async fn admission(&self, origin: Origin) -> bool {
-        let mut changes = self.changed.subscribe();
-        changes.wait_for(|published| published.closed || published.admits(origin)).await.is_ok_and(|published| !published.closed)
-    }
 
-    /// Admits the work a wake starts in the epoch it was woken in. The lease is taken at the call, so a settled wait sees the work. An epoch end that is not a new epoch yet delays the work to the next publication of the same epoch instead of dropping it.
-    pub(crate) fn admit_woken(self: &Arc<Self>, origin: Origin, target: &'static str, epoch: u64) -> impl std::future::Future<Output = Option<Admitted>> + Send + 'static {
-        let now = self.admit_as(origin, target, false, Some(epoch)).ok();
-        let life = self.clone();
-        async move {
-            match now {
-                Some(admitted) => Some(admitted),
-                None => life.admit_after_ending(origin, target, epoch).await,
-            }
-        }
-    }
 
-    async fn admit_after_ending(self: Arc<Self>, origin: Origin, target: &'static str, epoch: u64) -> Option<Admitted> {
-        let mut changes = self.changed.subscribe();
-        loop {
-            if let Ok(admitted) = self.admit_as(origin, target, false, Some(epoch)) { return Some(admitted); }
-            let waiting = { let published = changes.borrow_and_update(); !published.closed && published.ending && published.session_epoch == epoch };
-            if !waiting { return None; }
-            changes.changed().await.ok()?;
-        }
-    }
 
     /// The work that holds a lease now, for a report that names what a wait is waiting for.
     pub(crate) fn held(&self) -> Vec<String> {
@@ -405,21 +303,6 @@ impl Leases {
         let _ = activity.wait_for(|activity| activity.held == 0 && !activity.ending).await;
     }
 
-    /// Registers a holder and returns the state at that moment. Every change after it reaches the holder.
-    pub(crate) fn enroll<M: Holder + 'static>(self: &Arc<Self>, holder: &Arc<M>) -> Snapshot {
-        assert!(holder.registration().get().is_none());
-        let mut state = crate::db::locked(&self.state);
-        let snapshot = state.snapshot.clone();
-        if snapshot.closed {
-            drop(state);
-            holder.close();
-            return snapshot;
-        }
-        let id = Arc::as_ptr(holder) as usize;
-        assert!(holder.registration().set(Registration { owner: Arc::downgrade(self), id }).is_ok());
-        state.holders.insert(id, Arc::downgrade(holder) as Weak<dyn Holder>);
-        snapshot
-    }
 
     fn notify(&self, snapshot: Snapshot, holders: Vec<Weak<dyn Holder>>, starting: Option<Option<String>>) -> u64 {
         let changed = self.changed.clone();
@@ -586,15 +469,11 @@ impl Leases {
         self.admit_as(Origin::Explicit, "test session", false, Some(snapshot.session_epoch + 1))
     }
 
-    #[cfg(test)]
-    pub(crate) fn enrolled(&self) -> usize { crate::db::locked(&self.state).holders.len() }
 
-    #[cfg(test)]
-    pub(crate) fn work(&self) -> usize { self.work.load(std::sync::atomic::Ordering::SeqCst) }
 }
 
 #[cfg(test)]
-mod legacy_tests {
+mod admission_tests {
     use super::*;
 
     #[test]

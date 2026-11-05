@@ -26,7 +26,7 @@ const ALL_PEERS: [Peer; 10] = crate::owners::lifecycle::ALL_OWNERS;
 
 pub(super) struct LifecycleRunner {
     pub wiring: Arc<Wiring>,
-    pub leases: Arc<crate::ffi::legacy::Leases>,
+    pub leases: Arc<crate::ffi::admission::Leases>,
     pub absent: Vec<Peer>,
     pub db: Db,
     /// The published value and the answers of one step wait for `step_done`: a caller that sees a new epoch finds every owner already in it.

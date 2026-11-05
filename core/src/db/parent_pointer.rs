@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::{json, Map, Value};
 
@@ -23,13 +23,11 @@ pub(crate) struct PointerEdit {
 #[derive(Default)]
 pub(crate) struct Followed {
     pub edits: Vec<PointerEdit>,
-    pub absent: BTreeSet<ModelKey>,
 }
 
 #[derive(Default)]
 struct Parents {
     rows: BTreeMap<RowRef, (Row, Row)>,
-    absent: BTreeSet<ModelKey>,
 }
 
 struct Ops<'a> {
@@ -76,7 +74,7 @@ impl Db {
                 EntityOp::Touch { .. } => {}
             }
         }
-        let mut followed = Followed { absent: parents.absent, ..Followed::default() };
+        let mut followed = Followed::default();
         envelope.entity_ops.retain(|op| !matches!(op, EntityOp::Touch { .. }) || !parents.rows.contains_key(&op.row_ref()));
         for (parent, (before, after)) in parents.rows {
             envelope.entity_ops.push(EntityOp::Upsert { model: parent.model.clone(), id: parent.id.clone(), row: after.clone() });
@@ -97,10 +95,7 @@ impl Db {
             if ops.doomed.contains(&parent) {
                 continue;
             }
-            let Some(current) = ops.current(reader, parents, &parent)? else {
-                parents.absent.insert(association.target.clone());
-                continue;
-            };
+            let Some(current) = ops.current(reader, parents, &parent)? else { continue };
             if !association.child_is_newer(&current, row) {
                 continue;
             }

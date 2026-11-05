@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use crate::ffi::legacy::Origin;
+use crate::ffi::admission::Origin;
 use super::receipt::{WireOperationReceipt};
 use super::upload_wire::WireUploadRequest;
 use super::{Database, DbError};
@@ -33,7 +33,7 @@ pub(super) fn closed() -> DbError { DbError::Closed { detail: "the database is c
 fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no durable command: only sending a message and a media upload work without a network") } }
 
 impl Database {
-    pub(super) fn acquire(&self, origin: Origin, epoch: u64, target: &'static str) -> Result<crate::ffi::legacy::Admitted, DbError> {
+    pub(super) fn acquire(&self, origin: Origin, epoch: u64, target: &'static str) -> Result<crate::ffi::admission::Admitted, DbError> {
         self.account_call(epoch)?;
         let admitted = self.streams.admit(origin, target).map_err(|_| {
             let state = self.streams.snapshot();
@@ -47,7 +47,7 @@ impl Database {
     }
 
     /// Runs the work in the epoch of the caller: it starts only while that epoch is current and ends with it. `Session` work also needs a signed-in session.
-    pub(super) async fn in_epoch_as<T, F>(&self, origin: Origin, epoch: u64, target: &'static str, restore: bool, work: impl FnOnce(crate::ffi::legacy::Admitted) -> F) -> Result<T, DbError>
+    pub(super) async fn in_epoch_as<T, F>(&self, origin: Origin, epoch: u64, target: &'static str, restore: bool, work: impl FnOnce(crate::ffi::admission::Admitted) -> F) -> Result<T, DbError>
     where F: Future<Output = Result<T, DbError>> {
         let admitted = self.acquire(origin, epoch, target)?;
         let result = admitted.run(work(admitted.clone())).await.map_err(|_| ended())??;

@@ -16,7 +16,7 @@ use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, SchemaError, ValueFault};
 use crate::store::{PlanCommitError, Reader, StoreError};
 use crate::syncstate::read_sync;
-use crate::upload::UploadState;
+
 use crate::value::read_id;
 use crate::write::{cascade_destroys, cascade_envelope, WritePlan};
 
@@ -90,7 +90,6 @@ enum Action {
     Update,
     Destroy,
     Named(String),
-    Upload(String),
 }
 
 impl Action {
@@ -99,7 +98,7 @@ impl Action {
             Action::Create => "create",
             Action::Update => "update",
             Action::Destroy => "destroy",
-            Action::Named(name) | Action::Upload(name) => name,
+            Action::Named(name) => name,
         }
     }
 }
@@ -158,24 +157,24 @@ pub(super) fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> 
 }
 
 impl Db {
-    pub fn create(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, values: Map<String, Value>) -> Result<Row, DbError> {
+    pub fn create(&self, admitted: &crate::ffi::admission::Admitted, model: &str, values: Map<String, Value>) -> Result<Row, DbError> {
         self.create_with(admitted, model, values, Map::new())
     }
 
-    pub fn create_with(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+    pub fn create_with(&self, admitted: &crate::ffi::admission::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
         self.create_in(admitted, None, model, values, args)
     }
 
     /// Creates the row in the data generation the caller was admitted in: a commit after that generation ended is refused as stale.
-    pub(crate) fn create_in(&self, admitted: &crate::ffi::legacy::Admitted, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+    pub(crate) fn create_in(&self, admitted: &crate::ffi::admission::Admitted, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
         self.create_queued(admitted, pinned, model, values, args).map(|(row, _, _)| row)
     }
 
-    pub(crate) fn create_queued(&self, admitted: &crate::ffi::legacy::Admitted, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>, i64), DbError> {
+    pub(crate) fn create_queued(&self, admitted: &crate::ffi::admission::Admitted, pinned: Option<crate::identity::Generation>, model: &str, values: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>, i64), DbError> {
         self.create_claiming(admitted, pinned, model, values, args, |_| ()).map(|(row, operation, revision, ())| (row, operation, revision))
     }
 
-    pub(crate) fn create_claiming<T>(&self, admitted: &crate::ffi::legacy::Admitted, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Row, Option<i64>, i64, T), DbError> {
+    pub(crate) fn create_claiming<T>(&self, admitted: &crate::ffi::admission::Admitted, pinned: Option<crate::identity::Generation>, model: &str, mut values: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Row, Option<i64>, i64, T), DbError> {
         if !args.is_empty() { self.expire_blobs_before_use(admitted)?; }
         self.fill_local_sources(model, &mut values)?;
         let mut unannounced = None;
@@ -187,7 +186,7 @@ impl Db {
         Ok((row, operation, revision, claimed))
     }
 
-    fn insert_local<'a>(&'a self, admitted: &crate::ffi::legacy::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>, i64), DbError> {
+    fn insert_local<'a>(&'a self, admitted: &crate::ffi::admission::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>, i64), DbError> {
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &values)?;
         let mut input = values;
@@ -232,19 +231,19 @@ impl Db {
         Ok((id, operation, committed.revision.ok_or_else(|| DbError::Internal("created row has no revision".into()))?))
     }
 
-    pub fn update(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, patch: Map<String, Value>) -> Result<Row, DbError> {
+    pub fn update(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, patch: Map<String, Value>) -> Result<Row, DbError> {
         self.update_with(admitted, model, id, patch, Map::new())
     }
 
-    pub fn update_with(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
+    pub fn update_with(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Row, DbError> {
         self.update_queued(admitted, model, id, patch, args).map(|(row, _, _)| row)
     }
 
-    pub(crate) fn update_queued(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>, i64), DbError> {
+    pub(crate) fn update_queued(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<(Row, Option<i64>, i64), DbError> {
         self.update_claiming(admitted, model, id, patch, args, |_| ()).map(|(row, operation, revision, ())| (row, operation, revision))
     }
 
-    pub(crate) fn update_claiming<T>(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Row, Option<i64>, i64, T), DbError> {
+    pub(crate) fn update_claiming<T>(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Row, Option<i64>, i64, T), DbError> {
         if !args.is_empty() { self.expire_blobs_before_use(admitted)?; }
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &patch)?;
@@ -290,11 +289,11 @@ impl Db {
         Ok((row, operation, revision, claimed))
     }
 
-    pub fn act(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
+    pub fn act(&self, admitted: &crate::ffi::admission::Admitted, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>) -> Result<Acted, DbError> {
         self.act_claiming(admitted, model, action, id, patch, args, |_| ()).map(|(acted, ())| acted)
     }
 
-    pub fn act_claiming<T>(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(i64) -> T) -> Result<(Acted, T), DbError> {
+    pub fn act_claiming<T>(&self, admitted: &crate::ffi::admission::Admitted, model: &str, action: &str, id: &RowId, patch: Map<String, Value>, args: Map<String, Value>, claim: impl FnOnce(i64) -> T) -> Result<(Acted, T), DbError> {
         self.expire_blobs_before_use(admitted)?;
         let spec = self.shared.spec(model)?;
         let mut patch = patch;
@@ -469,11 +468,11 @@ pub(super) fn plan_scope_effect(reader: &Reader<'_>, target: &ModelSpec, effect:
 }
 
 impl Db {
-    pub fn destroy(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {
+    pub fn destroy(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId) -> Result<Vec<RowRef>, DbError> {
         self.destroy_claiming(admitted, model, id, |_| ()).map(|(destroyed, _, _, ())| destroyed)
     }
 
-    pub(crate) fn destroy_claiming<T>(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Vec<RowRef>, Option<i64>, i64, T), DbError> {
+    pub(crate) fn destroy_claiming<T>(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, claim: impl FnOnce(Option<i64>) -> T) -> Result<(Vec<RowRef>, Option<i64>, i64, T), DbError> {
         let spec = self.shared.spec(model)?;
         let own = RowRef::new(ModelKey::new(model), id.clone());
         let generation = self.generation();
@@ -540,7 +539,7 @@ impl Db {
 
     fn commit_local_optional<'a>(
         &'a self,
-        admitted: &crate::ffi::legacy::Admitted,
+        admitted: &crate::ffi::admission::Admitted,
         spec: &ModelSpec,
         queued: &mut Queued,
         generation: Option<crate::identity::Generation>,
@@ -579,10 +578,7 @@ impl Db {
     fn begin(&self, reader: &Reader<'_>, spec: &ModelSpec, queued: &Queued, created_at: i64) -> Result<OperationTransition, DbError> {
         let record = OperationRecord {
             seq: None,
-            action_key: match &queued.action {
-                Action::Upload(action) => Operation::upload_action_key(spec.key.as_str(), action),
-                other => Operation::action_key(spec.key.as_str(), other.name()),
-            },
+            action_key: Operation::action_key(spec.key.as_str(), queued.action.name()),
             status: OperationStatus::Pending,
             row_ids: vec![queued.row_id.clone()],
             temp_id: queued.temp_id.clone(),

@@ -294,7 +294,7 @@ impl Db {
         }
     }
 
-    pub fn set_ephemeral(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, values: Map<String, Value>) -> Result<(), DbError> {
+    pub fn set_ephemeral(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, values: Map<String, Value>) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
         let changed = {
             let life = &self.shared.store.lifecycle;
@@ -311,7 +311,7 @@ impl Db {
         }
     }
 
-    pub fn expire_ephemeral(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<usize, DbError> {
+    pub fn expire_ephemeral(&self, admitted: &crate::ffi::admission::Admitted) -> Result<usize, DbError> {
         let _gate = locked(&self.shared.expiry_gate);
         let (due, epoch) = {
             let life = &self.shared.store.lifecycle;
@@ -325,7 +325,7 @@ impl Db {
         Ok(due.reset.len() + self.destroy_expired(admitted, &due.expired)?)
     }
 
-    pub(crate) fn destroy_expired(&self, admitted: &crate::ffi::legacy::Admitted, candidates: &[RowKey]) -> Result<usize, DbError> {
+    pub(crate) fn destroy_expired(&self, admitted: &crate::ffi::admission::Admitted, candidates: &[RowKey]) -> Result<usize, DbError> {
         if candidates.is_empty() {
             return Ok(0);
         }
@@ -339,7 +339,7 @@ impl Db {
         self.destroy_claimed(admitted, generation, &claimed)
     }
 
-    pub(crate) fn destroy_claimed(&self, admitted: &crate::ffi::legacy::Admitted, generation: Generation, claimed: &[(RowKey, i64)]) -> Result<usize, DbError> {
+    pub(crate) fn destroy_claimed(&self, admitted: &crate::ffi::admission::Admitted, generation: Generation, claimed: &[(RowKey, i64)]) -> Result<usize, DbError> {
         let mut destroyed = 0;
         let committed = self.commit_following(&admitted.authority(), generation, |reader| {
             let mut envelope = CommitEnvelope::new(WriteOrigin::Event, generation);

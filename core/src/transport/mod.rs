@@ -6,7 +6,7 @@ mod error;
 mod extensions;
 mod events;
 mod fetch;
-#[cfg(any(test, feature = "stress"))]
+#[cfg(test)]
 mod mock;
 mod online;
 mod put;
@@ -23,7 +23,7 @@ pub use error::TransportError;
 pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
 pub use events::{EventFault, EventSpec};
 pub use fetch::{FetchAttempt, FetchError, FetchReport};
-#[cfg(any(test, feature = "stress"))]
+#[cfg(test)]
 pub use mock::{RecordedKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
 pub use put::{ByteSink, PutFile, PutRequest, PutResponse, TransferIdentity, TransferStep};
@@ -45,15 +45,15 @@ pub trait Transport: Send + Sync {
     async fn open_cable(&self, _url: &str) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {
         Err(TransportError::Network("encrypted cable socket is not connected".into()))
     }
-    async fn query(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn mutate(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn subscribe(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError>;
-    async fn put(&self, admitted: &crate::ffi::legacy::Admitted, request: PutRequest) -> Result<PutResponse, TransportError>;
+    async fn query(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<Response, TransportError>;
+    async fn mutate(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<Response, TransportError>;
+    async fn subscribe(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError>;
+    async fn put(&self, admitted: &crate::ffi::admission::Admitted, request: PutRequest) -> Result<PutResponse, TransportError>;
 }
 
 #[cfg(test)]
-pub(crate) fn test_admission() -> Result<crate::ffi::legacy::Admitted, crate::ffi::legacy::Ended> {
-    std::sync::Arc::new(crate::ffi::legacy::Leases::default()).admit(crate::ffi::legacy::Origin::Explicit, "test transport")
+pub(crate) fn test_admission() -> Result<crate::ffi::admission::Admitted, crate::ffi::admission::Ended> {
+    std::sync::Arc::new(crate::ffi::admission::Leases::default()).admit(crate::ffi::admission::Origin::Explicit, "test transport")
 }
 
 #[cfg(test)]

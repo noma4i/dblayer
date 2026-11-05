@@ -2,7 +2,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::harness::Phase;
+
+/// Observables shared by the references and the core.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Phase {
+    Idle,
+    Loading,
+    Loaded,
+    Failed,
+}
 
 pub(super) const PRELOAD: u32 = u32::MAX;
 
@@ -153,15 +161,6 @@ impl Window {
         }
     }
 
-    /// A window whose first page landed: `Idle{fresh}` with a cursor-less page, request 1 used.
-    pub(super) fn idle_fresh() -> Self {
-        let mut window = Self::new();
-        window.step(Input::Load { id: 0, goal: Goal::First, force: false });
-        window.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true });
-        window.step(Input::Committed { request: 1, revision: 1 });
-        window.take_outcomes();
-        window
-    }
 
     /// Before the first `Online` of the dictionary.
     pub(super) fn before_online() -> Self {

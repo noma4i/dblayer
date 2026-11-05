@@ -1,6 +1,6 @@
 use super::error::TransportError;
 use crate::pacing::{Backoff, Clock, RetryPolicy};
-use super::{Connectivity, GraphQLRequest, Response, Transport};
+use super::Connectivity;
 
 const RETRIABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
 // GraphQL list cursor errors require restarting pagination from the first page.

@@ -438,15 +438,15 @@ fn manifest_write_and_read_round_trip() {
 }
 
 #[test]
-fn missing_format_format_mismatch_and_data_version_mismatch_are_incompatible() {
+fn missing_format_format_mismatch_and_data_version_mismatch_are_mismatched() {
     let missing_format = verdict(&[("fingerprint:message", "message-v1")], None, &[]);
     let format_mismatch = verdict(&[(FORMAT_VERSION_KEY, "0")], None, &[]);
     let format = format_version();
     let data_mismatch = verdict(&[(FORMAT_VERSION_KEY, format.as_str()), (DATA_VERSION_KEY, "a")], Some("b"), &[]);
 
-    assert_eq!(missing_format, ManifestVerdict::Incompatible);
-    assert_eq!(format_mismatch, ManifestVerdict::Incompatible);
-    assert_eq!(data_mismatch, ManifestVerdict::Incompatible);
+    assert_eq!(missing_format, ManifestVerdict::Mismatch);
+    assert_eq!(format_mismatch, ManifestVerdict::Mismatch);
+    assert_eq!(data_mismatch, ManifestVerdict::Mismatch);
 }
 
 #[test]
@@ -464,26 +464,26 @@ fn empty_database_is_fresh_and_fingerprint_mismatch_touches_one_model() {
     assert_eq!(fresh, ManifestVerdict::Fresh);
     assert_eq!(cache_only, ManifestVerdict::CacheOnly { models: vec!["message".to_string()] });
     assert_eq!(removed, ManifestVerdict::CacheOnly { models: vec!["gone".to_string()] });
-    assert_eq!(added, ManifestVerdict::Compatible);
+    assert_eq!(added, ManifestVerdict::Match);
 }
 
 #[test]
-fn empty_manifest_with_cached_rows_is_incompatible() {
+fn empty_manifest_with_cached_rows_is_mismatched() {
     let connection = core_connection();
     connection.execute("insert into tombstone (model, id, seq, deleted_at) values ('m', '1', 1, 0)", []).unwrap();
 
-    assert_eq!(manifest_verify(&connection, None, &BTreeMap::new()).unwrap(), ManifestVerdict::Incompatible);
+    assert_eq!(manifest_verify(&connection, None, &BTreeMap::new()).unwrap(), ManifestVerdict::Mismatch);
 }
 
 #[test]
-fn stamp_makes_matching_manifest_compatible() {
+fn stamp_makes_matching_manifest_matching() {
     let connection = core_connection();
     let fingerprints = BTreeMap::from([("messages".to_string(), "fp1".to_string())]);
 
     manifest_stamp(&connection, Some("v1"), &fingerprints).unwrap();
 
-    assert_eq!(manifest_verify(&connection, Some("v1"), &fingerprints).unwrap(), ManifestVerdict::Compatible);
-    assert_eq!(manifest_verify(&connection, Some("v2"), &fingerprints).unwrap(), ManifestVerdict::Incompatible);
+    assert_eq!(manifest_verify(&connection, Some("v1"), &fingerprints).unwrap(), ManifestVerdict::Match);
+    assert_eq!(manifest_verify(&connection, Some("v2"), &fingerprints).unwrap(), ManifestVerdict::Mismatch);
 }
 
 #[test]

@@ -60,7 +60,7 @@ pub enum LifeReply {
 const OPEN_WAIT: Duration = Duration::from_secs(365 * 24 * 3600);
 
 /// The first author id of the calls that the old stack makes: below it the ids of Outbox, Transfer and Session.
-const LEGACY_AUTHORS: AuthorId = 1 << 32;
+const WAITER_AUTHORS: AuthorId = 1 << 32;
 
 /// The document and the answer root of a declared operation.
 pub type OperationLookup = Arc<dyn Fn(&str) -> Option<(String, String)> + Send + Sync>;

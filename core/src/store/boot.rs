@@ -72,7 +72,7 @@ impl Store {
         let migrated = migrated_reset.is_some();
         let mut reset_models = migrated_reset.unwrap_or_default();
         if !migrated { match &verdict {
-            ManifestVerdict::Fresh | ManifestVerdict::Compatible => {
+            ManifestVerdict::Fresh | ManifestVerdict::Match => {
                 create_model_tables(&inner.connection, models)?;
                 let transaction = inner.connection.unchecked_transaction()?;
                 manifest_stamp(&transaction, data_version, &fingerprints)?;
@@ -97,8 +97,8 @@ impl Store {
                 transaction.commit()?;
                 reset_models = reset;
             }
-            ManifestVerdict::Incompatible => {
-                write_intent(&inner.connection, "incompatible", &[], now)?;
+            ManifestVerdict::Mismatch => {
+                write_intent(&inner.connection, "mismatched", &[], now)?;
                 let transaction = inner.connection.unchecked_transaction()?;
                 wipe_all_cache(&transaction, true)?;
                 reset_models = models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect();

@@ -42,7 +42,7 @@ fn boot_creates_model_tables_and_ready_follows_mark_ready() {
 }
 
 #[test]
-fn second_boot_is_compatible_and_keeps_data() {
+fn second_boot_is_matching_and_keeps_data() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     let models = [messages_spec(), items_spec()];
@@ -51,7 +51,7 @@ fn second_boot_is_compatible_and_keeps_data() {
         seed(&store);
     }
     let (store, report) = reopen(&path, &models, Some("v1"));
-    assert_eq!(report.verdict, ManifestVerdict::Compatible);
+    assert_eq!(report.verdict, ManifestVerdict::Match);
     assert_eq!(store.row_count("messages").unwrap(), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 2);
 }
@@ -123,7 +123,7 @@ fn added_model_clears_nothing() {
         store.commit(envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![])).unwrap();
     }
     let (store, report) = reopen(&path, &[messages_spec(), items_spec()], None);
-    assert_eq!(report.verdict, ManifestVerdict::Compatible);
+    assert_eq!(report.verdict, ManifestVerdict::Match);
     assert_eq!(store.row_count("messages").unwrap(), 1);
     assert_eq!(store.row_count("items").unwrap(), 0);
 }
@@ -145,7 +145,7 @@ fn removed_model_clears_every_server_model_and_its_fingerprint() {
 }
 
 #[test]
-fn incompatible_manifests_wipe_cache_and_quarantine_operations() {
+fn mismatched_manifests_wipe_cache_and_quarantine_operations() {
     type Case = (&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>);
     let cases: [Case; 2] = [
         ("data version changed", Some("v1"), Some("v2"), None),
@@ -163,7 +163,7 @@ fn incompatible_manifests_wipe_cache_and_quarantine_operations() {
             }
         }
         let (store, report) = reopen(&path, &models, after);
-        assert_eq!(report.verdict, ManifestVerdict::Incompatible, "{case}");
+        assert_eq!(report.verdict, ManifestVerdict::Mismatch, "{case}");
         assert_eq!(store.row_count("messages").unwrap(), 0, "{case}: rows");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0, "{case}: membership");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0, "{case}: operations");
@@ -216,14 +216,14 @@ fn an_interrupted_session_end_wipes_the_data_at_the_next_open_and_asks_for_the_c
 }
 
 #[test]
-fn interrupted_incompatible_reset_is_completed_idempotently() {
+fn interrupted_mismatched_reset_is_completed_idempotently() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     let models = [messages_spec(), items_spec()];
     {
         let (store, _) = reopen(&path, &models, None);
         seed(&store);
-        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'incompatible', 1)");
+        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'mismatched', 1)");
     }
     let (store, report) = reopen(&path, &models, None);
     assert!(report.finished_interrupted_reset);
@@ -311,7 +311,7 @@ fn store_prop_boot_any_layout() {
         ),
         (
             "session with an extra column",
-            "DROP TABLE encrypted_session; CREATE TABLE encrypted_session (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, sequence INTEGER NOT NULL, legacy TEXT) STRICT; INSERT INTO encrypted_session (id, credential_digest, sequence, legacy) VALUES (1, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 4, 'x');",
+            "DROP TABLE encrypted_session; CREATE TABLE encrypted_session (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, sequence INTEGER NOT NULL, extra TEXT) STRICT; INSERT INTO encrypted_session (id, credential_digest, sequence, extra) VALUES (1, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 4, 'x');",
             4,
             0,
         ),

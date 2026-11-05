@@ -20,7 +20,7 @@ impl CableSession {
         Self { lifecycle: Lifecycle::new(clock, online), next_id: 0, cancellations, cancel }
     }
 
-    pub fn subscribe(&mut self, admitted: crate::ffi::legacy::Admitted, request: GraphQLRequest) -> (String, ServerSubscription) {
+    pub fn subscribe(&mut self, admitted: crate::ffi::admission::Admitted, request: GraphQLRequest) -> (String, ServerSubscription) {
         self.next_id += 1;
         let id = self.next_id.to_string();
         let (events, receiver) = crate::transport::subscription_channel();
@@ -47,7 +47,7 @@ impl CableSession {
         for id in ended { self.unsubscribe(&id); }
     }
 
-    pub(super) fn admitted(&self) -> Option<&crate::ffi::legacy::Admitted> {
+    pub(super) fn admitted(&self) -> Option<&crate::ffi::admission::Admitted> {
         self.lifecycle.core.entries.values().next().map(|entry| &entry.admitted)
     }
 

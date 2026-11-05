@@ -235,8 +235,8 @@ fn pending<F: Future>(call: &mut Pin<Box<F>>) -> bool {
     call.as_mut().poll(&mut std::task::Context::from_waker(std::task::Waker::noop())).is_pending()
 }
 
-fn test_admission() -> crate::ffi::legacy::Admitted {
-    Arc::new(crate::ffi::legacy::Leases::default()).admit(crate::ffi::legacy::Origin::Explicit, "test transport").unwrap()
+fn test_admission() -> crate::ffi::admission::Admitted {
+    Arc::new(crate::ffi::admission::Leases::default()).admit(crate::ffi::admission::Origin::Explicit, "test transport").unwrap()
 }
 
 fn opened_then_stuck() -> Script<super::SubscriptionSink> {

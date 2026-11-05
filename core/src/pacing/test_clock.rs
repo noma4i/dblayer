@@ -56,40 +56,25 @@ impl TestClock {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn linked(&self, start: Duration) -> Self {
-        let base = crate::db::locked(&self.time).base();
-        Self { time: self.time.clone(), shift: Arc::new(Mutex::new(start.saturating_sub(base))), changed: self.changed.clone(), slept: self.slept.clone() }
-    }
 
     fn base(&self) -> Duration {
         crate::db::locked(&self.time).base()
     }
 
-    pub(crate) fn advance(&self, by: Duration) {
-        *crate::db::locked(&self.shift) += by;
-        crate::db::lock::effect(|| self.changed.notify_waiters());
-    }
+
 
     #[cfg(test)]
-    pub(crate) fn set(&self, now: Duration) {
-        let base = self.base();
-        *crate::db::locked(&self.shift) = now.saturating_sub(base);
-        crate::db::lock::effect(|| self.changed.notify_waiters());
-    }
-
-    #[cfg(any(test, feature = "stress"))]
     fn advance_base(&self, by: Duration) {
         crate::db::locked(&self.time).now += by;
         crate::db::lock::effect(|| self.changed.notify_waiters());
     }
 
-    #[cfg(any(test, feature = "stress"))]
+    #[cfg(test)]
     fn next_deadline(&self) -> Option<Duration> {
         crate::db::locked(&self.time).sleepers.keys().next().copied()
     }
 
-    #[cfg(any(test, feature = "stress"))]
+    #[cfg(test)]
     pub(crate) async fn idle(&self, quiet: &impl Fn() -> Option<u64>, settle: &impl Fn()) {
         loop {
             tokio::time::sleep(Duration::from_millis(1)).await;
@@ -105,7 +90,7 @@ impl TestClock {
     }
 
     /// The only mover of a stopped clock: time jumps to the nearest sleeper only when `quiet` gives the same work mark before and after one whole idle turn of the runtime, so tasks woken by library threads run before the jump.
-    #[cfg(any(test, feature = "stress"))]
+    #[cfg(test)]
     pub(crate) async fn drive(&self, quiet: impl Fn() -> Option<u64>, settle: impl Fn()) {
         loop {
             self.idle(&quiet, &settle).await;

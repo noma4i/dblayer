@@ -41,10 +41,10 @@ fn land_rejects_a_stale_generation() {
 async fn an_old_subscription_admission_cannot_land_an_event_in_the_next_session() {
     let db = booted();
     let life = db.shared.store.lifecycle.clone();
-    assert!(life.start_session_in_tests(Some("A".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
-    let admitted = life.admit(crate::ffi::legacy::Origin::Session, "subscription event").unwrap();
+    assert!(life.start_session_in_tests(Some("A".into()), life.admit_passive(crate::ffi::admission::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    let admitted = life.admit(crate::ffi::admission::Origin::Session, "subscription event").unwrap();
     life.lose_session_in_tests();
-    assert!(life.start_session_in_tests(Some("B".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    assert!(life.start_session_in_tests(Some("B".into()), life.admit_passive(crate::ffi::admission::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     let event = upsert_envelope(&db, WriteOrigin::Event, "u1", "A");
 
     let result = db.land(&admitted, event);

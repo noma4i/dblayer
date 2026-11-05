@@ -151,7 +151,7 @@ impl OnlineSink {
         let waiter = life.set_online(online);
         let Ok(executor) = super::database::executor() else { return };
         let (sender, receiver) = std::sync::mpsc::channel();
-        crate::task::spawn_on(crate::task::Carry::Detached, executor.handle(), async move { let outcome = waiter.wait().await; crate::db::lock::effect(|| sender.send(outcome)); });
+        crate::task::spawn_on(crate::task::Carry::Detached, executor.handle(), async move { let outcome = waiter.wait().await; crate::db::lock::effect(|| { let _ = sender.send(outcome); }); });
         let _ = crate::blocking::blocking_unit(|| receiver.recv_timeout(std::time::Duration::from_secs(10)));
     }
 
@@ -231,17 +231,17 @@ impl core::Transport for ForeignTransport {
         };
         Ok(Arc::new(ForeignSocket { transport: self.0.clone(), lease, token }))
     }
-    async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
+    async fn query(&self, _admitted: &crate::ffi::admission::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::query");
         let json = self.0.query(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
-    async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
+    async fn mutate(&self, _admitted: &crate::ffi::admission::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::mutate");
         let json = self.0.mutate(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
-    async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
+    async fn subscribe(&self, _admitted: &crate::ffi::admission::Admitted, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::subscribe");
         let (sender, receiver) = core::subscription_channel();
         let transport = self.0.clone();
@@ -258,7 +258,7 @@ impl core::Transport for ForeignTransport {
         }
         Ok(core::ServerSubscription::new(receiver, core::ServerSubscriptionHandle::new(move || sink.abandon())))
     }
-    async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
+    async fn put(&self, _admitted: &crate::ffi::admission::Admitted, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::put");
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
         let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.identity, progress).await.map_err(transport_error)?;

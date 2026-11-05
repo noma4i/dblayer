@@ -1,34 +1,12 @@
-use std::path::Path;
-
-use crate::commit::UploadAdmission;
-use crate::files::{CopiedSource, FileDescriptor, FileDirectories, FileRecord, Location};
-use crate::identity::{Generation, RowId};
-use crate::upload::{UploadInput, UploadState};
-
-use super::{locked, Db, DbError};
-
-pub(crate) struct UploadFiles<'a> {
-    files: &'a FileDirectories,
-    owned: Vec<String>,
-    now: i64,
-}
-
-impl UploadFiles<'_> {
-}
-
-impl Drop for UploadFiles<'_> {
-    fn drop(&mut self) {
-        if !self.owned.is_empty() { let _ = self.files.discard(&self.owned); }
-    }
-}
+use super::{Db, DbError};
 
 impl Db {
-    pub(crate) fn expire_blobs_before_use(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<(), DbError> {
+    pub(crate) fn expire_blobs_before_use(&self, admitted: &crate::ffi::admission::Admitted) -> Result<(), DbError> {
         let failed_due = self.shared.store.lock().now_ms().saturating_sub(self.shared.blob_failed_ttl_ms.load(std::sync::atomic::Ordering::Relaxed));
         self.expire_blob_cache(admitted, failed_due)
     }
 
-    pub(crate) fn expire_blob_cache(&self, admitted: &crate::ffi::legacy::Admitted, failed_due: i64) -> Result<(), DbError> {
+    pub(crate) fn expire_blob_cache(&self, admitted: &crate::ffi::admission::Admitted, failed_due: i64) -> Result<(), DbError> {
         let ready_due = self.shared.store.lock().now_ms().saturating_sub(crate::upload::BLOB_LIFETIME_MS);
         let due = self.shared.read(&[], |reader| Ok(crate::store::blob::due(reader.connection(), ready_due, failed_due)?))?;
         if due.is_empty() { return Ok(()); }

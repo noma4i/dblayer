@@ -49,28 +49,12 @@ pub(crate) fn retry(connection: &Connection, seq: i64, models: &BTreeMap<String,
     pin(connection, seq, &record, models, now)
 }
 
-pub(crate) fn variables(connection: &Connection, seq: i64, input: &Value) -> Result<Option<Value>, StoreError> {
-    let uses: Vec<(String, String)> = connection.prepare("SELECT parameter, blob_id FROM blob_use WHERE consumer_seq = ?1")?.query_map([seq], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
-    let mut input = input.clone();
-    for (parameter, id) in uses {
-        let blob = snapshot(connection, &id)?.ok_or_else(|| StoreError::Constraint("unknown Blob".into()))?;
-        let Some(signed) = blob.signed_id else { return Ok(None) };
-        input[parameter] = Value::String(signed);
-    }
-    Ok(Some(input))
-}
 
-pub(crate) fn waiting(connection: &Connection, seq: i64) -> Result<bool, StoreError> {
-    Ok(connection.query_row("SELECT EXISTS (SELECT 1 FROM blob_use u JOIN blob_upload b ON b.id = u.blob_id LEFT JOIN op_item i ON i.seq = b.seq AND i.position = 0 WHERE u.consumer_seq = ?1 AND (i.transferred IS NOT 1 OR b.expired = 1))", [seq], |row| row.get(0))?)
-}
 
 pub(crate) fn due(connection: &Connection, ready: i64, failed: i64) -> Result<Vec<(String, Option<String>)>, StoreError> {
     Ok(connection.prepare("SELECT b.id, i.file_id FROM (SELECT id, seq FROM blob_upload WHERE consumer_seq IS NULL AND expired = 0 AND ready = 1 AND created_at <= ?1 UNION SELECT id, seq FROM blob_upload WHERE consumer_seq IS NULL AND expired = 0 AND failed_at <= ?2) b JOIN op_item i ON i.seq = b.seq AND i.position = 0")?.query_map(params![ready, failed], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?)
 }
 
-pub(crate) fn files(connection: &Connection, consumer: i64) -> Result<Vec<String>, StoreError> {
-    Ok(connection.prepare("SELECT i.file_id FROM blob_upload b JOIN op_item i ON i.seq = b.seq WHERE b.consumer_seq = ?1 AND i.file_id IS NOT NULL")?.query_map([consumer], |row| row.get(0))?.collect::<Result<_, _>>()?)
-}
 
 pub(crate) fn release(connection: &Connection, seq: i64, consumed: bool) -> Result<Vec<i64>, StoreError> {
     let uploads: Vec<(String, Option<i64>)> = connection.prepare("SELECT id, seq FROM blob_upload WHERE consumer_seq = ?1")?.query_map([seq], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;

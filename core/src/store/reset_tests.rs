@@ -80,7 +80,7 @@ fn cache_only_clears_one_model_closes_operations_and_clears_intent() {
 }
 
 #[test]
-fn incompatible_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_tables() {
+fn mismatched_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_tables() {
     let (store, _) = booted_store();
     seed_two_models(&store);
     user_tables(&store);
@@ -92,7 +92,7 @@ fn incompatible_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_
 }
 
 #[test]
-fn incompatible_restores_manifest_atomically() {
+fn mismatched_restores_manifest_atomically() {
     let (store, _) = booted_store();
     seed_two_models(&store);
     store.clear_account_in_tests().unwrap();

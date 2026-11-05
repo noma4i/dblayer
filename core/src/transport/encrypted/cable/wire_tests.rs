@@ -11,7 +11,7 @@ use rsa::{pkcs1::DecodeRsaPrivateKey, Oaep, RsaPrivateKey};
 use sha2::{Digest, Sha256};
 use crate::test_wait::{serving, within};
 
-fn test_admission() -> crate::ffi::legacy::Admitted {
+fn test_admission() -> crate::ffi::admission::Admitted {
     crate::db::Db::open_in_memory(Vec::new(), None).unwrap().admit().unwrap()
 }
 
@@ -251,16 +251,12 @@ impl CableConnect for FakeConnect {
 #[async_trait]
 impl crate::transport::Transport for FakeConnect {
     async fn open_cable(&self, _url: &str) -> Result<Arc<dyn CableSocket>, TransportError> { CableConnect::open(self).await }
-    async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted query") }
-    async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted mutation") }
-    async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::ServerSubscription, TransportError> { panic!("V2 subscription") }
-    async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, TransportError> { unreachable!() }
+    async fn query(&self, _admitted: &crate::ffi::admission::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted query") }
+    async fn mutate(&self, _admitted: &crate::ffi::admission::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted mutation") }
+    async fn subscribe(&self, _admitted: &crate::ffi::admission::Admitted, _: GraphQLRequest) -> Result<crate::transport::ServerSubscription, TransportError> { panic!("V2 subscription") }
+    async fn put(&self, _admitted: &crate::ffi::admission::Admitted, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, TransportError> { unreachable!() }
 }
 
-struct Http {
-    key: RsaPrivateKey,
-    reads: AtomicUsize,
-}
 
 struct Credentials {
     value: std::sync::Mutex<Option<String>>,
@@ -368,18 +364,6 @@ fn authentication_refusal_before_ready_stops_without_reopening() { crate::test_w
     assert_eq!(connect.opens.load(Ordering::SeqCst), 2);
 }) }
 
-#[async_trait]
-impl crate::transport::HttpExchange for Http {
-    async fn post(&self, path: &str, token: String, _: crate::transport::NetworkPurpose) -> Result<crate::transport::HttpReply, TransportError> {
-        assert_eq!(path, "/api/graphql");
-        let key = self.key.decrypt(Oaep::new::<sha1::Sha1>(), &URL_SAFE_NO_PAD.decode(token.split('.').nth(1).unwrap()).unwrap()).unwrap();
-        let request: Value = serde_json::from_slice(&super::link_tests::decrypt(&token, &key)).unwrap();
-        assert_eq!(request["body"]["operationName"], "ChatNode");
-        self.reads.fetch_add(1, Ordering::SeqCst);
-        let body = json!({"data":{"node":{"id":request["body"]["variables"]["id"], "title":"from HTTP"}}});
-        Ok(crate::transport::HttpReply { status: 200, body: super::super::fake_server_tests::seal_response(&request, None, body) })
-    }
-}
 
 #[test]
 fn no_socket_or_timer_work_without_subscribers() { crate::test_wait::paused(async {

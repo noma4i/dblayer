@@ -383,13 +383,13 @@ impl Dispatch {
 
 impl Db {
     /// The work generation when no commit, read or listener call is queued or running, every group has read the last commit and every subscriber has taken it.
-    #[cfg(any(test, feature = "stress"))]
+    #[cfg(test)]
     pub(crate) fn quiet_mark(&self) -> Option<u64> {
         let seen = self.shared.dispatch.progress.generation();
         self.quiet().then_some(seen)
     }
 
-    #[cfg(any(test, feature = "stress"))]
+    #[cfg(test)]
     pub(crate) fn await_quiet(&self) {
         if on_core_thread() {
             return;
@@ -403,7 +403,7 @@ impl Db {
         }
     }
 
-    #[cfg(any(test, feature = "stress"))]
+    #[cfg(test)]
     fn quiet(&self) -> bool {
         if self.shared.store.lifecycle.snapshot().closed { return true; }
         let revision = self.revision_seq().unwrap_or(0);

@@ -2,9 +2,9 @@
 use std::future::Future;
 
 use tokio::runtime::Handle;
-use tokio::task::{AbortHandle, JoinError, JoinHandle, JoinSet};
+use tokio::task::JoinHandle;
 
-use crate::ffi::legacy::Admitted;
+use crate::ffi::admission::Admitted;
 use crate::lifecycle::authority::Authority;
 
 thread_local! {
@@ -97,54 +97,6 @@ fn bind_once<R>(carry: Carry, work: impl FnOnce() -> R) -> impl FnOnce() -> R {
         }
         Carry::Internal | Carry::Detached => work(),
     }
-}
-
-pub(crate) fn bind<A, R>(carry: Carry, callback: impl Fn(A) -> R) -> impl Fn(A) -> R {
-    move |argument| match &carry {
-        Carry::Admitted(admitted) => {
-            let _current = Current(CURRENT_ADMISSION.replace(Some(admitted.clone())));
-            callback(argument)
-        }
-        Carry::Internal | Carry::Detached => callback(argument),
-    }
-}
-
-pub(crate) struct Children<T> {
-    set: JoinSet<T>,
-}
-
-impl<T> Default for Children<T> {
-    fn default() -> Self { Self { set: JoinSet::new() } }
-}
-
-impl<T: Send + 'static> Children<T> {
-    pub(crate) fn new() -> Self { Self::default() }
-
-    #[allow(clippy::disallowed_methods)]
-    pub(crate) fn spawn<F>(&mut self, carry: Carry, work: F) -> AbortHandle where F: Future<Output = T> + Send + 'static {
-        match carry {
-            Carry::Admitted(admitted) => self.set.spawn(ASYNC_ADMISSION.scope(admitted, work)),
-            Carry::Internal | Carry::Detached => self.set.spawn(work),
-        }
-    }
-
-    #[allow(clippy::disallowed_methods)]
-    pub(crate) fn spawn_on<F>(&mut self, carry: Carry, work: F, runtime: &Handle) -> AbortHandle where F: Future<Output = T> + Send + 'static {
-        match carry {
-            Carry::Admitted(admitted) => self.set.spawn_on(ASYNC_ADMISSION.scope(admitted, work), runtime),
-            Carry::Internal | Carry::Detached => self.set.spawn_on(work, runtime),
-        }
-    }
-
-    pub(crate) async fn join_next(&mut self) -> Option<Result<T, JoinError>> { self.set.join_next().await }
-
-    pub(crate) fn try_join_next(&mut self) -> Option<Result<T, JoinError>> { self.set.try_join_next() }
-
-    pub(crate) fn abort_all(&mut self) { self.set.abort_all() }
-
-    pub(crate) fn len(&self) -> usize { self.set.len() }
-
-    pub(crate) fn is_empty(&self) -> bool { self.set.is_empty() }
 }
 
 #[cfg(test)]

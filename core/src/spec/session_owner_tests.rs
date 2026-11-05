@@ -69,25 +69,6 @@ fn fail_of(error: &SessionError) -> Fail {
     }
 }
 
-fn owner_error(fail: &Fail) -> SessionError {
-    match fail {
-        Fail::Invalid => SessionError::Invalid,
-        Fail::Reason(reason) => SessionError::Rejected(reject(*reason)),
-        Fail::Session(code) => SessionError::Session(*code),
-        Fail::Storage => SessionError::Storage("disk".into()),
-        Fail::SessionExists => SessionError::SessionExists,
-        Fail::NoCredential => SessionError::NoCredential,
-        Fail::Revoked => SessionError::Revoked,
-        Fail::StateLost => SessionError::StateLost,
-        Fail::SequenceConflict => SessionError::SequenceConflict,
-        Fail::Protocol => SessionError::Protocol,
-        Fail::Unauthorized => SessionError::Unauthorized,
-        Fail::Http => SessionError::Http,
-        Fail::Interrupted => SessionError::Interrupted,
-        Fail::NoSession => SessionError::NoSession,
-        Fail::Closed => SessionError::Closed,
-    }
-}
 
 fn cause(cause: EndCause) -> Cause {
     match cause {
@@ -103,7 +84,6 @@ fn published_state(state: PubState) -> PublishedState {
         PubState::Session => PublishedState::Session,
         PubState::Ending => PublishedState::Ending,
         PubState::EndingFailed => PublishedState::EndingFailed,
-        PubState::Resetting => PublishedState::Resetting,
         PubState::StorageFailed => PublishedState::StorageFailed,
         PubState::Closing => PublishedState::Closing,
     }
@@ -132,12 +112,6 @@ fn queued_of(queued: &Queued) -> RefQueued {
     }
 }
 
-fn owner_queued(queued: RefQueued) -> Queued {
-    match queued {
-        RefQueued::Call { operation, body, reply } => Queued::Call { operation, body, reply },
-        RefQueued::Mutate { author, owner, req_id, epoch, path, body, purpose } => Queued::Mutate { author, owner, req_id, epoch, path, body, purpose },
-    }
-}
 
 fn outcome_of(outcome: &AuthorOutcome) -> Outcome {
     match outcome {

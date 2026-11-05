@@ -1,5 +1,5 @@
 use super::fixtures::*;
-use super::Db;
+
 use crate::query::Query;
 
 #[test]

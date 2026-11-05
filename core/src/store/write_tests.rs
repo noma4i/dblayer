@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use super::fixtures::*;
-use crate::ffi::legacy::Origin;
+use crate::ffi::admission::Origin;
 use crate::lifecycle::authority::Authority;
 
 fn stale(store: &super::Store) -> Authority {
     let admitted = store.lifecycle.admit(Origin::Explicit, "test write").unwrap();
-    assert!(store.lifecycle.start_session_in_tests(Some("other".into()), store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(admitted.value())).unwrap()).is_ok());
+    assert!(store.lifecycle.start_session_in_tests(Some("other".into()), store.lifecycle.admit_passive(crate::ffi::admission::Origin::Explicit, "test session", Some(admitted.value())).unwrap()).is_ok());
     admitted.authority()
 }
 
@@ -31,7 +31,7 @@ fn a_sql_write_outside_an_envelope_keeps_the_epoch_until_it_is_done() {
     let mut starting = None;
     store.write(&authority, || (), |_| {
         let life = store.lifecycle.clone();
-        starting = Some(std::thread::spawn(move || life.start_session_in_tests(Some("other".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(held)).unwrap()).is_ok()));
+        starting = Some(std::thread::spawn(move || life.start_session_in_tests(Some("other".into()), life.admit_passive(crate::ffi::admission::Origin::Explicit, "test session", Some(held)).unwrap()).is_ok()));
         crate::test_wait::spin_until("the epoch end reached the commit line", || *store.lifecycle.line_waits.0.lock().unwrap() > waits);
         assert_eq!(store.lifecycle.snapshot().session_epoch, held, "the epoch changed while the write held the commit line");
         Ok::<_, ()>(())

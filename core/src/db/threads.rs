@@ -44,7 +44,7 @@ impl LiveThreads {
         Busy(self.clone())
     }
 
-    #[cfg(any(test, feature = "stress"))]
+    #[cfg(test)]
     pub(crate) fn idle(&self) -> bool {
         self.busy.load(Ordering::Acquire) == 0
     }

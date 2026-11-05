@@ -1,12 +1,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
-use serde_json::Map;
+
+
 use tokio::sync::Notify;
 
-use super::tape::{Rows, StreamDelivery, Tape};
-use super::{Config, Database, DbError, ReadRequest, ReadValue, TestClock, Transport};
+use super::tape::{Rows, Tape};
+use super::{Config, Database, DbError, ReadRequest, TestClock, Transport};
 use crate::identity::RowId;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
@@ -256,7 +256,6 @@ async fn inv_fresh_15_a_test_clock_moves_fresh_for_without_sleeping() {
     }
 }
 
-type OpenHook = Box<dyn FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send>;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_before_the_transport_answers() {

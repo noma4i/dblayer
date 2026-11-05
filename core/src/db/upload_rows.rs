@@ -129,6 +129,7 @@ impl Db {
     }
 
     /// The transfers kept in the base, whole, for `Restored`. A row of the display without the value of a transfer (`seq` empty) is not one.
+    #[cfg(test)]
     pub(crate) fn read_transfers(&self) -> Result<Vec<StoredTransfer>, DbError> {
         let rows = self.shared.store.read_locked(upload_rows).map_err(|error| DbError::Internal(error.to_string()))?;
         self.stored_transfers(rows)

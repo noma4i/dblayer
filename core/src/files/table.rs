@@ -125,6 +125,7 @@ pub(crate) fn references_of_row(connection: &Connection, model: &str, row_id: &s
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn all_references(connection: &Connection) -> rusqlite::Result<Vec<FileReference>> {
     connection
         .prepare("SELECT id, model, row_id, field, location FROM file ORDER BY created_at, id")?

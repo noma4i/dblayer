@@ -9,7 +9,9 @@ use serde_json::Value;
 
 use super::dispatch::Event;
 use super::error::DbError;
-use super::listeners::{Feed, Listener, Subscriber};
+#[cfg(test)]
+use super::listeners::Feed;
+use super::listeners::{Listener, Subscriber};
 use super::open::{locked, Db, Shared};
 use super::reads::{CompletedRead, ReadJob, ReadResult, ReadRows, ReadTarget};
 use super::window::WindowSeed;
@@ -276,22 +278,16 @@ impl ObserverHandle {
         self.subscriber.owes_delivery()
     }
 
-    /// Makes the next delivery to this observer the whole result again, as for an observer that has just joined. Holds no reference to the observer.
-    pub(crate) fn rejoiner(&self) -> impl Fn() + Send + Sync + 'static {
-        let (shared, group, id) = (self.shared.clone(), self.group.clone(), self.id);
-        move || {
-            if let Some(shared) = shared.upgrade() {
-                shared.command_observers(ObserverCommand::Rejoin { group: group.clone(), id });
-            }
-        }
-    }
-
+    #[cfg(test)]
     pub(crate) fn control(&self) -> ObserverControl {
         ObserverControl { shared: self.shared.clone(), group: self.group.clone(), id: self.id, subscriber: self.subscriber.clone() }
     }
 
+
+
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 pub(crate) struct ObserverControl {
     shared: Weak<Shared>,
@@ -300,6 +296,7 @@ pub(crate) struct ObserverControl {
     subscriber: Arc<Subscriber>,
 }
 
+#[cfg(test)]
 impl ObserverControl {
     pub(crate) fn want_reach(&self, revision: i64) {
         if let Some(shared) = self.shared.upgrade() {
@@ -312,14 +309,13 @@ impl ObserverControl {
             self.subscriber.resume(&shared.executor);
         }
     }
-
 }
 
 pub(crate) enum ObserverCommand {
     Grow { group: String, before: usize, after: usize },
     Cancel { group: String, id: u64 },
+    #[cfg(test)]
     WantReach { group: String, id: u64, subscriber: Arc<Subscriber>, revision: i64 },
-    Rejoin { group: String, id: u64 },
 }
 
 impl ObserverHandle {
@@ -376,17 +372,10 @@ impl Shared {
                         accumulate_growth(&mut opening.growth, before, after);
                     }
                 }
+                #[cfg(test)]
                 ObserverCommand::WantReach { group: key, id, subscriber, revision } => {
                     observers.reach_waiting.push(ReachWait { key, id, subscriber, revision });
                     self.serve_reach(observers);
-                }
-                ObserverCommand::Rejoin { group: key, id } => {
-                    let Some(group) = observers.groups.get_mut(&key) else { continue };
-                    let Some(at) = group.subscribers.iter().position(|(member, _)| *member == id) else { continue };
-                    let member = group.subscribers.remove(at);
-                    member.1.restart_deliveries();
-                    group.facts.joining.push(member);
-                    self.pump(observers, &key);
                 }
                 ObserverCommand::Cancel { group: key, id } => {
                     let (kept, gone): (Vec<ReachWait>, Vec<ReachWait>) = std::mem::take(&mut observers.reach_waiting).into_iter().partition(|wait| wait.id != id);
@@ -832,10 +821,14 @@ impl Db {
         self.subscribe(Subject::Row(RowRef::new(ModelKey::new(model), id.clone())), Listener::Rows(Box::new(listener)), false)
     }
 
+
+
+    #[cfg(test)]
     pub(crate) fn observe_feed(&self, subject: Subject, paused: bool, listener: impl Fn(Feed) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
         self.subscribe(subject, Listener::Feed(Box::new(listener)), paused)
     }
 
+    #[cfg(test)]
     pub(crate) fn observe_query_feed(&self, query: Query, count: bool, paused: bool, listener: impl Fn(Feed) + Send + Sync + 'static) -> Result<ObserverHandle, DbError> {
         self.observe_feed(if count { Subject::Count(query) } else { Subject::Rows(query) }, paused, listener)
     }

@@ -112,10 +112,6 @@ impl<'a> Chain<'a> {
         }
     }
 
-    fn drop_op(&mut self, seq: i64) {
-        self.open.remove(&seq);
-        self.changed.remove(&seq);
-    }
 
     fn rewrites(&self) -> Vec<OperationTransition> {
         self.changed
@@ -226,11 +222,11 @@ fn restore_edit(
 }
 
 impl Db {
-    pub(crate) fn remove_upload_item(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, seq: i64, remove_row: bool) -> Result<bool, DbError> {
+    pub(crate) fn remove_upload_item(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, seq: i64, remove_row: bool) -> Result<bool, DbError> {
         self.remove_upload_item_if(admitted, model, id, seq, remove_row, None)
     }
 
-    pub(crate) fn remove_upload_item_if(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, seq: i64, remove_row: bool, still: Option<&Still<'_>>) -> Result<bool, DbError> {
+    pub(crate) fn remove_upload_item_if(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, seq: i64, remove_row: bool, still: Option<&Still<'_>>) -> Result<bool, DbError> {
         let generation = self.generation();
         let spec = self.spec(model)?;
         let mut removed = false;
@@ -282,15 +278,15 @@ impl Db {
         Ok(removed)
     }
 
-    pub fn roll_back(&self, admitted: &crate::ffi::legacy::Admitted, seq: i64) -> Result<CommitResult, DbError> {
+    pub fn roll_back(&self, admitted: &crate::ffi::admission::Admitted, seq: i64) -> Result<CommitResult, DbError> {
         self.roll_back_at(admitted, seq, self.generation())
     }
 
-    pub(crate) fn roll_back_at(&self, admitted: &crate::ffi::legacy::Admitted, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
+    pub(crate) fn roll_back_at(&self, admitted: &crate::ffi::admission::Admitted, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
         self.roll_back_if(admitted, seq, generation, None)
     }
 
-    pub(crate) fn roll_back_if(&self, admitted: &crate::ffi::legacy::Admitted, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
+    pub(crate) fn roll_back_if(&self, admitted: &crate::ffi::admission::Admitted, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
         self.roll_back_gated(&admitted.authority(), seq, generation, still)
     }
 

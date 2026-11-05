@@ -9,7 +9,7 @@ use super::local_write::plan_fault;
 use super::open::Db;
 
 impl Db {
-    pub fn set_local(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, path: &str, value: Value) -> Result<(), DbError> {
+    pub fn set_local(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, path: &str, value: Value) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
         let slot = spec.local_slot(path).ok_or_else(|| DbError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
         let value = match slot.key {

@@ -86,7 +86,7 @@ impl CallsRunner {
         let back = back.clone();
         let lease = self.db.shared.store.lifecycle.clone();
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
-            let admitted = match lease.admit(crate::ffi::legacy::Origin::Explicit, "run") {
+            let admitted = match lease.admit(crate::ffi::admission::Origin::Explicit, "run") {
                 Ok(admitted) => admitted,
                 Err(_) => return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }),
             };

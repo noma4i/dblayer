@@ -186,15 +186,7 @@ impl FakeServer {
         Arc::new(Self { state: Mutex::default(), clock, on_request: Mutex::new(None) })
     }
 
-    pub fn with_sequence(self: Arc<Self>, credential: &str, sequence: i64) -> Arc<Self> {
-        let digest = Sha256::digest(credential.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect();
-        self.state.lock().unwrap().session = Some(Session { digest, sequence, ..Session::default() });
-        self
-    }
 
-    pub fn on_request(&self, hook: impl Fn() + Send + 'static) {
-        *self.on_request.lock().unwrap() = Some(Box::new(hook));
-    }
 
     pub fn seen(&self) -> Vec<Value> {
         self.state.lock().unwrap().seen.clone()
@@ -212,11 +204,6 @@ impl FakeServer {
         self.state.lock().unwrap().faults.drop_next_request = true;
     }
 
-    pub fn interrupt_next_request(&self) {
-        let mut state = self.state.lock().unwrap();
-        state.faults.drop_next_request = true;
-        state.faults.interrupted = true;
-    }
 
     pub fn interrupt_next_answer(&self) {
         let mut state = self.state.lock().unwrap();
@@ -224,9 +211,6 @@ impl FakeServer {
         state.faults.interrupted = true;
     }
 
-    pub fn status_next(&self, status: u16) {
-        self.state.lock().unwrap().faults.status_next = Some(status);
-    }
 
     pub fn refuse_next(&self, code: &str, confirmed: bool) {
         self.state.lock().unwrap().faults.refuse_next = Some((code.to_string(), confirmed));

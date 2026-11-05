@@ -45,7 +45,6 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     }
 }
 
-struct CountingFeed(Arc<std::sync::atomic::AtomicUsize>);
 
 #[tokio::test]
 async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_fix() {
@@ -65,18 +64,3 @@ async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_f
     assert!(open(&slot).await.is_ok(), "the refused open must release its slot");
 }
 
-#[async_trait::async_trait]
-impl Transport for CountingFeed {
-    async fn open_cable(&self, _: Arc<super::super::CableLease>, _url: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<super::super::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) { unreachable!() }
-    async fn query(&self, _: super::super::TransportRequest) -> Result<String, DbError> {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ok(r#"{"data":{"feed":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#.into())
-    }
-    async fn mutate(&self, _: super::super::TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: super::super::TransportRequest, _: Arc<super::super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) { unreachable!() }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::super::ByteProgress>) -> Result<super::super::PutReply, DbError> { unreachable!() }
-}

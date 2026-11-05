@@ -1,5 +1,5 @@
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex};
 use std::task::Wake;
 use std::thread::JoinHandle;
@@ -37,15 +37,6 @@ pub(crate) fn recv_within<T>(receiver: &Receiver<T>) -> T {
     receiver.recv_timeout(BLOCK_LIMIT).unwrap_or_else(|error| panic!("nothing arrived: {error}"))
 }
 
-#[cfg(feature = "stress")]
-#[track_caller]
-pub(crate) fn recv_or_closed<T>(receiver: &Receiver<T>) -> Option<T> {
-    match receiver.recv_timeout(BLOCK_LIMIT) {
-        Ok(value) => Some(value),
-        Err(RecvTimeoutError::Disconnected) => None,
-        Err(RecvTimeoutError::Timeout) => panic!("nothing arrived and the sender is still alive"),
-    }
-}
 
 #[track_caller]
 pub(crate) fn join_within<T>(handle: JoinHandle<T>) -> T {
@@ -127,30 +118,8 @@ pub(crate) async fn yield_until(what: &str, mut ready: impl FnMut() -> bool) {
     }
 }
 
-pub(crate) struct ForeignWaker {
-    lock: Arc<Mutex<()>>,
-    entered: AtomicBool,
-    held_classes: Mutex<Vec<&'static str>>,
-}
 
-impl ForeignWaker {
-    pub(crate) fn new(lock: Arc<Mutex<()>>) -> Arc<Self> {
-        Arc::new(Self { lock, entered: AtomicBool::new(false), held_classes: Mutex::new(Vec::new()) })
-    }
 
-    pub(crate) fn entered(&self) -> bool {
-        self.entered.load(Ordering::SeqCst)
-    }
-
-}
-
-impl Wake for ForeignWaker {
-    fn wake(self: Arc<Self>) {
-        *self.held_classes.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = crate::db::lock::held_classes();
-        self.entered.store(true, Ordering::SeqCst);
-        drop(self.lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-    }
-}
 
 pub(crate) struct ProbeWaker {
     unlocked: Box<dyn Fn() -> bool + Send + Sync>,
@@ -221,17 +190,11 @@ fn world_dbs() -> Vec<crate::db::Db> {
     WORLD.with(|world| world.borrow().as_ref().map(|world| world.dbs.iter().filter_map(std::sync::Weak::upgrade).map(|shared| crate::db::Db { shared }).collect()).unwrap_or_default())
 }
 
-pub(crate) fn clock(start: Duration) -> crate::pacing::TestClock {
-    world_clock().map_or_else(|| crate::pacing::TestClock::new(start), |world| world.linked(start))
-}
 
 pub(crate) fn world_clock() -> Option<crate::pacing::TestClock> {
     WORLD.with(|world| world.borrow().as_ref().map(|world| world.clock.clone()))
 }
 
-pub(crate) fn enter_world(db: &crate::db::Db) {
-    WORLD.with(|world| if let Some(world) = world.borrow_mut().as_mut() { world.dbs.push(std::sync::Arc::downgrade(&db.shared)); });
-}
 
 pub(crate) async fn pass(duration: Duration) {
     match world_clock() {

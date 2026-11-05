@@ -5,7 +5,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
-fn test_admission() -> crate::ffi::legacy::Admitted {
+fn test_admission() -> crate::ffi::admission::Admitted {
     crate::db::Db::open_in_memory(Vec::new(), None).unwrap().admit().unwrap()
 }
 

@@ -65,9 +65,6 @@ impl Server {
         state.hold_ops.clear();
         state.held = Default::default();
     }
-    pub fn hold_op(&self, operation: &str) { self.state.lock().unwrap().hold_ops.push(operation.into()); }
-    pub fn release_op(&self, operation: &str) { self.state.lock().unwrap().hold_ops.retain(|held| held != operation); }
-    pub fn auto(&self, kind: Kind, reply: Reply) { self.state.lock().unwrap().auto[kind as usize].push_back(reply); }
     pub fn script(&self, operation: &str, reply: Reply) { self.state.lock().unwrap().script.entry(operation.into()).or_default().push_back(reply); }
     pub fn seen(&self) -> Vec<Seen> { self.state.lock().unwrap().seen.clone() }
     pub fn count(&self, operation: &str) -> usize { self.seen().iter().filter(|seen| seen.operation == operation).count() }

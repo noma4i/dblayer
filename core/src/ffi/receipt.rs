@@ -12,7 +12,7 @@ pub(super) enum Ticket {
 #[derive(uniffi::Object)]
 pub struct WireReceiptTicket {
     pub(super) ticket: Option<Ticket>,
-    pub(super) streams: Arc<crate::ffi::legacy::Leases>,
+    pub(super) streams: Arc<crate::ffi::admission::Leases>,
     pub(super) epoch: u64,
     pub(super) model: String,
     pub(super) operation: Option<i64>,
@@ -37,15 +37,15 @@ pub struct WireOperationReceipt {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn receipt_of(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<crate::owners::write::outbox::Receipt>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
+pub(super) fn receipt_of(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<crate::owners::write::outbox::Receipt>, streams: Arc<crate::ffi::admission::Leases>) -> WireOperationReceipt {
     held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Outbox), streams)
 }
 
-pub(super) fn receipt_of_transfer(epoch: u64, model: String, held: crate::owners::write::outbox::Receipt, optimistic_value: Option<WireRow>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
+pub(super) fn receipt_of_transfer(epoch: u64, model: String, held: crate::owners::write::outbox::Receipt, optimistic_value: Option<WireRow>, streams: Arc<crate::ffi::admission::Leases>) -> WireOperationReceipt {
     held_receipt(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, optimistic_value, Some(Ticket::Transfer(held)), streams)
 }
 
-fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Ticket>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
+fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Ticket>, streams: Arc<crate::ffi::admission::Leases>) -> WireOperationReceipt {
     let held = WireReceiptTicket { ticket, streams, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone() };
     WireOperationReceipt { epoch, model, operation, revision, optimistic_value, ticket: Arc::new(held) }
 }

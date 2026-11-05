@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde_json::{json, Map};
 
 use crate::schema::{
-    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
+    ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec,
     RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec, MergeRule,
 };
 use crate::value::ScalarKind;

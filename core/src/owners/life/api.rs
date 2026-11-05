@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 use std::sync::PoisonError;
 
-use super::{Life, LifeReply, LEGACY_AUTHORS};
+use super::{Life, LifeReply, WAITER_AUTHORS};
 use crate::owners::calls::{CallKind, CallsInput};
 use crate::owners::contract::{BatchAuthor, BatchId, CredentialCommitted, RequestId};
 use crate::owners::store::StoreReply;
@@ -78,7 +78,7 @@ impl Life {
     pub fn mutate_wait(&self, owner: Option<crate::owners::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        let author = LEGACY_AUTHORS + waiter.id().raw();
+        let author = WAITER_AUTHORS + waiter.id().raw();
         let (wiring, id) = (self.wiring.clone(), waiter.id());
         self.wiring.on_mutate_answer(author, move |_, outcome| {
             wiring.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).remove(&author);

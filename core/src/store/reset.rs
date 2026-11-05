@@ -247,7 +247,7 @@ pub(crate) fn current_fingerprints(inner: &Inner) -> BTreeMap<String, String> {
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
     let Some(mode) = pending_intent(&inner.connection)? else { return Ok(false) };
     let models: Vec<String> = inner.connection.prepare("SELECT model FROM reset_intent_model ORDER BY pos")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
-    if !matches!(mode.as_str(), "cache_only" | "incompatible" | "session_end") {
+    if !matches!(mode.as_str(), "cache_only" | "mismatched" | "session_end") {
         let transaction = inner.connection.unchecked_transaction()?;
         quarantine_add(&transaction, None, &serde_json::json!({ "mode": mode }), QuarantineReason::CorruptResetIntent)?;
         clear_intent(&transaction)?;
@@ -355,7 +355,7 @@ impl Store {
         let mut inner = self.lock();
         inner.generation = generation;
         let now = inner.now_ms();
-        write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "incompatible" }, &[], now)?;
+        write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "mismatched" }, &[], now)?;
         let transaction = inner.connection.unchecked_transaction()?;
         wipe_all_cache(&transaction, false)?;
         retire_operations(&transaction, None, None)?;

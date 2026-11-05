@@ -1,4 +1,4 @@
-use std::path::Path;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -67,22 +67,12 @@ fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
     }
 }
 
-fn file_db(path: &Path) -> Db {
-    Db::open(path, Vec::new(), None).unwrap()
-}
 
-fn rows(db: &Db) -> (Option<state::Session>, Option<state::Pending>) {
-    let inner = db.shared.store.lock();
-    (state::session(&inner.connection).unwrap(), state::pending(&inner.connection).unwrap())
-}
 
 fn graphql(query: &str) -> Value {
     json!({ "query": query })
 }
 
-fn fixed(request: &Value) -> Vec<Value> {
-    ["requestId", "responseKey", "credential", "sequence", "path", "body"].iter().map(|field| request[field].clone()).collect()
-}
 
 #[test]
 fn an_old_subscription_cannot_read_the_next_accounts_cable_credential() {
@@ -91,7 +81,7 @@ fn an_old_subscription_cannot_read_the_next_accounts_cable_credential() {
     let client = rig.client(&db);
     let old = db.admit().unwrap();
     let life = &db.shared.store.lifecycle;
-    let next = life.admit_passive(crate::ffi::legacy::Origin::Explicit, "next session", Some(old.value())).unwrap();
+    let next = life.admit_passive(crate::ffi::admission::Origin::Explicit, "next session", Some(old.value())).unwrap();
     life.start_session_in_tests(Some("B".into()), next).unwrap();
     assert!(matches!(client.cable_credential(&old), Err(TransportError::Interrupted(_))));
 }

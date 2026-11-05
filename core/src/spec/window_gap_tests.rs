@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError};
 
-use super::harness::Phase;
+use super::ref_window::Phase;
 use super::ref_window::{Effect, Failure, Goal, Input, Reject, Result3, State, Window, PRELOAD};
 use crate::owners::contract::{Committed, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError};
 use crate::owners::contract::WindowPhase as OwnerPhase;

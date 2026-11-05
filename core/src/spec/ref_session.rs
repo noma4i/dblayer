@@ -106,7 +106,6 @@ pub enum PubState {
     Session,
     Ending,
     EndingFailed,
-    Resetting,
     StorageFailed,
     Closing,
 }

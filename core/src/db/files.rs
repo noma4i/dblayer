@@ -32,7 +32,7 @@ impl Db {
         })
     }
 
-    pub fn attach(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, field: &str, bytes: &[u8], name: &str, mime: &str) -> Result<FileDescriptor, DbError> {
+    pub fn attach(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, field: &str, bytes: &[u8], name: &str, mime: &str) -> Result<FileDescriptor, DbError> {
         self.attach_as(&admitted.authority(), model, id, field, bytes, name, mime)
     }
 
@@ -116,7 +116,7 @@ impl Db {
         }
     }
 
-    pub fn detach(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, field: &str) -> Result<bool, DbError> {
+    pub fn detach(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, field: &str) -> Result<bool, DbError> {
         self.detach_as(&admitted.authority(), model, id, field)
     }
 

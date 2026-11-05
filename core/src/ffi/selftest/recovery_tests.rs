@@ -7,10 +7,10 @@ use serde_json::json;
 
 use super::rig_tests::{bound, named_bound, Gate};
 use crate::ffi::encrypted_tests::ThroughServer;
-use crate::ffi::sealed_errors_tests::{moment_spec, signed_in};
+use crate::ffi::sealed_errors_tests::moment_spec;
 use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, SessionCode, SubscriptionSink, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::upload::{UploadFile, UploadOperations};
 

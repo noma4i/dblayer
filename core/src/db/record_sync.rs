@@ -1,4 +1,4 @@
-use rusqlite::OptionalExtension;
+
 use crate::commit::{CommitEnvelope, OperationTransition, WriteOrigin};
 use crate::operation::OperationStatus;
 use crate::identity::RowId;
@@ -29,32 +29,18 @@ impl Db {
         self.shared.read(&[model], |reader| Ok(read_sync(reader.connection(), model, &[id.to_string()])?.remove(id.as_str()).unwrap_or_default()))
     }
 
-    pub fn retry(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
+    pub fn retry(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
         let key = self.action_operation_key(model, action)?;
         let stuck = self.stuck_operations(model, id, key.as_deref())?;
-        Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, Some((model, id, key.as_deref())))?)
+        self.retry_operations(admitted, stuck)
     }
 
-    pub fn retry_all(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<usize, DbError> {
+    pub fn retry_all(&self, admitted: &crate::ffi::admission::Admitted) -> Result<usize, DbError> {
         let stuck: Vec<OutboxOperation> = self.outbox()?.into_iter().filter(is_stuck).collect();
-        Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, None)?)
+        self.retry_operations(admitted, stuck)
     }
 
-    fn retry_upload_items(&self, admitted: &crate::ffi::legacy::Admitted, target: Option<(&str, &RowId, Option<&str>)>) -> Result<usize, DbError> {
-        let generation = self.generation();
-        let mut retried = 0;
-        self.commit_following(&admitted.authority(), generation, |reader| {
-            retried = 0;
-            let items = retried_upload_items(reader, target)?;
-            retried = items.len();
-            let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-            envelope.operation_transitions.extend(items.into_iter().map(|(seq, item_position, state)| OperationTransition::Progress { seq, item_position, state: Box::new(state) }));
-            Ok::<_, DbError>(Some(envelope))
-        }).map_err(super::local_write::plan_fault)?;
-        Ok(retried)
-    }
-
-    pub(crate) fn retry_operations(&self, admitted: &crate::ffi::legacy::Admitted, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
+    pub(crate) fn retry_operations(&self, admitted: &crate::ffi::admission::Admitted, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
         if stuck.is_empty() {
             return Ok(0);
         }
@@ -72,7 +58,7 @@ impl Db {
         Ok(stuck.len())
     }
 
-    pub fn discard(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
+    pub fn discard(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
         let key = self.action_operation_key(model, action)?;
         if self.record_operations(model, id, key.as_deref())?.iter().any(is_sending) {
             return Err(DbError::InFlight { model: model.to_string(), id: id.to_string() });
@@ -109,27 +95,3 @@ impl Db {
     }
 }
 
-/// The failed upload items of a record (or of every record) moved back to sending.
-fn retried_upload_items(reader: &crate::store::Reader<'_>, target: Option<(&str, &RowId, Option<&str>)>) -> Result<Vec<(i64, i64, crate::upload::UploadState)>, DbError> {
-    let connection = reader.connection();
-    let mut retried = Vec::new();
-    let uploads = match target {
-        Some((model, id, _)) => {
-            let keys = [(model.to_string(), id.to_string())].into();
-            let mut uploads = std::collections::HashMap::new();
-            for seq in crate::operation::row_operation_sequences(connection, &keys)? {
-                uploads.extend(crate::operation::read_operation_uploads(connection, seq)?);
-            }
-            uploads
-        }
-        None => crate::operation::read_upload_items(connection)?,
-    };
-    for ((seq, position), mut state) in uploads {
-        let (action, status, row): (String, String, String) = connection.query_row("SELECT op.action_key, op.status, op_item.row_id FROM op JOIN op_item USING (seq) WHERE seq = ?1 AND position = ?2", rusqlite::params![seq, position], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        if status != "pending" || target.is_some_and(|(model, id, key)| row != id.as_str() || key.is_some_and(|key| action != key) || crate::operation::Operation::split_action_key(&action).is_none_or(|(owner, _)| owner != model)) { continue; }
-        if state.apply(crate::upload::UploadEvent::Retried).is_err() { continue; }
-        retried.push((seq, position, state));
-    }
-    retried.sort_by_key(|(seq, position, _)| (*seq, *position));
-    Ok(retried)
-}

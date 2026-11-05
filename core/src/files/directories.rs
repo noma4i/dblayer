@@ -29,6 +29,7 @@ fn ignore_missing(result: io::Result<()>) -> io::Result<()> {
     }
 }
 
+#[cfg(test)]
 fn names(directory: &Path) -> io::Result<Vec<String>> {
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
@@ -158,14 +159,17 @@ impl FileDirectories {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn directory_entries(&self) -> io::Result<Vec<String>> {
         self.directory.as_deref().map(names).unwrap_or_else(|| Ok(Vec::new()))
     }
 
+    #[cfg(test)]
     pub(crate) fn cache_entries(&self) -> io::Result<Vec<String>> {
         names(&self.cache)
     }
 
+    #[cfg(test)]
     pub(crate) fn remove_directory_entry(&self, name: &str) -> io::Result<()> {
         if let Some(directory) = &self.directory {
             ignore_missing(fs::remove_file(directory.join(name)))?;
@@ -173,11 +177,13 @@ impl FileDirectories {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(crate) fn remove_cache_entry(&self, name: &str) -> io::Result<()> {
         ignore_missing(fs::remove_dir_all(self.cache.join(name)))
     }
 }
 
+#[cfg(test)]
 pub(crate) fn is_partial(name: &str) -> bool {
     name.ends_with(PART_SUFFIX)
 }

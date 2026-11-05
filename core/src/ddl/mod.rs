@@ -506,9 +506,9 @@ pub enum RecreateReason {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManifestVerdict {
     Fresh,
-    Compatible,
+    Match,
     CacheOnly { models: Vec<String> },
-    Incompatible,
+    Mismatch,
 }
 
 pub fn column_name(field: &str) -> String {
@@ -814,11 +814,11 @@ pub fn manifest_verify(
         return Ok(ManifestVerdict::Fresh);
     }
     if values.get(FORMAT_VERSION_KEY).map(String::as_str) != Some(format_version().as_str()) {
-        return Ok(ManifestVerdict::Incompatible);
+        return Ok(ManifestVerdict::Mismatch);
     }
     let stored_data_version = values.get(DATA_VERSION_KEY).map_or("", String::as_str);
     if stored_data_version != data_version.unwrap_or("") {
-        return Ok(ManifestVerdict::Incompatible);
+        return Ok(ManifestVerdict::Mismatch);
     }
 
     let stored: BTreeMap<&str, &str> = values
@@ -832,7 +832,7 @@ pub fn manifest_verify(
         .collect();
     mismatched.sort();
     if mismatched.is_empty() {
-        return Ok(ManifestVerdict::Compatible);
+        return Ok(ManifestVerdict::Match);
     }
     Ok(ManifestVerdict::CacheOnly { models: mismatched })
 }

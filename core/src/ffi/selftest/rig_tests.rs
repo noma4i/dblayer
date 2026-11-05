@@ -292,29 +292,6 @@ impl Switchable {
         Arc::new(Self { target: Mutex::new(target), invalid, tokens: AtomicUsize::new(0), attempts: AtomicUsize::new(0), failures: Mutex::new(Vec::new()), sinks: Mutex::new(Vec::new()), subscription_opened: Notify::new(), unsubscribed: Mutex::new(Vec::new()), sink_opened: Notify::new(), sink_closed: Notify::new() })
     }
     pub(super) fn set(&self, target: Option<Arc<World>>) { *self.target.lock().unwrap() = target; }
-    pub(super) fn unsubscribed(&self) -> Vec<String> { self.unsubscribed.lock().unwrap().clone() }
-    pub(super) fn failures(&self) -> Vec<String> { self.failures.lock().unwrap().clone() }
-    pub(super) fn attempts(&self) -> usize { self.attempts.load(Ordering::SeqCst) }
-    pub(super) fn opened(&self) -> usize { self.tokens.load(Ordering::SeqCst) }
-    pub(super) async fn first_sink(&self) -> (String, Arc<SubscriptionSink>) {
-        loop {
-            let notified = self.sink_opened.notified();
-            if let Some(sink) = self.sinks.lock().unwrap().first().cloned() { return sink; }
-            bound(notified).await;
-        }
-    }
-    pub(super) async fn wait_unsubscribed(&self, token: &str) {
-        loop {
-            let notified = self.sink_closed.notified();
-            if self.unsubscribed.lock().unwrap().iter().any(|found| found == token) { return; }
-            bound(notified).await;
-        }
-    }
-    pub(super) async fn subscription_opened(&self) { within_secs(BOUND, self.subscription_opened.notified()).await }
-    pub(super) fn emit(&self, json: String) -> Result<(), DbError> {
-        let sink = self.sinks.lock().unwrap().first().map(|(_, sink)| sink.clone()).expect("a subscription is open");
-        sink.event(json)
-    }
     fn current(&self) -> Result<Arc<World>, DbError> {
         self.target.lock().unwrap().clone().ok_or_else(|| match self.invalid {
             true => DbError::Invalid { detail: "No test transport".into() },

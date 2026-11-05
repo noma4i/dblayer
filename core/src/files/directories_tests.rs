@@ -14,13 +14,7 @@ pub(super) fn record_io(id: &str, operation: &'static str) {
     }
 }
 
-pub(crate) fn watch_file_io(id: &str) {
-    FILE_IO.get_or_init(Default::default).lock().unwrap().insert(id.to_string(), Vec::new());
-}
 
-pub(crate) fn take_file_io(id: &str) -> Vec<(&'static str, ThreadId)> {
-    FILE_IO.get().unwrap().lock().unwrap().remove(id).unwrap()
-}
 fn beside_database() -> (tempfile::TempDir, FileDirectories) {
     let root = tempfile::tempdir().unwrap();
     let directories = FileDirectories::beside(&root.path().join("42.sqlite"));

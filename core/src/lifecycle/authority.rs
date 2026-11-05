@@ -1,7 +1,7 @@
 //! What lets a SQL commit run: the epoch of admitted work, the proof of the opening,
 //! or a batch of an owner whose epoch and basis the Store owner checked against its `Published` snapshot before the write.
 
-use crate::ffi::legacy::Admitted;
+use crate::ffi::admission::Admitted;
 
 pub(crate) enum Authority {
     Admitted(Admitted),

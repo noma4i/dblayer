@@ -9,7 +9,7 @@ use super::rig_tests::{bound, Gate, Held, Rig};
 use crate::ffi::lifecycle_tests::Rows;
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, LoadMoreResult, OpenDatabase, PutReply, SubscriptionSink, TestClock, Transport, TransportRequest};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec, Storage};
-use crate::test_wait::yield_until;
+
 use crate::value::ScalarKind;
 
 struct Pages {

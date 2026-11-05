@@ -199,7 +199,6 @@ impl Twin {
     /// The id of the oldest erase of the Store.
     pub fn erase(&self) -> u64 { self.erases().first().expect("an erase is open").id }
 
-    pub fn last_erase(&self) -> u64 { self.erases().last().expect("an erase is open").id }
 
     pub fn publications(&self) -> Vec<u64> { self.reference.publishing.iter().map(|p| p.id).collect() }
 

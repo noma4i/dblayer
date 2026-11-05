@@ -2,7 +2,7 @@ mod cache;
 pub(crate) use cache::row_bytes;
 mod warm;
 mod commit;
-pub use crate::ffi::legacy::Admitted;
+pub use crate::ffi::admission::Admitted;
 mod correlate;
 mod diff;
 pub(crate) mod dispatch;
@@ -10,11 +10,6 @@ mod effects;
 mod ephemeral;
 mod error;
 mod files;
-mod upload;
-mod upload_accepted;
-mod upload_round;
-#[cfg(test)]
-mod upload_round_tests;
 mod land;
 mod land_event;
 mod land_window;
@@ -46,6 +41,7 @@ mod parent_pointer;
 mod ranked;
 mod reads;
 mod prior;
+mod upload;
 #[cfg(test)]
 mod prior_tests;
 mod replace;
@@ -65,8 +61,6 @@ pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
 pub use open::{Db, DbConfig, DroppedRecord, OpenReport};
 pub use row::{Record, Row};
-pub use upload_accepted::{AcceptedUpload, UploadAccepted, UploadAcceptedCallback};
-pub use upload_round::RoundStep;
 pub use warm::Peeked;
 pub(crate) use listeners::CallState;
 #[cfg(test)]

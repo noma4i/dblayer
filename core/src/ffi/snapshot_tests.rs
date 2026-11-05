@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::load_tests::relation;
-use super::tape::{folded, Seen, Tape};
-use super::{Config, Database, DbError, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, TestClock, Transport};
+use super::tape::{Seen, Tape};
+use super::{Config, Database, DbError, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, TestClock, Transport};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 

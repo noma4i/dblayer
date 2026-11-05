@@ -8,7 +8,7 @@ mod in_flight;
 mod resume;
 mod retry;
 mod throttle;
-#[cfg(any(test, feature = "stress"))]
+#[cfg(test)]
 mod test_clock;
 
 pub use backoff::Backoff;
@@ -27,7 +27,7 @@ pub use throttle::{Throttle, ThrottleDecision, ThrottleState};
 mod backoff_tests;
 #[cfg(test)]
 mod clock_tests;
-#[cfg(any(test, feature = "stress"))]
+#[cfg(test)]
 pub(crate) use test_clock::TestClock;
 #[cfg(test)]
 mod counters_tests;

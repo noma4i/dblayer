@@ -12,8 +12,6 @@ use super::open::Db;
 pub(crate) struct Restore {
     pub ops: Result<Vec<StoredOp>, DbError>,
     pub transfers: Result<Vec<crate::owners::write::transfer::StoredTransfer>, DbError>,
-    pub pending: Option<crate::transport::encrypted::state::Pending>,
-    pub pending_lost: bool,
 }
 
 impl Db {
@@ -37,7 +35,7 @@ impl Db {
         })?;
         let ops = self.stored_intents(entries, pending.clone(), answers);
         let transfers = self.stored_transfers(uploads);
-        Ok(Restore { ops, transfers, pending, pending_lost: self.open_report().dropped.iter().any(|row| row.table == "encrypted_pending") })
+        Ok(Restore { ops, transfers })
     }
 
     fn stored_intents(&self, entries: Vec<super::local_write::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::transport::encrypted::state::StoredAnswer)>) -> Result<Vec<StoredOp>, DbError> {

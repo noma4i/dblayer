@@ -41,10 +41,8 @@ pub(crate) struct PriorFile {
     pub id: String,
 }
 
+#[cfg(test)]
 pub(crate) struct HeldFile {
-    pub model: String,
-    pub row_id: String,
-    pub field: String,
     pub id: String,
 }
 
@@ -55,6 +53,7 @@ impl PriorRow {
         }
     }
 
+
     pub fn reappearing(&self) -> (Option<EntityOp>, Vec<ScopeOp>) {
         let PriorRow::Destroyed { model, id, before, members, .. } = self else { return (None, Vec::new()) };
         let (Ok(row_id), key) = (RowId::new(id), ModelKey::new(model)) else { return (None, Vec::new()) };
@@ -64,6 +63,7 @@ impl PriorRow {
         }
         (Some(EntityOp::Upsert { model: key, id: row_id, row: before.clone() }), scopes)
     }
+
 
     pub fn destroyed(reader: &Reader<'_>, model: &str, id: &str) -> Result<Option<PriorRow>, StoreError> {
         let Some(before) = reader.point(model, id)? else { return Ok(None) };
@@ -151,26 +151,11 @@ impl Prior {
         Ok(prior.to_value())
     }
 
-    pub fn created_beyond(&self, owned: &[RowId]) -> Vec<(String, RowId)> {
-        self.rows.iter().filter_map(|row| match row {
-            PriorRow::Created { model, id } => RowId::new(id).ok().filter(|id| !owned.contains(id)).map(|id| (model.clone(), id)),
-            _ => None,
-        }).collect()
-    }
 
     pub fn to_value(&self) -> Value {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
 
-    pub fn reappearing(&self) -> (Vec<EntityOp>, Vec<ScopeOp>) {
-        let (mut entity_ops, mut scope_ops) = (Vec::new(), Vec::new());
-        for row in &self.rows {
-            let (entity, scopes) = row.reappearing();
-            entity_ops.extend(entity);
-            scope_ops.extend(scopes);
-        }
-        (entity_ops, scope_ops)
-    }
 
     pub fn hiding(&self) -> Vec<EntityOp> {
         self.rows
@@ -182,11 +167,12 @@ impl Prior {
             .collect()
     }
 
+    #[cfg(test)]
     pub fn held_files(&self) -> Vec<HeldFile> {
         let mut held = Vec::new();
         for row in &self.rows {
-            if let PriorRow::Destroyed { model, id, files, .. } = row {
-                held.extend(files.iter().map(|file| HeldFile { model: model.clone(), row_id: id.clone(), field: file.field.clone(), id: file.id.clone() }));
+            if let PriorRow::Destroyed { files, .. } = row {
+                held.extend(files.iter().map(|file| HeldFile { id: file.id.clone() }));
             }
         }
         held

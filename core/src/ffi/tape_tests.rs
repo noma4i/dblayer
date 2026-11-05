@@ -103,7 +103,6 @@ impl Reader for Rows {
 }
 
 impl Rows {
-    pub(crate) fn values(&self) -> Vec<ReadValue> { self.3.lock().unwrap().1.clone() }
 
     pub(crate) fn last(&self) -> Option<Seen> { self.1.lock().unwrap().last().cloned() }
 
@@ -111,7 +110,6 @@ impl Rows {
 
     pub(crate) fn len(&self) -> usize { self.0.lock().unwrap().len() }
 
-    pub(crate) fn state(&self) -> Option<Seen> { self.last() }
 }
 
 /// Like `Rows`, for tests that only read the values.
@@ -128,21 +126,6 @@ impl Tape {
     pub(crate) fn last(&self) -> Option<Seen> { self.0.last() }
 }
 
-/// The phase, the ids and the size after each value.
-pub(crate) fn folded(changes: &[Seen]) -> Vec<(Option<ReadPhase>, Vec<String>, u32)> {
-    let mut ids: Vec<String> = Vec::new();
-    changes
-        .iter()
-        .map(|change| {
-            if change.full { ids.clear(); }
-            ids.retain(|id| !change.removed.contains(id));
-            for row in &change.rows {
-                if !ids.contains(&row.id) { ids.push(row.id.clone()); }
-            }
-            (change.phase, ids.clone(), change.size)
-        })
-        .collect()
-}
 
 impl ReadState {
     /// The first state a reader may show: the load ended with rows or with an error.
@@ -199,7 +182,6 @@ impl Watched {
         }
     }
 
-    pub(crate) async fn cancelled(&self) { self.stream.cancel().await; }
 }
 
 impl Drop for Watched {

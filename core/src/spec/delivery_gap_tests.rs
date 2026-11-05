@@ -5,13 +5,13 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::ref_delivery::{self as r, row, rows, Cause, Delivery, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws};
+use super::ref_delivery::{self as r, rows, Cause, Delivery, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws};
 use crate::owners::contract::{Committed, EpochEnded, Models, ModelsReset, WindowPhase, WindowState};
 use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
 use crate::owners::read::windows::{WindowKey, Windows};
 use crate::owners::support::{as_owner, new_log, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
-use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits, OutcomeId, Outcomes};
+use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits, Outcomes};
 
 const STREAM: d::StreamId = 1;
 const EPOCH: u64 = 1;

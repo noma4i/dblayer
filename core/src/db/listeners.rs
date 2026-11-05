@@ -77,6 +77,8 @@ impl Mailbox {
         self.paused = true;
     }
 
+
+    #[cfg(test)]
     pub(crate) fn resume(&mut self) -> bool {
         self.paused = false;
         std::mem::take(&mut self.owes_run) && !std::mem::replace(&mut self.scheduled, true)
@@ -110,12 +112,6 @@ impl Mailbox {
         }
     }
 
-    /// Forgets what was delivered and what waits, so that the next delivery is the whole result.
-    pub(crate) fn restart(&mut self) {
-        self.delivered = None;
-        self.restarted = true;
-        self.drop_pending();
-    }
 
     pub(crate) fn take(&mut self) -> Option<Taken> {
         self.restarted = false;
@@ -254,16 +250,15 @@ impl Subscriber {
         held(&self.mailbox).pause();
     }
 
-    pub(crate) fn restart_deliveries(&self) {
-        held(&self.mailbox).restart();
-    }
 
+    #[cfg(test)]
     pub(crate) fn resume(self: &Arc<Self>, executor: &Arc<Executor>) {
         let needs_run = held(&self.mailbox).resume();
         if needs_run {
             executor.schedule(self.clone());
         }
     }
+
 
     #[cfg(test)]
     pub(crate) fn owes_delivery(&self) -> bool {

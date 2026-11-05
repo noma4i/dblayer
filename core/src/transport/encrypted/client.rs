@@ -10,10 +10,8 @@ use super::key::ServerKey;
 use super::state::{self, Pending};
 use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
-use crate::ffi::legacy::{Admitted, Origin};
+use crate::ffi::admission::{Admitted, Origin};
 use crate::lifecycle::authority::Authority;
-#[cfg(test)]
-use crate::lifecycle::authority::Internal;
 use crate::pacing::{Clock, RetryPolicy};
 use crate::transport::{SessionCode, TransportError};
 use crate::transport::retry::{RetryClass, RetryCalls, Retrying};
@@ -186,7 +184,7 @@ impl EncryptedClient {
     }
 
     pub(super) fn validate(&self, admitted: &Admitted) -> Result<(), TransportError> {
-        if Arc::ptr_eq(admitted.life(), &self.db.shared.store.lifecycle) && admitted.is_current() { Ok(()) } else { Err(crate::ffi::legacy::Ended.into()) }
+        if Arc::ptr_eq(admitted.life(), &self.db.shared.store.lifecycle) && admitted.is_current() { Ok(()) } else { Err(crate::ffi::admission::Ended.into()) }
     }
 
     fn write_in<T>(&self, admitted: &Admitted, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {
