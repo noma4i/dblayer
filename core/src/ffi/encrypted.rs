@@ -166,7 +166,7 @@ impl Database {
     }
 }
 
-fn session_failure(error: crate::owners::session::SessionError) -> DbError {
+pub(super) fn session_failure(error: crate::owners::session::SessionError) -> DbError {
     use crate::owners::session::SessionError as Failed;
     match error {
         Failed::Invalid | Failed::Protocol => DbError::Invalid { detail: "the answer does not confirm the sequence".into() },
@@ -181,7 +181,8 @@ fn session_failure(error: crate::owners::session::SessionError) -> DbError {
         Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
         Failed::Storage(detail) => DbError::Database { detail },
         Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },
-        Failed::Interrupted | Failed::Closed => super::command::ended(),
+        Failed::Interrupted => super::command::ended(),
+        Failed::Closed => super::command::closed(),
     }
 }
 

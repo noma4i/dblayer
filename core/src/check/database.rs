@@ -48,6 +48,7 @@ fn error_kind(error: &DbError) -> &'static str {
         DbError::Sync { .. } => "sync",
         DbError::Network { .. } => "network",
         DbError::Interrupted { .. } => "interrupted",
+        DbError::Http { status: 401, .. } => "unauthorized",
         DbError::Http { .. } => "http",
         DbError::RequestTooLarge { .. } => "request_too_large",
         DbError::Graphql { .. } => "graphql",
