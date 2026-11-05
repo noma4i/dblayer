@@ -54,8 +54,7 @@ fn random_row(dice: &mut Dice, id: &str) -> serde_json::Map<String, serde_json::
     obj(row)
 }
 
-fn commit(db: &Db, dice: &mut Dice, op: EntityOp) {
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+fn stage(envelope: &mut CommitEnvelope, dice: &mut Dice, op: EntityOp) {
     let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("roster"));
     let row = op.row_ref().id;
     let order_key = format!("a1{}{}", &row.as_str()[1..], 1 + dice.below(9));
@@ -66,14 +65,20 @@ fn commit(db: &Db, dice: &mut Dice, op: EntityOp) {
         _ => {}
     }
     envelope.entity_ops.push(op);
-    db.land(&db.admit().unwrap(), envelope).unwrap();
 }
 
 fn edit(db: &Db, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) -> String {
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    let id = edit_into(&mut envelope, dice, known, fresh);
+    db.land(&db.admit().unwrap(), envelope).unwrap();
+    id
+}
+
+fn edit_into(envelope: &mut CommitEnvelope, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) -> String {
     let moments = ModelKey::new("moments");
     if !known.is_empty() && dice.below(5) == 0 {
         let id = known.swap_remove(dice.below(known.len()));
-        commit(db, dice, EntityOp::Destroy { model: moments, id: rid(&id), reason: DestroyReason::Server });
+        stage(envelope, dice, EntityOp::Destroy { model: moments, id: rid(&id), reason: DestroyReason::Server });
         return id;
     }
     let id = if known.is_empty() || dice.below(3) == 0 {
@@ -85,7 +90,7 @@ fn edit(db: &Db, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) ->
         known[dice.below(known.len())].clone()
     };
     let row = random_row(dice, &id);
-    commit(db, dice, EntityOp::Upsert { model: moments, id: rid(&id), row });
+    stage(envelope, dice, EntityOp::Upsert { model: moments, id: rid(&id), row });
     id
 }
 
@@ -98,9 +103,11 @@ fn run_sequence(seed: u64) {
     let db = booted();
     let query = query_of(seed as usize);
     let (mut known, mut fresh) = (Vec::new(), 0);
+    let mut preparation = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     for _ in 0..dice.below(25) {
-        edit(&db, &mut dice, &mut known, &mut fresh);
+        edit_into(&mut preparation, &mut dice, &mut known, &mut fresh);
     }
+    db.land(&db.admit().unwrap(), preparation).unwrap();
     let mirror: Arc<Mutex<Vec<Row>>> = Arc::default();
     let sink = mirror.clone();
     let subscriber = Subscriber::new(Listener::Rows(Box::new(move |change: &Change| change.apply_to(&mut sink.lock().unwrap()))), Default::default());
