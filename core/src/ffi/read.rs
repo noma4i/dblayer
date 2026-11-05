@@ -254,8 +254,9 @@ impl Database {
         if !view.remote { return; }
         let crate::owners::read::windows::WindowKind::Relation { relation, params } = view.window.kind() else { return };
         let now = self.db.shared.store.lock().now_ms();
-        if self.db.window_is_fresh(&view.model, &relation, &params, now).unwrap_or(false) { return; }
-        self.life.stale_window(view.window.clone());
+        if self.db.window_expired(&view.model, &relation, &params, now).unwrap_or(false) {
+            self.life.stale_window(view.window.clone());
+        }
     }
 
     /// Hands the status of the transfer of `key` to the stream at each change.
@@ -288,8 +289,10 @@ impl Database {
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
         let opened = self.view_of(&request).and_then(|view| Ok((view, self.db.revision_seq()?)));
+        let shut = self.life.is_shut();
         let (view, revision, valid, refusal) = match opened {
             Ok((view, revision)) => (view, revision, true, None),
+            Err(_) if shut => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, None),
             Err(error) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, Some(error)),
         };
         if valid { self.stale_before_open(&view); }

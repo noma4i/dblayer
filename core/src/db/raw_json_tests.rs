@@ -17,7 +17,7 @@ fn samples(mut spec: ModelSpec) -> Db {
 
 /// A page of the server lands the way the codec of Windows gives it to the Store: text fields that parse JSON are decoded first.
 async fn load_samples(db: &Db, row: Value) {
-    let mut patch = db.spec("samples").unwrap().patch(&obj(row));
+    let mut patch = db.spec("samples").unwrap().normalize(&obj(row)).unwrap();
     db.shared.store.decode_values("samples", &mut patch, crate::schema::read_path).unwrap();
     put(db, "samples", Value::Object(patch));
 }

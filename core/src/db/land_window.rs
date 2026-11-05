@@ -88,15 +88,24 @@ impl Db {
 
     /// Whether the window landed within the stale time of its relation and nothing marked it stale since (`now_ms` is the clock of the database).
     pub(crate) fn window_is_fresh(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<bool, DbError> {
+        Ok(self.window_age(model, relation, params, now_ms)?.unwrap_or(false))
+    }
+
+    /// Whether a window that landed once outlived its stale time or was marked stale; a window that never landed has no answer.
+    pub(crate) fn window_expired(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<bool, DbError> {
+        Ok(self.window_age(model, relation, params, now_ms)? == Some(false))
+    }
+
+    fn window_age(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<Option<bool>, DbError> {
         let spec = self.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
         let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;
         let (scope, key) = window_identity(spec, model, relation, remote, params)?;
-        let Some(freshness) = self.shared.store.window_freshness(&key)? else { return Ok(false) };
+        let Some(freshness) = self.shared.store.window_freshness(&key)? else { return Ok(None) };
         let is_empty = self.shared.store.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_none();
         let policy = crate::pacing::selected_policy(is_empty, &remote.stale_time, remote.empty_stale_time.as_deref());
         let window = crate::pacing::parse_duration(policy).ok_or_else(|| DbError::Internal(format!("unknown freshness {policy}")))?;
-        Ok(freshness.is_fresh(now_ms, i64::try_from(window.as_millis()).unwrap_or(i64::MAX)))
+        Ok(Some(freshness.is_fresh(now_ms, i64::try_from(window.as_millis()).unwrap_or(i64::MAX))))
     }
 
     /// The edge values of the rows of a relation window, by row id.

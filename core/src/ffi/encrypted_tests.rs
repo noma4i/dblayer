@@ -137,6 +137,7 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
     encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless })].into();
     let credentials = Arc::new(MemoryCredentials::default());
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(TicketPost)), None, None).await.unwrap();
+    database.set_online(true).unwrap();
     assert!(credentials.value().is_none());
 
     database.session_call("ticket".into(), body.into()).await.unwrap();

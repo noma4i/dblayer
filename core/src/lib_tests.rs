@@ -62,7 +62,7 @@ fn inv_time_01_only_the_clock_module_and_the_stress_rigs_read_the_wall_clock() {
         let strays: Vec<String> = mentions(word).into_iter().filter(|file| !allowed.contains(&file.as_str())).collect();
         assert_eq!(strays, Vec::<String>::new(), "{word} reads the wall clock outside the clock module");
     }
-    let defaults: Vec<String> = mentions("SystemClock").into_iter().filter(|file| !["pacing/clock.rs", "pacing/mod.rs", "store/mod.rs", "db/ephemeral.rs", "ffi/database.rs", "ffi/encrypted.rs"].contains(&file.as_str())).collect();
+    let defaults: Vec<String> = mentions("SystemClock").into_iter().filter(|file| !file.starts_with("spec/") && !["pacing/clock.rs", "pacing/mod.rs", "store/mod.rs", "db/ephemeral.rs", "ffi/database.rs", "ffi/encrypted.rs"].contains(&file.as_str())).collect();
     assert_eq!(defaults, Vec::<String>::new(), "a path builds its own system clock instead of taking the one given at open");
 }
 

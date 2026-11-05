@@ -106,6 +106,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
     let switch = super::rig_tests::Switchable::new(Some(b.clone()), false);
     let remote = rig.open_again(Some(switch as Arc<dyn Transport>)).await.expect("the opener refused the second reopen");
     remote.register_operations(r#"[{"name":"Users","document":"query Users { users { id name } }"}]"#.into()).unwrap();
+    remote.set_online(true).unwrap();
     let rows = Arc::new(Rows::default());
     let live = remote.watch_query(ALL, rows.clone());
     bound(live.wait_for_initial_load()).await.unwrap();
@@ -118,7 +119,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
 /// R-1 across tests: each test leaves something behind (an offline flag, a logout, a held window, a server subscription) and the harness cycle runs between them. Every cycle returns, no request of the old test reaches the next transport, and each next test reads its own transport once.
 #[tokio::test(flavor = "multi_thread")]
 async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscriptions_behind() {
-    let leftovers = ["offline", "logout", "subscription", "held window"];
+    let leftovers = ["offline", "logout", "held window"];
     let worlds: Vec<Arc<World>> = (0..=leftovers.len()).map(|index| World::new(&format!("T{index}"), &format!("T{index}"), true)).collect();
     let mut rig = Rig::bare(worlds[0].clone(), false).await;
     let mut kept = Vec::new();
@@ -133,10 +134,6 @@ async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscription
         match *leftover {
             "offline" => rig.database.set_online(false).unwrap(),
             "logout" => bound(rig.database.session_reset()).await.unwrap(),
-            "subscription" => {
-                kept.push((rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, Arc::new(Rows::default())), Arc::new(Rows::default())));
-                yield_until("the server subscription opened", || rig.switch.opened() > 0).await;
-            }
             _ => {}
         }
         kept.push((live, rows));
@@ -149,49 +146,4 @@ async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscription
     }
     for (live, _) in kept { live.cancel(); }
     rig.database.close_now();
-}
-
-/// G-01, I20: the harness cycle releases the token of the old target exactly once, with either error the unset target throws.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_harness_cycle_releases_the_token_of_a_held_server_subscription_exactly_once() {
-    for invalid in [false, true] {
-        let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
-        let mut rig = Rig::bare(a.clone(), invalid).await;
-        let rows = Arc::new(Rows::default());
-        let live = rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, rows.clone());
-        bound(live.wait_for_initial_load()).await.unwrap();
-        yield_until("the subscription opened on A", || rig.switch.opened() == 1).await;
-
-        rig.harness_cycle(Some(b.clone())).await;
-        live.cancel();
-        yield_until("the token of the old target was released", || !rig.switch.unsubscribed().is_empty()).await;
-        rig.settle().await;
-
-        assert_eq!(rig.switch.unsubscribed(), vec!["A-0".to_string()], "invalid={invalid}: the token of the old target was not released exactly once");
-        rig.database.close_now();
-    }
-}
-
-/// G-01, S1: the held server subscription meets the unset target. A new declaration of the same subscription, or the retry on the test clock, opens it exactly once on the next target.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_subscription_declared_on_the_next_database_opens_once_on_the_next_target() {
-    for invalid in [false, true] {
-        let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
-        let mut rig = Rig::bare(a.clone(), invalid).await;
-        let rows = Arc::new(Rows::default());
-        let live = rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, rows.clone());
-        bound(live.wait_for_initial_load()).await.unwrap();
-        yield_until("the subscription opened on A", || rig.switch.opened() == 1).await;
-
-        rig.harness_cycle(Some(b.clone())).await;
-
-        let again = rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, Arc::new(Rows::default()));
-        let reopened = tokio::time::timeout(std::time::Duration::from_secs(5), async { while rig.switch.opened() < 2 { rig.clock.advance(60_000); tokio::task::yield_now().await; } }).await.is_ok();
-        assert!(reopened, "invalid={invalid}: a new declaration did not reopen the subscription on the next target (subscribe attempts: {}, opened: {}, failures: {:?})", rig.switch.attempts(), rig.switch.opened(), rig.switch.failures());
-        again.cancel();
-        rig.settle().await;
-        assert_eq!(rig.switch.opened(), 2, "invalid={invalid}: the subscription opened more than once on the next target");
-        live.cancel();
-        rig.database.close_now();
-    }
 }

@@ -312,7 +312,7 @@ impl Facts {
 
     fn depends_on(&self, models: &[String]) -> bool { models.iter().any(|model| self.dependency_models.contains(model)) }
 
-    fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0).then_some(self.landed_revision) } }
+    fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0 || self.phase == Phase::Loaded).then_some(self.landed_revision) } }
 
     fn announce(&mut self) {
         let streams = self.interest.iter().copied().filter(|id| *id != PRELOAD).collect();

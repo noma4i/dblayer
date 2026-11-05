@@ -751,9 +751,10 @@ impl Delivery {
         if ended.epoch != self.epoch {
             return;
         }
+        let cause = if ended.cause == Cause::Close { EndCause::Closed } else { EndCause::SessionEnded };
         match self.stage {
-            DeliveryStage::Opening | DeliveryStage::Live => self.finish(EndCause::SessionEnded, false, fx),
-            DeliveryStage::Cancelling => self.cause = EndCause::SessionEnded,
+            DeliveryStage::Opening | DeliveryStage::Live => self.finish(cause, false, fx),
+            DeliveryStage::Cancelling => self.cause = cause,
             DeliveryStage::Ended => {}
         }
     }
