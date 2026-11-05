@@ -1,21 +1,28 @@
-//! `FeedIo` on `DetScheduler` with the mock transport. Requirement -> observed value -> assert:
-//! feed_io_frames_commit: subscription frames are inputs of their connection, an event reaches the Store as a `Commit`.
-//! feed_io_unsubscribe_closes: `Unsubscribe` closes the subscription and no frame reaches the owner after it.
+//! `FeedIo` on `DetScheduler` with a scripted cable line. Requirement -> observed value -> assert:
+//! feed_io_frames_commit: the handshake, the subscribe frame with the first send counter, an opened frame as `FrameOpened`, an event reaches the Store as a `Commit`.
+//! feed_io_unsubscribe_closes: the last `Want-` seals the unsubscribe frame with the next counter and closes the line, no frame reaches the owner after it.
+//! feed_io_counter_mismatch_closes: a frame with a skipped counter closes the line and the owner opens another connection.
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use serde_json::json;
+use async_trait::async_trait;
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
 
-use super::rig::{admit, collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
+use super::feed::FramedEvent;
+use super::rig::{collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
 use super::{FeedCodec, FeedIo};
+use crate::owners::contract::Online;
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::feed::{self as f, Feed, FeedInput, Mode};
 use crate::owners::read::windows::Windows;
 use crate::owners::store::StoreWriter;
 use crate::owners::support::{Discard, Sink};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
-use crate::transport::{GraphQLRequest, MockTransport, Response, SubscriptionEvent};
+use crate::transport::{CableLine, CableLines, GraphQLRequest, Incoming, Response, TransportError};
 
 const EPOCH: u64 = 1;
 
@@ -24,53 +31,118 @@ struct Models;
 impl FeedCodec for Models {
     fn request(&self, models: &[String]) -> GraphQLRequest { GraphQLRequest::new("subscription Feed", "Feed", json!({ "models": models })) }
 
-    fn event(&self, response: Response) -> Option<(String, String)> {
-        let data = response.data?;
-        Some((data["model"].as_str()?.to_string(), data["payload"].as_str()?.to_string()))
+    fn events(&self, response: Response) -> Vec<FramedEvent> {
+        let Some(data) = response.data else { return Vec::new() };
+        match (data["model"].as_str(), data["payload"].as_str()) {
+            (Some(model), Some(payload)) => vec![FramedEvent { model: model.into(), payload: payload.into(), reread: Default::default() }],
+            _ => Vec::new(),
+        }
     }
 }
 
-fn event(payload: &str) -> SubscriptionEvent { SubscriptionEvent::Next(Response::data(json!({ "model": "Chat", "payload": payload }))) }
+struct Line {
+    incoming: tokio::sync::Mutex<mpsc::UnboundedReceiver<Incoming>>,
+    sent: Arc<Mutex<Vec<(u64, Value)>>>,
+    closed: Arc<AtomicUsize>,
+}
 
-fn rig(script: Vec<SubscriptionEvent>) -> (DetScheduler, Address<Feed>, MockTransport, Batches, tokio::runtime::Runtime) {
+#[async_trait]
+impl CableLine for Line {
+    async fn send(&self, counter: u64, body: Value) -> Result<(), TransportError> {
+        self.sent.lock().unwrap_or_else(PoisonError::into_inner).push((counter, body));
+        Ok(())
+    }
+
+    async fn next(&self) -> Incoming { self.incoming.lock().await.recv().await.unwrap_or(Incoming::Closed { code: 1006, reason: String::new() }) }
+
+    async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); }
+}
+
+struct Lines(Mutex<VecDeque<Arc<Line>>>);
+
+#[async_trait]
+impl CableLines for Lines {
+    async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError> {
+        let line = self.0.lock().unwrap_or_else(PoisonError::into_inner).pop_front().ok_or_else(|| TransportError::Network("no line".into()))?;
+        Ok(line)
+    }
+}
+
+struct Peer {
+    frames: mpsc::UnboundedSender<Incoming>,
+    sent: Arc<Mutex<Vec<(u64, Value)>>>,
+    closed: Arc<AtomicUsize>,
+}
+
+fn line() -> (Arc<Line>, Peer) {
+    let (frames, incoming) = mpsc::unbounded_channel();
+    let (sent, closed) = (Arc::new(Mutex::new(Vec::new())), Arc::new(AtomicUsize::new(0)));
+    (Arc::new(Line { incoming: tokio::sync::Mutex::new(incoming), sent: sent.clone(), closed: closed.clone() }), Peer { frames, sent, closed })
+}
+
+fn next(counter: u64, payload: &str) -> Incoming { Incoming::Frame { counter, body: json!({"t":"next", "id":"1", "result":{"data":{"model":"Chat", "payload":payload}}}) } }
+
+fn rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::runtime::Runtime) {
     let runtime = runtime();
-    let mock = MockTransport::new();
-    mock.script_subscription("Feed", script);
     let batches = Batches::default();
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(mock.clone()), Arc::new(Models), admit(), runtime.handle().clone(), rest);
+    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest);
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", batches.clone(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), Discard);
     let peers = f::FeedPeers { store: Address::<StoreWriter>::new(store.index()), windows: Address::<Windows>::new(windows.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
-    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, true, peers), io);
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into()), io);
     det.start_epoch(EPOCH);
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), debounce_ms: 0, delivery: None });
-    (det, feed, mock, batches, runtime)
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online(Online(true)));
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
+    (det, feed, batches, runtime)
 }
 
 #[test]
 fn feed_io_frames_commit() {
-    let (mut det, feed, _mock, batches, _runtime) = rig(vec![SubscriptionEvent::Ready, event("hello")]);
+    let (line, peer) = line();
+    let (mut det, feed, batches, _runtime) = rig(vec![line]);
+    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    peer.frames.send(next(1, "hello")).unwrap();
     let seen = batches.clone();
     pump(&mut det, feed, |_| !seen.all().is_empty());
     let landed = batches.all();
     assert_eq!(landed.len(), 1);
     assert_eq!(landed[0].rows, [("Chat".to_string(), "hello".to_string())]);
     assert_eq!(landed[0].epoch, EPOCH);
-    assert!(saw_input(&det, "Frame") >= 2, "Ready and the event came as frames");
+    let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    assert_eq!(sent.len(), 1);
+    assert_eq!((sent[0].0, sent[0].1["t"].as_str(), sent[0].1["variables"]["models"][0].as_str()), (f::FIRST_SEND_COUNTER, Some("subscribe"), Some("Chat")), "the subscribe frame is sealed with the first send counter");
+    assert!(saw_input(&det, "HandshakeDone") >= 1 && saw_input(&det, "FrameOpened") >= 1);
 }
 
 #[test]
 fn feed_io_unsubscribe_closes() {
-    let (mut det, feed, mock, _batches, runtime) = rig(vec![SubscriptionEvent::Ready]);
+    let (line, peer) = line();
+    let (mut det, feed, _batches, runtime) = rig(vec![line]);
     pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
-    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), delivery: None });
-    pump(&mut det, feed, |det| det.trace().iter().any(|entry| entry.effects.contains("Unsubscribe")));
-    runtime.block_on(async { tokio::time::timeout(Duration::from_secs(10), mock.await_cancellations("Feed", 1)).await.expect("the subscription was cancelled") });
-    let before = saw_input(&det, "Frame");
-    mock.emit("Feed", event("late"));
-    pump_for(&mut det, feed, Duration::from_millis(500));
-    assert_eq!(saw_input(&det, "Frame"), before, "no frame reaches the owner after Unsubscribe");
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
+    let closed = peer.closed.clone();
+    pump(&mut det, feed, |_| closed.load(Ordering::SeqCst) >= 1);
+    let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
+    assert_eq!(sent.iter().map(|(counter, body)| (*counter, body["t"].as_str().unwrap_or(""))).collect::<Vec<_>>(), [(0, "subscribe"), (1, "unsubscribe")]);
+    let before = saw_input(&det, "FrameOpened");
+    let _ = peer.frames.send(next(1, "late"));
+    runtime.block_on(async { tokio::time::sleep(Duration::from_millis(50)).await });
+    pump_for(&mut det, feed, Duration::from_millis(300));
+    assert_eq!(saw_input(&det, "FrameOpened"), before, "no frame reaches the owner after the line closed");
+}
+
+#[test]
+fn feed_io_counter_mismatch_closes() {
+    let (first, peer) = line();
+    let (second, _other) = line();
+    let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
+    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    peer.frames.send(next(5, "skipped")).unwrap();
+    let closed = peer.closed.clone();
+    pump(&mut det, feed, |_| closed.load(Ordering::SeqCst) >= 1);
+    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
+    assert!(batches.all().is_empty(), "the frame with a skipped counter does not reach the Store");
 }

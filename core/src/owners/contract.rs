@@ -115,22 +115,6 @@ pub struct Transport<R> {
     pub outcome: TransportOutcome<R>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Frame {
-    Ready,
-    Event { model: String, payload: String },
-    ChannelLost { dropped: u64, models: Vec<String> },
-    Dropped,
-    Ended,
-}
-
-/// `SubscriptionFrame{connection_id, Ready/Event/ChannelLost/Dropped/Ended}`: a frame of the subscription connection.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SubscriptionFrame {
-    pub connection_id: ConnectionId,
-    pub frame: Frame,
-}
-
 /// `Tick(now)`: the only clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tick(pub Time);

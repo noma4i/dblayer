@@ -150,8 +150,6 @@ pub enum WindowsInput {
     Rejected(Rejected),
     Stale { model: String, keys: StaleKeys },
     RetryDue { request: RequestId },
-    /// A model event of the Feed: the windows of the model declared `reread` load again. Part 2 replaces it with `Stale{keys}`.
-    Reread { model: String },
     /// The executor of `DerivePreload` found these keys in the rows of a source window.
     PreloadKeys { keys: Vec<WindowKey> },
     /// A Store broadcast `Committed{tables}`: the models whose tables changed and the revision.
@@ -730,7 +728,6 @@ pub struct WindowsState {
     base_generation: u64,
     preload: Vec<WindowKey>,
     sources: BTreeSet<WindowKey>,
-    reread: Vec<WindowKey>,
     next_request: RequestId,
     next_attempt: u32,
     windows: BTreeMap<WindowKey, Window>,
@@ -748,18 +745,12 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), reread: Vec::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), peers }
+        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), peers }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
     pub fn with_preload(mut self, keys: Vec<WindowKey>) -> Self {
         self.preload = keys;
-        self
-    }
-
-    /// Keys that load again at every model event of their model.
-    pub fn with_reread(mut self, keys: Vec<WindowKey>) -> Self {
-        self.reread = keys;
         self
     }
 
@@ -877,12 +868,6 @@ impl StateOwner for Windows {
                 }
             }
             WindowsInput::RetryDue { request } => Self::by_request(state, request, Ev::RetryDue { request }, &mut out),
-            WindowsInput::Reread { model } => {
-                let keys: Vec<WindowKey> = state.reread.iter().filter(|key| key.model == model && state.windows.contains_key(key)).cloned().collect();
-                for key in keys {
-                    Self::on(state, &key, Ev::Stale, &mut out);
-                }
-            }
             WindowsInput::PreloadKeys { keys } => {
                 for key in keys {
                     if !state.windows.contains_key(&key) {
