@@ -280,8 +280,9 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     within(pause.entered.notified()).await;
     let second = database.clone();
     let epoch = second.session_epoch();
+    let waiting = database.life.waiting_calls();
     let joined = tokio::spawn(async move { second.load(epoch, "User".into(), "all".into(), "{}".into()).await });
-    crate::test_wait::yield_until("the load joined the flight", || database.sync.as_ref().unwrap().joined_loads() > 0).await;
+    crate::test_wait::yield_until("the load joined the flight", || database.life.waiting_calls() > waiting).await;
     within(database.session_reset()).await.unwrap();
     assert!(within(owner).await.unwrap().is_err(), "the owner of the old flight waited for its request");
     assert!(within(joined).await.unwrap().is_err(), "a call joined to the old flight waited for its request");

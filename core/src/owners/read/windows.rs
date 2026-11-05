@@ -101,7 +101,7 @@ impl AnswerPage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowOutcome {
     Loaded { revision: i64 },
-    Failed { error: String },
+    Failed { error: String, source: Option<crate::transport::TransportError> },
     PageLimit,
     Interrupted,
 }
@@ -355,12 +355,12 @@ impl Facts {
         Transition(WinState::ended())
     }
 
-    fn fail(&mut self, message: &str) -> Outcome<WinState> {
+    fn fail(&mut self, message: &str, source: Option<crate::transport::TransportError>) -> Outcome<WinState> {
         self.fresh = false;
         self.reread_due = false;
         self.phase = self.failed_phase();
         self.error = Some(message.to_string());
-        self.answer_all(&WindowOutcome::Failed { error: message.to_string() });
+        self.answer_all(&WindowOutcome::Failed { error: message.to_string(), source });
         self.announce();
         Transition(WinState::idle())
     }
@@ -549,7 +549,7 @@ impl Facts {
                     self.emit(Emit::Retry { request: *request, attempt: *attempts, class });
                     return Handled;
                 }
-                self.fail(&error.message)
+                self.fail(&error.message, error.source.clone())
             }
             Ev::RetryDue { request: got } if got == request && *retry && self.is_online() => {
                 *attempt = context.attempt();
@@ -614,7 +614,7 @@ impl Facts {
                     self.answer_all(&WindowOutcome::Interrupted);
                     Transition(WinState::ended())
                 }
-                RejectReason::Storage(message) => self.fail(message),
+                RejectReason::Storage(message) => self.fail(message, None),
             },
             Ev::InterestPlus { id } => {
                 self.interest.insert(*id);
@@ -902,7 +902,7 @@ impl StateOwner for Windows {
             WindowsInput::Load { key, id, goal, force, store_revision } => Self::load(state, key, id, goal, force, store_revision, &mut out),
             WindowsInput::Response { request, attempt, page } => Self::by_request(state, request, Ev::Response { request, attempt, page }, &mut out),
             WindowsInput::Failure { request, attempt, error } => Self::by_request(state, request, Ev::Failure { request, attempt, error: error.clone() }, &mut out),
-            WindowsInput::Dropped { request, attempt } => Self::by_request(state, request, Ev::Failure { request, attempt, error: RequestError { message: "dropped".into(), class: ErrorClass::Network } }, &mut out),
+            WindowsInput::Dropped { request, attempt } => Self::by_request(state, request, Ev::Failure { request, attempt, error: RequestError { message: "dropped".into(), class: ErrorClass::Network, source: None } }, &mut out),
             WindowsInput::Committed(committed) => Self::by_request(state, committed.batch, Ev::Committed { request: committed.batch, revision: committed.revision }, &mut out),
             WindowsInput::Rejected(rejected) => Self::by_request(state, rejected.batch, Ev::Rejected { request: rejected.batch, reason: rejected.reason }, &mut out),
             WindowsInput::Stale { model, keys } => {

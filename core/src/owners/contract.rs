@@ -95,6 +95,7 @@ pub enum ErrorClass {
 pub struct RequestError {
     pub message: String,
     pub class: ErrorClass,
+    pub source: Option<crate::transport::TransportError>,
 }
 
 impl RequestError {

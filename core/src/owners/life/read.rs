@@ -136,6 +136,10 @@ impl super::Life {
         (waiter, id)
     }
 
+    /// The platform calls that wait for an outcome of `Windows` now.
+    #[cfg(test)]
+    pub fn waiting_calls(&self) -> usize { self.wiring.outcomes.waiting() }
+
     /// The caller of `id` gives up: the window decides whether the request goes on for the others.
     pub fn leave_load(&self, key: WindowKey, id: u64) { self.wiring.to_windows(WindowsInput::InterestMinus { key, id }); }
 

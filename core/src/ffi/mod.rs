@@ -181,7 +181,9 @@ mod open_tests;
 mod write_calls_tests;
 #[cfg(test)]
 #[cfg(test)]
-mod load_more_tests;
+mod read_load_tests;
+#[cfg(test)]
+mod signed_session_tests;
 #[cfg(test)]
 mod load_all_cancel_tests;
 #[cfg(test)]

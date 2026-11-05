@@ -504,6 +504,11 @@ impl Rig {
     }
 
     pub(super) async fn encrypted_for_reactions(page: bool, keep_message: bool, reactions: bool) -> Rig {
+        Self::encrypted_edited(page, keep_message, reactions, |_| {}).await
+    }
+
+    /// The app path with the models changed by `edit` before the database opens.
+    pub(super) async fn encrypted_edited(page: bool, keep_message: bool, reactions: bool, edit: impl FnOnce(&mut Value)) -> Rig {
         let world = World::new("server", "initial", false);
         let switch = Switchable::new(Some(world.clone()), false);
         let mut encrypted = crate::transport::encrypted::protocol_tests::config();
@@ -524,6 +529,7 @@ impl Rig {
             create["on_failure"] = json!("keep");
         }
         if reactions { add_reactions(&mut models); }
+        edit(&mut models);
         let database = opener
             .open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
             .await

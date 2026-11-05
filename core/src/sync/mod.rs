@@ -6,6 +6,7 @@ pub(crate) type FailureProbe = Box<dyn Fn(bool) + Send>;
 mod dsl_tests;
 mod error;
 mod freshness;
+pub(crate) use freshness::stale_window;
 mod invalidate;
 pub(crate) use invalidate::{WindowEvent, WindowMark};
 mod land;
@@ -118,7 +119,6 @@ pub(crate) struct Flights {
     pub owners: HashMap<String, (u64, crate::identity::Generation)>,
     pub interest: HashMap<String, usize>,
     pub tasks: HashMap<String, (u64, tokio::task::AbortHandle)>,
-    pub pending: usize,
     #[cfg(test)]
     pub joined: JoinedLoads,
 }
@@ -139,9 +139,8 @@ impl Flights {
         Some((task, waiting))
     }
 
-    /// The flights no caller wants, once no caller waits to name its key.
+    /// The flights no caller wants.
     fn unwanted(&mut self) -> Vec<Abandoned> {
-        if self.pending > 0 { return Vec::new(); }
         let keys: Vec<String> = self.tasks.keys().filter(|key| self.interest.get(*key).is_none_or(|count| *count == 0)).cloned().collect();
         keys.iter().filter_map(|key| self.abandon(key)).collect()
     }

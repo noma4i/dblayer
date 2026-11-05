@@ -112,10 +112,10 @@ async fn a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_t
     within(transport.entered.notified()).await;
     database.session_reset().await.unwrap();
     assert!(matches!(within(old).await.unwrap(), Err(DbError::Interrupted { .. })), "a call of the old epoch survived the reset");
-    assert_eq!(within(load(&database, "Profile", "profile")).await, Ok(()));
+    assert!(matches!(within(load(&database, "Profile", "profile")).await, Err(DbError::NoSession { .. })), "a load without a session waits instead of failing");
     hold.add_permits(1);
     within(transport.ended.notified()).await;
-    assert_eq!(transport.asked("Profile"), 2, "the old command was sent again");
-    assert_eq!(ids(&database, "Profile", "profile").await, vec!["profile-b".to_string()], "the late answer of the old epoch landed");
+    assert_eq!(transport.asked("Profile"), 1, "no request left for the epoch without a session");
+    assert!(ids(&database, "Profile", "profile").await.is_empty(), "the late answer of the old epoch landed");
     database.close_database().await.unwrap();
 }

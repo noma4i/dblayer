@@ -49,6 +49,10 @@ pub struct Waiter<T> {
 impl<T> Outcomes<T> {
     pub fn new() -> Self { Self { inner: Arc::new(Mutex::new(Inner { next: 0, closed: false, last_ended: None, open: HashMap::new() })) } }
 
+    /// The calls that wait for an answer now.
+    #[cfg(test)]
+    pub fn waiting(&self) -> usize { self.lock().open.len() }
+
     fn lock(&self) -> MutexGuard<'_, Inner<T>> { self.inner.lock().unwrap_or_else(PoisonError::into_inner) }
 
     pub fn register(&self, epoch: Epoch) -> Waiter<T> {

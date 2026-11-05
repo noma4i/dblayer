@@ -86,6 +86,19 @@ impl Db {
         Ok(self.shared.store.window(&key)?)
     }
 
+    /// Whether the window landed within the stale time of its relation and nothing marked it stale since (`now_ms` is the clock of the database).
+    pub(crate) fn window_is_fresh(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<bool, DbError> {
+        let spec = self.spec(model)?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
+        let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;
+        let (scope, key) = window_identity(spec, model, relation, remote, params)?;
+        let Some(freshness) = self.shared.store.window_freshness(&key)? else { return Ok(false) };
+        let is_empty = self.shared.store.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_none();
+        let policy = crate::pacing::selected_policy(is_empty, &remote.stale_time, remote.empty_stale_time.as_deref());
+        let window = crate::sync::stale_window(policy).map_err(|error| DbError::Internal(error.to_string()))?;
+        Ok(freshness.is_fresh(now_ms, i64::try_from(window.as_millis()).unwrap_or(i64::MAX)))
+    }
+
     /// Whether the row is in the membership of the scope of a relation with params.
     pub(crate) fn window_member(&self, model: &str, relation: &str, params: &Map<String, Value>, id: &str) -> Result<bool, DbError> {
         let scope = self.spec(model)?.selection_key(relation, params).map_err(json_fault)?;

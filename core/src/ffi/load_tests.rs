@@ -142,7 +142,7 @@ pub(super) async fn held_rig()-> (Arc<Database>, Arc<Counting>, Arc<tokio::sync:
 
 async fn joined_the_flight(db: &Database, transport: &Counting, already: usize) {
     tokio::select! {
-        () = db.sync().unwrap().wait_joined(already + 1) => {}
+        () = crate::test_wait::yield_until("the second load waits in the window", || db.life.waiting_calls() > already) => {}
         () = transport.started.notified() => panic!("the second load made its own request instead of joining"),
     }
 }
@@ -245,7 +245,7 @@ async fn inv_fresh_13_load_during_a_live_connect_shares_its_request() {
     let (db, transport, hold) = held_rig().await;
     let _live = db.watch_query(r#"{"model":"Moment","relation":"feed","params":{}}"#, Arc::new(Rows::default()));
     within(transport.started.notified()).await;
-    let already = db.sync().unwrap().joined_loads();
+    let already = db.life.waiting_calls();
     let sharing = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     joined_the_flight(&db, &transport, already).await;
     hold.add_permits(1);
@@ -322,7 +322,7 @@ async fn inv_fresh_13_a_cancelled_caller_does_not_cancel_the_load_another_waits_
     let (db, transport, hold) = held_rig().await;
     let cancelled = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
-    let already = db.sync().unwrap().joined_loads();
+    let already = db.life.waiting_calls();
     let waiter = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     joined_the_flight(&db, &transport, already).await;
     cancelled.abort();

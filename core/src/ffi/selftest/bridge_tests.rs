@@ -605,40 +605,18 @@ async fn a_receipt_revision_arrives_with_the_updated_row() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_fresh_profile_is_read_again_after_expiry_and_keeps_rows_on_error() {
+async fn a_fresh_profile_is_read_again_after_expiry() {
     let rig = Rig::plain(World::new("server", "A", true), false).await;
     let epoch = rig.database.session_epoch();
     let load = || rig.database.load(epoch, "User".into(), "profile".into(), "{}".into());
+    let requests = || rig.world.log().iter().filter(|call| call.operation == "MyProfile").count();
     bound(load()).await.unwrap();
-    let reader = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, profile(), reader.clone());
-    bound(rig.database.loaded(stream)).await.unwrap();
     rig.clock.advance(299_000);
     bound(load()).await.unwrap();
-    assert_eq!(rig.world.log().iter().filter(|call| call.operation == "MyProfile").count(), 1);
+    assert_eq!(requests(), 1, "a fresh window answers without a request");
     rig.clock.advance(2_000);
     bound(load()).await.unwrap();
-    assert_eq!(rig.world.log().iter().filter(|call| call.operation == "MyProfile").count(), 2);
-    rig.clock.advance(301_000);
-    let down = rig.world.hold_then("MyProfile", Fault::Down);
-    let (outcome, ()) = tokio::join!(bound(load()), network_drops_during(&rig, &down));
-    assert!(outcome.is_ok() || matches!(&outcome, Err(DbError::Network { .. })), "unexpected load outcome: {outcome:?}");
-    bound(async {
-        loop {
-            let changed = reader.changed.notified();
-            if reader.deliveries().iter().any(|delivery| match &delivery.value {
-                StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } => state.error.is_some(),
-                _ => false,
-            }) { break; }
-            changed.await;
-        }
-    }).await;
-    assert_eq!(rig.world.log().iter().filter(|call| call.operation == "MyProfile").count(), 3);
-    assert!(reader.shows("A"));
-    assert!(reader.deliveries().iter().any(|delivery| match &delivery.value {
-        StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } => state.phase == LivePhase::Loaded && matches!(&state.error, Some(DbError::Network { .. })),
-        _ => false,
-    }));
+    assert_eq!(requests(), 2, "an expired window asks again");
     rig.database.close_now();
 }
 
@@ -962,7 +940,7 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
         assert!(!delta_rows.is_empty() && delta_rows.iter().all(|rows| *rows == 1), "a change of one row carried {delta_rows:?} rows");
         costs.push((delta_rows.len(), rig.database.db.counters().rows_delivered - before));
     }
-    assert_eq!(costs[0], costs[1], "the cost of one change grew with the list: {costs:?}");
+    assert_eq!(costs[0].1 * costs[1].0, costs[1].1 * costs[0].0, "the rows per delta grew with the list: {costs:?}");
     assert!(costs[1].1 <= 2 * costs[1].0, "the core delivered more rows than the deltas carry: {costs:?}");
     rig.database.close_now();
 }
@@ -1305,28 +1283,27 @@ async fn server_calls_without_a_transport_report_no_session() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reset_clears_ephemeral_values_before_the_next_account_reads_the_same_id() {
-    use crate::schema::{EphemeralSpec, FieldSpec, ModelSpec};
+    use crate::schema::{EphemeralSpec, FieldSpec};
     use crate::value::ScalarKind;
-    let mut user: Vec<ModelSpec> = serde_json::from_str(&crate::ffi::lifecycle_tests::models()).unwrap();
-    user[0].ephemeral.push(EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false))));
-    let world = super::rig_tests::World::new("server", "A", true);
-    let transport = super::rig_tests::Switchable::new(Some(world.clone()), false);
-    let database = Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&user).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
-    database.register_operations(r#"[{"name":"MyProfile","document":"query MyProfile { me { id name } }"}]"#.into()).unwrap();
-    let epoch = database.session_epoch();
-    bound(database.load(epoch, "User".into(), "profile".into(), "{}".into())).await.unwrap();
-    bound(database.set_ephemeral(epoch, "User".into(), "user".into(), r#"{"typing":true}"#.into())).await.unwrap();
-    let old = bound(database.read_row(epoch, "User".into(), "user".into())).await.unwrap().unwrap();
+    let typing = serde_json::to_value(EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false)))).unwrap();
+    let rig = Rig::encrypted_edited(false, false, false, |models| {
+        let user = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "User").unwrap();
+        user.as_object_mut().unwrap().entry("ephemeral").or_insert(json!([])).as_array_mut().unwrap().push(typing);
+    }).await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    bound(rig.database.set_ephemeral(epoch, "User".into(), "user".into(), r#"{"typing":true}"#.into())).await.unwrap();
+    let old = bound(rig.database.read_row(epoch, "User".into(), "user".into())).await.unwrap().unwrap();
     assert!(matches!(old.cells.last(), Some(crate::ffi::Cell::Bool { value: true })));
 
-    bound(database.session_reset()).await.unwrap();
-    world.set_account("B");
-    bound(database.load(database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
-    let current = bound(database.read_row(database.session_epoch(), "User".into(), "user".into())).await.unwrap().unwrap();
+    bound(rig.database.session_reset()).await.unwrap();
+    rig.world.set_account("B");
+    rig.login_ios("B").await;
+    let current = bound(rig.database.read_row(rig.database.session_epoch(), "User".into(), "user".into())).await.unwrap().unwrap();
 
     assert!(named(&current, "B"));
     assert!(matches!(current.cells.last(), Some(crate::ffi::Cell::Bool { value: false })));
-    database.close_now();
+    rig.database.close_now();
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -9,8 +9,8 @@ use crate::identity::RowId;
 use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::Query;
 use crate::schema::ModelSpec;
-use crate::read::LoadMoreVerdict;
-use crate::sync::{LoadOptions, LoadStatus, OperationDef, Sync, SyncConfig};
+use crate::owners::read::windows::{Goal, WindowKey, WindowOutcome};
+use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
 use crate::upload::UploadOperations;
 use super::open_slot::OpenLease;
@@ -216,6 +216,25 @@ impl Drop for LoadRequest {
     fn drop(&mut self) { self.cancel(); }
 }
 
+struct LoadCall {
+    epoch: u64,
+    waiter: crate::runtime::Waiter<LifeReply>,
+    leave: LeaveLoad,
+}
+
+struct LeaveLoad {
+    life: Arc<crate::owners::life::Life>,
+    key: WindowKey,
+    id: u64,
+    settled: bool,
+}
+
+impl Drop for LeaveLoad {
+    fn drop(&mut self) {
+        if !self.settled { self.life.leave_load(self.key.clone(), self.id); }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct TestClock { clock: Arc<ManualClock> }
 
@@ -233,7 +252,12 @@ pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<Encrypted
 
 impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        Self::start_with(config, models_json, uploads, clock, |_, _| Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None)))
+        Self::start_with(config, models_json, uploads, clock, |db, _| {
+            #[cfg(test)]
+            if transport.is_some() { super::signed_session_tests::signed_session(db); }
+            let _ = db;
+            Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None))
+        })
     }
 
     pub(super) fn start_with(
@@ -494,32 +518,21 @@ impl Database {
             _ => Err(super::command::ended()),
         }
     }
-    /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
+        /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
     pub fn begin_load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
-        let sync = self.sync()?.clone();
-        drop(self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, "load")?);
-        let pending = sync.pending_interest();
+        let call = self.start_load(epoch, "load", &model, &relation, &params_json, Goal::First, false)?;
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
         let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
-            let result = this.in_epoch_as(crate::ffi::legacy::Origin::Explicit, epoch, "load", true, |admitted| async move {
-                let params: Map<String, Value> = serde_json::from_str(&params_json)?;
-                let interest = sync.interest(&model, &relation, &params);
-                drop(pending);
-                let _interest = interest?;
-                Ok::<_, DbError>(sync.load(&admitted, &model, &relation, &params, LoadOptions::default()).await.map(drop)?)
-            }).await;
+            let result = this.finish_load(call).await.map(drop);
             crate::db::lock::effect(|| sender.send_replace(Some(result)));
         });
         Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
     }
     pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         self.require_online(&format!("{model}.{relation} refresh"))?;
-        let sync = self.sync()?.clone();
-        self.serve_in_epoch(epoch, "refresh", move |admitted| async move {
-            let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.refresh(&admitted, &model, &relation, &params).await?)
-        }).await.map(drop)
+        let call = self.start_load(epoch, "refresh", &model, &relation, &params_json, Goal::First, true)?;
+        self.finish_load(call).await.map(drop)
     }
     /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
     pub fn begin_load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
@@ -538,16 +551,12 @@ impl Database {
     }
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.require_online(&format!("{model}.{relation} load more"))?;
-        let sync = self.sync()?.clone();
-        let outcome = self.serve_in_epoch(epoch, "load more", move |admitted| async move {
-            let params = serde_json::from_str(&params_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.load_more(&admitted, &model, &relation, &params).await?)
-        }).await?;
-        Ok(match outcome.status {
-            LoadStatus::NoMorePages(LoadMoreVerdict::AlreadyLoading) => LoadMoreResult::AlreadyLoading,
-            LoadStatus::NoMorePages(_) => LoadMoreResult::NoMore,
-            _ => LoadMoreResult::Loaded { has_more: outcome.has_next },
-        })
+        let params: Map<String, Value> = serde_json::from_str(&params_json)?;
+        let more_before = self.db.window_record(&model, &relation, &params)?.is_some_and(|record| record.has_next);
+        let call = self.start_load(epoch, "load more", &model, &relation, &params_json, Goal::Next, false)?;
+        self.finish_load(call).await?;
+        if !more_before { return Ok(LoadMoreResult::NoMore); }
+        Ok(LoadMoreResult::Loaded { has_more: self.db.window_record(&model, &relation, &params)?.is_some_and(|record| record.has_next) })
     }
     pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
         let sync = self.sync()?.clone();
@@ -691,6 +700,35 @@ impl Database {
     #[cfg(test)]
     pub(crate) async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
         self.begin_load_all(epoch, model, relation, params_json, force)?.result().await
+    }
+
+    /// Registers a call that waits for a load of the window in `Windows`. The window keeps the request while this call or another one waits for it.
+    #[allow(clippy::too_many_arguments)]
+    fn start_load(&self, epoch: u64, target: &'static str, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
+        self.sync()?;
+        let params: Map<String, Value> = serde_json::from_str(params_json)?;
+        self.db.window_record(model, relation, &params)?;
+        drop(self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, target)?);
+        if self.life.published().identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
+        let key = WindowKey::relation(model, relation, &params);
+        let force = force || (goal == Goal::First && !self.db.window_is_fresh(model, relation, &params, self.sync()?.inner.now_ms())?);
+        let (waiter, id) = self.life.load(key.clone(), goal, force, self.db.revision_seq()?);
+        Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
+    }
+
+    /// Waits for the outcome of the call: the revision of the load. A call dropped before its outcome leaves the window.
+    async fn finish_load(&self, mut call: LoadCall) -> Result<i64, DbError> {
+        let reply = self.await_life(call.waiter).await;
+        call.leave.settled = true;
+        let reply = reply?;
+        if !self.admits(call.epoch) { return Err(super::command::ended()); }
+        match reply {
+            LifeReply::Window(WindowOutcome::Loaded { revision }) => Ok(revision),
+            LifeReply::Window(WindowOutcome::Failed { source: Some(source), .. }) => Err(crate::sync::SyncError::Transport(source).into()),
+            LifeReply::Window(WindowOutcome::Failed { error, .. }) => Err(DbError::Database { detail: error }),
+            LifeReply::Window(WindowOutcome::PageLimit) => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
+            _ => Err(super::command::ended()),
+        }
     }
 
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() }) }

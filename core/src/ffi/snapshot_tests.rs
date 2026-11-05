@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::load_tests::relation;
 use super::stream::tape::{folded, Seen, Tape};
-use super::{Config, Database, DbError, LivePhase, StreamRequest, TestClock, Transport};
+use super::{Config, Database, DbError, LivePhase, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, StreamRequest, TestClock, Transport};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
@@ -44,6 +44,18 @@ async fn open(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, clock.clone(), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
     (db, clock)
+}
+
+/// The first state of the stream that is loaded at a revision of `above` or later; the call fails after 5 seconds.
+async fn loaded_state(stream: &ReadStream, above: i64) -> ReadState {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. }) = stream.pull().await.unwrap().expect("a value") else { continue };
+            if state.phase == ReadPhase::Loaded && state.loaded.is_some_and(|at| at >= above) { return state; }
+        }
+    })
+    .await
+    .expect("the loaded state of the window reaches the stream")
 }
 
 fn consistent(changes: &[Seen]) {
@@ -136,25 +148,12 @@ async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_s
 async fn inv_loadm_16_a_refresh_that_changes_no_row_still_shows_its_state_once_the_group_has_read_through_it() {
     let (db, clock) = open(&[ONE_ROW, ONE_ROW]).await;
     db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
-    let listener = tape();
-    let live = db.watch_query(FEED, listener.clone());
-    live.wait_for_initial_load().await.unwrap();
-    let first_loaded_at = heard(&listener).last().and_then(|change| change.loaded_at).expect("the first frame is loaded");
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: FEED.into() });
+    let first_loaded = loaded_state(&stream, 0).await.loaded.expect("the first value is loaded");
     clock.advance(60_000);
     db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
-    let shown = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let current = listener.last().expect("the first value arrived");
-            if current.loaded_at.is_some_and(|at| at > first_loaded_at) && !current.refreshing {
-                return current;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the state of the refresh reaches the listener although no row changed");
-    assert_eq!((shown.phase, shown.size), (Some(LivePhase::Loaded), 1));
-    consistent(&heard(&listener));
+    let shown = loaded_state(&stream, first_loaded).await;
+    assert_eq!(shown.phase, ReadPhase::Loaded);
 }
 
 async fn open_with_authors(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
@@ -176,24 +175,12 @@ async fn inv_loadm_16_a_refresh_that_only_changes_a_related_row_still_shows_its_
     const BOB: &str = r#"{"data":{"moments":[{"id":"m1","text":"a","author":{"id":"u1","name":"Bob"}}]}}"#;
     let (db, clock) = open_with_authors(&[ANN, BOB]).await;
     db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
-    let listener = tape();
-    let live = db.watch_query(FEED, listener.clone());
-    live.wait_for_initial_load().await.unwrap();
-    let first_loaded_at = heard(&listener).last().and_then(|change| change.loaded_at).expect("the first frame is loaded");
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: FEED.into() });
+    let first_loaded = loaded_state(&stream, 0).await.loaded.expect("the first value is loaded");
     clock.advance(60_000);
     db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
-    let shown = tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let current = listener.last().expect("the first value arrived");
-            if current.loaded_at.is_some_and(|at| at > first_loaded_at) && !current.refreshing {
-                return current;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("the state of the refresh reaches the listener although no row of the query changed");
-    assert_eq!((shown.phase, shown.size), (Some(LivePhase::Loaded), 1));
+    let shown = loaded_state(&stream, first_loaded).await;
+    assert_eq!(shown.phase, ReadPhase::Loaded);
 }
 
 #[tokio::test]

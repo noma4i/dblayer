@@ -20,7 +20,7 @@ pub trait WindowCodec: Send + Sync + 'static {
 
     fn refusal(&self, response: &Response) -> Option<RequestError> {
         let error = response.errors.iter().find(|error| error.code() == Some(crate::transport::retry::INVALID_CURSOR))?;
-        Some(RequestError { message: error.message.clone(), class: ErrorClass::InvalidCursor })
+        Some(RequestError { message: error.message.clone(), class: ErrorClass::InvalidCursor, source: None })
     }
 }
 
@@ -81,21 +81,21 @@ impl EffectRunner<Windows> for WindowIo {
 async fn ask(transport: Option<&dyn Transport>, codec: &dyn WindowCodec, admit: &Admit, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
     let admitted = match admit() {
         Ok(admitted) => admitted,
-        Err(refused) => return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent }),
+        Err(refused) => return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent, source: None }),
     };
     let request = match codec.request(key, page, cursor) {
         Ok(request) => request,
-        Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent }),
+        Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
     };
     let Some(transport) = transport else {
-        return TransportOutcome::Error(RequestError { message: "the database has no transport".into(), class: ErrorClass::Network });
+        return TransportOutcome::Error(RequestError { message: "the database has no transport".into(), class: ErrorClass::Network, source: None });
     };
     match transport.query(&admitted, request).await {
         Ok(response) => match codec.refusal(&response) {
             Some(error) => TransportOutcome::Error(error),
             None => match codec.answer(key, page, response) {
                 Ok(answer) => TransportOutcome::Response(answer),
-                Err(message) => TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent }),
+                Err(message) => TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
             },
         },
         Err(error) => failure(&error),
@@ -105,7 +105,7 @@ async fn ask(transport: Option<&dyn Transport>, codec: &dyn WindowCodec, admit: 
 /// `Interrupted` = the request left and no answer came; every other error has the class of its retry policy.
 pub(super) fn failure<R>(error: &TransportError) -> TransportOutcome<R> {
     if matches!(error, TransportError::Graphql { extensions: Some(extensions), .. } if extensions.code.as_deref() == Some(crate::transport::retry::INVALID_CURSOR)) {
-        return TransportOutcome::Error(RequestError { message: error.to_string(), class: ErrorClass::InvalidCursor });
+        return TransportOutcome::Error(RequestError { message: error.to_string(), class: ErrorClass::InvalidCursor, source: Some(error.clone()) });
     }
     let class = match RetryClass::of_error(error) {
         _ if matches!(error, TransportError::Interrupted(_)) => return TransportOutcome::Dropped,
@@ -113,7 +113,7 @@ pub(super) fn failure<R>(error: &TransportError) -> TransportOutcome<R> {
         RetryClass::Server | RetryClass::Retriable => ErrorClass::Server,
         RetryClass::Fatal => ErrorClass::Permanent,
     };
-    TransportOutcome::Error(RequestError { message: error.to_string(), class })
+    TransportOutcome::Error(RequestError { message: error.to_string(), class, source: Some(error.clone()) })
 }
 
 impl Drop for WindowIo {

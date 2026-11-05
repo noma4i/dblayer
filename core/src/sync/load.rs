@@ -148,31 +148,6 @@ fn stop(abandoned: Vec<(tokio::task::AbortHandle, Option<watch::Sender<Option<Fl
     }
 }
 
-/// A caller whose load has not named its key yet: its arguments are read off the caller's thread. While one waits, no flight stops for want of interest, since the caller may join it.
-pub(crate) struct PendingInterest {
-    inner: std::sync::Weak<Inner>,
-}
-
-impl PendingInterest {
-    pub(crate) fn new(inner: &Arc<Inner>) -> Self {
-        locked(&inner.flights).pending += 1;
-        Self { inner: Arc::downgrade(inner) }
-    }
-}
-
-impl Drop for PendingInterest {
-    fn drop(&mut self) {
-        let Some(inner) = self.inner.upgrade() else { return };
-        let abandoned = {
-            let mut flights = locked(&inner.flights);
-            flights.pending -= 1;
-            flights.unwanted()
-        };
-        stop(abandoned);
-        drop(inner);
-    }
-}
-
 struct FlightGuard<'a> {
     inner: &'a Inner,
     key: String,
@@ -572,15 +547,6 @@ impl Sync {
     pub(crate) async fn wait_joined(&self, at_least: usize) {
         let mut joined = locked(&self.inner.flights).joined.0.subscribe();
         let _ = joined.wait_for(|joined| *joined >= at_least).await;
-    }
-
-    /// The interest of a caller whose arguments are not read yet. It keeps every flight running until the caller names its key.
-    pub(crate) fn pending_interest(&self) -> PendingInterest { PendingInterest::new(&self.inner) }
-
-    /// The interest of one caller in the load of a scope, taken before the load starts.
-    pub(crate) fn interest(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Interest, SyncError> {
-        let key = self.inner.resolve(crate::ffi::legacy::Origin::Explicit, model, relation, params)?.window_key;
-        Ok(Interest::new(&self.inner, &key))
     }
 
     pub async fn load(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {

@@ -169,7 +169,7 @@ impl Twin {
                 self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page });
             }
             Input::TransportError { request, attempt, failure } => {
-                self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { message: "e".to_string(), class: class_of(*failure) } });
+                self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { message: "e".to_string(), class: class_of(*failure), source: None } });
             }
             Input::Dropped { request, attempt } => self.post(w::WindowsInput::Dropped { request: *request, attempt: *attempt }),
             Input::Retry { request } => self.post(w::WindowsInput::RetryDue { request: *request }),
