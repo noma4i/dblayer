@@ -1,5 +1,9 @@
 {"trace":"local_write_offline"}
-{"in":"open","out":[{"o":"opened"}]}
+{"in":"open","out":[{"o":"opened"}],"args":{"encrypted":true}}
+{"in":"published","out":[{"o":"published","v":{"epoch":1}}]}
+{"args":{"body":{"token":"t"},"operation":"social"},"in":"session_call","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}}]}
+{"args":{"id":"r1","json":{"nextStep":"authenticated"}},"in":"answer","out":[{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":2}}]}
 {"in":"set_online","args":{"online":false},"out":[{"o":"online","v":false}]}
 {"in":"create","args":{"as":"r1","text":"a"},"out":[{"o":"receipt","v":{"op":"create","row":"r1"}}]}
 {"in":"has","args":{"row":"r1"},"out":[{"o":"row","v":{"present":true,"row":"r1"}}]}

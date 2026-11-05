@@ -1,7 +1,11 @@
 {"trace":"upload_cancel"}
-{"in":"open","out":[{"o":"opened"}]}
+{"in":"open","out":[{"o":"opened"}],"args":{"encrypted":true}}
+{"in":"published","out":[{"o":"published","v":{"epoch":1}}]}
+{"args":{"body":{"token":"t"},"operation":"social"},"in":"session_call","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}}]}
+{"args":{"id":"r1","json":{"nextStep":"authenticated"}},"in":"answer","out":[{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":2}}]}
 {"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
-{"in":"create","args":{"as":"r1","text":"a"},"out":[{"o":"receipt","v":{"op":"create","row":"r1"}},{"o":"request","v":{"id":"r1","kind":"mutation","purpose":"standard"}}]}
-{"in":"answer","args":{"id":"r1","json":{"data":{"createMoment":{"__typename":"Moment","createdAt":"2026-10-08T00:00:00.000Z","id":"m1","likedByMe":false,"media":{},"text":"a","uuid":"um1"}}}},"out":[]}
+{"in":"create","args":{"as":"r1","text":"a"},"out":[{"o":"receipt","v":{"op":"create","row":"r1"}},{"o":"request","v":{"id":"r2","kind":"http","purpose":"standard"}}]}
+{"in":"answer","args":{"id":"r2","json":{"data":{"createMoment":{"__typename":"Moment","createdAt":"2026-10-08T00:00:00.000Z","id":"m1","likedByMe":false,"media":{},"text":"a","uuid":"um1"}}}},"out":[]}
 {"in":"upload","args":{"action":"upload_clip","row":"r1"},"out":[{"o":"error","v":{"kind":"sync"}}]}
 {"in":"cancel_upload","args":{"action":"upload_clip","row":"r1"},"out":[{"o":"cancelled","v":{"row":"r1","value":false}}]}
