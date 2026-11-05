@@ -64,6 +64,7 @@ pub(super) enum Want {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Input {
     InterestPlus { id: u32 },
+    InterestPassive { id: u32 },
     InterestMinus { id: u32 },
     Load { id: u32, goal: Goal, force: bool },
     Response { request: u64, attempt: u32, cursor: Option<u32>, rows: bool },
@@ -259,6 +260,10 @@ impl Window {
 
     fn idle(&mut self, input: Input) -> Vec<Effect> {
         match input {
+            Input::InterestPassive { id } => {
+                self.interest.insert(id);
+                vec![Effect::WindowState]
+            }
             Input::InterestPlus { id } => {
                 self.interest.insert(id);
                 if self.fresh {

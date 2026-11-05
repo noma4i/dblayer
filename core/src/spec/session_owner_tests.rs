@@ -255,6 +255,7 @@ impl Twin {
             Input::SessionCall { operation, body, reply } => SessionInput::SessionCall { operation, body, reply },
             Input::Mutate { author, owner, req_id, epoch, path, body, purpose } => SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose },
             Input::Cancel { req_id } => SessionInput::Cancel { req_id },
+            Input::Release { req_id } => SessionInput::Release { req_id },
             Input::CredentialGenerated { op, credential } => SessionInput::CredentialGenerated { secret_op_id: op, credential },
             Input::SecretStored { op, ok } => SessionInput::SecretStored { secret_op_id: op, ok },
             Input::SecretCleared { op, ok } => SessionInput::SecretCleared { secret_op_id: op, ok },
@@ -1714,6 +1715,24 @@ fn sess_held_cancel() {
     let mut twin = held();
     assert!(twin.feed(Input::Cancel { req_id: 11 }).is_empty());
     assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }), "the pair is kept for the next Mutate");
+}
+
+#[test]
+fn sess_held_release() {
+    let mut twin = held();
+    let rid = twin.rid();
+    let effects = twin.feed(Input::Release { req_id: rid });
+    assert!(matches!(twin.reference.state, RefState::Calling { .. }), "the pair goes on after the release");
+    assert!(matches!(effects.as_slice(), [RefEffect::HttpRequest { pending, .. }] if pending.request_id == rid && pending.author.is_none()), "the same pair goes out with no author: {effects:?}");
+}
+
+#[test]
+fn sess_release_other() {
+    let mut twin = held();
+    assert!(twin.feed(Input::Release { req_id: 99 }).is_empty());
+    assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }), "another request does not release the pair");
+    let mut idle = Twin::new();
+    assert!(idle.feed(Input::Release { req_id: 1 }).is_empty());
 }
 
 #[test]

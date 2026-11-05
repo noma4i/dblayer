@@ -434,3 +434,21 @@ fn store_boot_corrupt_manifest_keeps_the_file_whole() {
     assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'saved_epoch'").as_deref(), Some("-3"));
     assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'format_version'").as_deref(), Some("old"));
 }
+
+#[test]
+fn store_prop_boot_atomic() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let (store, _) = reopen(&path, &[messages_spec()], None);
+        exec(&store, "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'req-1', 'k', 5, '/p', '{}', 0, 3);\
+                      UPDATE manifest SET value = 'old' WHERE key = 'format_version';\
+                      DROP TABLE row_messages;\
+                      CREATE VIEW row_messages AS SELECT 1 AS id");
+    }
+    let store = Store::open(&path).unwrap();
+    assert!(store.boot(&[messages_spec()], None).is_err(), "the model table cannot be created over the view");
+    assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'format_version'").as_deref(), Some("old"), "the format is not stamped: the old base is whole");
+    assert_eq!(text(&store, "SELECT request_id FROM encrypted_pending").as_deref(), Some("req-1"), "the kept intent stays where it was");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0, "nothing of the transfer is half done");
+}

@@ -820,3 +820,20 @@ fn store_prop_close_once() {
     twin.feed(Request::Close);
     assert_eq!(twin.history.iter().filter(|effect| matches!(effect, StoreEffect::StoreClosed)).count(), 1);
 }
+
+/// P-STORE-18: saving a restricting publication keeps the epoch, the commit of the ended epoch stays refused.
+#[test]
+fn store_prop_restricting_keeps_epoch() {
+    for epoch in 1..=5 {
+        let mut twin = Twin::new();
+        twin.publish(epoch, 0);
+        twin.feed(Request::EpochEnded { epoch });
+        twin.publication += 1;
+        let publication_id = twin.publication;
+        twin.feed(Request::Published { publication_id, epoch, generation: 0, active: false });
+        let io_id = twin.head_io().expect("the save of the publication starts");
+        twin.feed(Request::Erased { io_id, result: Ok(0) });
+        assert!(twin.state().epoch() >= epoch, "epoch {epoch}: the restricting save lowered the epoch to {}", twin.state().epoch());
+        assert_eq!(Twin::rejected(&twin.commit(epoch, &["a"])), Some(Reason::NoSession), "epoch {epoch}: the commit of the ended epoch is refused");
+    }
+}

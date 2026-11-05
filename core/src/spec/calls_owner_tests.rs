@@ -1,12 +1,26 @@
 //! Owner-level tests of the `calls` machine: the owner `Calls` on `DetScheduler` against `ref_calls.rs`. Names are the `Test` column.
 
-use super::ref_calls::{Calls as Ref, CallState, Effect as RefEffect, Fail, Input, Out};
-use crate::owners::calls::{CallAnswer, CallError, CallPhase, Calls, CallsEffect, CallsInput, CallsState};
+use super::ref_calls::{Calls as Ref, CallState, Effect as RefEffect, Fail, Input, Kind, Out};
+use crate::owners::calls::{CallAnswer, CallError, CallKind, CallPhase, Calls, CallsEffect, CallsInput, CallsState};
 use crate::owners::contract::Online;
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
 const EPOCH: u64 = 1;
+
+fn kind_of(kind: Kind) -> CallKind {
+    match kind {
+        Kind::Query => CallKind::Query,
+        Kind::Mutate => CallKind::Mutate,
+    }
+}
+
+fn ref_kind(kind: CallKind) -> Kind {
+    match kind {
+        CallKind::Query => Kind::Query,
+        CallKind::Mutate => Kind::Mutate,
+    }
+}
 
 fn fail(error: &Fail) -> CallError {
     match error {
@@ -16,6 +30,8 @@ fn fail(error: &Fail) -> CallError {
         Fail::Network => CallError::Network,
         Fail::Graphql(messages) => CallError::Graphql(messages.clone()),
         Fail::Http => CallError::Http,
+        Fail::Dropped => CallError::Dropped,
+        Fail::InvalidResponse => CallError::InvalidResponse,
         Fail::Interrupted => CallError::Interrupted,
     }
 }
@@ -29,20 +45,22 @@ struct Twin {
 }
 
 impl Twin {
-    fn new() -> Self { Self::with(true) }
+    fn new() -> Self { Self::with(Some(true)) }
 
-    fn with(online: bool) -> Self {
+    fn with(online: Option<bool>) -> Self {
         let mut det = DetScheduler::new(5);
         let log = new_log();
-        let addr = det.add::<Calls>("calls", CallsState::new(EPOCH, online, &["Op"]), Recorder::<Calls>::new(&log));
+        let declared = [("Op", Kind::Query), ("Change", Kind::Mutate)];
+        let addr = det.add::<Calls>("calls", CallsState::new(EPOCH, online, &declared.map(|(name, kind)| (name, kind_of(kind)))), Recorder::<Calls>::new(&log));
         det.start_epoch(EPOCH);
-        Self { det, addr, log, reference: Ref::new(EPOCH, online, &["Op"]), history: Vec::new() }
+        Self { det, addr, log, reference: Ref::new(EPOCH, online, &declared), history: Vec::new() }
     }
 
     /// Feeds both sides and compares effects, replies and the state of every call.
     fn feed(&mut self, input: Input) -> Out {
         match input.clone() {
             Input::Run { epoch, operation, reply } => self.det.post(self.addr, EpochStamp::Control, CallsInput::Run { epoch, operation, variables: String::new(), reply }),
+            Input::Declare(operations) => self.det.post(self.addr, EpochStamp::Control, CallsInput::Declare(operations.into_iter().map(|(name, kind)| (name, kind_of(kind))).collect())),
             Input::Response { call_id, body, errors } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Response { call_id, body, errors }),
             Input::TransportError { call_id, error } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::TransportError { call_id, error: fail(&error) }),
             Input::Dropped { call_id } => self.det.post(self.addr, EpochStamp::Epoch(EPOCH), CallsInput::Dropped { call_id }),
@@ -55,8 +73,9 @@ impl Twin {
         self.history.extend(raw.iter().cloned());
         let want = self.reference.step(input);
         let effects: Vec<RefEffect> = raw.iter().filter_map(|effect| match effect {
-            CallsEffect::Request { call_id, request_id, operation, .. } => Some(RefEffect::Request { call_id: *call_id, request_id: *request_id, operation: operation.clone() }),
-            CallsEffect::Cancel { request_id } => Some(RefEffect::Cancel { request_id: *request_id }),
+            CallsEffect::Request { call_id, request_id, operation, kind, .. } => Some(RefEffect::Request { call_id: *call_id, request_id: *request_id, operation: operation.clone(), kind: ref_kind(*kind) }),
+            CallsEffect::Cancel { request_id, kind } => Some(RefEffect::Cancel { request_id: *request_id, kind: ref_kind(*kind) }),
+            CallsEffect::Release { request_id } => Some(RefEffect::Release { request_id: *request_id }),
             CallsEffect::Drained(_) => Some(RefEffect::Drained),
             CallsEffect::Reply { .. } => None,
         }).collect();
@@ -69,7 +88,7 @@ impl Twin {
         let state = self.det.state(self.addr).expect("state");
         for call in 1..=4 {
             let got = state.phase(call).map(|phase| match phase {
-                CallPhase::Sending { request_id } => CallState::Sending { request_id },
+                CallPhase::Sending { request_id, kind, generation } => CallState::Sending { request_id, kind: ref_kind(kind), generation },
                 CallPhase::Done => CallState::Done,
             });
             assert_eq!(got, self.reference.state(call), "the same state of call {call}");
@@ -86,13 +105,16 @@ fn error_of(error: &CallError) -> Fail {
         CallError::Network => Fail::Network,
         CallError::Graphql(messages) => Fail::Graphql(messages.clone()),
         CallError::Http => Fail::Http,
+        CallError::Dropped => Fail::Dropped,
+        CallError::InvalidResponse => Fail::InvalidResponse,
         CallError::Interrupted => Fail::Interrupted,
         CallError::Storage => panic!("the Calls table does not read Published"),
     }
 }
 
 fn run(reply: u64) -> Input { Input::Run { epoch: EPOCH, operation: "Op".into(), reply } }
-fn response(call_id: u64) -> Input { Input::Response { call_id, body: "{}".into(), errors: vec![] } }
+fn run_mutate(reply: u64) -> Input { Input::Run { epoch: EPOCH, operation: "Change".into(), reply } }
+fn response(call_id: u64) -> Input { Input::Response { call_id, body: Some("{}".into()), errors: vec![] } }
 
 fn sending() -> Twin {
     let mut twin = Twin::new();
@@ -107,7 +129,8 @@ fn call_run_stale() { Twin::new().feed(Input::Run { epoch: EPOCH + 1, operation:
 fn call_run_unknown() { Twin::new().feed(Input::Run { epoch: EPOCH, operation: "Nope".into(), reply: 1 }); }
 
 #[test]
-fn call_run_offline() { Twin::with(false).feed(run(1)); }
+fn call_run_offline() { Twin::with(Some(false)).feed(run(1));
+    Twin::with(None).feed(run(2)); }
 
 #[test]
 fn call_run() {
@@ -116,10 +139,42 @@ fn call_run() {
 }
 
 #[test]
+fn call_declare() {
+    let mut twin = Twin::new();
+    twin.feed(Input::Declare(vec![("Other".into(), Kind::Query)]));
+    let out = twin.feed(Input::Run { epoch: EPOCH, operation: "Op".into(), reply: 1 });
+    assert_eq!(out.replies, vec![(1, Err(Fail::Invalid))], "the declared set is replaced, not extended");
+    let out = twin.feed(Input::Run { epoch: EPOCH, operation: "Other".into(), reply: 2 });
+    assert_eq!(out.effects.len(), 1, "the new operation runs");
+}
+
+#[test]
+fn call_run_mutate() {
+    let out = Twin::new().feed(run_mutate(1));
+    assert!(matches!(out.effects.as_slice(), [RefEffect::Request { kind: Kind::Mutate, .. }]), "a mutation goes through Session: {:?}", out.effects);
+}
+
+#[test]
+fn call_response_invalid() {
+    let out = sending().feed(Input::Response { call_id: 1, body: None, errors: vec![] });
+    assert_eq!(out.replies, vec![(10, Err(Fail::InvalidResponse))]);
+}
+
+#[test]
+fn call_declare_in_flight() {
+    let mut twin = sending();
+    twin.feed(Input::Declare(vec![]));
+    let out = twin.feed(response(1));
+    assert_eq!(out.replies.len(), 1, "an accepted call outlives a new declaration");
+    assert_eq!(twin.reference.generation, 1);
+    assert_eq!(twin.reference.state(1), Some(CallState::Done));
+}
+
+#[test]
 fn call_response() { sending().feed(response(1)); }
 
 #[test]
-fn call_response_errors() { sending().feed(Input::Response { call_id: 1, body: String::new(), errors: vec!["boom".into()] }); }
+fn call_response_errors() { sending().feed(Input::Response { call_id: 1, body: None, errors: vec!["boom".into()] }); }
 
 #[test]
 fn call_transport_error() {
@@ -128,7 +183,15 @@ fn call_transport_error() {
 }
 
 #[test]
-fn call_dropped() { sending().feed(Input::Dropped { call_id: 1 }); }
+fn call_dropped() {
+    let out = sending().feed(Input::Dropped { call_id: 1 });
+    assert_eq!(out.replies, vec![(10, Err(Fail::Dropped))], "the query is not repeated");
+    let mut mutation = Twin::new();
+    mutation.feed(run_mutate(11));
+    let out = mutation.feed(Input::Dropped { call_id: 1 });
+    assert_eq!(out.effects, vec![RefEffect::Release { request_id: 1 }], "Session keeps the pair of a dropped mutation");
+    assert_eq!(out.replies, vec![(11, Err(Fail::Dropped))]);
+}
 
 #[test]
 fn call_stray() {
@@ -255,6 +318,13 @@ fn call_prop_epoch() {
 fn call_prop_no_store_write() {
     let twin = random_trace(7);
     assert!(twin.history.iter().all(|effect| matches!(effect, CallsEffect::Request { .. } | CallsEffect::Cancel { .. } | CallsEffect::Reply { .. } | CallsEffect::Drained(_))), "Calls has no Store effect");
+}
+
+#[test]
+fn call_prop_answer_shape() {
+    let root = r#"{"id":"1","tags":["a"]}"#;
+    let out = sending().feed(Input::Response { call_id: 1, body: Some(root.into()), errors: vec![] });
+    assert_eq!(out.replies, vec![(10, Ok(root.to_string()))], "the answer is the root as the server sent it");
 }
 
 #[test]

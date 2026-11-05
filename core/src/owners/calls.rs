@@ -1,6 +1,6 @@
 //! Owner `Calls`: the arbitrary operation `run`, one transport request per call, no cache and no Store write.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::contract::{Drained, Online, RequestId};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
@@ -16,6 +16,8 @@ pub enum CallError {
     Network,
     Graphql(Vec<String>),
     Http,
+    Dropped,
+    InvalidResponse,
     Interrupted,
     Storage,
 }
@@ -23,15 +25,23 @@ pub enum CallError {
 pub type CallAnswer = Result<String, CallError>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallKind {
+    Query,
+    Mutate,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallPhase {
-    Sending { request_id: RequestId },
+    Sending { request_id: RequestId, kind: CallKind, generation: u64 },
     Done,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallsEffect {
-    Request { call_id: CallId, request_id: RequestId, operation: String, variables: String },
-    Cancel { request_id: RequestId },
+    Request { call_id: CallId, request_id: RequestId, operation: String, variables: String, kind: CallKind, epoch: Epoch },
+    Cancel { request_id: RequestId, kind: CallKind },
+    /// Session `Release{req_id}`: the pair of a dropped mutation stays with Session, Calls gives up its outcome.
+    Release { request_id: RequestId },
     Reply { id: ReplyId, answer: CallAnswer },
     Drained(Drained),
 }
@@ -41,8 +51,9 @@ pub enum CallsInput {
     /// `epoch` is the epoch of the caller: the table answers `NoSession` when it is not the current one.
     Run { epoch: Epoch, operation: String, variables: String, reply: ReplyId },
     /// Operations declared by `register_operations` after the open.
-    Declare(Vec<String>),
-    Response { call_id: CallId, body: String, errors: Vec<String> },
+    Declare(Vec<(String, CallKind)>),
+    /// `body` is the root of the operation, `None` when the response has no root.
+    Response { call_id: CallId, body: Option<String>, errors: Vec<String> },
     TransportError { call_id: CallId, error: CallError },
     Dropped { call_id: CallId },
     Online(Online),
@@ -53,16 +64,17 @@ pub enum CallsInput {
 
 pub struct CallsState {
     epoch: Epoch,
-    online: bool,
-    declared: BTreeSet<String>,
+    online: Option<bool>,
+    declared: BTreeMap<String, CallKind>,
+    generation: u64,
     calls: BTreeMap<CallId, (CallPhase, ReplyId)>,
     next: u64,
     drained: bool,
 }
 
 impl CallsState {
-    pub fn new(epoch: Epoch, online: bool, declared: &[&str]) -> Self {
-        Self { epoch, online, declared: declared.iter().map(|name| name.to_string()).collect(), calls: BTreeMap::new(), next: 1, drained: false }
+    pub fn new(epoch: Epoch, online: Option<bool>, declared: &[(&str, CallKind)]) -> Self {
+        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), next: 1, drained: false }
     }
 
     pub fn phase(&self, call: CallId) -> Option<CallPhase> { self.calls.get(&call).map(|(phase, _)| *phase) }
@@ -77,13 +89,13 @@ impl CallsState {
     }
 
     fn interrupt(&mut self, fx: &mut Vec<CallsEffect>) {
-        let sending: Vec<(CallId, RequestId)> = self.calls.iter().filter_map(|(id, (phase, _))| match phase {
-            CallPhase::Sending { request_id } => Some((*id, *request_id)),
+        let sending: Vec<(CallId, RequestId, CallKind)> = self.calls.iter().filter_map(|(id, (phase, _))| match phase {
+            CallPhase::Sending { request_id, kind, .. } => Some((*id, *request_id, *kind)),
             CallPhase::Done => None,
         }).collect();
-        for (call_id, request_id) in sending {
+        for (call_id, request_id, kind) in sending {
             self.finish(call_id, Err(CallError::Interrupted), fx);
-            fx.push(CallsEffect::Cancel { request_id });
+            fx.push(CallsEffect::Cancel { request_id, kind });
         }
     }
 }
@@ -101,22 +113,33 @@ impl StateOwner for Calls {
         let mut fx = Vec::new();
         match input {
             CallsInput::Run { epoch, reply, .. } if epoch != state.epoch => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::NoSession) }),
-            CallsInput::Run { reply, ref operation, .. } if !state.declared.contains(operation) => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) }),
-            CallsInput::Run { reply, .. } if !state.online => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Offline) }),
+            CallsInput::Run { reply, ref operation, .. } if !state.declared.contains_key(operation) => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) }),
+            CallsInput::Run { reply, .. } if state.online != Some(true) => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Offline) }),
             CallsInput::Run { reply, operation, variables, .. } => {
                 let id = state.next;
                 state.next += 1;
-                state.calls.insert(id, (CallPhase::Sending { request_id: id }, reply));
-                fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables });
+                let kind = state.declared[&operation];
+                state.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation: state.generation }, reply));
+                fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, kind, epoch: state.epoch });
             }
             CallsInput::Response { call_id, body, errors } if state.sending(call_id) => {
-                let answer = if errors.is_empty() { Ok(body) } else { Err(CallError::Graphql(errors)) };
+                let answer = match (errors.is_empty(), body) {
+                    (false, _) => Err(CallError::Graphql(errors)),
+                    (true, Some(body)) => Ok(body),
+                    (true, None) => Err(CallError::InvalidResponse),
+                };
                 state.finish(call_id, answer, &mut fx);
             }
             CallsInput::TransportError { call_id, error } if state.sending(call_id) => state.finish(call_id, Err(error), &mut fx),
-            CallsInput::Dropped { call_id } if state.sending(call_id) => state.finish(call_id, Err(CallError::Network), &mut fx),
-            CallsInput::Declare(names) => state.declared.extend(names),
-            CallsInput::Online(Online(online)) => state.online = online,
+            CallsInput::Dropped { call_id } if state.sending(call_id) => {
+                if let Some(CallPhase::Sending { request_id, kind: CallKind::Mutate, .. }) = state.phase(call_id) { fx.push(CallsEffect::Release { request_id }); }
+                state.finish(call_id, Err(CallError::Dropped), &mut fx);
+            }
+            CallsInput::Declare(operations) => {
+                state.declared = operations.into_iter().collect();
+                state.generation += 1;
+            }
+            CallsInput::Online(Online(online)) => state.online = Some(online),
             CallsInput::EpochEnded => state.interrupt(&mut fx),
             CallsInput::Closing => {
                 state.interrupt(&mut fx);

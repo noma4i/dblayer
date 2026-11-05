@@ -1169,3 +1169,26 @@ fn life_findings() {
     opened.feed(credential(1));
     assert!(opened.history.iter().any(|e| matches!(e, LifecycleEffect::EpochEnded { cause: Cause::SessionStarted, .. })), "a stream open without a session ends when the account is entered");
 }
+
+/// P-LIFE-12: `open` is answered exactly when the last receiver has classified, in every delivery order and with no clock.
+#[test]
+fn life_prop_open_no_timeout() {
+    let starts = [[RefOwner::Outbox, RefOwner::Transfer], [RefOwner::Transfer, RefOwner::Outbox]];
+    let classes = [RefOwner::Outbox, RefOwner::Transfer, RefOwner::Session];
+    let class_orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    for start in starts {
+        for order in class_orders {
+            let mut twin = Twin::open(4, 2, Some(9), Some(7));
+            twin.feed(Event::Saved(1));
+            for owner in start { twin.feed(Event::Started(owner, 5)); }
+            for (at, index) in order.into_iter().enumerate() {
+                assert!(twin.replies().is_empty(), "{start:?} {order:?}: open answered before the receiver {at} classified");
+                twin.feed(Event::RestoreClassified(classes[index], 5));
+            }
+            assert_eq!(twin.replies(), vec![(7, Ok(()))], "{start:?} {order:?}: open is answered once all receivers classified");
+        }
+    }
+    let mut failed = Twin::open(4, 2, Some(9), Some(7));
+    failed.feed(Event::SaveFailed(1));
+    assert_eq!(failed.replies(), vec![(7, Err(LifecycleError::Storage))], "a failed save answers open with Storage without waiting for anything");
+}

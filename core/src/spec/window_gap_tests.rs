@@ -162,6 +162,7 @@ impl Twin {
         let k = key();
         match &input {
             Input::InterestPlus { id } => self.post_call(w::WindowsInput::InterestPlus { key: k, id: id64(*id) }),
+            Input::InterestPassive { id } => self.post_call(w::WindowsInput::InterestPassive { key: k, id: id64(*id) }),
             Input::InterestMinus { id } => self.post_call(w::WindowsInput::InterestMinus { key: k, id: id64(*id) }),
             Input::Load { id, goal, force } => self.post_call(w::WindowsInput::Load { key: k, id: id64(*id), goal: goal_of(*goal), force: *force, store_revision: 0 }),
             Input::Response { request, attempt, cursor, rows } => {
@@ -453,6 +454,14 @@ fn win_idle_interest() {
     assert_eq!(known.watch(), [Effect::WindowState], "a fresh window only tells its phase");
     assert_eq!(known.stage(), Some(WindowStage::Idle));
     assert_eq!(known.phase(), Phase::Loaded);
+}
+
+#[test]
+fn win_idle_interest_passive() {
+    let mut twin = Twin::new();
+    assert_eq!(twin.step(Input::InterestPassive { id: STREAM }), [Effect::WindowState], "the phase goes to the stream and no request starts");
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+    assert_eq!(twin.state().interest(&key()), [u64::from(STREAM)]);
 }
 
 #[test]

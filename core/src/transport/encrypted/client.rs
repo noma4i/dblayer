@@ -258,6 +258,8 @@ impl EncryptedClient {
     /// Joins the owners: from now on a request with a `sequence` goes through the owner Session.
     pub(crate) fn attach(&self, life: &Arc<crate::owners::life::Life>) { let _ = self.life.set(Arc::downgrade(life)); }
 
+    pub(crate) fn graphql_path(&self) -> &str { &self.config.endpoints.graphql }
+
     pub(crate) fn credential_slot(&self) -> Arc<dyn CredentialSlot> { self.credentials.clone() }
 
     /// Erases the secret in the `CredentialStore`: the one path, held against a load that mints.

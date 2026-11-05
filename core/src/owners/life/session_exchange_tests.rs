@@ -566,3 +566,18 @@ fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landin
     super::runners::write_batch(&db, &batch(Vec::new())).unwrap();
     assert_eq!(answers(&db), 0);
 }
+
+/// store_read_intents_queue_failed: an unreadable queue table fails the restore of Outbox only, `open` is not cancelled and the base stays readable.
+#[tokio::test(flavor = "multi_thread")]
+async fn store_read_intents_queue_failed() {
+    let world = World::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    signed_in_file(&world, &path).await;
+    let db = Db::open(&path, Vec::new(), None).unwrap();
+    db.shared.store.lock().connection.execute_batch("ALTER TABLE op RENAME TO op_unreadable").unwrap();
+    let (_client, life) = world.open(&db).await;
+    assert!(life.restore_failures().iter().any(|(owner, _)| *owner == crate::owners::lifecycle::Peer::Outbox), "the queue failure reaches Outbox: {:?}", life.restore_failures());
+    assert!(life.published().identity.is_some(), "open went on with the session");
+    assert!(db.shared.store.saved().is_ok(), "the base answers reads after the failure");
+}

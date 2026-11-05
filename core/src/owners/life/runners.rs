@@ -10,7 +10,7 @@ use tokio::task::AbortHandle;
 use super::{LifeReply, Ports, Wiring};
 use crate::db::Db;
 use crate::identity::Generation;
-use crate::owners::calls::{CallError, Calls, CallsEffect, CallsInput};
+use crate::owners::calls::CallsInput;
 use crate::owners::contract::{Drained, NetworkEvent, Online, PublishedState};
 use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, Peer};
 use crate::owners::network::{Network, NetworkEffect, NetworkInput};
@@ -302,76 +302,6 @@ impl EffectRunner<Network> for NetworkRunner {
     fn step_done(&mut self) {
         for (id, closed) in self.held_replies.drain(..) {
             self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::Online { closed });
-        }
-    }
-}
-
-pub(super) struct CallsRunner {
-    wiring: Arc<Wiring>,
-    transport: Option<Arc<dyn crate::transport::Transport>>,
-    executor: tokio::runtime::Handle,
-    operations: super::OperationLookup,
-    db: Db,
-    running: HashMap<u64, AbortHandle>,
-}
-
-impl CallsRunner {
-    pub fn new(wiring: Arc<Wiring>, ports: &Ports) -> Self {
-        Self { wiring, transport: ports.transport.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), db: ports.db.clone(), running: HashMap::new() }
-    }
-
-    fn input_of(call_id: u64, root: &str, result: Result<Result<crate::transport::Response, TransportError>, crate::ffi::legacy::Ended>) -> CallsInput {
-        match result {
-            Ok(Ok(response)) => {
-                if response.shape().outcome() != ResponseOutcome::Commit {
-                    let messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
-                    return CallsInput::Response { call_id, body: String::new(), errors: if messages.is_empty() { vec!["empty response".to_string()] } else { messages } };
-                }
-                let data = response.data.unwrap_or(Value::Null);
-                CallsInput::Response { call_id, body: data.get(root).cloned().unwrap_or(Value::Null).to_string(), errors: Vec::new() }
-            }
-            Ok(Err(TransportError::Graphql { messages, .. })) => CallsInput::TransportError { call_id, error: CallError::Graphql(messages) },
-            Ok(Err(TransportError::Http { .. })) => CallsInput::TransportError { call_id, error: CallError::Http },
-            Ok(Err(TransportError::Interrupted(_))) | Err(_) => CallsInput::TransportError { call_id, error: CallError::Interrupted },
-            Ok(Err(_)) => CallsInput::TransportError { call_id, error: CallError::Network },
-        }
-    }
-}
-
-impl EffectRunner<Calls> for CallsRunner {
-    fn run(&mut self, _stamp: EpochStamp, effect: CallsEffect, back: &Back<Calls>) {
-        match effect {
-            CallsEffect::Request { call_id, request_id, operation, variables } => {
-                let (Some(transport), Some((document, root))) = (self.transport.clone(), (self.operations)(&operation)) else {
-                    back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid });
-                    return;
-                };
-                let back = back.clone();
-                let lease = self.db.shared.store.lifecycle.clone();
-                let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
-                    let admitted = match lease.admit(crate::ffi::legacy::Origin::Explicit, "run") {
-                        Ok(admitted) => admitted,
-                        Err(_) => return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }),
-                    };
-                    let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
-                    let request = GraphQLRequest::new(document.clone(), operation, variables);
-                    crate::db::lock::assert_no_library_lock("Transport::request");
-                    let result = admitted.run(async {
-                        if document.trim_start().starts_with("mutation") { transport.mutate(&admitted, request).await } else { transport.query(&admitted, request).await }
-                    }).await;
-                    back.reply(EpochStamp::Control, Self::input_of(call_id, &root, result));
-                });
-                self.running.insert(request_id, task.abort_handle());
-            }
-            CallsEffect::Cancel { request_id } => {
-                if let Some(task) = self.running.remove(&request_id) {
-                    crate::db::lock::effect(|| task.abort());
-                }
-            }
-            CallsEffect::Reply { id, answer } => {
-                self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::Call(answer));
-            }
-            CallsEffect::Drained(drained) => self.wiring.to_lifecycle(LifecycleInput::Drained(drained)),
         }
     }
 }

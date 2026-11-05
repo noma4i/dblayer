@@ -19,7 +19,7 @@ pub(crate) mod vectors_tests;
 
 pub use client::{Answer, EncryptedClient, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation};
 pub use config::{AppPlatform, ConfigCode, Country, SecurityCode, ServerConfig};
-pub use graphql::{missing_from_registry, repeats, response_of, EncryptedTransport};
+pub use graphql::{graphql_body, missing_from_registry, repeats, response_of, EncryptedTransport};
 pub(crate) use graphql::pending_matches;
 #[cfg(test)]
 use {jwe::{open_response, seal_request, RequestPlain, ResponsePlain}, key::ServerKey};

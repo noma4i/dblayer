@@ -136,7 +136,7 @@ async fn call_run_answers_by_epoch_and_network() {
     let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
-    life.declare(vec!["Op".into()]);
+    life.declare(vec![("Op".into(), crate::owners::calls::CallKind::Query)]);
     assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)), "a database without a session client hands the call to Calls in every state");
     life.credential_committed(IDENTITY);
@@ -255,7 +255,7 @@ async fn net_prop_no_request_before_snapshot() {
     let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
-    life.declare(vec!["Op".into()]);
+    life.declare(vec![("Op".into(), crate::owners::calls::CallKind::Query)]);
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert!(transport.calls().is_empty(), "no request left before the network said it is online");
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
@@ -301,13 +301,12 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     };
     let started = std::time::Instant::now();
-    while !heard.lock().unwrap().iter().any(|(owner, event)| *owner == Peer::Transfer && matches!(event, NetworkEvent::PowerSaving { epoch: Some(_), .. })) {
-        assert!(started.elapsed() < LIMIT, "the snapshot of the new epoch reached Transfer");
+    while !heard.lock().unwrap().iter().any(|(owner, event)| *owner == Peer::Session && matches!(event, NetworkEvent::Online { epoch: Some(_), .. })) {
+        assert!(started.elapsed() < LIMIT, "the snapshot of the new epoch reached Session");
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     let heard = heard.lock().unwrap().clone();
-    assert!(heard.contains(&(Peer::Transfer, NetworkEvent::Online { online: false, epoch: Some(epoch) })));
-    assert!(heard.contains(&(Peer::Transfer, NetworkEvent::PowerSaving { saving: true, epoch: Some(epoch) })), "Transfer gets `saving` with its first snapshot");
+    assert!(heard.contains(&(Peer::Session, NetworkEvent::Online { online: false, epoch: Some(epoch) })));
     closed(&life).await;
 }
 

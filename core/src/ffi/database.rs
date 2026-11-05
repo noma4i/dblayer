@@ -505,7 +505,7 @@ impl Database {
                 None => OperationDef::from_document(&name, &document).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has no root field") })?,
             };
             if let Some(size) = def["pageSize"].as_u64() { operation = operation.paged(u32::try_from(size).map_err(|error| DbError::Invalid { detail: error.to_string() })?); }
-            names.push(name.clone());
+            names.push((name.clone(), if document.trim_start().starts_with("mutation") { crate::owners::calls::CallKind::Mutate } else { crate::owners::calls::CallKind::Query }));
             declared.push(crate::owners::read::ReadOperation { name: operation.name.clone(), document: operation.document.clone(), root_path: operation.root_path.clone(), page_size: operation.page_size });
             sync.register(operation);
         }
@@ -769,6 +769,8 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
         CallError::Network => DbError::Network { detail: "the request did not reach the server".into() },
         CallError::Graphql(messages) => DbError::Graphql { messages, extensions: None },
         CallError::Http => DbError::Http { status: 0, detail: "the server refused the request".into() },
+        CallError::Dropped => DbError::Network { detail: "the request left and the answer did not come".into() },
+        CallError::InvalidResponse => DbError::Invalid { detail: "the response has no root of the operation".into() },
         CallError::Interrupted => super::command::ended(),
         CallError::Storage => DbError::Database { detail: "the database could not save its state".into() },
     }

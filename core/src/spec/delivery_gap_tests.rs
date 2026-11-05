@@ -1413,3 +1413,13 @@ fn dlv_failed_window_with_cached_rows_shows_loaded_with_the_error() {
     let (_, values) = empty.step_read(Input::WindowState(failed.clone()));
     assert_eq!(values, [Val::State { revision: 1, state: failed }], "no rows: the failure stays");
 }
+
+/// P-STORE-14: a snapshot read answered after the epoch ended reaches neither the stream nor the call.
+#[test]
+fn store_prop_read_epoch() {
+    for revision in 1..=4 {
+        let mut twin = ended_by_epoch();
+        let (effects, values) = twin.step_read(Input::ReadDone { revision, rows: rows(&["rLate"]) });
+        assert!(effects.is_empty() && values.iter().all(|value| matches!(value, Val::Ended(_))), "revision {revision}: the read of the ended epoch was delivered: {effects:?} {values:?}");
+    }
+}

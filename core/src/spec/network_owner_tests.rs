@@ -210,3 +210,36 @@ fn net_prop_foreground_once() {
         assert_eq!(sequence, (1..=calls).collect::<Vec<u64>>(), "each Foreground broadcasts once with the next number");
     }
 }
+
+fn orders(items: &[Input]) -> Vec<Vec<Input>> {
+    if items.len() <= 1 { return vec![items.to_vec()]; }
+    (0..items.len()).flat_map(|at| {
+        let mut rest = items.to_vec();
+        let head = rest.remove(at);
+        orders(&rest).into_iter().map(move |mut tail| { tail.insert(0, head.clone()); tail })
+    }).collect()
+}
+
+#[test]
+fn net_prop_snapshot_after_create() {
+    let inputs = [Input::SetOnline(true), Input::SnapshotRequest(Owner::Calls, 1), Input::SnapshotRequest(Owner::Outbox, 1), Input::SetOnline(false), Input::SnapshotRequest(Owner::Feed, 2)];
+    for order in orders(&inputs) {
+        let mut twin = Twin::new();
+        let (mut online, mut asked, mut answered) = (false, 0, Vec::new());
+        for input in order {
+            match &input {
+                Input::SetOnline(value) => online = *value,
+                Input::SnapshotRequest(owner, epoch) => answered.push((*owner, *epoch, online)),
+                _ => {}
+            }
+            asked += usize::from(matches!(input, Input::SnapshotRequest(..)));
+            twin.feed(input);
+        }
+        let got: Vec<(Owner, u64, bool)> = twin.history.iter().filter_map(|effect| match effect {
+            NetworkEffect::Snapshot { owner, epoch, online, .. } => Some((match owner { Peer::Calls => Owner::Calls, Peer::Outbox => Owner::Outbox, _ => Owner::Feed }, *epoch, *online)),
+            _ => None,
+        }).collect();
+        assert_eq!(got.len(), asked, "each owner of each epoch gets exactly one first snapshot");
+        assert_eq!(got, answered, "the snapshot carries the value at the request, in any delivery order");
+    }
+}

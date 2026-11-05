@@ -15,6 +15,7 @@ pub type SecretOpId = u64;
 
 pub const OUTBOX_AUTHOR: AuthorId = 1;
 pub const TRANSFER_AUTHOR: AuthorId = 2;
+pub const CALLS_AUTHOR: AuthorId = 3;
 
 /// The owner of a `Mutate`: `encrypted_pending` keeps it, and a pending restored at open answers the author this owner names.
 pub type MutateOwner = crate::transport::RequestOwner;
@@ -220,6 +221,8 @@ pub enum SessionInput {
     Mutate { author: AuthorId, owner: Option<MutateOwner>, req_id: RequestId, epoch: Epoch, path: String, body: String, purpose: u8 },
     /// Outbox, Transfer and Calls take their request back: the one in the network goes on, the one in the queue is removed.
     Cancel { req_id: RequestId },
+    /// The author gives up the outcome of its request: a held pair goes on with no author.
+    Release { req_id: RequestId },
     CredentialGenerated { secret_op_id: SecretOpId, credential: Digest },
     SecretStored { secret_op_id: SecretOpId, ok: bool },
     SecretCleared { secret_op_id: SecretOpId, ok: bool },
@@ -671,6 +674,10 @@ impl SessionState {
                     if let Some(removed) = self.queue.remove(at) { refuse(fx, removed, SessionError::Interrupted); }
                 }
             }
+            SessionInput::Release { req_id } => match phase {
+                SessionPhase::PendingHeld { pending } if pending.request_id == req_id => self.start_calling(PendingCall { author: None, ..pending }, fx),
+                phase => self.phase = phase,
+            },
             SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
                 self.restored_direct = None;
                 self.restore_ready = false;

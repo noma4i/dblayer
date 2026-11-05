@@ -124,6 +124,7 @@ pub enum Input {
     SessionCall { operation: String, body: String, reply: ReplyId },
     Mutate { author: AuthorId, owner: Option<Owner>, req_id: RequestId, epoch: u64, path: String, body: String, purpose: u8 },
     Cancel { req_id: RequestId },
+    Release { req_id: RequestId },
     CredentialGenerated { op: SecretOpId, credential: Digest },
     SecretStored { op: SecretOpId, ok: bool },
     SecretCleared { op: SecretOpId, ok: bool },
@@ -549,6 +550,10 @@ impl Session {
                     if let Some(removed) = self.queue.remove(at) { Self::refuse(out, removed, Fail::Interrupted); }
                 }
             }
+            Input::Release { req_id } => match state {
+                State::PendingHeld { pending } if pending.request_id == req_id => self.start_calling(Pending { author: None, ..pending }, out),
+                state => self.state = state,
+            },
             Input::EpochEnded { epoch, cause } => {
                 self.restored_direct = None;
                 self.restore_ready = false;

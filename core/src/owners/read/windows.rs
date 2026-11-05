@@ -154,6 +154,8 @@ impl StaleKeys {
 pub enum WindowsInput {
     /// A stream opened the key (Delivery open) or the preload of the key began.
     InterestPlus { key: WindowKey, id: InterestId },
+    /// An interest that only watches: the phase goes to the stream, no load starts.
+    InterestPassive { key: WindowKey, id: InterestId },
     InterestMinus { key: WindowKey, id: InterestId },
     /// `begin_load`, `begin_load_all`, `refresh`, `load_more`, `node`, `nodes`. `store_revision` is the Published revision of the Store at the entry.
     Load { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64 },
@@ -182,6 +184,7 @@ pub enum WindowsInput {
 #[derive(Clone, Debug)]
 enum Ev {
     InterestPlus { id: InterestId },
+    InterestPassive { id: InterestId },
     InterestMinus { id: InterestId },
     Load { id: InterestId, goal: Goal, force: bool, store_revision: i64 },
     Response { request: RequestId, attempt: u32, page: AnswerPage },
@@ -463,6 +466,11 @@ impl Facts {
     fn idle(&mut self, context: &mut Ctx<'_>, event: &Ev) -> Outcome<WinState> {
         self.env(event);
         match event {
+            Ev::InterestPassive { id } => {
+                self.interest.insert(*id);
+                self.announce();
+                Handled
+            }
             Ev::InterestPlus { id } => {
                 self.interest.insert(*id);
                 if self.fresh {
@@ -877,6 +885,11 @@ impl Windows {
         Self::on(state, &key, Ev::InterestPlus { id }, out);
     }
 
+    fn interest_passive(state: &mut WindowsState, key: WindowKey, id: InterestId, out: &mut Effects<Self>) {
+        state.ensure(&key);
+        Self::on(state, &key, Ev::InterestPassive { id }, out);
+    }
+
     fn load(state: &mut WindowsState, key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, out: &mut Effects<Self>) {
         if key.is_empty_nodes() {
             let effect = WindowEffect::Outcome { id, outcome: WindowOutcome::Loaded { revision: store_revision, has_more: false, fetched: false } };
@@ -899,6 +912,7 @@ impl StateOwner for Windows {
         let mut out: Effects<Self> = Vec::new();
         match input {
             WindowsInput::InterestPlus { key, id } => Self::interest_plus(state, key, id, &mut out),
+            WindowsInput::InterestPassive { key, id } => Self::interest_passive(state, key, id, &mut out),
             WindowsInput::InterestMinus { key, id } => Self::on(state, &key, Ev::InterestMinus { id }, &mut out),
             WindowsInput::Load { key, id, goal, force, store_revision } => Self::load(state, key, id, goal, force, store_revision, &mut out),
             WindowsInput::Response { request, attempt, page } => Self::by_request(state, request, Ev::Response { request, attempt, page }, &mut out),

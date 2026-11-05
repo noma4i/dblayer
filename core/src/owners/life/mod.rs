@@ -3,6 +3,10 @@
 
 mod observers;
 mod read;
+mod call_rule;
+#[cfg(test)]
+mod call_rule_tests;
+mod calls_runner;
 mod runners;
 pub(crate) mod session_runner;
 #[cfg(test)]
@@ -17,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
-use super::calls::{CallAnswer, CallError, Calls, CallsInput, CallsState};
+use super::calls::{CallAnswer, CallError, CallKind, Calls, CallsInput, CallsState};
 use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, CredentialCommitted, NetworkEvent, Published, PublishedState, Rejected, RequestId};
 use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
@@ -399,7 +403,7 @@ impl Life {
         builder.on_executor_failed(lifecycle);
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone(), executor: ports.executor.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
-        let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
+        let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((client, credentials), restored)| {
             let state = SessionState::with_operations(client.session_operations(), None);
             let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), &restored));
@@ -555,17 +559,10 @@ impl Life {
     pub fn run(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let published = self.published();
-        if !self.with_session {
-            return if published.closed { self.settled(LifeReply::Closed) } else { self.call(epoch, operation, variables) };
-        }
-        match published.state {
-            PublishedState::Closing => return self.settled(LifeReply::Closed),
-            PublishedState::StorageFailed => return self.settled(LifeReply::Call(Err(CallError::Storage))),
-            PublishedState::Ending | PublishedState::EndingFailed | PublishedState::NoSession => return self.settled(LifeReply::Call(Err(CallError::NoSession))),
-            PublishedState::Session | PublishedState::Resetting => {}
-        }
-        if published.identity.is_none() || published.epoch != epoch {
-            return self.settled(LifeReply::Call(Err(CallError::NoSession)));
+        match call_rule::call_verdict(&published, epoch, self.with_session) {
+            call_rule::CallVerdict::Closed => return self.settled(LifeReply::Closed),
+            call_rule::CallVerdict::Refuse(error) => return self.settled(LifeReply::Call(Err(error))),
+            call_rule::CallVerdict::Pass => {}
         }
         self.call(epoch, operation, variables)
     }
@@ -611,7 +608,7 @@ impl Life {
 
     pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) { self.wiring.on_store_reply(author, sink); }
 
-    pub fn declare(&self, names: Vec<String>) { self.wiring.to_calls(CallsInput::Declare(names)); }
+    pub fn declare(&self, names: Vec<(String, CallKind)>) { self.wiring.to_calls(CallsInput::Declare(names)); }
 
     pub fn session_reset(&self) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
