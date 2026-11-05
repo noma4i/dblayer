@@ -102,13 +102,18 @@ public struct Query<Model: DBModel>: Sendable {
 
   @concurrent public func edgeValues(of id: String, in scope: AccountScope? = nil) async throws -> [String: JSONValue]? {
     let (database, epoch) = try DB.admitted(scope)
-    return try JSONValue.read(try await database.edgeValues(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
+    return try JSONValue.read(try await database.edgeValues(epoch: epoch, model: Model.modelName, relation: try requiredRelation(), paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
+  }
+
+  private func requiredRelation() throws -> String {
+    guard let relation else { throw DbError.Invalid(detail: "\(Model.modelName) query has no relation to load") }
+    return relation
   }
 
   /// Starts loading the relation and returns this caller's interest at once. Callers of the same scope share one request, and the request stops when every caller cancelled its interest.
   public func beginLoad(in scope: AccountScope? = nil) throws -> LoadRequest {
     let (database, epoch) = try DB.admitted(scope)
-    return try database.beginLoad(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text)
+    return try database.beginLoad(epoch: epoch, model: Model.modelName, relation: try requiredRelation(), paramsJson: JSONValue.object(params).text)
   }
   /// Loads the relation. Cancelling the task gives up its interest in the shared request.
   @concurrent public func load(in scope: AccountScope? = nil) async throws {
@@ -117,17 +122,17 @@ public struct Query<Model: DBModel>: Sendable {
   }
   @concurrent public func refresh(in scope: AccountScope? = nil) async throws {
     let (database, epoch) = try DB.admitted(scope)
-    try await database.refresh(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text)
+    try await database.refresh(epoch: epoch, model: Model.modelName, relation: try requiredRelation(), paramsJson: JSONValue.object(params).text)
   }
   /// Reads every page of the connection of this relation to its confirmed end, so that a stream opened afterwards holds all rows. `force: false` uses the current freshness and the pages that are stored, `force: true` refreshes the first page and then reads the rest. A call that runs together with another one for the same relation shares its page requests. It throws when a page fails, when `max_pages` stops it before the end, or when the query has no remote relation. It does not make the pages atomic: rows of earlier pages stay after a failure.
   @concurrent public func loadAll(force: Bool = false, in scope: AccountScope? = nil) async throws {
     let (database, epoch) = try DB.admitted(scope)
-    let request = try database.beginLoadAll(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, force: force)
+    let request = try database.beginLoadAll(epoch: epoch, model: Model.modelName, relation: try requiredRelation(), paramsJson: JSONValue.object(params).text, force: force)
     try await withTaskCancellationHandler { try await request.result() } onCancel: { request.cancel() }
   }
   @discardableResult @concurrent public func loadMore(in scope: AccountScope? = nil) async throws -> LoadMoreResult {
     let (database, epoch) = try DB.admitted(scope)
-    return try await database.loadMore(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text)
+    return try await database.loadMore(epoch: epoch, model: Model.modelName, relation: try requiredRelation(), paramsJson: JSONValue.object(params).text)
   }
 }
 

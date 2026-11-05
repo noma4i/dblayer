@@ -24,12 +24,11 @@ struct PowerSavingTests {
     let name = Notification.Name("DBlayerTestPowerState")
     let fact = Fact()
     let reports = Reports()
-    let power = PowerSaving()
     fact.current = true
-    power.start(name: name, read: { fact.current }, report: { reports.add($0) })
+    let stop = PowerSaving.observe(name: name, read: { fact.current }) { reports.add($0) }
     fact.current = false
     NotificationCenter.default.post(name: name, object: nil)
-    power.stop()
+    stop()
     NotificationCenter.default.post(name: name, object: nil)
     #expect(reports.all == [true, false])
   }

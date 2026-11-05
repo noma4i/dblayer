@@ -5,11 +5,7 @@ import UIKit
 import AppKit
 #endif
 
-final class ForegroundEvents: @unchecked Sendable {
-  static let shared = ForegroundEvents()
-  private let lock = NSLock()
-  private var token: NSObjectProtocol?
-
+enum ForegroundEvents {
   static var systemName: Notification.Name? {
     #if canImport(UIKit)
     UIApplication.willEnterForegroundNotification
@@ -20,18 +16,10 @@ final class ForegroundEvents: @unchecked Sendable {
     #endif
   }
 
-  func start(name: Notification.Name? = ForegroundEvents.systemName, deliver: @escaping @Sendable () -> Void) {
-    stop()
-    guard let name else { return }
-    let observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in deliver() }
-    lock.withLock { token = observer }
-  }
-
-  func stop() {
-    let removed = lock.withLock { () -> NSObjectProtocol? in
-      defer { token = nil }
-      return token
-    }
-    if let removed { NotificationCenter.default.removeObserver(removed) }
+  /// Calls `deliver` on every notification until the returned stop runs.
+  static func observe(name: Notification.Name? = ForegroundEvents.systemName, _ deliver: @escaping @Sendable () -> Void) -> @Sendable () -> Void {
+    guard let name else { return {} }
+    let token = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in deliver() }
+    return { NotificationCenter.default.removeObserver(token) }
   }
 }

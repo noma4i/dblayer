@@ -29,26 +29,24 @@ struct ReachabilityTests {
   @Test @MainActor
   func thePathStateGatesTheOpenDatabaseAndTheBootstrapRequest() async throws {
     try await DB.close()
-    let path = Reachability(monitor: nil)
-    DB.reachability = path
-    defer {
-      DB.reachability = .shared
-      Task { @MainActor in try? await DB.close() }
-    }
+    let path = FakePath()
+    defer { Task { @MainActor in try? await DB.close() } }
     let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("fixtures/encrypted-http/kat.json")
     let fixture = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
     let encrypted = EncryptedConfig(origin: "https://example.com", serverKey: try #require(fixture["PUBLIC_KEY_DER_B64"]), pin: try #require(fixture["PIN"]), endpoints: EncryptedEndpoints(graphql: "/graphql", cable: "/cable", logout: "/logout", bootstrap: "/bootstrap", sessionOperations: [:]), protocolLabel: "test-v1", cablePurpose: "hello", cableChannel: "TestChannel")
     let (posts, continuation) = AsyncStream<Void>.makeStream()
     let http = RefusingHttp(continuation)
-    try await DB.open(encrypted: encrypted, credentials: PathCredential(), transport: MockTransport(), modelsJSON: modelsJSON, operations: [PathProbe.self], http: http)
+    try await Reachability.$source.withValue(path) {
+      try await DB.open(encrypted: encrypted, credentials: PathCredential(), transport: MockTransport(), modelsJSON: modelsJSON, operations: [PathProbe.self], http: http)
+    }
 
     #expect(await refusal().contains("offline"))
-    let bootstrap = Task { try? await DB.serverConfig(encrypted: encrypted, platform: .ios, version: "1.2", http: http) }
-    path.changed(true)
+    let bootstrap = Task { try? await Reachability.$source.withValue(path) { try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: "1.2", http: http) } }
+    path.set(true)
     #expect(await Cursor(posts).next("the bootstrap request after the path became satisfied") != nil)
     bootstrap.cancel()
     #expect(!(await refusal().contains("offline")))
-    path.changed(false)
+    path.set(false)
     #expect(await refusal().contains("offline"))
   }
 

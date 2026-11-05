@@ -23,7 +23,7 @@ extension BridgeProbeTests {
     await eventually("the relation fails") { list.snapshot.phase == .failed }
     let sink = try DB.database.onlineSink()
     let delivered = Delivered()
-    ForegroundEvents.shared.start(name: name) {
+    let stop = ForegroundEvents.observe(name: name) {
       delivered.add()
       sink.enterForeground()
     }
@@ -33,7 +33,7 @@ extension BridgeProbeTests {
     #expect(delivered.count == 1)
     await eventually("the delivered notification reloads the failed window") { transport.calls.count > before }
 
-    ForegroundEvents.shared.stop()
+    stop()
     NotificationCenter.default.post(name: name, object: nil)
     #expect(delivered.count == 1)
   }

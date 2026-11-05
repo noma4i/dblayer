@@ -1,26 +1,16 @@
 import Foundation
 
-final class PowerSaving: @unchecked Sendable {
-  static let shared = PowerSaving()
-  private let lock = NSLock()
-  private var token: NSObjectProtocol?
+enum PowerSaving {
+  static var lowRam: Bool { ProcessInfo.processInfo.physicalMemory <= 2 << 30 }
 
-  func start(
+  /// Reports the OS value at once and on every change until the returned stop runs.
+  static func observe(
     name: Notification.Name = .NSProcessInfoPowerStateDidChange,
     read: @escaping @Sendable () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled },
-    report: @escaping @Sendable (Bool) -> Void
-  ) {
-    stop()
-    let observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in report(read()) }
-    lock.withLock { token = observer }
+    _ report: @escaping @Sendable (Bool) -> Void
+  ) -> @Sendable () -> Void {
+    let token = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in report(read()) }
     report(read())
-  }
-
-  func stop() {
-    let removed = lock.withLock { () -> NSObjectProtocol? in
-      defer { token = nil }
-      return token
-    }
-    if let removed { NotificationCenter.default.removeObserver(removed) }
+    return { NotificationCenter.default.removeObserver(token) }
   }
 }

@@ -19,9 +19,9 @@ extension BridgeProbeTests {
   @Test @MainActor func modelRetriesPropagateErrorsToTheirCaller() async throws {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
     let real = try DB.database
-    defer { DB.current = real }
+    defer { DB.use(real) }
     let row = try await Moment.send(in: DB.account(), text: "saved").optimisticValue!
-    DB.current = RefusedRetry(noHandle: .init())
+    DB.use(RefusedRetry(noHandle: .init()))
     await #expect(throws: DbError.self) { try await row.retry(action: nil) }
   }
   @MainActor

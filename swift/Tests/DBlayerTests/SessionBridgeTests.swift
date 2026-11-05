@@ -27,9 +27,9 @@ extension BridgeProbeTests {
   @MainActor private func withRecordingSession(_ body: (RecordingSession) async throws -> Void) async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
     let real = try DB.database
-    defer { DB.current = real }
+    defer { DB.use(real) }
     let recording = RecordingSession(noHandle: .init())
-    DB.current = recording
+    DB.use(recording)
     try await body(recording)
   }
 
