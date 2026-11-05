@@ -193,17 +193,17 @@ impl Db {
                 .map_err(|error| DbError::Internal(error.to_string()))?;
                 Ok(StoredTransfer {
                     key,
-                    seq: u64::try_from(seq).unwrap_or_default(),
-                    source: Source { path: source, parts: u32::try_from(total).unwrap_or_default() },
+                    seq: unsigned(seq, "seq")?,
+                    source: Source { path: source, parts: unsigned(total, "total")? },
                     batch,
                     upload_id,
-                    confirmed_parts: u32::try_from(sent).unwrap_or_default(),
+                    confirmed_parts: unsigned(sent, "sent")?,
                     completed,
                     failed,
                     file_present,
-                    created_at: Time(u64::try_from(created_at).unwrap_or_default()),
+                    created_at: Time(unsigned(created_at, "created_at")?),
                     place,
-                    size: u64::try_from(size).unwrap_or_default(),
+                    size: unsigned(size, "size")?,
                     sha256,
                     mutation: NewOp {
                         model: model.clone(),
@@ -231,6 +231,10 @@ impl Db {
             })
             .map_err(DbError::from)
     }
+}
+
+fn unsigned<T: TryFrom<i64>>(value: i64, column: &str) -> Result<T, DbError> {
+    T::try_from(value).map_err(|_| DbError::Internal(format!("sync_upload.{column} holds {value}")))
 }
 
 fn key_parts(key: &str) -> Result<[&str; 3], DbError> {

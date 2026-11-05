@@ -121,7 +121,7 @@ pub enum OutboxInput {
     RetryDue { op_id: OpId },
     LocalWrite { model: String, epoch: Epoch, write: LocalWriteKind, row: String, values: String, reply: ReplyId, now: Time },
     /// `Tick(expire)` of an ephemeral row, scheduled by the owner when the write commits: `due` is the expiry it was scheduled for.
-    Expire { row: String, due: Time },
+    Expire { model: String, row: String, due: Time },
     Tick(Time),
 }
 
@@ -203,8 +203,6 @@ pub struct OutboxState {
     discard_waiters: Vec<(OpId, ReplyId)>,
     outcome_waiters: Vec<(OpId, ReplyId)>,
     ephemeral: BTreeMap<String, Time>,
-    /// The model of each ephemeral row, for its removal at the end of the term.
-    ephemeral_model: BTreeMap<String, String>,
     drained: bool,
 }
 
@@ -227,7 +225,6 @@ impl OutboxState {
             discard_waiters: Vec::new(),
             outcome_waiters: Vec::new(),
             ephemeral: BTreeMap::new(),
-            ephemeral_model: BTreeMap::new(),
             drained: false,
         }
     }
@@ -418,10 +415,9 @@ impl OutboxState {
                 Self::reply(fx, reply, OutboxAnswer::Ok);
                 if let Some((due, after)) = expire {
                     self.ephemeral.insert(row.clone(), due);
-                    self.ephemeral_model.insert(row.clone(), model);
                     let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
                     self.next_schedule += 1;
-                    fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::Expire { row, due } });
+                    fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::Expire { model, row, due } });
                 }
             }
             Batch::Operation { op_id, kind } => {
@@ -631,12 +627,11 @@ impl OutboxState {
         self.commit(batch, BTreeMap::from([(model.into(), generation)]), ops, 0, fx);
     }
 
-    fn expire(&mut self, row: String, due: Time, fx: &mut Effects<Outbox>) {
+    fn expire(&mut self, model: String, row: String, due: Time, fx: &mut Effects<Outbox>) {
         if self.ephemeral.get(&row).is_some_and(|written| *written > due) {
             return;
         }
         self.ephemeral.remove(&row);
-        let Some(model) = self.ephemeral_model.remove(&row) else { return };
         let batch = self.next_batch;
         self.next_batch += 1;
         self.commit(batch, BTreeMap::new(), vec![StoreOp::RemoveRows { model, ids: vec![row] }], 0, fx);
@@ -710,7 +705,7 @@ impl StateOwner for Outbox {
             }
             OutboxInput::RetryDue { op_id } => state.retry_due(op_id, &mut fx),
             OutboxInput::LocalWrite { model, epoch, write, row, values, reply, now } => state.local_write(model, epoch, write, row, values, reply, now, &mut fx),
-            OutboxInput::Expire { row, due } => state.expire(row, due, &mut fx),
+            OutboxInput::Expire { model, row, due } => state.expire(model, row, due, &mut fx),
             OutboxInput::Tick(_) => {}
         }
         fx

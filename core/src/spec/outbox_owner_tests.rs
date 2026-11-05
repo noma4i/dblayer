@@ -612,7 +612,7 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
                 twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(1_000) }, row: "w".into(), values: "{}".into(), reply: 51, now: Time(105) });
                 twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 12, tables: vec!["moments".into()], models: vec![] }));
             }
-            twin.post(OutboxInput::Expire { row: "w".into(), due: Time(110) })
+            twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) })
         }
     };
     let scheduled = twin.det.trace()[before..].iter().any(|entry| entry.effects.contains("Schedule"));
