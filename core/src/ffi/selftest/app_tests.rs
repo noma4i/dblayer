@@ -192,7 +192,8 @@ async fn login_link_already_authenticated_signs_out_then_repeats_once() {
     assert!(!rig.world.signed());
     let logins = rig.world.log().iter().filter(|entry| entry.operation == "login_link").count();
 
-    bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap();
+    let logout = bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap_err();
+    assert_eq!(session_code(logout), SessionCode::NoCredential);
     bound(rig.database.session_call("login_link".into(), body.clone())).await.unwrap();
     bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
 
