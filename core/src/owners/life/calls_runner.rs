@@ -85,7 +85,9 @@ impl CallsRunner {
         let Some(transport) = self.transport.clone() else { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid }) };
         let back = back.clone();
         let lease = self.db.shared.store.lifecycle.clone();
+        let launch = self.wiring.handle.launch();
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
+            drop(launch);
             let admitted = match lease.admit(crate::ffi::admission::Origin::Explicit, "run") {
                 Ok(admitted) => admitted,
                 Err(_) => return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }),

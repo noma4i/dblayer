@@ -204,7 +204,12 @@ impl DatabaseSut {
     fn launch(&mut self, work: impl std::future::Future<Output = Done> + Send + 'static) {
         let (entered, started) = tokio::sync::oneshot::channel();
         self.started.push(started);
-        self.calls.push(crate::task::spawn(crate::task::Carry::here(), async move { let _ = entered.send(()); work.await }));
+        self.calls.push(crate::task::spawn(crate::task::Carry::here(), async move {
+            let mut work = Box::pin(work);
+            let first = std::future::poll_fn(|cx| std::task::Poll::Ready(work.as_mut().poll(cx))).await;
+            let _ = entered.send(());
+            match first { std::task::Poll::Ready(done) => done, std::task::Poll::Pending => work.await }
+        }));
     }
 
     /// Waits until requests, finished calls and stream notices stop changing for 80 ms, then observes everything that finished.

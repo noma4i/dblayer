@@ -139,6 +139,17 @@ impl Handle {
     pub fn close(&self) {
         if let Some(router) = self.router() { router.broadcast(Control::Closing); }
     }
+
+    /// Counts an effect task as in flight from its spawn until its first poll, so the barrier covers the request it is about to make.
+    pub fn launch(&self) -> Launch { Launch(self.router().cloned().inspect(|router| router.inflight.add())) }
+}
+
+pub struct Launch(Option<Arc<Router>>);
+
+impl Drop for Launch {
+    fn drop(&mut self) {
+        if let Some(router) = self.0.take() { router.inflight.done(1); }
+    }
 }
 
 pub struct Runtime {

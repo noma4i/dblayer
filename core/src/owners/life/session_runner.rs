@@ -136,7 +136,9 @@ impl SessionRunner {
     fn off_thread(&self, back: &Back<SessionCalls>, id: crate::runtime::EffectId, work: impl FnOnce() -> SessionInput + Send + 'static) {
         let back = back.clone();
         let watch = back.watch(id);
+        let launch = self.wiring.handle.launch();
         drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || {
+            drop(launch);
             let _watch = watch;
             back.reply(EpochStamp::Control, work())
         }));
@@ -279,7 +281,9 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let purpose = if pending.purpose == 0 { NetworkPurpose::Standard } else { NetworkPurpose::Transfer };
                 let sequence = (pending.class != OperationClass::Sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
                 let watch = back.watch(crate::owners::session::http_id(attempt_id));
+                let launch = self.wiring.handle.launch();
                 let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
+                    drop(launch);
                     let _watch = watch;
                     crate::db::lock::assert_no_library_lock("HttpExchange::post");
                     let credential = match secret_for(credentials.as_ref(), expected.as_deref()) {

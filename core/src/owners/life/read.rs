@@ -103,10 +103,11 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             }
             WindowsEffect::Window { effect: WindowEffect::DerivePreload { .. }, .. } => {
                 let (db, handle, wiring) = (derive_db.clone(), derive_handle.clone(), windows_wiring.clone());
-                crate::task::spawn_blocking_on(crate::task::Carry::Detached, &derive_executor, move || match preload_keys(&db, true) {
+                let launch = derive_handle.launch();
+                crate::task::spawn_blocking_on(crate::task::Carry::Detached, &derive_executor, move || { drop(launch); match preload_keys(&db, true) {
                     Ok(keys) => handle.post(windows_at, stamp, WindowsInput::PreloadKeys { keys }),
                     Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
-                });
+                } });
             }
             WindowsEffect::SnapshotRequest { epoch } => windows_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch }),
             WindowsEffect::Drained(done) => drained(&windows_wiring, done),
