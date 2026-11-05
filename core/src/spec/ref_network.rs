@@ -1,4 +1,4 @@
-//! Executable table of `specs/machines/network.md`, one match arm per row.
+//! Executable table of the Network owner, one match arm per row.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {

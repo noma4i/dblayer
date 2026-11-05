@@ -1,4 +1,4 @@
-//! Owner `Network` (`specs/machines/network.md`): the only source of `online`, `foreground_seq` and `saving`.
+//! Owner `Network`: the only source of `online`, `foreground_seq` and `saving`.
 
 use super::contract::{Drained, ReplyId};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
