@@ -143,6 +143,7 @@ fn storage(error: rusqlite::Error) -> TransportError {
 pub(super) fn session_failure(error: crate::owners::session::SessionError) -> TransportError {
     use crate::owners::session::SessionError as Failed;
     match error {
+        Failed::StateLost => TransportError::Session { code: SessionCode::StateLost, detail: "the stored credential does not match the stored session state".into() },
         Failed::Revoked => TransportError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },
         Failed::NoCredential => TransportError::Session { code: SessionCode::NoCredential, detail: "the call needs a session and the database has none".into() },
         Failed::SequenceConflict => TransportError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
@@ -228,9 +229,9 @@ impl EncryptedClient {
         let online = db.connectivity();
         let client = Self { config: config.clone(), audience, key, http, credentials, db, clock, online, credential: Arc::default(), life: std::sync::OnceLock::new(), #[cfg(test)] kept: Mutex::new(Vec::new()), progress: Arc::default() };
         if client.db.shared.store.take_session_end_replay() {
-            client.credentials.clear()?;
             let admitted = client.admit("open encrypted state")?;
             client.write_in(&admitted, state::clear)?;
+            client.credentials.clear()?;
         }
         Ok(client)
     }

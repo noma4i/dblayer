@@ -199,3 +199,185 @@ async fn an_unreadable_stored_request_fails_the_open_with_a_storage_error() {
     let error = super::Life::start(ports, LIMIT).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "the read error reaches the caller: {error:?}");
 }
+
+use crate::owners::session::{AuthorOutcome, SessionError};
+use crate::transport::encrypted::client::digest_of;
+use crate::transport::{CredentialSlot, TransportError};
+
+#[derive(Default)]
+struct ProbeSlot {
+    memory: MemoryCredentials,
+    fail_set: std::sync::atomic::AtomicBool,
+    fail_get: std::sync::atomic::AtomicBool,
+    db: std::sync::Mutex<Option<Db>>,
+    session_at_clear: std::sync::Mutex<Vec<bool>>,
+}
+
+impl CredentialSlot for ProbeSlot {
+    fn get(&self) -> Result<Option<String>, TransportError> {
+        if self.fail_get.load(std::sync::atomic::Ordering::SeqCst) { return Err(TransportError::Network("keychain locked".into())); }
+        self.memory.get()
+    }
+
+    fn set(&self, credential: &str) -> Result<(), TransportError> {
+        if self.fail_set.load(std::sync::atomic::Ordering::SeqCst) { return Err(TransportError::Network("keychain full".into())); }
+        self.memory.set(credential)
+    }
+
+    fn clear(&self) -> Result<(), TransportError> {
+        if let Some(db) = self.db.lock().unwrap().as_ref() { self.session_at_clear.lock().unwrap().push(rows(db).0.is_some()); }
+        self.memory.clear()
+    }
+}
+
+fn open_with(world: &World, slot: Arc<ProbeSlot>, db: &Db) -> (Arc<EncryptedClient>, Arc<crate::owners::life::Life>) {
+    *slot.db.lock().unwrap() = Some(db.clone());
+    let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), slot, db.clone(), world.clock.clone()).unwrap());
+    let life = client.start_owners_in_tests(db);
+    (client, life)
+}
+
+async fn until(what: &str, mut done: impl FnMut() -> bool) {
+    let started = std::time::Instant::now();
+    while !done() {
+        assert!(started.elapsed() < LIMIT, "{what}");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn request_ids_are_random_uuid_v4_and_do_not_repeat_after_a_reopen() {
+    let world = World::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    for _ in 0..2 {
+        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let (client, life) = world.open(&db).await;
+        if rows(&db).0.is_none() { sign_in(&client).await; }
+        let reply = answer(life.mutate_wait(None, OTP.into(), json!({}).to_string(), 0)).await;
+        assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response(_))), "{reply:?}");
+        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+    }
+    let ids: Vec<String> = world.server.seen().iter().map(|request| request["requestId"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids.len(), 3);
+    for id in &ids {
+        assert_eq!(uuid::Uuid::parse_str(id).unwrap().get_version_num(), 4, "{id}");
+        assert!(!id.contains("-0000-4000-8000-"), "{id} carries a counter");
+    }
+    let mut unique = ids.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), ids.len(), "{ids:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_sign_in_stored_before_a_crash_lands_its_digest_after_the_reopen() {
+    let world = World::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    {
+        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let (client, life) = world.open(&db).await;
+        world.server.interrupt_next_answer();
+        let call = tokio::spawn({ let client = client.clone(); async move { sign_in(&client).await } });
+        until("the server never executed the sign-in", || world.server.executed().len() == 1).await;
+        until("the pending request was never stored", || rows(&db).1.is_some()).await;
+        assert!(rows(&db).0.is_none(), "no session row before the landing");
+        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+        call.abort();
+    }
+    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let (_client, life) = world.open(&db).await;
+    until("the stored sign-in did not land", || rows(&db).1.is_none() && rows(&db).0.is_some()).await;
+    let secret = world.credentials.value().expect("the secret stays");
+    let session = rows(&db).0.unwrap();
+    assert_eq!((session.credential_digest.clone(), session.sequence), (digest_of(&secret), 1));
+    until("the identity was not published", || life.published().identity == crate::store::identity_of(&session.credential_digest)).await;
+    assert_eq!(world.server.executed().len(), 1, "the server executed the sign-in once");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_left_by_a_crash_is_erased_and_the_session_rows_go_before_the_secret() {
+    let world = World::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    world.credentials.set("left-by-generate").unwrap();
+    {
+        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let (_client, life) = world.open(&db).await;
+        assert_eq!(world.credentials.value(), None, "GenerateCredential crashed before the pending: the secret is erased");
+        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+    }
+    {
+        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let (client, life) = world.open(&db).await;
+        sign_in(&client).await;
+        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+    }
+    let db = Db::open(&path, Vec::new(), None).unwrap();
+    db.shared.store.mark_session_end_in_tests().unwrap();
+    drop(db);
+    let slot = Arc::new(ProbeSlot::default());
+    slot.memory.set(&world.credentials.value().unwrap()).unwrap();
+    let db = Db::open(&path, Vec::new(), None).unwrap();
+    *slot.db.lock().unwrap() = Some(db.clone());
+    let client = EncryptedClient::new(&config(), world.server.clone(), slot.clone(), db.clone(), world.clock.clone()).unwrap();
+    drop(client);
+    assert_eq!(*slot.session_at_clear.lock().unwrap(), vec![false], "the session rows were erased before the secret");
+    assert_eq!((rows(&db).0, slot.memory.value()), (None, None));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_reset_erases_the_digest_before_the_secret() {
+    let world = World::new();
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let slot = Arc::new(ProbeSlot::default());
+    let (client, life) = open_with(&world, slot.clone(), &db);
+    sign_in(&client).await;
+    let reset = answer(life.session_reset()).await;
+    assert!(matches!(reset, LifeReply::Life(Ok(()))), "{reset:?}");
+    assert_eq!(*slot.session_at_clear.lock().unwrap(), vec![false]);
+    assert_eq!((rows(&db).0, slot.memory.value()), (None, None));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_store_that_cannot_save_ends_the_sign_in_with_an_error() {
+    let world = World::new();
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let slot = Arc::new(ProbeSlot::default());
+    slot.fail_set.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (client, _life) = open_with(&world, slot.clone(), &db);
+    let outcome = tokio::time::timeout(LIMIT, client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome");
+    assert!(outcome.is_err(), "{outcome:?}");
+    assert_eq!(world.server.seen().len(), 0, "nothing left the device");
+    assert_eq!(rows(&db), (None, None));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_or_foreign_secret_ends_the_request_before_the_network() {
+    let world = World::new();
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let slot = Arc::new(ProbeSlot::default());
+    let (client, life) = open_with(&world, slot.clone(), &db);
+    sign_in(&client).await;
+    let sent = world.server.seen().len();
+    slot.fail_get.store(true, std::sync::atomic::Ordering::SeqCst);
+    let failed = answer(life.mutate_wait(None, OTP.into(), json!({}).to_string(), 0)).await;
+    assert!(matches!(failed, LifeReply::Mutated(AuthorOutcome::Error(SessionError::Rejected(_)))), "{failed:?}");
+    slot.fail_get.store(false, std::sync::atomic::Ordering::SeqCst);
+    slot.memory.set("a-foreign-secret").unwrap();
+    let lost = answer(life.mutate_wait(None, OTP.into(), json!({}).to_string(), 0)).await;
+    assert!(matches!(lost, LifeReply::Mutated(AuthorOutcome::Error(SessionError::StateLost))), "{lost:?}");
+    assert_eq!(world.server.seen().len(), sent, "no request left the device");
+}
+
+#[test]
+fn only_a_revoked_logout_answer_is_revoked() {
+    use crate::owners::session::SessionInput;
+    use crate::transport::encrypted::Answer;
+    let answer = |body: Value| Ok(Answer { sequence: Some(2), body });
+    let revoked = json!({ "revoked": true });
+    assert!(matches!(super::session_runner::input_of(1, true, answer(revoked.clone())), SessionInput::Revoked { request_id: 1, .. }));
+    assert!(matches!(super::session_runner::input_of(1, false, answer(revoked)), SessionInput::Response { .. }));
+    assert!(matches!(super::session_runner::input_of(1, true, answer(json!({}))), SessionInput::Response { .. }));
+}

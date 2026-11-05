@@ -139,18 +139,18 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
             StoreEffect::EraseAccount { generation_new, erase_encrypted } => {
-                if erase_encrypted {
+                let erased = store.erase_account(Generation::from_value(generation_new), erase_encrypted);
+                if erase_encrypted && erased.is_ok() {
                     let cleared = match (&self.client, &self.credentials) {
                         (Some(client), _) => client.erase_credential(),
                         (None, Some(credentials)) => credentials.clear(),
                         (None, None) => Ok(()),
                     };
                     if let Err(error) = cleared {
-                        back.reply(EpochStamp::Control, StoreInput::Erased { result: Err(error.to_string()) });
-                        return;
+                        wiring.fault(format!("clear secret: {error}"));
                     }
                 }
-                self.erased(back, store.erase_account(Generation::from_value(generation_new), erase_encrypted));
+                self.erased(back, erased);
             }
             StoreEffect::EraseModels { generation_new, models } => {
                 let models: Vec<String> = models.into_iter().collect();
@@ -305,9 +305,9 @@ fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), 
 /// The batch op as the tables hold it: ids as text, the purpose as the enum of the transport.
 fn row_op(op: &StoreOp) -> Option<crate::store::RowOp> {
     Some(match op {
-        StoreOp::Pending { pending, credential_digest, response_key } => crate::store::RowOp::PutPending(crate::transport::encrypted::state::Pending {
+        StoreOp::Pending { pending, credential_digest, wire_id, response_key } => crate::store::RowOp::PutPending(crate::transport::encrypted::state::Pending {
             credential_digest: credential_digest.clone(),
-            request_id: super::session_runner::wire_request_id(pending.request_id),
+            request_id: wire_id.clone(),
             response_key: response_key.clone(),
             sequence: i64::try_from(pending.sequence).unwrap_or(i64::MAX),
             path: pending.path.clone(),

@@ -19,6 +19,14 @@
 - Opening a database of an older layout no longer fails: tables kept across a format change move by the columns both layouts share.
 - Operations of the previous account are not sent after an identity change without `sessionReset`.
 - A confirmed create keeps its row when another model is reset before its answer lands.
+- Encrypted request ids are random UUID v4 values that do not repeat after a reopen.
+- A first sign-in interrupted before its answer lands its credential after the next open.
+- A credential that is missing or does not match the stored digest ends the call with `stateLost` before any request is sent.
+- A `CredentialStore` failure ends the call with an error instead of waiting or repeating the request.
+- A cancelled request that already started in the network is not cancelled and reaches its answer.
+- A rejected landing keeps the stored request and repeats it with the same request id.
+- Only a `logout` answer with `revoked` ends the session.
+- The session end erases the digest rows before the credential; a credential left by a crash is erased at open.
 
 ## 6.17.0 - 2026-11-04
 

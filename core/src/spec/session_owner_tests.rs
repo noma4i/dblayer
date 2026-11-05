@@ -39,6 +39,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::Invalid => Fail::Invalid,
         SessionError::Rejected(reason) => Fail::Reason(reason_of(reason)),
         SessionError::Revoked => Fail::Revoked,
+        SessionError::StateLost => Fail::StateLost,
         SessionError::NoCredential => panic!("the reference has no NoCredential, the cell is tested without it"),
         SessionError::SequenceConflict => Fail::SequenceConflict,
         SessionError::Protocol => Fail::Protocol,
@@ -98,7 +99,8 @@ fn phase_of(phase: &SessionPhase) -> RefState {
         SessionPhase::Generating { call } => RefState::Generating { call: queued_of(call) },
         SessionPhase::Persisting { pending, batch } => RefState::Persisting { pending: pending_of(pending), batch: *batch },
         SessionPhase::Calling { pending, attempts, sent } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, sent: *sent },
-        SessionPhase::Landing { pending, batch, answer, identity } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: answer.clone(), identity: *identity },
+        SessionPhase::Landing { pending, batch, answer, identity, ended } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: answer.clone().map_err(|error| fail_of(&error)), identity: *identity, ended: *ended },
+        SessionPhase::Blocked { pending, attempts, retry } => RefState::Blocked { pending: pending_of(pending), attempts: *attempts, retry: *retry },
         SessionPhase::Closed => RefState::Closed,
     }
 }
@@ -161,7 +163,8 @@ impl Twin {
             Input::CredentialGenerated(credential) => SessionInput::CredentialGenerated { credential },
             Input::Dropped { request_id } => SessionInput::Dropped { request_id },
             Input::Cancel { req_id } => SessionInput::Cancel { req_id },
-            Input::Response { request_id, body, sequence, credential, revoked } => SessionInput::Response { request_id, body, sequence, credential, revoked },
+            Input::Response { request_id, body, sequence, credential } => SessionInput::Response { request_id, body, sequence, credential },
+            Input::Revoked { request_id, body } => SessionInput::Revoked { request_id, body },
             Input::HttpError { request_id, temporary, auth } => SessionInput::HttpError { request_id, temporary, auth },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: if batch == 0 { current } else { batch }, revision: 1, tables: vec![], models: Default::default() }),
             Input::Rejected(batch, reason) => SessionInput::Rejected(Rejected { batch: if batch == 0 { current } else { batch }, reason: reject(reason) }),
@@ -185,7 +188,7 @@ impl Twin {
         let want = self.reference.step(reference_input);
         let mut effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
         if scheduled > 0 {
-            let Some(SessionPhase::Calling { attempts, .. }) = self.det.state(self.addr).map(SessionState::phase) else { panic!("a retry timer is scheduled in Calling only") };
+            let Some(SessionPhase::Calling { attempts, .. } | SessionPhase::Blocked { attempts, .. }) = self.det.state(self.addr).map(SessionState::phase) else { panic!("a retry timer is scheduled in Calling or Blocked only") };
             effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick { attempts: *attempts }, scheduled));
         }
         let replies: Vec<(u64, Result<String, Fail>)> = raw.iter().filter_map(|effect| match effect {
@@ -216,7 +219,7 @@ fn call(reply: u64) -> Input { Input::SessionCall { operation: "social".into(), 
 fn call_of(operation: &str, reply: u64) -> Input { Input::SessionCall { operation: operation.into(), body: "{}".into(), reply } }
 fn mutate(author: u64, req_id: u64) -> Input { Input::Mutate { author, owner: None, req_id, path: "/graphql".into(), body: "{}".into(), purpose: 0 } }
 fn committed() -> Input { Input::Committed(0) }
-fn response(request_id: u64, sequence: u64, credential: Option<u64>) -> Input { Input::Response { request_id, body: "{}".into(), sequence: Some(sequence), credential, revoked: false } }
+fn response(request_id: u64, sequence: u64, credential: Option<u64>) -> Input { Input::Response { request_id, body: "{}".into(), sequence: Some(sequence), credential } }
 fn error(request_id: u64, temporary: bool, auth: bool) -> Input { Input::HttpError { request_id, temporary, auth } }
 
 fn persisting() -> Twin {
@@ -290,7 +293,7 @@ fn sess_calling_revoked() {
     let mut twin = calling();
     twin.feed(call(2));
     let id = twin.request_id();
-    twin.feed(Input::Response { request_id: id, body: String::new(), sequence: None, credential: None, revoked: true });
+    twin.feed(Input::Revoked { request_id: id, body: String::new() });
 }
 
 #[test]
@@ -298,7 +301,7 @@ fn sess_calling_sequence_conflict() {
     let mut twin = calling();
     let id = twin.request_id();
     twin.feed(response(id, 9, None));
-    twin.feed(Input::Response { request_id: 99, body: String::new(), sequence: None, credential: None, revoked: false });
+    twin.feed(Input::Response { request_id: 99, body: String::new(), sequence: None, credential: None });
 }
 
 #[test]
@@ -337,11 +340,19 @@ fn sess_calling_permanent() {
 }
 
 #[test]
-fn sess_calling_tick() { calling().feed(Input::Tick); }
+fn sess_calling_tick() {
+    let mut twin = calling();
+    let id = twin.request_id();
+    twin.feed(error(id, true, false));
+    let effects = twin.feed(Input::Tick);
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { .. }]), "the timer starts the repeat: {effects:?}");
+}
 
 #[test]
 fn sess_calling_tick_offline() {
     let mut twin = calling();
+    let id = twin.request_id();
+    twin.feed(error(id, true, false));
     twin.feed_all([Input::Online(false), Input::Tick]);
 }
 
@@ -591,7 +602,9 @@ fn sess_landing_mutate() {
 fn sess_mutate_error_reaches_author() {
     let mut twin = signed_in();
     twin.feed_all([mutate(7, 11), committed()]);
-    let effects = twin.feed(error(11, false, false));
+    let before = twin.feed(error(11, false, false));
+    assert!(!before.iter().any(|effect| matches!(effect, RefEffect::Answer { .. })), "the author hears the error after the commit");
+    let effects = twin.feed(committed());
     assert!(effects.contains(&RefEffect::Answer { author: 7, req_id: 11, outcome: Outcome::Error(Fail::Http) }));
     let mut twin = signed_in();
     twin.feed_all([mutate(7, 11), Input::Closing]);
@@ -601,7 +614,7 @@ fn sess_mutate_error_reaches_author() {
 fn sess_calling_no_sequence() {
     let mut twin = calling();
     let id = twin.request_id();
-    twin.feed(Input::Response { request_id: id, body: "{}".into(), sequence: None, credential: None, revoked: false });
+    twin.feed(Input::Response { request_id: id, body: "{}".into(), sequence: None, credential: None });
     assert_eq!(twin.replies, vec![(1, Err(Fail::Protocol))]);
 }
 
@@ -625,7 +638,7 @@ fn sess_landing_committed_sessionless() {
     let mut twin = signed_in();
     twin.feed_all([call_of("visit", 1), committed()]);
     let id = twin.request_id();
-    twin.feed(Input::Response { request_id: id, body: "{}".into(), sequence: None, credential: None, revoked: false });
+    twin.feed(Input::Response { request_id: id, body: "{}".into(), sequence: None, credential: None });
     twin.feed(committed());
     assert_eq!(twin.reference.credential, Some(RefCredential { digest: 4, sequence: 6 }), "a call without a session leaves the credential");
     assert_eq!(twin.replies, vec![(1, Ok("{}".into()))]);
@@ -655,7 +668,7 @@ fn trace(seed: u64) -> Twin {
             3 | 4 => committed(),
             5 => Input::Rejected(0, Reason::Storage),
             6 | 7 => response(request, if next(&mut s) % 6 == 0 { sequence + 1 } else { sequence }, if next(&mut s) % 2 == 0 { Some(10 + next(&mut s) % 3) } else { None }),
-            8 => Input::Response { request_id: request, body: String::new(), sequence: None, credential: None, revoked: true },
+            8 => Input::Revoked { request_id: request, body: String::new() },
             9 => error(request, next(&mut s) % 2 == 0, next(&mut s) % 2 == 0),
             10 => Input::Tick,
             11 => Input::Online(next(&mut s) % 2 == 0),
@@ -733,16 +746,6 @@ fn sess_prop_unauthorized_keeps_session() {
     assert!(!twin.history.iter().any(|e| matches!(e, SessionEffect::ServerEnded(_))));
 }
 
-#[test]
-fn sess_cancel_calling_and_queue() {
-    let mut twin = Twin::new();
-    twin.feed_all([mutate(7, 11), committed()]);
-    let effects = twin.feed(Input::Cancel { req_id: 11 });
-    assert_eq!(effects, vec![RefEffect::HttpCancel { request_id: 11 }]);
-    assert!(matches!(twin.reference.state, RefState::Calling { sent: false, .. }), "the pending stays for the repeat with the same request id");
-    twin.feed(Input::Online(true));
-}
-
 /// The owner alone, for the cells that `ref_session.rs` does not hold (D-08, D-11, D-17).
 struct Solo {
     det: DetScheduler,
@@ -803,7 +806,8 @@ fn sess_idle_call_no_credential() {
 fn sess_calling_revoked_logout() {
     let mut solo = Solo::new(stored_credential());
     let id = solo.calling("logout");
-    let effects = solo.feed(SessionInput::Response { request_id: id, body: r#"{"revoked":true}"#.into(), sequence: None, credential: None, revoked: true });
+    let mut effects = solo.feed(SessionInput::Revoked { request_id: id, body: r#"{"revoked":true}"#.into() });
+    effects.extend(solo.commit());
     assert!(effects.contains(&SessionEffect::Reply { id: 1, answer: Ok(r#"{"revoked":true}"#.into()) }), "a revoked answer to logout confirms the logout: {effects:?}");
     assert!(effects.iter().any(|effect| matches!(effect, SessionEffect::ServerEnded(_))), "and the server ended the session: {effects:?}");
     assert_eq!(solo.phase(), SessionPhase::Idle);
@@ -826,15 +830,94 @@ fn sess_cancel_started() {
     let mut solo = Solo::new(stored_credential());
     solo.feed(SessionInput::Mutate { author: 7, owner: None, req_id: 11, path: "/graphql".into(), body: "{}".into(), purpose: 0 });
     let persisting = solo.feed(SessionInput::Cancel { req_id: 11 });
-    assert!(persisting.is_empty(), "a Persisting request is not cancelled: {persisting:?}");
-    assert!(matches!(solo.phase(), SessionPhase::Persisting { .. }));
+    assert!(persisting.is_empty() && matches!(solo.phase(), SessionPhase::Persisting { .. }), "Persisting: {persisting:?}");
     solo.commit();
-    solo.feed(SessionInput::Response { request_id: 11, body: "{}".into(), sequence: Some(1), credential: None, revoked: false });
+    let calling = solo.feed(SessionInput::Cancel { req_id: 11 });
+    assert!(calling.is_empty(), "Calling: no HttpCancel, no reply: {calling:?}");
+    assert!(matches!(solo.phase(), SessionPhase::Calling { sent: true, .. }), "the request stays in the network");
+    solo.feed(SessionInput::Response { request_id: 11, body: "{}".into(), sequence: Some(1), credential: None });
     let landing = solo.feed(SessionInput::Cancel { req_id: 11 });
-    assert!(landing.is_empty(), "a Landing request is not cancelled: {landing:?}");
-    assert!(matches!(solo.phase(), SessionPhase::Landing { .. }));
+    assert!(landing.is_empty() && matches!(solo.phase(), SessionPhase::Landing { .. }), "Landing: {landing:?}");
     let done = solo.commit();
-    assert!(done.contains(&SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Response("{}".into()) }), "the started request reaches its outcome: {done:?}");
+    assert_eq!(done.iter().filter(|effect| matches!(effect, SessionEffect::Answer { .. })).count(), 1, "one final answer: {done:?}");
+    assert!(done.contains(&SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Response("{}".into()) }));
+}
+
+#[test]
+fn sess_calling_terminal_error_answers_after_the_commit() {
+    for (input, answer, ended) in [
+        (SessionInput::HttpError { request_id: 0, temporary: false, auth: false }, SessionError::Http, false),
+        (SessionInput::HttpError { request_id: 0, temporary: false, auth: true }, SessionError::Unauthorized, false),
+        (SessionInput::Revoked { request_id: 0, body: "{}".into() }, SessionError::Revoked, true),
+    ] {
+        let mut solo = Solo::new(stored_credential());
+        let id = solo.calling("social");
+        let input = match input {
+            SessionInput::HttpError { temporary, auth, .. } => SessionInput::HttpError { request_id: id, temporary, auth },
+            SessionInput::Revoked { body, .. } => SessionInput::Revoked { request_id: id, body },
+            other => other,
+        };
+        let before = solo.feed(input);
+        assert!(matches!(&before[..], [SessionEffect::RemovePending { .. }]), "{answer:?}: nothing is answered before the commit: {before:?}");
+        let after = solo.commit();
+        assert!(after.contains(&SessionEffect::Reply { id: 1, answer: Err(answer.clone()) }), "{answer:?}: {after:?}");
+        assert_eq!(after.iter().any(|effect| matches!(effect, SessionEffect::ServerEnded(_))), ended, "{answer:?}");
+        assert_eq!(solo.det.state(solo.addr).expect("the owner state").credential().map(|credential| credential.sequence), Some(0), "a failed call spends no sequence");
+    }
+}
+
+#[test]
+fn sess_calling_tick_starts_one_request() {
+    let mut solo = Solo::new(stored_credential());
+    let id = solo.calling("social");
+    solo.feed(SessionInput::HttpError { request_id: id, temporary: true, auth: false });
+    let first = solo.feed(SessionInput::Tick(Time(0)));
+    let second = solo.feed(SessionInput::Tick(Time(0)));
+    assert_eq!(first.iter().filter(|effect| matches!(effect, SessionEffect::HttpRequest { .. })).count(), 1, "{first:?}");
+    assert!(second.is_empty(), "the second Tick starts nothing: {second:?}");
+    assert!(solo.feed(SessionInput::Idle).is_empty());
+}
+
+#[test]
+fn sess_landing_rejected_keeps_the_pending() {
+    let mut solo = Solo::new(stored_credential());
+    let id = solo.calling("social");
+    solo.feed(SessionInput::Response { request_id: id, body: "{}".into(), sequence: Some(1), credential: None });
+    let batch = match solo.phase() { SessionPhase::Landing { batch, .. } => batch, other => panic!("{other:?}") };
+    let rejected = solo.feed(SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage("disk".into()) }));
+    assert!(rejected.contains(&SessionEffect::Reply { id: 1, answer: Err(SessionError::Rejected(RejectReason::Storage("disk".into()))) }));
+    assert!(matches!(solo.phase(), SessionPhase::Blocked { retry: true, .. }));
+    let next = solo.feed(SessionInput::SessionCall { operation: "social".into(), body: "{}".into(), reply: 2 });
+    assert_eq!(next, vec![SessionEffect::Reply { id: 2, answer: Err(SessionError::StateLost) }], "no new pending replaces the stored one");
+    let retry = solo.feed(SessionInput::Tick(Time(0)));
+    assert!(matches!(&retry[..], [SessionEffect::HttpRequest { pending }] if pending.request_id == id && pending.sequence == 1), "the same pair goes again: {retry:?}");
+}
+
+#[test]
+fn sess_generating_secret_failed() {
+    let mut solo = Solo::new(None);
+    solo.feed(SessionInput::SessionCall { operation: "social".into(), body: "{}".into(), reply: 1 });
+    assert!(matches!(solo.phase(), SessionPhase::Generating { .. }));
+    let effects = solo.feed(SessionInput::CredentialFailed { detail: "keychain".into() });
+    assert_eq!(effects, vec![SessionEffect::Reply { id: 1, answer: Err(SessionError::Rejected(RejectReason::Storage("keychain".into()))) }]);
+    assert_eq!(solo.phase(), SessionPhase::Idle);
+}
+
+#[test]
+fn sess_calling_secret_unavailable() {
+    let mut solo = Solo::new(stored_credential());
+    let id = solo.calling("social");
+    let lost = solo.feed(SessionInput::CredentialUnavailable { request_id: id, lost: true, detail: String::new() });
+    assert_eq!(lost, vec![SessionEffect::Reply { id: 1, answer: Err(SessionError::StateLost) }], "no schedule for a lost secret");
+    assert!(matches!(solo.phase(), SessionPhase::Blocked { retry: false, .. }));
+    assert!(solo.feed(SessionInput::Online(Online(true))).is_empty() && solo.feed(SessionInput::Tick(Time(0))).is_empty(), "StateLost is not repeated");
+    let mut solo = Solo::new(stored_credential());
+    let id = solo.calling("social");
+    let failed = solo.feed(SessionInput::CredentialUnavailable { request_id: id, lost: false, detail: "locked".into() });
+    assert!(failed.contains(&SessionEffect::Reply { id: 1, answer: Err(SessionError::Rejected(RejectReason::Storage("locked".into()))) }));
+    assert!(matches!(solo.phase(), SessionPhase::Blocked { retry: true, .. }), "a store error may be repeated");
+    let repeat = solo.feed(SessionInput::Tick(Time(0)));
+    assert!(matches!(&repeat[..], [SessionEffect::HttpRequest { pending }] if pending.request_id == id), "{repeat:?}");
 }
 
 /// The logout of the client is a path: the operation named `logout` is an ordinary one, the operation on the path of the logout is the logout.
@@ -863,10 +946,12 @@ fn sess_idle_login_generate_by_path() {
 fn sess_calling_revoked_logout_by_path() {
     let mut solo = Solo::with(renamed_logout(), stored_credential());
     let id = solo.calling("leave");
-    let effects = solo.feed(SessionInput::Response { request_id: id, body: "{}".into(), sequence: None, credential: None, revoked: true });
+    let mut effects = solo.feed(SessionInput::Revoked { request_id: id, body: "{}".into() });
+    effects.extend(solo.commit());
     assert!(effects.contains(&SessionEffect::Reply { id: 1, answer: Ok("{}".into()) }), "revoked on the logout path of the client confirms the logout: {effects:?}");
     let mut solo = Solo::with(renamed_logout(), stored_credential());
     let id = solo.calling("logout");
-    let effects = solo.feed(SessionInput::Response { request_id: id, body: "{}".into(), sequence: None, credential: None, revoked: true });
+    let mut effects = solo.feed(SessionInput::Revoked { request_id: id, body: "{}".into() });
+    effects.extend(solo.commit());
     assert!(effects.contains(&SessionEffect::Reply { id: 1, answer: Err(SessionError::Revoked) }), "revoked on another path is Revoked: {effects:?}");
 }

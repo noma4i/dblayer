@@ -87,7 +87,7 @@ pub struct UploadRow {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreOp {
     /// `encrypted_pending` = this row. `credential_digest` is the full digest of the credential, `response_key` seals the answer.
-    Pending { pending: PendingCall, credential_digest: String, response_key: String },
+    Pending { pending: PendingCall, credential_digest: String, wire_id: String, response_key: String },
     /// Remove the row `encrypted_pending`.
     RemovePending,
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.

@@ -1,7 +1,7 @@
 //! The intents of the queue as `Restored` gives them to the owner Outbox (`outbox.md`, section Open).
 
 use crate::operation::OperationStatus;
-use crate::owners::life::session_runner::{own_request_id, RESTORED_REQUEST};
+use crate::owners::life::session_runner::RESTORED_REQUEST;
 use crate::owners::write::outbox::{NewOp, Origin, StoredOp};
 use crate::schema::OnFailure;
 use crate::transport::RequestOwner;
@@ -40,7 +40,7 @@ impl Db {
                 effects: Default::default(),
             };
             let seq = operation.id.0;
-            let resume = pending.as_ref().filter(|pending| pending.owner == Some(RequestOwner::Operation { seq })).and_then(|pending| Some((own_request_id(&pending.request_id).unwrap_or(RESTORED_REQUEST), u64::try_from(pending.sequence).ok()?)));
+            let resume = pending.as_ref().filter(|pending| pending.owner == Some(RequestOwner::Operation { seq })).and_then(|pending| Some((RESTORED_REQUEST, u64::try_from(pending.sequence).ok()?)));
             stored.push(StoredOp { op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume });
         }
         Ok(stored)
