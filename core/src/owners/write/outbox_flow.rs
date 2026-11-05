@@ -197,7 +197,7 @@ impl OutboxState {
         match outcome {
             AuthorOutcome::Response(body) => {
                 let operation = &self.ops[&op_id];
-                let temp = Some(operation.op.row_id.clone()).filter(|row| crate::identity::is_temp_id(row));
+                let temp = Some(operation.op.row_id.clone()).filter(|row| crate::identity::is_temp_id(row)).or_else(|| operation.op.effects.rows.iter().find(|row| row.model == operation.op.model && crate::identity::is_temp_id(&row.row_id)).map(|row| row.row_id.clone()));
                 fx.push(Effect::Run(OutboxEffect::Decode(super::answer::DecodeJob { op_id, model: operation.op.model.clone(), action: operation.op.action.clone(), temp, body })));
             }
             AuthorOutcome::Error { class, error } => {

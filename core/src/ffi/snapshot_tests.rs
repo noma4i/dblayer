@@ -76,8 +76,9 @@ async fn inv_loadm_16_the_first_value_of_a_loaded_window_holds_its_rows_and_the_
     let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let changes = heard(&listener);
-    assert_eq!((changes[0].phase, changes[0].rows.len(), changes[0].size), (Some(ReadPhase::Loaded), 1, 1), "first value {:?}", changes[0].phase);
-    assert!(changes[0].loaded.is_some());
+    assert_eq!((changes[0].rows.len(), changes[0].size), (1, 1), "the first value holds the rows of the loaded window");
+    assert_eq!(changes.last().unwrap().phase, Some(ReadPhase::Loaded));
+    assert!(changes.last().unwrap().loaded.is_some());
     consistent(&changes);
     assert_eq!(listener.last().unwrap().seq, changes.last().unwrap().seq);
 }

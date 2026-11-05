@@ -24,7 +24,7 @@ const STREAM: u64 = 7;
 
 fn people() -> ModelSpec { ModelSpec::new("people", vec![FieldSpec::scalar("id", ScalarKind::Id)]) }
 
-fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false, remote: true, live: false, window: WindowKey { model: "people".into(), name: "list".into() }, subject: String::new() } }
+fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false, remote: true, live: false, reload: false, window: WindowKey { model: "people".into(), name: "list".into() }, subject: String::new() } }
 
 struct People;
 

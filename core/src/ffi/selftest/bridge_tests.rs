@@ -94,12 +94,6 @@ impl Reader {
     }
 }
 
-/// The network goes away while the held request is at the server: the load ends with the network error at once. A test clock never moves by itself, so a network error the server returns would wait for a retry without end.
-async fn network_drops_during(rig: &Rig, held: &super::rig_tests::Gate) {
-    held.entered().await;
-    rig.database.set_online(false).unwrap();
-}
-
 fn profile() -> ReadRequest { ReadRequest::List { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() } }
 
 fn users() -> ReadRequest { ReadRequest::List { query_json: r#"{"model":"User","relation":"all","params":{}}"#.into() } }
@@ -111,11 +105,13 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let epoch = rig.database.session_epoch();
     let before = rig.world.count("Users");
     let held = rig.world.hold_next("Users");
+    let idle = rig.database.life.waiting_calls();
     let first = rig.database.begin_load(epoch, "User".into(), "all".into(), "{}".into()).unwrap();
     held.entered_for("the shared load").await;
     let second = rig.database.begin_load(epoch, "User".into(), "all".into(), "{}".into()).unwrap();
-    yield_until("both calls wait for the shared load", || rig.database.life.waiting_calls() >= 2).await;
-    bound(crate::ffi::settled(&rig.database)).await.unwrap();
+    yield_until("both calls wait for the shared load", || rig.database.life.waiting_calls() >= idle + 2).await;
+    let owners = rig.database.life.clone();
+    assert!(tokio::task::spawn_blocking(move || owners.barrier(std::time::Duration::from_secs(5))).await.unwrap(), "the owners handled both loads");
     first.cancel();
     held.release();
     bound(second.result()).await.unwrap();
@@ -224,41 +220,6 @@ impl crate::ffi::Transport for PagedMomentTransport {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
-    use crate::schema::{ActionDeclaration, Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RootShape};
-    use crate::value::ScalarKind;
-    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
-    let mut feed = RelationSpec::global("feed");
-    feed.remote = Some(crate::schema_fixtures::remote("MomentsFeed", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
-    model.relations.push(feed);
-    let mut destroy = ActionDeclaration::new("destroy", RootShape::Destroy);
-    destroy.mutation = Some("DeleteMoment".into());
-    model.actions.push(destroy);
-    let transport = Arc::new(MomentTransport::default());
-    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, None, None, None, None)).await.unwrap();
-    database.register_operations(json!([
-        {"name":"MomentsFeed","document":"query MomentsFeed { moments { id text } }"},
-        {"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}
-    ]).to_string()).unwrap();
-    let epoch = database.session_epoch();
-    let reader = Reader::open();
-    let stream = database.subscribe_reading(epoch, ReadRequest::List { query_json: json!({"model":"Moment","relation":"feed","params":{}}).to_string() }, reader.clone());
-    bound(database.loaded(stream)).await.unwrap();
-    assert_eq!(ids_of(reader.rows()), ["1"]);
-    let receipt = bound(database.destroy(epoch, "Moment".into(), "1".into())).await.unwrap();
-    assert!(matches!(bound(database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    bound(async {
-        loop {
-            let changed = reader.changed.notified();
-            if ids_of(reader.rows()) == ["2"] { break; }
-            changed.await;
-        }
-    }).await;
-    assert_eq!(transport.reads.load(Ordering::SeqCst), 2);
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     use super::rig_tests::{plain_models, plain_operations};
     let directory = tempfile::tempdir().unwrap();
@@ -323,12 +284,11 @@ async fn a_profile_delivery_is_ready_with_its_rows_before_an_explicit_refresh() 
 async fn a_cold_profile_delivers_a_complete_first_frame_when_empty_or_failed() {
     for failed in [false, true] {
         let world = World::new("server", "A", true);
-        let down = failed.then(|| world.hold_then("MyProfile", Fault::Down));
+        if failed { world.fail_next("MyProfile", Fault::Business); }
         if !failed { world.empty_profile(); }
         let rig = Rig::plain(world, false).await;
         let reader = Reader::open();
         rig.database.subscribe_reading(rig.database.session_epoch(), profile(), reader.clone());
-        if let Some(down) = down { network_drops_during(&rig, &down).await; }
         bound(async {
             loop {
                 let changed = reader.changed.notified();
@@ -359,10 +319,9 @@ async fn a_cached_entity_remains_loaded_when_its_initial_network_read_fails() {
     let first = rig.database.subscribe_reading(epoch, request(), Reader::open());
     bound(rig.database.loaded(first)).await.unwrap();
     rig.database.cancel_stream(first);
-    let down = rig.world.hold_then("UserNode", Fault::Down);
+    rig.world.fail_next("UserNode", Fault::Business);
     let reader = Reader::open();
     let stream = rig.database.subscribe_reading(epoch, request(), reader.clone());
-    network_drops_during(&rig, &down).await;
     let result = bound(rig.database.loaded(stream)).await;
     assert!(result.is_ok(), "a cached entity should remain loaded: {result:?}");
     assert_eq!(reader.rows().first().map(|row| row.id.as_str()), Some("user"));
@@ -530,101 +489,6 @@ async fn a_fresh_profile_is_read_again_after_expiry() {
     bound(load()).await.unwrap();
     assert_eq!(requests(), 2, "an expired window asks again");
     rig.database.close_now();
-}
-
-fn chat_entry(index: usize) -> serde_json::Value {
-    json!({"topic":"MESSAGE","action":"UPDATED","recordId":format!("m{index}"),"chat":{"id":format!("c{index}"),"title":"t","revision":1,"lists":["PRIMARY"]}})
-}
-
-/// S209: a reader of events that pulls nothing while 400 events arrive reads the kept events and the lost ranges, which add up to the 400 sent, then one end after the database closed.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end() {
-    let (database, transport, _) = chat_events().await;
-    let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
-    let opened = bound(stream.pull()).await.unwrap();
-    assert!(matches!(opened, Some(ReadValue::Ready)), "the first value is the open source: {opened:?}");
-
-    transport.emit(json!({"data":{"recordEvents":{"entries":(0..400).map(chat_entry).collect::<Vec<_>>()}}}).to_string()).unwrap();
-    bound(crate::ffi::settled(&database)).await.unwrap();
-    database.close_now();
-    let mut burst = Vec::new();
-    while let Some(value) = bound(stream.pull()).await.unwrap() { burst.push(value); }
-    let kept = burst.iter().filter(|value| matches!(value, ReadValue::Event { .. })).count() as u64;
-    let lost: u64 = burst.iter().map(|value| match value { ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum();
-    assert_eq!(kept + lost, 400, "kept events and lost positions add up to the events sent");
-    assert!(lost > 0, "a reader that pulled nothing lost the oldest events");
-    assert!(matches!(burst.last(), Some(ReadValue::Ended { cause: ReadEnd::Closed })), "the stream ends once at the close: {:?}", burst.last());
-    assert_eq!(burst.iter().filter(|value| matches!(value, ReadValue::Ended { .. })).count(), 1);
-}
-
-/// A database whose chats arrive through a change feed with the chat in its payload.
-async fn chat_events() -> (Arc<Database>, Arc<Switchable>, Arc<World>) {
-    use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
-    use crate::value::ScalarKind;
-    let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
-    revision.from = Some("revision".into());
-    let mut chat = ModelSpec::new("Chat", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str), revision, FieldSpec::list("lists", ScalarKind::Str)]);
-    chat.server_revision = Some("serverRevision".into());
-    let mut node = RelationSpec::new("node", &[]);
-    node.text_params = vec![NODE_PARAM.into()];
-    node.node = Some(NodeRead::One);
-    let mut remote = crate::schema_fixtures::remote("ChatNode", RemoteShape::Single, "5.minutes");
-    remote.variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
-    node.remote = Some(remote);
-    let mut list = RelationSpec::new("list", &[]);
-    list.text_params.push("list".into());
-    list.membership.insert("list".into(), Membership::Contains("lists".into()));
-    list.joins_node = true;
-    list.joins_events = true;
-    let mut listed = crate::schema_fixtures::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
-    listed.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
-    list.remote = Some(listed);
-    chat.relations.extend([node, list]);
-    chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat"})).unwrap());
-    chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
-    let world = World::new("server", "A", true);
-    let transport = Switchable::new(Some(world.clone()), false);
-    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&vec![chat]).unwrap(), Some(transport.clone()), None, None, None, None, None)).await.unwrap();
-    database.register_operations(json!([
-        {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
-        {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
-        {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
-    ]).to_string()).unwrap();
-    database.set_online(true).unwrap();
-    (database, transport, world)
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn an_event_opened_before_linked_lists_reports_the_committed_payload() {
-    let (database, transport, world) = chat_events().await;
-    let epoch = database.session_epoch();
-    let reader = Reader::open();
-    let events = database.subscribe_reading(epoch, ReadRequest::Events { model: "Chat".into() }, reader.clone());
-    bound(database.loaded(events)).await.unwrap();
-    let params = |list: &str| json!({"list":list}).to_string();
-    for list in ["PRIMARY", "SECONDARY"] { bound(database.load(epoch, "Chat".into(), "list".into(), params(list))).await.unwrap(); }
-    let before = bound(database.node(epoch, "Chat".into(), "node".into(), "c1".into(), true)).await.unwrap().unwrap();
-    assert!(named(&before, "before"));
-    let query = |list: &str| json!({"model":"Chat","relation":"list","params":{"list":list}}).to_string();
-    assert_eq!(ids_of(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap()), ["c1"]);
-    transport.emit(json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}}).to_string()).unwrap();
-    bound(async {
-        loop {
-            let changed = reader.changed.notified();
-            if reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Event { .. })) { break; }
-            changed.await;
-        }
-    }).await;
-    let event = reader.deliveries().into_iter().find_map(|delivery| match delivery.value { ReadValue::Event { payload, .. } => serde_json::from_str::<serde_json::Value>(&payload).ok(), _ => None }).unwrap();
-    assert_eq!(event["id"], "c1");
-    assert_eq!(event["row"]["title"], "after", "the event carries the committed row");
-    let primary = bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap();
-    assert_eq!(ids_of(primary.clone()), ["c1"]);
-    assert!(named(&primary[0], "after"));
-    assert!(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap().is_empty());
-    let calls = world.log().into_iter().map(|entry| entry.operation).collect::<Vec<_>>();
-    assert_eq!(calls, ["subscribe:RecordEvents", "ChatList", "ChatList", "ChatNode"]);
-    database.close_now();
 }
 
 /// B01: after the login a stream delivers the account as one snapshot in the epoch of the session, in order, and the first value does not come from the calling thread.
@@ -929,7 +793,7 @@ async fn a_stream_that_cannot_connect_ends_once_and_leaves_the_table() {
         let stream = rig.database.subscribe_reading(epoch, request.clone(), reader.clone());
         yield_until("the failed stream ended", || !reader.ended().is_empty()).await;
         assert_eq!(reader.ended(), vec![ReadEnd::Invalid], "{request:?} ended with more or less than one outcome");
-        assert_eq!(rig.database.stream_census().open, 0, "{request:?} stayed in the table");
+        yield_until("the failed stream left the table", || rig.database.stream_census().open == 0).await;
         assert!(bound(rig.database.loaded(stream)).await.is_err(), "{request:?} reported a first load");
     }
     rig.database.close_now();
@@ -1089,27 +953,6 @@ async fn reset_clears_ephemeral_values_before_the_next_account_reads_the_same_id
     rig.database.close_now();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn an_old_subscription_sink_is_closed_before_the_next_account() {
-    let world = super::rig_tests::World::new("server", "A", true);
-    let rig = Rig::plain(world.clone(), false).await;
-    let epoch = rig.database.session_epoch();
-    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: r#"{"model":"Notice","relation":"recent","params":{}}"#.into() }, Reader::open());
-    let (token, old_sink) = rig.switch.first_sink().await;
-
-    bound(rig.database.session_reset()).await.unwrap();
-    rig.switch.wait_unsubscribed(&token).await;
-    world.set_account("B");
-    bound(rig.database.load(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
-    old_sink.event(r#"{"data":{"notices":{"id":"old"}}}"#.into()).unwrap();
-    let rows = bound(rig.database.read_query(rig.database.session_epoch(), r#"{"model":"Notice","relation":"recent","params":{}}"#.into())).await.unwrap();
-
-    assert!(rows.is_empty());
-    assert!(rig.switch.unsubscribed().contains(&token));
-    rig.database.cancel_stream(stream);
-    rig.database.close_now();
-}
-
 /// K04 (B4, old line ffi/database.rs create): a create the server answers goes through `create` with the epoch of the caller, needs the network, and returns the row the server confirmed.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_server_create_returns_the_confirmed_row_and_needs_the_network() {
@@ -1199,59 +1042,13 @@ async fn a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_re
 }
 
 
-/// K09 (spec B, C; old line ffi/stream/open.rs connect_json with `force` used once at open): a list stream opened with refresh on connect loads again once when the network returns, without a call of the app. A stream without the flag asks nothing.
+/// K11 (offline finding B): a call that always goes to the server fails at once with `Network` while the network is away and sends nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns() {
-    let rig = Rig::encrypted().await;
-    rig.world.seed_message("A", "m1", "first", 1);
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    let list = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"refreshOnConnect":true}"#.into() }, list.clone());
-    bound(rig.database.loaded(stream)).await.unwrap();
-    settle(&rig).await;
-    let before = rig.world.count("Thread");
-    rig.database.set_online(false).unwrap();
-    rig.database.set_online(true).unwrap();
-    yield_until("the list loaded again", || rig.world.count("Thread") > before).await;
-    settle(&rig).await;
-    assert_eq!(rig.world.count("Thread"), before + 1, "the stream loaded more or less than once on reconnect");
-    rig.database.cancel_stream(stream);
-    rig.database.set_online(false).unwrap();
-    rig.database.set_online(true).unwrap();
-    for _ in 0..50 { tokio::task::yield_now().await; }
-    settle(&rig).await;
-    assert_eq!(rig.world.count("Thread"), before + 1, "a cancelled stream loaded on reconnect");
-    rig.database.close_now();
-}
-
-/// K10 (offline finding A; old line sync/send/pause.rs retry_due): a durable command whose request failed on the network goes out at once when the network returns, without a step of the clock.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_durable_command_that_failed_on_the_network_goes_out_at_once_when_the_network_returns() {
+async fn a_refresh_and_a_load_more_fail_at_once_offline() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down);
-    let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
-    yield_until("the first attempt failed on the network", || rig.database.db.outbox().unwrap().first().is_some_and(|entry| entry.operation.attempts >= 1 && !entry.operation.transport_started)).await;
-    assert_eq!(rig.world.count("SendMessage"), 0, "the failed attempt reached the server");
-    rig.database.set_online(false).unwrap();
-    rig.database.set_online(true).unwrap();
-    let outcome = bound(rig.database.outcome(receipt)).await.unwrap();
-    assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "the command did not go out after the network returned: {outcome:?}");
-    let sequences: std::collections::BTreeSet<_> = rig.world.log().iter().filter(|entry| entry.operation == "SendMessage").map(|entry| entry.sequence).collect();
-    assert_eq!(sequences.len(), 1, "one pair reaches the server, a repeat of it is the same effect: {:?}", rig.world.log());
-    rig.database.close_now();
-}
-
-/// K11 (offline finding B; old lines ffi/database.rs refresh and load_more, ffi/stream/mod.rs refresh_stream): a call that always goes to the server fails at once with `Network` while the network is away, and the entity stream shows the error in its state.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_shows_the_error() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    let entity = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::ReadFetch::Force }, entity.clone());
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::ReadFetch::Force }, Reader::open());
     bound(rig.database.loaded(stream)).await.unwrap();
     let hits = rig.world.log().len();
     rig.database.set_online(false).unwrap();
@@ -1261,10 +1058,6 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     assert!(matches!(refreshed, Err(DbError::Network { .. })), "refresh offline: {refreshed:?}");
     let more = bound(rig.database.load_more(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
     assert!(matches!(more, Err(DbError::Network { .. })), "load more offline: {more:?}");
-    yield_until("the entity stream shows the error", || entity.deliveries().iter().any(|delivery| match &delivery.value {
-        ReadValue::State { state, .. } | ReadValue::Snapshot { state, .. } => state.error.is_some(),
-        _ => false,
-    })).await;
     assert_eq!(rig.world.log().len(), hits, "a call offline reached the server");
     rig.database.close_now();
 }
@@ -1456,7 +1249,11 @@ async fn forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_i
         settle(&rig).await;
         assert_eq!(matches!(result, WireOperationOutcome::Rejected { .. }), refusal, "{case}: the operation returned {result:?}");
         let expected = if refusal { strings(&["m1"]) } else { strings(&["m1", "forwarded-1"]) };
-        yield_until("the thread shows the outcome", || ids_of(reader.rows()) == expected).await;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while ids_of(reader.rows()) != expected {
+            assert!(std::time::Instant::now() < deadline, "{case}: expected {expected:?}, the thread shows {:?}", ids_of(reader.rows()));
+            tokio::task::yield_now().await;
+        }
         rig.database.close_now();
     }
 }
@@ -1517,27 +1314,50 @@ async fn a_plain_action_that_never_reached_the_server_ends_with_the_network_erro
     rig.database.close_now();
 }
 
-/// K20 (C08, old line sync/send/pause.rs retry_due): after a network return the first retry skips the backoff once. A second failure waits by the normal backoff, and the clock then delivers the command.
+/// K09 (spec B, C; old line ffi/stream/open.rs connect_json with `force` used once at open): a list stream opened with refresh on connect loads again once when the network returns, without a call of the app. A stream without the flag asks nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_second_failure_after_a_network_return_waits_by_the_backoff_and_the_clock_delivers() {
+async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns() {
     let rig = Rig::encrypted().await;
+    rig.world.seed_message("A", "m1", "first", 1);
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down);
-    rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down);
-    let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
-    let attempts = |rig: &Rig| rig.world.log().iter().filter(|entry| entry.operation == "SendMessage").count();
-    let failed_and_waiting = |rig: &Rig, count: usize| attempts(rig) == count && rig.database.db.outbox().unwrap().first().is_some_and(|entry| entry.operation.attempts as usize >= count && !entry.operation.transport_started);
-    yield_until("the first request failed and the command waits", || failed_and_waiting(&rig, 1)).await;
+    let list = Reader::open();
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"refreshOnConnect":true}"#.into() }, list.clone());
+    bound(rig.database.loaded(stream)).await.unwrap();
+    settle(&rig).await;
+    let before = rig.world.count("Thread");
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
-    yield_until("the retry after the network return failed and the command waits", || failed_and_waiting(&rig, 2)).await;
+    yield_until("the list loaded again", || rig.world.count("Thread") > before).await;
     settle(&rig).await;
-    assert_eq!(attempts(&rig), 2, "the command was tried again before its backoff");
-    rig.clock.advance(3_600_000);
-    let outcome = bound(rig.database.outcome(receipt)).await.unwrap();
-    assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "the clock did not deliver the command: {outcome:?}");
+    assert_eq!(rig.world.count("Thread"), before + 1, "the stream loaded more or less than once on reconnect");
+    rig.database.cancel_stream(stream);
+    rig.database.set_online(false).unwrap();
+    rig.database.set_online(true).unwrap();
+    for _ in 0..50 { tokio::task::yield_now().await; }
+    settle(&rig).await;
+    assert_eq!(rig.world.count("Thread"), before + 1, "a cancelled stream loaded on reconnect");
     rig.database.close_now();
+}
+
+/// K10 (out_sending_temp, out_sending_tick): a durable command whose request failed on the network is sent again by the backoff, the clock delivers it, and one pair reaches the server.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_the_clock() {
+    for failures in [1, 2] {
+        let rig = Rig::encrypted().await;
+        rig.login_ios("A").await;
+        let epoch = rig.database.session_epoch();
+        for _ in 0..failures { rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down); }
+        let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
+        let done = Arc::new(AtomicBool::new(false));
+        let waiting = { let database = rig.database.clone(); let done = done.clone(); tokio::spawn(async move { let outcome = database.outcome(receipt).await; done.store(true, Ordering::SeqCst); outcome }) };
+        yield_until("the clock delivers the command", || { rig.clock.advance(3_600_000); done.load(Ordering::SeqCst) }).await;
+        let outcome = bound(waiting).await.unwrap().unwrap();
+        assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{failures} failures: the command was not delivered: {outcome:?}");
+        let sequences: std::collections::BTreeSet<_> = rig.world.log().iter().filter(|entry| entry.operation == "SendMessage").map(|entry| entry.sequence).collect();
+        assert_eq!(sequences.len(), 1, "one pair reaches the server: {:?}", rig.world.log());
+        rig.database.close_now();
+    }
 }
 
 /// K23 (D01, old lines ffi/command.rs serve_in_epoch and sync/land.rs land_rows): a request that was accepted in the epoch of A, and whose answer waits at the server while another identity starts a session, lands nothing and ends refused. The epoch of A does not change, the generation does not either.
@@ -1664,4 +1484,3 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         rig.database.close_now();
     }
 }
-

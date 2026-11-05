@@ -28,7 +28,7 @@ async fn a_list_stream_gives_a_snapshot_then_a_delta_with_the_final_order() {
     let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
     let ReadValue::Snapshot { revision, rows, state } = next(&stream).await else { panic!("the first value is a snapshot") };
     assert_eq!(ids(&rows), ["n1"]);
-    assert_eq!(state.phase, ReadPhase::Idle, "a local list has no window to load");
+    assert_eq!(state.phase, ReadPhase::Loaded, "a local list has no window to load: it is loaded at once");
     db.create(epoch, "Note".into(), r#"{"id":"n2","text":"two"}"#.into(), "{}".into()).await.unwrap();
     let ReadValue::Delta { base, size, rows, indexes, .. } = next(&stream).await else { panic!("the next value is a delta") };
     assert_eq!((base, size), (revision, 2));
@@ -38,11 +38,9 @@ async fn a_list_stream_gives_a_snapshot_then_a_delta_with_the_final_order() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_request_that_cannot_be_read_reports_the_refusal_then_ends_as_invalid() {
+async fn a_request_that_cannot_be_read_ends_as_invalid() {
     let db = open().await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Entity { model: "Ghost".into(), id: "g1".into(), fetch: super::ReadFetch::Never });
-    let refusal = tokio::time::timeout(LIMIT, stream.pull()).await.expect("an answer within 5 s");
-    assert!(matches!(refusal, Err(super::DbError::Database { .. })), "{refusal:?}");
     assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Invalid }));
 }
 

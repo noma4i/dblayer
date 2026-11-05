@@ -106,6 +106,7 @@ impl Database {
         let params = Map::from_iter([(NODE_PARAM.to_string(), json!(row_id))]);
         self.node_relation(&model, &relation, NodeRead::One)?;
         let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+        if force { self.require_online(&format!("{model}.{relation} node"))?; }
         let wire = self.wire(&model)?.clone();
         let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), Goal::First, force).await?;
         self.finish_load(call).await?;

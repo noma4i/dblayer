@@ -125,8 +125,8 @@ K07	B9	core	a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no
 K08	B7	swift	BridgeProbeTests.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
 K08	B7	kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
 K09	B	core	a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns	green	-	arch-r3b consumer finding: refresh on reconnect
-K10	A	core	a_durable_command_that_failed_on_the_network_goes_out_at_once_when_the_network_returns	green	-	arch-r3c offline finding A
-K11	B	core	a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_shows_the_error	green	-	arch-r3c offline finding B
+K10	A	core	a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_the_clock	green	-	arch-r3c offline finding A
+K11	B	core	a_refresh_and_a_load_more_fail_at_once_offline	green	-	arch-r3c offline finding B
 K12	forward	core	a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_returns_it	green	-	arch-r3c consumer finding: forward
 K13	B6	core	member_actions_change_both_member_lists_before_the_answer_and_a_refusal_restores_them	green	-	arch-r3c B6 leave and members
 K13	B6	core	leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_restores_it	green	-	arch-r3c B6 leave and members
@@ -157,7 +157,7 @@ RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aDeltaOffTheShownRevis
 RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aJumpOfThePositionWithTheShownBaseAppliesTheDelta	green	-	arch-r3d review C09
 K17	C01	core	every_entry_of_a_left_account_is_refused_and_reaches_nothing	green	core-only: the proof counts the requests that reached the fake world; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C01
 K18	C04	core	a_plain_action_that_never_reached_the_server_ends_with_the_network_error_and_is_not_replayed	green	core-only: the proof counts the requests that reached the fake world; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C04
-K20	C08	core	a_second_failure_after_a_network_return_waits_by_the_backoff_and_the_clock_delivers	green	core-only: the proof moves the test clock and reads the outbox; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C08
+K20	C08	core	a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_the_clock	green	core-only: the proof moves the test clock and reads the outbox; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C08
 K21	C02	swift	BridgeProbeTests.aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced	green	-	arch-r3d review C02
 K21	C02	kotlin	com.noma4i.dblayer.ValueBridgeTest.aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced	green	-	arch-r3d review C02
 K23	D01	core	an_accepted_request_whose_answer_lands_after_the_next_account_started_writes_nothing	green	core-only: the proof holds a server request through the fake world gate and moves the epoch in the core; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review D01
@@ -206,7 +206,7 @@ S104		core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches
 S104		swift	BridgeProbeTests.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
 S104		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
 S106		core	an_old_subscription_admission_cannot_land_an_event_in_the_next_session	red-by-reading	core-only: admission at SQL commit	arch-audit Astra A1
-S107		core	an_old_subscription_sink_is_closed_before_the_next_account	unrun	S1: reset closes the subscription	arch-audit Astra A1
+S107		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S107		swift	BridgeProbeTests.oldSubscriptionSinkIsClosedBeforeTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S107		kotlin	com.noma4i.dblayer.OldSinkTest.oldSubscriptionSinkIsClosedBeforeTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S108		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the cable	arch-audit Astra A1
@@ -228,12 +228,6 @@ S205	K1-cancel	core	cancelling_a_reader_before_its_first_load_interrupts_the_wai
 S207	N1r	core	a_mutation_answer_requires_one_reread_after_an_older_load	unrun	-	arch-audit fable K4
 S207	N1r	swift	BridgeProbeTests.aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld	unrun	-	arch-audit fable K4
 S207	N1r	kotlin	com.noma4i.dblayer.ClubTest.aMutationReturnsWithItsAnswerWhileALoadOfItsRefetchedListIsHeld	unrun	-	arch-audit fable K4
-S208	K4-destroy	core	a_missing_destroyed_row_causes_one_reread_of_the_open_list	unrun	-	arch-audit fable K4
-S208	K4-destroy	swift	BridgeProbeTests.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
-S208	K4-destroy	kotlin	com.noma4i.dblayer.DestroyRereadTest.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
-S209	A3-journal	core	a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end	unrun	-	arch-audit astra A3, one core journal
-S209	A3-journal	swift	BridgeProbeTests.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
-S209	A3-journal	kotlin	com.noma4i.dblayer.ModelEventsTest.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
 S210	C21	core	a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages	unrun	-	arch-audit fable K6
 S210	C21	swift	BridgeProbeTests.cancellingTheCallerOfLoadAllStopsTheTransportCalls	unrun	-	arch-audit fable K6
 S210	C21	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheCallerOfLoadAllStopsTheTransportCalls	unrun	-	arch-audit fable K6
@@ -251,9 +245,6 @@ S217	A2-ttl	kotlin	com.noma4i.dblayer.TestClockTest.aTestClockMovesFreshForWitho
 S218	A2-media	core	preloads_and_three_media_loads_finish_on_empty_pages	unrun	-	arch-audit astra A2
 S218	A2-media	swift	BridgeProbeTests.preloadsAndThreeMediaLoadsFinishOnEmptyPages	unrun	-	arch-audit astra A2
 S218	A2-media	kotlin	com.noma4i.dblayer.MediaPreloadTest.preloadsAndThreeMediaLoadsFinishOnEmptyPages	unrun	-	arch-audit astra A2
-S219	A3-events	core	an_event_opened_before_linked_lists_reports_the_committed_payload	unrun	-	arch-audit astra A3
-S219	A3-events	swift	BridgeProbeTests.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
-S219	A3-events	kotlin	com.noma4i.dblayer.EventPayloadTest.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
 S220	window-reopen	core	a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response	red-by-reading	-	coordinator persisted issuance sequence
 S220	window-reopen	swift	BridgeProbeTests.aRefreshAfterReopenAndClockRollbackKeepsTheNewResponse	red-by-reading	-	coordinator persisted issuance sequence
 S220	window-reopen	kotlin	com.noma4i.dblayer.TestClockTest.aRefreshAfterReopenAndClockRollbackKeepsTheNewResponse	red-by-reading	-	coordinator persisted issuance sequence

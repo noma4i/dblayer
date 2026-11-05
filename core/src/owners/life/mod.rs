@@ -554,6 +554,13 @@ impl Life {
         drop(runtime);
     }
 
+    /// Returns once every input posted to an owner was handled, or false after `limit`.
+    #[cfg(test)]
+    pub fn barrier(&self, limit: std::time::Duration) -> bool {
+        let runtime = self.runtime.lock().unwrap_or_else(PoisonError::into_inner);
+        runtime.as_ref().is_none_or(|runtime| runtime.barrier(limit))
+    }
+
     /// Whether `shutdown` ran: the database is closed for good.
     pub fn is_shut(&self) -> bool { self.shut.load(Ordering::SeqCst) }
 

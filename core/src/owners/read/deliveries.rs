@@ -55,6 +55,8 @@ pub struct View {
     pub remote: bool,
     /// The model takes events of the server (`updates` of a relation or `listens`): an open stream wants its subscription.
     pub live: bool,
+    /// The stream loads its window again each time the network returns.
+    pub reload: bool,
     pub window: WindowKey,
     pub subject: String,
 }
@@ -145,6 +147,7 @@ enum Emit {
     Run(StreamEffect),
     Load { force: bool },
     InterestPlus,
+    ReloadOnConnect,
     InterestMinus,
     WantPlus,
     WantMinus,
@@ -307,6 +310,7 @@ impl Delivery {
                     && matches!(kind, Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale | Fetch::Force | Fetch::IfMissing });
                 if watches {
                     fx.push(Emit::InterestPlus);
+                    if machine.view.reload { fx.push(Emit::ReloadOnConnect); }
                     machine.interested = true;
                     if kind == (Kind::Entity { fetch: Fetch::Force }) {
                         fx.push(Emit::Load { force: true });
@@ -849,6 +853,7 @@ fn lower(peers: DeliveryPeers, stream: StreamId, machine: &Delivery, emits: Vec<
         let effect = match emit {
             Emit::Run(effect) => Effect::Run(DeliveryEffect::Stream { stream, effect }),
             Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream })),
+            Emit::ReloadOnConnect => Effect::Send(Outbound::new(peers.windows, WindowsInput::ReloadOnConnect { key: machine.view.window.clone(), id: stream })),
             Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: machine.opened })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
             Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events })),

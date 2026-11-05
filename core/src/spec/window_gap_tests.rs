@@ -648,6 +648,19 @@ fn win_idle_online() {
 }
 
 #[test]
+fn win_idle_reload_on_connect() {
+    let mut twin = fresh_watched();
+    twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: id64(STREAM) });
+    twin.post(w::WindowsInput::Online(Online(false)));
+    twin.post(w::WindowsInput::Online(Online(true)));
+    assert_eq!(twin.stage(), Some(WindowStage::Loading), "a fresh window with a reload interest loads again when the network returns");
+    let mut plain = fresh_watched();
+    plain.post(w::WindowsInput::Online(Online(false)));
+    plain.post(w::WindowsInput::Online(Online(true)));
+    assert_eq!(plain.stage(), Some(WindowStage::Idle), "a fresh window without the interest stays");
+}
+
+#[test]
 fn win_idle_models_reset() {
     let mut twin = fresh_watched();
     assert_eq!(twin.step(Input::ModelsReset { own_model: true }), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);

@@ -151,7 +151,6 @@ fn read_value(value: Value) -> Result<ReadValue, DbError> {
 pub struct ReadStream {
     life: Arc<Life>,
     stream: u64,
-    refusal: std::sync::Mutex<Option<DbError>>,
     ended: std::sync::atomic::AtomicBool,
     /// The task that hands the status of a transfer to the stream.
     status: Option<tokio::task::AbortHandle>,
@@ -170,9 +169,6 @@ impl ReadStream {
 impl ReadStream {
     /// The next value of the stream, `None` once the stream ended and its last value was taken.
     pub async fn pull(&self) -> Result<Option<ReadValue>, DbError> {
-        if let Some(error) = self.refusal.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() {
-            return Err(error);
-        }
         match self.life.pull(self.stream).wait().await {
             Outcome::Value(PullAnswer::Value(value)) => {
                 if matches!(value, Value::Ended(_)) {
@@ -225,13 +221,13 @@ impl Database {
                     Some((relation, params)) => WindowKey::relation(&model, relation, params),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind, model: model.clone(), tables: vec![crate::ddl::table_name(&model)], local: spec.is_local(), remote: remote.is_some(), live, window, subject: query_json.clone() })
+                Ok(View { kind, model: model.clone(), tables: vec![crate::ddl::table_name(&model)], local: spec.is_local(), remote: remote.is_some(), live, reload: serde_json::from_str::<serde_json::Value>(query_json).ok().and_then(|query| query.get("refreshOnConnect").and_then(serde_json::Value::as_bool)).unwrap_or(false), window, subject: query_json.clone() })
             }
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
-                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone() })
+                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone() })
             }
-            ReadRequest::Blob { key } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, window: WindowKey { model: String::new(), name: String::new() }, subject: key.clone() }),
+            ReadRequest::Blob { key } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: key.clone() }),
             ReadRequest::Entity { model, id, fetch } => {
                 let spec = self.db.spec(model)?;
                 let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
@@ -243,7 +239,7 @@ impl Database {
                     Some(relation) => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))])),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: vec![crate::ddl::table_name(model)], local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), window, subject: id.clone() })
+                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: vec![crate::ddl::table_name(model)], local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), reload: false, window, subject: id.clone() })
             }
         }
     }
@@ -290,11 +286,9 @@ impl Database {
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
         let opened = self.view_of(&request).and_then(|view| Ok((view, self.db.revision_seq()?)));
-        let shut = self.life.is_shut();
-        let (view, revision, valid, refusal) = match opened {
-            Ok((view, revision)) => (view, revision, true, None),
-            Err(_) if shut => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, None),
-            Err(error) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, Some(error)),
+        let (view, revision, valid) = match opened {
+            Ok((view, revision)) => (view, revision, true),
+            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false),
         };
         if valid { self.stale_before_open(&view); }
         self.life.open_stream(stream, view, epoch, revision, valid);
@@ -302,6 +296,6 @@ impl Database {
             (ReadRequest::Blob { key }, true) => self.watch_status(stream, key),
             _ => None,
         };
-        Arc::new(ReadStream { life: self.life.clone(), stream, refusal: std::sync::Mutex::new(refusal), ended: std::sync::atomic::AtomicBool::new(false), status })
+        Arc::new(ReadStream { life: self.life.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status })
     }
 }

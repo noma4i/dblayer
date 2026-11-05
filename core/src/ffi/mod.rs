@@ -1,7 +1,8 @@
 mod database;
-pub(crate) use database::NEEDS_NETWORK;
 mod receipt;
 pub(crate) mod legacy;
+#[cfg(test)]
+pub(crate) use database::NEEDS_NETWORK;
 #[cfg(test)]
 pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
     let (lifecycle, db) = (database.streams.clone(), database.db.clone());
@@ -9,6 +10,8 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
         loop {
             lifecycle.settled().await;
             database.operations_quiet().await;
+            let owners = database.life.clone();
+            database::blocking(move || { owners.barrier(std::time::Duration::from_secs(5)); Ok(()) }).await?;
             let listeners = db.clone();
             database::blocking(move || { listeners.await_revision(listeners.revision_seq()?); Ok(()) }).await?;
             if lifecycle.quiet() { return Ok::<(), DbError>(()); }

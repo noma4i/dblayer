@@ -40,7 +40,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
         let opened = slot.open(config(), "[]".into(), options, Some(Arc::new(Plain)), None, None, None, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
-            Err(error) => assert!(!accepted && error.to_string().ends_with("invalid upload: upload operation Missing is not registered"), "{name}: {error}"),
+            Err(error) => assert!(!accepted && error.to_string().ends_with("invalid: upload operation Missing is not registered"), "{name}: {error}"),
         }
     }
 }
@@ -61,7 +61,7 @@ async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_f
         Err(error) => error.to_string(),
         Ok(_) => panic!("uploads with empty operations were accepted"),
     };
-    assert!(error.ends_with("invalid upload: uploads are declared but operations is empty: pass the upload GraphQLOperation definitions in operations to open or openTesting"), "{error}");
+    assert!(error.ends_with("invalid: uploads are declared but operations is empty: pass the upload GraphQLOperation definitions in operations to open"), "{error}");
     assert!(open(&slot).await.is_ok(), "the refused open must release its slot");
 }
 

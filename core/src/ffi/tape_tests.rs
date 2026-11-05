@@ -171,6 +171,7 @@ pub(crate) struct Watched {
     pump: tokio::task::JoinHandle<()>,
     request: ReadRequest,
     ended: Arc<std::sync::atomic::AtomicBool>,
+    stopped: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Watched {
@@ -189,6 +190,7 @@ impl Watched {
         let stream = self.stream.clone();
         let handle = tokio::runtime::Handle::current();
         if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+            self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
             self.pump.abort();
             self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
             tokio::task::block_in_place(|| handle.block_on(async move { stream.cancel().await }));
@@ -227,11 +229,14 @@ impl Database {
         let pulled = stream.clone();
         let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = ended.clone();
+        let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let halt = stopped.clone();
         let pump = tokio::spawn(async move {
             let mut seq = 0;
             loop {
                 match pulled.pull().await {
                     Ok(Some(value)) => {
+                        if halt.load(std::sync::atomic::Ordering::SeqCst) { return; }
                         seq += 1;
                         if matches!(value, ReadValue::Ended { .. }) { flag.store(true, std::sync::atomic::Ordering::SeqCst); }
                         if let Some(done) = settled_by(&value, seq) {
@@ -247,7 +252,7 @@ impl Database {
                 }
             }
         });
-        let watched = Arc::new(Watched { stream, epoch, settled, pump, request, ended });
+        let watched = Arc::new(Watched { stream, epoch, settled, pump, request, ended, stopped });
         registry().lock().unwrap().insert((Arc::as_ptr(&self.life) as usize, watched.stream.id()), watched.clone());
         watched
     }
