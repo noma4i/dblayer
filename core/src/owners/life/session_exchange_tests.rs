@@ -453,7 +453,7 @@ async fn a_secret_left_by_a_crash_is_erased_and_the_session_rows_go_before_the_s
     {
         let db = Db::open(&path, Vec::new(), None).unwrap();
         let (_client, life) = world.open(&db).await;
-        assert_eq!(world.credentials.value(), None, "GenerateCredential crashed before the pending: the secret is erased");
+        until("GenerateCredential crashed before the pending: the secret is not erased", || world.credentials.value().is_none()).await;
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
     {
