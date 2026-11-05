@@ -60,7 +60,7 @@ impl Db {
                 StoreOp::MarkError { op_id, error } => {
                     let seq = i64::try_from(*op_id).unwrap_or(i64::MAX);
                     envelope.operation_transitions.push(match error {
-                        Some(_) => OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, error.clone().unwrap_or_default()) },
+                        Some(message) => OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, message.clone()) },
                         None => OperationTransition::Retry { seq },
                     });
                 }

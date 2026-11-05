@@ -30,6 +30,9 @@ pub(crate) fn request_id_of_wire(wire: &str) -> Option<RequestId> {
     Some((u64::from_str_radix(high, 16).ok()? << 48) | u64::from_str_radix(node, 16).ok()?)
 }
 
+/// The request id of the owner for a stored wire id: the id it holds, `None` when `wire_request_id` did not make the wire id.
+pub(crate) fn own_request_id(wire: &str) -> Option<RequestId> { request_id_of_wire(wire).filter(|id| wire_request_id(*id) == wire) }
+
 /// The owner id of a stored pending whose wire id was not made by `wire_request_id`: the wire id stays as stored.
 pub(crate) const RESTORED_REQUEST: RequestId = 1 << 62;
 
@@ -84,7 +87,7 @@ impl SessionRunner {
         let operations = client.session_operations();
         let Some(row) = client.stored_pending()? else { return Ok(Restored { credential, pending: None, wire: None, key: None }) };
         let sequence = u64::try_from(row.sequence).map_err(|_| TransportError::Decode(format!("the stored pending has the sequence {}", row.sequence)))?;
-        let own = request_id_of_wire(&row.request_id).filter(|id| wire_request_id(*id) == row.request_id);
+        let own = own_request_id(&row.request_id);
         let request_id = own.unwrap_or(RESTORED_REQUEST);
         let restored_wire = own.is_none().then(|| row.request_id.clone());
         let pending = {

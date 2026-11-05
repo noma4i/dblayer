@@ -636,9 +636,9 @@ impl OutboxState {
             return;
         }
         self.ephemeral.remove(&row);
+        let Some(model) = self.ephemeral_model.remove(&row) else { return };
         let batch = self.next_batch;
         self.next_batch += 1;
-        let model = self.ephemeral_model.remove(&row).unwrap_or_default();
         self.commit(batch, BTreeMap::new(), vec![StoreOp::RemoveRows { model, ids: vec![row] }], 0, fx);
     }
 }
