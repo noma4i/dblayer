@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use super::ref_outbox::{open_step_of, step_of, write_step_of, Ctx, Eff, Fault as RFault, In, OCtx, Obs, Out, Policy, Reason as RReason, Restored, St, Step, WCtx, WEff, WIn, WObs, WSt, Why as RWhy};
 use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
-use crate::owners::outbox::{self as o, OutboxAnswer, CommitKind, Fault, LocalWriteKind, NewOp, OnReject, OpId, Origin, Outbox, OutboxEffect, OutboxInput, OutboxState, Receipt, Stage, StoredOp, Why};
+use crate::owners::write::outbox::{self as o, OutboxAnswer, CommitKind, Fault, LocalWriteKind, NewOp, OnReject, OpId, Origin, Outbox, OutboxEffect, OutboxInput, OutboxState, Receipt, Stage, StoredOp, Why};
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 

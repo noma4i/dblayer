@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use super::contract::{BatchId, Committed, Drained, EpochEnded, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
+use crate::owners::contract::{BatchId, Committed, Drained, EpochEnded, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
 
 pub type OpId = u64;

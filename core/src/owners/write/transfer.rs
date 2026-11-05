@@ -3,9 +3,9 @@
 
 use std::collections::BTreeMap;
 
-use super::contract::{BatchId, Drained, EpochEnded, EpochStarted, Online};
+use crate::owners::contract::{BatchId, Drained, EpochEnded, EpochStarted, Online};
 use crate::transport::NetworkPurpose;
-use super::contract::ReplyId;
+use crate::owners::contract::ReplyId;
 use super::outbox::{Fault, OutboxOutcome, Receipt};
 use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
 
@@ -45,7 +45,7 @@ pub enum TransferInput {
     Restored(Vec<StoredTransfer>),
     CopyDone { key: Key },
     CopyFailed { key: Key, error: String },
-    StepOk { key: Key, part: Option<u32> },
+    StepOk { key: Key, part: Option<u32>, upload_id: Option<String> },
     StepError { key: Key, part: Option<u32>, temporary: bool },
     Completed { key: Key },
     CompleteError { key: Key, temporary: bool },
@@ -96,15 +96,16 @@ pub enum StoreKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransferEffect {
-    Copy { key: Key },
+    /// Copy `source` into the file directory in chunks of 1 MiB.
+    Copy { key: Key, source: Source },
     CopyCancel { key: Key },
     Store { key: Key, batch: BatchId, kind: StoreKind },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { key: Key, part: Option<u32>, purpose: NetworkPurpose },
-    Complete { key: Key },
+    Step { key: Key, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source },
+    Complete { key: Key, upload_id: Option<String> },
     /// To the executor: it adds the Backoff and the clock, then posts `Tick(retry{key})`.
     ScheduleRetry { key: Key, attempt: u32 },
-    Abort { key: Key },
+    Abort { key: Key, upload_id: Option<String> },
     CancelStep { key: Key },
     DeleteFile { key: Key },
     DeleteOperation { key: Key },
@@ -194,6 +195,8 @@ impl TransferState {
         run(fx, TransferEffect::Store { key: key.into(), batch, kind });
     }
 
+    fn upload_id_of(&self, key: &str) -> Option<String> { self.transfers.get(key).and_then(|transfer| transfer.upload_id.clone()) }
+
     fn active(&self) -> u32 { self.transfers.values().filter(|transfer| matches!(transfer.stage, TransferStage::Uploading | TransferStage::Completing)).count() as u32 }
 
     fn progress(transfer: &Transfer) -> u32 { transfer.confirmed_parts * 100 / transfer.source.parts.max(1) }
@@ -204,7 +207,7 @@ impl TransferState {
         }
     }
 
-    fn step_effect(transfer: &Transfer) -> TransferEffect { TransferEffect::Step { key: transfer.key.clone(), part: Some(transfer.confirmed_parts + 1), purpose: NetworkPurpose::Transfer } }
+    fn step_effect(transfer: &Transfer) -> TransferEffect { TransferEffect::Step { key: transfer.key.clone(), part: Some(transfer.confirmed_parts + 1), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone() } }
 
     /// Ready transfers start by `(seq, position)` while a slot is free and the network is up.
     fn start_in_order(&mut self, fx: &mut Fx) {
@@ -264,11 +267,12 @@ impl TransferState {
             return reply(fx, rep, TransferAnswer::Err(Fault::NoSession));
         }
         self.now = self.now.max(now);
+        let copy_from = source.clone();
         self.create(&key, source, batch, None, now, TransferStage::Copying);
         let seq = self.transfers[&key].seq;
         reply(fx, rep, TransferAnswer::Receipt(Receipt { epoch, op_id: seq, revision: 0 }));
         Self::shows(fx, &key, Shown::Copying);
-        run(fx, TransferEffect::Copy { key });
+        run(fx, TransferEffect::Copy { key, source: copy_from });
         self.round_needed(epoch, fx);
     }
 
@@ -299,7 +303,7 @@ impl TransferState {
                 let online = self.online;
                 if online {
                     transfer.complete_in_flight = true;
-                    run(fx, TransferEffect::Complete { key: key.clone() });
+                    run(fx, TransferEffect::Complete { key: key.clone(), upload_id: transfer.upload_id.clone() });
                 }
                 Self::shows(fx, &key, Shown::Uploading { progress: 100 });
                 self.round_needed(self.epoch, fx);
@@ -320,27 +324,32 @@ impl TransferState {
         }
         Self::shows(fx, key, Shown::Failed { error });
         if abort {
-            run(fx, TransferEffect::Abort { key: key.into() });
+            let upload_id = self.upload_id_of(key);
+            run(fx, TransferEffect::Abort { key: key.into(), upload_id });
         }
         self.store(key, StoreKind::Failed, fx);
     }
 
-    fn step_ok(&mut self, key: &str, part: Option<u32>, fx: &mut Fx) {
+    fn step_ok(&mut self, key: &str, part: Option<u32>, upload_id: Option<String>, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(key) else { return };
         if transfer.stage != TransferStage::Uploading || part != Some(transfer.confirmed_parts + 1) {
             return;
+        }
+        if upload_id.is_some() {
+            transfer.upload_id = upload_id;
         }
         transfer.confirmed_parts += 1;
         let all = transfer.confirmed_parts >= transfer.source.parts;
         let progress = if all { 100 } else { Self::progress(transfer) };
         let next = Self::step_effect(transfer);
+        let complete = TransferEffect::Complete { key: key.into(), upload_id: transfer.upload_id.clone() };
         if all {
             transfer.stage = TransferStage::Completing;
             transfer.complete_in_flight = true;
         }
         self.store(key, StoreKind::ConfirmedParts, fx);
         Self::shows(fx, key, Shown::Uploading { progress });
-        run(fx, if all { TransferEffect::Complete { key: key.into() } } else { next });
+        run(fx, if all { complete } else { next });
     }
 
     fn step_error(&mut self, key: &str, part: Option<u32>, temporary: bool, fx: &mut Fx) {
@@ -376,7 +385,7 @@ impl TransferState {
             }
             TransferStage::Completing if online && !transfer.complete_in_flight => {
                 transfer.complete_in_flight = true;
-                run(fx, TransferEffect::Complete { key: key.into() });
+                run(fx, TransferEffect::Complete { key: key.into(), upload_id: transfer.upload_id.clone() });
             }
             _ => {}
         }
@@ -441,7 +450,8 @@ impl TransferState {
                     run(fx, TransferEffect::CancelStep { key: key.into() });
                 }
                 if stage == TransferStage::Completing || has_upload {
-                    run(fx, TransferEffect::Abort { key: key.into() });
+                    let upload_id = self.upload_id_of(key);
+                    run(fx, TransferEffect::Abort { key: key.into(), upload_id });
                 }
                 Self::delete_all(key, fx);
                 self.start_in_order(fx);
@@ -452,7 +462,8 @@ impl TransferState {
                 reply(fx, rep, ok);
                 self.end_transfer(key, fx);
                 if has_upload {
-                    run(fx, TransferEffect::Abort { key: key.into() });
+                    let upload_id = self.upload_id_of(key);
+                    run(fx, TransferEffect::Abort { key: key.into(), upload_id });
                 }
                 Self::delete_all(key, fx);
             }
@@ -475,7 +486,8 @@ impl TransferState {
             self.transfers.get_mut(key).map(|transfer| transfer.complete_in_flight = true);
             Self::shows(fx, key, Shown::Uploading { progress: 100 });
             self.store(key, StoreKind::Retrying, fx);
-            run(fx, TransferEffect::Complete { key: key.into() });
+            let upload_id = self.upload_id_of(key);
+            run(fx, TransferEffect::Complete { key: key.into(), upload_id });
         } else {
             self.set(key, TransferStage::Ready);
             Self::shows(fx, key, Shown::Queued);
@@ -497,7 +509,7 @@ impl TransferState {
                 }
                 (TransferStage::Completing, true) if !transfer.complete_in_flight => {
                     transfer.complete_in_flight = true;
-                    run(fx, TransferEffect::Complete { key: key.clone() });
+                    run(fx, TransferEffect::Complete { key: key.clone(), upload_id: transfer.upload_id.clone() });
                 }
                 (TransferStage::Failed, true) => self.schedule_expire(fx),
                 _ => {}
@@ -513,7 +525,8 @@ impl TransferState {
             let has_upload = self.transfers[&key].upload_id.is_some();
             self.end_transfer(&key, fx);
             if has_upload {
-                run(fx, TransferEffect::Abort { key: key.clone() });
+                let upload_id = self.upload_id_of(&key);
+                run(fx, TransferEffect::Abort { key: key.clone(), upload_id });
             }
             Self::delete_all(&key, fx);
         }
@@ -600,7 +613,7 @@ impl StateOwner for Transfers {
                     state.store(&key, StoreKind::Failed, &mut fx);
                 }
             }
-            TransferInput::StepOk { key, part } => state.step_ok(&key, part, &mut fx),
+            TransferInput::StepOk { key, part, upload_id } => state.step_ok(&key, part, upload_id, &mut fx),
             TransferInput::StepError { key, part, temporary } => state.step_error(&key, part, temporary, &mut fx),
             TransferInput::Completed { key } => {
                 if state.stage_of(&key) == Some(TransferStage::Completing) {

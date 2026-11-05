@@ -4,9 +4,9 @@
 
 use super::ref_transfer::{round_step, step_of, Ctx, Eff, In, Kind, Noise, Obs, Round, RoundIn, Shown, St, Step};
 use crate::owners::contract::{EpochStarted, Online};
-use crate::owners::outbox::{Fault, OutboxOutcome};
+use crate::owners::write::outbox::{Fault, OutboxOutcome};
 use crate::owners::support::{new_log, take, Log, Recorder};
-use crate::owners::transfer::{self as t, RoundState, Source, StoreKind, StoredTransfer, TransferAnswer, TransferEffect, TransferInput, TransferStage, TransferState, TransferTick, Transfers};
+use crate::owners::write::transfer::{self as t, RoundState, Source, StoreKind, StoredTransfer, TransferAnswer, TransferEffect, TransferInput, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 use crate::transport::NetworkPurpose;
 
@@ -154,7 +154,7 @@ fn input_of(twin: &mut Twin, ctx: &Ctx, input: In) -> Vec<TransferEffect> {
         In::CopyFailed => twin.post(TransferInput::CopyFailed { key, error: "e".into() }),
         In::Cancel => twin.post(TransferInput::Cancel { key, reply }),
         In::Start => twin.post(TransferInput::Online(Online(true))),
-        In::StepOk { parts_left } => twin.post(TransferInput::StepOk { key, part: if ctx.stray_step { Some(99) } else if parts_left { Some(1) } else { Some(PARTS) } }),
+        In::StepOk { parts_left } => twin.post(TransferInput::StepOk { key, part: if ctx.stray_step { Some(99) } else if parts_left { Some(1) } else { Some(PARTS) }, upload_id: None }),
         In::StepError { temporary } => twin.post(TransferInput::StepError { key, part, temporary }),
         In::Online(on) => twin.post(TransferInput::Online(Online(on))),
         In::Completed => twin.post(TransferInput::Completed { key }),
@@ -181,7 +181,7 @@ fn input_of(twin: &mut Twin, ctx: &Ctx, input: In) -> Vec<TransferEffect> {
             take(&twin.log)
         }
         In::Noise(noise) => twin.post(match noise {
-            Noise::StepOk => TransferInput::StepOk { key, part: Some(1) },
+            Noise::StepOk => TransferInput::StepOk { key, part: Some(1), upload_id: None },
             Noise::StepError => TransferInput::StepError { key, part: Some(1), temporary: true },
             Noise::Completed => TransferInput::Completed { key },
             Noise::CompleteError => TransferInput::CompleteError { key, temporary: false },
@@ -196,7 +196,7 @@ fn input_of(twin: &mut Twin, ctx: &Ctx, input: In) -> Vec<TransferEffect> {
 
 fn effect_key(effect: &TransferEffect) -> Option<&str> {
     match effect {
-        TransferEffect::Copy { key } | TransferEffect::CopyCancel { key } | TransferEffect::Store { key, .. } | TransferEffect::Step { key, .. } | TransferEffect::Complete { key } | TransferEffect::ScheduleRetry { key, .. } | TransferEffect::Abort { key } | TransferEffect::CancelStep { key } | TransferEffect::DeleteFile { key } | TransferEffect::DeleteOperation { key } | TransferEffect::DeleteLocalCopy { key } | TransferEffect::SubmitMutation { key } | TransferEffect::DiscardMutation { key, .. } | TransferEffect::Shows { key, .. } | TransferEffect::Refused { key } => Some(key),
+        TransferEffect::Copy { key, .. } | TransferEffect::CopyCancel { key } | TransferEffect::Store { key, .. } | TransferEffect::Step { key, .. } | TransferEffect::Complete { key, .. } | TransferEffect::ScheduleRetry { key, .. } | TransferEffect::Abort { key, .. } | TransferEffect::CancelStep { key } | TransferEffect::DeleteFile { key } | TransferEffect::DeleteOperation { key } | TransferEffect::DeleteLocalCopy { key } | TransferEffect::SubmitMutation { key } | TransferEffect::DiscardMutation { key, .. } | TransferEffect::Shows { key, .. } | TransferEffect::Refused { key } => Some(key),
         TransferEffect::Reply { .. } | TransferEffect::ScheduleJob { .. } | TransferEffect::EndJob { .. } | TransferEffect::Drained(_) => None,
     }
 }
@@ -711,7 +711,7 @@ fn copies(keys: &[&str]) -> Vec<TransferInput> { keys.iter().map(|key| TransferI
 fn net(keys: &[&str]) -> Vec<TransferInput> {
     let mut script = Vec::new();
     for key in keys {
-        script.push(TransferInput::StepOk { key: (*key).into(), part: Some(1) });
+        script.push(TransferInput::StepOk { key: (*key).into(), part: Some(1), upload_id: None });
         script.push(TransferInput::StepError { key: (*key).into(), part: Some(1), temporary: false });
         script.push(TransferInput::Completed { key: (*key).into() });
     }
