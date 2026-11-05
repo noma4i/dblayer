@@ -256,8 +256,8 @@ impl Life {
     }
 
     /// `Mutate` of Outbox and Transfer: the answer comes to the sink the author registered with `on_mutate_answer`.
-    pub fn mutate(&self, author: AuthorId, req_id: RequestId, path: String, body: String, purpose: u8) {
-        self.wiring.to_session(SessionInput::Mutate { author, req_id, path, body, purpose });
+    pub fn mutate(&self, author: AuthorId, owner: Option<super::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) {
+        self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, path, body, purpose });
     }
 
     pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) { self.wiring.on_mutate_answer(author, sink); }

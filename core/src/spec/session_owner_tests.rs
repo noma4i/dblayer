@@ -7,14 +7,14 @@ use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 
 const EPOCH: u64 = 3;
-/// `social` and `logout` carry the session, `login` issues a credential, `visit` carries no session.
+/// `social`, `logout` and `login` carry the session (a call at `credential = None` is the sign-in), `visit` carries no session.
 fn operations() -> Vec<Operation> {
-    let def = |name: &str, sessionless, login| Operation { name: name.into(), path: format!("/{name}"), sessionless, login };
-    vec![def("social", false, false), def("logout", false, false), def("login", false, true), def("visit", true, false)]
+    let def = |name: &str, sessionless| Operation { name: name.into(), path: format!("/{name}"), sessionless };
+    vec![def("social", false), def("logout", false), def("login", false), def("visit", true)]
 }
 
 fn owner_operations() -> Vec<SessionOperation> {
-    operations().into_iter().map(|def| SessionOperation { name: def.name, path: def.path, sessionless: def.sessionless, login: def.login }).collect()
+    operations().into_iter().map(|def| SessionOperation { name: def.name, path: def.path, sessionless: def.sessionless }).collect()
 }
 
 fn reject(reason: Reason) -> RejectReason {
@@ -68,18 +68,19 @@ fn pending_of(pending: &PendingCall) -> RefPending {
         credential: pending.credential,
         purpose: pending.purpose,
         author: pending.author,
+        owner: pending.owner.clone(),
         reply: pending.reply,
     }
 }
 
 fn owner_pending(pending: RefPending) -> PendingCall {
-    PendingCall { request_id: pending.request_id, sequence: pending.sequence, operation: pending.operation, path: pending.path, body: pending.body, sessionless: pending.sessionless, credential: pending.credential, purpose: pending.purpose, author: pending.author, reply: pending.reply }
+    PendingCall { request_id: pending.request_id, sequence: pending.sequence, operation: pending.operation, path: pending.path, body: pending.body, sessionless: pending.sessionless, credential: pending.credential, purpose: pending.purpose, author: pending.author, owner: pending.owner, reply: pending.reply }
 }
 
 fn queued_of(queued: &Queued) -> RefQueued {
     match queued {
         Queued::Call { operation, body, reply } => RefQueued::Call { operation: operation.clone(), body: body.clone(), reply: *reply },
-        Queued::Mutate { author, req_id, path, body, purpose } => RefQueued::Mutate { author: *author, req_id: *req_id, path: path.clone(), body: body.clone(), purpose: *purpose },
+        Queued::Mutate { author, owner, req_id, path, body, purpose } => RefQueued::Mutate { author: *author, owner: owner.clone(), req_id: *req_id, path: path.clone(), body: body.clone(), purpose: *purpose },
     }
 }
 
@@ -131,12 +132,18 @@ impl Twin {
     /// Idle, online, `Published.epoch` = `EPOCH`.
     fn new() -> Self { Self::with(true) }
 
-    fn with(online: bool) -> Self {
+    fn with(online: bool) -> Self { Self::start(online, Some(RefCredential { digest: 4, sequence: 0 })) }
+
+    /// No credential: a call that carries the session signs in.
+    fn bare() -> Self { Self::start(true, None) }
+
+    fn start(online: bool, credential: Option<RefCredential>) -> Self {
         let mut det = DetScheduler::new(2);
         let log = new_log();
         let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), online), Recorder::<SessionCalls>::new(&log));
         let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new() };
         twin.feed(Input::Published { epoch: EPOCH });
+        twin.feed(Input::Open { credential, pending: None });
         twin
     }
 
@@ -149,7 +156,7 @@ impl Twin {
         let owner_input = match input.clone() {
             Input::Open { credential, pending } => SessionInput::Open { credential: credential.map(|c| Credential { digest: c.digest, sequence: c.sequence }), pending: pending.map(owner_pending) },
             Input::SessionCall { operation, body, reply } => SessionInput::SessionCall { operation, body, reply },
-            Input::Mutate { author, req_id, path, body, purpose } => SessionInput::Mutate { author, req_id, path, body, purpose },
+            Input::Mutate { author, owner, req_id, path, body, purpose } => SessionInput::Mutate { author, owner, req_id, path, body, purpose },
             Input::CredentialGenerated(credential) => SessionInput::CredentialGenerated { credential },
             Input::Dropped { request_id } => SessionInput::Dropped { request_id },
             Input::Response { request_id, body, sequence, credential, revoked } => SessionInput::Response { request_id, body, sequence, credential, revoked },
@@ -205,7 +212,7 @@ impl Twin {
 
 fn call(reply: u64) -> Input { Input::SessionCall { operation: "social".into(), body: "{}".into(), reply } }
 fn call_of(operation: &str, reply: u64) -> Input { Input::SessionCall { operation: operation.into(), body: "{}".into(), reply } }
-fn mutate(author: u64, req_id: u64) -> Input { Input::Mutate { author, req_id, path: "/graphql".into(), body: "{}".into(), purpose: 0 } }
+fn mutate(author: u64, req_id: u64) -> Input { Input::Mutate { author, owner: None, req_id, path: "/graphql".into(), body: "{}".into(), purpose: 0 } }
 fn committed() -> Input { Input::Committed(0) }
 fn response(request_id: u64, sequence: u64, credential: Option<u64>) -> Input { Input::Response { request_id, body: "{}".into(), sequence: Some(sequence), credential, revoked: false } }
 fn error(request_id: u64, temporary: bool, auth: bool) -> Input { Input::HttpError { request_id, temporary, auth } }
@@ -434,12 +441,28 @@ fn sess_open_restored() {
 #[test]
 fn sess_open_pending() {
     let mut twin = Twin::new();
-    let effects = twin.feed(Input::Open { credential: Some(RefCredential { digest: 4, sequence: 6 }), pending: Some(RefPending { request_id: 5, sequence: 7, operation: "social".into(), path: "/social".into(), body: "{}".into(), sessionless: false, credential: None, purpose: 0, author: None, reply: Some(99) }) });
+    let effects = twin.feed(Input::Open { credential: Some(RefCredential { digest: 4, sequence: 6 }), pending: Some(RefPending { request_id: 5, sequence: 7, operation: "social".into(), path: "/social".into(), body: "{}".into(), sessionless: false, credential: None, purpose: 0, author: None, owner: None, reply: Some(99) }) });
     assert_eq!(effects.len(), 1, "one Http request of the restored pending");
     assert!(matches!(&effects[0], RefEffect::HttpRequest { pending } if pending.request_id == 5 && pending.reply.is_none()));
     twin.feed(response(5, 7, None));
     twin.feed(committed());
     assert!(twin.replies.is_empty(), "an answer without a caller shows nothing");
+}
+
+#[test]
+fn sess_open_pending_owner() {
+    let mut twin = Twin::bare();
+    let owner = crate::transport::RequestOwner::Operation { seq: 3 };
+    let pending = RefPending { request_id: 5, sequence: 7, operation: String::new(), path: "/graphql".into(), body: "{}".into(), sessionless: false, credential: None, purpose: 0, author: None, owner: Some(owner), reply: None };
+    let effects = twin.feed(Input::Open { credential: Some(RefCredential { digest: 4, sequence: 6 }), pending: Some(pending) });
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending }] if pending.author == Some(super::ref_session::OUTBOX_AUTHOR)), "a restored pending with an owner goes to the author the owner names");
+    twin.feed(response(5, 7, None));
+    let answered = twin.feed(committed());
+    assert!(matches!(&answered[..], [RefEffect::Answer { author, req_id: 5, outcome: Outcome::Response(_) }] if *author == super::ref_session::OUTBOX_AUTHOR));
+    let transfer = RefPending { request_id: 6, sequence: 8, operation: String::new(), path: "/graphql".into(), body: "{}".into(), sessionless: false, credential: None, purpose: 1, author: None, owner: Some(crate::transport::RequestOwner::Transfer { operation_id: 1, item_id: "a".into(), step: crate::upload::UploadStage::Prepare }), reply: None };
+    let mut twin = Twin::bare();
+    let effects = twin.feed(Input::Open { credential: Some(RefCredential { digest: 4, sequence: 7 }), pending: Some(transfer) });
+    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending }] if pending.author == Some(super::ref_session::TRANSFER_AUTHOR)));
 }
 
 #[test]
@@ -466,7 +489,7 @@ fn signed_in() -> Twin {
 }
 
 fn generating() -> Twin {
-    let mut twin = Twin::new();
+    let mut twin = Twin::bare();
     assert_eq!(twin.feed(call_of("login", 1)), vec![RefEffect::GenerateCredential]);
     twin
 }
@@ -614,7 +637,7 @@ fn next(seed: &mut u64) -> u64 {
 /// A random trace; requests and batches are read from the reference state so the inputs are mostly the right ones.
 fn trace(seed: u64) -> Twin {
     let mut s = seed;
-    let mut twin = Twin::new();
+    let mut twin = Twin::bare();
     let mut reply = 0;
     for _ in 0..40 {
         let request = match &twin.reference.state {

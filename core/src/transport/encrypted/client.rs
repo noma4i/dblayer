@@ -243,8 +243,8 @@ impl EncryptedClient {
 
     /// The declared session operations and `logout`, as the owner Session takes them.
     pub(crate) fn session_operations(&self) -> Vec<crate::owners::session::SessionOperation> {
-        let declared = self.config.endpoints.session_operations.iter().map(|(name, operation)| crate::owners::session::SessionOperation { name: name.clone(), path: operation.path.clone(), sessionless: operation.sessionless, login: false });
-        declared.chain(std::iter::once(crate::owners::session::SessionOperation { name: "logout".into(), path: self.config.endpoints.logout.clone(), sessionless: false, login: false })).collect()
+        let declared = self.config.endpoints.session_operations.iter().map(|(name, operation)| crate::owners::session::SessionOperation { name: name.clone(), path: operation.path.clone(), sessionless: operation.sessionless });
+        declared.chain(std::iter::once(crate::owners::session::SessionOperation { name: "logout".into(), path: self.config.endpoints.logout.clone(), sessionless: false })).collect()
     }
 
     pub(crate) fn stored_session(&self) -> Result<Option<state::Session>, TransportError> { self.read_connection(state::session) }

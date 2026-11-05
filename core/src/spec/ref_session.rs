@@ -7,6 +7,17 @@ pub type BatchId = u64;
 pub type ReplyId = u64;
 pub type AuthorId = u64;
 pub type Digest = u64;
+pub type Owner = crate::transport::RequestOwner;
+
+pub const OUTBOX_AUTHOR: AuthorId = 1;
+pub const TRANSFER_AUTHOR: AuthorId = 2;
+
+pub fn author_of(owner: &Owner) -> AuthorId {
+    match owner {
+        Owner::Operation { .. } | Owner::Unmatched { .. } => OUTBOX_AUTHOR,
+        Owner::Transfer { .. } => TRANSFER_AUTHOR,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EndCause {
@@ -49,7 +60,6 @@ pub struct Operation {
     pub name: String,
     pub path: String,
     pub sessionless: bool,
-    pub login: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -63,20 +73,21 @@ pub struct Pending {
     pub credential: Option<Digest>,
     pub purpose: u8,
     pub author: Option<AuthorId>,
+    pub owner: Option<Owner>,
     pub reply: Option<ReplyId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Queued {
     Call { operation: String, body: String, reply: ReplyId },
-    Mutate { author: AuthorId, req_id: RequestId, path: String, body: String, purpose: u8 },
+    Mutate { author: AuthorId, owner: Option<Owner>, req_id: RequestId, path: String, body: String, purpose: u8 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input {
     Open { credential: Option<Credential>, pending: Option<Pending> },
     SessionCall { operation: String, body: String, reply: ReplyId },
-    Mutate { author: AuthorId, req_id: RequestId, path: String, body: String, purpose: u8 },
+    Mutate { author: AuthorId, owner: Option<Owner>, req_id: RequestId, path: String, body: String, purpose: u8 },
     CredentialGenerated(Digest),
     Response { request_id: RequestId, body: String, sequence: Option<u64>, credential: Option<Digest>, revoked: bool },
     HttpError { request_id: RequestId, temporary: bool, auth: bool },
@@ -186,24 +197,24 @@ impl Session {
                     return;
                 };
                 self.call_epoch = self.epoch;
-                if def.login {
+                if !def.sessionless && self.credential.is_none() {
                     out.effects.push(Effect::GenerateCredential);
                     self.state = State::Generating { call: Queued::Call { operation, body, reply } };
                     return;
                 }
                 let sequence = if def.sessionless { 0 } else { self.credential.as_ref().map_or(1, |credential| credential.sequence + 1) };
                 let request_id = self.request();
-                let pending = Pending { request_id, sequence, operation, path: def.path, body, sessionless: def.sessionless, credential: None, purpose: 0, author: None, reply: Some(reply) };
+                let pending = Pending { request_id, sequence, operation, path: def.path, body, sessionless: def.sessionless, credential: None, purpose: 0, author: None, owner: None, reply: Some(reply) };
                 self.persist(pending, out);
             }
-            Queued::Mutate { author, req_id, path, body, purpose } => {
+            Queued::Mutate { author, owner, req_id, path, body, purpose } => {
                 let Some(credential) = self.credential.clone() else {
                     out.effects.push(Effect::Answer { author, req_id, outcome: Outcome::Error(Fail::NoSession) });
                     self.idle(out);
                     return;
                 };
                 self.call_epoch = self.epoch;
-                let pending = Pending { request_id: req_id, sequence: credential.sequence + 1, operation: String::new(), path, body, sessionless: false, credential: None, purpose, author: Some(author), reply: None };
+                let pending = Pending { request_id: req_id, sequence: credential.sequence + 1, operation: String::new(), path, body, sessionless: false, credential: None, purpose, author: Some(author), owner, reply: None };
                 self.persist(pending, out);
             }
         }
@@ -255,7 +266,8 @@ impl Session {
                     None => self.state = State::Idle,
                     Some(pending) => {
                         self.next_request = self.next_request.max(pending.request_id + 1);
-                        let pending = Pending { reply: None, ..pending };
+                        let author = pending.owner.as_ref().map(author_of).or(pending.author);
+                        let pending = Pending { reply: None, author, ..pending };
                         if self.online { out.effects.push(Effect::HttpRequest { pending: pending.clone() }); }
                         self.state = State::Calling { pending, attempts: 0, sent: self.online };
                     }
@@ -263,19 +275,19 @@ impl Session {
             }
             (state, Input::Open { .. }) => self.state = state,
             (State::Idle, Input::SessionCall { operation, body, reply }) => self.begin(Queued::Call { operation, body, reply }, &mut out),
-            (State::Idle, Input::Mutate { author, req_id, path, body, purpose }) => self.begin(Queued::Mutate { author, req_id, path, body, purpose }, &mut out),
+            (State::Idle, Input::Mutate { author, owner, req_id, path, body, purpose }) => self.begin(Queued::Mutate { author, owner, req_id, path, body, purpose }, &mut out),
             (state @ (State::Generating { .. } | State::Persisting { .. } | State::Calling { .. } | State::Landing { .. }), Input::SessionCall { operation, body, reply }) => {
                 self.state = state;
                 self.queue.push_back(Queued::Call { operation, body, reply });
             }
-            (state @ (State::Generating { .. } | State::Persisting { .. } | State::Calling { .. } | State::Landing { .. }), Input::Mutate { author, req_id, path, body, purpose }) => {
+            (state @ (State::Generating { .. } | State::Persisting { .. } | State::Calling { .. } | State::Landing { .. }), Input::Mutate { author, owner, req_id, path, body, purpose }) => {
                 self.state = state;
-                self.queue.push_back(Queued::Mutate { author, req_id, path, body, purpose });
+                self.queue.push_back(Queued::Mutate { author, owner, req_id, path, body, purpose });
             }
             (State::Generating { call: Queued::Call { operation, body, reply } }, Input::CredentialGenerated(credential)) => {
                 let def = self.operations.iter().find(|def| def.name == operation).cloned().expect("a generating call is declared");
                 let request_id = self.request();
-                let pending = Pending { request_id, sequence: 1, operation, path: def.path, body, sessionless: false, credential: Some(credential), purpose: 0, author: None, reply: Some(reply) };
+                let pending = Pending { request_id, sequence: 1, operation, path: def.path, body, sessionless: false, credential: Some(credential), purpose: 0, author: None, owner: None, reply: Some(reply) };
                 self.persist(pending, &mut out);
             }
             (State::Idle, Input::EpochEnded { cause, .. }) => {

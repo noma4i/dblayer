@@ -42,18 +42,22 @@ impl SessionRunner {
     /// What `Open` of the owner takes: the stored `encrypted_session` (signed in when its sequence is above 0) and the stored `encrypted_pending`.
     pub fn stored(client: &EncryptedClient) -> Result<(Option<Credential>, Option<PendingCall>), TransportError> {
         let credential = client.stored_session()?.filter(|session| session.sequence > 0).and_then(|session| crate::store::identity_of(&session.credential_digest).map(|digest| Credential { digest, sequence: u64::try_from(session.sequence).unwrap_or(0) }));
+        let operations = client.session_operations();
         let pending = client.stored_pending()?.and_then(|row| {
             let request_id = row.request_id.parse().ok()?;
+            let sessionless = row.credential_digest.is_empty();
+            let operation = operations.iter().find(|def| def.path == row.path && row.owner.is_none()).map(|def| def.name.clone()).unwrap_or_default();
             Some(PendingCall {
                 request_id,
                 sequence: u64::try_from(row.sequence).ok()?,
-                operation: String::new(),
+                operation,
                 path: row.path,
                 body: row.body,
-                sessionless: row.credential_digest.is_empty(),
+                sessionless,
                 credential: None,
                 purpose: u8::from(row.purpose == NetworkPurpose::Transfer),
-                author: None,
+                author: row.owner.as_ref().map(crate::owners::session::author_of),
+                owner: row.owner,
                 reply: None,
             })
         });
