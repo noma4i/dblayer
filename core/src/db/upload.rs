@@ -43,12 +43,12 @@ impl Drop for UploadFiles<'_> {
 }
 
 impl Db {
-    pub(crate) fn expire_blobs_before_use(&self, admitted: &crate::lifecycle::Admitted) -> Result<(), DbError> {
+    pub(crate) fn expire_blobs_before_use(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<(), DbError> {
         let failed_due = self.shared.store.lock().now_ms().saturating_sub(self.shared.blob_failed_ttl_ms.load(std::sync::atomic::Ordering::Relaxed));
         self.expire_blob_cache(admitted, failed_due)
     }
 
-    pub(crate) fn expire_blob_cache(&self, admitted: &crate::lifecycle::Admitted, failed_due: i64) -> Result<(), DbError> {
+    pub(crate) fn expire_blob_cache(&self, admitted: &crate::ffi::legacy::Admitted, failed_due: i64) -> Result<(), DbError> {
         let ready_due = self.shared.store.lock().now_ms().saturating_sub(crate::upload::BLOB_LIFETIME_MS);
         let due = self.shared.read(&[], |reader| Ok(crate::store::blob::due(reader.connection(), ready_due, failed_due)?))?;
         if due.is_empty() { return Ok(()); }
@@ -63,7 +63,7 @@ impl Db {
     }
 
     // Preparation closures only copy files and reserve deferred commits; they must not publish or call foreign code.
-    pub(crate) fn prepare_blob<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, admitted: &crate::lifecycle::Admitted, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
+    pub(crate) fn prepare_blob<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, admitted: &crate::ffi::legacy::Admitted, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
         if !std::sync::Arc::ptr_eq(&self.shared.store.lifecycle, admitted.life()) { return Err(DbError::NoSession { detail: "the admission belongs to another database".into() }.into()); }
         let _gate = locked(&self.shared.files_gate);
         self.shared.store.lock().ensure_generation(&admitted.authority(), generation).map_err(DbError::from)?;
@@ -83,7 +83,7 @@ impl Db {
         crate::store::blob::snapshot(&store.connection, id)?.ok_or_else(|| DbError::InvalidUpload("unknown Blob in this database".into()))
     }
 
-    pub(crate) fn preparing_uploads<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, admitted: &crate::lifecycle::Admitted, model: &str, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, Generation, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
+    pub(crate) fn preparing_uploads<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, admitted: &crate::ffi::legacy::Admitted, model: &str, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, Generation, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
         if !std::sync::Arc::ptr_eq(&self.shared.store.lifecycle, admitted.life()) { return Err(DbError::NoSession { detail: "the admission belongs to another database".into() }.into()); }
         let spec = self.shared.spec(model)?;
         if spec.is_local() || spec.is_memory() {

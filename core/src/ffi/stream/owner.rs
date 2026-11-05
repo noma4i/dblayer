@@ -4,7 +4,7 @@ use statig::blocking::InitializedStateMachine;
 
 use crate::db::dispatch::OrderedEffects;
 use crate::db::locked;
-use crate::lifecycle::{Admitted, Change, Holder, Lifecycle, Origin, Registration, Snapshot, Stamp};
+use crate::ffi::legacy::{Admitted, Change, Holder, Leases, Origin, Registration, Snapshot, Stamp};
 use crate::sync::{FirstScreenHold, RelationState};
 use super::machine::{self, Context, Facts, Fixed, Input};
 use super::open::Handles;
@@ -33,7 +33,7 @@ impl Drop for Stream {
 fn interrupted() -> DbError { DbError::Interrupted { detail: "initial load cancelled".into() } }
 
 impl Stream {
-    pub(in crate::ffi) fn new(id: u64, epoch: u64, life: Arc<Lifecycle>, table: &Arc<StreamTable>, sink: Arc<dyn ValueSink>, request: Request) -> Arc<Self> {
+    pub(in crate::ffi) fn new(id: u64, epoch: u64, life: Arc<Leases>, table: &Arc<StreamTable>, sink: Arc<dyn ValueSink>, request: Request) -> Arc<Self> {
         let fixed = Fixed { life, calls: Arc::new(crate::db::CallState::new()) };
         let machine = machine::machine(sink, &fixed);
         Arc::new(Self {

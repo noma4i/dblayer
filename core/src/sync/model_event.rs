@@ -8,7 +8,7 @@ use super::{locked, Inner, Sync};
 /// A source event as it was received: the database state at that moment, its area and its kind.
 #[derive(Clone, Copy)]
 pub(crate) struct Heard<'a> {
-    pub stamp: crate::lifecycle::Stamp,
+    pub stamp: crate::ffi::legacy::Stamp,
     pub area: &'a str,
     pub kind: &'a str,
 }
@@ -26,7 +26,7 @@ pub struct ModelEvent {
 /// A reader of the events of one model. The source hands it each event with the database state at the moment the event was received, and each event it could not read.
 pub(crate) trait EventReader: Send + std::marker::Sync {
     fn model(&self) -> &str;
-    fn heard(&self, event: &ModelEvent, stamp: crate::lifecycle::Stamp);
+    fn heard(&self, event: &ModelEvent, stamp: crate::ffi::legacy::Stamp);
     fn unread(&self, count: u64);
 }
 
@@ -44,7 +44,7 @@ impl Inner {
     }
 
     /// `stamp` is the database state at the moment the source event was received, never the one at publication.
-    pub(crate) fn publish_model_event(&self, stamp: crate::lifecycle::Stamp, event: ModelEvent) {
+    pub(crate) fn publish_model_event(&self, stamp: crate::ffi::legacy::Stamp, event: ModelEvent) {
         for reader in self.readers_of(&event.model) { reader.heard(&event, stamp); }
     }
 

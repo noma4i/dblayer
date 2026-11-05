@@ -128,7 +128,7 @@ impl<'a> Retrying<'a> {
     }
 }
 
-pub(crate) async fn query(admitted: &crate::lifecycle::Admitted, transport: &dyn Transport, request: GraphQLRequest, clock: &dyn Clock, online: &Connectivity, called: impl Fn()) -> Result<(Response, u32), TransportError> {
+pub(crate) async fn query(admitted: &crate::ffi::legacy::Admitted, transport: &dyn Transport, request: GraphQLRequest, clock: &dyn Clock, online: &Connectivity, called: impl Fn()) -> Result<(Response, u32), TransportError> {
     if transport.retries_queries() {
         called();
         crate::db::lock::assert_no_library_lock("Transport::query");

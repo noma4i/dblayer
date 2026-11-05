@@ -1033,7 +1033,7 @@ async fn a_missed_revision_gives_one_new_snapshot() {
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::await_holding_lock)]
 async fn a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row() {
-    use crate::lifecycle::{Boundary, End};
+    use crate::ffi::legacy::{Boundary, End};
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
@@ -1206,7 +1206,7 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
     let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
     assert_eq!(rig.database.session_epoch(), epoch);
-    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.session_from(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
+    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session_in_tests(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
     yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while the commit of the send was held");
     release_tx.send(()).unwrap();
@@ -1231,7 +1231,7 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
 #[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::await_holding_lock)]
 async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing() {
-    use crate::lifecycle::{Boundary, End};
+    use crate::ffi::legacy::{Boundary, End};
     let rig = Rig::encrypted().await;
     rig.world.seed_message("B", "b1", "hello", 1);
     rig.login_ios("A").await;
@@ -1827,7 +1827,7 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     let running = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "profile".into(), "{}".into()).await }) };
     gate.entered_for("the accepted request").await;
     let store = &rig.database.db.shared.store;
-    let moved = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.session_from(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
+    let moved = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session_in_tests(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
     assert!(bound(moved).await.unwrap(), "the session start of the other identity did not begin");
     assert_ne!(rig.database.session_epoch(), epoch);
     gate.release();
@@ -1855,7 +1855,7 @@ async fn a_queued_message_of_a_never_goes_out_when_another_identity_takes_the_se
     let expired = Arc::new(AtomicBool::new(false));
     let release_expired = expired.clone();
     *rig.database.db.shared.store.lifecycle.after_publish.lock().unwrap() = Some(Box::new(move || { opened.send(()).unwrap(); if release.recv_timeout(std::time::Duration::from_secs(20)).is_err() { release_expired.store(true, Ordering::SeqCst); } }));
-    let switched = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || { let lifecycle = &database.db.shared.store.lifecycle; lifecycle.session_from(Some("another-account".into()), lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok() }) };
+    let switched = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || { let lifecycle = &database.db.shared.store.lifecycle; lifecycle.start_session_in_tests(Some("another-account".into()), lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok() }) };
     tokio::task::spawn_blocking(move || opened_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
     assert_ne!(rig.database.session_epoch(), epoch, "the new epoch was not published");
     rig.database.set_online(true).unwrap();
@@ -2070,7 +2070,7 @@ async fn a_public_flush_holds_the_commit_line_of_its_epoch_while_it_commits() {
     let flushing = { let database = rig.database.clone(); tokio::spawn(async move { database.flush().await }) };
     tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
     let waits = *store.lifecycle.begin_waits.0.lock().unwrap();
-    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.session_from(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
+    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session_in_tests(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
     yield_until("the session start reached the commit line", || *store.lifecycle.begin_waits.0.lock().unwrap() > waits).await;
     assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while a commit of the flush was held");
     release_tx.send(()).unwrap();

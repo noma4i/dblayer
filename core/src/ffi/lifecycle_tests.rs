@@ -250,7 +250,7 @@ async fn a_confirmed_logout_that_reaches_the_commit_after_the_close_clears_nothi
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ending_the_session_of_an_older_epoch_ends_nothing() {
-    use crate::lifecycle::{Boundary, End, Refused};
+    use crate::ffi::legacy::{Boundary, End, Refused};
     let database = open(Arc::new(Server::default())).await;
     let lifecycle = database.db.shared.store.lifecycle.clone();
     database.session_reset().await.unwrap();

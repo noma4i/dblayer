@@ -71,7 +71,7 @@ impl LoadOutcome {
 }
 
 pub(crate) struct Resolved<'a> {
-    pub origin: crate::lifecycle::Origin,
+    pub origin: crate::ffi::legacy::Origin,
     pub media: Option<&'a crate::schema::MediaSpec>,
     pub members_complete: bool,
     pub node_reread: bool,
@@ -100,7 +100,7 @@ impl Resolved<'_> {
 struct Flight {
     key: String,
     token: u64,
-    origin: crate::lifecycle::Origin,
+    origin: crate::ffi::legacy::Origin,
     model: String,
     relation: String,
     params: Map<String, Value>,
@@ -213,7 +213,7 @@ impl Drop for FlightGuard<'_> {
 }
 
 impl Inner {
-    pub(crate) async fn load_scope(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, force: bool) -> FlightResult {
+    pub(crate) async fn load_scope(self: &Arc<Self>, admitted: &crate::ffi::legacy::Admitted, resolved: &Resolved<'_>, force: bool) -> FlightResult {
         if resolved.members_complete || resolved.media.is_some() {
             self.load_members(admitted, resolved, force).await?;
             return Ok(LoadOutcome::of(LoadStatus::Loaded));
@@ -221,7 +221,7 @@ impl Inner {
         self.fetch(admitted, resolved, None, force).await
     }
 
-    pub(crate) fn resolve(&self, origin: crate::lifecycle::Origin, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Resolved<'_>, SyncError> {
+    pub(crate) fn resolve(&self, origin: crate::ffi::legacy::Origin, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Resolved<'_>, SyncError> {
         let spec = self.db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
         let declared = spec
             .relations
@@ -300,15 +300,15 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn fetch(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
+    pub(crate) async fn fetch(&self, admitted: &crate::ffi::legacy::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool) -> FlightResult {
         match self.fetch_in(resolved, cursor, force, admitted).await {
-            Ok(outcome) if resolved.origin == crate::lifecycle::Origin::Explicit && outcome.status == LoadStatus::Discarded(DiscardReason::StaleGeneration) => Err(crate::lifecycle::Ended.into()),
+            Ok(outcome) if resolved.origin == crate::ffi::legacy::Origin::Explicit && outcome.status == LoadStatus::Discarded(DiscardReason::StaleGeneration) => Err(crate::ffi::legacy::Ended.into()),
             result => result,
         }
     }
 
     /// Joins the flight of the key or starts it. The flight runs as its own task with its own lease and ends with one result for every caller that waits; it stops when the last caller left.
-    async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted) -> FlightResult {
+    async fn fetch_in(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::ffi::legacy::Admitted) -> FlightResult {
         let Some(this) = self.this.get().and_then(std::sync::Weak::upgrade) else { return Err(SyncError::Cancelled) };
         let generation = self.db.generation();
         let flight_key = match &cursor {
@@ -391,7 +391,7 @@ impl Inner {
     }
 
     /// The one run of a flight. Its guard ends the flight with the result, or as abandoned when the task stops before.
-    async fn fly(self: Arc<Self>, flight: Flight, sender: watch::Sender<Option<FlightEnd>>, lease: crate::lifecycle::Admitted) {
+    async fn fly(self: Arc<Self>, flight: Flight, sender: watch::Sender<Option<FlightEnd>>, lease: crate::ffi::legacy::Admitted) {
         let mut guard = FlightGuard { inner: &self, key: flight.key.clone(), sender: Some(sender), token: flight.token };
         let resolved = match self.resolve(flight.origin, &flight.model, &flight.relation, &flight.params) {
             Ok(mut resolved) => { resolved.node_reread = flight.node_reread; resolved }
@@ -424,14 +424,14 @@ impl Inner {
         guard.finish(result);
     }
 
-    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::lifecycle::Admitted, generation: crate::identity::Generation) -> Executed {
+    async fn execute_bound(&self, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, lease: &crate::ffi::legacy::Admitted, generation: crate::identity::Generation) -> Executed {
         match lease.run(self.execute(lease, resolved, cursor, force, generation)).await {
             Ok(executed) => executed,
             Err(ended) => Executed::Failed(ended.into()),
         }
     }
 
-    async fn execute(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, generation: crate::identity::Generation) -> Executed {
+    async fn execute(&self, admitted: &crate::ffi::legacy::Admitted, resolved: &Resolved<'_>, cursor: Option<String>, force: bool, generation: crate::identity::Generation) -> Executed {
         let loaded = if let Some(media) = resolved.media { self.media_load(admitted, resolved, media, generation).await } else { self.run(admitted, resolved, cursor, force, generation).await };
         match loaded {
             Ok(executed) => executed,
@@ -439,7 +439,7 @@ impl Inner {
         }
     }
 
-    async fn run(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool, generation: crate::identity::Generation) -> Result<Executed, SyncError> {
+    async fn run(&self, admitted: &crate::ffi::legacy::Admitted, resolved: &Resolved<'_>, mut cursor: Option<String>, force: bool, generation: crate::identity::Generation) -> Result<Executed, SyncError> {
         let attempt = self.begin_attempt(&resolved.window_key, generation)?;
         let has_window = crate::blocking::blocking_unit(|| self.db.shared.store.window(&resolved.window_key))?.is_some();
         let variables = load_variables(&resolved.params, &resolved.remote.shape, resolved.page_size(), cursor.as_deref(), &resolved.remote.variables);
@@ -504,11 +504,11 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn query_with_retry(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
+    pub(crate) async fn query_with_retry(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<(Response, u32), SyncError> {
         self.query_with_cursor_error(admitted, request, false).await
     }
 
-    async fn query_with_cursor_error(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest, return_invalid_cursor: bool) -> Result<(Response, u32), SyncError> {
+    async fn query_with_cursor_error(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest, return_invalid_cursor: bool) -> Result<(Response, u32), SyncError> {
         let (response, attempts) = tokio::select! {
             biased;
             () = self.connectivity.offline() => return Err(SyncError::Offline),
@@ -522,7 +522,7 @@ impl Inner {
         Err(SyncError::Graphql { messages, extensions: response.extensions() })
     }
 
-    pub(crate) async fn load_more(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>) -> FlightResult {
+    pub(crate) async fn load_more(&self, admitted: &crate::ffi::legacy::Admitted, resolved: &Resolved<'_>) -> FlightResult {
         let RemoteShape::Connection { max_pages, .. } = resolved.remote.shape else {
             return Err(SyncError::NotPaged { model: resolved.model.clone(), relation: resolved.scope.key.to_string() });
         };
@@ -546,11 +546,11 @@ impl Inner {
 impl Sync {
     #[cfg(test)]
     pub fn window_key(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<String, SyncError> {
-        Ok(self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?.window_key)
+        Ok(self.inner.resolve(crate::ffi::legacy::Origin::Session, model, relation, params)?.window_key)
     }
 
     pub fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<std::collections::BTreeMap<String, Map<String, Value>>, SyncError> {
-        let resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?;
+        let resolved = self.inner.resolve(crate::ffi::legacy::Origin::Session, model, relation, params)?;
         let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
         let read = self.inner.db.shared.store.read(&[model], |reader| reader.scope_edges(model, resolved.scope.key.as_str(), &wanted))?;
         {
@@ -581,21 +581,21 @@ impl Sync {
 
     /// The interest of one caller in the load of a scope, taken before the load starts.
     pub(crate) fn interest(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Interest, SyncError> {
-        let key = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?.window_key;
+        let key = self.inner.resolve(crate::ffi::legacy::Origin::Explicit, model, relation, params)?.window_key;
         Ok(Interest::new(&self.inner, &key))
     }
 
-    pub async fn load(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
+    pub async fn load(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<LoadOutcome, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
-        let resolved = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?;
+        let resolved = self.inner.resolve(crate::ffi::legacy::Origin::Explicit, model, relation, params)?;
         self.inner.load_scope(admitted, &resolved, options.force).await
     }
 
-    pub async fn load_more(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
+    pub async fn load_more(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
-        let resolved = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?;
+        let resolved = self.inner.resolve(crate::ffi::legacy::Origin::Explicit, model, relation, params)?;
         self.inner.load_more(admitted, &resolved).await
     }
 }

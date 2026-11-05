@@ -19,7 +19,7 @@ impl super::super::Inner {
         Ok((operation, request))
     }
 
-    pub(super) async fn send_transfer(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<crate::transport::Response, TransportError> {
+    pub(super) async fn send_transfer(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<crate::transport::Response, TransportError> {
         let name = request.operation_name.clone();
         locked(&self.counters).record_transport_call();
         crate::db::lock::assert_no_library_lock("Transport::mutate");

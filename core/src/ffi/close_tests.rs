@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
-use crate::lifecycle::{Holder, Lifecycle};
+use crate::ffi::legacy::{Holder, Lifecycle};
 use super::open_slot::OpenSlot;
 use super::stream::tape::Rows;
 use super::{Config, Database, DbError, StreamEnd, StreamRequest};
@@ -13,13 +13,13 @@ use crate::test_wait::{join_within, within, yield_until};
 use crate::transport::{MockTransport, SubscriptionEvent};
 use crate::value::ScalarKind;
 
-struct Counting(AtomicUsize, Option<Arc<Lifecycle>>, Mutex<Vec<usize>>, std::sync::OnceLock<crate::lifecycle::Registration>);
+struct Counting(AtomicUsize, Option<Arc<Lifecycle>>, Mutex<Vec<usize>>, std::sync::OnceLock<crate::ffi::legacy::Registration>);
 impl Holder for Counting {
     fn close(&self) {
         self.0.fetch_add(1, Ordering::SeqCst);
         if let Some(streams) = &self.1 { crate::db::locked(&self.2).push(streams.enrolled()); }
     }
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.3 }
+    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.3 }
 }
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
@@ -156,13 +156,13 @@ struct Journal {
     log: Mutex<Vec<String>>,
     hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     entered: std::sync::mpsc::Sender<()>,
-    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
 }
 
 impl Holder for Journal {
     fn close(&self) {}
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
-    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
+    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
+    fn changed(&self, snapshot: &crate::ffi::legacy::Snapshot) {
         let held = self.hold.lock().unwrap().take();
         if let Some(release) = held {
             self.entered.send(()).unwrap();
@@ -174,14 +174,14 @@ impl Holder for Journal {
 
 #[test]
 fn a_transition_returns_after_its_callbacks_ran_even_while_another_thread_delivers() {
-    use crate::lifecycle::Change;
+    use crate::ffi::legacy::Change;
     let streams = Arc::new(Lifecycle::default());
     let (entered, entered_receiver) = std::sync::mpsc::channel();
     let (release, release_receiver) = std::sync::mpsc::channel();
     let journal = Arc::new(Journal { log: Mutex::default(), hold: Mutex::new(Some(release_receiver)), entered, registration: Default::default() });
     let at_enrollment = streams.enroll(&journal);
     assert!(at_enrollment.session.is_none() && !at_enrollment.closed);
-    let content = |models: Option<Vec<String>>| { let streams = streams.clone(); std::thread::spawn(move || { let permit = streams.begin_blocking(crate::lifecycle::Boundary::Content, None).unwrap(); permit.defer(Change::Cleared(models)); permit.finish(); }) };
+    let content = |models: Option<Vec<String>>| { let streams = streams.clone(); std::thread::spawn(move || { let permit = streams.begin_blocking(crate::ffi::legacy::Boundary::Content, None).unwrap(); permit.defer(Change::Cleared(models)); permit.finish(); }) };
     let delivering = content(None);
     entered_receiver.recv_timeout(std::time::Duration::from_secs(5)).expect("the first callback started");
     let ending = content(Some(Vec::new()));
@@ -202,8 +202,8 @@ fn a_transition_walks_only_the_holders_open_now() {
     let open: Vec<_> = (0..3).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
     for member in &open { streams.enroll(member); }
     let before = streams.work();
-    let permit = streams.begin_blocking(crate::lifecycle::Boundary::Content, None).unwrap();
-    permit.defer(crate::lifecycle::Change::Cleared(None));
+    let permit = streams.begin_blocking(crate::ffi::legacy::Boundary::Content, None).unwrap();
+    permit.defer(crate::ffi::legacy::Change::Cleared(None));
     permit.finish();
     assert_eq!(streams.work() - before, 3, "a reset visited holders that were closed long ago");
 }
@@ -212,7 +212,7 @@ struct Blocking {
     entered: std::sync::mpsc::Sender<()>,
     hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
     closed: AtomicUsize,
-    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
 }
 
 impl Holder for Blocking {
@@ -224,7 +224,7 @@ impl Holder for Blocking {
         }
         self.closed.fetch_add(1, Ordering::SeqCst);
     }
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -253,7 +253,7 @@ struct Reentering {
     database: Mutex<Option<Arc<Database>>>,
     slot: Arc<OpenSlot>,
     slot_taken_inside: AtomicUsize,
-    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
 }
 
 impl Holder for Reentering {
@@ -264,7 +264,7 @@ impl Holder for Reentering {
             self.slot_taken_inside.store(usize::from(self.slot.acquire().is_err()), Ordering::SeqCst);
         }
     }
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -3,7 +3,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-use crate::lifecycle::{Boundary, Change, Permit};
 use crate::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ListKey;
@@ -277,90 +276,37 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
 }
 
 impl Store {
-    /// Records that a session end began, before anything is cleared. A crash before the clearing ends is replayed at the next open: the data is wiped and the credential cleared.
-    pub(crate) fn write_session_end_intent(&self, _permit: &Permit) -> Result<(), StoreError> {
-        let inner = self.lock();
-        let now = inner.now_ms();
-        write_intent(&inner.connection, "session_end", &[], now)
-    }
-
     /// True once after an open that finished an interrupted session end: the credential is still to clear.
     pub(crate) fn take_session_end_replay(&self) -> bool {
         self.session_end_replay.swap(false, std::sync::atomic::Ordering::SeqCst)
-    }
-
-    pub fn reset_cache_only(&self, models: &[&str]) -> Result<(), StoreError> {
-        let permit = self.lifecycle.begin_blocking(Boundary::Models, None).map_err(StoreError::refused)?;
-        self.reset_cache_only_held(&permit, models)?.run();
-        permit.finish();
-        Ok(())
-    }
-
-    pub(crate) fn reset_cache_only_held(&self, permit: &Permit, models: &[&str]) -> Result<ResetCommitted<'_>, StoreError> {
-        let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
-        let mut inner = self.lock();
-        let tables: Vec<(String, String)> = models
-            .iter()
-            .map(|model| inner.model(model).map(|info| (model.to_string(), info.table.clone())))
-            .collect::<Result<_, _>>()?;
-        inner.generation = permit.next_generation();
-        let now = inner.now_ms();
-        let names: Vec<String> = models.iter().map(|model| model.to_string()).collect();
-        write_intent(&inner.connection, "cache_only", &names, now)?;
-        let transaction = inner.connection.unchecked_transaction()?;
-        for (model, table) in &tables {
-            wipe_model_cache(&transaction, model, table, false)?;
-        }
-        retire_operations(&transaction, Some(&names), None)?;
-        let revision = bump_revision(&transaction)?;
-        clear_intent(&transaction)?;
-        let operations = crate::operation::read_queue(&transaction)?;
-        transaction.commit()?;
-        *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
-        drop(readers);
-        permit.defer(Change::Cleared(Some(names.clone())));
-        let event = StoreEvent::Reset { revision, models: Some(names.clone()), operations: operations.clone() };
-        if let Some(log) = self.commit_log.get() { log(&event); }
-        let ticket = self.line.ticket();
-        drop(inner);
-        Ok(ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(names), operations })
-    }
-
-    pub fn reset_incompatible(&self) -> Result<(), StoreError> {
-        let permit = self.lifecycle.begin_blocking(Boundary::Content, None).map_err(StoreError::refused)?;
-        self.reset_incompatible_held(&permit)?.run();
-        permit.finish();
-        Ok(())
-    }
-
-    pub(crate) fn reset_incompatible_held(&self, permit: &Permit) -> Result<ResetCommitted<'_>, StoreError> {
-        let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
-        let mut inner = self.lock();
-        inner.generation = permit.next_generation();
-        let now = inner.now_ms();
-        write_intent(&inner.connection, if matches!(permit.boundary(), Boundary::SessionEnd(_)) { "session_end" } else { "incompatible" }, &[], now)?;
-        let transaction = inner.connection.unchecked_transaction()?;
-        wipe_all_cache(&transaction, false)?;
-        retire_operations(&transaction, None, None)?;
-        manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
-        let revision = bump_revision(&transaction)?;
-        clear_intent(&transaction)?;
-        let operations = crate::operation::read_queue(&transaction)?;
-        transaction.commit()?;
-        *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
-        drop(readers);
-        permit.defer(Change::Cleared(None));
-        let event = StoreEvent::Reset { revision, models: None, operations: operations.clone() };
-        if let Some(log) = self.commit_log.get() { log(&event); }
-        let ticket = self.line.ticket();
-        drop(inner);
-        Ok(ResetCommitted { store: self, ticket: Some(ticket), revision, models: None, operations })
     }
 
     #[cfg(test)]
     pub fn reset_intent(&self) -> Result<Option<String>, StoreError> {
         let inner = self.lock();
         pending_intent(&inner.connection)
+    }
+}
+
+#[cfg(test)]
+impl Store {
+    /// The clearing the executor does for `ClearModels`, for the tests that run without the owners: the cache of the models goes, the generation moves and the leases hear it.
+    pub(crate) fn clear_models_in_tests(&self, models: &[&str]) -> Result<(), StoreError> {
+        let generation = self.generation().next();
+        let names: Vec<String> = models.iter().map(|model| model.to_string()).collect();
+        self.erase_models(generation, &names)?;
+        self.lifecycle.models_reset(generation.value(), &names);
+        Ok(())
+    }
+
+    /// The clearing the executor does for `ClearAccount` without the credential tables, for the tests that run without the owners: the epoch ends and the next one starts without a session.
+    pub(crate) fn clear_account_in_tests(&self) -> Result<(), StoreError> {
+        let generation = self.generation().next();
+        self.lifecycle.epoch_ended(crate::runtime::Cause::IdentityChanged);
+        self.erase_account(generation, false)?;
+        let epoch = self.lifecycle.snapshot().session_epoch + 1;
+        self.lifecycle.published(&crate::owners::contract::Published { epoch, identity: None, generation: generation.value(), closed: false });
+        Ok(())
     }
 }
 

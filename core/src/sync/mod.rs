@@ -161,7 +161,7 @@ impl Default for JoinedLoads {
 
 pub(crate) struct Inner {
     stopped: watch::Receiver<bool>,
-    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
     registered: std::sync::atomic::AtomicBool,
     this: std::sync::OnceLock<std::sync::Weak<Inner>>,
     pub db: Db,
@@ -259,7 +259,7 @@ pub struct Sync {
 }
 
 struct Lifetime {
-    lifecycle: Arc<crate::lifecycle::Lifecycle>,
+    lifecycle: Arc<crate::ffi::legacy::Leases>,
     closer: Arc<Closer>,
 }
 
@@ -267,16 +267,16 @@ struct Lifetime {
 struct Closer {
     stop: watch::Sender<bool>,
     owner: Arc<load_owner::LoadOwner>,
-    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
 }
 
-impl crate::lifecycle::Holder for Closer {
+impl crate::ffi::legacy::Holder for Closer {
     fn close(&self) {
         crate::db::lock::effect(|| self.stop.send_replace(true));
         self.owner.submit(load_machine::Event::Close);
     }
 
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
 }
 
 impl Drop for Lifetime {
@@ -374,11 +374,6 @@ impl Sync {
         this.inner.preload.attach(preloads.clone());
         let _ = this.inner.this.set(preloads.clone());
         this.inner.owner.on_reload(Arc::new(move |target, since| { if let Some(inner) = preloads.upgrade() { inner.spawn_retry(target, load_machine::LoadKind::Refresh, Some(since)); } }));
-        if let Ok(session) = this.inner.transport.session() {
-            if let Ok(admitted) = this.inner.db.admit() {
-                let _ = this.inner.db.shared.store.lifecycle.session_from(session, admitted);
-            }
-        }
         locked(&this.inner.account).0 = this.inner.db.shared.store.lifecycle.snapshot().session;
         this.inner.db.shared.store.lifecycle.enroll(&this.inner);
         this
@@ -407,19 +402,19 @@ impl Sync {
     }
 }
 
-impl crate::lifecycle::Holder for Inner {
+impl crate::ffi::legacy::Holder for Inner {
     fn close(&self) {}
 
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
+    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
 
     fn session_starting(&self, session: Option<&str>) {
         if let Some(inner) = self.this.get().and_then(std::sync::Weak::upgrade) { inner.account_changed(session); }
     }
 
-    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
+    fn changed(&self, snapshot: &crate::ffi::legacy::Snapshot) {
         let Some(inner) = self.this.get().and_then(std::sync::Weak::upgrade) else { return };
         match &snapshot.change {
-            crate::lifecycle::Change::Cleared(models) => {
+            crate::ffi::legacy::Change::Cleared(models) => {
                 self.owner.reset(models.as_deref());
                 self.reset_live_ready();
                 self.reopen_live();
@@ -427,13 +422,13 @@ impl crate::lifecycle::Holder for Inner {
                 if models.is_none() { inner.end_uploads_of_reset(); }
                 inner.preload_on_event();
             }
-            crate::lifecycle::Change::SessionStarted(_) | crate::lifecycle::Change::SessionEnded => {
-                if matches!(snapshot.change, crate::lifecycle::Change::SessionEnded) { inner.cancel_uploads(); }
+            crate::ffi::legacy::Change::SessionStarted(_) | crate::ffi::legacy::Change::SessionEnded => {
+                if matches!(snapshot.change, crate::ffi::legacy::Change::SessionEnded) { inner.cancel_uploads(); }
                 inner.preload_session();
                 if snapshot.session.is_some() {
                     inner.refresh_due_entities(true);
                     inner.preload_on_event();
-                    if let Ok(admitted) = self.db.shared.store.lifecycle.admit_session_at(crate::lifecycle::Origin::Session, "resume", snapshot.session_epoch) {
+                    if let Ok(admitted) = self.db.shared.store.lifecycle.admit_session_at(crate::ffi::legacy::Origin::Session, "resume", snapshot.session_epoch) {
                         let _ = inner.request_resume(&admitted, resume_machine::Cause::Explicit, None);
                     }
                     inner.spawn_flush(Duration::ZERO);

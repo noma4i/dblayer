@@ -296,7 +296,7 @@ fn unknown_model_is_a_plan_error_without_poison() {
 fn stale_generation_envelope_is_rejected_before_any_write() {
     let (store, _) = booted_store();
     let stale = envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
-    store.reset_incompatible().unwrap();
+    store.clear_account_in_tests().unwrap();
     let error = store.commit(stale).unwrap_err();
     assert!(matches!(error, StoreError::Envelope(EnvelopeFault::StaleGeneration)));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 0);
@@ -326,7 +326,7 @@ fn second_apply_failure_poisons_reads_until_reset() {
             store.commit(envelope(&store, vec![upsert("items", json!({"id": "i1"}))], vec![])),
             Err(StoreError::Poisoned(_))
         ));
-        store.reset_incompatible().unwrap();
+        store.clear_account_in_tests().unwrap();
         assert!(store.apply_failure().is_none());
         assert!(store.point("items", "i1").unwrap().is_none());
     }
@@ -366,7 +366,7 @@ fn commit_with_plan_error_writes_nothing_and_none_is_a_noop() {
 fn commit_with_rejects_stale_generation_before_planning() {
     let (store, _) = booted_store();
     let old = store.generation();
-    store.reset_incompatible().unwrap();
+    store.clear_account_in_tests().unwrap();
     let mut planned = false;
     let outcome = store.commit_prepared(old, |_| {
         planned = true;

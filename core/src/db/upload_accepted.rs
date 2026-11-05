@@ -27,7 +27,7 @@ impl Db {
         *locked(&self.shared.upload_accepted) = Some(sink);
     }
 
-    pub(crate) fn report_upload_accepted(&self, admitted: &crate::lifecycle::Admitted, model: &str, items: Vec<AcceptedUpload>) {
+    pub(crate) fn report_upload_accepted(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, items: Vec<AcceptedUpload>) {
         let Some(sink) = locked(&self.shared.upload_accepted).clone() else { return };
         let group = UploadAccepted { epoch: admitted.value(), model: model.to_string(), items };
         let accepted = {
@@ -54,7 +54,7 @@ impl Db {
         })
     }
 
-    pub fn note_background_refused(&self, admitted: &crate::lifecycle::Admitted, items: &[AcceptedUpload], detail: &str) -> Result<usize, DbError> {
+    pub fn note_background_refused(&self, admitted: &crate::ffi::legacy::Admitted, items: &[AcceptedUpload], detail: &str) -> Result<usize, DbError> {
         let generation = self.generation();
         let mut noted = 0;
         self.commit_following(&admitted.authority(), generation, |reader| {

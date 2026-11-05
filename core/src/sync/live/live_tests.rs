@@ -392,7 +392,7 @@ fn a_committed_credential_starts_the_model_subscriptions_and_the_end_of_the_sess
     rig.transport.set_session(Some("first"));
     rig.sync.commit_session_for_test();
     rig.transport.await_calls("MomentListen", 1).await;
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1, "logout");
     rig.transport.set_session(Some("second"));
@@ -435,7 +435,7 @@ fn allowing_listening_without_a_credential_opens_nothing_and_logout_stops_the_al
     rig.transport.set_session(Some("first"));
     rig.sync.commit_session_for_test();
     rig.transport.await_calls("MomentListen", 1).await;
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     crate::test_wait::pass(Duration::from_secs(31)).await;
     assert_eq!(rig.transport.cancellations("MomentListen"), 1, "logout");
     rig.sync.set_listening(true);

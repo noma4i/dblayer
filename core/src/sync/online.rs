@@ -17,15 +17,21 @@ impl Sync {
                 let probe = locked(&self.inner.after_network_change).take();
                 if let Some(probe) = probe { probe(); }
             }
-            if !online {
-                let newest = self.inner.newest_operation();
-                if let Some(newest) = newest {
-                    let mut lost = locked(&self.inner.network_lost);
-                    *lost = (*lost).max(newest);
-                }
-            }
             was_online
         };
+        self.online_changed(was_online, online);
+    }
+
+    /// The old stack's part of a change of the network: the owner Network has set `Connectivity` already, `was_online` is the value before.
+    pub fn online_changed(&self, was_online: bool, online: bool) {
+        if !online {
+            let _line = self.inner.network_line.enter();
+            let newest = self.inner.newest_operation();
+            if let Some(newest) = newest {
+                let mut lost = locked(&self.inner.network_lost);
+                *lost = (*lost).max(newest);
+            }
+        }
         crate::db::lock::assert_no_library_lock("Transport::set_online");
         self.inner.transport.set_online(online);
         if !online {
@@ -84,10 +90,10 @@ impl Inner {
         let clock = self.clock.clone();
         let deadline = clock.now().saturating_add(wait);
         let inner = Arc::downgrade(self);
-        let woken = wait.is_zero().then(|| lifecycle.admit_woken(crate::lifecycle::Origin::Session, "outbox flush", epoch));
+        let woken = wait.is_zero().then(|| lifecycle.admit_woken(crate::ffi::legacy::Origin::Session, "outbox flush", epoch));
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
             clock.sleep(deadline.saturating_sub(clock.now())).await;
-            let admission = woken.unwrap_or_else(|| lifecycle.admit_woken(crate::lifecycle::Origin::Session, "outbox flush", epoch));
+            let admission = woken.unwrap_or_else(|| lifecycle.admit_woken(crate::ffi::legacy::Origin::Session, "outbox flush", epoch));
             let Some(admitted) = admission.await else { return };
             let Some(inner) = inner.upgrade() else { return };
             if let Some(generation) = slot {
@@ -111,12 +117,12 @@ impl Inner {
     pub(super) fn spawn_retry(self: &Arc<Self>, target: Target, kind: LoadKind, debt: Option<i64>) {
         let Ok(runtime) = Handle::try_current() else { return };
         let Some(epoch) = self.waking_epoch() else { return };
-        let admission = self.db.shared.store.lifecycle.admit_woken(crate::lifecycle::Origin::Session, "retry load", epoch);
+        let admission = self.db.shared.store.lifecycle.admit_woken(crate::ffi::legacy::Origin::Session, "retry load", epoch);
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
             let Some(admitted) = admission.await else { return };
             let Some(inner) = inner.upgrade() else { return };
-            let Ok(resolved) = inner.resolve(crate::lifecycle::Origin::Session, &target.model, &target.relation, &target.params) else { return };
+            let Ok(resolved) = inner.resolve(crate::ffi::legacy::Origin::Session, &target.model, &target.relation, &target.params) else { return };
             if let Some(since) = debt {
                 if inner.db.shared.store.invalidate_windows(&admitted.authority(), std::slice::from_ref(&resolved.window_key), since).is_err() { return; }
             }

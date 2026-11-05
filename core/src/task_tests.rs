@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::runtime::Handle;
 
 use super::*;
-use crate::lifecycle::{Lifecycle, Origin};
+use crate::ffi::legacy::{Lifecycle, Origin};
 
 fn held() -> Option<u64> { admitted().map(|admitted| admitted.value()) }
 

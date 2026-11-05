@@ -4,6 +4,7 @@ use serde_json::Value;
 use crate::sync::SyncError;
 use crate::transport::{self as core, EncryptedClient, EncryptedConfig, EncryptedTransport, ServerConfig, SessionCode};
 use super::database::{cancellable, Database, Wiring};
+use crate::owners::life::LifeReply;
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
 
@@ -63,38 +64,6 @@ fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
         Some(code) => Err(DbError::Session { code: SessionCode::of(code), detail: code.to_string() }),
         None => Ok(answer),
     }
-}
-
-pub(super) async fn resume(admitted: &crate::lifecycle::Admitted, client: Arc<EncryptedClient>, sync: Option<crate::sync::Sync>) -> Result<(Option<String>, core::encrypted::After), DbError> {
-    let effects = Arc::new(crate::sync::DeliveryEffects::new(sync.as_ref().map(|sync| &sync.inner)));
-    let serial = match &sync {
-        Some(sync) => Some(sync.inner.outbox_gate.lock().await),
-        None => None,
-    };
-    let stored = client.pending_call().map_err(typed)?;
-    let owner = client.pending_owner().map_err(typed)?;
-    let upload = match (&sync, &owner) {
-        (Some(sync), Some(owner)) => sync.inner.claim_upload_resume(admitted, owner).await?,
-        _ => None,
-    };
-    if client.pending_call().map_err(typed)? != stored { return Ok((None, core::encrypted::After::Nothing)); }
-    let (answer, result, after) = match client.resume_pending(admitted).await {
-        Ok((Some(answer), after)) => (Some(answer.clone()), core::response_of(answer), after),
-        Ok((None, after)) => (None, Err(core::TransportError::Graphql { messages: vec!["the stored request belongs to a sessionless operation".into()], extensions: None }), after),
-        Err(error) if core::encrypted::permanently_refused(&error) => (None, Err(error), core::encrypted::After::Nothing),
-        Err(error) => return Err(typed(error)),
-    };
-    drop(serial);
-    let settled = if let (Some(sync), Some(owner)) = (&sync, owner) {
-        if !matches!(&result, Ok(response) if core::missing_from_registry(response)) {
-            sync.inner.settle_resumed(admitted, effects.clone(), upload, owner, result).await.map_err(DbError::from)
-        } else {
-            Ok(())
-        }
-    } else { Ok(()) };
-    effects.run();
-    settled?;
-    Ok((answer.map(refused).transpose()?.map(|answer| answer.body.to_string()), after))
 }
 
 pub(super) fn wire(
@@ -172,41 +141,46 @@ impl Drop for RetrySubscription {
 #[uniffi::export]
 impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
-        let client = self.session()?.clone();
+        let client = self.session()?;
         if !client.has_session_operation(&operation) { return Err(DbError::Invalid { detail: format!("unknown session operation {operation}") }); }
-        let body = serde_json::from_str::<Value>(&body_json)?;
-        let epoch = self.streams.snapshot().session_epoch;
-        let call_client = client.clone();
-        let (answer, after) = self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "session call", operation != "logout", |admitted| async move {
-            let (answer, after) = cancellable(async move { call_client.call_admitted(&admitted, operation, body).await }).await?.map_err(typed)?;
-            Ok((refused(answer)?, after))
-        }).await?;
-        cancellable(async move { client.conclude(epoch, after).await }).await?.map_err(typed)?;
-        Ok(answer.body.to_string())
+        serde_json::from_str::<Value>(&body_json)?;
+        match self.await_life(self.life.session_call(operation, body_json)).await? {
+            LifeReply::Session(Ok(body)) => {
+                let answer = core::Answer { sequence: None, body: serde_json::from_str(&body)? };
+                Ok(refused(answer)?.body.to_string())
+            }
+            LifeReply::Session(Err(error)) => Err(session_failure(error)),
+            _ => Err(super::command::ended()),
+        }
     }
 
+    /// The owner Session sends a request that was stored before the close when it opens. The call returns without a request of its own.
     pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
-        let client = self.session()?.clone();
-        let sync = self.sync.clone();
-        let epoch = self.streams.snapshot().session_epoch;
-        let resume_client = client.clone();
-        let restore = !client.logout_pending().map_err(typed)?;
-        let (answer, after) = self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "session resume", restore, |admitted| async move {
-            cancellable(async move { resume(&admitted, resume_client, sync).await }).await?
-        }).await?;
-        cancellable(async move { client.conclude(epoch, after).await }).await?.map_err(typed)?;
-        Ok(answer)
+        self.session()?;
+        Ok(None)
     }
 
     /// Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
     pub async fn session_reset(&self) -> Result<(), DbError> {
-        match self.session.clone() {
-            Some(client) => cancellable(async move { client.reset().await }).await?.map_err(typed),
-            None => {
-                let db = self.db.clone();
-                cancellable(async move { db.end_session::<DbError>(crate::lifecycle::End::Local, None, |_| Ok(())).await }).await?
-            }
+        match self.await_life(self.life.session_reset()).await? {
+            LifeReply::Life(Ok(())) => Ok(()),
+            LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Storage)) => Err(DbError::Database { detail: "the account could not be cleared".into() }),
+            _ => Err(super::command::ended()),
         }
+    }
+}
+
+fn session_failure(error: crate::owners::session::SessionError) -> DbError {
+    use crate::owners::session::SessionError as Failed;
+    match error {
+        Failed::Invalid | Failed::Protocol => DbError::Invalid { detail: "the answer does not confirm the sequence".into() },
+        Failed::Revoked => DbError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },
+        Failed::SequenceConflict => DbError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
+        Failed::Unauthorized => DbError::Http { status: 401, detail: String::new() },
+        Failed::Http => DbError::Network { detail: "the request was refused".into() },
+        Failed::Rejected(reason) => DbError::Database { detail: format!("the request was not stored: {reason:?}") },
+        Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },
+        Failed::Interrupted | Failed::Closed => super::command::ended(),
     }
 }
 

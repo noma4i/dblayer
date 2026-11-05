@@ -67,7 +67,7 @@ enum Delivery {
 }
 
 pub(crate) struct Sending<'a> {
-    pub admitted: &'a crate::lifecycle::Admitted,
+    pub admitted: &'a crate::ffi::legacy::Admitted,
     pub effects: std::sync::Arc<DeliveryEffects>,
     pub entry: &'a OutboxOperation,
     pub model: String,
@@ -103,7 +103,7 @@ struct Bound {
 }
 
 struct InFlight<'a> {
-    admitted: &'a crate::lifecycle::Admitted,
+    admitted: &'a crate::ffi::legacy::Admitted,
     inner: &'a Inner,
     effects: std::sync::Arc<DeliveryEffects>,
     seq: i64,
@@ -239,7 +239,7 @@ impl Inner {
             locked(&effects.pending).push(move || ticket.finish(super::FinishedOperation { result, answer, value, items, discarded: Vec::new() }));
         }
     }
-    pub(crate) fn fail_commit(&self, admitted: &crate::lifecycle::Admitted, error: SyncError) {
+    pub(crate) fn fail_commit(&self, admitted: &crate::ffi::legacy::Admitted, error: SyncError) {
         let stored = self.db.shared.store.lock();
         let life = &self.db.shared.store.lifecycle;
         let line = life.commit_line();
@@ -251,16 +251,16 @@ impl Inner {
     }
 
     /// Boxed here once: the future of a pass is large in a debug build and must not sit inside the future of every caller.
-    pub(crate) fn flush<'a>(self: &'a std::sync::Arc<Self>, admitted: &'a crate::lifecycle::Admitted) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FlushReport, SyncError>> + Send + 'a>> {
+    pub(crate) fn flush<'a>(self: &'a std::sync::Arc<Self>, admitted: &'a crate::ffi::legacy::Admitted) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FlushReport, SyncError>> + Send + 'a>> {
         Box::pin(async move {
             admitted.run(self.flush_pass(admitted)).await.map_err(SyncError::from)?
         })
     }
 
-    async fn flush_pass(self: &std::sync::Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<FlushReport, SyncError> {
+    async fn flush_pass(self: &std::sync::Arc<Self>, admitted: &crate::ffi::legacy::Admitted) -> Result<FlushReport, SyncError> {
         let mut publish = PassEffects { serial: Some(self.outbox_gate.lock().await), inner: self, effects: std::sync::Arc::new(DeliveryEffects::new(Some(self))) };
         let mut report = FlushReport::default();
-        if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(report); }
+        if !self.admitted(crate::ffi::legacy::Origin::Session) { return Ok(report); }
         publish.release();
         let mut checked = self.refuse_non_durable(admitted, &publish.effects)?;
         publish.release();
@@ -293,7 +293,7 @@ impl Inner {
                 }
                 continue;
             };
-            if !self.admitted(crate::lifecycle::Origin::Session) { break; }
+            if !self.admitted(crate::ffi::legacy::Origin::Session) { break; }
             let rows = crate::operation::row_keys(&entry.operation);
             let row_in_flight = flying.values().flatten().any(|row| rows.contains(row));
             if !sends.is_empty() && (row_in_flight || names_unconfirmed_record(&entry)) {
@@ -398,7 +398,7 @@ impl Inner {
     }
 
     /// Only sending a message and a media upload wait for the network (`specs/architecture.md` D). Any other action that needs the server is refused and rolled back when the network is away or when it was left over from before this open.
-    fn refuse_non_durable(&self, admitted: &crate::lifecycle::Admitted, effects: &std::sync::Arc<DeliveryEffects>) -> Result<RefusalState, SyncError> {
+    fn refuse_non_durable(&self, admitted: &crate::ffi::legacy::Admitted, effects: &std::sync::Arc<DeliveryEffects>) -> Result<RefusalState, SyncError> {
         let state = self.refusal_state();
         let (lost, left, online) = state;
         let pending: Vec<i64> = locked(self.operation_queue()?).pending.iter().copied().collect();
@@ -496,7 +496,7 @@ impl Inner {
         Ok(Some(Bound { model, action, mutation, variables }))
     }
 
-    async fn send<'a>(&'a self, admitted: &'a crate::lifecycle::Admitted, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>, checked: Option<RefusalState>, effects: std::sync::Arc<DeliveryEffects>, reserved: Option<InFlight<'a>>) -> Result<SendResult, SyncError> {
+    async fn send<'a>(&'a self, admitted: &'a crate::ffi::legacy::Admitted, entry: &OutboxOperation, resumed: Option<Result<Response, TransportError>>, checked: Option<RefusalState>, effects: std::sync::Arc<DeliveryEffects>, reserved: Option<InFlight<'a>>) -> Result<SendResult, SyncError> {
         let Some((Bound { model, action, mutation, .. }, generation, base_revision)) = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
             let Some(bound) = self.bind(entry)? else { return Ok(None) };
             Ok(Some((bound, self.db.generation(), self.db.revision_seq()?)))
@@ -516,7 +516,7 @@ impl Inner {
         self.send_reserved(sending, operation, resumed, None, keep).await
     }
 
-    fn reserve_send<'a>(&'a self, admitted: &'a crate::lifecycle::Admitted, seq: i64, generation: Generation, effects: std::sync::Arc<DeliveryEffects>, ordered: bool) -> Option<InFlight<'a>> {
+    fn reserve_send<'a>(&'a self, admitted: &'a crate::ffi::legacy::Admitted, seq: i64, generation: Generation, effects: std::sync::Arc<DeliveryEffects>, ordered: bool) -> Option<InFlight<'a>> {
         let key = (generation, seq);
         let mut attempts = locked(&self.final_attempts);
         if attempts.active.contains_key(&key) { return None; }
@@ -682,7 +682,7 @@ impl Inner {
         Ok(request)
     }
 
-    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, admitted: &crate::lifecycle::Admitted, effects: std::sync::Arc<DeliveryEffects>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
+    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, admitted: &crate::ffi::legacy::Admitted, effects: std::sync::Arc<DeliveryEffects>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
         let seq = match &request_owner {
             crate::transport::RequestOwner::Operation { seq } => *seq,
             crate::transport::RequestOwner::Transfer { operation_id, item_id, step } => {
@@ -825,11 +825,11 @@ impl Inner {
     }
 
     /// A send that the end of the session or the close of the database cancels. The answer of an ended session is never read.
-    pub(crate) async fn mutate_scoped(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
+    pub(crate) async fn mutate_scoped(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
         admitted.run(self.transport.mutate(admitted, request)).await?
     }
 
-    async fn deliver(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Delivery {
+    async fn deliver(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Delivery {
         locked(&self.counters).record_transport_call();
         let owner = request.owner.clone();
         crate::db::lock::assert_no_library_lock("Transport::mutate");
@@ -841,7 +841,7 @@ impl Inner {
         delivery_of(result, replayable)
     }
 
-    async fn deliver_or_resume(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest, resumed: Option<Result<Response, TransportError>>) -> Delivery {
+    async fn deliver_or_resume(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest, resumed: Option<Result<Response, TransportError>>) -> Delivery {
         match resumed {
             Some(result) => {
                 let replayable = match request.owner.as_ref().map(|owner| crate::transport::encrypted::pending_matches(&self.db, owner)).transpose() {
@@ -1083,7 +1083,7 @@ impl Inner {
 
     pub(crate) fn commit(
         &self,
-        admitted: &crate::lifecycle::Admitted,
+        admitted: &crate::ffi::legacy::Admitted,
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
     ) -> Result<Option<CommitResult>, SyncError> {
@@ -1098,7 +1098,7 @@ impl Inner {
 
     pub(crate) fn commit_deferred(
         &self,
-        admitted: &crate::lifecycle::Admitted,
+        admitted: &crate::ffi::legacy::Admitted,
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, SyncError>,
     ) -> Result<Option<crate::store::Committed<'_>>, SyncError> {
@@ -1111,7 +1111,7 @@ impl Inner {
         })
     }
 
-    fn write_connection(&self, admitted: &crate::lifecycle::Admitted, run: impl FnOnce(&Connection) -> rusqlite::Result<()>) -> Result<(), SyncError> {
+    fn write_connection(&self, admitted: &crate::ffi::legacy::Admitted, run: impl FnOnce(&Connection) -> rusqlite::Result<()>) -> Result<(), SyncError> {
         let authority = admitted.authority();
         self.db.shared.store.write(&authority, || SyncError::Store("the session ended while its answer was pending".into()), |inner| run(&inner.connection).map_err(|error| SyncError::Store(error.to_string())))
     }

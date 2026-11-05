@@ -140,7 +140,7 @@ impl ByteProgress {
 pub struct PutReply { pub status: u16, pub etag: Option<String> }
 
 #[derive(uniffi::Object)]
-pub struct OnlineSink { pub(crate) sync: Option<crate::sync::WeakSync>, pub(crate) online: Arc<core::Connectivity> }
+pub struct OnlineSink { pub(crate) sync: Option<crate::sync::WeakSync>, pub(crate) online: Arc<core::Connectivity>, pub(crate) life: std::sync::Weak<crate::owners::life::Life> }
 
 impl OnlineSink {
     fn live_sync(&self) -> Option<Option<crate::sync::Sync>> {
@@ -155,12 +155,16 @@ impl OnlineSink {
 impl OnlineSink {
     pub fn set_online(&self, online: bool) {
         let Some(sync) = self.live_sync() else { return };
-        match (sync, super::database::executor()) {
-            (Some(sync), Ok(executor)) => {
-                let _entered = executor.enter();
-                sync.set_online(online);
-            }
-            _ => self.online.set_online(online),
+        let Some(life) = self.life.upgrade() else { return };
+        let was_online = self.online.is_online();
+        let waiter = life.set_online(online);
+        let Ok(executor) = super::database::executor() else { return };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        executor.spawn(async move { let _ = sender.send(waiter.wait().await); });
+        if receiver.recv_timeout(std::time::Duration::from_secs(10)).is_err() { return; }
+        if let Some(sync) = sync {
+            let _entered = executor.enter();
+            sync.online_changed(was_online, online);
         }
     }
 
@@ -246,17 +250,17 @@ impl core::Transport for ForeignTransport {
         };
         Ok(Arc::new(ForeignSocket { transport: self.0.clone(), lease, token }))
     }
-    async fn query(&self, _admitted: &crate::lifecycle::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
+    async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::query");
         let json = self.0.query(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
-    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
+    async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::mutate");
         let json = self.0.mutate(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
-    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
+    async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::subscribe");
         let (sender, receiver) = core::subscription_channel();
         let transport = self.0.clone();
@@ -273,7 +277,7 @@ impl core::Transport for ForeignTransport {
         }
         Ok(core::ServerSubscription::new(receiver, core::ServerSubscriptionHandle::new(move || sink.abandon())))
     }
-    async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
+    async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::put");
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
         let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.identity, progress).await.map_err(transport_error)?;

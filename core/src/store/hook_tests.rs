@@ -32,8 +32,8 @@ fn inv_conc_01_a_store_hook_may_call_the_store_it_was_announced_from() {
     let worker = store.clone();
     within_five_seconds(move || {
         written(&worker, "m1");
-        worker.reset_cache_only(&["messages"]).unwrap();
-        worker.reset_incompatible().unwrap();
+        worker.clear_models_in_tests(&["messages"]).unwrap();
+        worker.clear_account_in_tests().unwrap();
     });
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3, "one announcement for the commit and one for each reset");
 }
@@ -83,14 +83,14 @@ fn inv_conc_02_no_store_lock_is_held_while_the_hook_calls_into_other_components(
         log.lock().unwrap().push((inside.writer_is_free(), inside.models.try_write().is_ok()));
     }));
     written(&store, "m1");
-    store.reset_cache_only(&["messages"]).unwrap();
-    store.reset_incompatible().unwrap();
+    store.clear_models_in_tests(&["messages"]).unwrap();
+    store.clear_account_in_tests().unwrap();
     assert_eq!(*probes.lock().unwrap(), vec![(true, true); 3]);
 }
 
 fn deferred<'a>(store: &'a Store, row_id: &str) -> Committed<'a> {
     let mut planned = Some(envelope(store, vec![upsert("messages", message(row_id, "c1"))], vec![]));
-    store.commit_prepared_deferred(&crate::lifecycle::Authority::Internal(crate::lifecycle::Internal::for_tests()), store.generation(), |_| Ok::<_, StoreError>(planned.take())).unwrap()
+    store.commit_prepared_deferred(&crate::ffi::legacy::Authority::Internal(crate::ffi::legacy::Internal::for_tests()), store.generation(), |_| Ok::<_, StoreError>(planned.take())).unwrap()
 }
 
 #[test]

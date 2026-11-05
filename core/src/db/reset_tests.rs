@@ -44,15 +44,15 @@ type ResetCalls = std::sync::Arc<std::sync::Mutex<Vec<Option<Vec<String>>>>>;
 type ResetCall = Box<dyn Fn(Option<&[String]>) + Send + Sync>;
 
 struct ResetProbe {
-    registration: std::sync::OnceLock<crate::lifecycle::Registration>,
+    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
     call: ResetCall,
 }
 
-impl crate::lifecycle::Holder for ResetProbe {
+impl crate::ffi::legacy::Holder for ResetProbe {
     fn close(&self) {}
-    fn registration(&self) -> &std::sync::OnceLock<crate::lifecycle::Registration> { &self.registration }
-    fn changed(&self, snapshot: &crate::lifecycle::Snapshot) {
-        if let crate::lifecycle::Change::Cleared(models) = &snapshot.change { (self.call)(models.as_deref()); }
+    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
+    fn changed(&self, snapshot: &crate::ffi::legacy::Snapshot) {
+        if let crate::ffi::legacy::Change::Cleared(models) = &snapshot.change { (self.call)(models.as_deref()); }
     }
 }
 
@@ -81,8 +81,8 @@ fn reentrant_reset_rig() -> (Db, ResetCalls, std::sync::Arc<ResetProbe>) {
 fn reset_listener_writes_and_resets() {
     type Outer = fn(&Db);
     let cases: [(&str, Outer, Option<Vec<String>>); 2] = [
-        ("reset_all", |db| db.reset_all().unwrap(), None),
-        ("reset of models", |db| db.reset(&["vibes"]).unwrap(), Some(vec!["vibes".to_string()])),
+        ("reset_all", |db| db.clear_account().unwrap(), None),
+        ("reset of models", |db| db.clear_models(&["vibes"]).unwrap(), Some(vec!["vibes".to_string()])),
     ];
     for (name, outer, first) in cases {
         let (db, calls, _probe) = reentrant_reset_rig();

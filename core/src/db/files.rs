@@ -32,7 +32,7 @@ impl Db {
         })
     }
 
-    pub fn attach(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, field: &str, bytes: &[u8], name: &str, mime: &str) -> Result<FileDescriptor, DbError> {
+    pub fn attach(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, field: &str, bytes: &[u8], name: &str, mime: &str) -> Result<FileDescriptor, DbError> {
         self.file_field(model, field)?;
         let _gate = locked(&self.shared.files_gate);
         let descriptor = FileDescriptor {
@@ -111,7 +111,7 @@ impl Db {
         }
     }
 
-    pub fn detach(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, field: &str) -> Result<bool, DbError> {
+    pub fn detach(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, field: &str) -> Result<bool, DbError> {
         let nullable = self.file_field(model, field)?;
         let _gate = locked(&self.shared.files_gate);
         let generation = self.generation();

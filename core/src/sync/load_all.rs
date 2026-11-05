@@ -12,7 +12,7 @@ use super::load_machine::LoadError;
 use super::load_owner::FlightTicket;
 
 impl Inner {
-    pub(crate) async fn load_members(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
+    pub(crate) async fn load_members(self: &Arc<Self>, admitted: &crate::ffi::legacy::Admitted, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
         let origin = resolved.origin;
         if !self.admitted(origin) { return Err(SyncError::Cancelled); }
         let (inner, model, relation, params) = (self.clone(), resolved.model.clone(), resolved.relation.clone(), resolved.params.clone());
@@ -29,7 +29,7 @@ impl Inner {
         reader.finished().await
     }
 
-    pub(crate) async fn members_chain(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
+    pub(crate) async fn members_chain(&self, admitted: &crate::ffi::legacy::Admitted, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
         let ticket = FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, self.stored(resolved)?);
         let result = match self.load_all(admitted, resolved, force).await { Ok(()) => self.stored(resolved), Err(error) => Err(error) };
         match &result {
@@ -43,7 +43,7 @@ impl Inner {
         SyncError::Incomplete { model: resolved.model.clone(), relation: resolved.relation.clone(), reason: reason.to_string() }
     }
 
-    async fn load_all(&self, admitted: &crate::lifecycle::Admitted, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
+    async fn load_all(&self, admitted: &crate::ffi::legacy::Admitted, resolved: &Resolved<'_>, force: bool) -> Result<(), SyncError> {
         let first = self.fetch(admitted, resolved, None, force).await?;
         if let Some(error) = first.kept_error {
             return Err(error);
@@ -84,10 +84,10 @@ impl Inner {
 }
 
 impl Sync {
-    pub async fn load_all(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<(), SyncError> {
+    pub async fn load_all(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, relation: &str, params: &Map<String, Value>, options: LoadOptions) -> Result<(), SyncError> {
         self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
-        let resolved = self.inner.resolve(crate::lifecycle::Origin::Explicit, model, relation, params)?;
+        let resolved = self.inner.resolve(crate::ffi::legacy::Origin::Explicit, model, relation, params)?;
         if resolved.media.is_some() { return self.inner.load_members(admitted, &resolved, options.force).await; }
         self.inner.load_all(admitted, &resolved, options.force).await
     }

@@ -28,7 +28,7 @@ use super::load::{LoadOptions, LoadOutcome};
 use super::{Inner, Sync};
 
 impl Inner {
-    pub(crate) async fn reload_watched(&self, admitted: &crate::lifecycle::Admitted, model: &str, relations: Option<&std::collections::BTreeSet<String>>, only_stale: bool) -> Result<usize, SyncError> {
+    pub(crate) async fn reload_watched(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, relations: Option<&std::collections::BTreeSet<String>>, only_stale: bool) -> Result<usize, SyncError> {
         let targets: BTreeMap<String, (String, Map<String, Value>)> = self.db.observed_reads()
             .into_iter()
             .filter(|entry| entry.model == model && relations.is_none_or(|names| names.contains(&entry.relation)))
@@ -39,7 +39,7 @@ impl Inner {
         for (key, (relation, params)) in targets {
             let result = async {
                 if only_stale && !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.stale_since.is_some()) { return Ok(false); }
-                let resolved = self.resolve(crate::lifecycle::Origin::Session, model, &relation, &params)?;
+                let resolved = self.resolve(crate::ffi::legacy::Origin::Session, model, &relation, &params)?;
                 let outcome = if only_stale {
                     self.flights_settled(&resolved).await;
                     if !self.db.shared.store.window_freshness(&key)?.is_some_and(|freshness| freshness.stale_since.is_some()) { return Ok(false); }
@@ -57,7 +57,7 @@ impl Inner {
 }
 
 impl Inner {
-    pub(crate) async fn expire_and_reload_watched(&self, admitted: &crate::lifecycle::Admitted, model: &str, since: Option<i64>) -> Result<usize, SyncError> {
+    pub(crate) async fn expire_and_reload_watched(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, since: Option<i64>) -> Result<usize, SyncError> {
         let keys: Vec<String> = self.db.observed_reads().into_iter().filter(|entry| entry.model == model).map(|entry| entry.key).collect();
         let since = match since { Some(since) => since, None => self.next_issued()? };
         self.db.shared.store.invalidate_windows(&admitted.authority(), &keys, since)?;
@@ -66,7 +66,7 @@ impl Inner {
 }
 
 impl Sync {
-    pub async fn refresh(&self, admitted: &crate::lifecycle::Admitted, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
+    pub async fn refresh(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, relation: &str, params: &Map<String, Value>) -> Result<LoadOutcome, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         self.load(admitted, model, relation, params, LoadOptions { force: true }).await
     }

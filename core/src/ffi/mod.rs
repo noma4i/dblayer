@@ -1,4 +1,5 @@
 mod database;
+pub(crate) mod legacy;
 #[cfg(test)]
 pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
     let (lifecycle, db) = (database.streams.clone(), database.db.clone());

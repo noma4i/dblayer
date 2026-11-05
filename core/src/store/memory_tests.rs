@@ -76,7 +76,7 @@ fn reset_incompatible_empties_memory_tables_too() {
     let store = Store::open_in_memory().unwrap();
     store.boot(&models(), None).unwrap();
     seed(&store);
-    store.reset_incompatible().unwrap();
+    store.clear_account_in_tests().unwrap();
     assert_eq!(store.row_count("presence").unwrap(), 0);
     assert_eq!(store.row_count("messages").unwrap(), 0);
 }

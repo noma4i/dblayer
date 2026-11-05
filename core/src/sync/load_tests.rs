@@ -263,7 +263,7 @@ fn inv_fresh_03_response_after_a_reset_is_discarded() { crate::test_wait::paused
     let sync = rig.sync.clone();
     let task = tokio::spawn(async move { sync.load(&sync.inner.db.admit().unwrap(), "moments", "feed", &Map::new(), LoadOptions::default()).await });
     rig.transport.await_calls("MomentsFeed", 1).await;
-    rig.db.shared.store.reset_cache_only(&["moments"]).unwrap();
+    rig.db.shared.store.clear_models_in_tests(&["moments"]).unwrap();
     let outcome = task.await.unwrap();
     assert!(matches!(&outcome, Err(SyncError::Transport(TransportError::Interrupted(_)))), "the explicit call straddling the reset must end with its outcome: {outcome:?}");
     assert_eq!(text_of(&rig, "moments", "m1"), None);
@@ -458,7 +458,7 @@ fn reading_the_stored_window_for_a_load_reads_the_same_members_at_every_list_siz
     let mut costs = Vec::new();
     for size in [100, 10_000] {
         let (rig, params) = rig_with_user_list(size).await;
-        let resolved = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "by_user", &params).unwrap();
+        let resolved = rig.sync.inner.resolve(crate::ffi::legacy::Origin::Session, "moments", "by_user", &params).unwrap();
         costs.push(reads_during(|| assert!(rig.sync.inner.stored(&resolved).unwrap().unwrap().has_rows)));
     }
     assert_eq!(costs[0], costs[1], "member reads at 100 and 10000 rows");
@@ -478,8 +478,8 @@ fn creating_a_row_in_a_loaded_list_reads_the_same_members_at_every_list_size() {
 #[test]
 fn resolving_twice_shares_the_operation_and_the_relation_spec() {
     let rig = rig();
-    let first = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "feed", &Map::new()).unwrap();
-    let second = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "feed", &Map::new()).unwrap();
+    let first = rig.sync.inner.resolve(crate::ffi::legacy::Origin::Session, "moments", "feed", &Map::new()).unwrap();
+    let second = rig.sync.inner.resolve(crate::ffi::legacy::Origin::Session, "moments", "feed", &Map::new()).unwrap();
     let operations: [&super::registry::OperationDef; 2] = [&first.operation, &second.operation];
     let remotes: [&crate::schema::RemoteSpec; 2] = [first.remote, second.remote];
     assert!(std::ptr::eq(operations[0], operations[1]), "the operation document is cloned for each resolve");

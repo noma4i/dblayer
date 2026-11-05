@@ -111,7 +111,7 @@ pub struct SubscriptionStatus {
 
 type SharedStatus = Arc<Mutex<SubscriptionStatus>>;
 
-type Opened = (Generation, crate::lifecycle::Admitted, Result<ServerSubscription, TransportError>);
+type Opened = (Generation, crate::ffi::legacy::Admitted, Result<ServerSubscription, TransportError>);
 
 pub struct Updates {
     abort: AbortHandle,
@@ -153,7 +153,7 @@ struct Pending {
     id: RowId,
     node: Map<String, Value>,
     generation: Generation,
-    stamp: crate::lifecycle::Stamp,
+    stamp: crate::ffi::legacy::Stamp,
 }
 
 struct Feed {
@@ -165,8 +165,8 @@ struct Feed {
     status: SharedStatus,
     backoff: Backoff,
     ready: Option<tokio::sync::watch::Sender<Option<Result<(), SyncError>>>>,
-    received: crate::lifecycle::Stamp,
-    epoch: crate::lifecycle::Admitted,
+    received: crate::ffi::legacy::Stamp,
+    epoch: crate::ffi::legacy::Admitted,
     lost: Arc<Mutex<LostEvents>>,
 }
 
@@ -185,7 +185,7 @@ impl LostEvents {
 }
 
 impl Feed {
-    fn recipients(&self, received: crate::lifecycle::Stamp) -> Vec<Feed> {
+    fn recipients(&self, received: crate::ffi::legacy::Stamp) -> Vec<Feed> {
         let definitions = if self.shared { self.inner.live_definitions(&self.def.operation, &self.def.variables) } else { vec![(*self.def).clone()] };
         definitions.into_iter().map(|def| Feed {
             inner: self.inner.clone(), root_path: def.root.clone().unwrap_or_else(|| self.operation_root.clone()),
@@ -221,8 +221,8 @@ impl Feed {
         if !self.epoch.life().admits_epoch(self.epoch.value()) { crate::db::locked(&self.lost).owe(self.inner.next_issued().ok()); }
     }
 
-    fn lose_queued(&self, connection: Option<ServerSubscription>, change: &Option<crate::lifecycle::Invalidated>) {
-        let rebound = matches!(change, Some(crate::lifecycle::Invalidated::Rebound));
+    fn lose_queued(&self, connection: Option<ServerSubscription>, change: &Option<crate::ffi::legacy::Invalidated>) {
+        let rebound = matches!(change, Some(crate::ffi::legacy::Invalidated::Rebound));
         let queued = connection.is_some_and(|mut connection| rebound && connection.take_queued_responses());
         let since = if rebound { self.inner.next_issued().ok() } else { None };
         let mut lost = crate::db::locked(&self.lost);
@@ -252,9 +252,9 @@ impl Feed {
         }
     }
 
-    async fn invalidation(&self, response: &Response, generation: Generation, received: crate::lifecycle::Stamp) -> bool { self.now().scope(self.invalidation_in(response, generation, received)).await }
+    async fn invalidation(&self, response: &Response, generation: Generation, received: crate::ffi::legacy::Stamp) -> bool { self.now().scope(self.invalidation_in(response, generation, received)).await }
 
-    async fn invalidation_in(&self, response: &Response, generation: Generation, received: crate::lifecycle::Stamp) -> bool {
+    async fn invalidation_in(&self, response: &Response, generation: Generation, received: crate::ffi::legacy::Stamp) -> bool {
         let Some(data) = response.data.as_ref() else { return false };
         let Some((_, feed)) = self.inner.change_feed().filter(|(_, feed)| feed.subscription == self.def.operation) else { return false };
         if generation != self.inner.db.generation() { return true; }
@@ -334,7 +334,7 @@ impl Feed {
         true
     }
 
-    async fn payload_target(&self, model: &str, read: &crate::schema::ChangeRead, event: PayloadEvent<'_>, event_id: &RowId, generation: Generation, received: crate::lifecycle::Stamp) -> Result<(), SyncError> {
+    async fn payload_target(&self, model: &str, read: &crate::schema::ChangeRead, event: PayloadEvent<'_>, event_id: &RowId, generation: Generation, received: crate::ffi::legacy::Stamp) -> Result<(), SyncError> {
         let PayloadEvent { change, area, kind } = event;
         let terminal = read.removes_on.iter().any(|removal| removal == kind);
         let node = if terminal { Map::new() } else {
@@ -412,7 +412,7 @@ impl Feed {
         }
         let mut failure = None;
         for (relation, params) in targets.into_values() {
-            let outcome = match self.inner.resolve(crate::lifecycle::Origin::Session, model, &relation, &params) {
+            let outcome = match self.inner.resolve(crate::ffi::legacy::Origin::Session, model, &relation, &params) {
                 Ok(resolved) => self.inner.load_scope(&self.epoch, &resolved, true).await.and_then(super::LoadOutcome::paid).map(drop),
                 Err(error) => Err(error),
             };
@@ -429,12 +429,12 @@ impl Feed {
             Some(parameter) => Map::from_iter([(parameter.to_string(), json!(id.ok_or_else(|| SyncError::Event("missing event id".into()))?))]),
             None => Map::new(),
         };
-        let mut resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, name, &params)?;
+        let mut resolved = self.inner.resolve(crate::ffi::legacy::Origin::Session, model, name, &params)?;
         resolved.node_reread = relation.node == Some(crate::schema::NodeRead::One);
         self.inner.load_scope(&self.epoch, &resolved, true).await.and_then(super::LoadOutcome::paid).map(drop)
     }
 
-    fn now(&self) -> crate::lifecycle::Admitted { self.epoch.clone() }
+    fn now(&self) -> crate::ffi::legacy::Admitted { self.epoch.clone() }
 
     async fn apply_event(&self, response: &Response) -> bool { self.now().scope(self.apply_event_in(response)).await }
 
@@ -582,7 +582,7 @@ impl Feed {
         let mut count = 0;
         let mut announced: Vec<(String, RowId, Map<String, Value>)> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
-        let committed = db.commit_following_report(&crate::lifecycle::Authority::Admitted(self.now()), generation, |reader| {
+        let committed = db.commit_following_report(&crate::ffi::legacy::Authority::Admitted(self.now()), generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();
@@ -677,7 +677,7 @@ impl Feed {
     }
 
     /// Reads the connection until it ends or the session moves. A change of the session is taken only between events: the event in hand is applied or recovered to its end.
-    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation, resets: &mut crate::lifecycle::Watch) -> Pumped {
+    async fn pump(&self, connection: &mut ServerSubscription, lifecycle: &mut Lifecycle, generation: Generation, resets: &mut crate::ffi::legacy::Watch) -> Pumped {
         let mut pending: Vec<(Arc<SubscriptionDef>, Duration, Vec<Pending>)> = Vec::new();
         loop {
             let deadline = pending.iter().map(|(_, deadline, _)| *deadline).min();
@@ -719,7 +719,7 @@ impl Feed {
                         self.hold(true);
                         lifecycle.handle(Event::Next);
                         self.publish(lifecycle);
-                        let received = crate::lifecycle::Stamp { generation, session_epoch: self.epoch.value() };
+                        let received = crate::ffi::legacy::Stamp { generation, session_epoch: self.epoch.value() };
                         let invalidation = self.invalidation(&response, generation, received).await;
                         let mut items = Vec::new();
                         for feed in self.recipients(received) {
@@ -758,12 +758,12 @@ impl Feed {
         }
     }
 
-    async fn run(mut self, request: GraphQLRequest, first: Option<Opened>, mut resets: crate::lifecycle::Watch) {
+    async fn run(mut self, request: GraphQLRequest, first: Option<Opened>, mut resets: crate::ffi::legacy::Watch) {
         let mut lifecycle = Lifecycle::new(self.backoff);
         let mut opened = first;
         let mut dropped = false;
         'open: loop {
-            if !self.inner.admitted(crate::lifecycle::Origin::Session) {
+            if !self.inner.admitted(crate::ffi::legacy::Origin::Session) {
                 opened = None;
                 self.mark(|status| status.opening = false);
                 if resets.changed().await.is_none() { return; }
@@ -845,10 +845,10 @@ impl Feed {
 
 enum Pumped {
     Ended(SubscriptionFailureKind, Option<SubscriptionFailure>, Vec<Pending>),
-    Invalidated(Option<crate::lifecycle::Invalidated>),
+    Invalidated(Option<crate::ffi::legacy::Invalidated>),
 }
 
-async fn invalidated(resets: &mut crate::lifecycle::Watch) -> Option<crate::lifecycle::Invalidated> {
+async fn invalidated(resets: &mut crate::ffi::legacy::Watch) -> Option<crate::ffi::legacy::Invalidated> {
     resets.invalidated().await
 }
 
@@ -868,9 +868,9 @@ impl Inner {
                 self.connectivity.online().await;
                 let lifecycle = &self.db.shared.store.lifecycle;
                 let admitted = loop {
-                    match self.db.shared.store.lifecycle.admit(crate::lifecycle::Origin::Session, "subscription open") {
+                    match self.db.shared.store.lifecycle.admit(crate::ffi::legacy::Origin::Session, "subscription open") {
                         Ok(admitted) => break admitted,
-                        Err(_) if !lifecycle.admission(crate::lifecycle::Origin::Session).await => return None,
+                        Err(_) if !lifecycle.admission(crate::ffi::legacy::Origin::Session).await => return None,
                         Err(_) => {}
                     }
                 };
@@ -880,9 +880,9 @@ impl Inner {
                 let opened = admitted.run(self.transport.subscribe(&admitted, request)).await.unwrap_or_else(|ended| Err(ended.into()));
                 if let Ok(connection) = &opened {
                     let life = lifecycle.clone();
-                    connection.hold_frames(move || life.admit_session_at(crate::lifecycle::Origin::Session, "subscription frame", epoch).ok().map(|lease| Box::new(lease) as Box<dyn Send>));
+                    connection.hold_frames(move || life.admit_session_at(crate::ffi::legacy::Origin::Session, "subscription frame", epoch).ok().map(|lease| Box::new(lease) as Box<dyn Send>));
                 }
-                let admitted = lifecycle.admit_passive(crate::lifecycle::Origin::Session, "subscription event", Some(epoch)).ok()?;
+                let admitted = lifecycle.admit_passive(crate::ffi::legacy::Origin::Session, "subscription event", Some(epoch)).ok()?;
                 Some((generation, admitted, opened))
             } => result,
         }
@@ -899,7 +899,7 @@ impl Inner {
             .ok_or_else(|| SyncError::UnknownOperation(def.operation.clone()))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, def.variables.clone());
         let mut resets = self.db.shared.store.lifecycle.watch();
-        let first = if self.connectivity.is_online() && self.admitted(crate::lifecycle::Origin::Session) {
+        let first = if self.connectivity.is_online() && self.admitted(crate::ffi::legacy::Origin::Session) {
             tokio::select! {
                 biased;
                 _ = invalidated(&mut resets) => None,
@@ -914,8 +914,8 @@ impl Inner {
         let epoch = if let Some((_, admitted, _)) = &first { admitted.clone() } else {
             let lifecycle = &self.db.shared.store.lifecycle;
             loop {
-                if let Ok(admitted) = lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "subscription", None) { break admitted; }
-                if !lifecycle.admission(crate::lifecycle::Origin::Explicit).await { return Err(SyncError::Cancelled); }
+                if let Ok(admitted) = lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "subscription", None) { break admitted; }
+                if !lifecycle.admission(crate::ffi::legacy::Origin::Explicit).await { return Err(SyncError::Cancelled); }
             }
         };
         let feed = Feed { inner: self.clone(), def: Arc::new(def), shared: ready.is_some(), operation_root: operation.root_path.clone(), root_path, status: status.clone(), backoff, ready, received: self.db.shared.store.lifecycle.snapshot().stamp(), lost: Arc::default(), epoch };

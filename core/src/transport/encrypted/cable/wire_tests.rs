@@ -11,7 +11,7 @@ use rsa::{pkcs1::DecodeRsaPrivateKey, Oaep, RsaPrivateKey};
 use sha2::{Digest, Sha256};
 use crate::test_wait::{serving, within};
 
-fn test_admission() -> crate::lifecycle::Admitted {
+fn test_admission() -> crate::ffi::legacy::Admitted {
     crate::db::Db::open_in_memory(Vec::new(), None).unwrap().admit().unwrap()
 }
 
@@ -310,10 +310,10 @@ impl CableConnect for FakeConnect {
 #[async_trait]
 impl crate::transport::Transport for FakeConnect {
     async fn open_cable(&self) -> Result<Arc<dyn CableSocket>, TransportError> { CableConnect::open(self).await }
-    async fn query(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted query") }
-    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted mutation") }
-    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<crate::transport::ServerSubscription, TransportError> { panic!("V2 subscription") }
-    async fn put(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, TransportError> { unreachable!() }
+    async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted query") }
+    async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted mutation") }
+    async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::ServerSubscription, TransportError> { panic!("V2 subscription") }
+    async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, TransportError> { unreachable!() }
 }
 
 struct Http {

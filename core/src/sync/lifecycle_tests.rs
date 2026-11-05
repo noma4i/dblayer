@@ -8,7 +8,7 @@ use crate::transport::Reply;
 fn an_ended_session_parks_the_outbox_until_the_next_session_starts() { crate::test_wait::paused(async {
     let rig = rig();
     let row = rig.db.create(&rig.db.admit().unwrap(), "moments", params(json!({"text": "unsent"}))).unwrap();
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     rig.transport.enqueue("CreateMoment", Reply::data(json!({"createMoment": {"id": "m1", "text": "unsent", "userId": null}})));
     crate::sync::rig::app(&rig.sync, rig.sync.flush(&rig.sync.inner.db.admit().unwrap())).await.unwrap();
     assert_eq!(rig.transport.call_count("CreateMoment"), 0);
@@ -46,7 +46,7 @@ async fn ending_the_session_cancels_a_send_in_flight_and_frees_the_outbox() {
     let sync = rig.sync.clone();
     let flushing = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await });
     rig.transport.await_calls("CreateMoment", 1).await;
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     assert!(matches!(crate::test_wait::within(flushing).await.unwrap(), Err(crate::sync::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))));
     crate::test_wait::yield_until("the outbox gate is free", || rig.sync.inner.outbox_gate.try_lock().is_ok()).await;
     assert_ne!(rig.db.outbox().unwrap()[0].operation.status, OperationStatus::Committed);
@@ -55,7 +55,7 @@ async fn ending_the_session_cancels_a_send_in_flight_and_frees_the_outbox() {
 #[tokio::test]
 async fn closing_the_database_ends_the_outcome_wait_of_a_pending_operation() {
     let rig = rig();
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     let (_, ticket) = create_claimed(&rig.sync, "moments", params(json!({"text": "unsent"})));
     let admitted = rig.sync.inner.db.admit().unwrap();
     let waiting = tokio::spawn(async move { admitted.run(ticket.result()).await.map(drop) });
@@ -73,7 +73,7 @@ async fn a_flush_woken_during_a_model_reset_sends_the_queued_write_once_after_th
     rig.db.update(&rig.db.admit().unwrap(), "moments", &crate::identity::RowId::new("m1").unwrap(), params(json!({"text": "new"}))).unwrap();
     rig.transport.enqueue("UpdateMoment", Reply::data(json!({"updateMoment": {"id": "m1", "text": "new", "userId": null}})));
     let lifecycle = rig.db.shared.store.lifecycle.clone();
-    let permit = lifecycle.begin_blocking(crate::lifecycle::Boundary::Models, None).unwrap();
+    let permit = lifecycle.begin_blocking(crate::ffi::legacy::Boundary::Models, None).unwrap();
     rig.sync.set_online(true);
     rig.db.reset_in(&permit, &["users"]).unwrap();
     permit.finish();

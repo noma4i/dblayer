@@ -135,18 +135,18 @@ fn limited_combinations(parameters: &[(&String, Vec<Value>)], at: usize, params:
 }
 
 impl Inner {
-    pub(crate) fn admitted(&self, origin: crate::lifecycle::Origin) -> bool {
+    pub(crate) fn admitted(&self, origin: crate::ffi::legacy::Origin) -> bool {
         self.db.shared.store.lifecycle.snapshot().admits(origin)
     }
 
-    pub(crate) fn ensure_admitted(&self, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+    pub(crate) fn ensure_admitted(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<(), SyncError> {
         if !Arc::ptr_eq(admitted.life(), &self.db.shared.store.lifecycle) || !admitted.is_current() { return Err(SyncError::Cancelled); }
         Ok(())
     }
 
-    pub(crate) fn require_session(&self, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+    pub(crate) fn require_session(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<(), SyncError> {
         self.ensure_admitted(admitted)?;
-        if !self.admitted(crate::lifecycle::Origin::Session) { return Err(SyncError::NoSession("the database has no session".into())); }
+        if !self.admitted(crate::ffi::legacy::Origin::Session) { return Err(SyncError::NoSession("the database has no session".into())); }
         Ok(())
     }
 
@@ -207,7 +207,7 @@ impl Inner {
             if !state.due || state.running || state.held() || state.yielding() || !self.connectivity.is_online() { return; }
             state.running = true;
         }
-        let admission = self.db.shared.store.lifecycle.admit_woken(crate::lifecycle::Origin::Session, "preload", epoch);
+        let admission = self.db.shared.store.lifecycle.admit_woken(crate::ffi::legacy::Origin::Session, "preload", epoch);
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
             let Some(admitted) = admission.await else {
@@ -226,7 +226,7 @@ impl Inner {
     }
 
     fn preload_take(&self) -> bool {
-        let signed_in = self.admitted(crate::lifecycle::Origin::Session);
+        let signed_in = self.admitted(crate::ffi::legacy::Origin::Session);
         let mut state = locked(&self.preload.state);
         let ready = state.due && !state.held() && !state.yielding() && self.connectivity.is_online() && signed_in;
         if ready { state.due = false; } else { state.running = false; }
@@ -237,14 +237,14 @@ impl Inner {
     fn preload_failed(&self, error: &SyncError) {
         let Ok(windows) = self.preloaded_windows() else { return };
         for (model, relation, params) in windows {
-            let Ok(resolved) = self.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) else { continue };
+            let Ok(resolved) = self.resolve(crate::ffi::legacy::Origin::Session, &model, &relation, &params) else { continue };
             if let Ok(seed) = self.stored(&resolved) {
                 FlightTicket::new(&self.owner, &resolved.window_key, resolved.target(), false, seed).failed(LoadError::of(error));
             }
         }
     }
 
-    async fn preload_windows_in_epoch(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) {
+    async fn preload_windows_in_epoch(self: &Arc<Self>, admitted: &crate::ffi::legacy::Admitted) {
         let lanes = Arc::new(Semaphore::new(PRELOAD_PARALLEL));
         let mut changed = self.preload.changed.subscribe();
         let mut loads = Children::new();
@@ -266,12 +266,12 @@ impl Inner {
             for (model, relation, params) in windows {
                 let key = format!("{model}|{relation}|{params:?}");
                 if !started.insert(key.clone()) { continue; }
-                let Ok(window_key) = self.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
+                let Ok(window_key) = self.resolve(crate::ffi::legacy::Origin::Session, &model, &relation, &params).map(|resolved| resolved.window_key) else { continue };
                 let (inner, lanes, loaded, admitted) = (self.clone(), lanes.clone(), key.clone(), admitted.clone());
                 let task = loads.spawn(crate::task::Carry::here(), async move {
                     let _lane = lanes.acquire_owned().await;
                     inner.app_loads_settled().await;
-                    let result = match inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) {
+                    let result = match inner.resolve(crate::ffi::legacy::Origin::Session, &model, &relation, &params) {
                         Ok(resolved) => inner.load_scope(&admitted, &resolved, false).await,
                         Err(error) => Err(error),
                     };
@@ -343,7 +343,7 @@ impl Sync {
         if was_saving && !saving { self.inner.preload_start(); }
     }
 
-    pub async fn refresh_preloads(&self, admitted: &crate::lifecycle::Admitted) -> Result<Vec<PreloadFailure>, SyncError> {
+    pub async fn refresh_preloads(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<Vec<PreloadFailure>, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         let _app = self.app_load();
         if !self.inner.connectivity.is_online() { return Err(SyncError::Offline); }
@@ -359,7 +359,7 @@ impl Sync {
                 loads.spawn(crate::task::Carry::here(), async move {
                     let _lane = lanes.acquire_owned().await;
                     let (model, relation, params) = window;
-                    let fetched = match inner.resolve(crate::lifecycle::Origin::Explicit, &model, &relation, &params) {
+                    let fetched = match inner.resolve(crate::ffi::legacy::Origin::Explicit, &model, &relation, &params) {
                         Ok(resolved) => inner.load_scope(&admitted, &resolved, true).await.map(|outcome| outcome.kept_error),
                         Err(error) => Err(error),
                     };
@@ -405,16 +405,13 @@ impl Sync {
 #[cfg(test)]
 impl Sync {
     /// Ends the session the way a confirmed logout does, without a credential.
-    pub(crate) fn end_session_for_test(&self) {
-        let lifecycle = &self.inner.db.shared.store.lifecycle;
-        let Ok(permit) = lifecycle.begin_blocking(crate::lifecycle::Boundary::SessionEnd(crate::lifecycle::End::Server), None) else { return };
-        self.inner.db.shared.store.end_session(&permit);
+    pub(crate) fn lose_session_for_test(&self) {
+        self.inner.db.shared.store.lifecycle.lose_session_in_tests();
     }
 
     pub(crate) fn commit_session_for_test(&self) {
-        let lifecycle = &self.inner.db.shared.store.lifecycle;
         match self.inner.transport.session() {
-            Ok(session) => { if let Ok(admitted) = self.inner.db.admit() { let _ = lifecycle.session_from(session, admitted); } self.operations_ready(); }
+            Ok(session) => { if let Ok(admitted) = self.inner.db.admit() { let _ = self.inner.db.shared.store.lifecycle.start_session_in_tests(session, admitted); } self.operations_ready(); }
             Err(error) => self.inner.preload_failed(&SyncError::Transport(error)),
         }
     }

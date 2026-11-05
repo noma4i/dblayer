@@ -24,15 +24,15 @@ pub(crate) struct DueRefresh {
     cancel: CancelToken,
     sink: RefreshSink,
     session: bool,
-    admitted: crate::lifecycle::Admitted,
+    admitted: crate::ffi::legacy::Admitted,
 }
 
 impl Sync {
-    pub fn refresh_entities(&self, admitted: &crate::lifecycle::Admitted, model: &str, ids: &[String], fetch: EntityFetch, sink: RefreshSink) -> Result<CancelToken, SyncError> {
+    pub fn refresh_entities(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, ids: &[String], fetch: EntityFetch, sink: RefreshSink) -> Result<CancelToken, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         let cancel = CancelToken::new();
         if fetch == EntityFetch::None { return Ok(cancel); }
-        if !self.inner.admitted(crate::lifecycle::Origin::Session) {
+        if !self.inner.admitted(crate::ffi::legacy::Origin::Session) {
             for id in ids { sink(id, None); }
             return Ok(cancel);
         }
@@ -59,7 +59,7 @@ impl Sync {
                 if present { return Ok(()); }
                 if due.cancel.is_cancelled() || due.generation != inner.db.generation() { return Err(SyncError::Cancelled); }
             }
-            inner.node(&due.admitted, crate::lifecycle::Origin::Session, &due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
+            inner.node(&due.admitted, crate::ffi::legacy::Origin::Session, &due.model, &due.relation, &due.id, matches!(due.fetch, EntityFetch::Force | EntityFetch::IfMissing)).await.map(|_| ())
         };
         let result = tokio::select! { biased; _ = due.cancel.cancelled() => return, result = work => result };
         if due.cancel.is_cancelled() || !due.admitted.is_current() || due.generation != inner.db.generation() { return; }
@@ -75,12 +75,12 @@ impl Sync {
         (due.sink)(&due.id, outcome);
     }
 
-    pub async fn load_entity(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &str) -> Result<(), SyncError> {
+    pub async fn load_entity(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &str) -> Result<(), SyncError> {
         self.inner.ensure_admitted(admitted)?;
         let spec = self.inner.db.spec(model).map_err(|_| SyncError::UnknownModel(model.into()))?;
         let relation = spec.relations.iter().find(|declared| declared.node == Some(NodeRead::One))
             .ok_or_else(|| SyncError::UnknownRelation { model: model.into(), relation: "node".into() })?.name.clone();
-        self.inner.node(admitted, crate::lifecycle::Origin::Explicit, model, &relation, id, true).await.map(|_| ())
+        self.inner.node(admitted, crate::ffi::legacy::Origin::Explicit, model, &relation, id, true).await.map(|_| ())
     }
 
     pub fn cancel_entity_refresh(&self, cancel: &CancelToken) {

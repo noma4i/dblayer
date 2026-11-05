@@ -21,12 +21,12 @@ fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values()
             None | Some("17") => {
                 let expected = if value.is_none() { 0 } else { 17 };
                 assert_eq!(store.revision_seq().unwrap(), expected);
-                store.reset_cache_only(&["messages"]).unwrap();
+                store.clear_models_in_tests(&["messages"]).unwrap();
                 assert_eq!(store.revision_seq().unwrap(), expected + 1);
             }
             _ => {
                 assert!(store.revision_seq().is_err());
-                assert!(store.reset_cache_only(&["messages"]).is_err());
+                assert!(store.clear_models_in_tests(&["messages"]).is_err());
             }
         }
         store.lock().connection.execute_batch("DROP TABLE manifest").unwrap();

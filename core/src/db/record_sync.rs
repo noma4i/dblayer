@@ -29,14 +29,14 @@ impl Db {
         self.shared.read(&[model], |reader| Ok(read_sync(reader.connection(), model, &[id.to_string()])?.remove(id.as_str()).unwrap_or_default()))
     }
 
-    pub fn retry(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
+    pub fn retry(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
         let key = self.action_operation_key(model, action)?;
         let stuck = self.stuck_operations(model, id, key.as_deref())?;
         Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, Some((model, id, key.as_deref())))?)
     }
 
     /// Retries the failed operation of a record or its failed upload items in one commit. Nothing failed gives no operation: the record stays as it is.
-    pub(crate) fn retry_claiming<T>(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>, claim: impl FnOnce(i64) -> T) -> Result<(Option<i64>, i64, Option<super::Row>, Option<T>), DbError> {
+    pub(crate) fn retry_claiming<T>(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, action: Option<&str>, claim: impl FnOnce(i64) -> T) -> Result<(Option<i64>, i64, Option<super::Row>, Option<T>), DbError> {
         let key = self.action_operation_key(model, action)?;
         let generation = self.generation();
         let mut sequence = None;
@@ -69,12 +69,12 @@ impl Db {
         Ok((sequence, revision, row, ticket))
     }
 
-    pub fn retry_all(&self, admitted: &crate::lifecycle::Admitted) -> Result<usize, DbError> {
+    pub fn retry_all(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<usize, DbError> {
         let stuck: Vec<OutboxOperation> = self.outbox()?.into_iter().filter(is_stuck).collect();
         Ok(self.retry_operations(admitted, stuck)? + self.retry_upload_items(admitted, None)?)
     }
 
-    fn retry_upload_items(&self, admitted: &crate::lifecycle::Admitted, target: Option<(&str, &RowId, Option<&str>)>) -> Result<usize, DbError> {
+    fn retry_upload_items(&self, admitted: &crate::ffi::legacy::Admitted, target: Option<(&str, &RowId, Option<&str>)>) -> Result<usize, DbError> {
         let generation = self.generation();
         let mut retried = 0;
         self.commit_following(&admitted.authority(), generation, |reader| {
@@ -88,7 +88,7 @@ impl Db {
         Ok(retried)
     }
 
-    pub(crate) fn retry_operations(&self, admitted: &crate::lifecycle::Admitted, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
+    pub(crate) fn retry_operations(&self, admitted: &crate::ffi::legacy::Admitted, stuck: Vec<OutboxOperation>) -> Result<usize, DbError> {
         if stuck.is_empty() {
             return Ok(0);
         }
@@ -118,7 +118,7 @@ impl Db {
         })
     }
 
-    pub(crate) fn expire_candidates(&self, admitted: &crate::lifecycle::Admitted, candidates: Vec<(i64, String, String, String)>, due: i64, running: &[i64]) -> Result<usize, DbError> {
+    pub(crate) fn expire_candidates(&self, admitted: &crate::ffi::legacy::Admitted, candidates: Vec<(i64, String, String, String)>, due: i64, running: &[i64]) -> Result<usize, DbError> {
         let mut removed = 0;
         let mut rolled_back = std::collections::BTreeSet::new();
         for (seq, action_key, status, row) in candidates {
@@ -148,7 +148,7 @@ impl Db {
         Ok(removed)
     }
 
-    pub fn discard(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
+    pub fn discard(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<usize, DbError> {
         let key = self.action_operation_key(model, action)?;
         if self.record_operations(model, id, key.as_deref())?.iter().any(is_sending) {
             return Err(DbError::InFlight { model: model.to_string(), id: id.to_string() });

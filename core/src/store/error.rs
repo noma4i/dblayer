@@ -35,7 +35,6 @@ impl From<rusqlite::Error> for StoreError {
 }
 
 impl StoreError {
-    pub(crate) fn refused(_: crate::lifecycle::Refused) -> Self { StoreError::Refused }
 
     pub(crate) fn is_apply_failure(&self) -> bool {
         match self {

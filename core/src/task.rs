@@ -4,7 +4,7 @@ use std::future::Future;
 use tokio::runtime::Handle;
 use tokio::task::{AbortHandle, JoinError, JoinHandle, JoinSet};
 
-use crate::lifecycle::{Admitted, Authority};
+use crate::ffi::legacy::{Admitted, Authority};
 
 thread_local! {
     static CURRENT_ADMISSION: std::cell::RefCell<Option<Admitted>> = const { std::cell::RefCell::new(None) };

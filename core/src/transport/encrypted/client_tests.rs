@@ -110,8 +110,8 @@ fn an_old_subscription_cannot_read_the_next_accounts_cable_credential() {
     let client = rig.client(&db);
     let old = db.admit().unwrap();
     let life = &db.shared.store.lifecycle;
-    let next = life.admit_passive(crate::lifecycle::Origin::Explicit, "next session", Some(old.value())).unwrap();
-    life.session_from(Some("B".into()), next).unwrap();
+    let next = life.admit_passive(crate::ffi::legacy::Origin::Explicit, "next session", Some(old.value())).unwrap();
+    life.start_session_in_tests(Some("B".into()), next).unwrap();
     assert!(matches!(client.cable_credential(&old), Err(TransportError::Interrupted(_))));
 }
 

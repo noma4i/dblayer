@@ -54,14 +54,14 @@ impl super::Store {
         Ok(rows)
     }
 
-    pub(crate) fn settle_transfer_abort(&self, authority: &crate::lifecycle::Authority, id: i64) -> Result<(), StoreError> {
+    pub(crate) fn settle_transfer_abort(&self, authority: &crate::ffi::legacy::Authority, id: i64) -> Result<(), StoreError> {
         self.write_store(authority, |inner| {
             inner.connection.execute("DELETE FROM transfer_abort WHERE id = ?1", [id])?;
             Ok(())
         })
     }
 
-    pub(crate) fn settle_transfer_abort_identity(&self, authority: &crate::lifecycle::Authority, operation_id: i64, item_id: &str) -> Result<bool, StoreError> {
+    pub(crate) fn settle_transfer_abort_identity(&self, authority: &crate::ffi::legacy::Authority, operation_id: i64, item_id: &str) -> Result<bool, StoreError> {
         self.write_store(authority, |inner| {
             Ok(inner.connection.execute("DELETE FROM transfer_abort WHERE operation_id = ?1 AND item_id = ?2", params![operation_id, item_id])? > 0)
         })

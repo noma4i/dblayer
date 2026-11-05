@@ -220,7 +220,7 @@ async fn a_change_of_the_network_waits_for_the_commit_of_a_start_that_passed_its
         assert!(!slot.lock().unwrap().as_ref().unwrap().is_finished(), "the change of the network did not wait for the commit");
         assert!(online.is_online(), "the network moved while the start held the line");
     }));
-    let admitted = store.lifecycle.admit(crate::lifecycle::Origin::Explicit, "test commit").unwrap();
+    let admitted = store.lifecycle.admit(crate::ffi::legacy::Origin::Explicit, "test commit").unwrap();
     let committed = store.commit_as(&admitted.authority(), envelope);
     assert!(committed.is_ok(), "{:?}", committed.err());
     crate::test_wait::join_within(changing.lock().unwrap().take().unwrap());

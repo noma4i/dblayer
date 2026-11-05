@@ -12,7 +12,7 @@ use super::upload_tests::{file, rid};
 async fn upload_without_a_session_refuses_before_accepting_a_file() {
     let rig = super::upload_tests::upload_rig(super::upload_tests::small());
     put(&rig, "moments", moment("m1", "x"));
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     let source = file(b"clip");
     let admitted = rig.db.admit().unwrap();
     let result = rig.sync.upload(&admitted, "moments", &rid("m1"), "upload", UploadFile::new(source.path().to_str().unwrap())).await;

@@ -26,7 +26,7 @@ impl Inner {
             if params.len() != relation.by_columns.len() {
                 continue;
             }
-            let Ok(resolved) = self.resolve(crate::lifecycle::Origin::Session, model, &relation.name, &params) else { continue };
+            let Ok(resolved) = self.resolve(crate::ffi::legacy::Origin::Session, model, &relation.name, &params) else { continue };
             let loaded = rusqlite::OptionalExtension::optional(reader.connection().query_row("SELECT 1 FROM query_window WHERE key = ?1", [&resolved.window_key], |row| row.get::<_, i64>(0)))
                 .map_err(|error| SyncError::Event(error.to_string()))?;
             if loaded.is_none() {
@@ -127,11 +127,11 @@ impl Inner {
         Ok(ops)
     }
 
-    pub(crate) fn land_rows(&self, admitted: &crate::lifecycle::Admitted, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
+    pub(crate) fn land_rows(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
         crate::blocking::blocking_unit(|| self.land_rows_unit(admitted, model, normalized, attempt))
     }
 
-    fn land_rows_unit(&self, admitted: &crate::lifecycle::Admitted, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
+    fn land_rows_unit(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, normalized: &Normalized, attempt: &FetchAttempt) -> Result<Landed, SyncError> {
         let serial = locked(&self.landing);
         let mut drops = 0;
         let (mut admitted_roots, mut invalid_roots) = (0, 0);
@@ -159,11 +159,11 @@ impl Inner {
         Ok(Landed::Applied { rows: admitted_roots, invalid: invalid_roots, revision })
     }
 
-    pub(crate) fn land(&self, admitted: &crate::lifecycle::Admitted, landing: Landing) -> Result<Landed, SyncError> {
+    pub(crate) fn land(&self, admitted: &crate::ffi::legacy::Admitted, landing: Landing) -> Result<Landed, SyncError> {
         crate::blocking::blocking_unit(|| self.land_unit(admitted, landing))
     }
 
-    fn land_unit(&self, admitted: &crate::lifecycle::Admitted, landing: Landing) -> Result<Landed, SyncError> {
+    fn land_unit(&self, admitted: &crate::ffi::legacy::Admitted, landing: Landing) -> Result<Landed, SyncError> {
         let serial = locked(&self.landing);
         let Landing { marker, leave_stale, node_reread, model, scope, window_key, normalized, is_first_page, replace_window, plans_as_first, coverage, edge_fields, requested_cursor, page_info, keeps_total, attempt } = landing;
         let generation = attempt.generation;

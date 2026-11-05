@@ -148,7 +148,7 @@ impl Inner {
 
     fn subscription_scope(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Option<(String, Value)> {
         if params.is_empty() { return None; }
-        let resolved = self.resolve(crate::lifecycle::Origin::Session, model, relation, params).ok()?;
+        let resolved = self.resolve(crate::ffi::legacy::Origin::Session, model, relation, params).ok()?;
         let variables = mapped_variables(&resolved.params, &resolved.remote.variables);
         Some((resolved.scope.key.to_string(), Value::Object(variables)))
     }

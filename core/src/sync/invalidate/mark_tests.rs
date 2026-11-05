@@ -367,7 +367,7 @@ fn a_reread_queued_before_a_session_change_writes_nothing_in_the_next_session() 
     let flushing = tokio::spawn(async move { crate::sync::rig::app(&sync, sync.flush(&sync.inner.db.admit().unwrap())).await });
     rig.transport.await_calls("LikeMoment", 2).await;
     assert!(is_stale(&rig, "history"), "the first commit left the list fresh");
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     assert!(matches!(crate::test_wait::within(flushing).await.unwrap(), Err(crate::sync::SyncError::Transport(crate::transport::TransportError::Interrupted(_)))));
     rig.sync.commit_session_for_test();
     let _watch = rig.sync.watch("moments", "history", &none()).unwrap();

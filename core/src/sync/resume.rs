@@ -101,7 +101,7 @@ pub(crate) struct Runner {
     epoch: u64,
     id: u64,
     first: Cause,
-    admitted: crate::lifecycle::Admitted,
+    admitted: crate::ffi::legacy::Admitted,
 }
 
 impl Runner {
@@ -165,7 +165,7 @@ impl Sync {
         let spec = self.inner.db.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| SyncError::UnknownRelation { model:model.into(), relation:relation.into() })?;
         let (read, state) = if declared.remote.is_some() {
-            let resolved = self.inner.resolve(crate::lifecycle::Origin::Session, model, relation, params)?;
+            let resolved = self.inner.resolve(crate::ffi::legacy::Origin::Session, model, relation, params)?;
             let key = resolved.window_key.clone();
             let state = self.inner.owner.observe(&key, resolved.target(), None);
             let read = self.inner.db.register_observed_read(crate::db::ObservedRead { model: model.to_string(), relation: relation.to_string(), params: params.clone(), key });
@@ -176,9 +176,9 @@ impl Sync {
         Ok(Watch { inner: self.inner.clone(), _read: read, _state: state, live, failures: Some(failures) })
     }
 
-    pub async fn resume(&self, admitted: &crate::lifecycle::Admitted) -> Result<ResumeReport, SyncError> {
+    pub async fn resume(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<ResumeReport, SyncError> {
         self.inner.ensure_admitted(admitted)?;
-        if !self.inner.admitted(crate::lifecycle::Origin::Session) { return Ok(ResumeReport::default()); }
+        if !self.inner.admitted(crate::ffi::legacy::Origin::Session) { return Ok(ResumeReport::default()); }
         admitted.run(async {
             let (sender, receiver) = oneshot::channel();
             self.inner.request_resume(admitted, Cause::Explicit, Some(sender))?;
@@ -195,7 +195,7 @@ impl Inner {
     pub(crate) fn resume_on_event(self: &Arc<Self>) {
         if !self.connectivity.is_online() { return; }
         let (Ok(runtime), Some(epoch)) = (Handle::try_current(), self.waking_epoch()) else { return };
-        let admission = self.db.shared.store.lifecycle.admit_woken(crate::lifecycle::Origin::Session, "resume", epoch);
+        let admission = self.db.shared.store.lifecycle.admit_woken(crate::ffi::legacy::Origin::Session, "resume", epoch);
         let inner = Arc::downgrade(self);
         crate::task::spawn_on(crate::task::Carry::Detached, &runtime, self.until_closed(async move {
             let Some(admitted) = admission.await else { return };
@@ -203,12 +203,12 @@ impl Inner {
         }));
     }
 
-    pub(crate) fn begin_resume(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<Runner> {
+    pub(crate) fn begin_resume(self: &Arc<Self>, admitted: &crate::ffi::legacy::Admitted, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Option<Runner> {
         let epoch = admitted.value();
         self.resume.request(epoch, cause, waiter).map(|(id, first)| Runner { inner: Arc::downgrade(self), epoch, id, first, admitted: admitted.clone() })
     }
 
-    pub(crate) fn request_resume(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Result<(), SyncError> {
+    pub(crate) fn request_resume(self: &Arc<Self>, admitted: &crate::ffi::legacy::Admitted, cause: Cause, waiter: Option<oneshot::Sender<Outcome>>) -> Result<(), SyncError> {
         let runtime = Handle::try_current().map_err(|_| SyncError::Store("no async runtime to run the resume".into()))?;
         let runner = {
             let life = &self.db.shared.store.lifecycle;
@@ -222,8 +222,8 @@ impl Inner {
         Ok(())
     }
 
-    pub(crate) async fn resume_windows(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted, cause: Cause) -> Result<ResumeReport, SyncError> {
-        if !self.admitted(crate::lifecycle::Origin::Session) { return Ok(ResumeReport::default()); }
+    pub(crate) async fn resume_windows(self: &Arc<Self>, admitted: &crate::ffi::legacy::Admitted, cause: Cause) -> Result<ResumeReport, SyncError> {
+        if !self.admitted(crate::ffi::legacy::Origin::Session) { return Ok(ResumeReport::default()); }
         if cause == Cause::Explicit { self.transport.resume_subscriptions(); }
         self.restart_live(cause);
         let drain = self.config.resume;
@@ -255,7 +255,7 @@ impl Inner {
                 let admitted = admitted.clone();
                 let force = !unforced.contains(&key);
                 loads.spawn(crate::task::Carry::here(), async move {
-                    let resolved = inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params)?;
+                    let resolved = inner.resolve(crate::ffi::legacy::Origin::Session, &model, &relation, &params)?;
                     if resolved.members_complete || resolved.media.is_some() {
                         tokio::select! {
                             _ = inner.owner.unobserved(&resolved.window_key) => Err(SyncError::Cancelled),

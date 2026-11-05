@@ -11,13 +11,13 @@ use super::open::{locked, Db};
 use super::prior::Prior;
 
 impl Db {
-    pub fn maintain(&self, admitted: &crate::lifecycle::Admitted, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, DbError> {
+    pub fn maintain(&self, admitted: &crate::ffi::legacy::Admitted, temp_rows: &[TempRowPolicy]) -> Result<MaintenanceReport, DbError> {
         let report = self.shared.store.maintain(admitted, temp_rows)?;
         self.sweep_files(admitted)?;
         Ok(report)
     }
 
-    pub fn sweep_files(&self, admitted: &crate::lifecycle::Admitted) -> Result<usize, DbError> {
+    pub fn sweep_files(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<usize, DbError> {
         let _gate = locked(&self.shared.files_gate);
         {
             let life = &self.shared.store.lifecycle;
@@ -82,7 +82,7 @@ impl Db {
         result
     }
 
-    fn remove_references(&self, admitted: &crate::lifecycle::Admitted, references: &[FileReference]) -> Result<(crate::store::Committed<'_>, Result<(), DbError>), DbError> {
+    fn remove_references(&self, admitted: &crate::ffi::legacy::Admitted, references: &[FileReference]) -> Result<(crate::store::Committed<'_>, Result<(), DbError>), DbError> {
         let generation = self.generation();
         let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
         for reference in references {

@@ -6,7 +6,7 @@ use crate::upload::{BlobSnapshot, BlobState, UploadFile, UploadState, UploadOper
 use super::super::{locked, Inner, Sync, SyncError};
 
 impl Inner {
-    pub(crate) async fn expire_blobs(self: &Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<(), SyncError> {
+    pub(crate) async fn expire_blobs(self: &Arc<Self>, admitted: &crate::ffi::legacy::Admitted) -> Result<(), SyncError> {
         let failed_due = self.now_ms().saturating_sub(self.config.upload.failed_ttl.as_millis().try_into().unwrap_or(i64::MAX));
         let inner = self.clone();
         let admitted = admitted.clone();
@@ -22,7 +22,7 @@ impl Inner {
 }
 
 impl Sync {
-    pub async fn upload_blob(&self, admitted: &crate::lifecycle::Admitted, name: &str, create: &str, file: UploadFile) -> Result<String, SyncError> {
+    pub async fn upload_blob(&self, admitted: &crate::ffi::legacy::Admitted, name: &str, create: &str, file: UploadFile) -> Result<String, SyncError> {
         self.inner.require_session(admitted)?;
         if !locked(&self.inner.operations).contains_key(create) { return Err(SyncError::UnknownOperation(create.into())); }
         let inner = self.inner.clone();
@@ -68,7 +68,7 @@ impl Sync {
         }
     }
 
-    pub async fn retry_blob(&self, admitted: &crate::lifecycle::Admitted, id: &str) -> Result<(), SyncError> {
+    pub async fn retry_blob(&self, admitted: &crate::ffi::legacy::Admitted, id: &str) -> Result<(), SyncError> {
         self.inner.require_session(admitted)?;
         self.inner.expire_blobs(admitted).await?;
         let blob = self.blob_snapshot(id)?;
@@ -89,7 +89,7 @@ impl Sync {
         self.inner.start_uploads()
     }
 
-    pub async fn discard_blob(&self, admitted: &crate::lifecycle::Admitted, id: &str) -> Result<(), SyncError> {
+    pub async fn discard_blob(&self, admitted: &crate::ffi::legacy::Admitted, id: &str) -> Result<(), SyncError> {
         self.inner.require_session(admitted)?;
         let generation = self.inner.db.generation();
         let blob = self.blob_snapshot(id)?;

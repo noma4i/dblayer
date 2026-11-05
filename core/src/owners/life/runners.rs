@@ -21,6 +21,7 @@ use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
 
 pub(super) struct LifecycleRunner {
     pub wiring: Arc<Wiring>,
+    pub leases: Arc<crate::ffi::legacy::Leases>,
     pub absent: Vec<Peer>,
     /// The published value and the answers of one step wait for `step_done`: a caller that sees a new epoch finds every owner already in it.
     pub held_published: Option<crate::owners::contract::Published>,
@@ -42,11 +43,12 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_network(NetworkInput::EpochStarted);
             }
             LifecycleEffect::EpochEnded { epoch, cause } => {
+                self.leases.epoch_ended(cause);
                 wiring.set_ending(true);
                 wiring.handle.end_epoch(epoch, cause);
                 wiring.outcomes.end_epoch(epoch, cause);
             }
-            LifecycleEffect::ModelsReset { .. } => {}
+            LifecycleEffect::ModelsReset { generation, models, .. } => self.leases.models_reset(generation, &models.into_iter().collect::<Vec<_>>()),
             LifecycleEffect::Closing => {
                 wiring.handle.close();
                 for peer in &self.absent {
@@ -63,6 +65,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
 
     fn step_done(&mut self) {
         if let Some(published) = self.held_published.take() {
+            self.leases.published(&published);
             self.wiring.publish(published);
         }
         for (id, result) in self.held_replies.drain(..) {
@@ -75,6 +78,7 @@ pub(super) struct StoreRunner {
     pub wiring: Arc<Wiring>,
     pub db: Db,
     pub credentials: Option<Arc<dyn crate::transport::CredentialSlot>>,
+    pub client: Option<Arc<crate::transport::EncryptedClient>>,
 }
 
 impl StoreRunner {
@@ -112,6 +116,9 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                             return;
                         }
                     }
+                }
+                if erase_encrypted {
+                    if let Some(client) = &self.client { client.forget_credential(); }
                 }
                 self.erased(back, store.erase_account(Generation::from_value(generation_new), erase_encrypted));
             }
@@ -185,7 +192,7 @@ impl CallsRunner {
         Self { wiring, transport: ports.transport.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), db: ports.db.clone(), running: HashMap::new() }
     }
 
-    fn input_of(call_id: u64, root: &str, result: Result<Result<crate::transport::Response, TransportError>, crate::lifecycle::Ended>) -> CallsInput {
+    fn input_of(call_id: u64, root: &str, result: Result<Result<crate::transport::Response, TransportError>, crate::ffi::legacy::Ended>) -> CallsInput {
         match result {
             Ok(Ok(response)) => {
                 if response.shape().outcome() != ResponseOutcome::Commit {
@@ -214,7 +221,7 @@ impl EffectRunner<Calls> for CallsRunner {
                 let back = back.clone();
                 let lease = self.db.shared.store.lifecycle.clone();
                 let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
-                    let admitted = match lease.admit(crate::lifecycle::Origin::Explicit, "run") {
+                    let admitted = match lease.admit(crate::ffi::legacy::Origin::Explicit, "run") {
                         Ok(admitted) => admitted,
                         Err(_) => return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }),
                     };

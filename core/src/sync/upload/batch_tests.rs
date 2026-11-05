@@ -223,10 +223,10 @@ async fn discard_while_the_final_mutation_waits_offline_uses_the_single_operatio
     }
     #[async_trait::async_trait]
     impl Transport for PauseAfterTransfer {
-        async fn query(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.transport.query(_admitted, request).await }
-        async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.transport.mutate(_admitted, request).await }
-        async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { self.transport.subscribe(_admitted, request).await }
-        async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
+        async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.transport.query(_admitted, request).await }
+        async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.transport.mutate(_admitted, request).await }
+        async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { self.transport.subscribe(_admitted, request).await }
+        async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
             let result = self.transport.put(_admitted, request).await;
             if self.transport.put_calls().len() == 2 { self.online.lock().unwrap().as_ref().unwrap().set_online(false); }
             result

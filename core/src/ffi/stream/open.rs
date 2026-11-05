@@ -53,7 +53,7 @@ struct EventFeed {
 impl EventReader for EventFeed {
     fn model(&self) -> &str { &self.model }
 
-    fn heard(&self, event: &ModelEvent, stamp: crate::lifecycle::Stamp) {
+    fn heard(&self, event: &ModelEvent, stamp: crate::ffi::legacy::Stamp) {
         let Some(stream) = self.stream.upgrade() else { return };
         let wire = WireModelEvent { area: event.area.clone(), kind: event.kind.clone(), id: event.id.clone(), before: event.before.as_ref().map(|row| self.wire.row(row)), after: event.after.as_ref().map(|row| self.wire.row(row)) };
         stream.heard(wire, stamp);
@@ -156,13 +156,13 @@ impl Database {
         let mut skip = !connectivity.is_online();
         let mut returns = connectivity.returns();
         let this = self.clone();
-        let admitted = self.db.shared.store.lifecycle.admit_passive(crate::lifecycle::Origin::Explicit, "reconnect refresh", Some(epoch)).map_err(|_| DbError::Interrupted { detail: "the session ended".into() })?;
+        let admitted = self.db.shared.store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "reconnect refresh", Some(epoch)).map_err(|_| DbError::Interrupted { detail: "the session ended".into() })?;
         let task = crate::task::spawn_on(admitted.into(), executor()?.handle(), async move {
             while returns.changed().await.is_ok() {
                 if std::mem::take(&mut skip) { continue; }
                 let refreshing = sync.clone();
                 let (model, relation, params) = (model.clone(), relation.clone(), params.clone());
-                let _ = this.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "reconnect refresh", true, |admitted| async move { Ok::<_, DbError>(refreshing.refresh(&admitted, &model, &relation, &params).await?) }).await;
+                let _ = this.in_epoch_as(crate::ffi::legacy::Origin::Explicit, epoch, "reconnect refresh", true, |admitted| async move { Ok::<_, DbError>(refreshing.refresh(&admitted, &model, &relation, &params).await?) }).await;
             }
         });
         Ok(task.abort_handle())
@@ -312,12 +312,12 @@ impl Database {
             loop {
                 let snapshot = transitions.current();
                 if snapshot.closed { return; }
-                if !snapshot.admits(crate::lifecycle::Origin::Session) {
+                if !snapshot.admits(crate::ffi::legacy::Origin::Session) {
                     loader.load_finished(None);
                     if transitions.changed().await.is_none() { return; }
                     continue;
                 }
-                let resolved = match sync.inner.resolve(crate::lifecycle::Origin::Session, &model, &relation, &params) {
+                let resolved = match sync.inner.resolve(crate::ffi::legacy::Origin::Session, &model, &relation, &params) {
                     Ok(resolved) => resolved,
                     Err(error) => { loader.load_finished(Some(DbError::from(error))); return; }
                 };

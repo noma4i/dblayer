@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, OperationTransition, WriteOrigin};
 use crate::identity::Generation;
-use crate::lifecycle::Authority;
+use crate::ffi::legacy::Authority;
 use crate::store::{Committed, PlanCommitError, Reader};
 
 use super::error::DbError;
@@ -11,8 +11,8 @@ use super::open::Db;
 use super::parent_pointer::Followed;
 
 impl Db {
-    pub fn admit(&self) -> Result<crate::lifecycle::Admitted, DbError> {
-        self.shared.store.lifecycle.admit(crate::lifecycle::Origin::Explicit, "core call")
+    pub fn admit(&self) -> Result<crate::ffi::legacy::Admitted, DbError> {
+        self.shared.store.lifecycle.admit(crate::ffi::legacy::Origin::Explicit, "core call")
             .map_err(|_| DbError::NoSession { detail: "the database does not admit work".into() })
     }
 

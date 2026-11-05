@@ -28,7 +28,7 @@ pub trait CableConnect: Send + Sync {
 
 struct Add {
     request: GraphQLRequest,
-    admitted: crate::lifecycle::Admitted,
+    admitted: crate::ffi::legacy::Admitted,
     reply: oneshot::Sender<ServerSubscription>,
 }
 
@@ -45,14 +45,14 @@ pub struct CableSubscriptions {
 }
 
 impl CableSubscriptions {
-    pub fn new(config: EncryptedConfig, credential: Arc<dyn Fn(&crate::lifecycle::Admitted) -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, clock: Arc<dyn Clock>) -> Self {
+    pub fn new(config: EncryptedConfig, credential: Arc<dyn Fn(&crate::ffi::legacy::Admitted) -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, clock: Arc<dyn Clock>) -> Self {
         let (commands, receiver) = mpsc::unbounded_channel();
         let wakes = Arc::new(AtomicUsize::new(0));
         crate::task::spawn(crate::task::Carry::Detached, run(config, credential, connect, online.clone(), receiver, wakes.clone(), clock));
         Self { commands, wakes }
     }
 
-    pub async fn subscribe(&self, admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
+    pub async fn subscribe(&self, admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         let (reply, receiver) = oneshot::channel();
         crate::db::lock::effect(|| self.commands.send(Command::Add(Add { request, admitted: admitted.clone(), reply })).map_err(|_| TransportError::Network("cable stopped".into())))?;
         receiver.await.map_err(|_| TransportError::Network("cable stopped".into()))
@@ -153,7 +153,7 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
     }
 }
 
-async fn run(config: EncryptedConfig, credential: Arc<dyn Fn(&crate::lifecycle::Admitted) -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, mut commands: mpsc::UnboundedReceiver<Command>, wakes: Arc<AtomicUsize>, clock: Arc<dyn Clock>) {
+async fn run(config: EncryptedConfig, credential: Arc<dyn Fn(&crate::ffi::legacy::Admitted) -> Result<String, TransportError> + Send + Sync>, connect: Arc<dyn CableConnect>, online: Arc<Connectivity>, mut commands: mpsc::UnboundedReceiver<Command>, wakes: Arc<AtomicUsize>, clock: Arc<dyn Clock>) {
     let mut session = CableSession::new(clock.clone(), online.clone());
     let mut connection: Option<(Arc<dyn CableSocket>, CableLink)> = None;
     let mut incoming = None;

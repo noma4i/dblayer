@@ -45,7 +45,7 @@ fn inv_loadm_19_a_new_observer_of_a_window_whose_last_watch_drops_concurrently_s
     let rig = rig();
     let owner = rig.sync.inner.owner.clone();
     for number in 0..200 {
-        let resolved = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "vibe_feed", &vibe(number)).unwrap();
+        let resolved = rig.sync.inner.resolve(crate::ffi::legacy::Origin::Session, "moments", "vibe_feed", &vibe(number)).unwrap();
         let (window, target) = (resolved.window_key.clone(), resolved.target());
         let last = owner.observe(&window, target.clone(), None);
         let gate = std::sync::Arc::new(crate::test_wait::Rendezvous::new(2));
@@ -74,7 +74,7 @@ fn inv_loadm_19_a_late_seed_never_replaces_what_a_flight_already_landed() { crat
     use super::load_machine::{Data, LoadPhase};
     let rig = rig();
     let owner = rig.sync.inner.owner.clone();
-    let resolved = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "vibe_feed", &vibe(1)).unwrap();
+    let resolved = rig.sync.inner.resolve(crate::ffi::legacy::Origin::Session, "moments", "vibe_feed", &vibe(1)).unwrap();
     let (window, target) = (resolved.window_key.clone(), resolved.target());
     let watch = owner.observe(&window, target.clone(), None);
     let landed = || stored(5, Some(3), Data::Landed { has_more: false, total: Some(3), loaded_at: 7 });

@@ -55,34 +55,34 @@ impl Database {
     }
 
     pub fn background_refused(&self, epoch: u64, items: Vec<WireAcceptedUpload>, detail: String) -> Result<(), DbError> {
-        let admitted = self.acquire(crate::lifecycle::Origin::Session, epoch, "background upload refusal")?;
+        let admitted = self.acquire(crate::ffi::legacy::Origin::Session, epoch, "background upload refusal")?;
         let items: Vec<_> = items.iter().map(|item| AcceptedUpload { seq: item.seq, position: item.position }).collect();
         self.db.note_background_refused(&admitted, &items, &detail)?;
         Ok(())
     }
 
     pub fn round_begin(&self, epoch: u64) -> Result<Option<u32>, DbError> {
-        let admitted = self.acquire(crate::lifecycle::Origin::Explicit, epoch, "begin upload round")?;
+        let admitted = self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, "begin upload round")?;
         Ok(self.db.round_begin(&admitted)?)
     }
 
     pub fn round_next(&self, epoch: u64, owner: u32) -> Result<WireRoundStep, DbError> {
-        let admitted = self.acquire(crate::lifecycle::Origin::Explicit, epoch, "advance upload round")?;
+        let admitted = self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, "advance upload round")?;
         Ok(self.db.round_next(&admitted, owner)?.into())
     }
 
     pub fn round_leave(&self, epoch: u64, owner: u32) -> Result<WireRoundStep, DbError> {
-        let admitted = self.acquire(crate::lifecycle::Origin::Explicit, epoch, "leave upload round")?;
+        let admitted = self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, "leave upload round")?;
         Ok(self.db.round_leave(&admitted, owner)?.into())
     }
 
     pub fn round_end(&self, epoch: u64, owner: u32) -> Result<Option<Vec<WireUploadAccepted>>, DbError> {
-        let admitted = self.acquire(crate::lifecycle::Origin::Session, epoch, "end upload round")?;
+        let admitted = self.acquire(crate::ffi::legacy::Origin::Session, epoch, "end upload round")?;
         Ok(self.db.round_end(&admitted, owner)?.map(|late| late.into_iter().map(|group| WireUploadAccepted { epoch: group.epoch, model: group.model, items: group.items.into_iter().map(Into::into).collect() }).collect()))
     }
 
     pub fn round_abandon(&self, epoch: u64, owner: u32) -> Result<(), DbError> {
-        let admitted = self.acquire(crate::lifecycle::Origin::Explicit, epoch, "abandon upload round")?;
+        let admitted = self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, "abandon upload round")?;
         Ok(self.db.round_abandon(&admitted, owner)?)
     }
 }

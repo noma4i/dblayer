@@ -279,7 +279,7 @@ fn logout_style_wipe_leaves_no_files_behind() {
     let (root, db) = on_disk();
     seed_tree(&db);
     attach(&db, "m1", "media", &large());
-    db.shared.store.reset_incompatible().unwrap();
+    db.shared.store.clear_account_in_tests().unwrap();
     assert_eq!(count_files(&db), 0);
     db.sweep_files(&db.admit().unwrap()).unwrap();
     assert!(db.shared.files.directory_entries().unwrap().is_empty());

@@ -39,7 +39,7 @@ pub(super) enum HeardItem {
 /// Keeps what a reader of model events hears, the way the journal of a stream takes it: an event of another session is dropped, one of an older generation and one that could not be read are counted as missed.
 struct Log {
     model: String,
-    life: Arc<crate::lifecycle::Lifecycle>,
+    life: Arc<crate::ffi::legacy::Leases>,
     items: Mutex<VecDeque<HeardItem>>,
     ready: tokio::sync::Notify,
 }
@@ -59,7 +59,7 @@ impl Log {
 impl EventReader for Log {
     fn model(&self) -> &str { &self.model }
 
-    fn heard(&self, event: &super::ModelEvent, stamp: crate::lifecycle::Stamp) {
+    fn heard(&self, event: &super::ModelEvent, stamp: crate::ffi::legacy::Stamp) {
         let now = self.life.snapshot().stamp();
         if now.session_epoch != stamp.session_epoch { return; }
         if now.generation != stamp.generation { return self.gap(1); }
@@ -394,7 +394,7 @@ fn an_events_collector_keeps_receiving_across_sign_out_and_the_next_sign_in() { 
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "one"}})));
     emit(&rig, vec![event("CHAT", "UPDATED", "c1")]);
     assert_eq!(expect_event(within(&events).await).id, "c1");
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     crate::test_wait::pass(std::time::Duration::from_secs(31)).await;
     rig.transport.set_session(Some("second"));
     rig.sync.commit_session_for_test();
@@ -413,7 +413,7 @@ fn an_events_collector_keeps_one_stream_across_a_session_start_and_hears_only_th
     rig.sync.commit_session_for_test();
     rig.transport.await_calls("Changes", 1).await;
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     rig.transport.await_calls("Changes", 2).await;
     rig.transport.enqueue("ChatNode", Reply::data(json!({"node": {"id": "c1", "title": "new"}})));
     let change = |kind: &str| SubscriptionEvent::Next(Response::data(json!({"recordEvents": {"changes": [event("CHAT", kind, "c1")]}})));
@@ -462,7 +462,7 @@ async fn an_event_received_before_the_session_ended_is_not_published_after_it() 
     }));
     emit(&rig, vec![event("CHAT", "DELETED", "c1")]);
     crate::test_wait::recv_within(&entered_receiver);
-    rig.sync.end_session_for_test();
+    rig.sync.lose_session_for_test();
     rig.transport.set_session(Some("second"));
     rig.sync.commit_session_for_test();
     release.send(()).unwrap();

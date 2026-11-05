@@ -17,7 +17,7 @@ use super::error::SyncError;
 use super::{locked, Inner, Sync};
 
 impl Inner {
-    pub(crate) async fn flush_pending(self: &std::sync::Arc<Self>, admitted: &crate::lifecycle::Admitted) -> Result<FlushReport, SyncError> {
+    pub(crate) async fn flush_pending(self: &std::sync::Arc<Self>, admitted: &crate::ffi::legacy::Admitted) -> Result<FlushReport, SyncError> {
         if self.upload_housekeeping_due.swap(false, std::sync::atomic::Ordering::SeqCst) {
             if let Err(error) = self.expire_uploads(admitted).await {
                 self.upload_housekeeping_due.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -37,24 +37,24 @@ impl Sync {
         locked(&self.inner.outcomes).claim(operation)
     }
 
-    pub async fn flush(&self, admitted: &crate::lifecycle::Admitted) -> Result<FlushReport, SyncError> {
+    pub async fn flush(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<FlushReport, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         self.inner.flush_pending(admitted).await
     }
 
-    pub async fn retry(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<FlushReport, SyncError> {
+    pub async fn retry(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<FlushReport, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         self.inner.db.retry(admitted, model, id, action)?;
         self.flush(admitted).await
     }
 
-    pub async fn retry_all(&self, admitted: &crate::lifecycle::Admitted) -> Result<FlushReport, SyncError> {
+    pub async fn retry_all(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<FlushReport, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         self.inner.db.retry_all(admitted)?;
         self.flush(admitted).await
     }
 
-    pub async fn discard(&self, admitted: &crate::lifecycle::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
+    pub async fn discard(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, action: Option<&str>) -> Result<(), SyncError> {
         self.inner.ensure_admitted(admitted)?;
         self.inner.db.discard(admitted, model, id, action)?;
         self.inner.start_uploads()?;

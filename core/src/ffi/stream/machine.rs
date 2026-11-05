@@ -4,7 +4,7 @@ use std::sync::Arc;
 use statig::prelude::*;
 
 use crate::db::dispatch::Effects;
-use crate::lifecycle::{Lifecycle, Stamp};
+use crate::ffi::legacy::{Leases, Stamp};
 use crate::sync::{snapshot_phase, LoadError, LoadPhase, RelationState};
 use super::journal::{Appended, Journal};
 use super::{Frame, LivePhase, StreamEnd, StreamState, StreamValue, ValueSink};
@@ -60,7 +60,7 @@ pub(super) struct Context<'a> {
 
 /// The parts of a stream that every state reads.
 pub(super) struct Fixed {
-    pub(super) life: Arc<Lifecycle>,
+    pub(super) life: Arc<Leases>,
     pub(super) calls: Arc<crate::db::CallState>,
 }
 

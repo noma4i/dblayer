@@ -7,7 +7,7 @@ use super::{locked, Sync};
 
 impl Sync {
     /// Sends a registered operation without adding it to the outbox.
-    pub async fn run(&self, admitted: &crate::lifecycle::Admitted, operation: &str, variables: Value) -> Result<Value, SyncError> {
+    pub async fn run(&self, admitted: &crate::ffi::legacy::Admitted, operation: &str, variables: Value) -> Result<Value, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         let definition = locked(&self.inner.operations).get(operation).cloned().ok_or_else(|| SyncError::UnknownOperation(operation.to_string()))?;
         if !self.inner.connectivity.is_online() {

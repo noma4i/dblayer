@@ -18,7 +18,7 @@ use super::steps::{text, StepError, Stop, EXPIRED_MESSAGE};
 
 pub(super) struct Runner {
     pub(super) inner: Arc<Inner>,
-    pub(super) admitted: crate::lifecycle::Admitted,
+    pub(super) admitted: crate::ffi::legacy::Admitted,
     pub(super) seq: i64,
     pub(super) position: i64,
     pub(super) transfer: crate::upload::Transfer,
@@ -60,11 +60,11 @@ pub(super) fn stop_of(error: StepError) -> Stop {
     }
 }
 
-pub(super) fn drive(inner: Arc<Inner>, admitted: crate::lifecycle::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+pub(super) fn drive(inner: Arc<Inner>, admitted: crate::ffi::legacy::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     Box::pin(drive_pass(inner, admitted, seq, position, run, token, mode, resumed))
 }
 
-async fn drive_pass(inner: Arc<Inner>, admitted: crate::lifecycle::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
+async fn drive_pass(inner: Arc<Inner>, admitted: crate::ffi::legacy::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, mode: RunMode, resumed: Option<Result<Response, TransportError>>) {
     let runner = match crate::blocking::blocking_unit(|| Runner::load(inner.clone(), admitted.clone(), seq, position, run, token, matches!(mode, RunMode::Transfer))) {
         Ok(Some(runner)) => runner,
         Ok(None) => return,
@@ -86,7 +86,7 @@ async fn drive_pass(inner: Arc<Inner>, admitted: crate::lifecycle::Admitted, seq
 }
 
 impl Runner {
-    pub(super) fn load(inner: Arc<Inner>, admitted: crate::lifecycle::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, transfer: bool) -> Result<Option<Self>, super::super::SyncError> {
+    pub(super) fn load(inner: Arc<Inner>, admitted: crate::ffi::legacy::Admitted, seq: i64, position: i64, run: u64, token: CancelToken, transfer: bool) -> Result<Option<Self>, super::super::SyncError> {
         let Some(entry) = inner.outbox_operation(seq)? else { return Ok(None) };
         let owner = match inner.blob_id(seq)? {
             Some(id) => crate::upload::UploadOwner::Blob { id },

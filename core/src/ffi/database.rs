@@ -13,14 +13,17 @@ use crate::read::LoadMoreVerdict;
 use crate::sync::{LoadOptions, LoadStatus, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
 use crate::upload::UploadOperations;
-use crate::lifecycle::Lifecycle;
+use crate::ffi::legacy::Leases;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
 use super::wire::{WireModel, WireRow};
 use super::{DbError, LoadMoreResult, OnlineSink, Transport};
+use crate::owners::life::LifeReply;
 
 type ParsedQuery = (Query, Option<(String, Map<String, Value>)>);
+
+pub(super) fn executor_enter() -> Result<tokio::runtime::EnterGuard<'static>, DbError> { Ok(executor()?.enter()) }
 
 pub(super) fn executor() -> Result<&'static Runtime, DbError> {
     static EXECUTOR: Starter = Starter::new();
@@ -103,7 +106,7 @@ pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u6
 #[derive(uniffi::Object)]
 pub struct WireReceiptTicket {
     ticket: Option<Arc<crate::sync::OutcomeTicket>>,
-    life: Arc<Lifecycle>,
+    life: Arc<crate::ffi::legacy::Leases>,
     epoch: u64,
     model: String,
     operation: Option<i64>,
@@ -127,7 +130,7 @@ pub struct WireOperationReceipt {
     pub ticket: Arc<WireReceiptTicket>,
 }
 
-pub(super) fn receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Arc<crate::sync::OutcomeTicket>>, life: Arc<Lifecycle>) -> WireOperationReceipt {
+pub(super) fn receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Arc<crate::sync::OutcomeTicket>>, life: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
     let held = WireReceiptTicket { ticket, life, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone() };
     WireOperationReceipt { epoch, model, operation, revision, optimistic_value, ticket: Arc::new(held) }
 }
@@ -226,7 +229,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) streams: Arc<Lifecycle>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -256,7 +259,8 @@ impl Database {
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), streams, db, sync, session, stream_table: Arc::default(), testing: false, wires: Arc::new(wires) }))
+        let life = Self::build_life(&db, &sync, &session)?;
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), testing: false, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -300,6 +304,29 @@ impl Database {
             };
             Ok(Arc::new(Self { testing, ..Arc::unwrap_or_clone(database) }))
         }).await
+    }
+
+    /// F1: the owners of direction A on the threads of the core, started from the booted `Db`. It returns after the first `Publish`.
+    fn build_life(db: &Db, sync: &Option<Sync>, session: &Option<Arc<EncryptedClient>>) -> Result<Arc<crate::owners::life::Life>, DbError> {
+        let executor = executor()?.handle().clone();
+        let lookup = sync.as_ref().map(Sync::downgrade);
+        let operations: crate::owners::life::OperationLookup = Arc::new(move |name| {
+            let sync = lookup.as_ref()?.upgrade()?;
+            let definition = crate::db::locked(&sync.inner.operations).get(name).cloned()?;
+            Some((definition.document.clone(), definition.root_path.clone()))
+        });
+        let ports = crate::owners::life::Ports {
+            db: db.clone(),
+            transport: sync.as_ref().map(|sync| sync.inner.transport.clone()),
+            executor,
+            operations,
+            credentials: session.as_ref().map(|client| client.credential_slot()),
+            session: session.clone(),
+        };
+        let _entered = executor_enter()?;
+        let life = Arc::new(crate::owners::life::Life::start(ports, Duration::from_secs(30)).map_err(|error| DbError::Database { detail: format!("the owners did not start: {error:?}") })?);
+        if let Some(client) = session { client.attach(&life); }
+        Ok(life)
     }
 
     pub(super) fn hold(&self, lease: Arc<OpenLease>) { let _ = self.lease.set(lease); }
@@ -346,7 +373,7 @@ impl Database {
         if declared.as_ref().is_some_and(|action| action.durable) {
             return Err(DbError::Invalid { detail: format!("{model} sends its create as a durable command: use send") });
         }
-        let origin = if remote { crate::lifecycle::Origin::Session } else { crate::lifecycle::Origin::Explicit };
+        let origin = if remote { crate::ffi::legacy::Origin::Session } else { crate::ffi::legacy::Origin::Explicit };
         self.write_in_epoch(origin, epoch, "create", move |database, admitted| {
             let sync = database.sync.clone();
             let (row, operation, revision, ticket) = database.db.create_claiming(admitted, None, &model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?, |operation| operation.and_then(|operation| sync.as_ref().map(|sync| sync.claim_outcome(operation))))?;
@@ -364,7 +391,7 @@ impl Database {
         }).await
     }
     pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
-        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "set local", move |database, admitted| {
+        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "set local", move |database, admitted| {
             Ok(database.db.set_local(admitted, &model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
         }).await
     }
@@ -414,14 +441,14 @@ impl Database {
         }
     }
     pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
-        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "set ephemeral", move |database, admitted| {
+        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "set ephemeral", move |database, admitted| {
             Ok(database.db.set_ephemeral(admitted, &model, &id(&row_id)?, serde_json::from_str(&values_json)?)?)
         }).await
     }
     #[allow(clippy::too_many_arguments)]
     pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String) -> Result<String, DbError> {
         let row_id = id(&row_id)?;
-        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "attach", move |database, admitted| Ok(database.db.attach(admitted, &model, &row_id, &field, &bytes, &name, &mime)?.to_value().to_string())).await
+        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "attach", move |database, admitted| Ok(database.db.attach(admitted, &model, &row_id, &field, &bytes, &name, &mime)?.to_value().to_string())).await
     }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;
@@ -437,7 +464,7 @@ impl Database {
     }
     pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
         let row_id = id(&row_id)?;
-        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "detach", move |database, admitted| Ok(database.db.detach(admitted, &model, &row_id, &field)?)).await
+        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "detach", move |database, admitted| Ok(database.db.detach(admitted, &model, &row_id, &field)?)).await
     }
     pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
@@ -457,22 +484,23 @@ impl Database {
         Ok(())
     }
     pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
-        let sync = self.sync()?.clone();
-        let answer = self.serve_in_epoch(epoch, "run", |admitted| async move {
-            let variables: Value = serde_json::from_str(&variables_json).map_err(DbError::from)?;
-            Ok::<_, DbError>(sync.run(&admitted, &operation, variables).await?)
-        }).await?;
-        Ok(answer.to_string())
+        self.sync()?;
+        serde_json::from_str::<Value>(&variables_json)?;
+        match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
+            LifeReply::Call(Ok(answer)) => Ok(answer),
+            LifeReply::Call(Err(error)) => Err(call_failure(error)),
+            _ => Err(super::command::ended()),
+        }
     }
     /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
     pub fn begin_load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
         let sync = self.sync()?.clone();
-        drop(self.acquire(crate::lifecycle::Origin::Explicit, epoch, "load")?);
+        drop(self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, "load")?);
         let pending = sync.pending_interest();
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
         let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
-            let result = this.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "load", true, |admitted| async move {
+            let result = this.in_epoch_as(crate::ffi::legacy::Origin::Explicit, epoch, "load", true, |admitted| async move {
                 let params: Map<String, Value> = serde_json::from_str(&params_json)?;
                 let interest = sync.interest(&model, &relation, &params);
                 drop(pending);
@@ -501,11 +529,11 @@ impl Database {
     /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
     pub fn begin_load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
         let sync = self.sync()?.clone();
-        drop(self.acquire(crate::lifecycle::Origin::Explicit, epoch, "load all")?);
+        drop(self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, "load all")?);
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
         let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
-            let result = this.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "load all", true, |admitted| async move {
+            let result = this.in_epoch_as(crate::ffi::legacy::Origin::Explicit, epoch, "load all", true, |admitted| async move {
                 let params: Map<String, Value> = serde_json::from_str(&params_json)?;
                 Ok::<_, DbError>(sync.load_all(&admitted, &model, &relation, &params, LoadOptions { force }).await?)
             }).await;
@@ -540,7 +568,7 @@ impl Database {
     }
     pub async fn flush(&self) -> Result<(), DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(()) };
-        let admitted = self.streams.admit(crate::lifecycle::Origin::Session, "flush").map_err(|_| DbError::NoSession { detail: "the database has no session".into() })?;
+        let admitted = self.streams.admit(crate::ffi::legacy::Origin::Session, "flush").map_err(|_| DbError::NoSession { detail: "the database has no session".into() })?;
         on_executor(async move { sync.flush(&admitted).await }).await?;
         Ok(())
     }
@@ -549,7 +577,7 @@ impl Database {
             let sync = self.sync()?.clone();
             let wire = self.wire(&model)?.clone();
             let life = self.streams.clone();
-            return self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "retry", false, |admitted| on_executor(async move {
+            return self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "retry", false, |admitted| on_executor(async move {
                 let file = source.into_file()?;
                 let (operation, revision, row, ticket) = sync.retry_upload_source(&admitted, &model, &row_id, action.as_deref(), file).await?;
                 Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, row.map(|row| wire.row(&row)), Some(ticket), life))
@@ -559,7 +587,7 @@ impl Database {
             let row = self.db.find(&model, &id(&row_id)?)?.map(|row| self.wire(&model).map(|wire| wire.row(&row))).transpose()?;
             return Ok(receipt(epoch, model, None, self.db.revision_seq()?, row, None, self.streams.clone()));
         }
-        self.write_in_epoch(crate::lifecycle::Origin::Session, epoch, "retry", move |database, admitted| {
+        self.write_in_epoch(crate::ffi::legacy::Origin::Session, epoch, "retry", move |database, admitted| {
             let sync = database.sync()?.clone();
             let id = id(&row_id)?;
             let (operation, revision, row, ticket) = database.db.retry_claiming(admitted, &model, &id, action.as_deref(), |operation| sync.claim_outcome(operation))?;
@@ -574,7 +602,7 @@ impl Database {
     pub async fn retry_all(&self, epoch: u64) -> Result<u64, DbError> {
         let Some(sync) = self.sync.clone() else { return Ok(0) };
         let db = self.db.clone();
-        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "retry all", false, |admitted| async move {
+        self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "retry all", false, |admitted| async move {
             let count = db.retry_all(&admitted)?;
             sync.flush(&admitted).await?;
             Ok::<_, DbError>(count as u64)
@@ -582,7 +610,7 @@ impl Database {
     }
     pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
         let sync = self.sync.clone();
-        self.write_in_epoch(crate::lifecycle::Origin::Explicit, epoch, "discard", move |database, admitted| {
+        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "discard", move |database, admitted| {
             let row = id(&row_id)?;
             database.db.discard(admitted, &model, &row, action.as_deref())?;
             if let Some(sync) = &sync {
@@ -594,14 +622,14 @@ impl Database {
     }
     pub async fn resume(&self, epoch: u64) -> Result<(), DbError> {
         let sync = self.sync.clone();
-        self.in_epoch_as(crate::lifecycle::Origin::Explicit, epoch, "resume", false, |admitted| async move {
+        self.in_epoch_as(crate::ffi::legacy::Origin::Explicit, epoch, "resume", false, |admitted| async move {
             let Some(sync) = sync else { return Ok(()) };
             on_executor(async move { sync.resume(&admitted).await.map(drop).map_err(DbError::from) }).await
         }).await
     }
     pub async fn resume_uploads(&self, epoch: u64) -> Result<(), DbError> {
         let sync = self.sync()?.clone();
-        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "resume uploads", false, |admitted| on_executor(async move { sync.resume_uploads(&admitted).await.map_err(DbError::from) })).await
+        self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "resume uploads", false, |admitted| on_executor(async move { sync.resume_uploads(&admitted).await.map_err(DbError::from) })).await
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
 
@@ -617,13 +645,13 @@ impl Database {
         }
         Ok(())
     }
-    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.as_ref().map(Sync::downgrade), online: self.db.connectivity() })) }
+    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.as_ref().map(Sync::downgrade), online: self.db.connectivity(), life: Arc::downgrade(&self.life) })) }
     pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?.clone();
         let life = self.streams.clone();
         let row = id(&row_id)?;
-        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "upload", false, |admitted| on_executor(async move {
+        self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "upload", false, |admitted| on_executor(async move {
             let file = request.into_file()?;
             let (operation, revision, row, ticket) = sync.upload(&admitted, &model, &row, &action, file).await?;
             Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, row.map(|row| wire.row(&row)), Some(ticket), life))
@@ -632,7 +660,7 @@ impl Database {
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
         let sync = self.sync()?.clone();
         let wire = self.wire(&model)?.clone();
-        self.in_epoch_as(crate::lifecycle::Origin::Session, epoch, "upload batch", false, |admitted| on_executor(async move {
+        self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "upload batch", false, |admitted| on_executor(async move {
             let items = items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?;
             let input = request.into_input()?;
             let receipt = sync.upload_create_batch(&admitted, &model, items, input).await?;
@@ -677,24 +705,30 @@ impl Database {
     }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
-        let finished = self.close_holders();
-        let lifecycle = self.streams.clone();
+        let waiter = self.life.close();
+        let answered = on_executor(async move {
+            tokio::time::timeout(Duration::from_secs(10), waiter.wait()).await.map(drop).map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
+        }).await;
+        let life = self.life.clone();
+        let stored = blocking(move || Ok(life.wait_store_closed(Duration::from_secs(10)))).await;
+        let leases = self.streams.clone();
         let drained = on_executor(async move {
-            tokio::time::timeout(Duration::from_secs(10), lifecycle.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", lifecycle.held().join("; ")) })
+            tokio::time::timeout(Duration::from_secs(10), leases.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", leases.held().join("; ")) })
         }).await;
         let db = self.db.clone();
         let ended = blocking(move || Ok(db.close()?)).await;
-        if finished { if let Some(lease) = self.lease.get() { lease.release(); } }
-        drained.and(ended)
+        if let Some(lease) = self.lease.get() { lease.release(); }
+        answered.and(stored.and_then(|closed| if closed { Ok(()) } else { Err(DbError::Invalid { detail: "close timed out while the store was open".into() }) })).and(drained).and(ended)
     }
 }
 
 impl Database {
-    /// Closes the lifecycle and every holder. True when this call finished the close.
-    fn close_holders(&self) -> bool {
-        let mut finished = self.streams.close();
-        if let Some(sync) = &self.sync { finished &= sync.close(); }
-        finished
+    /// Waits for the answer of an owner. An answer other than a value ends the call with the end of its epoch.
+    pub(super) async fn await_life(&self, waiter: crate::runtime::Waiter<LifeReply>) -> Result<LifeReply, DbError> {
+        match waiter.wait().await {
+            crate::runtime::Outcome::Value(LifeReply::Closed) | crate::runtime::Outcome::EpochEnded(_) | crate::runtime::Outcome::Closing => Err(super::command::ended()),
+            crate::runtime::Outcome::Value(reply) => Ok(reply),
+        }
     }
 
     #[cfg(test)]
@@ -705,7 +739,8 @@ impl Database {
     /// The part of `close` that does not wait: for a caller that cannot await.
     #[cfg(test)]
     pub(super) fn close_now(&self) {
-        if self.close_holders() { if let Some(lease) = self.lease.get() { lease.release(); } }
+        let _ = futures_lite_block(self.life.close().wait());
+        if let Some(lease) = self.lease.get() { lease.release(); }
     }
 
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() }) }
@@ -722,9 +757,9 @@ impl Database {
     }
 
     /// An action that needs the server fails at once while the network is away. Only sending a message and a media upload wait for it (`send`, `upload`).
-    fn write_origin(&self, model: &str, action: &str) -> Result<crate::lifecycle::Origin, DbError> {
+    fn write_origin(&self, model: &str, action: &str) -> Result<crate::ffi::legacy::Origin, DbError> {
         let declared = self.db.spec(model)?.actions.iter().any(|declared| declared.name == action && declared.mutation.is_some());
-        Ok(if declared { crate::lifecycle::Origin::Session } else { crate::lifecycle::Origin::Explicit })
+        Ok(if declared { crate::ffi::legacy::Origin::Session } else { crate::ffi::legacy::Origin::Explicit })
     }
 
     pub(super) fn parsed_query(&self, json: &str) -> Result<ParsedQuery, DbError> {
@@ -745,3 +780,25 @@ impl Database {
     }
 }
 
+
+/// The failure of `run` as the platform sees it.
+fn call_failure(error: crate::owners::calls::CallError) -> DbError {
+    use crate::owners::calls::CallError;
+    match error {
+        CallError::NoSession => DbError::NoSession { detail: "the database has no session".into() },
+        CallError::Invalid => DbError::Invalid { detail: "the operation is not registered".into() },
+        CallError::Offline => DbError::Network { detail: "the operation needs the network".into() },
+        CallError::Network => DbError::Network { detail: "the request did not reach the server".into() },
+        CallError::Graphql(messages) => DbError::Graphql { messages, extensions: None },
+        CallError::Http => DbError::Http { status: 0, detail: "the server refused the request".into() },
+        CallError::Interrupted => super::command::ended(),
+    }
+}
+
+#[cfg(test)]
+fn futures_lite_block<T>(future: impl std::future::Future<Output = T>) -> T {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let handle = executor().expect("the executor").handle().clone();
+    handle.spawn(async move { let _ = sender.send(future.await); });
+    receiver.recv_timeout(Duration::from_secs(10)).expect("the owners answered within 10 s")
+}

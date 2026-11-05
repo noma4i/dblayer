@@ -204,10 +204,10 @@ fn http_put_failure_does_not_confirm_transfer() { crate::test_wait::paused(async
     struct HttpStatus(crate::transport::MockTransport, u16);
     #[async_trait::async_trait]
     impl Transport for HttpStatus {
-        async fn query(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.0.query(_admitted, request).await }
-        async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.0.mutate(_admitted, request).await }
-        async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { self.0.subscribe(_admitted, request).await }
-        async fn put(&self, _admitted: &crate::lifecycle::Admitted, _: PutRequest) -> Result<PutResponse, TransportError> { Ok(PutResponse { status: self.1, etag: None }) }
+        async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.0.query(_admitted, request).await }
+        async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.0.mutate(_admitted, request).await }
+        async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { self.0.subscribe(_admitted, request).await }
+        async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, _: PutRequest) -> Result<PutResponse, TransportError> { Ok(PutResponse { status: self.1, etag: None }) }
     }
     for status in [503, 408, 429, 400, 403, 302] {
         let config = UploadConfig { backoff: small().backoff.limited(0), ..small() };

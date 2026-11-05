@@ -368,19 +368,19 @@ impl Transport for MockTransport {
         self.lock().session.clone().unwrap_or_else(|| Ok(Some(String::new())))
     }
 
-    async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
+    async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
         self.transfer(request).await
     }
 
-    async fn query(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
+    async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.reply(CallKind::Query, request).await
     }
 
-    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
+    async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.reply(CallKind::Mutation, request).await
     }
 
-    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
+    async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         self.record(CallKind::Subscription, &request);
         let (sender, receiver) = super::subscription_channel();
         let name = request.operation_name;

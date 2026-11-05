@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::db::locked;
-use crate::lifecycle::{Admitted, Origin};
+use crate::ffi::legacy::{Admitted, Origin};
 use super::wire::{WireModel, WireRow};
 use super::{Database, DbError, WireBlobSnapshot, WireModelEvent};
 

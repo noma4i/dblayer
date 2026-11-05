@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use crate::lifecycle::Origin;
+use crate::ffi::legacy::Origin;
 use super::database::{blocking, on_executor};
 use super::database::{receipt, WireOperationReceipt};
 use super::upload_wire::WireUploadRequest;
@@ -29,7 +29,7 @@ pub struct CommandRequest {
 pub(super) fn ended() -> DbError { DbError::Interrupted { detail: "the session of this command ended".into() } }
 
 #[cfg(test)]
-struct WriteProbe(std::sync::Arc<crate::lifecycle::Lifecycle>);
+struct WriteProbe(std::sync::Arc<crate::ffi::legacy::Leases>);
 
 #[cfg(test)]
 impl Drop for WriteProbe {
@@ -39,11 +39,11 @@ impl Drop for WriteProbe {
 fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no durable command: only sending a message and a media upload work without a network") } }
 
 impl Database {
-    pub(super) fn acquire(&self, origin: Origin, epoch: u64, target: &'static str) -> Result<crate::lifecycle::Admitted, DbError> {
+    pub(super) fn acquire(&self, origin: Origin, epoch: u64, target: &'static str) -> Result<crate::ffi::legacy::Admitted, DbError> {
         if !self.streams.admits_epoch(epoch) { return Err(ended()); }
         let admitted = self.streams.admit(origin, target).map_err(|_| {
             let state = self.streams.snapshot();
-            if origin == Origin::Session && !state.closed && state.transition.is_none() && !state.signed_in() {
+            if origin == Origin::Session && !state.closed && !state.ending && !state.signed_in() {
                 DbError::NoSession { detail: "the database has no session".into() }
             } else { ended() }
         })?;
@@ -52,16 +52,11 @@ impl Database {
     }
 
     /// Runs the work in the epoch of the caller: it starts only while that epoch is current and ends with it. `Session` work also needs a signed-in session.
-    pub(super) async fn in_epoch_as<T, F>(&self, origin: Origin, epoch: u64, target: &'static str, restore: bool, work: impl FnOnce(crate::lifecycle::Admitted) -> F) -> Result<T, DbError>
+    pub(super) async fn in_epoch_as<T, F>(&self, origin: Origin, epoch: u64, target: &'static str, restore: bool, work: impl FnOnce(crate::ffi::legacy::Admitted) -> F) -> Result<T, DbError>
     where F: Future<Output = Result<T, DbError>> {
         let admitted = self.acquire(origin, epoch, target)?;
         let result = admitted.run(work(admitted.clone())).await.map_err(|_| ended())??;
-        let admitted = if restore {
-            if let Some(sync) = &self.sync {
-                let session = sync.inner.transport.session().map_err(|error| DbError::from(crate::sync::SyncError::Transport(error)))?;
-                if session.is_some() { self.streams.session_from(session, admitted).map_err(|_| ended())? } else { admitted }
-            } else { admitted }
-        } else { admitted };
+        let _ = restore;
         admitted.run(async { result }).await.map_err(|_| ended())
     }
 
@@ -70,7 +65,7 @@ impl Database {
     }
 
     /// A write to the local database that belongs to the epoch of the caller. The SQL commit is refused when the epoch moved or the database closed before it.
-    pub(super) async fn write_in_epoch<T: Send + 'static>(&self, origin: Origin, epoch: u64, target: &'static str, write: impl FnOnce(&Database, &crate::lifecycle::Admitted) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+    pub(super) async fn write_in_epoch<T: Send + 'static>(&self, origin: Origin, epoch: u64, target: &'static str, write: impl FnOnce(&Database, &crate::ffi::legacy::Admitted) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
         let admitted = self.acquire(origin, epoch, target)?;
         if origin == Origin::Session { self.require_online(target)?; }
         let this = self.clone();
@@ -101,7 +96,7 @@ impl Database {
     }
 
     /// Server work of the epoch of the caller: the task is aborted when the epoch ends.
-    pub(super) async fn serve_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static, F: Future<Output = Result<T, E>> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl FnOnce(crate::lifecycle::Admitted) -> F + Send + 'static) -> Result<T, DbError> {
+    pub(super) async fn serve_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static, F: Future<Output = Result<T, E>> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl FnOnce(crate::ffi::legacy::Admitted) -> F + Send + 'static) -> Result<T, DbError> {
         self.in_epoch_as(Origin::Explicit, epoch, target, true, |admitted| async move {
             super::database::cancellable(async move { work(admitted).await.map_err(Into::into) }).await?
         }).await
@@ -134,7 +129,7 @@ impl Database {
         let this = self.clone();
         let epoch = request.epoch;
         let model = request.model.clone();
-        let work = move |admitted: crate::lifecycle::Admitted| async move {
+        let work = move |admitted: crate::ffi::legacy::Admitted| async move {
             let values: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&request.values_json)?;
             let (row, operation, revision, ticket) = match request.upload {
                 None => {

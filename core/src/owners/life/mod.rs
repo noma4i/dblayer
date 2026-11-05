@@ -27,8 +27,13 @@ pub enum LifeReply {
     Online { closed: bool },
     Call(CallAnswer),
     Session(SessionAnswer),
+    Mutated(AuthorOutcome),
     Closed,
 }
+
+/// The first author id and request id of the calls that the old stack makes: below them the ids of Outbox, Transfer and Session.
+const LEGACY_AUTHORS: AuthorId = 1 << 32;
+const LEGACY_REQUESTS: RequestId = 1 << 40;
 
 /// The document and the answer root of a declared operation.
 pub type OperationLookup = Arc<dyn Fn(&str) -> Option<(String, String)> + Send + Sync>;
@@ -69,7 +74,7 @@ pub(crate) struct Wiring {
     faults: Mutex<Vec<String>>,
     open_failed: Mutex<Option<String>>,
     /// Where the answer to a `Mutate` goes, by author: `Transport{req_id, Response/Error}`.
-    mutate_sinks: Mutex<HashMap<AuthorId, Box<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>>>,
+    mutate_sinks: Mutex<HashMap<AuthorId, Arc<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>>>,
 }
 
 impl Wiring {
@@ -138,12 +143,13 @@ impl Wiring {
     }
 
     pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) {
-        self.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).insert(author, Box::new(sink));
+        self.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).insert(author, Arc::new(sink));
     }
 
     /// `Transport{req_id, Response/Error{Permanent, X}}` to the author of a `Mutate`.
     pub fn answer_author(&self, author: AuthorId, req_id: RequestId, outcome: AuthorOutcome) {
-        match self.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).get(&author) {
+        let sink = self.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).get(&author).cloned();
+        match sink {
             Some(sink) => sink(req_id, outcome),
             None => self.fault(format!("no author {author} for the answer to request {req_id}")),
         }
@@ -181,8 +187,8 @@ impl Life {
         let session = ports.session.clone().zip(ports.credentials.clone());
         let mut builder = RuntimeBuilder::new();
         let wiring = Arc::new(Wiring::new(builder.handle()));
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some()), held_published: None, held_replies: Vec::new() });
-        let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone() });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some()), held_published: None, held_replies: Vec::new() });
+        let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().map(|(client, credentials)| {
@@ -258,6 +264,19 @@ impl Life {
     /// `Mutate` of Outbox and Transfer: the answer comes to the sink the author registered with `on_mutate_answer`.
     pub fn mutate(&self, author: AuthorId, owner: Option<super::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) {
         self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, path, body, purpose });
+    }
+
+    /// A `Mutate` of the old stack: the answer comes to the waiter. Its request ids start high, apart from the ids Session gives to its own calls.
+    pub fn mutate_wait(&self, owner: Option<super::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        let author = LEGACY_AUTHORS + waiter.id().raw();
+        let (wiring, id) = (self.wiring.clone(), waiter.id());
+        self.wiring.on_mutate_answer(author, move |_, outcome| {
+            wiring.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).remove(&author);
+            wiring.outcomes.settle(id, LifeReply::Mutated(outcome));
+        });
+        self.mutate(author, owner, LEGACY_REQUESTS + waiter.id().raw(), path, body, purpose);
+        waiter
     }
 
     pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) { self.wiring.on_mutate_answer(author, sink); }

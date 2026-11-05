@@ -139,7 +139,7 @@ fn refused_shared_batch_rereads_every_model_and_records_each_failed_recovery() {
         let users_events = super::model_event_tests::open_heard(&rig.sync, "users").await.unwrap();
         let moments_events = super::model_event_tests::open_heard(&rig.sync, "moments").await.unwrap();
         let shared = rig.db.shared.clone();
-        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.advance_generation_for_test()));
+        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.clear_models_in_tests()));
         rig.transport.emit("Signal", SubscriptionEvent::Next(Response::data(json!({"first":{"id":"u", "name":"event"}, "second":{"id":"m9", "text":"event", "userId":"u"}}))));
         rig.transport.await_consumed("Signal").await;
         assert_eq!((rig.transport.call_count("CurrentUser"), rig.transport.call_count("MomentsByUser")), (2, 2));
@@ -734,12 +734,12 @@ fn a_typed_session_refusal_during_subscribe_stops_without_retry() { crate::test_
     struct Refusal;
     #[async_trait::async_trait]
     impl crate::transport::Transport for Refusal {
-        async fn query(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
-        async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
-        async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
+        async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
+        async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::Response, crate::transport::TransportError> { unreachable!() }
+        async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, _: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
             Err(crate::transport::TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, detail: "session_unknown".into() })
         }
-        async fn put(&self, _admitted: &crate::lifecycle::Admitted, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> { unreachable!() }
+        async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, _: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> { unreachable!() }
     }
     let rig = rig_with_subscription();
     let sync = crate::sync::Sync::new(rig.db.clone(), std::sync::Arc::new(Refusal), std::sync::Arc::new(rig.clock.clone()), Default::default());
@@ -852,7 +852,7 @@ fn a_refused_event_batch_reloads_the_watched_lists_of_its_model_or_leaves_a_gap_
         let subscription = rig.sync.subscribe(upsert_def()).await.unwrap();
         let shared = rig.db.shared.clone();
         *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || {
-            shared.store.advance_generation_for_test();
+            shared.store.clear_models_in_tests();
         }));
         rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
         crate::test_wait::pass(Duration::from_secs(3)).await;
@@ -892,20 +892,20 @@ struct RefusingFirstSubscribe {
 
 #[async_trait::async_trait]
 impl crate::transport::Transport for RefusingFirstSubscribe {
-    async fn query(&self, _admitted: &crate::lifecycle::Admitted, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
+    async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
         self.inner.query(_admitted, request).await
     }
-    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
+    async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, request: crate::transport::GraphQLRequest) -> Result<Response, crate::transport::TransportError> {
         self.inner.mutate(_admitted, request).await
     }
-    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
+    async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, request: crate::transport::GraphQLRequest) -> Result<crate::transport::ServerSubscription, crate::transport::TransportError> {
         let refused = self.refusals.try_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |left| left.checked_sub(1)).is_ok();
         if refused {
             return Err(crate::transport::TransportError::Network("down".to_string()));
         }
         self.inner.subscribe(_admitted, request).await
     }
-    async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> {
+    async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, request: crate::transport::PutRequest) -> Result<crate::transport::PutResponse, crate::transport::TransportError> {
         self.inner.put(_admitted, request).await
     }
 }
@@ -992,7 +992,7 @@ fn an_event_that_waits_for_its_debounce_never_commits_in_the_epoch_a_session_sta
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     crate::test_wait::pass(Duration::from_millis(100)).await;
     crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
@@ -1011,7 +1011,7 @@ fn an_event_queued_before_a_session_start_never_commits_in_the_epoch_that_start_
     rig.transport.await_consumed("MomentChanged").await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "of the old epoch", "userId": null})));
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     crate::test_wait::pass(Duration::from_secs(2)).await;
     assert_eq!(text_of(&rig, "moments", "m1"), None);
     rig.transport.await_calls("MomentChanged", 2).await;
@@ -1028,7 +1028,7 @@ fn a_delayed_callback_of_the_connection_a_session_start_replaced_changes_nothing
     rig.transport.await_calls("MomentChanged", 1).await;
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit_on("MomentChanged", 0, next(json!({"id": "m1", "text": "of the old connection", "userId": null})));
     rig.transport.emit_on("MomentChanged", 1, next(json!({"id": "m2", "text": "of the new connection", "userId": null})));
@@ -1044,7 +1044,7 @@ fn an_event_enqueued_right_after_a_session_start_is_applied() { crate::test_wait
     rig.transport.await_calls("MomentChanged", 1).await;
     rig.transport.await_consumed("MomentChanged").await;
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
     rig.transport.await_consumed("MomentChanged").await;
@@ -1084,7 +1084,7 @@ fn an_event_lost_at_a_session_start_reloads_the_fresh_window_once_and_nothing_lo
             rig.transport.await_consumed("MomentChanged").await;
         }
         let life = rig.db.shared.store.lifecycle.clone();
-        assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+        assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
         crate::test_wait::pass(Duration::from_secs(5)).await;
         let user = rig.db.find("users", &crate::identity::RowId::new("u1").unwrap()).unwrap().unwrap();
         let expected = if matches!(lost, Lost::Nothing) { (1, Some("before")) } else { (2, Some("after")) };
@@ -1115,7 +1115,7 @@ struct LostPositions(std::sync::atomic::AtomicU64);
 
 impl super::EventReader for LostPositions {
     fn model(&self) -> &str { "users" }
-    fn heard(&self, _: &super::ModelEvent, _: crate::lifecycle::Stamp) {}
+    fn heard(&self, _: &super::ModelEvent, _: crate::ffi::legacy::Stamp) {}
     fn unread(&self, count: u64) { self.0.fetch_add(count, std::sync::atomic::Ordering::SeqCst); }
 }
 
@@ -1152,7 +1152,7 @@ fn an_event_refused_at_its_sql_commit_by_a_session_start_reloads_the_fresh_windo
         rig.transport.await_consumed("MomentChanged").await;
         let life = rig.db.shared.store.lifecycle.clone();
         let epoch = life.snapshot().session_epoch;
-        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()); }));
+        *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || { assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()); }));
         rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
         rig.transport.await_consumed("MomentChanged").await;
         crate::test_wait::pass(Duration::from_secs(5)).await;
@@ -1175,7 +1175,7 @@ fn a_lost_event_reloads_an_already_stale_window_once() { crate::test_wait::pause
     }
     rig.transport.emit("MomentChanged", next(json!({"id": "u1", "name": "lost"})));
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     crate::test_wait::pass(Duration::from_secs(5)).await;
     assert_eq!((rig.transport.call_count("CurrentUser"), user_name(&rig)), (2, Some("after".into())));
 }) }
@@ -1188,7 +1188,7 @@ fn a_session_start_drops_the_replaced_connection_without_holding_a_library_lock(
     rig.transport.await_consumed("MomentChanged").await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m1", "text": "queued", "userId": null})));
     let life = rig.db.shared.store.lifecycle.clone();
-    assert!(life.session_from(Some("another-account".into()), life.admit_passive(crate::lifecycle::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
+    assert!(life.start_session_in_tests(Some("another-account".into()), life.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(life.snapshot().session_epoch)).unwrap()).is_ok());
     rig.transport.await_cancellations("MomentChanged", 1).await;
     rig.transport.await_calls("MomentChanged", 2).await;
     rig.transport.emit("MomentChanged", next(json!({"id": "m2", "text": "of the new epoch", "userId": null})));
@@ -1204,7 +1204,7 @@ fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() { cr
     rig.sync.register(super::OperationDef::new("MomentChanged", "subscription MomentChanged { x }", "momentChanged"));
     let params = serde_json::json!({"userId": "u1"}).as_object().unwrap().clone();
     rig.transport.enqueue("MomentsByUser", user_list(&["m1"]).after(Duration::from_secs(100)));
-    let key = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "by_user", &params).unwrap().window_key;
+    let key = rig.sync.inner.resolve(crate::ffi::legacy::Origin::Session, "moments", "by_user", &params).unwrap().window_key;
     let _observed = rig.db.register_observed_read(crate::db::ObservedRead { model: "moments".into(), relation: "by_user".into(), params: params.clone(), key });
     let debounced = SubscriptionDef::new(EventSpec::new("moment_changed").debounced(Duration::from_secs(60)).merged_by_row(), "MomentChanged", "moments", EventEffect::Upsert);
     let updates = rig.sync.subscribe(debounced).await.unwrap();
@@ -1212,7 +1212,7 @@ fn a_terminal_failure_does_not_wait_for_the_reload_a_pending_event_starts() { cr
     rig.transport.emit("MomentChanged", next(json!({"id": "m9", "text": "t", "userId": "u1"})));
     rig.transport.await_consumed("MomentChanged").await;
     let shared = rig.db.shared.clone();
-    *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.advance_generation_for_test()));
+    *rig.db.shared.store.before_write.lock().unwrap() = Some(Box::new(move || shared.store.clear_models_in_tests()));
     rig.transport.emit("MomentChanged", SubscriptionEvent::Failed(SubscriptionFailure::new(SubscriptionFailureKind::Graphql, "refused")));
     crate::test_wait::pass(Duration::from_secs(1)).await;
     let status = updates.status();

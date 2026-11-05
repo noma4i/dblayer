@@ -29,7 +29,7 @@ async fn stored_seed_read_failures_remain_visible_with_and_without_rows() {
                 store.connection.execute_batch(sql).unwrap();
             }
             let watch = match watch { Some(watch) => watch, None => rig.sync.relation_state("moments", "feed", &none()).await.unwrap() };
-            let resolved = rig.sync.inner.resolve(crate::lifecycle::Origin::Session, "moments", "feed", &none()).unwrap();
+            let resolved = rig.sync.inner.resolve(crate::ffi::legacy::Origin::Session, "moments", "feed", &none()).unwrap();
             assert!(rig.sync.inner.stored(&resolved).is_err(), "{case}");
             let state = watch.borrow();
             assert_eq!(state.phase, if rows { LoadPhase::Loaded } else { LoadPhase::Failed }, "{case}");

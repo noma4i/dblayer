@@ -108,7 +108,7 @@ impl Store {
 
     #[cfg(test)]
     pub fn save_window(&self, record: &WindowRecord) -> Result<(), StoreError> {
-        self.write_store(&crate::lifecycle::Authority::Internal(crate::lifecycle::Internal::for_tests()), |inner| upsert_window(&inner.connection, record, inner.now_ms()))
+        self.write_store(&crate::ffi::legacy::Authority::Internal(crate::ffi::legacy::Internal::for_tests()), |inner| upsert_window(&inner.connection, record, inner.now_ms()))
     }
 
     pub fn window(&self, key: &str) -> Result<Option<WindowRecord>, StoreError> {
@@ -148,16 +148,16 @@ impl Store {
             .optional()?)
     }
 
-    pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
+    pub(crate) fn invalidate_family(&self, authority: &crate::ffi::legacy::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
         self.write_store(authority, |inner| {
-            if let crate::lifecycle::Authority::Admitted(admitted) = authority {
+            if let crate::ffi::legacy::Authority::Admitted(admitted) = authority {
                 if !admitted.is_current() { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
             }
             mark_families(&inner.connection, &[(model.to_string(), relation.to_string())], since)
         })
     }
 
-    pub(crate) fn invalidate_windows(&self, authority: &crate::lifecycle::Authority, keys: &[String], since: i64) -> Result<usize, StoreError> {
+    pub(crate) fn invalidate_windows(&self, authority: &crate::ffi::legacy::Authority, keys: &[String], since: i64) -> Result<usize, StoreError> {
         self.write_store(authority, |inner| {
             let mut marked = 0;
             for key in keys {
@@ -169,7 +169,7 @@ impl Store {
 
     #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
-        let admitted = self.lifecycle.admit(crate::lifecycle::Origin::Explicit, "test invalidate").map_err(|_| StoreError::Refused)?;
+        let admitted = self.lifecycle.admit(crate::ffi::legacy::Origin::Explicit, "test invalidate").map_err(|_| StoreError::Refused)?;
         let since = self.max_window_sequence()? + 1;
         self.invalidate_family(&admitted.authority(), model, relation, since)
     }

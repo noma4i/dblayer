@@ -76,12 +76,12 @@ impl Server {
 
 #[async_trait]
 impl Transport for Mutex<Server> {
-    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
+    async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.lock().unwrap().mutate(request)
     }
-    async fn query(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<Response, TransportError> { unreachable!() }
-    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, _: GraphQLRequest) -> Result<ServerSubscription, TransportError> { unreachable!() }
-    async fn put(&self, _admitted: &crate::lifecycle::Admitted, _: PutRequest) -> Result<PutResponse, TransportError> { unreachable!() }
+    async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<Response, TransportError> { unreachable!() }
+    async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<ServerSubscription, TransportError> { unreachable!() }
+    async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, _: PutRequest) -> Result<PutResponse, TransportError> { unreachable!() }
 }
 
 fn models(accepts: bool) -> Vec<ModelSpec> {

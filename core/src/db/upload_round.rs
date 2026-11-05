@@ -256,7 +256,7 @@ impl Db {
         locked(&self.shared.upload_round).accept(group)
     }
 
-    fn change_round<T>(&self, admitted: &crate::lifecycle::Admitted, change: impl FnOnce(&mut UploadRound) -> T) -> Result<T, super::DbError> {
+    fn change_round<T>(&self, admitted: &crate::ffi::legacy::Admitted, change: impl FnOnce(&mut UploadRound) -> T) -> Result<T, super::DbError> {
         let life = &self.shared.store.lifecycle;
         let _line = life.commit_line();
         if !std::sync::Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() {
@@ -265,23 +265,23 @@ impl Db {
         Ok(change(&mut locked(&self.shared.upload_round)))
     }
 
-    pub fn round_begin(&self, admitted: &crate::lifecycle::Admitted) -> Result<Option<u32>, super::DbError> {
+    pub fn round_begin(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<Option<u32>, super::DbError> {
         self.change_round(admitted, |round| round.begin(admitted.value()))
     }
 
-    pub fn round_next(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<RoundStep, super::DbError> {
+    pub fn round_next(&self, admitted: &crate::ffi::legacy::Admitted, owner: u32) -> Result<RoundStep, super::DbError> {
         self.change_round(admitted, |round| round.next(owner))
     }
 
-    pub fn round_leave(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<RoundStep, super::DbError> {
+    pub fn round_leave(&self, admitted: &crate::ffi::legacy::Admitted, owner: u32) -> Result<RoundStep, super::DbError> {
         self.change_round(admitted, |round| round.leave(owner))
     }
 
-    pub fn round_end(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<Option<Vec<UploadAccepted>>, super::DbError> {
+    pub fn round_end(&self, admitted: &crate::ffi::legacy::Admitted, owner: u32) -> Result<Option<Vec<UploadAccepted>>, super::DbError> {
         self.change_round(admitted, |round| round.end(owner))
     }
 
-    pub fn round_abandon(&self, admitted: &crate::lifecycle::Admitted, owner: u32) -> Result<(), super::DbError> {
+    pub fn round_abandon(&self, admitted: &crate::ffi::legacy::Admitted, owner: u32) -> Result<(), super::DbError> {
         self.change_round(admitted, |round| round.abandon(owner))
     }
 }

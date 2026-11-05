@@ -74,8 +74,8 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
-    pub(crate) fn ensure_generation(&self, authority: &crate::lifecycle::Authority, generation: Generation) -> Result<(), StoreError> {
-        if let crate::lifecycle::Authority::Admitted(admitted) = authority {
+    pub(crate) fn ensure_generation(&self, authority: &crate::ffi::legacy::Authority, generation: Generation) -> Result<(), StoreError> {
+        if let crate::ffi::legacy::Authority::Admitted(admitted) = authority {
             if !admitted.life().admits_epoch(admitted.value()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
         }
         if generation != self.generation {
@@ -187,7 +187,7 @@ impl Drop for Committed<'_> {
 
 pub struct Store {
     inner: Mutex<Inner>,
-    pub(crate) lifecycle: Arc<crate::lifecycle::Lifecycle>,
+    pub(crate) lifecycle: Arc<crate::ffi::legacy::Leases>,
     models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
     poison: Arc<Mutex<Option<String>>>,
     readers: Option<readers::Readers>,
@@ -318,25 +318,6 @@ impl Store {
 
     pub fn generation(&self) -> Generation {
         self.lifecycle.snapshot().generation
-    }
-
-    /// Ends the session and moves the generation under the writer lock, so a response write that checked the epoch under the same lock lands before the end or is refused.
-    pub(crate) fn end_session(&self, permit: &crate::lifecycle::Permit) {
-        let ticket = {
-            let mut inner = self.lock();
-            let (generation, ticket) = permit.ended();
-            inner.generation = generation;
-            ticket
-        };
-        self.lifecycle.delivered(ticket);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn advance_generation_for_test(&self) {
-        let Ok(permit) = self.lifecycle.begin_blocking(crate::lifecycle::Boundary::Models, None) else { return };
-        self.lock().generation = permit.next_generation();
-        permit.defer(crate::lifecycle::Change::Cleared(Some(Vec::new())));
-        permit.finish();
     }
 
     #[cfg(test)]
