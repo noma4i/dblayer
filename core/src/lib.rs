@@ -22,6 +22,8 @@ pub mod upload;
 pub mod ffi;
 #[cfg(test)]
 mod check;
+#[cfg(test)]
+mod spec;
 pub mod runtime;
 mod blocking;
 mod lifecycle;
@@ -31,5 +33,3 @@ mod task;
 mod lib_tests;
 #[cfg(test)]
 mod test_wait;
-#[cfg(test)]
-mod spec;
