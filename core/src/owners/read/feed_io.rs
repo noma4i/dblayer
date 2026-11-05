@@ -45,6 +45,7 @@ pub struct FeedIo {
     lines: Arc<dyn CableLines>,
     codec: Arc<dyn FeedCodec>,
     handle: Handle,
+    counted: Option<crate::runtime::Handle>,
     open: Connections,
     attempts: AtomicU64,
     rest: Rest<FeedEffect>,
@@ -54,7 +55,13 @@ pub struct FeedIo {
 fn session_closed(code: u16, reason: &str) -> bool { matches!(code, 4401 | 4403) || matches!(reason, "LOGGED_OUT" | "ACCOUNT_LOCKED") }
 
 impl FeedIo {
-    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>) -> Self { Self { lines, codec, handle, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
+    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>) -> Self { Self { lines, codec, handle, counted: None, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
+
+    /// The barrier of the owners waits for the connections this executor starts.
+    pub fn counted_by(mut self, owners: crate::runtime::Handle) -> Self {
+        self.counted = Some(owners);
+        self
+    }
 
     fn connect(&self, stamp: EpochStamp, connection: ConnectionId, back: &Back<Feed>) {
         let cancel = CancelToken::new();
@@ -70,7 +77,9 @@ impl FeedIo {
                 back.reply(stamp, input);
             }
         };
+        let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(Carry::Detached, &self.handle, async move {
+            drop(launch);
             Self::run(lines, codec, connection, (cancel, closing, established), queued, reply).await;
             let mut open = open.lock().unwrap_or_else(PoisonError::into_inner);
             if open.get(&connection).is_some_and(|entry| entry.attempt == attempt) {

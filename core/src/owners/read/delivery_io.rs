@@ -15,15 +15,24 @@ pub struct DeliveryIo {
     snapshots: Arc<dyn Snapshots>,
     answers: Outcomes<PullAnswer>,
     handle: Handle,
+    counted: Option<crate::runtime::Handle>,
     rest: Rest<DeliveryEffect>,
 }
 
 impl DeliveryIo {
-    pub fn new(snapshots: Arc<dyn Snapshots>, answers: Outcomes<PullAnswer>, handle: Handle, rest: Rest<DeliveryEffect>) -> Self { Self { snapshots, answers, handle, rest } }
+    pub fn new(snapshots: Arc<dyn Snapshots>, answers: Outcomes<PullAnswer>, handle: Handle, rest: Rest<DeliveryEffect>) -> Self { Self { snapshots, answers, handle, counted: None, rest } }
+
+    /// The barrier of the owners waits for the reads this executor starts.
+    pub fn counted_by(mut self, owners: crate::runtime::Handle) -> Self {
+        self.counted = Some(owners);
+        self
+    }
 
     fn read(&self, stamp: EpochStamp, stream: StreamId, read_id: u64, revision: i64, view: View, back: &Back<Deliveries>) {
         let (snapshots, back) = (self.snapshots.clone(), back.clone());
+        let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_blocking_on(Carry::Detached, &self.handle, move || {
+            let _launch = launch;
             let answer = match snapshots.read(&view, revision) {
                 Ok((seen, data)) => DeliveryInput::ReadDone { stream, read_id, revision: seen, data },
                 Err(error) => DeliveryInput::ReadFailed { stream, read_id, revision, error },

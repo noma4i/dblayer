@@ -439,6 +439,7 @@ impl Life {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
                 copy: None,
+                counted: Some(builder.handle()),
                 stale: Some({
                     let stale_wiring = wiring.clone();
                     Arc::new(move |families: Vec<(String, String)>, revision: i64| {
@@ -506,6 +507,7 @@ impl Life {
                 copy: None,
                 stale: None,
                 decode: None,
+                counted: None,
             };
             builder.add::<Outbox>("local_writes", OutboxState::local_writes(0, store), executor)
         };

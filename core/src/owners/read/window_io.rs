@@ -33,20 +33,29 @@ pub struct WindowIo {
     codec: Arc<dyn WindowCodec>,
     admit: Admit,
     handle: Handle,
+    counted: Option<crate::runtime::Handle>,
     open: Open,
     rest: Rest<WindowsEffect>,
 }
 
 impl WindowIo {
     pub fn new(transport: Option<Arc<dyn Transport>>, codec: Arc<dyn WindowCodec>, admit: Admit, handle: Handle, rest: Rest<WindowsEffect>) -> Self {
-        Self { transport, codec, admit, handle, open: Open::default(), rest }
+        Self { transport, codec, admit, handle, counted: None, open: Open::default(), rest }
+    }
+
+    /// The barrier of the owners waits for the requests this executor starts.
+    pub fn counted_by(mut self, owners: crate::runtime::Handle) -> Self {
+        self.counted = Some(owners);
+        self
     }
 
     fn request(&self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), page: u32, cursor: Option<String>, back: &Back<Windows>) {
         let token = CancelToken::new();
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
         let (transport, codec, admit, open, back) = (self.transport.clone(), self.codec.clone(), self.admit.clone(), self.open.clone(), back.clone());
+        let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(Carry::Detached, &self.handle, async move {
+            drop(launch);
             let outcome = tokio::select! {
                 () = token.cancelled() => None,
                 outcome = ask(transport.as_deref(), codec.as_ref(), &admit, &key, page, cursor.as_deref()) => Some(outcome),

@@ -114,7 +114,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             WindowsEffect::Window { .. } => {}
         }),
     );
-    let windows = builder.add::<Windows>("windows", state, windows_io);
+    let windows = builder.add::<Windows>("windows", state, windows_io.counted_by(handle.clone()));
 
     let deliveries_wiring = wiring.clone();
     let delivery_io = DeliveryIo::new(
@@ -129,7 +129,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::Drained(done) => drained(&deliveries_wiring, done),
             DeliveryEffect::Stream { .. } => {}
         }),
-    );
+    ).counted_by(handle.clone());
     let deliveries = builder.add::<Deliveries>("deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }), delivery_io);
     let feed_wiring = wiring.clone();
     let feed_rest: Rest<FeedEffect> = Box::new(move |_stamp, effect| match effect {
@@ -141,7 +141,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let feed = match &ports.cable {
         Some(lines) => {
             let codec = Arc::new(LazyFeedCodec { db: db.clone(), operations: ports.read_operations.clone().unwrap_or_default(), wiring: wiring.clone(), built: OnceLock::new() });
-            builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest))
+            builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest).counted_by(handle.clone()))
         }
         None => builder.add::<Feed>("feed", feed_state, FeedWithoutIo { rest: feed_rest }),
     };
