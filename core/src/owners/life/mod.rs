@@ -47,8 +47,9 @@ pub enum LifeReply {
     Closed,
 }
 
-/// The first author id of the calls that the old stack makes: below it the ids of Outbox, Transfer and Session.
 const OPEN_WAIT: Duration = Duration::from_secs(365 * 24 * 3600);
+
+/// The first author id of the calls that the old stack makes: below it the ids of Outbox, Transfer and Session.
 const LEGACY_AUTHORS: AuthorId = 1 << 32;
 
 /// The document and the answer root of a declared operation.
@@ -388,6 +389,7 @@ impl Life {
         let wiring = Arc::new(Wiring::new(builder.handle()));
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
+        builder.on_executor_failed(lifecycle);
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone(), executor: ports.executor.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
