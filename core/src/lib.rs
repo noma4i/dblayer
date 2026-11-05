@@ -22,6 +22,7 @@ pub mod upload;
 pub mod ffi;
 #[cfg(test)]
 mod check;
+pub mod runtime;
 mod blocking;
 mod lifecycle;
 mod task;
