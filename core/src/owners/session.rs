@@ -336,7 +336,7 @@ impl SessionState {
                         fx.push(SessionEffect::HttpCancel { request_id: pending.request_id });
                     }
                 } else if let SessionPhase::Blocked { pending, retry: true, .. } = &self.phase {
-                    if online {
+                    if online && pending.author.is_none() {
                         let pending = pending.clone();
                         fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
                         self.phase = SessionPhase::Calling { pending, attempts: 0, sent: true };
@@ -366,6 +366,13 @@ impl SessionState {
             (phase @ SessionPhase::Blocked { .. }, SessionInput::SessionCall { reply, .. }) => {
                 self.phase = phase;
                 fx.push(SessionEffect::Reply { id: reply, answer: Err(SessionError::StateLost) });
+            }
+            (SessionPhase::Blocked { pending, retry: true, .. }, SessionInput::Mutate { req_id, .. }) if pending.request_id == req_id => {
+                let sent = self.online;
+                if sent {
+                    fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
+                }
+                self.phase = SessionPhase::Calling { pending, attempts: 0, sent };
             }
             (phase @ SessionPhase::Blocked { .. }, SessionInput::Mutate { author, req_id, .. }) => {
                 if !matches!(&phase, SessionPhase::Blocked { pending, .. } if pending.request_id == req_id) {
@@ -467,7 +474,7 @@ impl SessionState {
                 if !lost && self.online {
                     fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
                 }
-                self.phase = SessionPhase::Blocked { pending: PendingCall { reply: None, author: None, ..pending }, attempts: attempts + 1, retry: !lost };
+                self.phase = SessionPhase::Blocked { pending: PendingCall { reply: None, ..pending }, attempts: attempts + 1, retry: !lost };
             }
             (SessionPhase::Calling { pending, attempts, .. }, SessionInput::HttpError { request_id, temporary, auth }) if request_id == pending.request_id => {
                 if temporary && self.online {
@@ -502,7 +509,7 @@ impl SessionState {
                 fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
                 self.phase = SessionPhase::Calling { pending, attempts, sent: true };
             }
-            (SessionPhase::Blocked { pending, retry: true, .. }, SessionInput::Tick(_)) if self.online => {
+            (SessionPhase::Blocked { pending, retry: true, .. }, SessionInput::Tick(_)) if self.online && pending.author.is_none() => {
                 fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
                 self.phase = SessionPhase::Calling { pending, attempts: 0, sent: true };
             }
@@ -530,7 +537,7 @@ impl SessionState {
                 if self.online {
                     fx.push(SessionEffect::ScheduleTick { attempts: 1 });
                 }
-                self.phase = SessionPhase::Blocked { pending: PendingCall { reply: None, author: None, ..pending }, attempts: 1, retry: true };
+                self.phase = SessionPhase::Blocked { pending: PendingCall { reply: None, ..pending }, attempts: 1, retry: true };
             }
             (phase, _) => self.phase = phase,
         }

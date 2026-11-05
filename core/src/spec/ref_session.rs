@@ -157,11 +157,13 @@ pub struct Session {
     /// Epoch of the call in `Generating`, `Persisting`, `Calling`, `Landing`.
     call_epoch: u64,
     restored: bool,
+    /// The path of the logout operation of the client.
+    logout_path: String,
 }
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: bool) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, operations, next_request: 1, next_batch: 1, call_epoch: 0, restored: false }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, operations, next_request: 1, next_batch: 1, call_epoch: 0, restored: false, logout_path: "/logout".into() }
     }
 
     fn batch(&mut self) -> BatchId {
@@ -260,7 +262,7 @@ impl Session {
                         out.effects.push(Effect::HttpCancel { request_id: pending.request_id });
                     }
                 } else if let State::Blocked { pending, retry: true, .. } = &self.state {
-                    if online {
+                    if online && pending.author.is_none() {
                         let pending = pending.clone();
                         out.effects.push(Effect::HttpRequest { pending: pending.clone() });
                         self.state = State::Calling { pending, attempts: 0, sent: true };
@@ -290,6 +292,12 @@ impl Session {
             (state @ State::Blocked { .. }, Input::SessionCall { reply, .. }) => {
                 self.state = state;
                 out.replies.push((reply, Err(Fail::StateLost)));
+            }
+            (State::Blocked { pending, attempts, retry: true }, Input::Mutate { req_id, .. }) if pending.request_id == req_id => {
+                let sent = self.online;
+                if sent { out.effects.push(Effect::HttpRequest { pending: pending.clone() }); }
+                let _ = attempts;
+                self.state = State::Calling { pending, attempts: 0, sent };
             }
             (state @ State::Blocked { .. }, Input::Mutate { author, req_id, .. }) => {
                 if !matches!(&state, State::Blocked { pending, .. } if pending.request_id == req_id) {
@@ -350,10 +358,11 @@ impl Session {
                 Self::finish(&mut out, &pending, Err(Fail::Reason(reason)));
                 self.idle(&mut out);
             }
-            (State::Calling { pending, .. }, Input::Revoked { request_id, .. }) if request_id == pending.request_id => {
+            (State::Calling { pending, .. }, Input::Revoked { request_id, body }) if request_id == pending.request_id => {
                 let batch = self.batch();
                 out.effects.push(Effect::RemovePending { batch, epoch: self.call_epoch });
-                self.state = State::Landing { pending, batch, answer: Err(Fail::Revoked), identity: None, ended: true };
+                let answer = if pending.path == self.logout_path { Ok(body) } else { Err(Fail::Revoked) };
+                self.state = State::Landing { pending, batch, answer, identity: None, ended: true };
             }
             (State::Calling { pending, .. }, Input::Response { request_id, body, sequence, credential }) if request_id == pending.request_id => {
                 if pending.sessionless || sequence == Some(pending.sequence) {
@@ -398,7 +407,7 @@ impl Session {
                 out.effects.push(Effect::HttpRequest { pending: pending.clone() });
                 self.state = State::Calling { pending, attempts, sent: true };
             }
-            (State::Blocked { pending, retry: true, .. }, Input::Tick) if self.online => {
+            (State::Blocked { pending, retry: true, .. }, Input::Tick) if self.online && pending.author.is_none() => {
                 out.effects.push(Effect::HttpRequest { pending: pending.clone() });
                 self.state = State::Calling { pending, attempts: 0, sent: true };
             }
@@ -420,7 +429,7 @@ impl Session {
             (State::Landing { pending, batch, .. }, Input::Rejected(rejected, reason)) if rejected == batch => {
                 Self::finish(&mut out, &pending, Err(Fail::Reason(reason)));
                 if self.online { out.effects.push(Effect::ScheduleTick { attempts: 1 }); }
-                self.state = State::Blocked { pending: Pending { reply: None, author: None, ..pending }, attempts: 1, retry: true };
+                self.state = State::Blocked { pending: Pending { reply: None, ..pending }, attempts: 1, retry: true };
             }
             (state, _) => self.state = state,
         }
