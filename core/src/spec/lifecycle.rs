@@ -357,10 +357,6 @@ impl Owner for LifecycleOwner {
     }
 
     async fn real(&self) -> Box<dyn Sut> {
-        #[cfg(feature = "spec_api")]
-        if self.full {
-            return Box::new(super::owner_sut::OwnerSut::new());
-        }
         Box::new(LifecycleSut::new())
     }
 

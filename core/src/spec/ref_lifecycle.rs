@@ -44,7 +44,6 @@ pub enum State {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    Open { saved_epoch: u64, saved_generation: u64, saved_identity: Option<Identity>, changed_models: BTreeSet<String> },
     Credential(Identity),
     SessionReset(Id),
     ServerEnded(u64),

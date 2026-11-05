@@ -36,44 +36,14 @@ async fn store_commit_stale_epoch() {
     check("store_commit_stale_epoch", &["login", "create:b:other", "rows"], false).await;
 }
 
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_commit_stale_generation() {
-    check("store_commit_stale_generation", &["login", "create:a", "reset_models", "create:b", "rows"], true).await;
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn store_commit_ok() {
     check("store_commit_ok", &["login", "create:a", "rows"], false).await;
 }
 
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_commit_sqlite_error() {
-    check("store_commit_sqlite_error", &["login", "fail_commit", "create:a", "rows"], true).await;
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn store_clear_account() {
     check("store_clear_account", &["login", "create:a", "session_reset", "login", "rows"], false).await;
-}
-
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_clear_account_error() {
-    check("store_clear_account_error", &["login", "create:a", "fail_clear", "session_reset", "rows"], true).await;
-}
-
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_clear_models() {
-    check("store_clear_models", &["login", "create:a", "reset_models", "rows"], true).await;
-}
-
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_clear_models_error() {
-    check("store_clear_models_error", &["login", "create:a", "fail_clear", "reset_models", "rows"], true).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -91,36 +61,12 @@ async fn store_closed() {
     check("store_closed", &["login", "close", "create:a", "create:b:other"], false).await;
 }
 
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_prop_revision() {
-    property("P-STORE-01", true, &[&["login", "create:a", "session_reset", "login", "create:b"]]).await;
-}
-
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_prop_no_stale_rows() {
-    property("P-STORE-02", true, &[&["login", "create:a", "reset_models", "rows"]]).await;
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn store_prop_no_stale_epoch() {
     property("P-STORE-03", false, &[&["login", "create:a", "session_reset", "login", "create:b:other", "rows"]]).await;
 }
 
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_prop_atomic() {
-    property("P-STORE-04", true, &[&["login", "commit_batch:x,y", "rows"]]).await;
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn store_prop_reply_once() {
     property("P-STORE-05", false, &[&["login", "create:a", "close", "create:b"]]).await;
-}
-
-#[cfg(feature = "spec_api")]
-#[tokio::test(flavor = "multi_thread")]
-async fn store_prop_reads_not_blocked() {
-    property("P-STORE-06", true, &[&["login", "create:a", "hold_writer", "rows_held", "release_writer"]]).await;
 }

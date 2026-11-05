@@ -125,7 +125,10 @@ impl Store {
 
     pub fn step(&mut self, request: Request) -> Done {
         if self.state == Open::Closed {
-            return Done { reply: Some(Reply::Rejected(Reason::Closed)) };
+            return match request {
+                Request::Commit { .. } => Done { reply: Some(Reply::Rejected(Reason::Closed)) },
+                _ => Done::default(),
+            };
         }
         match request {
             Request::Commit { batch, .. } if batch.epoch != self.epoch => Done { reply: Some(Reply::Rejected(Reason::NoSession)) },

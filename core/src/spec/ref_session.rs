@@ -119,13 +119,6 @@ impl Session {
         self.next_batch - 1
     }
 
-    fn pending(&self) -> Option<&Pending> {
-        match &self.state {
-            State::Persisting { pending, .. } | State::Calling { pending, .. } | State::Landing { pending, .. } => Some(pending),
-            _ => None,
-        }
-    }
-
     fn reply(out: &mut Out, reply: Option<ReplyId>, answer: Answer) { out.replies.extend(reply.map(|id| (id, answer))); }
 
     /// `Idle`, then the next call of the queue as `Idle x SessionCall`.
@@ -277,8 +270,6 @@ impl Session {
         }
         out
     }
-
-    pub fn has_pending(&self) -> bool { self.pending().is_some() }
 }
 
 fn pending_of(state: &State) -> Option<Pending> {

@@ -17,11 +17,14 @@ mod ref_window;
 mod delivery_tests;
 mod feed_tests;
 mod lifecycle_tests;
+mod lifecycle_owner_tests;
+mod network_owner_tests;
+mod store_owner_tests;
+mod session_owner_tests;
+mod calls_owner_tests;
 mod store_tests;
 mod window_tests;
 
-#[cfg(feature = "spec_api")]
-mod owner_sut;
 mod delivery_gap_tests;
 mod feed_gap_tests;
 mod window_gap_tests;
