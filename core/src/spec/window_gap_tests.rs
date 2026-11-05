@@ -122,11 +122,11 @@ impl Twin {
             }
             Input::Committed { request } => {
                 self.revision += 1;
-                self.post(w::WindowsInput::Committed(Committed { batch: *request, revision: self.revision, tables: Vec::new() }));
+                self.post(w::WindowsInput::Committed(Committed { batch: *request, revision: self.revision, tables: Vec::new(), models: Vec::new() }));
             }
             Input::Rejected { request, reason } => {
                 let reason = match reason {
-                    Reject::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: self.generation },
+                    Reject::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()] },
                     Reject::NoSession => RejectReason::NoSession,
                     Reject::Storage => RejectReason::Storage("disk".into()),
                 };
@@ -142,7 +142,7 @@ impl Twin {
                 self.post(w::WindowsInput::Stale { key: k, revision });
             }
             Input::Online(on) => self.post(w::WindowsInput::Online(Online(*on))),
-            Input::EpochStarted => self.post(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: None })),
+            Input::EpochStarted => self.post(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: None, generation: 0 })),
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
                 self.run();
@@ -639,11 +639,11 @@ impl EffectRunner<Windows> for Executor {
                 let current = self.store_generation.load(Ordering::SeqCst);
                 if basis < current {
                     log.push(Seen::Rejected(request));
-                    back.reply(stamp, w::WindowsInput::Rejected(Rejected { batch: request, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: current } }));
+                    back.reply(stamp, w::WindowsInput::Rejected(Rejected { batch: request, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()] } }));
                 } else {
                     self.revision += 1;
                     log.push(Seen::Landed { request, basis, revision: self.revision });
-                    back.reply(stamp, w::WindowsInput::Committed(Committed { batch: request, revision: self.revision, tables: Vec::new() }));
+                    back.reply(stamp, w::WindowsInput::Committed(Committed { batch: request, revision: self.revision, tables: Vec::new(), models: Vec::new() }));
                 }
             }
             WindowEffect::Outcome { id, outcome } => log.push(Seen::Outcome(id, outcome)),

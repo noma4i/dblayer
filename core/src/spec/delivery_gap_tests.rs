@@ -121,7 +121,7 @@ impl Twin {
             }
             Input::Committed { revision, touches } => {
                 let table = if *touches { "moments" } else { "other" };
-                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()] }));
+                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], models: Vec::new() }));
             }
             Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream: STREAM, revision: *revision, rows: rows_of(rows) }),
             Input::ReadFailed { revision } => self.post(d::DeliveryInput::ReadFailed { stream: STREAM, revision: *revision, error: "e".into() }),
@@ -565,7 +565,7 @@ fn pulls(count: usize) -> Vec<d::DeliveryInput> { (0..count).map(|_| d::Delivery
 fn row_sources(rig: &mut Rig) {
     rig.source("store", vec![
         d::DeliveryInput::ReadDone { stream: STREAM, revision: 1, rows: rows_of(&ids(&["r1"])) },
-        d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["moments".into()] }),
+        d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["moments".into()], models: Vec::new() }),
         d::DeliveryInput::ReadDone { stream: STREAM, revision: 2, rows: rows_of(&ids(&["r1", "r2"])) },
     ]);
     rig.source("window", vec![d::DeliveryInput::WindowState { stream: STREAM, state: load_state(loading()) }, d::DeliveryInput::WindowState { stream: STREAM, state: load_state(loaded()) }]);
@@ -828,7 +828,7 @@ fn dlv_dictionary_owner() {
 #[test]
 fn dlv_epoch_started_unknown_cause() {
     let mut rig = rig(Kind::Rows);
-    rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::EpochStarted(crate::owners::contract::EpochStarted { epoch: 2, identity: None }));
+    rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::EpochStarted(crate::owners::contract::EpochStarted { epoch: 2, identity: None, generation: 0 }));
     rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::EpochEnded(EpochEnded { epoch: 2, cause: Ended::SessionReset }));
     rig.det.run_until_quiet(100).expect("quiet");
     assert_eq!(rig.det.state(rig.deliveries).expect("state").stage(STREAM), Some(d::DeliveryStage::Opening), "the stream of epoch 1 is not touched by the end of epoch 2");

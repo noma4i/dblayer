@@ -201,12 +201,12 @@ impl FeedState {
     }
 
     fn frame(&mut self, frame: SubscriptionFrame, fx: &mut Vec<FeedEffect>) {
-        let known = frame.connection == self.connection || self.switching == Some(frame.connection);
-        if !known || frame.epoch != self.epoch {
+        let known = frame.connection_id == self.connection || self.switching == Some(frame.connection_id);
+        if !known {
             return;
         }
         match (self.mode, frame.frame) {
-            (Mode::Opening { gap }, Frame::Ready) if frame.connection == self.connection => {
+            (Mode::Opening { gap }, Frame::Ready) if frame.connection_id == self.connection => {
                 self.mode = Mode::Live;
                 if gap {
                     for model in self.models() {
@@ -215,13 +215,13 @@ impl FeedState {
                     fx.push(FeedEffect::StaleWindows(self.models()));
                 }
             }
-            (Mode::Live, Frame::Ready) if self.switching == Some(frame.connection) => {
+            (Mode::Live, Frame::Ready) if self.switching == Some(frame.connection_id) => {
                 let old = self.connection;
-                self.connection = frame.connection;
+                self.connection = frame.connection_id;
                 self.switching = None;
                 fx.push(FeedEffect::CloseConnection { connection: old });
             }
-            (Mode::Opening { gap }, Frame::Dropped) if frame.connection == self.connection => {
+            (Mode::Opening { gap }, Frame::Dropped | Frame::Ended) if frame.connection_id == self.connection => {
                 self.mode = Mode::Opening { gap };
                 self.connection = self.next_connection;
                 self.next_connection += 1;
@@ -229,15 +229,15 @@ impl FeedState {
                     fx.push(FeedEffect::ScheduleResubscribe { connection: self.connection });
                 }
             }
-            (Mode::Live, Frame::Event { model, payload }) if frame.connection == self.connection => self.event(model, payload, fx),
-            (Mode::Live, Frame::Lost { dropped, models }) if frame.connection == self.connection => {
+            (Mode::Live, Frame::Event { model, payload }) if frame.connection_id == self.connection => self.event(model, payload, fx),
+            (Mode::Live, Frame::ChannelLost { dropped, models }) if frame.connection_id == self.connection => {
                 self.flush_pending(fx);
                 for model in &models {
                     self.lose(model, dropped, fx);
                 }
                 fx.push(FeedEffect::StaleWindows(models));
             }
-            (Mode::Live, Frame::Dropped) if frame.connection == self.connection => {
+            (Mode::Live, Frame::Dropped | Frame::Ended) if frame.connection_id == self.connection => {
                 self.mode = Mode::Opening { gap: true };
                 self.flush_pending(fx);
                 self.subscribe(fx);

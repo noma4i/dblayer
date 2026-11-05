@@ -67,7 +67,7 @@ impl Twin {
         self.run();
     }
 
-    fn frame(&mut self, connection: ConnectionId, frame: Frame) { self.post(f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection, frame })); }
+    fn frame(&mut self, connection: ConnectionId, frame: Frame) { self.post(f::FeedInput::Frame(SubscriptionFrame { connection_id: connection, frame })); }
 
     fn batch(&mut self) -> BatchId { self.batches.pop_front().unwrap_or(9_999) }
 
@@ -82,29 +82,29 @@ impl Twin {
                 let connection = if *current { self.connection } else { 9_999 };
                 self.frame(connection, Frame::Event { model: model.clone(), payload: id.clone() });
             }
-            Input::ChannelLost { dropped, models } => self.frame(self.connection, Frame::Lost { dropped: *dropped, models: models.clone() }),
+            Input::ChannelLost { dropped, models } => self.frame(self.connection, Frame::ChannelLost { dropped: *dropped, models: models.clone() }),
             Input::Dropped => self.frame(self.connection, Frame::Dropped),
             Input::Committed => {
                 let batch = self.batch();
-                self.post(f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new() }));
+                self.post(f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Vec::new() }));
             }
             Input::Rejected(reason) => {
                 let batch = self.batch();
                 let reason = match reason {
-                    Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generation: self.generation },
+                    Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone() },
                     Reject::Storage => RejectReason::Storage("disk".into()),
                     Reject::NoSession => RejectReason::NoSession,
                 };
                 self.post(f::FeedInput::Rejected(Rejected { batch, reason }));
             }
-            Input::StrayBatch => self.post(f::FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new() })),
+            Input::StrayBatch => self.post(f::FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), models: Vec::new() })),
             Input::Tick => self.post(f::FeedInput::Tick(Time(0))),
             Input::Online(on) => self.post(f::FeedInput::Online(Online(*on))),
             Input::ModelsReset { models } => {
                 self.generation += 1;
                 self.post(f::FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: self.generation, models: models.clone() }));
             }
-            Input::EpochStarted => self.post(f::FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: None })),
+            Input::EpochStarted => self.post(f::FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: None, generation: 0 })),
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
                 self.run();
@@ -445,15 +445,15 @@ impl EffectRunner<Feed> for Executor {
     fn run(&mut self, stamp: EpochStamp, effect: FeedEffect, back: &Back<Feed>) {
         self.log.lock().unwrap_or_else(PoisonError::into_inner).push(effect.clone());
         match effect {
-            FeedEffect::Subscribe { connection, .. } => back.reply(stamp, f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection, frame: Frame::Ready })),
+            FeedEffect::Subscribe { connection, .. } => back.reply(stamp, f::FeedInput::Frame(SubscriptionFrame { connection_id: connection, frame: Frame::Ready })),
             FeedEffect::ScheduleResubscribe { connection } => back.reply(stamp, f::FeedInput::ResubscribeDue { connection }),
             FeedEffect::Commit { batch, events } => {
                 let stale = self.post_generation.load(Ordering::SeqCst);
                 let refused: Vec<String> = events.iter().filter(|event| event.model == "Post" && event.basis < stale).map(|event| event.model.clone()).collect();
                 if refused.is_empty() {
-                    back.reply(stamp, f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new() }));
+                    back.reply(stamp, f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Vec::new() }));
                 } else {
-                    back.reply(stamp, f::FeedInput::Rejected(Rejected { batch, reason: RejectReason::StaleGeneration { models: refused, generation: stale } }));
+                    back.reply(stamp, f::FeedInput::Rejected(Rejected { batch, reason: RejectReason::StaleGeneration { models: refused } }));
                 }
             }
             _ => {}
@@ -467,7 +467,7 @@ thread_local! {
 
 fn seen() -> Log<FeedEffect> { SEEN.with(|slot| slot.borrow().clone()).expect("a rig was built").0.clone() }
 
-fn event_frame(model: &str, payload: &str) -> f::FeedInput { f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 1, frame: Frame::Event { model: model.into(), payload: payload.into() } }) }
+fn event_frame(model: &str, payload: &str) -> f::FeedInput { f::FeedInput::Frame(SubscriptionFrame { connection_id: 1, frame: Frame::Event { model: model.into(), payload: payload.into() } }) }
 
 fn rig(debounce_ms: u64, frames: Vec<f::FeedInput>, with_reset: bool) -> DetScheduler {
     let mut det = DetScheduler::new(1);
@@ -517,8 +517,8 @@ fn feed_prop_cover_owner() {
     let frames = vec![
         event_frame("Chat", "c1"),
         event_frame("Chat", "c2"),
-        f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 1, frame: Frame::Lost { dropped: 2, models: vec!["Chat".into()] } }),
-        f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 1, frame: Frame::Dropped }),
+        f::FeedInput::Frame(SubscriptionFrame { connection_id: 1, frame: Frame::ChannelLost { dropped: 2, models: vec!["Chat".into()] } }),
+        f::FeedInput::Frame(SubscriptionFrame { connection_id: 1, frame: Frame::Dropped }),
     ];
     let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), false), LIMITS, |_| {
         let log = seen();
@@ -537,7 +537,7 @@ fn feed_prop_pending_never_vanishes_owner() {
     let frames = vec![
         event_frame("Chat", "c1"),
         event_frame("Chat", "c2"),
-        f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 1, frame: Frame::Dropped }),
+        f::FeedInput::Frame(SubscriptionFrame { connection_id: 1, frame: Frame::Dropped }),
         event_frame("Chat", "c3"),
     ];
     let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), false), Limits { depth: 40, max_traces: 4_000 }, |det| {
@@ -593,9 +593,9 @@ fn feed_prop_stale_connection_owner() {
     let report = explore(
         || {
             let frames = vec![
-                f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 77, frame: Frame::Event { model: "Chat".into(), payload: "x".into() } }),
-                f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 77, frame: Frame::Dropped }),
-                f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 77, frame: Frame::Lost { dropped: 3, models: vec!["Chat".into()] } }),
+                f::FeedInput::Frame(SubscriptionFrame { connection_id: 77, frame: Frame::Event { model: "Chat".into(), payload: "x".into() } }),
+                f::FeedInput::Frame(SubscriptionFrame { connection_id: 77, frame: Frame::Dropped }),
+                f::FeedInput::Frame(SubscriptionFrame { connection_id: 77, frame: Frame::ChannelLost { dropped: 3, models: vec!["Chat".into()] } }),
             ];
             rig(0, frames, false)
         },

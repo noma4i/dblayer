@@ -16,6 +16,7 @@ pub enum Cause {
     SessionReset,
     ServerEnded,
     IdentityChanged,
+    SessionStarted,
     Close,
 }
 

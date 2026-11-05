@@ -362,8 +362,7 @@ impl Facts {
                 }
             }
             Ev::Rejected { request: got, reason } if got == request => match reason {
-                RejectReason::StaleGeneration { generation, .. } => {
-                    self.generation = self.generation.max(*generation);
+                RejectReason::StaleGeneration { .. } => {
                     let next = self.begin(context, 1);
                     Transition(WinState::loading(next, 1, self.known_revision, self.generation, false, 0, false))
                 }
