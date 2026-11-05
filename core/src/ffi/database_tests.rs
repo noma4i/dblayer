@@ -67,6 +67,9 @@ async fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
 
 impl Database {
     /// The part of `close` that does not wait: for a caller that cannot await.
+    /// The owners of the database, for a test that waits for them to be quiet.
+    pub(crate) fn life_handle(&self) -> Arc<crate::owners::life::Life> { self.life.clone() }
+
     pub(super) fn close_now(&self) {
         let (sender, receiver) = std::sync::mpsc::channel();
         let waiter = self.life.close();

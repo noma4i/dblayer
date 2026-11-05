@@ -206,7 +206,7 @@ impl DatabaseSut {
     async fn settle(&mut self) -> Vec<Observation> {
         let mut quiet = 0;
         let mut last = (usize::MAX, usize::MAX, u64::MAX);
-        if let Some(database) = self.database.clone() { let _ = crate::ffi::settled(&database).await; }
+        if let Some(database) = self.database.clone() { let owners = database.life_handle(); let _ = tokio::task::spawn_blocking(move || owners.barrier(Duration::from_secs(2))).await; }
         for _ in 0..600 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             let now = (self.mock.count(), self.calls.iter().filter(|call| call.is_finished()).count(), self.heard.0.load(Ordering::SeqCst));
