@@ -2,17 +2,18 @@
 //! A table row applies to the machine of the key an input names. Inputs that name a request (`Transport`, `Committed`, `Rejected`, `RetryDue`)
 //! go to the machine that owns the request. `Online`, `EpochStarted`, `EpochEnded`, `ModelsReset`, `Closing` apply to every machine,
 //! `Stale` to every machine of the model. Request ids are unique in the owner. The retry timer is `Effect::Schedule` of the owner
-//! (`now` of the last `Tick` plus the backoff). Inputs for other owners (`Commit`, `WindowState`) are `Effect::Send` to the addresses of the state.
+//! (`after` = the backoff). Inputs for other owners (`Commit`, `WindowState`) are `Effect::Send` to the addresses of the state.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use statig::prelude::*;
 
 use crate::owners::read::deliveries::{DeliveryInput, Deliveries};
 use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
 use crate::pacing::RetryPolicy;
-use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, Stale, Transport, TransportOutcome, WindowPhase as Phase, WindowState};
+use crate::owners::contract::{BatchAuthor, Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, Stale, Transport, TransportOutcome, WindowPhase as Phase, WindowState};
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 /// `(model, relation, params)`, `(model, node, id)` or `(model, node, ids)` as one name; `model` is the model of the window.
@@ -560,7 +561,6 @@ pub struct WindowsState {
     next_request: RequestId,
     windows: BTreeMap<WindowKey, Window>,
     reread: Vec<WindowKey>,
-    now: Time,
     peers: WindowsPeers,
 }
 
@@ -573,7 +573,7 @@ pub struct WindowsPeers {
 
 impl WindowsState {
     pub fn new(epoch: Epoch, online: bool, peers: WindowsPeers) -> Self {
-        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), next_request: 1, windows: BTreeMap::new(), reread: Vec::new(), now: Time(0), peers }
+        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), next_request: 1, windows: BTreeMap::new(), reread: Vec::new(), peers }
     }
 
     /// Keys that load again at every model event of their model.
@@ -610,7 +610,7 @@ pub struct Windows;
 
 impl Windows {
     fn on(state: &mut WindowsState, key: &WindowKey, event: Ev, out: &mut Effects<Self>) {
-        let (now, peers) = (state.now, state.peers);
+        let peers = state.peers;
         let Some(window) = state.windows.get_mut(key) else { return };
         let epoch = window.machine.epoch;
         for emit in window.handle(event, &mut state.next_request) {
@@ -623,13 +623,13 @@ impl Windows {
                 }
                 Emit::Commit { request, basis, page } => {
                     let rows = page.rows.into_iter().map(|row| (key.model.clone(), row)).collect();
-                    let batch = StoreBatch { id: request, epoch, basis: BTreeMap::from([(key.model.clone(), basis)]), rows, intents: 0, credential: None };
+                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, epoch, basis: BTreeMap::from([(key.model.clone(), basis)]), rows, intents: 0, credential: None, ops: Vec::new() };
                     out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
                 }
                 Emit::Retry { request, attempt, class } => {
                     let policy = if class == ErrorClass::Network { RetryPolicy::QueryNetwork } else { RetryPolicy::QueryServer };
-                    let at = Time(now.0.saturating_add(u64::try_from(policy.backoff().delay(attempt - 1).as_millis()).unwrap_or(u64::MAX)));
-                    out.push(Effect::Schedule { id: ScheduleId(request), at, input: WindowsInput::RetryDue { request } });
+                    let after: Duration = policy.backoff().delay(attempt - 1);
+                    out.push(Effect::Schedule { id: ScheduleId(request), after, input: WindowsInput::RetryDue { request } });
                 }
                 Emit::Announce { state, streams } => {
                     for stream in streams {
@@ -734,7 +734,7 @@ impl StateOwner for Windows {
                 Self::every(state, &Ev::Closing, &mut out);
                 out.push(Effect::Run(WindowsEffect::Drained(Drained { owner: "Windows" })));
             }
-            WindowsInput::Tick(now) => state.now = state.now.max(now),
+            WindowsInput::Tick(_) => {}
         }
         out
     }

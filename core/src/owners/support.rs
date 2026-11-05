@@ -3,6 +3,7 @@
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use crate::owners::contract::{BatchId, Committed, RejectReason, Rejected};
 use crate::owners::store::StoreInput;
@@ -152,7 +153,7 @@ impl StateOwner for Ender {
 pub(crate) enum Emitted<E> {
     Run(E),
     Send { to: usize, input: String },
-    Schedule { id: ScheduleId, at: Time, input: String },
+    Schedule { id: ScheduleId, after: Duration, input: String },
     Cancel(ScheduleId),
     Broadcast(Control),
 }
@@ -190,9 +191,9 @@ where
                     seen.push(Emitted::Send { to: outbound.to, input: format!("{:?}", outbound.payload) });
                     Effect::Send(outbound)
                 }
-                Effect::Schedule { id, at, input } => {
-                    seen.push(Emitted::Schedule { id, at, input: format!("{input:?}") });
-                    Effect::Schedule { id, at, input }
+                Effect::Schedule { id, after, input } => {
+                    seen.push(Emitted::Schedule { id, after, input: format!("{input:?}") });
+                    Effect::Schedule { id, after, input }
                 }
                 Effect::Cancel(id) => {
                     seen.push(Emitted::Cancel(id));

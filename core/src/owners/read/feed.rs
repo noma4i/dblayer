@@ -1,10 +1,11 @@
 //! Owner `Feed` (`specs/machines/feed.md`): the server subscription of the epoch, the model events and their positions.
-//! Timers are `Effect::Schedule` of the owner (`now` of the last `Tick` plus the debounce or the backoff). Inputs for other owners
+//! Timers are `Effect::Schedule` of the owner (`after` = the debounce or the backoff). Inputs for other owners
 //! (`Commit`, `Stale`, `Joined`, `ModelReady`, `ModelEvent`, `ModelLost`) are `Effect::Send` to the addresses of the state.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
-use crate::owners::contract::{BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, Stale, SubscriptionFrame};
+use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, Stale, SubscriptionFrame};
 use crate::owners::read::deliveries::{DeliveryInput, Deliveries, StreamId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
 use crate::owners::read::windows::{Windows, WindowsInput};
@@ -103,7 +104,6 @@ pub struct FeedState {
     next_connection: ConnectionId,
     next_batch: BatchId,
     attempts: u32,
-    now: Time,
     peers: FeedPeers,
 }
 
@@ -124,7 +124,6 @@ impl FeedState {
             next_connection: 1,
             next_batch: 1,
             attempts: 0,
-            now: Time(0),
             peers,
         }
     }
@@ -449,7 +448,7 @@ impl Feed {
             *entry = (*entry).min(event.basis);
         }
         let rows = events.into_iter().map(|event| (event.model, event.payload)).collect();
-        StoreBatch { id: batch, epoch: state.epoch, basis, rows, intents: 0, credential: None }
+        StoreBatch { author: BatchAuthor::Feed, id: batch, epoch: state.epoch, basis, rows, intents: 0, credential: None, ops: Vec::new() }
     }
 
     fn lower(state: &FeedState, fx: Vec<Fx>) -> Effects<Self> {
@@ -459,13 +458,12 @@ impl Feed {
             match item {
                 Fx::Run(effect) => out.push(Effect::Run(effect)),
                 Fx::Debounce { after_ms } => {
-                    let at = Time(state.now.0.saturating_add(after_ms));
-                    out.push(Effect::Schedule { id: DEBOUNCE, at, input: FeedInput::Tick(at) });
+                    out.push(Effect::Schedule { id: DEBOUNCE, after: Duration::from_millis(after_ms), input: FeedInput::Tick(Time(0)) });
                 }
                 Fx::CancelDebounce => out.push(Effect::Cancel(DEBOUNCE)),
                 Fx::Resubscribe { connection, attempt } => {
-                    let delay = u64::try_from(RetryPolicy::Subscription.backoff().delay(attempt - 1).as_millis()).unwrap_or(u64::MAX);
-                    out.push(Effect::Schedule { id: ScheduleId(connection), at: Time(state.now.0.saturating_add(delay)), input: FeedInput::ResubscribeDue { connection } });
+                    let after = RetryPolicy::Subscription.backoff().delay(attempt - 1);
+                    out.push(Effect::Schedule { id: ScheduleId(connection), after, input: FeedInput::ResubscribeDue { connection } });
                 }
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
@@ -492,9 +490,6 @@ impl StateOwner for Feed {
     fn step(state: &mut FeedState, input: FeedInput) -> Effects<Self> {
         let mut fx = Vec::new();
         let ended = state.mode == Mode::Ended;
-        if let FeedInput::Tick(now) = &input {
-            state.now = state.now.max(*now);
-        }
         match input {
             FeedInput::ModelsReset(reset) => {
                 for model in reset.models {

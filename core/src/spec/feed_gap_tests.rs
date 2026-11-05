@@ -185,12 +185,16 @@ impl Twin {
                 Emitted::Run(FeedEffect::Unsubscribe | FeedEffect::CloseConnection { .. }) => modelled.push(Effect::Unsubscribe),
                 Emitted::Run(FeedEffect::Drained(_)) => modelled.push(Effect::Drained),
                 Emitted::Run(FeedEffect::Ended) => seen.push(Obs::Ended),
-                Emitted::Schedule { input, .. } if input.starts_with("Tick") => modelled.push(Effect::ScheduleTick),
+                Emitted::Schedule { after, input, .. } if input.starts_with("Tick") => {
+                    assert_eq!(after, std::time::Duration::from_millis(self.debounce_ms), "the debounce is the delay of the Schedule");
+                    modelled.push(Effect::ScheduleTick);
+                }
                 Emitted::Schedule { input, .. } if input.starts_with("ResubscribeDue") => {
                     self.connection = number_after(&input, "connection: ").expect("the connection");
                     modelled.push(Effect::ScheduleResubscribe);
                 }
                 Emitted::Send { to: STORE, input } => {
+                    assert!(input.contains("author: Feed"), "a batch of Feed names its author: {input}");
                     self.batches.push_back(number_after(&input, "id: ").expect("the batch id"));
                     modelled.push(Effect::Commit);
                 }
