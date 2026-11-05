@@ -9,10 +9,17 @@
 - `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
 
 ### Changed
+- A refused sessionless call reports a network error without the HTTP status.
 - `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
 
 ### Fixed
+- Events of the server subscription land in the cache and reach event streams.
+- A destroy the server answers only with NOT_FOUND is confirmed and the open lists of the model are read once more.
+- An offline refresh shows its error in the state of the stream of the window.
+- The first value of a stream of a loaded window holds the loaded phase.
+- A stream opened on a closed database ends as closed.
+- A request that cannot be read ends its stream as invalid.
 - Sign-in returns after its session identity is visible to subsequent calls.
 - Receipt waits return Interrupted when session reset races with their admission.
 - Loads keep their caller's epoch when the account changes before dispatch.
