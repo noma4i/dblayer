@@ -17,7 +17,7 @@ use crate::test_wait::{within_secs, yield_until};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 
 /// Every call of a sequence returns within this many seconds or the test fails instead of hanging.
-pub(super) const BOUND: u64 = 20;
+pub(super) const BOUND: u64 = 8;
 
 /// Like `bound`, and the panic names the step that did not return.
 pub(super) async fn named_bound<T>(step: &str, work: impl std::future::Future<Output = T>) -> T {

@@ -89,7 +89,7 @@ impl Rendezvous {
 
 /// The limit runs on the wall clock: a paused test clock advances the moment the runtime idles, which would expire it before a real thread answers.
 pub(crate) async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
-    within_secs(20, work).await
+    within_secs(8, work).await
 }
 
 pub(crate) async fn within_secs<T>(seconds: u64, work: impl std::future::Future<Output = T>) -> T {

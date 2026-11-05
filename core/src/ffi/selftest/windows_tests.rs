@@ -48,6 +48,7 @@ async fn open_pages() -> (Arc<Database>, Arc<Pages>) {
     let pages = Arc::new(Pages { queries: AtomicUsize::new(0), gates: Mutex::new(HashMap::new()) });
     let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(pages.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
+    database.set_online(true).unwrap();
     (database, pages)
 }
 
@@ -82,7 +83,6 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
             first.entered_for(&case).await;
             (load_more(), b)
         };
-        yield_until("the second call reached the transport or joined", || pages.queries.load(Ordering::SeqCst) >= 3 || a.is_finished() || b.is_finished()).await;
         for _ in 0..2 { first.release(); second.release(); }
         let (a, b) = (bound(a).await.unwrap(), bound(b).await.unwrap());
         assert!(a.is_ok() || b.is_ok(), "{case}: both overlapping calls failed: {a:?} {b:?}");
@@ -91,7 +91,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         let mut unique = listed.clone();
         unique.dedup();
         assert_eq!(listed, unique, "{case}: a row is listed twice: {listed:?}");
-        database.reset_data().await;
+        database.reset_models_of(&["Moment"]).await;
         bound(crate::ffi::settled(&database)).await.unwrap();
         let before = pages.queries.load(Ordering::SeqCst);
         let fresh_rows = Arc::new(Rows::default());

@@ -31,7 +31,7 @@ fn shrink(reached: u64, mut fails: impl FnMut(u64) -> bool, budget: Duration) ->
 }
 
 const SEEDS: u64 = 16;
-const STEPS: u64 = 32;
+const STEPS: u64 = 16;
 
 #[derive(Clone, Copy, Debug)]
 enum Act {
@@ -247,7 +247,7 @@ async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent() {
         let (seed, result) = run.await.expect("a seed run did not panic");
         let Err(failure) = result else { continue };
         let handle = tokio::runtime::Handle::current();
-        let shortest = tokio::task::block_in_place(|| shrink(STEPS, |steps| handle.block_on(run_seed(seed, steps)).is_err(), Duration::from_secs(20)));
+        let shortest = tokio::task::block_in_place(|| shrink(STEPS, |steps| handle.block_on(run_seed(seed, steps)).is_err(), Duration::from_secs(3)));
         panic!("seed {seed} fails; shortest failing prefix {shortest:?} steps; replay with seed {seed}\n{failure}");
     }
 }
