@@ -140,15 +140,15 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             }
             StoreEffect::EraseAccount { generation_new, erase_encrypted } => {
                 if erase_encrypted {
-                    if let Some(credentials) = &self.credentials {
-                        if let Err(error) = credentials.clear() {
-                            back.reply(EpochStamp::Control, StoreInput::Erased { result: Err(error.to_string()) });
-                            return;
-                        }
+                    let cleared = match (&self.client, &self.credentials) {
+                        (Some(client), _) => client.erase_credential(),
+                        (None, Some(credentials)) => credentials.clear(),
+                        (None, None) => Ok(()),
+                    };
+                    if let Err(error) = cleared {
+                        back.reply(EpochStamp::Control, StoreInput::Erased { result: Err(error.to_string()) });
+                        return;
                     }
-                }
-                if erase_encrypted {
-                    if let Some(client) = &self.client { client.forget_credential(); }
                 }
                 self.erased(back, store.erase_account(Generation::from_value(generation_new), erase_encrypted));
             }

@@ -120,3 +120,25 @@ fn credential_callback_asking_for_the_credential_is_refused() {
 
     assert!(matches!(slot.1.lock().unwrap().take(), Some(Err(TransportError::Network(_)))));
 }
+
+#[test]
+fn sess_prop_credential_in_store() {
+    struct Counting { memory: MemoryCredentials, gets: AtomicUsize, clears: AtomicUsize }
+    impl CredentialSlot for Counting {
+        fn get(&self) -> Result<Option<String>, TransportError> { self.gets.fetch_add(1, Ordering::SeqCst); self.memory.get() }
+        fn set(&self, credential: &str) -> Result<(), TransportError> { self.memory.set(credential) }
+        fn clear(&self) -> Result<(), TransportError> { self.clears.fetch_add(1, Ordering::SeqCst); self.memory.clear() }
+    }
+    let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
+    let slot = Arc::new(Counting { memory: MemoryCredentials::default(), gets: AtomicUsize::new(0), clears: AtomicUsize::new(0) });
+    let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..protocol_tests::config() };
+    let client = EncryptedClient::new(&config, FakeServer::new(clock.clone()), slot.clone(), Db::open_in_memory(Vec::new(), None).unwrap(), clock).unwrap();
+
+    let first = client.credential(&client.admit("test credential").unwrap()).unwrap();
+    let second = client.credential(&client.admit("test credential").unwrap()).unwrap();
+    assert_eq!((first.as_str(), slot.gets.load(Ordering::SeqCst)), (second.as_str(), 2), "every request reads the secret from the store");
+
+    client.erase_credential().unwrap();
+    assert_eq!(slot.clears.load(Ordering::SeqCst), 1, "the erase reaches the store once");
+    assert_eq!(slot.memory.get().unwrap(), None);
+}

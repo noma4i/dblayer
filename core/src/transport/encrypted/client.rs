@@ -97,8 +97,6 @@ pub struct EncryptedClient {
 
 #[derive(Default)]
 struct CredentialState {
-    cached: Option<String>,
-    generation: u64,
     loading: Option<ThreadId>,
 }
 
@@ -242,11 +240,11 @@ impl EncryptedClient {
 
     pub(crate) fn credential_slot(&self) -> Arc<dyn CredentialSlot> { self.credentials.clone() }
 
-    /// The cached credential is gone with the account.
-    pub(crate) fn forget_credential(&self) {
-        let mut state = crate::db::locked(&self.credential.state);
-        state.cached = None;
-        state.generation += 1;
+    /// Erases the secret in the `CredentialStore`: the one path, held against a load that mints.
+    pub(crate) fn erase_credential(&self) -> Result<(), TransportError> {
+        let _loading = self.hold_credential()?;
+        crate::db::lock::assert_no_library_lock("CredentialSlot::clear");
+        crate::blocking::blocking_unit(|| self.credentials.clear())
     }
 
     /// A request with a `sequence` for the old stack: the owner Session sends it, in order with every other request of the session.
@@ -331,26 +329,35 @@ impl EncryptedClient {
         Ok(Answer { sequence: opened.sequence, body: opened.body })
     }
 
+    fn hold_credential(&self) -> Result<Loading<'_>, TransportError> {
+        let cell = &self.credential;
+        let mut state = crate::db::locked(&cell.state);
+        loop {
+            match state.loading {
+                None => {
+                    state.loading = Some(thread::current().id());
+                    return Ok(Loading(cell));
+                }
+                Some(owner) if owner == thread::current().id() => return Err(TransportError::Network("the credential callback re-entered the credential load".into())),
+                Some(_) => state = crate::db::lock::wait(&cell.settled, state),
+            }
+        }
+    }
+
+    /// The secret is read from the `CredentialStore` on every request: the core keeps no copy.
     pub(super) fn credential(&self, admitted: &Admitted) -> Result<String, TransportError> {
         self.validate(admitted)?;
-        let cell = &self.credential;
-        let (cached, generation, _loading) = {
-            let mut state = crate::db::locked(&cell.state);
-            loop {
-                if let Some(credential) = &state.cached { break (Some(credential.clone()), state.generation, None); }
-                match state.loading {
-                    None => {
-                        state.loading = Some(thread::current().id());
-                        break (None, state.generation, Some(Loading(cell)));
-                    }
-                    Some(owner) if owner == thread::current().id() => return Err(TransportError::Network("the credential callback re-entered the credential load".into())),
-                    Some(_) => state = crate::db::lock::wait(&cell.settled, state),
-                }
+        let _loading = self.hold_credential()?;
+        crate::db::lock::assert_no_library_lock("CredentialSlot::get");
+        match crate::blocking::blocking_unit(|| self.credentials.get())? {
+            Some(stored) => self.verified(stored),
+            None => {
+                let credential = random_token();
+                crate::db::lock::assert_no_library_lock("CredentialSlot::set");
+                crate::blocking::blocking_unit(|| self.credentials.set(&credential))?;
+                self.write_in(admitted, |connection| state::start(connection, &digest_of(&credential)))?;
+                Ok(credential)
             }
-        };
-        match cached {
-            Some(credential) => self.verified(credential),
-            None => self.load_credential(admitted, generation),
         }
     }
 
@@ -363,31 +370,6 @@ impl EncryptedClient {
             Some(session) if session.credential_digest == digest_of(&credential) => Ok(credential),
             _ => Err(TransportError::Session { code: SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }),
         }
-    }
-
-    fn load_credential(&self, admitted: &Admitted, generation: u64) -> Result<String, TransportError> {
-        crate::db::lock::assert_no_library_lock("CredentialSlot::get");
-        let (credential, minted) = match crate::blocking::blocking_unit(|| self.credentials.get())? {
-            Some(stored) => (self.verified(stored), false),
-            None => {
-                let credential = random_token();
-                crate::db::lock::assert_no_library_lock("CredentialSlot::set");
-                crate::blocking::blocking_unit(|| self.credentials.set(&credential))?;
-                (Ok(credential), true)
-            }
-        };
-        let mut state = crate::db::locked(&self.credential.state);
-        if state.generation != generation {
-            drop(state);
-            if minted { crate::db::lock::assert_no_library_lock("CredentialSlot::clear"); crate::blocking::blocking_unit(|| self.credentials.clear())?; }
-            return Err(TransportError::Network("the session was reset while its credential was loading".into()));
-        }
-        let credential = credential?;
-        if minted {
-            self.write_in(admitted, |connection| state::start(connection, &digest_of(&credential)))?;
-        }
-        state.cached = Some(credential.clone());
-        Ok(credential)
     }
 
     #[cfg(test)]
