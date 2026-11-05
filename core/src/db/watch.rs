@@ -44,7 +44,6 @@ pub struct Change {
     pub full: bool,
     pub size: usize,
     pub window: Option<WindowEdge>,
-    pub(crate) keys: HashMap<RowId, Arc<OrderKey>>,
 }
 
 impl Change {

@@ -41,10 +41,6 @@ pub(crate) struct PriorFile {
     pub id: String,
 }
 
-#[cfg(test)]
-pub(crate) struct HeldFile {
-    pub id: String,
-}
 
 impl PriorRow {
     pub fn id(&self) -> &str {
@@ -167,16 +163,6 @@ impl Prior {
             .collect()
     }
 
-    #[cfg(test)]
-    pub fn held_files(&self) -> Vec<HeldFile> {
-        let mut held = Vec::new();
-        for row in &self.rows {
-            if let PriorRow::Destroyed { files, .. } = row {
-                held.extend(files.iter().map(|file| HeldFile { id: file.id.clone() }));
-            }
-        }
-        held
-    }
 
     pub fn swap(&mut self, temp: &RowId, real: &RowId, parent: &str, references: &[(String, String)]) -> bool {
         let mut changed = false;

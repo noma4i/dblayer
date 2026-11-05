@@ -44,7 +44,7 @@ fn put_replaces_the_file_of_the_same_pair() {
     put(&connection, &record("f1", "m1", "media", Location::Table, b"one")).unwrap();
     put(&connection, &record("f2", "m1", "media", Location::Table, b"two")).unwrap();
     assert_eq!(find(&connection, "moments", "m1", "media").unwrap().unwrap().id, "f2");
-    assert_eq!(all_references(&connection).unwrap().len(), 1);
+    assert_eq!(all_references(&connection).len(), 1);
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn remove_pair_and_remove_row_delete_only_their_files() {
     put(&connection, &record("f3", "m2", "media", Location::Table, b"3")).unwrap();
     assert_eq!(remove_pair(&connection, "moments", "m1", "media").unwrap(), 1);
     assert_eq!(remove_row(&connection, "moments", "m1").unwrap(), 1);
-    let left: Vec<String> = all_references(&connection).unwrap().into_iter().map(|reference| reference.id).collect();
+    let left: Vec<String> = all_references(&connection).into_iter().map(|reference| reference.id).collect();
     assert_eq!(left, vec!["f3"]);
 }
 
@@ -87,9 +87,9 @@ fn clear_model_and_clear_all_empty_the_table() {
     other.model = "users".into();
     put(&connection, &other).unwrap();
     clear_model(&connection, "moments").unwrap();
-    assert_eq!(all_references(&connection).unwrap().len(), 1);
+    assert_eq!(all_references(&connection).len(), 1);
     clear_all(&connection).unwrap();
-    assert!(all_references(&connection).unwrap().is_empty());
+    assert!(all_references(&connection).is_empty());
 }
 
 #[test]
@@ -97,4 +97,12 @@ fn placement_switches_to_a_directory_above_the_limit_only_when_one_exists() {
     assert_eq!(placement(TABLE_LIMIT, true), Location::Table);
     assert_eq!(placement(TABLE_LIMIT + 1, true), Location::Directory);
     assert_eq!(placement(TABLE_LIMIT + 1, false), Location::Table);
+}
+
+fn all_references(connection: &rusqlite::Connection) -> Vec<Ref> {
+    connection.prepare("SELECT id FROM file ORDER BY created_at, id").unwrap().query_map([], |row| Ok(Ref { id: row.get(0)? })).unwrap().collect::<Result<_, _>>().unwrap()
+}
+
+struct Ref {
+    id: String,
 }

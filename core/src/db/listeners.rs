@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -43,9 +43,6 @@ pub(crate) struct Mailbox {
     scheduled: bool,
     delivered: Option<Arc<Version>>,
     restarted: bool,
-    reached: i64,
-    told_reached: i64,
-    failure: Option<String>,
     paused: bool,
     owes_run: bool,
 }
@@ -53,7 +50,6 @@ pub(crate) struct Mailbox {
 impl Mailbox {
     pub(crate) fn push(&mut self, version: Arc<Version>, replaced: &[(RowId, RowId)], loaded: Loaded) -> bool {
         self.latest = Some(version);
-        self.failure = None;
         self.loaded.rows.extend(loaded.rows);
         for (name, parents) in loaded.related {
             self.loaded.related.entry(name).or_default().extend(parents);
@@ -131,11 +127,6 @@ impl Mailbox {
         self.scheduled = false;
     }
 
-    fn take_tail(&mut self) -> Tail {
-        let reached = (self.reached > self.told_reached).then(|| std::mem::replace(&mut self.told_reached, self.reached));
-        Tail { reached: reached.map(|_| self.reached), failure: self.failure.take() }
-    }
-
     fn drop_pending(&mut self) {
         self.latest = None;
         self.replaced.clear();
@@ -147,28 +138,14 @@ impl Mailbox {
     }
 }
 
-#[derive(Default)]
-struct Tail {
-    reached: Option<i64>,
-    failure: Option<String>,
-}
-
-pub(crate) enum Feed {
-    Rows(Box<Change>),
-    Count(CountChange),
-    Reached(i64),
-    Failed(String),
-}
-
 pub(crate) trait Runnable: Send + Sync {
     fn run(&self);
-    fn stranded(&self, detail: String);
+    fn stranded(&self);
 }
 
 pub(crate) enum Listener {
     Rows(Box<dyn Fn(&Change) + Send + Sync>),
     Count(Box<dyn Fn(&CountChange) + Send + Sync>),
-    Feed(Box<dyn Fn(Feed) + Send + Sync>),
 }
 
 /// A listener call starts only while the subscription is live: starting a call and cancelling are atomic against each other.
@@ -226,13 +203,10 @@ impl Runnable for Subscriber {
         self.run_deliveries();
     }
 
-    fn stranded(&self, detail: String) {
+    fn stranded(&self) {
         locked(&self.counters).listener_spawn_failures += 1;
         let mut mailbox = held(&self.mailbox);
         mailbox.finish();
-        if matches!(self.listener, Listener::Feed(_)) {
-            mailbox.failure = Some(detail);
-        }
     }
 }
 
@@ -250,21 +224,6 @@ impl Subscriber {
         held(&self.mailbox).pause();
     }
 
-
-    #[cfg(test)]
-    pub(crate) fn resume(self: &Arc<Self>, executor: &Arc<Executor>) {
-        let needs_run = held(&self.mailbox).resume();
-        if needs_run {
-            executor.schedule(self.clone());
-        }
-    }
-
-
-    #[cfg(test)]
-    pub(crate) fn owes_delivery(&self) -> bool {
-        held(&self.mailbox).owes_run
-    }
-
     pub(crate) fn idle(&self) -> bool {
         let mailbox = held(&self.mailbox);
         !mailbox.scheduled && !mailbox.owes_run
@@ -277,49 +236,15 @@ impl Subscriber {
         }
     }
 
-    pub(crate) fn reach(self: &Arc<Self>, executor: &Arc<Executor>, revision: i64) {
-        if !matches!(self.listener, Listener::Feed(_)) {
-            return;
-        }
-        let needs_run = {
-            let mut mailbox = held(&self.mailbox);
-            if revision <= mailbox.reached {
-                return;
-            }
-            mailbox.reached = revision;
-            locked(&self.counters).reach_notices += 1;
-            mailbox.wants_run()
-        };
-        if needs_run {
-            executor.schedule(self.clone());
-        }
-    }
-
-    pub(crate) fn fail(self: &Arc<Self>, executor: &Arc<Executor>, error: String) {
-        if !matches!(self.listener, Listener::Feed(_)) {
-            return;
-        }
-        let needs_run = {
-            let mut mailbox = held(&self.mailbox);
-            mailbox.failure = Some(error);
-            mailbox.wants_run()
-        };
-        if needs_run {
-            executor.schedule(self.clone());
-        }
-    }
-
     fn run_deliveries(&self) {
         loop {
-            let (taken, tail) = {
+            let taken = {
                 let mut mailbox = held(&self.mailbox);
-                let taken = mailbox.take();
-                let tail = mailbox.take_tail();
-                if taken.is_none() && tail.reached.is_none() && tail.failure.is_none() {
+                let Some(taken) = mailbox.take() else {
                     mailbox.finish();
                     return;
-                }
-                (taken, tail)
+                };
+                taken
             };
             if self.call_state.is_cancelled() {
                 let mut mailbox = held(&self.mailbox);
@@ -327,17 +252,11 @@ impl Subscriber {
                 mailbox.finish();
                 return;
             }
-            if let Some(mut taken) = taken {
-                self.deliver(&mut taken);
-                let mut mailbox = held(&self.mailbox);
-                if !mailbox.restarted {
-                    mailbox.delivered = Some(taken.latest);
-                }
-            }
-            if let Listener::Feed(call) = &self.listener {
-                for feed in tail.reached.map(Feed::Reached).into_iter().chain(tail.failure.map(Feed::Failed)) {
-                    self.call_state.call(|| call(feed));
-                }
+            let mut taken = taken;
+            self.deliver(&mut taken);
+            let mut mailbox = held(&self.mailbox);
+            if !mailbox.restarted {
+                mailbox.delivered = Some(taken.latest);
             }
         }
     }
@@ -351,12 +270,7 @@ impl Subscriber {
         diff.map(|diff| {
             let (rows, related) = if first { whole_rows(body, &mut taken.loaded) } else { changed_rows(&diff, &mut taken.loaded.rows, &mut taken.loaded.related) };
             locked(&self.counters).rows_delivered += rows.len();
-            let keys = body.ranking().map(|ranked| {
-                let moved = diff.inserted.iter().chain(&diff.updated).chain(&diff.moved).chain(diff.renamed.iter().map(|(_, to)| to)).chain(diff.replaced.iter().map(|(_, to)| to));
-                let ids: Vec<RowId> = if first { body.entries().iter().map(|entry| entry.id.clone()).collect() } else { moved.cloned().collect() };
-                ids.into_iter().filter_map(|id| ranked.get(id.as_str()).map(|(key, _)| (id.clone(), key.clone()))).collect::<HashMap<_, _>>()
-            });
-            Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len(), window: body.window.as_ref().map(|part| part.edge), keys: keys.unwrap_or_default() }
+            Change { revision: taken.latest.revision, rows, related, diff, full: first, size: body.len(), window: body.window.as_ref().map(|part| part.edge) }
         })
     }
 
@@ -369,9 +283,7 @@ impl Subscriber {
         let latest = taken.latest.clone();
         let outcome = match (&self.listener, &latest.body) {
             (Listener::Rows(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| self.call_state.call(|| call(&change))),
-            (Listener::Feed(call), Body::Rows(body)) => self.rows_change(taken, body).map(|change| self.call_state.call(|| call(Feed::Rows(Box::new(change))))),
             (Listener::Count(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| self.call_state.call(|| call(&change))),
-            (Listener::Feed(call), Body::Count(count)) => self.count_change(taken, *count).map(|change| self.call_state.call(|| call(Feed::Count(change)))),
             _ => None,
         };
         if outcome == Some(true) {
@@ -438,7 +350,7 @@ impl Executor {
             return;
         }
         queue.workers += 1;
-        let Err(detail) = self.spawn_worker(self.clone()) else { return };
+        let Err(_) = self.spawn_worker(self.clone()) else { return };
         queue.workers -= 1;
         if queue.workers > 0 {
             self.wake.notify_one(); // lock-ok: condvar schedules an OS thread
@@ -447,7 +359,7 @@ impl Executor {
         let stranded = queue.ready.pop_back();
         drop(queue);
         if let Some((subscriber, busy)) = stranded {
-            subscriber.stranded(detail);
+            subscriber.stranded();
             drop(busy);
         }
     }

@@ -58,11 +58,10 @@ fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
             }
         }
         let call = client.pending_call();
-        let matching = super::graphql::pending_matches(&db, &crate::transport::RequestOwner::Transfer { operation_id: 7, item_id: "item".into(), step: crate::upload::UploadStage::Put });
         match case {
-            "missing" => { assert_eq!(call.unwrap(), None); assert!(!matching.unwrap()); }
-            "valid" => { assert_eq!(call.unwrap(), Some(("/graphql".into(), json!({})))); assert!(matching.unwrap()); }
-            _ => { assert!(call.is_err(), "{case}"); assert!(matching.is_err(), "{case}"); }
+            "missing" => { assert_eq!(call.unwrap(), None); }
+            "valid" => { assert_eq!(call.unwrap(), Some(("/graphql".into(), json!({})))); }
+            _ => { assert!(call.is_err(), "{case}"); }
         }
     }
 }

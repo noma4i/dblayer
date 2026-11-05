@@ -6,7 +6,7 @@ use super::ref_outbox::{step_of, Ctx, Eff, Fault as RFault, In, Obs, Out, Policy
 use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::session::SessionCalls;
 use crate::owners::store::StoreWriter;
-use crate::owners::support::{new_log, number_after, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
+use crate::owners::support::{new_log, number_after, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::owners::write::outbox::{self as o, CommitKind, Fault, NewOp, OpId, Origin, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, Why};
 use crate::owners::write::transfer::Transfers;
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
@@ -24,8 +24,8 @@ pub(super) enum OutboxEffect {
     Send { op_id: OpId, request_id: u64, sequence: u64 },
     CancelRequest { op_id: OpId },
     Reply { reply: ReplyId, answer: OutboxAnswer },
-    TransferOutcome { key: String, outcome: o::OutboxOutcome },
-    Schedule { id: u64, after_ms: u128 },
+    TransferOutcome { outcome: o::OutboxOutcome },
+    Schedule,
     Drained,
     Copy { id: u64, source: String },
 }
@@ -72,9 +72,9 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
             let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
             OutboxEffect::Send { op_id: operation.map_or(request_id, |operation| operation.op_id), request_id, sequence: operation.map_or(0, |operation| operation.sequence) }
         }
-        Emitted::Send { to: TRANSFER_AT, input } => OutboxEffect::TransferOutcome { key: text_after(&input, "key: ")?, outcome: outcome_named(&input) },
+        Emitted::Send { to: TRANSFER_AT, input } => OutboxEffect::TransferOutcome { outcome: outcome_named(&input) },
         Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
-        Emitted::Schedule { id, after, .. } => OutboxEffect::Schedule { id: id.0, after_ms: after.as_millis() },
+        Emitted::Schedule { .. } => OutboxEffect::Schedule,
         Emitted::Cancel(_) | Emitted::Broadcast(_) => return None,
     })
 }
@@ -371,7 +371,7 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
                     OutboxAnswer::Err(fault) => obs.push(Obs::Fails(fault_of(&fault))),
                 }
             }
-            OutboxEffect::Schedule { .. } => {}
+            OutboxEffect::Schedule => {}
             OutboxEffect::TransferOutcome { outcome, .. } => eff.push(Eff::TransferOutcome(out_of(&outcome))),
             OutboxEffect::Drained => eff.push(Eff::Drained),
             OutboxEffect::Copy { .. } => {}

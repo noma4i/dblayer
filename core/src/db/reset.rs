@@ -13,7 +13,7 @@ impl Db {
             self.shared.spec(model)?;
         }
         self.shared.store.erase_models(generation, &names)?;
-        self.shared.store.lifecycle.models_reset(generation.value(), &names);
+        self.shared.store.lifecycle.models_reset(generation.value());
         Ok(())
     }
 

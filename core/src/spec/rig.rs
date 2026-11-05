@@ -26,7 +26,7 @@ pub(super) enum Reply { Ok, Temp, Refuse, NotFound }
 pub(super) enum Kind { Mutate = 0, Put = 1 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Seen { pub kind: Kind, pub operation: String, pub variables: Value, pub purpose: String }
+pub(super) struct Seen { pub kind: Kind, pub operation: String, pub variables: Value }
 
 #[derive(Default)]
 struct State {
@@ -105,12 +105,12 @@ impl Server {
     pub async fn wait_held(&self, kind: Kind, count: usize) { until("held requests", || self.held(kind) >= count).await }
     pub async fn wait_seen(&self, operation: &str, count: usize) { until(operation, || self.count(operation) >= count).await }
 
-    async fn decide(self: &Arc<Self>, kind: Kind, operation: &str, variables: Value, purpose: String) -> Reply {
+    async fn decide(self: &Arc<Self>, kind: Kind, operation: &str, variables: Value) -> Reply {
         let row = variables.get("momentId").and_then(Value::as_str).map(str::to_string);
         let text = variables.get("text").and_then(Value::as_str).unwrap_or("").to_string();
         let (receiver, reply) = {
             let mut state = self.state.lock().unwrap();
-            state.seen.push(Seen { kind, operation: operation.into(), variables, purpose });
+            state.seen.push(Seen { kind, operation: operation.into(), variables });
             if let Some(row) = &row {
                 let count = state.in_flight.entry(row.clone()).or_default();
                 *count += 1;
@@ -172,7 +172,7 @@ impl Transport for Wire {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { Ok(json!({"data":{"moments":[]}}).to_string()) }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> {
         let variables: Value = serde_json::from_str(&request.variables_json).unwrap_or(Value::Null);
-        let reply = self.0.decide(Kind::Mutate, &request.operation_name, variables.clone(), format!("{:?}", request.purpose)).await;
+        let reply = self.0.decide(Kind::Mutate, &request.operation_name, variables.clone()).await;
         match reply {
             Reply::Ok => Ok(answer_of(&request.operation_name, &variables, self.0.next()).to_string()),
             Reply::Temp => Err(DbError::Network { detail: "temporary".into() }),
@@ -183,7 +183,7 @@ impl Transport for Wire {
     async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { Err(DbError::Network { detail: "no subscriptions".into() }) }
     fn unsubscribe(&self, _: String) {}
     async fn put(&self, url: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
-        let reply = self.0.decide(Kind::Put, "put", json!({"url": url}), "Transfer".into()).await;
+        let reply = self.0.decide(Kind::Put, "put", json!({"url": url})).await;
         match reply {
             Reply::Ok => Ok(PutReply { status: 200, etag: Some(format!("etag-{}", self.0.next())) }),
             Reply::Temp => Err(DbError::Network { detail: "temporary".into() }),
@@ -195,7 +195,7 @@ impl Transport for Wire {
 
 #[async_trait]
 impl EncryptedHttp for Wire {
-    async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
+    async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let sequence = request["sequence"].as_i64();
         let answer = match path.as_str() {
@@ -204,7 +204,7 @@ impl EncryptedHttp for Wire {
             _ => {
                 let name = request["body"]["operationName"].as_str().unwrap_or_default().to_string();
                 let variables = request["body"]["variables"].clone();
-                match self.0.decide(Kind::Mutate, &name, variables.clone(), format!("{purpose:?}")).await {
+                match self.0.decide(Kind::Mutate, &name, variables.clone()).await {
                     Reply::Ok => answer_of(&name, &variables, self.0.next()),
                     Reply::Temp => return Err(DbError::Network { detail: "temporary".into() }),
                     Reply::Refuse => json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
@@ -264,7 +264,7 @@ pub fn upload_operations() -> UploadOperations {
     }
 }
 
-pub(super) struct Rig { pub db: Arc<Database>, pub server: Arc<Server>, pub clock: Arc<TestClock>, pub models: String }
+pub(super) struct Rig { pub db: Arc<Database>, pub server: Arc<Server>, pub clock: Arc<TestClock> }
 
 impl Drop for Rig {
     fn drop(&mut self) {
@@ -298,7 +298,7 @@ impl Rig {
         db.register_operations(OPERATIONS.into()).unwrap();
         db.set_online(true).unwrap();
         if !signed { within(db.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap(); }
-        Rig { db, server, clock, models }
+        Rig { db, server, clock }
     }
 
     pub fn epoch(&self) -> u64 { self.db.session_epoch() }

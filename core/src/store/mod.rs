@@ -17,8 +17,6 @@ pub(crate) mod blob;
 mod boot;
 mod error;
 mod file_ops;
-#[cfg(test)]
-mod maintenance;
 mod open;
 mod restore;
 pub(crate) use open::{is_unreadable, remove_database};
@@ -42,8 +40,6 @@ pub use apply::PlanCommitError;
 pub(crate) use apply::save_pending;
 pub use boot::BootReport;
 pub use error::StoreError;
-#[cfg(test)]
-pub use maintenance::{MaintenanceReport, TempRowPolicy};
 pub use rows::{EdgeRead, Reader, StoredRow};
 pub(crate) use response::coalesce_rows;
 #[cfg(test)]
@@ -377,8 +373,6 @@ mod boot_tests;
 mod write_tests;
 #[cfg(test)]
 mod file_ops_tests;
-#[cfg(test)]
-mod maintenance_tests;
 #[cfg(test)]
 mod memory_tests;
 #[cfg(test)]

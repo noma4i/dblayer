@@ -302,7 +302,7 @@ impl Store {
         let generation = self.generation().next();
         let names: Vec<String> = models.iter().map(|model| model.to_string()).collect();
         self.erase_models(generation, &names)?;
-        self.lifecycle.models_reset(generation.value(), &names);
+        self.lifecycle.models_reset(generation.value());
         Ok(())
     }
 

@@ -114,19 +114,6 @@ fn inv_observe_08_a_rows_call_that_passed_the_cancel_check_does_not_start_after_
     assert_eq!(db.counters().observer_calls, 0);
 }
 
-fn feed_log(sink: std::sync::mpsc::Sender<String>) -> Listener {
-    use super::listeners::Feed;
-    Listener::Feed(Box::new(move |feed| {
-        let line = match feed {
-            Feed::Rows(change) => format!("rows {}", change.revision),
-            Feed::Count(change) => format!("count {}", change.revision),
-            Feed::Reached(revision) => format!("reached {revision}"),
-            Feed::Failed(message) => format!("failed {message}"),
-        };
-        sink.send(line).unwrap();
-    }))
-}
-
 #[test]
 fn listener_thread_creation_failure() {
     use super::fixtures::booted;
@@ -137,24 +124,17 @@ fn listener_thread_creation_failure() {
     let executor = db.shared.executor.clone();
     executor.refuse_spawn.store(true, Ordering::SeqCst);
 
-    let (feed_sink, feed_lines) = channel();
-    let feed = Subscriber::new(feed_log(feed_sink), db.shared.counters.clone());
     let (row_sink, row_revisions) = channel();
     let rows = Subscriber::new(Listener::Rows(Box::new(move |change| row_sink.send(change.revision).unwrap())), db.shared.counters.clone());
-    feed.post(&executor, version(1), &[], Loaded::default());
     rows.post(&executor, version(1), &[], Loaded::default());
-    assert_eq!(db.counters().listener_spawn_failures, 2, "both refused starts are counted");
-    assert!(feed_lines.try_recv().is_err() && row_revisions.try_recv().is_err(), "no callback runs on the posting thread");
-    assert!(feed.idle() && rows.idle(), "a refused start leaves no subscriber waiting for a worker");
+    assert_eq!(db.counters().listener_spawn_failures, 1, "the refused start is counted");
+    assert!(row_revisions.try_recv().is_err(), "no callback runs on the posting thread");
+    assert!(rows.idle(), "a refused start leaves no subscriber waiting for a worker");
 
     executor.refuse_spawn.store(false, Ordering::SeqCst);
-    feed.reach(&executor, 1);
-    let delivered: Vec<String> = (0..3).map(|_| recv_within(&feed_lines)).collect();
-    assert_eq!(delivered, ["rows 1", "reached 1", "failed refused by the test"], "the subscriber learns of the refusal from its own mailbox");
-    executor.refuse_spawn.store(true, Ordering::SeqCst);
     rows.post(&executor, version(2), &[], Loaded::default());
-    assert_eq!(recv_within(&row_revisions), 2, "a live worker serves the others although the next start is refused");
-    assert_eq!(db.counters().listener_spawn_failures, 2, "only the starts that left a subscriber without a worker are counted");
+    assert_eq!(recv_within(&row_revisions), 2, "a live worker serves the subscriber once the start is allowed");
+    assert_eq!(db.counters().listener_spawn_failures, 1, "only the start that left a subscriber without a worker is counted");
 }
 
 struct Capture {
@@ -176,17 +156,15 @@ impl Drop for Capture {
 #[test]
 fn listener_capture_drop_reenters() {
     use super::fixtures::booted;
-    use super::listeners::Feed;
     use super::observe::ObserverHandle;
     use super::open::locked;
     use super::Db;
     use crate::query::Query;
     use crate::test_wait::spin_until;
     type Observe = fn(&Db, Capture) -> ObserverHandle;
-    let kinds: [(&str, Observe); 3] = [
+    let kinds: [(&str, Observe); 2] = [
         ("rows", |db, capture| db.observe(Query::new("moments"), move |_| { let _keep = &capture; }).unwrap()),
         ("count", |db, capture| db.observe_count(Query::new("moments"), move |_| { let _keep = &capture; }).unwrap()),
-        ("feed", |db, capture| db.observe_query_feed(Query::new("moments"), false, false, move |_: Feed| { let _keep = &capture; }).unwrap()),
     ];
     for (kind, observe) in kinds {
         let db = booted();

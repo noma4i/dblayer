@@ -169,24 +169,9 @@ impl FileDirectories {
         names(&self.cache)
     }
 
-    #[cfg(test)]
-    pub(crate) fn remove_directory_entry(&self, name: &str) -> io::Result<()> {
-        if let Some(directory) = &self.directory {
-            ignore_missing(fs::remove_file(directory.join(name)))?;
-        }
-        Ok(())
-    }
 
-    #[cfg(test)]
-    pub(crate) fn remove_cache_entry(&self, name: &str) -> io::Result<()> {
-        ignore_missing(fs::remove_dir_all(self.cache.join(name)))
-    }
 }
 
-#[cfg(test)]
-pub(crate) fn is_partial(name: &str) -> bool {
-    name.ends_with(PART_SUFFIX)
-}
 
 fn write_atomic(target: &Path, partial: &Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = target.parent() {

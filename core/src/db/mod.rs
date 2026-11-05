@@ -32,8 +32,6 @@ mod upload_rows;
 mod queue_write_tests;
 mod merge;
 mod lookup;
-#[cfg(test)]
-mod maintain;
 mod observe;
 pub(crate) mod op_effect;
 mod open;
@@ -76,11 +74,7 @@ pub(crate) mod fixtures;
 #[cfg(test)]
 mod invariants;
 #[cfg(test)]
-mod feed_tests;
-#[cfg(test)]
 mod swap_tests;
-#[cfg(test)]
-mod await_revision_tests;
 #[cfg(test)]
 mod entity_pin_tests;
 #[cfg(test)]

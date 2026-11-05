@@ -55,12 +55,6 @@ pub fn repeats(config: &super::EncryptedConfig, request: &GraphQLRequest, path: 
     path == config.endpoints.graphql && (*body == graphql_body(request, false) || *body == graphql_body(request, true))
 }
 
-#[cfg(test)]
-pub(crate) fn pending_matches(db: &crate::db::Db, owner: &crate::transport::RequestOwner) -> Result<bool, crate::store::StoreError> {
-    Ok(db.shared.store.read_locked(super::state::pending)?.is_some_and(|pending| {
-        pending.owner.as_ref() == Some(owner)
-    }))
-}
 
 pub fn response_of(answer: Answer) -> Result<Response, TransportError> {
     if let Some(code) = answer.body.get("error").and_then(Value::as_str) {

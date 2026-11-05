@@ -75,7 +75,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             }
             LifecycleEffect::ModelsReset { epoch, generation, models } => {
                 let models: Vec<String> = models.into_iter().collect();
-                self.leases.models_reset(generation, &models);
+                self.leases.models_reset(generation);
                 let reset = crate::owners::contract::ModelsReset { epoch, generation, models };
                 wiring.to_windows(WindowsInput::ModelsReset(reset.clone()));
                 wiring.to_deliveries(DeliveryInput::ModelsReset(reset.clone()));

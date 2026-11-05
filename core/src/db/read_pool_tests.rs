@@ -203,21 +203,6 @@ fn nb1_cancelling_and_growing_an_observer_do_not_wait_for_the_registry() {
 }
 
 #[test]
-fn d3_a_commit_that_touches_no_group_notifies_no_feed_subscriber() {
-    let db = booted();
-    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
-    let mut keep = Vec::new();
-    for index in 0..300 {
-        keep.push(db.observe_query_feed(Query::new("users").limited(index + 1), false, false, |_| {}).unwrap());
-    }
-    db.await_revision(db.revision_seq().unwrap());
-    let before = db.counters().reach_notices;
-    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "x"}));
-    let notices = db.counters().reach_notices - before;
-    assert_eq!(notices, 0, "feed subscribers told about a commit that touched none of their groups: {notices}");
-}
-
-#[test]
 fn the_first_delivery_of_a_warm_query_reads_sqlite_off_the_calling_thread() {
     let db = booted();
     put(&db, "users", json!({"id": "u1", "name": "Ann"}));

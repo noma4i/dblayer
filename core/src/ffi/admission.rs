@@ -18,9 +18,9 @@ pub(crate) enum Origin { Explicit, Session }
 
 #[derive(Clone, Debug)]
 pub(crate) enum Change {
-    SessionStarted(Option<String>),
+    SessionStarted,
     SessionEnded,
-    Cleared(Option<Vec<String>>),
+    Cleared,
     Closed,
 }
 
@@ -49,7 +49,7 @@ impl From<Ended> for crate::transport::TransportError {
 
 impl Default for Snapshot {
     fn default() -> Self {
-        Self { generation: Generation::INITIAL, session: None, ended: false, ending: false, closed: false, revision: 0, notice: 0, session_epoch: 0, change: Change::SessionStarted(None) }
+        Self { generation: Generation::INITIAL, session: None, ended: false, ending: false, closed: false, revision: 0, notice: 0, session_epoch: 0, change: Change::SessionStarted }
     }
 }
 
@@ -381,11 +381,11 @@ impl Leases {
             state.snapshot.ended = false;
             let holders = state.holders.open();
             if std::mem::take(&mut state.cleared_on_publish) {
-                state.apply(Change::Cleared(None));
+                state.apply(Change::Cleared);
                 tickets.push((state.snapshot.clone(), holders.clone(), None));
             }
             if moved {
-                state.apply(Change::SessionStarted(session.clone()));
+                state.apply(Change::SessionStarted);
                 tickets.push((state.snapshot.clone(), holders, Some(session)));
             } else {
                 state.snapshot.revision += 1;
@@ -404,12 +404,12 @@ impl Leases {
     }
 
     /// `ModelsReset` of Lifecycle: the cache of the models is gone and the generation grew. The epoch stays.
-    pub(crate) fn models_reset(&self, generation: u64, models: &[String]) {
+    pub(crate) fn models_reset(&self, generation: u64) {
         let (ticket, activity) = {
             let mut state = crate::db::locked(&self.state);
             if state.snapshot.closed { return; }
             state.snapshot.generation = Generation::from_value(generation);
-            state.apply(Change::Cleared(Some(models.to_vec())));
+            state.apply(Change::Cleared);
             let snapshot = state.snapshot.clone();
             let holders = state.holders.open();
             #[cfg(test)]
