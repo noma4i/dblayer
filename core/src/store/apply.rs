@@ -144,7 +144,7 @@ impl Store {
                 if !admitted.is_current() { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
                 Some(line)
             }
-            Authority::Internal(_) => None,
+            Authority::Internal(_) | Authority::Owner => None,
         };
         #[cfg(test)]
         if matches!(authority, Authority::Admitted(_)) {

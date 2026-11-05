@@ -284,9 +284,8 @@ fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), 
     if queue.is_empty() {
         return Ok(());
     }
-    let admitted = db.shared.store.lifecycle.admit(crate::ffi::legacy::Origin::Explicit, "write").map_err(|_| "no session to write in".to_string())?;
     let ops: Vec<StoreOp> = queue.into_iter().cloned().collect();
-    db.write_queue_ops(&admitted, &ops).map_err(|error| error.to_string())
+    db.write_queue_ops(&ops).map_err(|error| error.to_string())
 }
 
 /// The batch op as the tables hold it: ids as text, the purpose as the enum of the transport.

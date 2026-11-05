@@ -52,7 +52,7 @@ impl From<&Authority> for Carry {
     fn from(authority: &Authority) -> Self {
         match authority {
             Authority::Admitted(admitted) => Self::Admitted(admitted.clone()),
-            Authority::Internal(_) => Self::Internal,
+            Authority::Internal(_) | Authority::Owner => Self::Internal,
         }
     }
 }

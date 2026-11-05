@@ -13,6 +13,7 @@ use crate::owners::write::transfer::{Source, Steps, StoredTransfer};
 use crate::runtime::Time;
 use crate::schema::OnFailure;
 
+use super::commit::Gate;
 use super::error::DbError;
 use super::local_write::plan_fault;
 use super::open::Db;
@@ -35,7 +36,7 @@ fn upserts(model: &str, rows: &[RowValue]) -> Result<Vec<EntityOp>, DbError> {
 
 impl Db {
     /// Applies the ops of one batch. The batch of an operation holds the ops of one commit kind, so each op is one commit.
-    pub(crate) fn write_queue_ops(&self, admitted: &crate::ffi::legacy::Admitted, ops: &[StoreOp]) -> Result<(), DbError> {
+    pub(crate) fn write_queue_ops(&self, ops: &[StoreOp]) -> Result<(), DbError> {
         let generation = self.generation();
         let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
         let mut rolled_back = Vec::new();
@@ -64,31 +65,31 @@ impl Db {
                         None => OperationTransition::Retry { seq },
                     });
                 }
-                StoreOp::Upload { row, kind } => self.write_upload_row(admitted, row, *kind)?,
-                StoreOp::RemoveUpload { key } => self.remove_upload_row(admitted, key)?,
-                StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(admitted, *op_id, (model, id, action), payload, effects),
+                StoreOp::Upload { row, kind } => self.write_upload_row(row, *kind)?,
+                StoreOp::RemoveUpload { key } => self.remove_upload_row(key)?,
+                StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
                 StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::Session { .. } => {}
             }
         }
         for seq in rolled_back {
-            self.roll_back_at(admitted, seq, generation)?;
+            self.roll_back_gated(&Gate::Owner, seq, generation, None)?;
         }
         if envelope.entity_ops.is_empty() && envelope.operation_transitions.is_empty() {
             return Ok(());
         }
-        self.commit_following(&admitted.authority(), generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
+        self.commit_following(&Gate::Owner, generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
         Ok(())
     }
 
     /// `Intent`: the optimistic rows, the membership, the tombstones and the operation, in one commit. The prior state the rollback restores is read here.
-    fn write_intent(&self, admitted: &crate::ffi::legacy::Admitted, op_id: u64, (model, id, action): (&str, &str, &str), payload: &str, effects: &IntentEffects) -> Result<(), DbError> {
+    fn write_intent(&self, op_id: u64, (model, id, action): (&str, &str, &str), payload: &str, effects: &IntentEffects) -> Result<(), DbError> {
         let generation = self.generation();
         let seq = i64::try_from(op_id).map_err(|_| DbError::UnknownOperation(i64::MAX))?;
         let created_at = self.shared.store.lock().now_ms();
         let input: Value = serde_json::from_str(payload).map_err(json_fault)?;
         let owner = row_id(id)?;
         let (result, _) = self
-            .commit_following_deferred(&admitted.authority(), generation, |reader| {
+            .commit_following_deferred(&Gate::Owner, generation, |reader| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 let mut prior = Prior::default();
                 for EffectRow { model: row_model, row_id: row_key, values: text } in &effects.rows {
@@ -131,7 +132,7 @@ impl Db {
     }
 
     /// `Upload{row, kind}`: the whole value of a transfer in `sync_upload` for the key `model:row_id:action`. The kind of the batch names the status.
-    fn write_upload_row(&self, admitted: &crate::ffi::legacy::Admitted, row: &UploadRow, kind: UploadKind) -> Result<(), DbError> {
+    fn write_upload_row(&self, row: &UploadRow, kind: UploadKind) -> Result<(), DbError> {
         let [model, id, action] = key_parts(&row.key)?;
         let (status, stage) = match kind {
             UploadKind::Failed => ("failed", "failed"),
@@ -144,7 +145,7 @@ impl Db {
         };
         self.shared
             .store
-            .write_store(&admitted.authority(), |stored| {
+            .write_store(&Gate::Owner, |stored| {
                 stored.connection.execute(
                     "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, seq, source, batch, upload_id, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
@@ -221,11 +222,11 @@ impl Db {
             .collect::<Result<Vec<_>, DbError>>()?)
     }
 
-    fn remove_upload_row(&self, admitted: &crate::ffi::legacy::Admitted, key: &str) -> Result<(), DbError> {
+    fn remove_upload_row(&self, key: &str) -> Result<(), DbError> {
         let [model, id, action] = key_parts(key)?;
         self.shared
             .store
-            .write_store(&admitted.authority(), |stored| {
+            .write_store(&Gate::Owner, |stored| {
                 stored.connection.execute("DELETE FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND action = ?3", rusqlite::params![model, id, action])?;
                 Ok(())
             })

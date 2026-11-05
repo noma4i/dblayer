@@ -10,6 +10,9 @@ use super::merge::Admission;
 use super::open::Db;
 use super::parent_pointer::Followed;
 
+/// What lets a commit run: the writes of the owners come with `Gate::Owner`.
+pub(crate) type Gate = Authority;
+
 impl Db {
     pub fn admit(&self) -> Result<crate::ffi::legacy::Admitted, DbError> {
         self.shared.store.lifecycle.admit(crate::ffi::legacy::Origin::Explicit, "core call")

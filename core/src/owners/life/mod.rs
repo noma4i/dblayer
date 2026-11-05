@@ -317,10 +317,16 @@ impl Life {
         });
         let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref()) {
             (Some(outbox), Some(port), Some(transport)) => {
-                let (settle_wiring, drained_wiring, admit_db) = (wiring.clone(), wiring.clone(), ports.db.clone());
+                let (settle_wiring, drained_wiring, admit_db, admit_wiring) = (wiring.clone(), wiring.clone(), ports.db.clone(), wiring.clone());
                 let wire = super::write::wire::Wire {
                     transport: transport.clone(),
-                    admit: Arc::new(move || admit_db.admit().ok()),
+                    admit: Arc::new(move || match admit_db.admit() {
+                        Ok(admitted) => Some(admitted),
+                        Err(error) => {
+                            admit_wiring.fault(format!("a step of a transfer found no session to run in: {error}"));
+                            None
+                        }
+                    }),
                     tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone())),
                 };
                 let executor = TransferExecutor::new(

@@ -247,10 +247,11 @@ impl Default for Leases {
     }
 }
 
-/// What lets a SQL commit run: the epoch of admitted work, or the proof of the opening. A commit has no third form.
+/// What lets a SQL commit run: the epoch of admitted work, the proof of the opening, or a batch of an owner whose epoch and basis the Store owner checked against its `Published` snapshot before the write.
 pub(crate) enum Authority {
     Admitted(Admitted),
     Internal(Internal),
+    Owner,
 }
 
 pub(crate) struct Internal(());

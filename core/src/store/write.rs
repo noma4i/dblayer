@@ -14,7 +14,7 @@ impl Store {
                 if !admitted.is_current() { return Err(refused()); }
                 Some(line)
             }
-            Authority::Internal(_) => None,
+            Authority::Internal(_) | Authority::Owner => None,
         };
         work(&inner)
     }

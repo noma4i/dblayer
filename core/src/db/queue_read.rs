@@ -12,7 +12,7 @@ use super::open::Db;
 
 impl Db {
     /// Every open operation of the queue. The `path` of a request and the rule `on_failure` come from the operation the model declares for `(model, action)`:
-    /// the base has no column for them. An action without a declared mutation comes back with the error mark, never silently.
+    /// the base has no column for them. An operation whose action declares no mutation is an error that names it: nothing is guessed.
     pub(crate) fn read_intents(&self) -> Result<Vec<StoredOp>, DbError> {
         let (entries, pending) = self.shared.read(&[], |reader| Ok((read_outbox(reader)?, crate::transport::encrypted::state::pending(reader.connection()).map_err(crate::store::StoreError::from)?)))?;
         let mut stored = Vec::with_capacity(entries.len());
@@ -25,20 +25,23 @@ impl Db {
                 return Err(DbError::Internal(format!("the operation {} has no row", operation.id.0)));
             };
             let declared = self.spec(model)?.actions.iter().find(|declaration| declaration.name == action);
-            let path = declared.and_then(|declaration| declaration.mutation.as_deref()).map(|name| format!("/{name}"));
+            let mutation = declared.and_then(|declaration| declaration.mutation.as_deref());
+            let Some(mutation) = mutation else {
+                return Err(DbError::Internal(format!("the operation {} ({model}.{action}) declares no mutation to restore it with", operation.id.0)));
+            };
             let op = NewOp {
                 model: model.to_string(),
                 row_id: row_id.as_str().to_string(),
                 action: action.to_string(),
                 on_failure: declared.map_or(OnFailure::Rollback, |declaration| declaration.on_failure),
                 origin: Origin::Api,
-                path: path.clone().unwrap_or_default(),
+                path: format!("/{mutation}"),
                 body: entry.input.to_string(),
                 effects: Default::default(),
             };
             let seq = operation.id.0;
             let resume = pending.as_ref().filter(|pending| pending.owner == Some(RequestOwner::Operation { seq })).and_then(|pending| Some((own_request_id(&pending.request_id).unwrap_or(RESTORED_REQUEST), u64::try_from(pending.sequence).ok()?)));
-            stored.push(StoredOp { op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: path.is_none() || operation.status == OperationStatus::Failed, pending: resume });
+            stored.push(StoredOp { op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume });
         }
         Ok(stored)
     }
