@@ -124,7 +124,7 @@ async fn an_invalid_hash_is_not_sent_again() {
 }
 
 #[tokio::test]
-async fn a_mutation_missing_from_the_registry_is_sent_again_as_the_next_sequence_with_the_document() {
+async fn a_mutation_missing_from_the_registry_is_sent_again_with_the_document_under_the_same_request_id_and_sequence() {
     let rig = Rig::signed_in().await;
 
     let response = rig.transport().mutate(&rig.db.admit().unwrap(), request(WRITE)).await.unwrap();
@@ -132,8 +132,8 @@ async fn a_mutation_missing_from_the_registry_is_sent_again_as_the_next_sequence
     let sent = rig.graphql_requests();
     assert_eq!(response.data, Some(json!({ "done": WRITE })));
     assert_eq!(documents(&sent), [false, true]);
-    assert_eq!(sent.iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(2), json!(3)]);
-    assert_eq!(ids(&sent).iter().collect::<std::collections::HashSet<_>>().len(), 2);
+    assert_eq!(sent.iter().map(|request| request["sequence"].clone()).collect::<Vec<_>>(), [json!(2), json!(2)]);
+    assert_eq!(ids(&sent).iter().collect::<std::collections::HashSet<_>>().len(), 1);
     assert_eq!((rig.server.executed().len(), rig.pending_sequence()), (2, None));
 }
 

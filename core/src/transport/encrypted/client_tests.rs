@@ -13,11 +13,6 @@ use crate::pacing::ManualClock;
 
 const START: u64 = 1_800_000_000;
 
-pub(crate) fn cancel_pending(call: impl std::future::Future) {
-    use std::task::{Context, Waker};
-    assert!(Box::pin(call).as_mut().poll(&mut Context::from_waker(Waker::noop())).is_pending());
-}
-
 fn config() -> EncryptedConfig {
     EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() }
 }

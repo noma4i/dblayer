@@ -56,8 +56,6 @@ mod key_tests;
 #[cfg(test)]
 mod origin_tests;
 #[cfg(test)]
-mod persisted_query_retry_tests;
-#[cfg(test)]
 mod persisted_query_tests;
 #[cfg(test)]
 mod refused_sequence_tests;

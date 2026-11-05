@@ -263,6 +263,9 @@ impl FakeServer {
             }
             return seal_response(data, None, json!({ "data": { "read": document } }));
         };
+        if let Err(code) = &resolved {
+            return seal_response(data, None, persisted_failure(code));
+        }
         let digest = digest_of(data);
         if session.sequence == sequence && session.request_digest == digest {
             return session.answer.clone().expect("stored answer");
