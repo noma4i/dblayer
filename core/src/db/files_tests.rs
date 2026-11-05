@@ -173,7 +173,6 @@ fn inv_file_06_destroying_a_row_hides_its_files_and_those_of_cascaded_children_b
     }
     assert_eq!(count_files(&db), 4);
     assert_eq!(db.shared.files.directory_entries().unwrap().len(), 3);
-    db.sweep_files(&db.admit().unwrap()).unwrap();
     assert_eq!(count_files(&db), 4);
 }
 
@@ -214,76 +213,19 @@ fn inv_file_04_temp_row_files_follow_the_row_to_its_real_id() {
     db.land(&db.admit().unwrap(), envelope).unwrap();
     assert_eq!(db.read("moments", &rid("m7"), "media").unwrap(), Some(SMALL.to_vec()));
     assert_eq!(db.read("moments", &temp.id, "media").unwrap(), None);
-    assert_eq!(db.maintain(&db.admit().unwrap(), &[]).unwrap().temp_rows_dropped, 0);
     assert_eq!(db.read("moments", &rid("m7"), "media").unwrap(), Some(SMALL.to_vec()));
 }
 
 #[test]
-fn inv_file_10_sweep_reports_directory_and_removal_failures() {
-    for (suffix, listing) in [("files", true), ("cache", true), ("files", false), ("cache", false)] {
-        let (root, db) = on_disk();
-        let directory = root.path().join(format!("42.sqlite.{suffix}"));
-        if listing {
-            std::fs::write(&directory, b"not a directory").unwrap();
-        } else {
-            std::fs::create_dir_all(&directory).unwrap();
-            if suffix == "files" {
-                std::fs::create_dir(directory.join("stray")).unwrap();
-            } else {
-                std::fs::write(directory.join("stray"), b"not a directory").unwrap();
-            }
-        }
-        assert!(db.sweep_files(&db.admit().unwrap()).is_err(), "{suffix} listing={listing} reported success");
-    }
-}
-
-#[test]
-fn maintain_removes_files_of_vanished_rows_and_unreferenced_fields() {
+fn inv_file_03_a_local_destroy_keeps_the_bytes_while_it_waits_and_a_rejection_gives_them_back() {
     let (_root, db) = on_disk();
     seed_tree(&db);
-    let gone = attach(&db, "m1", "media", &large());
-    let overwritten = attach(&db, "m2", "media", &large());
-    let kept = attach(&db, "m2", "cover", &large());
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new("moments"), id: rid("m1"), reason: DestroyReason::Server });
-    envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("moments"), id: rid("m2"), row: obj(json!({"id": "m2", "userId": "u2", "text": "two", "media": null, "cover": kept.to_value()})) });
-    db.land(&db.admit().unwrap(), envelope).unwrap();
-    assert_eq!(db.shared.files.directory_entries().unwrap().len(), 3);
-    db.maintain(&db.admit().unwrap(), &[]).unwrap();
-    assert_eq!(db.shared.files.directory_entries().unwrap(), vec![kept.id.clone()]);
-    assert_eq!(count_files(&db), 1);
-    assert!(db.read("moments", &rid("m2"), "media").unwrap().is_none());
-    assert_eq!(db.read("moments", &rid("m2"), "cover").unwrap().unwrap().len(), 300 * 1024);
-    assert!(!db.shared.files.directory_entries().unwrap().contains(&gone.id) && !db.shared.files.directory_entries().unwrap().contains(&overwritten.id));
-}
-
-#[test]
-fn maintain_removes_stray_directory_files_partial_writes_and_stale_cache() {
-    let (root, db) = on_disk();
-    seed_tree(&db);
-    let kept = attach(&db, "m1", "media", &large());
-    let small = attach(&db, "m2", "media", SMALL);
-    let live_cache = db.url("moments", &rid("m2"), "media").unwrap().unwrap();
-    let directory = root.path().join("42.sqlite.files");
-    std::fs::write(directory.join("stray"), b"x").unwrap();
-    std::fs::write(directory.join("half.part"), b"x").unwrap();
-    db.shared.files.materialize("stale", "x.bin", b"x").unwrap();
-    db.sweep_files(&db.admit().unwrap()).unwrap();
-    assert_eq!(db.shared.files.directory_entries().unwrap(), vec![kept.id]);
-    assert_eq!(db.shared.files.cache_entries().unwrap(), vec![small.id]);
-    assert!(live_cache.exists());
-}
-
-#[test]
-fn logout_style_wipe_leaves_no_files_behind() {
-    let (root, db) = on_disk();
-    seed_tree(&db);
     attach(&db, "m1", "media", &large());
-    db.shared.store.clear_account_in_tests().unwrap();
-    assert_eq!(count_files(&db), 0);
-    db.sweep_files(&db.admit().unwrap()).unwrap();
-    assert!(db.shared.files.directory_entries().unwrap().is_empty());
-    assert!(root.path().join("42.sqlite").exists());
+    db.destroy(&db.admit().unwrap(), "moments", &rid("m1")).unwrap();
+    assert_eq!(count_files(&db), 1, "the bytes stay while the destroy waits for the server");
+    let seq = db.outbox().unwrap()[0].operation.id.0;
+    db.roll_back(&db.admit().unwrap(), seq).unwrap();
+    assert_eq!(db.read("moments", &rid("m1"), "media").unwrap(), Some(large()), "a rejection gives the bytes back");
 }
 
 #[test]

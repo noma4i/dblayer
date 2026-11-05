@@ -68,7 +68,7 @@ fn the_base_keeps_the_whole_value_of_a_transfer() {
     assert!(!transfer.file_present);
 }
 
-fn paged_moments() -> super::Db {
+pub(super) fn paged_moments() -> super::Db {
     let mut moments = moments_spec();
     let mut mine = crate::schema::RelationSpec::new("mine", &["userId"]);
     mine.remote = Some(crate::schema::RemoteSpec {
@@ -89,7 +89,7 @@ fn paged_moments() -> super::Db {
     db
 }
 
-fn page(key: &crate::owners::read::windows::WindowKey, number: u32, ids: &[&str], cursor: Option<&str>) -> StoreOp {
+pub(super) fn page(key: &crate::owners::read::windows::WindowKey, number: u32, ids: &[&str], cursor: Option<&str>) -> StoreOp {
     let roots = ids.iter().map(|id| crate::owners::store::RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": "u1", "text": id}).to_string() }).collect();
     StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all: false, cursor: cursor.map(str::to_string), roots, related: Vec::new(), total: None, base_revision: 0 }
 }

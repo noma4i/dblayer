@@ -31,4 +31,6 @@ mod feed_io_tests;
 #[cfg(test)]
 mod rig;
 #[cfg(test)]
+mod schema_io_tests;
+#[cfg(test)]
 mod window_io_tests;

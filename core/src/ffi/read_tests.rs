@@ -74,3 +74,11 @@ async fn a_stream_held_across_close_gets_one_ended_then_nothing() {
     assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Closed }));
     assert!(tokio::time::timeout(LIMIT, stream.pull()).await.expect("an answer within 5 s").unwrap().is_none());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inv_api_06_an_events_stream_that_cannot_open_its_subscription_reports_the_failure() {
+    let db = open().await;
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Events { model: "Note".into() });
+    let value = next(&stream).await;
+    assert!(matches!(value, ReadValue::Ended { .. }), "no subscription can open here: the stream ends with its cause instead of waiting: {value:?}");
+}

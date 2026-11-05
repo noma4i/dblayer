@@ -33,3 +33,19 @@ fn headers_parse_from_a_map_or_a_list() {
     assert_eq!(parse_headers(Some(&list)).unwrap(), [("x-a".to_string(), "1".to_string()), ("x-b".to_string(), "2".to_string())]);
     assert!(parse_headers(None).unwrap().is_empty());
 }
+
+#[test]
+fn inv_file_08_no_single_read_of_a_file_is_larger_than_the_single_threshold_or_the_part_size() {
+    let config = UploadConfig::default();
+    for total in [0, 1, config.multipart_threshold - 1, config.multipart_threshold, 100 * MEBIBYTE, 100 * MEBIBYTE + 1] {
+        match scenario_for(total, config.multipart_threshold) {
+            UploadScenario::Single => assert!(total < config.multipart_threshold, "a single read holds at most the threshold: {total}"),
+            UploadScenario::Multipart => {
+                let ranges: Vec<(u64, u64)> = (1..=part_count(total, config.part_size)).map(|number| part_range(total, config.part_size, number)).collect();
+                assert!(ranges.iter().all(|(_, length)| *length <= config.part_size), "{total}: a part is larger than the part size");
+                assert_eq!(ranges.iter().map(|(_, length)| length).sum::<u64>(), total);
+                assert!(ranges.windows(2).all(|pair| pair[0].0 + pair[0].1 == pair[1].0), "{total}: parts overlap or leave a gap");
+            }
+        }
+    }
+}

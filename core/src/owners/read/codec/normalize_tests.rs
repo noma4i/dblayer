@@ -160,3 +160,11 @@ fn repeated_roots_and_nested_rows_merge_selected_fields_once() {
     assert_eq!(normalized.related.len(), 1);
     assert_eq!(normalized.related[0].1["name"], "last");
 }
+
+#[test]
+fn inv_id_01_a_number_and_the_same_id_as_text_become_the_same_text_id() {
+    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
+    let normalized = normalize_nodes(&db, "users", &nodes(json!([{"id": 54, "name": "Ann"}, {"id": "54", "name": "Bob"}]))).unwrap();
+    assert_eq!(normalized.roots.iter().map(|row| row["id"].clone()).collect::<Vec<_>>(), [json!("54")], "a number and its text are one row");
+    assert!(normalize_nodes(&db, "users", &nodes(json!([{"id": "", "name": "Ann"}]))).map_or(true, |normalized| normalized.roots.is_empty()), "an empty id is refused");
+}

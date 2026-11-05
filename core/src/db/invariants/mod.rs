@@ -25,3 +25,7 @@ mod work_tests;
 mod cut_tests;
 #[cfg(test)]
 mod row_tests;
+#[cfg(test)]
+mod id_tests;
+#[cfg(test)]
+mod merge_tests;

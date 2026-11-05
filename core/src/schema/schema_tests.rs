@@ -706,3 +706,28 @@ fn a_correlation_path_must_start_at_a_declared_field() {
     assert_eq!(faults(&["id", "media.blobId"]), vec![]);
     assert_eq!(faults(&["media.blobId", "missing"]), vec![DeclarationError::CorrelateUnknownField("create".into())]);
 }
+
+#[test]
+fn inv_dsl_10_not_values_pass_only_a_present_string_that_is_not_listed() {
+    let except: MatchValues = serde_json::from_value(serde_json::json!({"not": ["SCREENSHOT"]})).unwrap();
+    assert!(except.accepts(&serde_json::json!("TYPING")));
+    for refused in [serde_json::json!("SCREENSHOT"), serde_json::Value::Null, serde_json::json!(1), serde_json::json!(["TYPING"])] {
+        assert!(!except.accepts(&refused), "{refused} passed a not filter");
+    }
+    let one_of: MatchValues = serde_json::from_value(serde_json::json!(["A", "B"])).unwrap();
+    assert!(one_of.accepts(&serde_json::json!("A")) && !one_of.accepts(&serde_json::json!("C")) && !one_of.accepts(&serde_json::Value::Null));
+}
+
+#[test]
+fn inv_dsl_11_membership_binds_a_list_parameter_to_a_row_field_by_contains_or_equals() {
+    let mut contains = RelationSpec::new("list", &[]);
+    contains.membership.insert("list".into(), Membership::Contains("lists".into()));
+    let row = serde_json::json!({"id": "c1", "lists": ["PRIMARY", "PINNED"]}).as_object().unwrap().clone();
+    let params: Vec<_> = contains.row_params(&row).iter().map(|params| params["list"].clone()).collect();
+    assert_eq!(params, [serde_json::json!("PRIMARY"), serde_json::json!("PINNED")]);
+    assert!(contains.row_params(&serde_json::json!({"id": "c1"}).as_object().unwrap().clone()).is_empty(), "a row without the field joins nothing");
+    let mut equals = RelationSpec::new("by_title", &[]);
+    equals.membership.insert("title".into(), Membership::Equals("title".into()));
+    assert_eq!(equals.row_params(&serde_json::json!({"id": "c1", "title": "t"}).as_object().unwrap().clone()).len(), 1);
+    assert!(equals.row_params(&serde_json::json!({"id": "c1", "title": null}).as_object().unwrap().clone()).is_empty());
+}
