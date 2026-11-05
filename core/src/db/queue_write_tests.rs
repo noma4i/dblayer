@@ -107,3 +107,21 @@ fn a_landed_page_gives_rows_membership_and_the_window_record() {
     let window = db.shared.store.window(&crate::store::window_key(scope.as_str(), crate::schema::PageDirection::Forward)).unwrap().unwrap();
     assert_eq!((window.cursor.as_deref(), window.has_next, window.pages), (None, false, 2));
 }
+
+/// out_land_swap: a landing batch with `Swap` replaces the temporary id by the real one in the commit of the answer rows.
+#[test]
+fn a_landing_with_a_swap_replaces_the_temporary_row_by_the_real_one() {
+    let db = booted();
+    let temp = crate::identity::RowId::generate_temp(None);
+    let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.to_string(), values: json!({"id": temp.to_string(), "userId": "u0", "text": "a"}).to_string() }], ..Default::default() };
+    db.write_queue_ops(&[StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: temp.to_string(), action: "create".into(), payload: "{}".into(), effects }]).unwrap();
+    assert!(db.find("moments", &temp).unwrap().is_some());
+    let real = crate::owners::store::RowValue { row_id: "m9".into(), values: json!({"id": "m9", "userId": "u0", "text": "a"}).to_string() };
+    db.write_queue_ops(&[
+        StoreOp::Rows { model: "moments".into(), rows: vec![real] },
+        StoreOp::Swap { model: "moments".into(), temp: temp.to_string(), real: "m9".into() },
+        StoreOp::RemoveIntent { op_id: 1 },
+    ]).unwrap();
+    assert!(db.find("moments", &temp).unwrap().is_none(), "the temporary row is gone");
+    assert_eq!(db.find("moments", &rid("m9")).unwrap().unwrap().text("text"), Some("a"));
+}

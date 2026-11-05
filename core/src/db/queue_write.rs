@@ -15,7 +15,8 @@ use crate::schema::OnFailure;
 
 use crate::lifecycle::authority::Authority;
 use super::error::DbError;
-use super::local_write::plan_fault;
+use super::local_write::{plan_fault, read_outbox};
+use super::swap::TempReplacement;
 use super::open::Db;
 use super::prior::{Prior, PriorRow};
 
@@ -40,11 +41,16 @@ impl Db {
         let generation = self.generation();
         let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
         let mut rolled_back = Vec::new();
+        let mut swaps: Vec<(&str, RowId, RowId)> = Vec::new();
+        let mut landed_op = -1;
         for op in ops {
             match op {
                 StoreOp::RollBack { op_id } => rolled_back.push(i64::try_from(*op_id).map_err(|_| DbError::UnknownOperation(i64::MAX))?),
                 StoreOp::RemoveIntent { op_id } if rolled_back.contains(&i64::try_from(*op_id).unwrap_or(i64::MAX)) => {}
-                StoreOp::RemoveIntent { op_id } => envelope.operation_transitions.push(OperationTransition::Close { seq: i64::try_from(*op_id).unwrap_or(i64::MAX), status: OperationStatus::Committed }),
+                StoreOp::RemoveIntent { op_id } => {
+                    landed_op = i64::try_from(*op_id).unwrap_or(i64::MAX);
+                    envelope.operation_transitions.push(OperationTransition::Close { seq: i64::try_from(*op_id).unwrap_or(i64::MAX), status: OperationStatus::Committed });
+                }
                 StoreOp::Rows { model, rows } => {
                     envelope.origin = WriteOrigin::Response;
                     envelope.entity_ops.extend(upserts(model, rows)?);
@@ -65,7 +71,7 @@ impl Db {
                         None => OperationTransition::Retry { seq },
                     });
                 }
-                StoreOp::Swap { .. } => {}
+                StoreOp::Swap { model, temp, real } => swaps.push((model.as_str(), row_id(temp)?, row_id(real)?)),
                 StoreOp::Upload { row, kind } => self.write_upload_row(row, *kind)?,
                 StoreOp::RemoveUpload { key } => self.remove_upload_row(key)?,
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
@@ -79,10 +85,21 @@ impl Db {
         for seq in rolled_back {
             self.roll_back_gated(&Authority::Owner, seq, generation, None)?;
         }
-        if envelope.entity_ops.is_empty() && envelope.operation_transitions.is_empty() {
+        if envelope.entity_ops.is_empty() && envelope.operation_transitions.is_empty() && swaps.is_empty() {
             return Ok(());
         }
-        self.commit_following(&Authority::Owner, generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
+        self.commit_following(&Authority::Owner, generation, |reader| {
+            let mut planned = envelope.clone();
+            if !swaps.is_empty() {
+                let outbox = read_outbox(reader)?;
+                for (model, temp, real) in &swaps {
+                    if reader.point(model, temp.as_str())?.is_some() {
+                        self.swap_temp(reader, &mut planned, &outbox, TempReplacement { model, temp, real }, landed_op)?;
+                    }
+                }
+            }
+            Ok::<_, DbError>(Some(planned))
+        }).map_err(plan_fault)?;
         Ok(())
     }
 
