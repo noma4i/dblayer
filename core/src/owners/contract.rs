@@ -176,7 +176,7 @@ pub struct ModelReady {
 
 /// `ModelEvent{model, position, payload}`: Feed to the Deliveries of the model.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ModelEvent {
+pub struct EventAtPosition {
     pub model: String,
     pub position: u64,
     pub payload: String,
