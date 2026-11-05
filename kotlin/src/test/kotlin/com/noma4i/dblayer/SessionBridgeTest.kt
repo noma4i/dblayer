@@ -18,10 +18,6 @@ class SessionBridgeTest {
             calls.add("call $operation $bodyJson")
             return """{"ticket":"t-1"}"""
         }
-        override suspend fun sessionResume(): String? {
-            calls.add("resume")
-            return """{"ticket":"t-2"}"""
-        }
         override suspend fun sessionReset() { calls.add("reset") }
         override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?, source: WireUploadRequest?): WireOperationReceipt {
             calls.add("retry $model $rowId ${action ?: "null"}")
@@ -51,11 +47,10 @@ class SessionBridgeTest {
         }
     }
 
-    @Test fun sessionResumeDecodesTheAnswerAndResetReachesTheCore() = bounded {
+    @Test fun sessionResetReachesTheCore() = bounded {
         withRecordingSession { recording ->
-            assertEquals(TicketAnswer("t-2"), DBlayer.sessionResume<TicketAnswer>())
             DBlayer.sessionReset()
-            assertEquals(listOf("resume", "reset"), recording.calls)
+            assertEquals(listOf("reset"), recording.calls)
         }
     }
 

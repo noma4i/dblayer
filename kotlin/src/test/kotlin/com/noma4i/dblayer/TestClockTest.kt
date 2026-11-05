@@ -21,7 +21,7 @@ class TestClockTest {
             DBlayer.close()
             val transport = MockTransport()
             val hold = transport.hold("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
-            DBlayer.openTesting(transport, modelsJSON, listening = false)
+            DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
             val first = Moment.feed.beginLoad()
             try {
@@ -59,7 +59,7 @@ class TestClockTest {
             transport.enqueue("MomentsFeed", page(row2, false, "fresh"))
             transport.enqueue("LikeMoment", """{"data":{"likeMoment":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":true,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
             val definitions = """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"LikeMoment","document":"mutation LikeMoment(${'$'}momentId: ID!) { likeMoment(momentId: ${'$'}momentId) { id uuid likedByMe media createdAt } }"}]"""
-            DBlayer.openTesting(transport, modelsJSON, listening = false)
+            DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations(definitions)
             Moment.feed.load()
             val row = Moment.feed.read().single()
@@ -97,7 +97,7 @@ class TestClockTest {
             }
             transport.enqueue("LikeMoment", """{"data":{"likeMoment":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":true,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
             val definitions = """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"LikeMoment","document":"mutation LikeMoment(${'$'}momentId: ID!) { likeMoment(momentId: ${'$'}momentId) { id uuid likedByMe media createdAt } }"}]"""
-            DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000, listening = false)
+            DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000)
             DBlayer.database.registerOperations(definitions)
             Moment.feed.load()
             val row = Moment.feed.read().single()
@@ -106,7 +106,7 @@ class TestClockTest {
             assertTrue(awaitWithin("the mutation is confirmed") { receipt.outcome() } is OperationOutcome.Confirmed)
             assertEquals(1, transport.calls.count { it.operationName == "MomentsFeed" })
             DBlayer.close()
-            DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000, listening = false)
+            DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000)
             DBlayer.database.registerOperations(definitions)
             Moment.feed.load()
             assertEquals(listOf("2"), Moment.feed.read().map { it.id })

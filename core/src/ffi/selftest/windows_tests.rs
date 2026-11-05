@@ -46,7 +46,7 @@ async fn open_pages() -> (Arc<Database>, Arc<Pages>) {
     });
     model.relations.push(feed);
     let pages = Arc::new(Pages { queries: AtomicUsize::new(0), gates: Mutex::new(HashMap::new()) });
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(pages.clone()), None, TestClock::new(1_000_000), false, false, None, None, None, None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(pages.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
     (database, pages)
 }
@@ -123,7 +123,6 @@ async fn repeated_online_listening_and_power_saving_signals_add_no_request() {
 
         for _ in 0..3 {
             rig.database.set_online(true).unwrap();
-            rig.database.set_listening(true).unwrap();
             sink.set_power_saving(false);
             rig.settle().await;
         }
@@ -150,18 +149,16 @@ fn presence() -> ModelSpec {
 async fn memory_expiry_follows_the_last_write() {
     let models = vec![presence()];
     let clock = TestClock::new(1_000_000);
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), None, None, clock.clone(), false, false, None, None, None, None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), None, None, clock.clone(), None, None, None, None).await.unwrap();
 
     bound(database.create(database.session_epoch(), "presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_000);
     bound(database.update(database.session_epoch(), "presence".into(), "p1".into(), r#"{"room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_000);
-    bound(database.maintain()).await.unwrap();
     assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");
     clock.advance(2_000);
     let expired = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         while database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some() {
-            database.maintain().await.unwrap();
             tokio::task::yield_now().await;
         }
     })
@@ -172,13 +169,12 @@ async fn memory_expiry_follows_the_last_write() {
 
 /// R-11: the app returns to the foreground and refreshes the profile while its views are held. The refusal is typed, the credential and the views stay, and the next refresh succeeds. The server subscription of an encrypted session runs on the cable socket, which this rig does not speak, so it is not part of this sequence.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_refused_foreground_refresh_keeps_the_views_and_the_credential() {
+async fn a_refused_refresh_keeps_the_views_and_the_credential() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
     held.shows("A").await;
     held.lists_show("A").await;
-    rig.database.enter_foreground_for_testing().unwrap();
     rig.settle().await;
     rig.world.fail_next("MyProfile", super::rig_tests::Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false });
 

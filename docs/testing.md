@@ -30,11 +30,9 @@ Keep the projections and streams of a test alive until every asynchronous assert
 
 A live query loads by itself when something subscribes, and an explicit refresh can add a second request. Queue 2 or 3 replies per operation and assert the content of `transport.calls`, not their exact count.
 
-Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. `advance` expires due memory rows and resets due ephemeral values at once, with no waiting. The production `open` has no clock parameter. `openTesting` takes `preload`, default false: a scope declared with `preload` sends no request on open, session, network return or the end of power saving. Pass `preload: true` to load like the production `open`. In Kotlin, `openTesting` and `TestClock.advance` need `@OptIn(DBlayerTestingApi::class)` on the calling declaration.
+Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. `advance` expires due memory rows and resets due ephemeral values at once, with no waiting. The production `open` has no clock parameter. In Kotlin, `openTesting` and `TestClock.advance` need `@OptIn(DBlayerTestingApi::class)` on the calling declaration.
 
 When declaring `uploads`, pass their `GraphQLOperation` definitions in `operations`.
-
-`DB.enterForegroundForTesting()` in Swift (`DBlayerTesting`) and `DBlayer.enterForegroundForTesting()` in Kotlin (`@DBlayerTestingApi`) require a database opened with `openTesting`. They send the same core event as a system foreground notice, without posting notifications or changing the process lifecycle. A scope with `refresh_on_foreground: true` reloads when it has a reader, even while fresh. No reader means no request. The call schedules the event. Await the window's result to check its effect.
 
 A test opens its database and closes it. There is no reset between tests: close the database, set the next transport and open again. `close` waits until every lease ended.
 
@@ -163,7 +161,7 @@ Test conventions:
 | `harness_tests` | Target unset (Interrupted or Invalid), close, next target, a new database. A late answer of the old target. Reopen through the same opener. Tests that leave offline, a session reset and subscriptions behind |
 | `calls_tests` | Each explicit call in flight at the server when session reset or close arrives, with a late success or a late sealed refusal. A call the server never answers ends at close |
 | `recovery_tests` | A refused pending request kept across a data reset, close and reopen with a new data version, an active and a queued upload ended by the exit |
-| `windows_tests` | Overlapping load-more and refresh in both answer orders, repeated online, listening and power-saving signals, memory expiry on the last write |
+| `windows_tests` | Overlapping load-more and refresh in both answer orders, repeated online and power-saving signals, memory expiry on the last write |
 | `machine_tests` | 16 seeds of 32 steps over login, exit, session reset, refresh, held views, clock ticks, offline and overlapping calls. A model decides what every view must show and what may reach the server. A failure prints the seed, the shortest failing prefix and the action tape |
 
 `core/src/ffi/selftest/manifest.tsv` is the fixed list of the sequences C01 to C19 for the three lanes (core, Swift, Kotlin). A row names the test of one lane, the state it had when written (green, red with its cause, flaky), what changes when the lifecycle rules change, and the app source line the order comes from. A core test checks that every row names an existing test, that every sequence test is listed, and that a test using the data logout or the old exit is marked as changing.

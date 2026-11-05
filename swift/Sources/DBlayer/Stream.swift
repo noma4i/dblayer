@@ -381,7 +381,7 @@ public struct AccountScope: Sendable {
   }
 
   /// One row by id. `fetch` tells when the library loads it from the server.
-  public func entity<Model: DBModel>(_: Model.Type, _ id: String, fetch: EntityFetch = .none) -> ValueStream {
+  public func entity<Model: DBModel>(_: Model.Type, _ id: String, fetch: EntityFetch = .never) -> ValueStream {
     database.openValueStream(epoch: epoch, request: .entity(model: Model.modelName, id: id, fetch: fetch))
   }
 

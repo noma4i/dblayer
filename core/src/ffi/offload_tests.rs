@@ -37,7 +37,6 @@ fn json_calls() -> Vec<(&'static str, Call)> {
         ("refresh", Box::new(move |db, bad| Box::pin(async move { db.refresh(db.session_epoch(), moment(), "feed".into(), bad).await }))),
         ("load_more", Box::new(move |db, bad| Box::pin(async move { db.load_more(db.session_epoch(), moment(), "feed".into(), bad).await.map(drop) }))),
         ("load_all", Box::new(move |db, bad| Box::pin(async move { db.load_all(db.session_epoch(), moment(), "feed".into(), bad, false).await }))),
-        ("warm", Box::new(move |db, bad| Box::pin(async move { db.warm(db.session_epoch(), bad).await }))),
         ("edge_values", Box::new(move |db, bad| Box::pin(async move { db.edge_values(db.session_epoch(), moment(), "feed".into(), bad, vec!["r1".into()]).await.map(drop) }))),
         ("peek_query", Box::new(move |db, bad| Box::pin(async move { db.peek_query(db.session_epoch(), bad).await.map(drop) }))),
     ]
@@ -85,7 +84,6 @@ fn file_calls() -> Vec<(&'static str, FileCall)> {
         ("read", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.read(db.session_epoch(), m, r, f).await; }))),
         ("url", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.url(db.session_epoch(), m, r, f).await; }))),
         ("detach", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.detach(db.session_epoch(), m, r, f).await; }))),
-        ("maintain", Box::new(move |db| Box::pin(async move { let _ = db.maintain().await; }))),
     ]
 }
 

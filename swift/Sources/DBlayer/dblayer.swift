@@ -1312,7 +1312,7 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func cancelUpload(epoch: UInt64, model: String, rowId: String, action: String) async throws  -> Bool
     
     /**
-     * Closes the database: every lease ends, every holder closes, the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
+     * Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
      */
     func closeDatabase() async throws 
     
@@ -1326,15 +1326,9 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func edgeValues(epoch: UInt64, model: String, relation: String, paramsJson: String, rowIds: [String]) async throws  -> String
     
-    func enterForegroundForTesting() throws 
-    
     func file(epoch: UInt64, model: String, rowId: String, field: String) async throws  -> String?
     
-    func flush() async throws 
-    
     func loadMore(epoch: UInt64, model: String, relation: String, paramsJson: String) async throws  -> LoadMoreResult
-    
-    func maintain() async throws 
     
     func node(epoch: UInt64, model: String, relation: String, rowId: String, force: Bool) async throws  -> WireRow?
     
@@ -1352,23 +1346,13 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func refresh(epoch: UInt64, model: String, relation: String, paramsJson: String) async throws 
     
-    func refreshPreloads(epoch: UInt64) async throws 
-    
     func registerOperations(defsJson: String) throws 
     
-    func resume(epoch: UInt64) async throws 
-    
-    func resumeUploads(epoch: UInt64) async throws 
-    
     func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws  -> WireOperationReceipt
-    
-    func retryAll(epoch: UInt64) async throws  -> UInt64
     
     func run(epoch: UInt64, operation: String, variablesJson: String) async throws  -> String
     
     func setEphemeral(epoch: UInt64, model: String, rowId: String, valuesJson: String) async throws 
-    
-    func setListening(allowed: Bool) throws 
     
     func setLocal(epoch: UInt64, model: String, rowId: String, path: String, valueJson: String) async throws 
     
@@ -1384,16 +1368,12 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func url(epoch: UInt64, model: String, rowId: String, field: String) async throws  -> String?
     
-    func warm(epoch: UInt64, queryJson: String) async throws 
-    
     func sessionCall(operation: String, bodyJson: String) async throws  -> String
     
     /**
      * Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
      */
     func sessionReset() async throws 
-    
-    func sessionResume() async throws  -> String?
     
     /**
      * The reader stopped. The stream ends in the core, its journal is dropped and no value is read after this call returns. The call does not wait for the reader.
@@ -1717,7 +1697,7 @@ open func cancelUpload(epoch: UInt64, model: String, rowId: String, action: Stri
 }
     
     /**
-     * Closes the database: every lease ends, every holder closes, the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
+     * Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
      */
 open func closeDatabase()async throws   {
     return
@@ -1815,14 +1795,6 @@ open func edgeValues(epoch: UInt64, model: String, relation: String, paramsJson:
         )
 }
     
-open func enterForegroundForTesting()throws   {try rustCallWithError(FfiConverterTypeDbError_lift) {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_enter_foreground_for_testing(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-}
-}
-    
 open func file(epoch: UInt64, model: String, rowId: String, field: String)async throws  -> String?  {
     return
         try  await uniffiRustCallAsync(
@@ -1839,22 +1811,6 @@ open func file(epoch: UInt64, model: String, rowId: String, field: String)async 
         )
 }
     
-open func flush()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_flush(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
 open func loadMore(epoch: UInt64, model: String, relation: String, paramsJson: String)async throws  -> LoadMoreResult  {
     return
         try  await uniffiRustCallAsync(
@@ -1867,22 +1823,6 @@ open func loadMore(epoch: UInt64, model: String, relation: String, paramsJson: S
             completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
             freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeLoadMoreResult_lift,
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-open func maintain()async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_maintain(
-                        self.uniffiCloneHandle()
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
             errorHandler: FfiConverterTypeDbError_lift
         )
 }
@@ -1997,22 +1937,6 @@ open func refresh(epoch: UInt64, model: String, relation: String, paramsJson: St
         )
 }
     
-open func refreshPreloads(epoch: UInt64)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_refresh_preloads(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
 open func registerOperations(defsJson: String)throws   {try rustCallWithError(FfiConverterTypeDbError_lift) {
         uniffiCallStatus in
     uniffi_dblayer_fn_method_database_register_operations(
@@ -2020,38 +1944,6 @@ open func registerOperations(defsJson: String)throws   {try rustCallWithError(Ff
         FfiConverterString.lower(defsJson),uniffiCallStatus
     )
 }
-}
-    
-open func resume(epoch: UInt64)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_resume(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-open func resumeUploads(epoch: UInt64)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_resume_uploads(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
 }
     
 open func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?)async throws  -> WireOperationReceipt  {
@@ -2066,22 +1958,6 @@ open func retry(epoch: UInt64, model: String, rowId: String, action: String?, so
             completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
             freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeWireOperationReceipt_lift,
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-open func retryAll(epoch: UInt64)async throws  -> UInt64  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_retry_all(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_u64,
-            completeFunc: ffi_dblayer_rust_future_complete_u64,
-            freeFunc: ffi_dblayer_rust_future_free_u64,
-            liftFunc: FfiConverterUInt64.lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
 }
@@ -2116,15 +1992,6 @@ open func setEphemeral(epoch: UInt64, model: String, rowId: String, valuesJson: 
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeDbError_lift
         )
-}
-    
-open func setListening(allowed: Bool)throws   {try rustCallWithError(FfiConverterTypeDbError_lift) {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_set_listening(
-            self.uniffiCloneHandle(),
-        FfiConverterBool.lower(allowed),uniffiCallStatus
-    )
-}
 }
     
 open func setLocal(epoch: UInt64, model: String, rowId: String, path: String, valueJson: String)async throws   {
@@ -2225,22 +2092,6 @@ open func url(epoch: UInt64, model: String, rowId: String, field: String)async t
         )
 }
     
-open func warm(epoch: UInt64, queryJson: String)async throws   {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_warm(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(queryJson)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_void,
-            completeFunc: ffi_dblayer_rust_future_complete_void,
-            freeFunc: ffi_dblayer_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
 open func sessionCall(operation: String, bodyJson: String)async throws  -> String  {
     return
         try  await uniffiRustCallAsync(
@@ -2273,23 +2124,6 @@ open func sessionReset()async throws   {
             completeFunc: ffi_dblayer_rust_future_complete_void,
             freeFunc: ffi_dblayer_rust_future_free_void,
             liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-open func sessionResume()async throws  -> String?  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_session_resume(
-                        self.uniffiCloneHandle()
-                )
-            },
-            cancelFunc: ffi_dblayer_rust_future_cancel_rust_buffer,
-            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
-            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
-            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionString.lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
 }
@@ -3120,7 +2954,7 @@ public protocol OpenDatabaseProtocol: AnyObject, Sendable {
     
     func `open`(config: Config, modelsJson: String, options: OpenOptions, transport: Transport?, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?) async throws  -> Database
     
-    func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, preload: Bool, listening: Bool, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?) async throws  -> Database
+    func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?) async throws  -> Database
     
 }
 open class OpenDatabase: OpenDatabaseProtocol, @unchecked Sendable {
@@ -3200,12 +3034,12 @@ open func `open`(config: Config, modelsJson: String, options: OpenOptions, trans
         )
 }
     
-open func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, preload: Bool, listening: Bool, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?)async throws  -> Database  {
+open func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?)async throws  -> Database  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_opendatabase_open_with_clock(
-                        self.uniffiCloneHandle(),FfiConverterTypeConfig_lower(config),FfiConverterString.lower(modelsJson),FfiConverterOptionTypeTransport.lower(transport),FfiConverterOptionTypeWireUploadOperations.lower(uploads),FfiConverterTypeTestClock_lower(clock),FfiConverterBool.lower(preload),FfiConverterBool.lower(listening),FfiConverterOptionTypeEncryptedConfig.lower(encrypted),FfiConverterOptionTypeCredentialStore.lower(credentials),FfiConverterOptionTypeEncryptedHttp.lower(http),FfiConverterOptionTypeRetryProgress.lower(retries)
+                        self.uniffiCloneHandle(),FfiConverterTypeConfig_lower(config),FfiConverterString.lower(modelsJson),FfiConverterOptionTypeTransport.lower(transport),FfiConverterOptionTypeWireUploadOperations.lower(uploads),FfiConverterTypeTestClock_lower(clock),FfiConverterOptionTypeEncryptedConfig.lower(encrypted),FfiConverterOptionTypeCredentialStore.lower(credentials),FfiConverterOptionTypeEncryptedHttp.lower(http),FfiConverterOptionTypeRetryProgress.lower(retries)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_u64,
@@ -6054,18 +5888,14 @@ public struct OpenOptions: Equatable, Hashable {
     public var uploads: WireUploadOperations?
     public var powerSaving: Bool
     public var lowRam: Bool
-    public var preload: Bool
-    public var listening: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(operations: String, uploads: WireUploadOperations?, powerSaving: Bool, lowRam: Bool, preload: Bool, listening: Bool) {
+    public init(operations: String, uploads: WireUploadOperations?, powerSaving: Bool, lowRam: Bool) {
         self.operations = operations
         self.uploads = uploads
         self.powerSaving = powerSaving
         self.lowRam = lowRam
-        self.preload = preload
-        self.listening = listening
     }
 
     
@@ -6087,9 +5917,7 @@ public struct FfiConverterTypeOpenOptions: FfiConverterRustBuffer {
                 operations: FfiConverterString.read(from: &buf), 
                 uploads: FfiConverterOptionTypeWireUploadOperations.read(from: &buf), 
                 powerSaving: FfiConverterBool.read(from: &buf), 
-                lowRam: FfiConverterBool.read(from: &buf), 
-                preload: FfiConverterBool.read(from: &buf), 
-                listening: FfiConverterBool.read(from: &buf)
+                lowRam: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -6098,8 +5926,6 @@ public struct FfiConverterTypeOpenOptions: FfiConverterRustBuffer {
         FfiConverterOptionTypeWireUploadOperations.write(value.uploads, into: &buf)
         FfiConverterBool.write(value.powerSaving, into: &buf)
         FfiConverterBool.write(value.lowRam, into: &buf)
-        FfiConverterBool.write(value.preload, into: &buf)
-        FfiConverterBool.write(value.listening, into: &buf)
     }
 }
 
@@ -8557,6 +8383,11 @@ enum DbError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     )
     case Session(code: SessionCode, detail: String
     )
+    /**
+     * The database is closed (`lifecycle.md`: calls after `Close` get `Err(Closed)`).
+     */
+    case Closed(detail: String
+    )
 
     
 
@@ -8626,6 +8457,9 @@ public struct FfiConverterTypeDbError: FfiConverterRustBuffer {
             )
         case 12: return .Session(
             code: try FfiConverterTypeSessionCode.read(from: &buf), 
+            detail: try FfiConverterString.read(from: &buf)
+            )
+        case 13: return .Closed(
             detail: try FfiConverterString.read(from: &buf)
             )
 
@@ -8703,6 +8537,11 @@ public struct FfiConverterTypeDbError: FfiConverterRustBuffer {
         case let .Session(code,detail):
             writeInt(&buf, Int32(12))
             FfiConverterTypeSessionCode.write(code, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
+            
+        
+        case let .Closed(detail):
+            writeInt(&buf, Int32(13))
             FfiConverterString.write(detail, into: &buf)
             
         }
@@ -8801,7 +8640,7 @@ public func FfiConverterTypeEncryptedSocketEvent_lower(_ value: EncryptedSocketE
 
 public enum EntityFetch: Equatable, Hashable {
     
-    case none
+    case never
     case stale
     case force
     case ifMissing
@@ -8826,7 +8665,7 @@ public struct FfiConverterTypeEntityFetch: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .none
+        case 1: return .never
         
         case 2: return .stale
         
@@ -8842,7 +8681,7 @@ public struct FfiConverterTypeEntityFetch: FfiConverterRustBuffer {
         switch value {
         
         
-        case .none:
+        case .never:
             writeInt(&buf, Int32(1))
         
         
@@ -9276,6 +9115,10 @@ public enum SessionCode: Equatable, Hashable {
     case alreadyAuthenticated
     case serverKeyMismatch
     case stateLost
+    /**
+     * Raised by the core: a call that needs the session while there is none. The server never sends it.
+     */
+    case noCredential
     case other
 
 
@@ -9324,7 +9167,9 @@ public struct FfiConverterTypeSessionCode: FfiConverterRustBuffer {
         
         case 13: return .stateLost
         
-        case 14: return .other
+        case 14: return .noCredential
+        
+        case 15: return .other
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -9386,8 +9231,12 @@ public struct FfiConverterTypeSessionCode: FfiConverterRustBuffer {
             writeInt(&buf, Int32(13))
         
         
-        case .other:
+        case .noCredential:
             writeInt(&buf, Int32(14))
+        
+        
+        case .other:
+            writeInt(&buf, Int32(15))
         
         }
     }
@@ -11759,7 +11608,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_cancel_upload() != 27388) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_close_database() != 51190) {
+    if (uniffi_dblayer_checksum_method_database_close_database() != 52666) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_create() != 12107) {
@@ -11777,19 +11626,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_edge_values() != 42334) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_enter_foreground_for_testing() != 29641) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_file() != 62867) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_flush() != 20138) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_load_more() != 38719) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_maintain() != 8785) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_node() != 26975) {
@@ -11816,31 +11656,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_refresh() != 51357) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_refresh_preloads() != 10840) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_register_operations() != 47241) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_resume() != 22898) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_resume_uploads() != 6392) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_retry() != 27065) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_retry_all() != 25573) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_run() != 31958) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_set_ephemeral() != 25133) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_set_listening() != 40523) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_set_local() != 55989) {
@@ -11864,16 +11689,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_url() != 24988) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_warm() != 51793) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_dblayer_checksum_method_database_session_call() != 15531) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_session_reset() != 19549) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_session_resume() != 44692) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_cancel_stream() != 62832) {
@@ -11969,7 +11788,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_opendatabase_open() != 52767) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 15298) {
+    if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 26343) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_valuesink_available() != 34732) {

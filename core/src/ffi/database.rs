@@ -228,7 +228,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, testing: bool, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -261,7 +261,7 @@ impl Database {
         if let Some(sync) = &sync { let _ = operations.set(sync.downgrade()); }
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), testing: false, wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -275,16 +275,16 @@ impl Database {
         uploads: Option<UploadOperations>,
         retries: Option<Arc<super::RetryProgress>>,
     ) -> Result<Arc<Self>, DbError> {
-        Self::open_at(config, models_json, transport, encrypted, credentials, http, uploads, retries, Arc::new(SystemClock), false).await
+        Self::open_at(config, models_json, transport, encrypted, credentials, http, uploads, retries, Arc::new(SystemClock)).await
     }
 
     #[allow(clippy::too_many_arguments)]
     pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<TestClock>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, retries: Option<Arc<super::RetryProgress>>) -> Result<Arc<Self>, DbError> {
-        Self::open_at(config, models_json, transport, encrypted, credentials, http, uploads, retries, clock.clock.clone(), true).await
+        Self::open_at(config, models_json, transport, encrypted, credentials, http, uploads, retries, clock.clock.clone()).await
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn open_at(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, uploads: Option<UploadOperations>, retries: Option<Arc<super::RetryProgress>>, clock: Arc<dyn Clock>, testing: bool) -> Result<Arc<Self>, DbError> {
+    async fn open_at(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, uploads: Option<UploadOperations>, retries: Option<Arc<super::RetryProgress>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -303,7 +303,7 @@ impl Database {
                     Self::start(config, models_json, transport, uploads, clock)?
                 }
             };
-            Ok(Arc::new(Self { testing, ..Arc::unwrap_or_clone(database) }))
+            Ok(database)
         }).await
     }
 
@@ -355,12 +355,6 @@ impl Database {
         self.read_in_epoch(epoch, "edge values", move |_| {
             let params = serde_json::from_str(&params_json)?;
             Ok(serde_json::to_string(&sync.edge_values(&model, &relation, &params, &row_ids)?)?)
-        }).await
-    }
-    pub async fn warm(&self, epoch: u64, query_json: String) -> Result<(), DbError> {
-        self.read_in_epoch(epoch, "warm", move |this| {
-            let (query, _) = this.parsed_query(&query_json)?;
-            Ok(this.db.warm(&query)?)
         }).await
     }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
@@ -523,13 +517,6 @@ impl Database {
             Ok::<_, DbError>(sync.refresh(&admitted, &model, &relation, &params).await?)
         }).await.map(drop)
     }
-    pub async fn refresh_preloads(&self, epoch: u64) -> Result<(), DbError> {
-        let sync = self.sync()?.clone();
-        let failures = self.serve_in_epoch(epoch, "refresh preloads", |admitted| async move { Ok::<_, DbError>(sync.refresh_preloads(&admitted).await?) }).await?;
-        if failures.is_empty() { return Ok(()); }
-        let scopes: Vec<String> = failures.iter().map(|failure| format!("{}.{} {}: {}", failure.model, failure.relation, serde_json::Value::Object(failure.params.clone()), failure.error)).collect();
-        Err(DbError::Sync { detail: format!("{} preload scopes failed to refresh: {}", scopes.len(), scopes.join("; ")) })
-    }
     /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
     pub fn begin_load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
         let sync = self.sync()?.clone();
@@ -570,12 +557,6 @@ impl Database {
         let rows = self.serve_in_epoch(epoch, "nodes", move |admitted| async move { sync.nodes(&admitted, &model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
         Ok(rows.iter().map(|row| wire.row(row)).collect())
     }
-    pub async fn flush(&self) -> Result<(), DbError> {
-        let Some(sync) = self.sync.clone() else { return Ok(()) };
-        let admitted = self.streams.admit(crate::ffi::legacy::Origin::Session, "flush").map_err(|_| DbError::NoSession { detail: "the database has no session".into() })?;
-        on_executor(async move { sync.flush(&admitted).await }).await?;
-        Ok(())
-    }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
         if let Some(source) = source {
             let sync = self.sync()?.clone();
@@ -603,15 +584,6 @@ impl Database {
             Ok(receipt(epoch, model, operation, revision, row, ticket, database.streams.clone()))
         }).await
     }
-    pub async fn retry_all(&self, epoch: u64) -> Result<u64, DbError> {
-        let Some(sync) = self.sync.clone() else { return Ok(0) };
-        let db = self.db.clone();
-        self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "retry all", false, |admitted| async move {
-            let count = db.retry_all(&admitted)?;
-            sync.flush(&admitted).await?;
-            Ok::<_, DbError>(count as u64)
-        }).await
-    }
     pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
         let sync = self.sync.clone();
         self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "discard", move |database, admitted| {
@@ -624,31 +596,8 @@ impl Database {
             Ok(())
         }).await
     }
-    pub async fn resume(&self, epoch: u64) -> Result<(), DbError> {
-        let sync = self.sync.clone();
-        self.in_epoch_as(crate::ffi::legacy::Origin::Explicit, epoch, "resume", false, |admitted| async move {
-            let Some(sync) = sync else { return Ok(()) };
-            on_executor(async move { sync.resume(&admitted).await.map(drop).map_err(DbError::from) }).await
-        }).await
-    }
-    pub async fn resume_uploads(&self, epoch: u64) -> Result<(), DbError> {
-        let sync = self.sync()?.clone();
-        self.in_epoch_as(crate::ffi::legacy::Origin::Session, epoch, "resume uploads", false, |admitted| on_executor(async move { sync.resume_uploads(&admitted).await.map_err(DbError::from) })).await
-    }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
 
-    pub fn enter_foreground_for_testing(&self) -> Result<(), DbError> {
-        if !self.testing { return Err(DbError::Invalid { detail: "enterForegroundForTesting requires openTesting".into() }); }
-        self.online_sink()?.enter_foreground();
-        Ok(())
-    }
-    pub fn set_listening(&self, allowed: bool) -> Result<(), DbError> {
-        if let Some(sync) = &self.sync {
-            let _entered = executor()?.enter();
-            sync.set_listening(allowed);
-        }
-        Ok(())
-    }
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.as_ref().map(Sync::downgrade), online: self.db.connectivity(), life: Arc::downgrade(&self.life) })) }
     pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
         let sync = self.sync()?.clone();
@@ -701,11 +650,6 @@ impl Database {
         let sync = self.sync()?.clone();
         let row = id(&row_id)?;
         self.serve_in_epoch(epoch, "cancel upload", |admitted| async move { sync.cancel_upload(&admitted, &model, &row, &action).await }).await
-    }
-    pub async fn maintain(&self) -> Result<(), DbError> {
-        let db = self.db.clone();
-        let admitted = db.admit()?;
-        blocking(move || Ok(db.maintain(&admitted, &[]).map(|_| ())?)).await
     }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {

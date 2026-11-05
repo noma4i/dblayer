@@ -51,6 +51,7 @@ private fun kindOf(error: DbException): String = when (error) {
     is DbException.RequestTooLarge -> "request_too_large"
     is DbException.Graphql -> "graphql"
     is DbException.Session -> "session"
+    is DbException.Closed -> "closed"
 }
 
 private fun failed(error: Throwable): Done = Done(failure(if (error is DbException) kindOf(error) else "invalid"))
@@ -72,7 +73,7 @@ private fun causeName(end: StreamEnd): String = when (end) {
 }
 
 private fun fetchOf(name: String?): EntityFetch? = when (name) {
-    "never" -> EntityFetch.NONE
+    "never" -> EntityFetch.NEVER
     "stale" -> EntityFetch.STALE
     "force" -> EntityFetch.FORCE
     "if_missing" -> EntityFetch.IF_MISSING
@@ -161,7 +162,7 @@ private class DatabaseRunner {
 
     suspend fun open(models: String, encrypted: Boolean): List<JsonObject> = try {
         val session = if (encrypted) EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel") else null
-        val opened = OpenDatabase().openWithClock(Config(null, null, 32u), File(corpusDirectory, if (models == "events") "models_events.json" else "models.json").readText(), mock, null, clock, false, true, session, if (encrypted) Credentials() else null, if (encrypted) mock else null, null)
+        val opened = OpenDatabase().openWithClock(Config(null, null, 32u), File(corpusDirectory, if (models == "events") "models_events.json" else "models.json").readText(), mock, null, clock, session, if (encrypted) Credentials() else null, if (encrypted) mock else null, null)
         opened.registerOperations(File(corpusDirectory, "operations.json").readText())
         database = opened
         listOf(observation("opened"))

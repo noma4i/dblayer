@@ -70,14 +70,12 @@ class UploadSessionTest {
             transport.base.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
             transport.base.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
             val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""", uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            val epoch = database.sessionEpoch()
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "hello") }, upload = UploadCommand("upload_clip", UploadRequest(file.path)))
             val row = sent.optimisticValue!!
             transport.arrived.await()
             val waiting = async(start = CoroutineStart.UNDISPATCHED) { sent.outcome() }
             DBlayer.sessionReset()
             assertEquals(OperationOutcome.Interrupted, waiting.await())
-            assertTrue(runCatching { database.resumeUploads(epoch) }.exceptionOrNull() is DbException.Interrupted)
             val refused = runCatching { database.upload(database.sessionEpoch(), "Moment", row.id, "upload_clip", UploadRequest(file.path).wire()) }.exceptionOrNull()
             assertTrue("upload without a session returned $refused", refused is DbException.NoSession)
             User.profile.load(AccountScope.current())

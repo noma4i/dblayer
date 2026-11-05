@@ -4,7 +4,6 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use super::sealed_errors_tests::moment_spec;
-use super::upload_resume_tests::Bytes;
 use crate::transport::encrypted::fake_server_tests::FakeServer;
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::HttpExchange;
@@ -42,6 +41,23 @@ impl CredentialStore for Remote {
     fn clear(&self) -> Result<(), DbError> { self.call(json!({"clear": true})).map(|_| ()) }
 }
 
+struct Bytes;
+
+#[async_trait::async_trait]
+impl Transport for Bytes {
+    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
+    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
+    async fn cable_close(&self, _: String) {}
+    async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
+    async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
+    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
+    fn unsubscribe(&self, _: String) {}
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
+        Ok(PutReply { status: 200, etag: Some("part".into()) })
+    }
+}
+
 async fn child(mode: &str) {
     let path = std::env::var("DBLAYER_UPLOAD_DB").unwrap();
     if mode == "resume" {
@@ -63,7 +79,6 @@ async fn child(mode: &str) {
         database.sync.as_ref().unwrap().wait_uploads().await;
         assert_eq!(database.db.outbox().unwrap().len(), 1);
     } else {
-        database.session_resume().await.unwrap();
         database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None).await.unwrap();
         database.sync.as_ref().unwrap().wait_uploads().await;
         assert!(database.db.outbox().unwrap().is_empty());

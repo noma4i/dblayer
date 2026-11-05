@@ -275,7 +275,7 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
     fun <Model : DBModel, Target : DBModel> related(query: Query<Model>, association: Association<Model, Target>): ValueStream = database.openValueStream(epoch, StreamRequest.Related(query.json, association.name))
 
     /** One row by id. [fetch] tells when the library loads it from the server. */
-    fun <Model : DBModel> entity(decoder: ModelDecoder<Model>, id: String, fetch: EntityFetch = EntityFetch.NONE): ValueStream = database.openValueStream(epoch, StreamRequest.Entity(decoder.modelName, id, fetch))
+    fun <Model : DBModel> entity(decoder: ModelDecoder<Model>, id: String, fetch: EntityFetch = EntityFetch.NEVER): ValueStream = database.openValueStream(epoch, StreamRequest.Entity(decoder.modelName, id, fetch))
 
     fun <Model : DBModel> events(decoder: ModelDecoder<Model>): ValueStream = database.openValueStream(epoch, StreamRequest.Events(decoder.modelName))
 

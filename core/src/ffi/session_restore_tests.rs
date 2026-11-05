@@ -108,11 +108,9 @@ async fn a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_t
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let transport = Accounts::new(Some(hold.clone()));
     let database = open(transport.clone()).await;
-    let old_epoch = database.session_epoch();
     let old = tokio::spawn({ let database = database.clone(); async move { load(&database, "Profile", "profile").await } });
     within(transport.entered.notified()).await;
     database.session_reset().await.unwrap();
-    assert!(matches!(within(database.resume(old_epoch)).await, Err(DbError::Interrupted { .. })));
     assert!(matches!(within(old).await.unwrap(), Err(DbError::Interrupted { .. })), "a call of the old epoch survived the reset");
     assert_eq!(within(load(&database, "Profile", "profile")).await, Ok(()));
     hold.add_permits(1);

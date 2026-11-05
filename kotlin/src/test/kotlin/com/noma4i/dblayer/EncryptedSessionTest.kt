@@ -60,7 +60,6 @@ class EncryptedSessionTest {
             assertEquals((256 * 1024).toULong(), error.limit)
         }
         assertEquals(0, http.posts.size)
-        assertNull(database.sessionResume())
         try {
             database.sessionCall("otp", """{"phone":"+61400000000"}""")
             throw AssertionError("expected the scripted HTTP refusal")
@@ -106,11 +105,9 @@ class EncryptedSessionTest {
 
         failsWith<DbException.Http> { database.sessionCall("ticket", "{}") }
         assertNull(credentials.current)
-        assertNull(database.sessionResume())
         failsWith<DbException.Http> { database.sessionCall("otp", """{"phone":"+61400000000"}""") }
         failsWith<DbException.Http> { database.sessionCall("otp", """{"phone":"+61411111111"}""") }
 
-        assertNull(database.sessionResume())
         assertEquals(listOf("/api/ticket", "/api/auth/otp", "/api/auth/otp"), http.posts.map { it.first })
         assertEquals(5, http.posts[0].second.split(".").size)
         assertEquals(43, credentials.current?.length)

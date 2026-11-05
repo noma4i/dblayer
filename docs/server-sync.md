@@ -117,7 +117,7 @@ DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
 val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))
 ```
 
-`sessionCall` encodes an `Encodable` (`@Serializable` in Kotlin) body, sends a configured operation and decodes the answer into the type you name. Without an answer type it returns nothing (`sessionSend` in Kotlin). `sessionResume` decodes the resume answer the same way and returns `nil` / `null` when there is nothing to resume. `sessionReset()` drops the stored session. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`. After `logout()` the core keeps background reads and subscriptions idle until a call you made (`sessionCall`, `run`, `load`, `refresh`, `node` or `waitForInitialLoad` of a held entity) succeeds while a credential is stored. `waitForInitialLoad` of a held entity makes its own read once while the session is ended. A failed read, or a transport without a session, leaves the session ended. `sessionReset()` and a confirmed server logout clear the credential, so they never reopen them. After that `waitForInitialLoad` of a held entity throws an interrupted error without a request.
+`sessionCall` encodes an `Encodable` (`@Serializable` in Kotlin) body, sends a configured operation and decodes the answer into the type you name. Without an answer type it returns nothing (`sessionSend` in Kotlin). `sessionReset()` drops the stored session. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`. After `logout()` the core keeps background reads and subscriptions idle until a call you made (`sessionCall`, `run`, `load`, `refresh`, `node` or `waitForInitialLoad` of a held entity) succeeds while a credential is stored. `waitForInitialLoad` of a held entity makes its own read once while the session is ended. A failed read, or a transport without a session, leaves the session ended. `sessionReset()` and a confirmed server logout clear the credential, so they never reopen them. After that `waitForInitialLoad` of a held entity throws an interrupted error without a request.
 
 Each `EncryptedSessionOperation` declares `path` and `sessionless`. This replaces the former path string on both platforms.
 For `sessionless: true`, the request contains exactly `audience`, `kid`, `method`, `path`, `requestId`, `issuedAt`, `responseKey`, and `body`.
@@ -154,7 +154,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | Mutation receipt `outcome()` | the queued mutation got the sealed refusal. The rejected outcome carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
 | streams (`scope.stream`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
-`retry(action)` does not throw for the refusal of one operation. `sessionResume()` throws sealed refusals but returns `nil` / `null` for permanent HTTP refusals listed below. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
+`retry(action)` does not throw for the refusal of one operation. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
 
 The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` reach the rejected outcome with the same code. The action's declaration decides whether to keep its optimistic value.
 
@@ -166,30 +166,26 @@ Recovery depends on the response and whether it confirms the sequence:
 | ----------- | ----------- | -- |
 | confirmed the sequence (`accountUnavailable`, `rateLimited`, every sign-in code) | spent, nothing is pending | fix the cause, then `retry`. The core sends the mutation as a new request |
 | did not confirm it, and the code is `unauthenticated`, `sessionEnded` or `sequenceConflict` | pending, and it blocks every other mutation, sign-in too | `sessionReset()`, sign in again, then `retry` |
-| HTTP 400, 404, 405, 413, 415, or 422 without a sealed answer | removed without advancing the sequence, the owner becomes `Failed` with a typed rejection | `sessionResume()` returns `nil` / `null`. Fix the cause before sending again |
+| HTTP 400, 404, 405, 413, 415, or 422 without a sealed answer | removed without advancing the sequence, the owner becomes `Failed` with a typed rejection | Fix the cause before sending again |
 | lost connection, timeout, HTTP 408, 429 or 5xx | pending | the durable owner repeats the saved request under the [retry policy](#retries) |
-| any other HTTP error status | pending | fix the cause, then call `sessionResume()` or `retry` |
-| stored request whose path is now declared sessionless | removed without sending or advancing the sequence | `sessionResume()` returns `nil` / `null` |
+| any other HTTP error status | pending | fix the cause, then `retry` |
+| stored request whose path is now declared sessionless | removed without sending or advancing the sequence | nothing to do |
 
 The permanent statuses apply to the first send and every repeat through the same settlement code.
-The first send still throws its HTTP error. A second `sessionResume()` sends nothing after removal.
+The first send still throws its HTTP error. Opening the database again sends nothing after removal.
 The server refuses these requests before consuming their sequence, so the next request reuses that sequence.
 The [retry owner](#retries) preserves Pending across temporary failures.
 HTTP 401, 403, 407, 418, 425 and other unlisted statuses return immediately with pending preserved.
 Bare HTTP 401 and 403 remain HTTP errors and are not converted to `SessionCode`.
-Opening the database does not call `sessionResume()`. The application calls it explicitly.
+Opening the database with a session sends the stored request. The application calls nothing.
 
-`sessionResume()` closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
+The library closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
 
-In Swift and Kotlin, `sessionResume()` holds the right to send from reading the stored request until the operation closes.
-Parallel `retry` and automatic retries wait for the resume to finish.
-For an upload, the resume first waits for the active sender and takes its entry in `uploads.active`.
-If the sender already finished the stored request, the resume returns `nil` in Swift and `null` in Kotlin.
 
 For mutations with `clientMutationId` in the SDL input type, the generator sets `client_mutation_id` in the action spec.
 The model needs no field declaration. Without SDL, automatic key passing is off.
 SQLite gives each new operation a random 128-bit key and stores it in the column `op.client_mutation_id`.
-The key survives restart, `retry`, `sessionResume` and a retry of the final upload mutation.
+The key survives restart, `retry` and a retry of the final upload mutation.
 A new encrypted request gets the old key of the operation. A new operation gets a new key.
 An app value in `input.clientMutationId` takes priority, including an explicit `null`.
 The technical upload steps use the same `key`, `uploadId` and stored encrypted request.
@@ -201,14 +197,14 @@ The library does not declare success without a server row. It does not try to fi
 The app sets the keys `messageAlbumSend.items[].clientKey`. The library does not change them.
 
 Uploads also own their saved requests, including blob creation, multipart signing, completion, abort and the final mutation.
-After reopening the database, `sessionResume()` passes the answer to the same upload step and continues its remaining work.
+After reopening the database, the library passes the answer to the same upload step and continues its remaining work.
 The saved request identifies the exact part numbers when an upload URL needs renewal.
 Upload failures retain their typed `SessionCode` in Swift and Kotlin.
 
 A batch upload stores one `op` and one `op_item` per file, including its source, correlation key, progress, and saved request.
 The final mutation carries all remaining items in their original order and uses the operation's existing delivery key.
 An uncertain final delivery keeps every member until explicit retry or discard.
-A direct `run` mutation has no queued owner, so `sessionResume()` returns its answer without creating an operation.
+A direct `run` mutation has no queued owner and creates no operation.
 
 ```swift
 do {
@@ -363,9 +359,9 @@ Each attempt refreshes issuedAt after waiting for online and seals the request a
 The mutation lock stays held across the current encrypted call.
 A confirmed temporary refusal atomically commits the confirmed sequence and stores the next Pending with a new requestId and response key.
 The next attempt uses that new sequence and the same operation body.
-Cancellation preserves Pending for `sessionResume()` and never advances an unconfirmed sequence.
+Cancellation preserves Pending and never advances an unconfirmed sequence.
 Dropping the Rust future stops the request and its backoff.
-Swift Task and Kotlin coroutine cancellation also stop bootstrap, `sessionCall` and `sessionResume`.
+Swift Task and Kotlin coroutine cancellation also stop bootstrap and `sessionCall`.
 The Swift generator connects these calls to UniFFI cancellation and serializes cancel/free of each native future handle.
 Other Swift async calls keep their existing cancellation behavior.
 UniFFI generates non-throwing `current`, `cableNext` and `cableClose` with `try!`, so cancelling every async call would crash those methods.
@@ -414,8 +410,8 @@ DBlayer.open(context, encrypted = encrypted, credentials = credentials, transpor
 Rules of the session:
 
 - Every mutation, including a credentialed sign-in operation, carries the next sequence number. A query carries none and gets a new request id each time.
-- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call or an explicit `sessionResume()` sends the identical request again, including after restart. The server answers from its record. Only the time stamp changes. A GraphQL call that was stored with its document after a miss counts as the same call when you repeat it.
-- While a request is pending, a different mutation fails with a network error and sends nothing. `sessionResume()` sends the pending request and returns its answer. When a queued operation owns the request, the answer also closes that operation.
+- The core stores a mutation (request id, response key, sequence, path and body) before it sends it. If the answer is lost, the same call or the next open with a session sends the identical request again, including after restart. The server answers from its record. Only the time stamp changes. A GraphQL call that was stored with its document after a miss counts as the same call when you repeat it.
+- While a request is pending, a different mutation fails with a network error and sends nothing. The library sends the pending request when the database opens with a session. When a queued operation owns the request, the answer also closes that operation.
 - A refused step such as `invalidCode` confirms the sequence. `sequenceConflict`, `unauthenticated` and `sessionEnded` do not: the pending request stays. The core never clears the session for any code. Treat these three as a lost session: call `sessionReset()`, delete your signed-in state and sign in again.
 - Database format changes, model resets and reopening preserve the credential digest, confirmed sequence and complete pending request in SQLite.
 - Changes to the session tables migrate their stored values within the same transaction that recreates the database tables.
@@ -448,7 +444,7 @@ The final content mutation follows the [write rules](files.md#rules-1): a confir
 | `INVALID_OPERATION` | retry with a pause if the step returned this code | `Failed` |
 | `SERVICE_UNAVAILABLE` | retry with a pause | retry with a pause |
 - `sessionReset()` ends the session without contacting the server. It ends the work of the old session, deletes the credential and the stored state, and clears the data of the account. It returns after the clearing. Signing out of the app is this one call.
-- A `logout` answer with `revoked` clears the credential and the state in one step, without confirming the sequence first. If your `CredentialStore.clear` fails, the pending logout stays and `sessionResume()` finishes it with the answer the server stored.
+- A `logout` answer with `revoked` clears the credential and the state in one step, without confirming the sequence first. If your `CredentialStore.clear` fails, the pending logout stays and the next open with a session finishes it with the answer the server stored.
 - The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.
 
 ### Persisted queries
@@ -461,11 +457,11 @@ The core sends a GraphQL call as its SHA-256 hash first, without the document. T
 | `PERSISTED_QUERY_NOT_FOUND` (HTTP 200, `errors[].extensions.code`) | sends the call once more with the document and the hash, returns that answer |
 | `INVALID_INPUT` or any other error | returns it, no second send |
 
-The second answer is final: a second `PERSISTED_QUERY_NOT_FOUND` goes to your app and the core sends no third request. Swift and Kotlin code does not change: the generated operations and `sessionResume()` behave as before and return the answer of the last send.
+The second answer is final: a second `PERSISTED_QUERY_NOT_FOUND` goes to your app and the core sends no third request. Swift and Kotlin code does not change: the generated operations behave as before and return the answer of the last send.
 
 - A query is sent again as a new request: new request id, new response key. The server reports the miss before it records the request id, so nothing is spent.
 - A mutation is sent again as a new mutation. The server has already taken the first sequence number `N` and answers the miss with it, so the core confirms `N` and removes the pending request. The second send takes `N+1`, new request id and response key, and the core stores it before it sends it, like any mutation. The same `N` with another body would get `SEQUENCE_CONFLICT`.
-- After a restart `sessionResume()` sends the stored request unchanged. A stored hash-only request that is answered with a miss returns that answer, and your app sends the mutation again as usual.
+- After a restart the library sends the stored request unchanged. A stored hash-only request that is answered with a miss returns that answer, and your app sends the mutation again as usual.
 
 The server registry fills itself. The first call of a document after the app is installed (or after the server lost the registry) costs 2 requests: the miss and the send with the document, which the server stores. Every later call of that document, from any device, is one hash-only request. If the server registers the documents in advance through its deployment tooling, there are no misses and every call is one hash-only request.
 
@@ -620,7 +616,7 @@ println(code.url)
 - `parameter :kind, WidgetKind` and `attribute :kind, WidgetKind` name a schema enum. It becomes a typed enum with an `unknown` case, in inputs too (see [models](models.md#enums)). A custom scalar needs a `scalar` line (see [models](models.md#custom-scalars)). The `JSON` scalar uses `JSONValue` in Swift and `JsonElement` in Kotlin.
 - The call does not enter the outbox and returns Offline when started offline.
 - Encrypted calls follow the [retry policy](#retries). A numbered mutation stores Pending before HTTP, including for a standalone operation.
-- Cancelling a standalone encrypted mutation preserves Pending for `sessionResume()` and leaves its result unconfirmed.
+- Cancelling a standalone encrypted mutation preserves Pending and leaves its result unconfirmed.
 - Plain standalone calls return transport failures and GraphQL errors directly.
 - A failed call or load throws a typed error. `Http` carries the status and the body (401, 503), `Graphql` carries every message of an answer with errors in order, `Session` carries the session code of a refusal of the encrypted session (see [session errors in loads and mutations](#session-errors-in-loads-and-mutations)), `Network` and `Interrupted` tell whether the request left the device. Any other failure is a `Sync` error with its text.
 

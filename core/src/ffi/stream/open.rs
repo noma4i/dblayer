@@ -110,7 +110,7 @@ impl Database {
 
     fn connect_entity(&self, stream: &Arc<Stream>, model: &str, id: &str, fetch: crate::sync::EntityFetch) -> Result<Handles, DbError> {
         let row = RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-        let sync = if fetch == crate::sync::EntityFetch::None { None } else {
+        let sync = if fetch == crate::sync::EntityFetch::Never { None } else {
             let sync = self.sync().map_err(|_| DbError::Invalid { detail: "entity fetch needs a network session".into() })?.clone();
             stream.fetches_entity();
             stream.expect_load();

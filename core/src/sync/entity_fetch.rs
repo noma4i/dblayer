@@ -7,7 +7,7 @@ use super::error::SyncError;
 use super::{locked, Inner, Sync};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
-pub enum EntityFetch { None, Stale, Force, IfMissing }
+pub enum EntityFetch { Never, Stale, Force, IfMissing }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefreshError { Offline, Failed(SyncError) }
@@ -31,7 +31,7 @@ impl Sync {
     pub fn refresh_entities(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, ids: &[String], fetch: EntityFetch, sink: RefreshSink) -> Result<CancelToken, SyncError> {
         self.inner.ensure_admitted(admitted)?;
         let cancel = CancelToken::new();
-        if fetch == EntityFetch::None { return Ok(cancel); }
+        if fetch == EntityFetch::Never { return Ok(cancel); }
         if !self.inner.admitted(crate::ffi::legacy::Origin::Session) {
             for id in ids { sink(id, None); }
             return Ok(cancel);

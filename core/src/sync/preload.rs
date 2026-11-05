@@ -22,7 +22,6 @@ struct State {
     listened: bool,
     power_saving: bool,
     low_ram: bool,
-    suppressed: bool,
     unseen: usize,
     app_loads: usize,
     first_snapshot: bool,
@@ -30,7 +29,7 @@ struct State {
 
 impl State {
     fn held(&self) -> bool {
-        self.suppressed || self.power_saving || self.low_ram
+        self.power_saving || self.low_ram
     }
 
     fn yielding(&self) -> bool {
@@ -39,14 +38,6 @@ impl State {
 }
 
 const PRELOAD_PARALLEL: usize = 3;
-
-#[derive(Debug, Clone)]
-pub struct PreloadFailure {
-    pub model: String,
-    pub relation: String,
-    pub params: Map<String, Value>,
-    pub error: SyncError,
-}
 
 pub(crate) struct PreloadOwner {
     state: Mutex<State>,
@@ -341,42 +332,6 @@ impl Sync {
     pub fn set_power_saving(&self, saving: bool) {
         let was_saving = std::mem::replace(&mut locked(&self.inner.preload.state).power_saving, saving);
         if was_saving && !saving { self.inner.preload_start(); }
-    }
-
-    pub async fn refresh_preloads(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<Vec<PreloadFailure>, SyncError> {
-        self.inner.ensure_admitted(admitted)?;
-        let _app = self.app_load();
-        if !self.inner.connectivity.is_online() { return Err(SyncError::Offline); }
-        let lanes = Arc::new(Semaphore::new(PRELOAD_PARALLEL));
-        let mut refreshed = HashSet::new();
-        let mut failures = Vec::new();
-        loop {
-            let windows: Vec<Window> = self.inner.preloaded_windows()?.into_iter().filter(|(model, relation, params)| refreshed.insert(format!("{model}|{relation}|{params:?}"))).collect();
-            if windows.is_empty() { return Ok(failures); }
-            let mut loads = Children::new();
-            for window in windows {
-                let (inner, lanes, admitted) = (self.inner.clone(), lanes.clone(), admitted.clone());
-                loads.spawn(crate::task::Carry::here(), async move {
-                    let _lane = lanes.acquire_owned().await;
-                    let (model, relation, params) = window;
-                    let fetched = match inner.resolve(crate::ffi::legacy::Origin::Explicit, &model, &relation, &params) {
-                        Ok(resolved) => inner.load_scope(&admitted, &resolved, true).await.map(|outcome| outcome.kept_error),
-                        Err(error) => Err(error),
-                    };
-                    match fetched {
-                        Ok(None) => None,
-                        Ok(Some(error)) | Err(error) => Some(PreloadFailure { model, relation, params, error }),
-                    }
-                });
-            }
-            while let Some(finished) = loads.join_next().await {
-                if let Ok(Some(failure)) = finished { failures.push(failure); }
-            }
-        }
-    }
-
-    pub fn set_preload(&self, enabled: bool) {
-        locked(&self.inner.preload.state).suppressed = !enabled;
     }
 
     pub fn set_low_ram(&self, low_ram: bool) {

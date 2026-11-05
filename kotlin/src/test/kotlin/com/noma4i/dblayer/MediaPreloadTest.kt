@@ -48,7 +48,7 @@ class MediaPreloadTest {
             transport.enqueue("ChatMedia", whole("v2"))
             transport.enqueue("LikeMoment", """{"data":{"likeMoment":{"__typename":"MediaMessage","id":"v1","chatId":"c1","kind":"TEXT","mediaKind":"IMAGE","sequenceNumber":1}}}""")
             val definitions = """[{"name":"MediaMarker","document":"query MediaMarker(${'$'}chatId: ID!, ${'$'}upToSequence: Int!) { node(id: ${'$'}chatId) { mediaLibrary(upToSequence: ${'$'}upToSequence) { revision visualCount audioCount giftCount latestSequence } } }"},{"name":"MediaTail","document":"query MediaTail(${'$'}chatId: ID!, ${'$'}afterSequence: Int!, ${'$'}first: Int, ${'$'}after: String) { node(id: ${'$'}chatId) { messages(afterSequence: ${'$'}afterSequence, first: ${'$'}first, after: ${'$'}after) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } }"},{"name":"LikeMoment","document":"mutation LikeMoment(${'$'}momentId: ID!) { likeMoment(momentId: ${'$'}momentId) { id chatId kind mediaKind sequenceNumber } }"}]"""
-            DBlayer.openTesting(transport, updated, operations = listOf(ChatMedia), listening = false)
+            DBlayer.openTesting(transport, updated, operations = listOf(ChatMedia))
             DBlayer.database.registerOperations(definitions)
             val query = MediaMessage.visualMedia("c1")
             awaitWithin("the initial media load") { query.loadAll() }
@@ -85,7 +85,7 @@ class MediaPreloadTest {
         val preload = transport.hold("PresenceOnline", """{"data":{"presenceOnline":[]}}""")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            DBlayer.openTesting(transport, modelsJSON, operations = listOf(PresenceOnline, ChatMedia), preload = true)
+            DBlayer.openTesting(transport, modelsJSON, operations = listOf(PresenceOnline, ChatMedia))
             awaitWithin("the preload request") { preload.entered() }
             preload.release()
             val empty = """{"data":{"node":{"messages":{"edges":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"""

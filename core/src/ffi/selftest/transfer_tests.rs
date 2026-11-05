@@ -201,12 +201,10 @@ async fn shifting_a_batch_during_a_held_encrypted_request_keeps_the_file_owner()
             drop(db);
             let reopened = open().await.unwrap();
             reopened.register_operations(serde_json::to_string(&definitions).unwrap()).unwrap();
-            named_bound("resume session", reopened.session_resume()).await.unwrap();
             reopened
         } else { db };
         if lose {
-            named_bound("finish transfers", db.resume_uploads(db.session_epoch())).await.unwrap();
-            named_bound("send batch", db.flush()).await.unwrap();
+            named_bound("finish transfers", db.sync.as_ref().unwrap().wait_uploads()).await;
             let mut stored: Vec<String> = db.read_query(db.session_epoch(), r#"{"model":"Asset"}"#.into()).await.unwrap().into_iter().map(|row| row.id).collect();
             stored.sort();
             assert_eq!(stored, vec!["a1", "a2"]);
@@ -605,10 +603,10 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     db.set_online(false).unwrap();
     db.set_online(true).unwrap();
     named_bound("abort", transport.abort.notified()).await;
-    named_bound("finish abort", db.resume_uploads(db.session_epoch())).await.unwrap();
+    named_bound("finish abort", db.sync.as_ref().unwrap().wait_uploads()).await;
     db.set_online(false).unwrap();
     db.set_online(true).unwrap();
-    named_bound("repeat online", db.resume_uploads(db.session_epoch())).await.unwrap();
+    named_bound("repeat online", db.sync.as_ref().unwrap().wait_uploads()).await;
     let calls = transport.calls.lock().unwrap();
     let aborts: Vec<_> = calls.iter().filter(|call| call.operation_name == "AbortMultipart").collect();
     assert_eq!(aborts.len(), 1);
@@ -643,10 +641,10 @@ async fn discarding_a_queued_photo_offline_routes_the_abort_after_reopen() {
     db.set_online(false).unwrap();
     db.set_online(true).unwrap();
     named_bound("abort", transport.abort.notified()).await;
-    named_bound("finish abort", db.resume_uploads(db.session_epoch())).await.unwrap();
+    named_bound("finish abort", db.sync.as_ref().unwrap().wait_uploads()).await;
     db.set_online(false).unwrap();
     db.set_online(true).unwrap();
-    named_bound("repeat online", db.resume_uploads(db.session_epoch())).await.unwrap();
+    named_bound("repeat online", db.sync.as_ref().unwrap().wait_uploads()).await;
     let calls = transport.calls.lock().unwrap();
     let aborts: Vec<_> = calls.iter().filter(|call| call.operation_name == "AbortMultipart").collect();
     assert_eq!(aborts.len(), 1);

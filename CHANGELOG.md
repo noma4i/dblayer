@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Removed
+- `Database.flush`, `resume`, `resumeUploads`, `retryAll`, `refreshPreloads`, `warm`, `maintain` and `setListening` are gone from the bridge on both platforms. The library sends, resumes and maintains by itself.
+- `sessionResume` is gone from Swift, Kotlin and the core. Opening the database with a session sends a request stored before the close.
+- `enterForegroundForTesting` is gone. The foreground notice comes from the system.
+- `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
+
+### Changed
+- `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
+
 ### Fixed
 - Opening a database of an older layout no longer fails: tables kept across a format change move by the columns both layouts share.
 - Operations of the previous account are not sent after an identity change without `sessionReset`.

@@ -91,10 +91,6 @@ extension BridgeProbeTests {
     try await DB.sessionReset()
     #expect(await Cursor(result.stream).next("the old upload wait ends") == true)
     do {
-      try await database.resumeUploads(epoch: epoch)
-      Issue.record("old upload resume was accepted")
-    } catch DbError.Interrupted {}
-    do {
       _ = try await database.upload(epoch: database.sessionEpoch(), model: "Moment", rowId: row.id, action: "upload_clip", request: UploadRequest(path: file.path).wire)
       Issue.record("upload accepted without a session")
     } catch DbError.NoSession {}

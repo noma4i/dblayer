@@ -13,7 +13,7 @@ extension BridgeProbeTests {
       transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"\#(id)","uuid":"\#(uuid)","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     }
     transport.enqueue("DeleteMoment", reply: #"{"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]}"#)
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, listening: false)
+    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#)
     let held = Projected<Moment>(try DB.account().stream(Moment.feed))
     let (events, signal) = AsyncStream<Int>.makeStream()

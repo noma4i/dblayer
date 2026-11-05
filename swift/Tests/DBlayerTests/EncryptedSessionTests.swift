@@ -58,7 +58,6 @@ struct EncryptedSessionTests {
       #expect(size > limit && limit == 256 * 1024)
     }
     #expect(http.posts.isEmpty)
-    #expect(try await database.sessionResume() == nil)
     do {
       _ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
       Issue.record("expected the scripted HTTP refusal")
@@ -101,11 +100,9 @@ struct EncryptedSessionTests {
 
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "ticket", bodyJson: "{}") }
     #expect(credentials.current == nil)
-    #expect(try await database.sessionResume() == nil)
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#) }
     await #expect(throws: DbError.self) { try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61411111111"}"#) }
 
-    #expect(try await database.sessionResume() == nil)
     let posts = http.posts
     #expect(posts.map(\.path) == ["/api/ticket", "/api/auth/otp", "/api/auth/otp"])
     #expect(posts[0].body.split(separator: ".", omittingEmptySubsequences: false).count == 5)

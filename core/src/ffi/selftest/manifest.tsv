@@ -6,7 +6,6 @@ S315	batch-receipt	kotlin	com.noma4i.dblayer.UploadBatchTest.batchOwnsSourcesAnd
 S314	multi-join	core	joining_multiple_members_keeps_each_once_in_order	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
 S314	multi-join	swift	BridgeProbeTests.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
 S314	multi-join	kotlin	com.noma4i.dblayer.ClubTest.joiningMultipleMembersKeepsEachOnceInOrder	red-by-reading	multiple members and duplicate ID remain ordered	S3 scope planner audit
-S312	format	core	a_pending_operation_survives_an_old_format_without_restoring_the_cached_row	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S312	format	swift	BridgeProbeTests.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S312	format	kotlin	com.noma4i.dblayer.ClubTest.aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow	red-by-reading	old format, open, 422, retry policy and no restored row	coordinator format decision
 S313	outcome	core	an_operation_outcome_can_be_read_twice_from_its_receipt	red-by-reading	read the same outcome twice	operation receipt
@@ -80,8 +79,7 @@ C14		core	a_data_reset_between_a_refused_pending_request_and_the_session_reset_k
 C14		core	a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_sign_in_and_never_runs	green	-	library
 C15		core	an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs_each_once	green	S1: the data logout variant becomes the session reset (it clears the data)	library
 C16		core	repeated_online_listening_and_power_saving_signals_add_no_request	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	library
-C17		core	a_pending_request_survives_close_reopen_and_a_new_schema_and_runs_once	green	S1: close is awaited	library
-C17		core	resume_after_a_restart_sends_the_pending_request_and_the_server_runs_it_once	green	-	library
+C17		core	out_open_restores_pending	green	S1: close is awaited	library
 C18		core	memory_expiry_follows_the_last_write	green	-	library
 C19	R-5	core	login_link_already_authenticated_signs_out_then_repeats_once	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LoginLinkSignIn.swift:53-78, A android/app/src/main/java/com/yupi/LoginLinkSignIn.kt:36-47
 C19	R-5	swift	BridgeProbeTests.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSealedSession loses the data logout	I LoginLinkSignIn.swift:53-78
@@ -90,7 +88,7 @@ G01	R-3	core	the_harness_cycle_releases_the_token_of_a_held_server_subscription_
 G01	R-3	core	a_subscription_declared_on_the_next_database_opens_once_on_the_next_target	green	S1: new declaration or explicit load makes the lease; the test then asserts the declaration path	library
 G01		core	harness_cycles_survive_tests_that_leave_offline_logout_and_subscriptions_behind	green	S1: each test closes its database and the next test opens a new one; the leftover logout becomes a session reset	library
 R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
-R11		core	a_refused_foreground_refresh_keeps_the_views_and_the_credential	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LiveEventLifecycle.swift:24
+R11		core	a_refused_refresh_keeps_the_views_and_the_credential	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LiveEventLifecycle.swift:24
 B01		core	a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2 specs/architecture.md B, C, D, F
 B01		swift	BridgeProbeTests.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2 specs/architecture.md B, C, D, F
 B01		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2 specs/architecture.md B, C, D, F
@@ -184,7 +182,6 @@ K27	E02	core	a_network_that_dropped_and_returned_right_after_the_refusal_decisio
 K28	E06	swift	BridgeProbeTests.updateAndDestroyReachTypedLiveRows	green	-	arch-r3e review E06
 K28	E06	kotlin	com.noma4i.dblayer.BridgeProbeTest.updateAndDestroyReachTypedLiveRows	green	-	arch-r3e review E06
 K29	F02	core	a_network_that_moves_between_the_plan_and_the_commit_of_a_start_refuses_the_action	green	core-only: the proof runs a hook inside the writer between the plan and the commit; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3f review F02
-K30	F01	core	a_public_flush_holds_the_commit_line_of_its_epoch_while_it_commits	green	core-only: the proof holds a commit inside the writer and moves the epoch; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3f review F01
 K31	F01	core	an_old_admission_cannot_write_ephemeral_data_in_the_next_session	red-by-reading	core-only: writes require admission at the call site	arch-r3f review F01
 P01		core	an_event_that_arrived_before_the_reader_is_not_replayed_and_the_next_one_is_delivered	green	-	parity slice 3 platform tests
 P01		swift	BridgeProbeTests.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests

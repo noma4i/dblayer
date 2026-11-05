@@ -28,9 +28,6 @@ object DBlayer {
         offCaller { database.sessionCall(operation, dbJson.encodeToString(body)) }
     }
 
-    suspend inline fun <reified Answer> sessionResume(): Answer? =
-        offCaller { database.sessionResume()?.let { dbJson.decodeFromString<Answer>(it) } }
-
     /** Ends the session: work of the old session ends, the credential and the data of the account go. Call it for every sign-out; the library clears the data itself. */
     suspend fun sessionReset() {
         offCaller { database.sessionReset() }
@@ -106,7 +103,7 @@ object DBlayer {
     ) {
         UploadNotifications.store(context, uploadNotification)
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire(), PowerSaving.saving(context), PowerSaving.lowRam(context), true, true)
+        val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire(), PowerSaving.saving(context), PowerSaving.lowRam(context))
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }, retries)
@@ -119,7 +116,7 @@ object DBlayer {
         ready.complete(made)
     }
 
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock, preload: Boolean, listening: Boolean = true, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock, preload, listening, encrypted, credentials, http, retries) }
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock, encrypted, credentials, http, retries) }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }

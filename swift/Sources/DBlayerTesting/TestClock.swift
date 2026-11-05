@@ -6,13 +6,11 @@ extension TestClock {
 }
 
 extension DB {
-  public static func enterForegroundForTesting() throws { try database.enterForegroundForTesting() }
-
-  /// Opens the database on a clock that only `advance(by:)` moves, so freshness windows, retry delays and expiry run without sleeping. Scope preloads send no request unless `preload` is true.
+  /// Opens the database on a clock that only `advance(by:)` moves, so freshness windows, retry delays and expiry run without sleeping.
   @discardableResult
-  public static func openTesting(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], uploads: UploadOperations? = nil, startingAt start: Date = Date(), preload: Bool = false, listening: Bool = true, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> TestClock {
+  public static func openTesting(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], uploads: UploadOperations? = nil, startingAt start: Date = Date(), encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> TestClock {
     let clock = TestClock(startMillis: UInt64(start.timeIntervalSince1970 * 1000))
-    let database = try await openOnClock(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport, uploads: uploads, clock: clock, preload: preload, listening: listening, encrypted: encrypted, credentials: credentials, http: http, retries: retries)
+    let database = try await openOnClock(config: Config(path: path, dataVersion: nil, cacheRows: 2000), modelsJson: modelsJSON, transport: transport, uploads: uploads, clock: clock, encrypted: encrypted, credentials: credentials, http: http, retries: retries)
     try install(database, transport: transport, operations: operations)
     return clock
   }

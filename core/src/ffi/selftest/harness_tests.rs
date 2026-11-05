@@ -46,7 +46,6 @@ async fn closing_with_the_target_unset_sends_nothing_and_leaves_the_next_databas
 
         assert_eq!(a.hits(), before, "invalid={invalid}: work of the reset reached the transport after its target was unset");
         assert_eq!(b.hits(), 0, "invalid={invalid}: work of the reset reached the next transport before the next test asked");
-        rig.database.set_listening(true).unwrap();
         let (live, rows) = window(&rig).await;
         bound(live.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("invalid={invalid}: a new window inherited {error:?}"));
         shows(&rows, "B").await;

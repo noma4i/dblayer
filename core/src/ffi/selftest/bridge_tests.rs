@@ -275,7 +275,7 @@ async fn a_refetch_owed_without_a_reader_survives_reopen() {
     let config = crate::ffi::Config { path: Some(directory.path().join("cache.sqlite").to_string_lossy().into_owned()), data_version: None, cache_rows: 32 };
     let opener = crate::ffi::OpenDatabase::new();
     let transport = Arc::new(MomentTransport::default());
-    let first = bound(opener.open_with_clock(config.clone(), models.clone(), Some(transport.clone()), None, crate::ffi::TestClock::new(1_000_000), false, false, None, None, None, None)).await.unwrap();
+    let first = bound(opener.open_with_clock(config.clone(), models.clone(), Some(transport.clone()), None, crate::ffi::TestClock::new(1_000_000), None, None, None, None)).await.unwrap();
     first.register_operations(operations.clone()).unwrap();
     let epoch = first.session_epoch();
     bound(first.load(epoch, "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
@@ -283,7 +283,7 @@ async fn a_refetch_owed_without_a_reader_survives_reopen() {
     assert!(matches!(bound(first.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
     assert_eq!(transport.reads.load(Ordering::SeqCst), 1);
     bound(first.close_database()).await.unwrap();
-    let second = bound(opener.open_with_clock(config, models, Some(transport.clone()), None, crate::ffi::TestClock::new(1_000_000), false, false, None, None, None, None)).await.unwrap();
+    let second = bound(opener.open_with_clock(config, models, Some(transport.clone()), None, crate::ffi::TestClock::new(1_000_000), None, None, None, None)).await.unwrap();
     second.register_operations(operations).unwrap();
     let epoch = second.session_epoch();
     bound(second.load(epoch, "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
@@ -336,7 +336,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let opener = crate::ffi::OpenDatabase::new();
     let world_a = World::new("server", "A", true);
     let switch = Switchable::new(Some(world_a.clone()), false);
-    let first = bound(opener.open_with_clock(config.clone(), plain_models(), Some(switch.clone()), None, crate::ffi::TestClock::new(1_000_000), false, false, None, None, None, None)).await.unwrap();
+    let first = bound(opener.open_with_clock(config.clone(), plain_models(), Some(switch.clone()), None, crate::ffi::TestClock::new(1_000_000), None, None, None, None)).await.unwrap();
     first.register_operations(plain_operations()).unwrap();
     bound(first.refresh(first.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     let query = r#"{"model":"User","relation":"profile","params":{}}"#.to_string();
@@ -345,7 +345,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     bound(first.close_database()).await.unwrap();
     let world_b = World::new("server", "B", true);
     switch.set(Some(world_b.clone()));
-    let second = bound(opener.open_with_clock(config, plain_models(), Some(switch), None, crate::ffi::TestClock::new(100), false, false, None, None, None, None)).await.unwrap();
+    let second = bound(opener.open_with_clock(config, plain_models(), Some(switch), None, crate::ffi::TestClock::new(100), None, None, None, None)).await.unwrap();
     second.register_operations(plain_operations()).unwrap();
     bound(second.refresh(second.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     let rows = bound(second.read_query(second.session_epoch(), query)).await.unwrap();
@@ -976,7 +976,7 @@ async fn work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_ge
     let epoch = rig.database.session_epoch();
     let (entity, count, list) = (Reader::open(), Reader::open(), Reader::open());
     let streams = [
-        rig.database.subscribe_reading(epoch, StreamRequest::Entity { model: "Message".into(), id: "s1".into(), fetch: crate::ffi::EntityFetch::None }, entity.clone()),
+        rig.database.subscribe_reading(epoch, StreamRequest::Entity { model: "Message".into(), id: "s1".into(), fetch: crate::ffi::EntityFetch::Never }, entity.clone()),
         rig.database.subscribe_reading(epoch, StreamRequest::Count { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#.into() }, count.clone()),
         rig.database.subscribe_reading(epoch, thread(), list.clone()),
     ];
@@ -1100,7 +1100,7 @@ async fn a_stream_that_cannot_connect_ends_once_and_leaves_the_table() {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let requests = [
-        StreamRequest::Entity { model: "Nope".into(), id: "x".into(), fetch: crate::ffi::EntityFetch::None },
+        StreamRequest::Entity { model: "Nope".into(), id: "x".into(), fetch: crate::ffi::EntityFetch::Never },
         StreamRequest::Events { model: "Nope".into() },
         StreamRequest::Count { query_json: r#"{"model":"Nope"}"#.into() },
     ];
@@ -1218,7 +1218,6 @@ async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_ne
     assert!(operations_begun(&rig) > begun_before, "the send did not commit before the epoch changed");
     settle(&rig).await;
     rig.database.set_online(true).unwrap();
-    bound(rig.database.flush()).await.unwrap();
     settle(&rig).await;
     assert_eq!(rig.world.count("SendMessage"), 0, "the message of the account that left went out for the next one");
     assert!(rig.database.db.outbox().unwrap().is_empty(), "an operation of the account that left is still queued");
@@ -1275,11 +1274,10 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     drop(admitted);
     assert_eq!(rig.database.db.outbox().unwrap().len(), 1, "the plain action was queued once");
     rig.database.set_online(false).unwrap();
-    bound(rig.database.flush()).await.unwrap();
+    settle(&rig).await;
     assert!(rig.database.db.outbox().unwrap().is_empty(), "a plain action stayed queued while the network was away");
     assert_eq!(rig.database.db.shared.store.row_count("Group").unwrap(), 0, "the row of the refused action stayed");
     rig.database.set_online(true).unwrap();
-    bound(rig.database.flush()).await.unwrap();
     settle(&rig).await;
     assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out after the network returned");
     let receipt = bound(rig.database.send(message(epoch, "offline", 2))).await.unwrap();
@@ -1719,13 +1717,10 @@ async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
         case("run", |db, old| Box::pin(async move { bound(db.run(old, "MyProfile".into(), "{}".into())).await.map(drop) })),
         case("load", |db, old| Box::pin(async move { bound(db.load(old, "User".into(), "all".into(), "{}".into())).await })),
         case("refresh", |db, old| Box::pin(async move { bound(db.refresh(old, "User".into(), "all".into(), "{}".into())).await })),
-        case("refresh_preloads", |db, old| Box::pin(async move { bound(db.refresh_preloads(old)).await })),
         case("load_all", |db, old| Box::pin(async move { bound(db.load_all(old, "User".into(), "all".into(), "{}".into(), true)).await })),
         case("load_more", |db, old| Box::pin(async move { bound(db.load_more(old, "User".into(), "all".into(), "{}".into())).await.map(drop) })),
         case("node", |db, old| Box::pin(async move { bound(db.node(old, "User".into(), "node".into(), "user".into(), true)).await.map(drop) })),
         case("nodes", |db, old| Box::pin(async move { bound(db.nodes(old, "User".into(), "nodes".into(), vec!["user".into()])).await.map(drop) })),
-        case("retry_all", |db, old| Box::pin(async move { bound(db.retry_all(old)).await.map(drop) })),
-        case("warm", |db, old| Box::pin(async move { bound(db.warm(old, r#"{"model":"User"}"#.into())).await })),
         case("edge_values", |db, old| Box::pin(async move { bound(db.edge_values(old, "User".into(), "all".into(), "{}".into(), vec!["user".into()])).await.map(drop) })),
         case("peek_query", |db, old| Box::pin(async move { bound(db.peek_query(old, r#"{"model":"User"}"#.into())).await.map(drop) })),
         case("peek_row", |db, old| Box::pin(async move { db.peek_row(old, "User".into(), "user".into()).map(drop) })),
@@ -1756,7 +1751,6 @@ async fn a_plain_action_that_never_reached_the_server_ends_with_the_network_erro
     assert!(rig.database.db.outbox().unwrap().is_empty(), "the failed action stayed queued");
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
-    bound(rig.database.flush()).await.unwrap();
     settle(&rig).await;
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 1, "the action went out again after the network returned");
     rig.database.close_now();
@@ -1779,7 +1773,6 @@ async fn a_plain_action_unsent_when_the_network_drops_never_goes_out_after_it_re
     drop(sender_busy);
     let receipt = bound(acting).await.unwrap().unwrap();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { failure } if failure.kind == "network"));
-    bound(rig.database.flush()).await.unwrap();
     settle(&rig).await;
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 0, "an action queued before the drop went out after the network returned");
     assert!(rig.database.db.outbox().unwrap().is_empty());
@@ -2017,28 +2010,3 @@ async fn a_network_that_moves_between_the_plan_and_the_commit_of_a_start_refuses
     rig.database.close_now();
 }
 
-/// K30 (F01, old lines ffi/database.rs flush and sync/send/flush.rs flush_pass): the public flush of a queued durable command lands its SQL commits in the epoch of its own lease, so a session start waits for the commit that is running and the epoch does not change under it.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_public_flush_holds_the_commit_line_of_its_epoch_while_it_commits() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
-    bound(rig.database.send(message(epoch, "queued", 1))).await.unwrap();
-    let store = &rig.database.db.shared.store;
-    let (entered, entered_rx) = std::sync::mpsc::channel();
-    let (release_tx, release) = std::sync::mpsc::channel::<()>();
-    *store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { entered.send(()).unwrap(); let _ = release.recv_timeout(std::time::Duration::from_secs(20)); }));
-    rig.database.db.connectivity().set_online(true);
-    let flushing = { let database = rig.database.clone(); tokio::spawn(async move { database.flush().await }) };
-    tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
-    let waits = *store.lifecycle.line_waits.0.lock().unwrap();
-    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session_in_tests(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
-    yield_until("the session start reached the commit line", || *store.lifecycle.line_waits.0.lock().unwrap() > waits).await;
-    assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while a commit of the flush was held");
-    release_tx.send(()).unwrap();
-    let _ = bound(flushing).await.unwrap();
-    assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
-    settle(&rig).await;
-    rig.database.close_now();
-}

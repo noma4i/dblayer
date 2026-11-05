@@ -14,7 +14,7 @@ Foreign execution must not run under a library lock. State changes return owned 
 - A delivery touches only the rows it carries. The wrappers hold no lock for it.
 - Await `discard(action)` and `sessionReset()` to finish removing queued changes or clearing account data before starting dependent work.
 - Opening a database is asynchronous (`await DB.open` in Swift, suspend `DBlayer.open` in Kotlin). Registering operations is synchronous. A live query attaches off the caller thread when it is collected.
-- Calls that read or write files (`attach`, `file`, `read`, `url`, `detach`, `maintain`) run on a background thread of the library, never on the caller thread.
+- Calls that read or write files (`attach`, `file`, `read`, `url`, `detach`) run on a background thread of the library, never on the caller thread.
 - Upload metadata reads, checksums and byte-range reads use the blocking pool. Cancelling a transfer does not wait for queued file work.
 - `cached()`, `cachedRow` and the edge value reads answer without the caller thread waiting for the database lock and decode their rows off the caller thread. They are `async` in Swift and `suspend` in Kotlin, as are the bridge calls `peekQuery` and `edgeValues` underneath. See [live data](live-data.md#reading-before-the-first-delivery).
 - The transports on both platforms do the whole network exchange, including reading the response body, off the caller thread: Kotlin on `Dispatchers.IO`, Swift through the async `URLSession` API. You can call them from the main thread.

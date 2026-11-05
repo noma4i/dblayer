@@ -90,7 +90,6 @@ internal suspend fun <Model : DBModel> confirmedPairs(receipt: OperationReceipt<
 
 private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Model>): List<String?> = confirmedPairs(receipt).map { it?.second }
 
-private suspend fun finishTransfers() = DBlayer.database.resumeUploads(DBlayer.database.sessionEpoch())
 
 class TransferTest {
     @Test
@@ -162,9 +161,7 @@ class TransferTest {
                         DBlayer.close()
                         DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
-                        DBlayer.database.sessionResume()
-                        finishTransfers()
-                        DBlayer.database.flush()
+                        eventually("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
                         assertEquals(listOf("a1", "a2"), listOf("a1", "a2").filter { Asset.find(it).current() != null })
                     } else {
                         assertEquals(listOf(null, "a1", "a2"), confirmedIds(receipt))
@@ -265,10 +262,8 @@ class TransferTest {
             reopened.setOnline(true)
             abort.entered()
             abort.release()
-            reopened.resumeUploads(reopened.sessionEpoch())
             reopened.setOnline(false)
             reopened.setOnline(true)
-            reopened.resumeUploads(reopened.sessionEpoch())
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)
@@ -289,7 +284,7 @@ class TransferTest {
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 2); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
-            finishTransfers()
+            eventually("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
             rows[0].discard("create_files")
             assertEquals(listOf(null, "a1"), confirmedIds(receipt))
@@ -314,7 +309,7 @@ class TransferTest {
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
-            finishTransfers()
+            eventually("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
             assertEquals(receipt.operation, rows[0].retry("create_files").operation)
             assertEquals(listOf("a0", "a1", "a2"), confirmedIds(receipt))
@@ -471,10 +466,8 @@ class TransferTest {
             reopened.setOnline(true)
             abort.entered()
             abort.release()
-            reopened.resumeUploads(reopened.sessionEpoch())
             reopened.setOnline(false)
             reopened.setOnline(true)
-            reopened.resumeUploads(reopened.sessionEpoch())
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)

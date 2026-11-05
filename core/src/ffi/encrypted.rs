@@ -154,12 +154,6 @@ impl Database {
         }
     }
 
-    /// The owner Session sends a request that was stored before the close when it opens. The call returns without a request of its own.
-    pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
-        self.session()?;
-        Ok(None)
-    }
-
     /// Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
     pub async fn session_reset(&self) -> Result<(), DbError> {
         match self.await_life(self.life.session_reset()).await? {

@@ -128,9 +128,8 @@ extension BridgeProbeTests {
     try #require(changed == SQLITE_OK)
     let transport = MockTransport()
     transport.enqueue("SendLetter", failure: .Http(status: 422, detail: "refused"))
-    let database = try await reopen(config: config, modelsJson: models, transport: transport, operations: clubDefs)
-    let flushing = Task { try await database.flush() }
-    try await valueBeforeDeadline(flushing) {}
+    try await reopen(config: config, modelsJson: models, transport: transport, operations: clubDefs)
+    await eventually("the pending send reaches the server") { transport.calls.filter { $0.operationName == "SendLetter" }.count == 1 }
     #expect(transport.calls.filter { $0.operationName == "SendLetter" }.count == 1)
     #expect(try await Letter.ids([id]).read().isEmpty)
     transport.enqueue("SendLetter", failure: .Http(status: 422, detail: "refused again"))

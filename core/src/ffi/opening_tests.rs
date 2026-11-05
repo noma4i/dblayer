@@ -1,7 +1,7 @@
 use super::*;
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
-fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), uploads: None, power_saving: false, low_ram: false, preload: true, listening: true } }
+fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), uploads: None, power_saving: false, low_ram: false } }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
     slot.open(config(), "[]".into(), options(), None, None, None, None, None).await
 }
@@ -36,7 +36,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     let blob = |name: &str| WireUploadOperations { create_blob: Some(WireUploadOperation { name: name.into(), root_path: None }), multipart: None };
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), uploads: Some(blob(name)), power_saving: false, low_ram: false, preload: true, listening: true };
+        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), uploads: Some(blob(name)), power_saving: false, low_ram: false };
         let opened = slot.open(config(), "[]".into(), options, Some(Arc::new(Plain)), None, None, None, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
@@ -93,7 +93,7 @@ async fn the_power_and_memory_facts_given_to_open_hold_the_first_preload() {
     for (power_saving, low_ram, loads_at_open) in [(true, false, false), (false, true, false), (false, false, true)] {
         let requests = Arc::new(AtomicUsize::new(0));
         let slot = OpenDatabase::new();
-        let options = OpenOptions { operations: operations.into(), uploads: None, power_saving, low_ram, preload: true, listening: true };
+        let options = OpenOptions { operations: operations.into(), uploads: None, power_saving, low_ram };
         let database = slot.open(config(), models.clone(), options, Some(Arc::new(CountingFeed(requests.clone()))), None, None, None, None).await.unwrap();
         let sync = database.sync().unwrap();
         if loads_at_open {
@@ -129,7 +129,7 @@ async fn the_preload_waits_until_the_listener_has_taken_its_first_snapshot() {
     let models = serde_json::to_string(&vec![users_spec(), moments]).unwrap();
     let operations = r#"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id } pageInfo { hasNextPage endCursor } } }"}]"#;
     let requests = Arc::new(AtomicUsize::new(0));
-    let options = OpenOptions { operations: operations.into(), uploads: None, power_saving: true, low_ram: false, preload: true, listening: true };
+    let options = OpenOptions { operations: operations.into(), uploads: None, power_saving: true, low_ram: false };
     let database = OpenDatabase::new().open(config(), models, options, Some(Arc::new(CountingFeed(requests.clone()))), None, None, None, None).await.unwrap();
     let (available, waiting) = std::sync::mpsc::channel();
     let stream = database.subscribe(database.session_epoch(), StreamRequest::Query { query_json: r#"{"model":"users"}"#.into() }, Arc::new(Waiting(available)));
@@ -143,42 +143,4 @@ async fn the_preload_waits_until_the_listener_has_taken_its_first_snapshot() {
     yield_until("the preload after the first snapshot", || requests.load(Ordering::SeqCst) == 1).await;
     database.cancel_stream(stream);
     database.close_now();
-}
-
-#[tokio::test]
-async fn preload_off_sends_no_request_on_any_event_and_on_loads() {
-    use crate::sync::rig::{moments_spec, users_spec};
-    use crate::test_wait::yield_until;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    let mut moments = moments_spec();
-    moments.relations.iter_mut().find(|relation| relation.name == "feed").unwrap().preload = Some(Default::default());
-    let models = serde_json::to_string(&vec![users_spec(), moments]).unwrap();
-    let operations = r#"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id } pageInfo { hasNextPage endCursor } } }"}]"#;
-    for (clocked, preload) in [(false, false), (true, false), (false, true), (true, true)] {
-        let requests = Arc::new(AtomicUsize::new(0));
-        let slot = OpenDatabase::new();
-        let transport: Arc<dyn Transport> = Arc::new(CountingFeed(requests.clone()));
-        let database = if clocked {
-            let database = slot.open_with_clock(config(), models.clone(), Some(transport), None, super::super::TestClock::new(1_000_000), preload, true, None, None, None, None).await.unwrap();
-            database.register_operations(operations.into()).unwrap();
-            database
-        } else {
-            let options = OpenOptions { operations: operations.into(), uploads: None, power_saving: false, low_ram: false, preload, listening: true };
-            slot.open(config(), models.clone(), options, Some(transport), None, None, None, None).await.unwrap()
-        };
-        let sync = database.sync().unwrap();
-        if preload {
-            yield_until("the preload", || requests.load(Ordering::SeqCst) == 1).await;
-        } else {
-            let _entered = super::super::database::executor().unwrap().enter();
-            sync.set_online(false);
-            sync.set_online(true);
-            sync.set_power_saving(true);
-            sync.set_power_saving(false);
-            sync.commit_session_for_test();
-            sync.inner.preload_on_event();
-            assert!(requests.load(Ordering::SeqCst) == 0 && !sync.preload_running(), "clocked={clocked} preload off started a request");
-        }
-        database.close_now();
-    }
 }

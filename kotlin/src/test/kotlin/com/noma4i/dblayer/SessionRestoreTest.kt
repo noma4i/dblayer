@@ -40,12 +40,10 @@ class SessionRestoreTest {
             transport.base.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
             DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
-            val oldEpoch = DBlayer.database.sessionEpoch()
             val oldScope = AccountScope.current()
             val old = async { runCatching { User.profile.load(oldScope) } }
             transport.arrived.await()
             DBlayer.sessionReset()
-            assertTrue(runCatching { DBlayer.database.resume(oldEpoch) }.exceptionOrNull() is DbException.Interrupted)
             assertTrue(old.await().exceptionOrNull() is DbException.Interrupted)
             User.profile.load(AccountScope.current())
             transport.released.complete(Unit)

@@ -18,8 +18,6 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
 }
 #[cfg(test)]
 mod close_tests;
-#[cfg(test)]
-mod pending_registration_tests;
 mod foreign_future;
 mod lease;
 mod open_slot;
@@ -149,11 +147,7 @@ mod sealed_errors_tests;
 #[cfg(test)]
 mod session_guards_tests;
 #[cfg(test)]
-mod session_resume_effect_tests;
-#[cfg(test)]
 mod open_layout_tests;
-#[cfg(test)]
-mod upload_resume_tests;
 #[cfg(test)]
 mod upload_process_tests;
 #[cfg(test)]

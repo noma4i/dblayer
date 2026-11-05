@@ -468,16 +468,6 @@ impl Inner {
 }
 
 impl Sync {
-    pub async fn resume_uploads(&self, admitted: &crate::ffi::legacy::Admitted) -> Result<(), SyncError> {
-        self.inner.require_session(admitted)?;
-        admitted.run(async {
-            self.inner.abort_transfers(admitted).await?;
-            self.inner.start_uploads()?;
-            self.wait_uploads().await;
-            Ok(())
-        }).await?
-    }
-
     pub(crate) async fn upload_create_claiming(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, action: &str, values: serde_json::Map<String, serde_json::Value>, file: UploadFile) -> Result<(crate::db::Row, i64, i64, Arc<crate::sync::OutcomeTicket>), SyncError> {
         self.inner.require_session(admitted)?;
         let inner = self.inner.clone();
@@ -586,6 +576,7 @@ impl Sync {
         self.inner.finish_run(admitted, seq, position, run);
     }
 
+    #[cfg(test)]
     pub(crate) async fn wait_uploads(&self) {
         loop {
             let mut tasks = std::mem::take(&mut locked(&self.inner.uploads).tasks);

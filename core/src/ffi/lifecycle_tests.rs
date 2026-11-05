@@ -118,7 +118,7 @@ async fn open(server: Arc<Server>) -> Arc<Database> {
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), sessionless: false });
     encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), sessionless: true });
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, models(), Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), None, TestClock::new(1_000_000), false, false, Some(encrypted), Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), Some(server), None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, models(), Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), None, TestClock::new(1_000_000), Some(encrypted), Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), Some(server), None).await.unwrap();
     database.register_operations(json!([
         {"name":"MyProfile","document":"query MyProfile { me { id name } }"},
         {"name":"UserNode","document":"query UserNode($id: ID!) { node(id: $id) { ... on User { id name } } }"},

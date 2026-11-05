@@ -250,7 +250,7 @@ extension BridgeProbeTests {
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
     let reader = LossyReader()
-    let stream = try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .none), sink: reader)
+    let stream = try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .never), sink: reader)
     reader.bind(stream)
     await eventually("the failed stream ended") { !reader.ended.isEmpty }
 

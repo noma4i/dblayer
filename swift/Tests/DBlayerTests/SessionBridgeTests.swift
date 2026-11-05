@@ -15,10 +15,6 @@ private final class RecordingSession: Database, @unchecked Sendable {
     record("call \(operation) \(bodyJson)")
     return #"{"ticket":"t-1"}"#
   }
-  override func sessionResume() async throws -> String? {
-    record("resume")
-    return #"{"ticket":"t-2"}"#
-  }
   override func sessionReset() async throws { record("reset") }
   override func sessionEpoch() -> UInt64 { 1 }
   override func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws -> WireOperationReceipt {
@@ -46,11 +42,10 @@ extension BridgeProbeTests {
     }
   }
 
-  @Test @MainActor func sessionResumeDecodesTheAnswerAndResetReachesTheCore() async throws {
+  @Test @MainActor func sessionResetReachesTheCore() async throws {
     try await withRecordingSession { recording in
-      #expect(try await DB.sessionResume(as: TicketAnswer.self) == TicketAnswer(ticket: "t-2"))
       try await DB.sessionReset()
-      #expect(recording.calls == ["resume", "reset"])
+      #expect(recording.calls == ["reset"])
     }
   }
 

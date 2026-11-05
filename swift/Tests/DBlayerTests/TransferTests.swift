@@ -17,7 +17,6 @@ private func confirmedIds<Model: DBModel>(_ receipt: OperationReceipt<Model>) as
   try await confirmedPairs(receipt).map { $0?.id }
 }
 
-private func finishTransfers() async throws { try await DB.database.resumeUploads(epoch: DB.database.sessionEpoch()) }
 
 private final class MultipartTransfer: Transport, @unchecked Sendable {
   let mock = MockTransport()
@@ -174,9 +173,11 @@ extension BridgeProbeTests {
         try await DB.close()
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, uploads: uploads, encrypted: encrypted, credentials: credential, http: server)
         try DB.database.registerOperations(defsJson: operations)
-        _ = try await DB.database.sessionResume()
-        try await finishTransfers()
-        try await DB.database.flush()
+        await eventually("both assets are stored") {
+          let a1 = (try? await Asset.find("a1").current()) ?? nil
+          let a2 = (try? await Asset.find("a2").current()) ?? nil
+          return a1 != nil && a2 != nil
+        }
         #expect(try await Asset.find("a1").current() != nil)
         #expect(try await Asset.find("a2").current() != nil)
       } else {
@@ -277,10 +278,8 @@ extension BridgeProbeTests {
     try reopened.setOnline(online: true)
     await abort.entered()
     abort.release()
-    try await reopened.resumeUploads(epoch: reopened.sessionEpoch())
     try reopened.setOnline(online: false)
     try reopened.setOnline(online: true)
-    try await reopened.resumeUploads(epoch: reopened.sessionEpoch())
     let aborts = transport.calls.filter { $0.operationName == "AbortMultipart" }
     #expect(aborts.count == 1 && aborts.first?.purpose == .transfer)
     try await DB.close()
@@ -304,7 +303,7 @@ extension BridgeProbeTests {
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(2), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)
-    try await finishTransfers()
+    await eventually("the refused file failed") { ((try? await Asset.find(rows[0].id).current()?.sync.state) ?? nil) == .failed }
     #expect(try await Asset.find(rows[0].id).current()?.sync.state == .failed)
     try await rows[0].discard(action: "create_files")
     #expect(try await confirmedIds(receipt) == [nil, "a1"])
@@ -335,7 +334,7 @@ extension BridgeProbeTests {
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(3), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)
-    try await finishTransfers()
+    await eventually("the refused file failed") { ((try? await Asset.find(rows[0].id).current()?.sync.state) ?? nil) == .failed }
     #expect(try await Asset.find(rows[0].id).current()?.sync.state == .failed)
     #expect(try await rows[0].retry(action: "create_files").operation == receipt.operation)
     #expect(try await confirmedIds(receipt) == ["a0", "a1", "a2"])
@@ -503,10 +502,8 @@ extension BridgeProbeTests {
     try reopened.setOnline(online: true)
     await abort.entered()
     abort.release()
-    try await reopened.resumeUploads(epoch: reopened.sessionEpoch())
     try reopened.setOnline(online: false)
     try reopened.setOnline(online: true)
-    try await reopened.resumeUploads(epoch: reopened.sessionEpoch())
     let aborts = transport.calls.filter { $0.operationName == "AbortMultipart" }
     #expect(aborts.count == 1)
     #expect(aborts.first?.purpose == .transfer)

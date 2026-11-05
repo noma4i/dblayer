@@ -133,8 +133,8 @@ class ClubTest {
                 check(changed == 0)
                 val transport = MockTransport()
                 transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused"))
-                val database = reopen(config, models, transport, CLUB_DEFS)
-                withTimeout(5000) { database.flush() }
+                reopen(config, models, transport, CLUB_DEFS)
+                eventually("the pending send reaches the server") { transport.calls.count { it.operationName == "SendLetter" } == 1 }
                 assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
                 assertTrue(Query("Letter", Letter).readRow(id) == null)
                 transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused again"))

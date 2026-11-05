@@ -116,7 +116,7 @@ async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_s
         StreamRequest::Query { query_json: bad.into() },
         StreamRequest::Query { query_json: "not json".into() },
         StreamRequest::Count { query_json: bad.into() },
-        StreamRequest::Entity { model: "Moment".into(), id: String::new(), fetch: super::EntityFetch::None },
+        StreamRequest::Entity { model: "Moment".into(), id: String::new(), fetch: super::EntityFetch::Never },
         StreamRequest::Related { query_json: r#"{"model":"Moment"}"#.into(), name: "nope".into() },
         StreamRequest::Query { query_json: r#"{"model":"Nope"}"#.into() },
     ];

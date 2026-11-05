@@ -38,7 +38,6 @@ extension BridgeProbeTests {
     transport.base.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
-    let oldEpoch = try DB.database.sessionEpoch()
     let oldScope = try DB.account()
     let result = AsyncStream<Bool>.makeStream()
     Task {
@@ -48,10 +47,6 @@ extension BridgeProbeTests {
     }
     _ = try #require(await Cursor(transport.arrived.stream).next("the old request"))
     try await DB.sessionReset()
-    do {
-      try await DB.database.resume(epoch: oldEpoch)
-      Issue.record("the old resume was accepted")
-    } catch DbError.Interrupted {}
     #expect(await Cursor(result.stream).next("the old load ends") == true)
     try await User.profile.load(in: DB.account())
     transport.released.continuation.yield(())

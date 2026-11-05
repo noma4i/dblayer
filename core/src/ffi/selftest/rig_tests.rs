@@ -525,7 +525,7 @@ impl Rig {
         }
         if reactions { add_reactions(&mut models); }
         let database = opener
-            .open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), false, false, Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
+            .open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(world.clone()), None)
             .await
             .unwrap();
         database.register_operations(plain_operations()).unwrap();
@@ -539,7 +539,7 @@ impl Rig {
         let opener = OpenDatabase::new();
         let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
         add_reactions(&mut models);
-        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), false, false, None, None, None, None).await.unwrap();
+        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), None, None, None, None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
@@ -579,7 +579,7 @@ impl Rig {
             action.variables.insert("id".into(), "id".into());
             group["actions"].as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
         }
-        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), false, false, None, None, None, None).await.unwrap();
+        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), None, None, None, None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
@@ -589,7 +589,7 @@ impl Rig {
         self.switch.set(None);
         bound(self.database.close_database()).await.unwrap();
         self.switch.set(next);
-        let database = self.opener.open_with_clock(config(), plain_models(), Some(self.switch.clone()), None, self.clock.clone(), false, false, None, None, None, None).await.unwrap();
+        let database = self.opener.open_with_clock(config(), plain_models(), Some(self.switch.clone()), None, self.clock.clone(), None, None, None, None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
         self.database = database;
     }
@@ -621,7 +621,7 @@ impl Rig {
 
     /// A second open through the opener that already owns an open database.
     pub(super) async fn open_again(&self, transport: Option<Arc<dyn Transport>>) -> Result<Arc<Database>, DbError> {
-        self.opener.open_with_clock(config(), plain_models(), transport, None, TestClock::new(1_000_000), false, false, None, None, None, None).await
+        self.opener.open_with_clock(config(), plain_models(), transport, None, TestClock::new(1_000_000), None, None, None, None).await
     }
 
     pub(super) async fn settle(&self) { bound(crate::ffi::settled(&self.database)).await.unwrap(); }

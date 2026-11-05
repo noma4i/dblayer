@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cancellable = false;
     let mut cancellations = 0;
     for line in source.split_inclusive('\n') {
-        if ["uniffi_dblayer_fn_method_database_session_call(", "uniffi_dblayer_fn_method_database_session_resume(", "uniffi_dblayer_fn_func_fetch_server_config("].iter().any(|call| line.contains(call)) { cancellable = true; }
+        if ["uniffi_dblayer_fn_method_database_session_call(", "uniffi_dblayer_fn_func_fetch_server_config("].iter().any(|call| line.contains(call)) { cancellable = true; }
         if let Some((indent, result)) = line.split_once("pollFunc: ffi_dblayer_rust_future_poll_") {
             if cancellable {
                 output.push_str(&format!("{indent}cancelFunc: ffi_dblayer_rust_future_cancel_{result}"));
@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         output.push_str(line);
     }
-    if cancellations != 3 { return Err("expected three cancellable encrypted Swift calls".into()); }
+    if cancellations != 2 { return Err("expected two cancellable encrypted Swift calls".into()); }
     std::fs::write(file, output)?;
     Ok(())
 }

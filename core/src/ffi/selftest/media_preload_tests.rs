@@ -144,7 +144,7 @@ async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
         {"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id chatId kind mediaKind sequenceNumber } }"}
     ]).to_string();
     let transport = Arc::new(MarkedMediaTransport::default());
-    let options = OpenOptions { operations, uploads: None, power_saving: false, low_ram: false, preload: false, listening: false };
+    let options = OpenOptions { operations, uploads: None, power_saving: false, low_ram: false };
     let database = within_secs(20, OpenDatabase::new().open(Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&specs).unwrap(), options, Some(transport.clone()), None, None, None, None)).await.unwrap();
     let epoch = database.session_epoch();
     let params = json!({"chatId":"c1"}).to_string();
@@ -170,7 +170,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
         {"name":"PresenceOnline","document":"query PresenceOnline { presenceOnline { id } }"},
         {"name":"ChatMedia","document":"query ChatMedia($chatId: ID!, $first: Int, $after: Cursor, $mediaKinds: [String!], $includeGifts: Boolean!) { node(id: $chatId) { ... on Chat { messages(first: $first, after: $after, mediaKinds: $mediaKinds, includeGifts: $includeGifts) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } } }"}
     ]).to_string();
-    let options = OpenOptions { operations, uploads: None, power_saving: false, low_ram: false, preload: true, listening: true };
+    let options = OpenOptions { operations, uploads: None, power_saving: false, low_ram: false };
     let opener = OpenDatabase::new();
     let database = within_secs(20, opener.open(Config { path: None, data_version: None, cache_rows: 32 }, models(), options, Some(transport.clone()), None, None, None, None)).await.unwrap();
     within_secs(20, transport.preload.notified()).await;

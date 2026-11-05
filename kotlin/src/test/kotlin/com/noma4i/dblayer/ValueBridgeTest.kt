@@ -305,7 +305,7 @@ class ValueBridgeTest {
             openSession()
             signIn("A")
             val reader = LossyReader()
-            reader.bind(DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Entity("Nope", "x", EntityFetch.NONE), reader))
+            reader.bind(DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Entity("Nope", "x", EntityFetch.NEVER), reader))
             eventually("the failed stream ended") { reader.ended().isNotEmpty() }
 
             assertEquals(listOf(StreamEnd.INVALID), reader.ended())
