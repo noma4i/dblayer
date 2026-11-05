@@ -184,9 +184,17 @@ impl Watched {
         seen.unwrap_or_else(|| Err(DbError::Interrupted { detail: "the stream is gone".into() }))
     }
 
+    /// What `cancel()` of a platform does: it returns once the stream is cancelled.
     pub(crate) fn cancel(&self) {
         let stream = self.stream.clone();
-        drop(tokio::spawn(async move { stream.cancel().await }));
+        let handle = tokio::runtime::Handle::current();
+        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+            self.pump.abort();
+            self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+            tokio::task::block_in_place(|| handle.block_on(async move { stream.cancel().await }));
+        } else {
+            drop(tokio::spawn(async move { stream.cancel().await }));
+        }
     }
 
     pub(crate) async fn cancelled(&self) { self.stream.cancel().await; }
@@ -268,7 +276,7 @@ impl Database {
 
     /// Loads the relation of the stream again from the server.
     pub(crate) async fn refresh_stream(&self, id: u64) -> Result<(), DbError> {
-        let Some(watched) = self.watched_by(id) else { return Err(DbError::Interrupted { detail: "the stream is gone".into() }) };
+        let Some(watched) = self.watched_by(id).filter(|watched| !watched.ended.load(std::sync::atomic::Ordering::SeqCst)) else { return Err(DbError::Interrupted { detail: "the stream is gone".into() }) };
         if let ReadRequest::Entity { model, id, .. } = &watched.request {
             let spec = self.db.spec(model)?;
             let relation = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One)).map(|relation| relation.name.clone()).ok_or_else(|| DbError::Invalid { detail: format!("{model} declares no node read") })?;

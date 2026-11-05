@@ -35,6 +35,9 @@ fn refused(detail: impl Into<String>) -> Decoded { Decoded::Refused { temporary:
 
 /// `root_of` gives the root field of a registered mutation.
 pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &DecodeJob) -> Decoded {
+    if let Some(code) = serde_json::from_str::<Value>(&job.body).ok().and_then(|body| body.get("error").and_then(Value::as_str).map(str::to_string)) {
+        return refused(code);
+    }
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
     if !answer.errors.is_empty() {
         let messages: Vec<&str> = answer.errors.iter().map(|error| error.message.as_str()).collect();

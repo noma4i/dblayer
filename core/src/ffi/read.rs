@@ -219,12 +219,13 @@ impl Database {
                 let model = query.model.as_str().to_string();
                 let spec = self.db.spec(&model)?;
                 let kind = if matches!(request, ReadRequest::Count { .. }) { Kind::Count } else { Kind::List };
+                let live = !spec.listens.is_empty() || remote.as_ref().is_some_and(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && !declared.updates.is_empty()));
                 let remote = remote.filter(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && declared.remote.is_some()));
                 let window = match &remote {
                     Some((relation, params)) => WindowKey::relation(&model, relation, params),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind, model: model.clone(), tables: vec![crate::ddl::table_name(&model)], local: spec.is_local(), remote: remote.is_some(), live: !spec.is_local() && spec.is_live(), window, subject: query_json.clone() })
+                Ok(View { kind, model: model.clone(), tables: vec![crate::ddl::table_name(&model)], local: spec.is_local(), remote: remote.is_some(), live, window, subject: query_json.clone() })
             }
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
@@ -242,7 +243,7 @@ impl Database {
                     Some(relation) => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))])),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: vec![crate::ddl::table_name(model)], local: spec.is_local(), remote: fetch != Fetch::Never, live: !spec.is_local() && spec.is_live(), window, subject: id.clone() })
+                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: vec![crate::ddl::table_name(model)], local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), window, subject: id.clone() })
             }
         }
     }

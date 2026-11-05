@@ -116,6 +116,7 @@ impl Database {
 
     /// The rows of the ids that the root of the model has now, in the order of the call.
     pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
+        self.admit_now(epoch)?;
         self.node_relation(&model, &relation, NodeRead::Many)?;
         let ids = row_ids.iter().map(|id| RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })).collect::<Result<Vec<_>, _>>()?;
         let wire = self.wire(&model)?.clone();
