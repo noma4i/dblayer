@@ -197,4 +197,6 @@ bash scripts/check_dblayer.sh      # cheap checks, then the Rust, Swift, Kotlin 
 cargo test                         # Rust core and generator only
 ```
 
+The Rust toolchain is pinned in `rust-toolchain.toml` (channel and cross targets).
+
 More in [docs/getting-started.md](docs/getting-started.md).
