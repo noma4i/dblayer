@@ -350,7 +350,7 @@ fn inv_op_15_kept_update_stays_failed_with_the_error_and_blocks_only_its_own_rec
     assert_eq!(statuses(&rig), [OperationStatus::Failed, OperationStatus::Pending]);
 }) }
 
-// mutation: drop the retire_operations call from Store::reset_incompatible
+// mutation: drop the retire_operations call from the account clearing of the Store
 #[test]
 fn logout_leaves_no_refused_operation_able_to_block_the_next_one_of_the_row() { crate::test_wait::paused(async {
     let rig = keeping_rig();
