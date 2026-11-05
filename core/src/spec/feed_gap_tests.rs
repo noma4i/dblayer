@@ -8,10 +8,10 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, PoisonError};
 
-use super::ref_feed::{Counter, Effect, Feed as Ref, Input, Mode, Obs, Reject, To};
+use super::ref_feed::{Counter, Effect, Feed as Ref, Input, Kind, Mode, Obs, Reject, To};
 use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
-use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, FramedEvent, Outgoing, Protocol, ProtocolReason};
+use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
 use crate::owners::read::windows::{WindowKey, Windows};
 use crate::owners::store::StoreWriter;
 use crate::owners::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Landing, Log, NoEffect, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
@@ -79,6 +79,8 @@ struct Twin {
     generation: u64,
     /// `(connection, counter)` of every `Seal` the owner gave out.
     sealed: Vec<(ConnectionId, u64)>,
+    /// The `SnapshotRequest` effects the owner gave out.
+    snapshots: usize,
     reread: bool,
     /// Everything the owner gave out, in order, across the steps.
     history: Vec<Emitted<FeedEffect>>,
@@ -100,7 +102,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         let mut reference = Ref::new();
         reference.debounce = debounce;
-        let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), generation: 0, sealed: Vec::new(), reread: false, history: Vec::new(), shown: Vec::new() };
+        let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), generation: 0, sealed: Vec::new(), snapshots: 0, reread: false, history: Vec::new(), shown: Vec::new() };
         if let Some(on) = online {
             twin.post(FeedInput::Online(Online(on)));
             twin.reference.online = Some(on);
@@ -144,7 +146,17 @@ impl Twin {
             Input::HandshakeDone => vec![FeedInput::HandshakeDone { connection_id: self.connection(To::Opening), key_id: 7 }],
             Input::FrameOpened { to, counter, events } => {
                 let connection = self.connection(*to);
-                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), events: events.iter().map(|(model, payload)| framed(model, payload, reread)).collect() }]
+                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame: Frame::Events { id: f::SUBSCRIPTION.into(), events: events.iter().map(|(model, payload)| framed(model, payload, reread)).collect() } }]
+            }
+            Input::Frame { to, counter, kind } => {
+                let connection = self.connection(*to);
+                let frame = match kind {
+                    Kind::Ping => Frame::Ping { ts: 5 },
+                    Kind::Complete => Frame::Complete { id: f::SUBSCRIPTION.into() },
+                    Kind::OtherId => Frame::Complete { id: "2".into() },
+                    Kind::Quiet => Frame::Quiet,
+                };
+                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame }]
             }
             Input::ProtocolError { to } => vec![FeedInput::ProtocolError { connection_id: self.connection(*to), reason: ProtocolReason::Decrypt }],
             Input::Event { to, model, payload } => vec![FeedInput::Event { connection_id: self.connection(*to), event: framed(model, payload, reread) }],
@@ -217,9 +229,14 @@ impl Twin {
                 Emitted::Run(FeedEffect::Connect { .. }) => modelled.push(Effect::Connect),
                 Emitted::Run(FeedEffect::Seal { connection, counter, frame, .. }) => {
                     self.sealed.push((connection, counter));
-                    modelled.push(if matches!(frame, Outgoing::Subscribe { .. }) { Effect::SealSubscribe } else { Effect::SealUnsubscribe });
+                    modelled.push(match frame {
+                        Outgoing::Subscribe { .. } => Effect::SealSubscribe,
+                        Outgoing::Unsubscribe => Effect::SealUnsubscribe,
+                        Outgoing::Pong { .. } => Effect::SealPong,
+                    });
                 }
                 Emitted::Run(FeedEffect::Close { .. }) => modelled.push(Effect::Close),
+                Emitted::Run(FeedEffect::SnapshotRequest { .. }) => self.snapshots += 1,
                 Emitted::Run(FeedEffect::Drained(_)) => modelled.push(Effect::Drained),
                 Emitted::Schedule { after, input, .. } if input.starts_with("Tick") => {
                     assert_eq!(after, std::time::Duration::from_millis(self.debounce_ms), "the debounce is the delay of the Schedule");
@@ -294,6 +311,8 @@ fn feed_created() {
     assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
     assert_eq!(twin.state().online(), None, "online is unknown until the first Online");
     twin.post(FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(7), generation: 4 }));
+    let requests = take(&twin.log);
+    assert!(requests.iter().any(|entry| matches!(entry, Emitted::Run(FeedEffect::SnapshotRequest { epoch: EPOCH }))), "the step of EpochStarted asks Network for the snapshot of Feed: {requests:?}");
     twin.post(FeedInput::Online(Online(true)));
     twin.reference.online = Some(true);
     twin.step(plus("Chat"));
@@ -387,6 +406,22 @@ fn feed_landing_after_drop() {
     twin.step(Input::Committed);
     assert_eq!(twin.reference.take_obs(), Vec::new());
     assert_eq!(twin.state().landing(), 0, "a batch that lands after the break is settled");
+}
+
+#[test]
+fn feed_landing_rejected_after_drop() {
+    let mut opening = live_immediate();
+    opening.step(chat("c1"));
+    opening.step(Input::Dropped { to: To::Active });
+    assert!(matches!(opening.state().mode(), f::Mode::Opening { gap: true }));
+    opening.step(Input::Rejected(Reject::NoSession));
+    assert_eq!(opening.state().mode(), f::Mode::Ended, "a terminal refusal of the Store ends Feed in Opening");
+    assert!(opening.state().opening_connection().is_none());
+    let mut off = live_immediate();
+    off.step(chat("c1"));
+    off.step(Input::Online(false));
+    off.step(Input::Rejected(Reject::NoSession));
+    assert_eq!(off.state().mode(), f::Mode::Ended, "and in Off");
 }
 
 #[test]
@@ -804,6 +839,35 @@ fn feed_proto_frame_before_handshake() {
     let mut twin = opening();
     assert_eq!(twin.step(Input::FrameOpened { to: To::Opening, counter: Counter::Expected, events: vec![("Chat".into(), "c1".into())] }), [Effect::Close, Effect::ScheduleResubscribe]);
     assert_eq!(twin.state().position("Chat"), 0, "the frame does not sit");
+}
+
+#[test]
+fn feed_proto_ping_pong() {
+    let mut twin = live();
+    let connection = twin.connection(To::Active);
+    assert_eq!(twin.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::Ping }), [Effect::SealPong]);
+    assert!(matches!(twin.state().protocol(connection), Some(Protocol::Established { send_counter: 2, recv_counter, .. }) if recv_counter == f::FIRST_RECV_COUNTER + 1), "the pong reserved its own send counter");
+}
+
+#[test]
+fn feed_proto_frame_kinds() {
+    let mut other = live();
+    assert!(other.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::OtherId }).is_empty(), "a frame of another subscription id is not for Feed");
+    let mut quiet = live();
+    assert!(quiet.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::Quiet }).is_empty());
+    let mut complete = live();
+    assert_eq!(complete.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::Complete }), [Effect::Connect]);
+    let mut replayed = live();
+    assert_eq!(replayed.step(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete }), [Effect::Close, Effect::Connect], "the counter is checked before the meaning of the frame");
+}
+
+#[test]
+fn feed_live_dropped_closes_opening() {
+    let mut twin = live_immediate();
+    twin.step(plus("Post"));
+    let waiting = twin.state().opening_connection().expect("a connection waits for the new want");
+    assert_eq!(twin.step(Input::Dropped { to: To::Active }), [Effect::Close, Effect::Connect]);
+    assert_ne!(twin.state().opening_connection(), Some(waiting));
 }
 
 #[test]

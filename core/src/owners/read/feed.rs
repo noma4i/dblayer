@@ -59,6 +59,23 @@ pub enum Mode {
 pub enum ProtocolReason {
     Handshake,
     Decrypt,
+    /// A frame that passed the schema of the cable but is no valid frame of the subscription.
+    Frame,
+}
+
+/// The id of the one subscription of a connection: the frames of any other id are not for Feed.
+pub const SUBSCRIPTION: &str = "1";
+
+/// What a decrypted frame of the server says, as the executor reads it. The owner checks the counter before it reads the meaning.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Frame {
+    Ping { ts: i64 },
+    Events { id: String, events: Vec<FramedEvent> },
+    Complete { id: String },
+    /// The server closes the connection or reports an error: the connection ends.
+    Ended,
+    /// `ready`, `subscribed`, `pong`: nothing for the owner.
+    Quiet,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +97,8 @@ struct Connection {
 pub enum Outgoing {
     Subscribe { models: Vec<String> },
     Unsubscribe,
+    /// The answer to a server `ping`.
+    Pong { ts: i64 },
 }
 
 /// The effects of the runner: IO of the connection and the end of the owner.
@@ -92,6 +111,8 @@ pub enum FeedEffect {
     /// Transport `Unsubscribe(connection)`.
     Close { connection: ConnectionId },
     Drained(Drained),
+    /// `SnapshotRequest{Feed, epoch}` to Network: the first `Online` of the epoch comes back addressed to Feed.
+    SnapshotRequest { epoch: Epoch },
 }
 
 /// What the steps give out: an effect of the runner, a timer, or an input for another owner.
@@ -119,7 +140,7 @@ pub enum FeedInput {
     WantPlus { model: String, id: SubscriptionId, stream: bool },
     WantMinus { model: String, id: SubscriptionId },
     HandshakeDone { connection_id: ConnectionId, key_id: u64 },
-    FrameOpened { connection_id: ConnectionId, counter: u64, events: Vec<FramedEvent> },
+    FrameOpened { connection_id: ConnectionId, counter: u64, frame: Frame },
     ProtocolError { connection_id: ConnectionId, reason: ProtocolReason },
     Event { connection_id: ConnectionId, event: FramedEvent },
     /// `dropped` = the number of lost events per model, `None` = the number is unknown.
@@ -420,6 +441,7 @@ impl FeedState {
                     self.close_all(fx);
                 } else {
                     self.mark_lost(&events, fx);
+                    self.end(false, fx);
                 }
             }
         }
@@ -568,6 +590,7 @@ impl FeedState {
             Mode::Live if self.active_connection() == Some(connection) => {
                 self.flush_pending(fx);
                 self.active = None;
+                Self::close(self.opening.take(), fx);
                 self.mode = Mode::Opening { gap: true };
                 self.attempts = 0;
                 self.open_connection(fx);
@@ -598,7 +621,7 @@ impl FeedState {
         }
     }
 
-    fn frame_opened(&mut self, connection: ConnectionId, counter: u64, events: Vec<FramedEvent>, fx: &mut Vec<Fx>) {
+    fn frame_opened(&mut self, connection: ConnectionId, counter: u64, frame: Frame, fx: &mut Vec<Fx>) {
         let Some(found) = self.connection_mut(connection) else { return };
         let accepted = match &mut found.protocol {
             Protocol::Established { recv_counter, .. } if *recv_counter == counter => {
@@ -611,8 +634,20 @@ impl FeedState {
             self.protocol_failed(connection, fx);
             return;
         }
-        for event in events {
-            self.event(connection, event, fx);
+        match frame {
+            Frame::Ping { ts } => {
+                if let Some(found) = self.connection_mut(connection) {
+                    Self::seal(found, Outgoing::Pong { ts }, fx);
+                }
+            }
+            Frame::Events { id, events } if id == SUBSCRIPTION => {
+                for event in events {
+                    self.event(connection, event, fx);
+                }
+            }
+            Frame::Complete { id } if id == SUBSCRIPTION => self.dropped(connection, fx),
+            Frame::Ended => self.dropped(connection, fx),
+            Frame::Events { .. } | Frame::Complete { .. } | Frame::Quiet => {}
         }
     }
 
@@ -807,6 +842,7 @@ impl StateOwner for Feed {
             FeedInput::EpochStarted(started) => {
                 state.epoch = started.epoch;
                 state.base_generation = started.generation;
+                fx.push(Fx::Run(FeedEffect::SnapshotRequest { epoch: started.epoch }));
             }
             FeedInput::EpochEnded(ended) => {
                 if ended.epoch == state.epoch {
@@ -817,7 +853,7 @@ impl StateOwner for Feed {
             FeedInput::WantPlus { model, id, stream } => state.want_plus(model, id, stream, &mut fx),
             FeedInput::WantMinus { model, id } => state.want_minus(&model, id, &mut fx),
             FeedInput::HandshakeDone { connection_id, key_id } => state.handshake_done(connection_id, key_id, &mut fx),
-            FeedInput::FrameOpened { connection_id, counter, events } => state.frame_opened(connection_id, counter, events, &mut fx),
+            FeedInput::FrameOpened { connection_id, counter, frame } => state.frame_opened(connection_id, counter, frame, &mut fx),
             FeedInput::ProtocolError { connection_id, .. } => {
                 if state.connection_mut(connection_id).is_some() {
                     state.dropped(connection_id, &mut fx);

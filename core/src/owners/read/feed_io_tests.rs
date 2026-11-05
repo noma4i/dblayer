@@ -1,6 +1,8 @@
 //! `FeedIo` on `DetScheduler` with a scripted cable line. Requirement -> observed value -> assert:
 //! feed_io_frames_commit: the handshake, the subscribe frame with the first send counter, an opened frame as `FrameOpened`, an event reaches the Store as a `Commit`.
 //! feed_io_unsubscribe_closes: the last `Want-` seals the unsubscribe frame with the next counter and closes the line, no frame reaches the owner after it.
+//! feed_io_broken_next_drops: a `next` that is no response is a protocol error, the owner opens another connection and nothing lands.
+//! feed_io_close_cancels_handshake: `Close` of a connection that waits in its handshake ends the open (the future is dropped).
 //! feed_io_counter_mismatch_closes: a frame with a skipped counter closes the line and the owner opens another connection.
 
 use std::collections::VecDeque;
@@ -145,4 +147,54 @@ fn feed_io_counter_mismatch_closes() {
     pump(&mut det, feed, |_| closed.load(Ordering::SeqCst) >= 1);
     pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
     assert!(batches.all().is_empty(), "the frame with a skipped counter does not reach the Store");
+}
+
+#[test]
+fn feed_io_broken_next_drops() {
+    let (first, peer) = line();
+    let (second, _other) = line();
+    let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
+    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"next", "id":"1", "result":{}}) }).unwrap();
+    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
+    assert!(batches.all().is_empty());
+    assert!(saw_input(&det, "ProtocolError") >= 1, "the broken frame is an explicit protocol error");
+}
+
+struct Hanging(Arc<AtomicUsize>);
+
+struct DropCount(Arc<AtomicUsize>);
+
+impl Drop for DropCount {
+    fn drop(&mut self) { self.0.fetch_add(1, Ordering::SeqCst); }
+}
+
+#[async_trait]
+impl CableLines for Hanging {
+    async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError> {
+        let _guard = DropCount(self.0.clone());
+        std::future::pending().await
+    }
+}
+
+#[test]
+fn feed_io_close_cancels_handshake() {
+    let runtime = runtime();
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let (_, rest) = collector();
+    let io = FeedIo::new(Arc::new(Hanging(dropped.clone())), Arc::new(Models), runtime.handle().clone(), rest);
+    let mut det = DetScheduler::new(1);
+    let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
+    let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
+    let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), Discard);
+    let peers = f::FeedPeers { store: Address::<StoreWriter>::new(store.index()), windows: Address::<Windows>::new(windows.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into()), io);
+    det.start_epoch(EPOCH);
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online(Online(true)));
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
+    pump_for(&mut det, feed, Duration::from_millis(100));
+    assert_eq!(dropped.load(Ordering::SeqCst), 0, "the open waits");
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
+    let seen = dropped.clone();
+    pump(&mut det, feed, |_| seen.load(Ordering::SeqCst) >= 1);
 }

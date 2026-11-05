@@ -24,12 +24,25 @@ pub(super) enum Counter {
     Replayed,
 }
 
+/// A frame of the server that carries no model event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    Ping,
+    /// `complete` of the subscription of the connection.
+    Complete,
+    /// `complete` and `next` of another subscription id.
+    OtherId,
+    /// `ready`, `subscribed`, `pong`.
+    Quiet,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Input {
     WantPlus { model: String, id: u64, stream: bool },
     WantMinus { model: String, id: u64 },
     HandshakeDone,
     FrameOpened { to: To, counter: Counter, events: Vec<(String, String)> },
+    Frame { to: To, counter: Counter, kind: Kind },
     ProtocolError { to: To },
     Event { to: To, model: String, payload: String },
     ChannelLost { to: To, dropped: Option<Vec<(String, u64)>> },
@@ -55,6 +68,7 @@ pub(super) enum Effect {
     Connect,
     SealSubscribe,
     SealUnsubscribe,
+    SealPong,
     Close,
     ScheduleTick,
     ScheduleResubscribe,
@@ -314,6 +328,10 @@ impl Feed {
                     self.close_all(&mut effects);
                 } else {
                     self.mark(&batch, |_| Slot::Lost);
+                    self.mode = Mode::Ended;
+                    self.close_all(&mut effects);
+                    self.held.clear();
+                    self.pending.clear();
                 }
             }
         }
@@ -415,6 +433,7 @@ impl Feed {
                     self.flush(&mut effects);
                 }
                 self.active = None;
+                Self::goodbye(self.opening.take(), &mut effects);
                 self.mode = Mode::Opening { gap: true };
                 self.opening = Some(Proto::Handshake);
                 effects.push(Effect::Connect);
@@ -532,6 +551,18 @@ impl Feed {
                         self.event(to, &model, &payload, &mut effects);
                     }
                 }
+                (Some(_), _) => {
+                    effects.push(Effect::Close);
+                    effects.extend(self.dropped(to));
+                }
+                (None, _) => {}
+            },
+            Input::Frame { to, counter, kind } => match (self.named(to), counter) {
+                (Some(Proto::Established), Counter::Expected) => match kind {
+                    Kind::Ping => effects.push(Effect::SealPong),
+                    Kind::Complete => return self.dropped(to),
+                    Kind::OtherId | Kind::Quiet => {}
+                },
                 (Some(_), _) => {
                     effects.push(Effect::Close);
                     effects.extend(self.dropped(to));

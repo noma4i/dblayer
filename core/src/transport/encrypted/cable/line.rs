@@ -81,6 +81,16 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
     }
 }
 
+/// A socket whose handshake is cancelled mid-way (the connect future is dropped) closes in the background.
+struct OpenSocket(Option<Arc<dyn CableSocket>>);
+
+impl Drop for OpenSocket {
+    fn drop(&mut self) {
+        let (Some(socket), Ok(handle)) = (self.0.take(), tokio::runtime::Handle::try_current()) else { return };
+        crate::task::spawn_on(crate::task::Carry::Detached, &handle, async move { socket.close().await });
+    }
+}
+
 struct SocketLine {
     socket: Arc<dyn CableSocket>,
     keys: CableKeys,
@@ -119,7 +129,10 @@ impl CableLines for EncryptedLines {
     async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError> {
         let credential = (self.credential)()?;
         let socket = self.transport.open_cable().await?;
-        match handshake(socket.as_ref(), &self.config, &credential).await {
+        let mut open = OpenSocket(Some(socket.clone()));
+        let keys = handshake(socket.as_ref(), &self.config, &credential).await;
+        open.0 = None;
+        match keys {
             Ok(keys) => Ok(Arc::new(SocketLine { socket, keys, channel: self.config.cable_channel.clone() })),
             Err(error) => {
                 socket.close().await;

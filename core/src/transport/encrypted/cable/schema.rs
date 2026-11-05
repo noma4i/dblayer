@@ -14,7 +14,7 @@ pub(super) fn valid(body: &Value, server: bool) -> bool {
     let (required, optional): (&[&str], &[&str]) = match (server, body["t"].as_str()) {
         (false, Some("subscribe")) => (&["id", "query"], &["variables", "operationName"]),
         (false, Some("unsubscribe")) => (&["id"], &[]),
-        (false, Some("ping")) | (true, Some("pong")) => (&["ts"], &[]),
+        (false, Some("ping" | "pong")) | (true, Some("pong" | "ping")) => (&["ts"], &[]),
         (false, Some("close")) => (&[], &[]),
         (true, Some("ready")) => (&["connectionId", "challengeDigest"], &[]),
         (true, Some("subscribed" | "complete")) => (&["id"], &[]),

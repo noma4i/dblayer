@@ -3,13 +3,15 @@
 //! counter the effect names. The counters and the protocol transitions belong to `Feed`. A closed connection gives no more inputs.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-use super::feed::{FramedEvent, Outgoing, ProtocolReason};
+use super::feed::{Frame, FramedEvent, Outgoing, ProtocolReason, SUBSCRIPTION};
 use super::ports::Rest;
 use crate::owners::contract::ConnectionId;
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput};
@@ -24,11 +26,15 @@ pub trait FeedCodec: Send + Sync + 'static {
     fn events(&self, response: Response) -> Vec<FramedEvent>;
 }
 
-const SUBSCRIPTION: &str = "1";
+/// How long the queued frames of a closing established connection may still go out.
+const CLOSE_DRAIN: Duration = Duration::from_secs(2);
 
 struct Open {
     frames: mpsc::UnboundedSender<(u64, Value)>,
     cancel: CancelToken,
+    /// Set at `Close`: the writer gets `CLOSE_DRAIN` to send the queue, then the line closes.
+    closing: CancelToken,
+    established: Arc<AtomicBool>,
 }
 
 type Connections = Arc<Mutex<HashMap<ConnectionId, Open>>>;
@@ -49,8 +55,9 @@ impl FeedIo {
 
     fn connect(&self, stamp: EpochStamp, connection: ConnectionId, back: &Back<Feed>) {
         let cancel = CancelToken::new();
+        let (closing, established) = (CancelToken::new(), Arc::new(AtomicBool::new(false)));
         let (frames, mut queued) = mpsc::unbounded_channel::<(u64, Value)>();
-        self.open.lock().unwrap_or_else(PoisonError::into_inner).insert(connection, Open { frames, cancel: cancel.clone() });
+        self.open.lock().unwrap_or_else(PoisonError::into_inner).insert(connection, Open { frames, cancel: cancel.clone(), closing: closing.clone(), established: established.clone() });
         let (lines, codec, back) = (self.lines.clone(), self.codec.clone(), back.clone());
         let token = cancel.clone();
         let reply = move |input: FeedInput| {
@@ -69,6 +76,7 @@ impl FeedIo {
                 Err(TransportError::Decode(_)) => return reply(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Handshake }),
                 Err(_) => return reply(FeedInput::Dropped { connection_id: connection }),
             };
+            established.store(true, Ordering::SeqCst);
             reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection });
             let writer = {
                 let (line, reply) = (line.clone(), reply.clone());
@@ -83,6 +91,7 @@ impl FeedIo {
             let reader = Self::read(line.clone(), codec, connection, reply);
             tokio::select! {
                 () = cancel.cancelled() => {}
+                () = async { closing.cancelled().await; tokio::time::sleep(CLOSE_DRAIN).await } => {}
                 () = writer => cancel.cancel(),
                 () = reader => {}
             }
@@ -93,28 +102,41 @@ impl FeedIo {
     async fn read(line: Arc<dyn CableLine>, codec: Arc<dyn FeedCodec>, connection: ConnectionId, reply: impl Fn(FeedInput)) {
         loop {
             match line.next().await {
-                Incoming::Frame { counter, body } => match body["t"].as_str() {
-                    Some("closing") => {
-                        let (code, reason) = (body["code"].as_u64().unwrap_or(0) as u16, body["reason"].as_str().unwrap_or(""));
-                        return reply(if session_closed(code, reason) { FeedInput::SubscriptionEnded { connection_id: connection } } else { FeedInput::Dropped { connection_id: connection } });
+                Incoming::Frame { counter, body } => {
+                    let frame = match Self::frame_of(&codec, &body) {
+                        Ok(frame) => frame,
+                        Err(reason) => return reply(FeedInput::ProtocolError { connection_id: connection, reason }),
+                    };
+                    let last = matches!(&frame, Frame::Ended) || matches!(&frame, Frame::Complete { id } if id == SUBSCRIPTION);
+                    reply(FeedInput::FrameOpened { connection_id: connection, counter, frame });
+                    if last {
+                        return;
                     }
-                    Some("complete") => return reply(FeedInput::SubscriptionEnded { connection_id: connection }),
-                    Some("error") => {
-                        let retryable = body["retryable"] == true;
-                        return reply(if retryable { FeedInput::Dropped { connection_id: connection } } else { FeedInput::SubscriptionEnded { connection_id: connection } });
-                    }
-                    Some("next") => {
-                        let events = serde_json::from_value::<Response>(body["result"].clone()).ok().filter(|response| response.shape() != ResponseShape::Empty).map(|response| codec.events(response)).unwrap_or_default();
-                        reply(FeedInput::FrameOpened { connection_id: connection, counter, events });
-                    }
-                    _ => reply(FeedInput::FrameOpened { connection_id: connection, counter, events: Vec::new() }),
-                },
+                }
                 Incoming::Closed { code, reason } => {
                     return reply(if session_closed(code, &reason) { FeedInput::SubscriptionEnded { connection_id: connection } } else { FeedInput::Dropped { connection_id: connection } });
                 }
                 Incoming::Unreadable(_) => return reply(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Decrypt }),
             }
         }
+    }
+
+    /// The meaning of a frame the cable already validated. A `next` that is no response is a broken frame.
+    fn frame_of(codec: &Arc<dyn FeedCodec>, body: &Value) -> Result<Frame, ProtocolReason> {
+        let id = || body["id"].as_str().unwrap_or_default().to_string();
+        Ok(match body["t"].as_str() {
+            Some("ping") => Frame::Ping { ts: body["ts"].as_i64().unwrap_or_default() },
+            Some("closing" | "error") => Frame::Ended,
+            Some("complete") => Frame::Complete { id: id() },
+            Some("next") => {
+                let response = serde_json::from_value::<Response>(body["result"].clone()).map_err(|_| ProtocolReason::Frame)?;
+                if response.shape() == ResponseShape::Empty {
+                    return Err(ProtocolReason::Frame);
+                }
+                Frame::Events { id: id(), events: codec.events(response) }
+            }
+            _ => Frame::Quiet,
+        })
     }
 
     fn body_of(&self, frame: Outgoing) -> Value {
@@ -124,6 +146,7 @@ impl FeedIo {
                 json!({"t":"subscribe", "id":SUBSCRIPTION, "query":request.document, "variables":request.variables, "operationName":request.operation_name})
             }
             Outgoing::Unsubscribe => json!({"t":"unsubscribe", "id":SUBSCRIPTION}),
+            Outgoing::Pong { ts } => json!({"t":"pong", "ts":ts}),
         }
     }
 
@@ -136,7 +159,14 @@ impl FeedIo {
     }
 
     /// The frames sealed before the close still go out: the writer ends when its queue is empty and the sender is gone, then the line closes.
-    fn close(&self, connection: ConnectionId) { self.open.lock().unwrap_or_else(PoisonError::into_inner).remove(&connection); }
+    fn close(&self, connection: ConnectionId) {
+        let Some(open) = self.open.lock().unwrap_or_else(PoisonError::into_inner).remove(&connection) else { return };
+        if open.established.load(Ordering::SeqCst) {
+            open.closing.cancel();
+        } else {
+            open.cancel.cancel();
+        }
+    }
 }
 
 impl EffectRunner<Feed> for FeedIo {
