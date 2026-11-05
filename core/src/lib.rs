@@ -31,3 +31,5 @@ mod task;
 mod lib_tests;
 #[cfg(test)]
 mod test_wait;
+#[cfg(test)]
+mod spec;
