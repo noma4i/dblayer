@@ -196,15 +196,58 @@ fn message_from_a_tick_carries_the_owner_epoch_and_a_receiver_of_another_epoch_d
 }
 
 #[test]
-fn outbound_without_an_epoch_is_control_only_for_an_owner_type_without_epochs() {
+fn owner_with_epochs_keeps_sending_after_epoch_end_and_epochless_receiver_admits_any_stamp() {
+    let mut det = DetScheduler::new(1);
+    let sink = det.add::<Sink>("sink", Vec::new(), SinkRunner);
+    let sender = det.add::<Toy>("sender", ToyState { tell: Some((sink, 9)), ..ToyState::default() }, ToyRunner::default());
+    det.start_epoch_for(sender, 1);
+    det.end_epoch(1, Cause::Close);
+    det.run_until_quiet(10).unwrap();
+    det.send(sender, Stamp::Control, ToyInput::Tell);
+    det.run_until_quiet(10).unwrap();
+    assert_eq!(det.state(sink), &vec![9]);
+    assert_eq!(det.dropped(sink), 0);
+
+    let receiver = det.add::<Toy>("receiver", ToyState::default(), ToyRunner::default());
+    let relay = det.add::<Toy>("relay", ToyState { on_go: Some((receiver, ToyInput::Deposit(2))), ..ToyState::default() }, ToyRunner::default());
+    det.start_epoch_for(relay, 1);
+    det.start_epoch_for(receiver, 2);
+    det.end_epoch(1, Cause::Close);
+    det.run_until_quiet(10).unwrap();
+    let before = det.dropped(receiver);
+    det.send(relay, Stamp::Control, ToyInput::Go);
+    det.run_until_quiet(10).unwrap();
+    assert_eq!((det.state(receiver).total, det.dropped(receiver) - before), (0, 1));
+}
+
+#[test]
+fn owner_without_epochs_runs_step_for_input_stamped_with_epoch_7() {
+    let mut det = DetScheduler::new(1);
+    let sink = det.add::<Sink>("sink", Vec::new(), SinkRunner);
+    det.send(sink, Stamp::Epoch(7), SinkInput::Note(3));
+    det.run_until_quiet(10).unwrap();
+    assert_eq!(det.state(sink), &vec![3]);
+    assert_eq!(det.dropped(sink), 0);
+}
+
+#[test]
+fn owner_with_epochs_before_its_first_epoch_stamps_epoch_0_and_receiver_of_epoch_1_drops_it() {
     let mut det = DetScheduler::new(1);
     let receiver = det.add::<Toy>("receiver", ToyState::default(), ToyRunner::default());
     let relay = det.add::<Toy>("relay", ToyState { on_go: Some((receiver, ToyInput::Deposit(2))), ..ToyState::default() }, ToyRunner::default());
-    let hub = det.add::<Hub>("hub", (), HubRunner);
-    det.start_epoch_for(receiver, 4);
+    det.start_epoch_for(receiver, 1);
     det.send(relay, Stamp::Control, ToyInput::Go);
     det.run_until_quiet(10).unwrap();
-    assert_eq!((det.state(receiver).total, det.dropped(receiver)), (0, 0));
+    assert_eq!((det.state(receiver).total, det.dropped(receiver)), (0, 1));
+    assert!(det.trace().iter().any(|entry| entry.owner == "receiver" && entry.dropped && entry.stamp == Stamp::Epoch(0)));
+}
+
+#[test]
+fn control_input_from_an_owner_without_epochs_reaches_a_receiver_with_an_epoch() {
+    let mut det = DetScheduler::new(1);
+    let receiver = det.add::<Toy>("receiver", ToyState::default(), ToyRunner::default());
+    let hub = det.add::<Hub>("hub", (), HubRunner);
+    det.start_epoch_for(receiver, 4);
     det.send(hub, Stamp::Control, HubInput::Probe(receiver));
     det.run_until_quiet(10).unwrap();
     assert_eq!(det.state(receiver).total, 1);

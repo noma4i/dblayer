@@ -11,6 +11,7 @@ pub struct Toy;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ToyInput {
     Go,
+    Tell,
     Deposit(u32),
     Seal,
     WorkRequest(u32),
@@ -41,6 +42,7 @@ pub enum ToyEffect {
 #[derive(Clone, Default)]
 pub struct ToyState {
     pub on_go: Option<(Address<Toy>, ToyInput)>,
+    pub tell: Option<(Address<Sink>, u32)>,
     pub on_tick: Option<(Address<Toy>, ToyInput)>,
     pub pump: Option<Address<Toy>>,
     pub total: u32,
@@ -63,6 +65,7 @@ impl Owner for Toy {
     fn step(state: &mut ToyState, input: ToyInput) -> Effects<Toy> {
         match input {
             ToyInput::Go => state.on_go.clone().map(|(to, message)| vec![Effect::Send(Outbound::new(to, message))]).unwrap_or_default(),
+            ToyInput::Tell => state.tell.map(|(to, n)| vec![Effect::Send(Outbound::new(to, SinkInput::Note(n)))]).unwrap_or_default(),
             ToyInput::Deposit(amount) => {
                 if state.sealed {
                     state.lost += amount;
@@ -226,4 +229,42 @@ pub fn race(seed: u64) -> (DetScheduler, Address<Toy>) {
     det.send(depositor, Stamp::Epoch(1), ToyInput::Go);
     det.send(sealer, Stamp::Epoch(1), ToyInput::Go);
     (det, ledger)
+}
+
+pub struct Sink;
+
+#[derive(Debug)]
+pub enum SinkInput {
+    Note(u32),
+    Idle,
+}
+
+#[derive(Debug)]
+pub enum SinkEffect {}
+
+impl Owner for Sink {
+    const EPOCHED: bool = false;
+
+    type State = Vec<u32>;
+    type Input = SinkInput;
+    type Effect = SinkEffect;
+
+    fn step(state: &mut Vec<u32>, input: SinkInput) -> Effects<Sink> {
+        if let SinkInput::Note(n) = input {
+            state.push(n);
+        }
+        vec![]
+    }
+
+    fn tick(_now: Time) -> SinkInput { SinkInput::Idle }
+
+    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> SinkInput { SinkInput::Idle }
+
+    fn closing() -> SinkInput { SinkInput::Idle }
+}
+
+pub struct SinkRunner;
+
+impl EffectRunner<Sink> for SinkRunner {
+    fn run(&mut self, _stamp: Stamp, effect: SinkEffect, _back: &Back<Sink>) { match effect {} }
 }

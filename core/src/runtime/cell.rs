@@ -31,6 +31,7 @@ pub(crate) struct Cell<O: Owner> {
     pub state: O::State,
     queue: VecDeque<Item<O>>,
     epoch: Option<Epoch>,
+    last_epoch: Option<Epoch>,
     schedule: BTreeMap<(Time, u64), Scheduled<O::Input>>,
     keys: HashMap<ScheduleId, (Time, u64)>,
     sequence: u64,
@@ -39,7 +40,7 @@ pub(crate) struct Cell<O: Owner> {
 
 impl<O: Owner> Cell<O> {
     pub fn new(state: O::State) -> Self {
-        Self { state, queue: VecDeque::new(), epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0 }
+        Self { state, queue: VecDeque::new(), epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0 }
     }
 
     pub fn ready(&self) -> bool { !self.queue.is_empty() }
@@ -93,7 +94,7 @@ impl<O: Owner> Cell<O> {
             }
             Item::EndEpoch(epoch, cause) => {
                 let input = O::epoch_ended(epoch, cause);
-                if self.epoch != Some(epoch) {
+                if O::EPOCHED && self.epoch != Some(epoch) {
                     return Some(self.drop_input(Stamp::Epoch(epoch), label(trace, &input)));
                 }
                 (Stamp::Epoch(epoch), input, true)
@@ -107,23 +108,21 @@ impl<O: Owner> Cell<O> {
         let mut broadcasts = Vec::new();
         for effect in effects {
             match effect {
-                Effect::Schedule { id, at, input } => self.schedule_input(id, at, out.unwrap_or(Stamp::Control), input),
+                Effect::Schedule { id, at, input } => self.schedule_input(id, at, out, input),
                 Effect::Cancel(id) => self.cancel(id),
                 Effect::Send(mut outbound) => {
-                    if let Some(owner_stamp) = out {
-                        outbound.stamp = owner_stamp;
-                        sends.push(outbound);
-                    }
+                    outbound.stamp = out;
+                    sends.push(outbound);
                 }
                 Effect::Broadcast(control) => {
                     assert!(!O::EPOCHED, "only an owner outside epochs broadcasts control inputs");
                     broadcasts.push(control);
                 }
-                Effect::Run(effect) => runner.run(out.unwrap_or(Stamp::Control), effect, back),
+                Effect::Run(effect) => runner.run(out, effect, back),
             }
         }
         if ended {
-            self.epoch = None;
+            self.last_epoch = self.epoch.take();
             self.purge_schedule(|stamp| stamp != Stamp::Control);
         }
         Some(Ran { stamp, dropped: false, input: input_label, effects: effects_label, sends, broadcasts })
@@ -134,14 +133,14 @@ impl<O: Owner> Cell<O> {
         Ran { stamp, dropped: true, input, effects: String::new(), sends: Vec::new(), broadcasts: Vec::new() }
     }
 
-    fn owner_stamp(&self) -> Option<Stamp> {
-        if O::EPOCHED { self.epoch.map(Stamp::Epoch) } else { Some(Stamp::Control) }
+    fn owner_stamp(&self) -> Stamp {
+        if O::EPOCHED { Stamp::Epoch(self.epoch.or(self.last_epoch).unwrap_or(0)) } else { Stamp::Control }
     }
 
     fn admits(&self, stamp: Stamp) -> bool {
         match stamp {
             Stamp::Control => true,
-            Stamp::Epoch(epoch) => self.epoch == Some(epoch),
+            Stamp::Epoch(epoch) => !O::EPOCHED || self.epoch == Some(epoch),
         }
     }
 
