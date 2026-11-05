@@ -40,9 +40,13 @@ struct Slot<O: StateOwner> {
 impl<O: StateOwner> ErasedSlot for Slot<O> {
     fn name(&self) -> &'static str { self.name }
 
-    fn ready(&self) -> bool { self.cell.ready() }
+    /// An answer of the executor waits in the inbox: it is a pending input of the owner like any other (R9).
+    fn ready(&self) -> bool { self.cell.ready() || !self.inbox.lock().unwrap_or_else(PoisonError::into_inner).is_empty() }
 
-    fn run_one(&mut self) -> Option<Ran> { self.cell.run_one(self.runner.as_mut(), &self.back, true) }
+    fn run_one(&mut self) -> Option<Ran> {
+        self.absorb();
+        self.cell.run_one(self.runner.as_mut(), &self.back, true)
+    }
 
     fn absorb(&mut self) {
         let arrived: Vec<_> = self.inbox.lock().unwrap_or_else(PoisonError::into_inner).drain(..).collect();
@@ -108,7 +112,6 @@ impl DetScheduler {
         let Some(&index) = ready.get(choice) else { return false };
         let Some(ran) = self.slots[index].run_one() else { return false };
         self.trace.push(TraceEntry { owner: self.slots[index].name(), stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
-        self.slots.iter_mut().for_each(|slot| slot.absorb());
         for outbound in ran.sends {
             self.slots[outbound.to].deliver(outbound.stamp, outbound.payload);
         }

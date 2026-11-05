@@ -227,7 +227,7 @@ impl TransferState {
     fn schedule_expire(&mut self, fx: &mut Fx) {
         let id = ScheduleId(self.next_batch);
         self.next_batch += 1;
-        fx.push(Effect::Schedule { id, at: self.now, input: TransferInput::Tick { now: self.now, kind: TransferTick::Expire } });
+        fx.push(Effect::Schedule { id, after: std::time::Duration::ZERO, input: TransferInput::Tick { now: self.now, kind: TransferTick::Expire } });
     }
 
     fn end_transfer(&mut self, key: &str, fx: &mut Fx) {

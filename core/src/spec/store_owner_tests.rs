@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::ref_lifecycle::Cause as RefCause;
 use super::ref_store::{Batch, Boot, Open, Reason, Reply, Request, Store as Ref};
 use crate::owners::contract::{EpochEnded, Published, RejectReason};
+use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{BootFound, StoreWriter, StoreBatch, StoreEffect, StoreInput, StoreMode, StoreReply, StoreState};
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
@@ -76,9 +77,9 @@ impl Twin {
             Request::Commit { batch, sqlite_ok } => {
                 self.batch += 1;
                 let id = self.batch;
-                raw = self.send(StoreInput::Commit(StoreBatch { id, epoch: batch.epoch, basis: batch.basis, rows: batch.rows, intents: batch.intents, credential: batch.credential }));
+                raw = self.send(StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, epoch: batch.epoch, basis: batch.basis, rows: batch.rows, intents: batch.intents, credential: batch.credential, ops: Vec::new() }));
                 if raw.iter().any(|effect| matches!(effect, StoreEffect::Write { .. })) {
-                    raw.extend(self.send(StoreInput::Written { batch: id, result: if sqlite_ok { Ok(()) } else { Err(DISK.into()) } }));
+                    raw.extend(self.send(StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: if sqlite_ok { Ok(()) } else { Err(DISK.into()) } }));
                 }
             }
             Request::ClearAccount { epoch_old, cause: c, generation_new, sqlite_ok } => {
@@ -383,14 +384,28 @@ fn store_prop_reply_once_owner() {
         let twin = random_trace(seed);
         let mut seen = Vec::new();
         for effect in &twin.history {
-            if let StoreEffect::Reply { batch, .. } = effect {
-                assert!(!seen.contains(batch), "batch {batch} is answered twice");
-                seen.push(*batch);
+            if let StoreEffect::Reply { author, batch, .. } = effect {
+                assert!(!seen.contains(&(*author, *batch)), "batch {batch} of {author:?} is answered twice");
+                seen.push((*author, *batch));
             }
         }
         let sent = twin.batch;
         assert_eq!(seen.len() as u64, sent, "every batch is answered, Closed too");
     }
+}
+
+/// `store.md` batch: the id is unique within the author, the answer goes to the pair `(author, id)`.
+#[test]
+fn store_commit_author_pair() {
+    let mut twin = Twin::live();
+    let batch = |author| StoreBatch { author, id: 1, epoch: 1, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: Vec::new() };
+    twin.send(StoreInput::Commit(batch(BatchAuthor::Session)));
+    twin.send(StoreInput::Commit(batch(BatchAuthor::Outbox)));
+    let written = twin.send(StoreInput::Written { author: BatchAuthor::Session, batch: 1, result: Ok(()) });
+    assert!(written.iter().any(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Session, batch: 1, reply: StoreReply::Committed { .. } })), "the Session batch is answered");
+    assert!(!written.iter().any(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Outbox, .. })), "the Outbox batch with the same id still waits");
+    let written = twin.send(StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(()) });
+    assert!(written.iter().any(|effect| matches!(effect, StoreEffect::Reply { author: BatchAuthor::Outbox, batch: 1, reply: StoreReply::Committed { .. } })), "the Outbox batch is answered");
 }
 
 #[test]

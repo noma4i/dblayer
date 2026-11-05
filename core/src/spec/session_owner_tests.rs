@@ -1,13 +1,21 @@
 //! Owner-level tests of the owner `Session` in `specs/machines/lifecycle.md`: the owner on `DetScheduler` against `ref_session.rs`. Names are the `Test` column.
 
-use super::ref_session::{Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Pending as RefPending, Reason, Session as Ref, State as RefState};
+use super::ref_session::{Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Operation, Outcome, Pending as RefPending, Queued as RefQueued, Reason, Session as Ref, State as RefState};
 use crate::owners::contract::{Committed, EpochEnded, Online, Published, RejectReason, Rejected};
-use crate::owners::session::{Credential, PendingCall, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
+use crate::owners::session::{AuthorOutcome, Credential, SessionOperation, PendingCall, Queued, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 
 const EPOCH: u64 = 3;
-const DECLARED: [&str; 2] = ["social", "logout"];
+/// `social` and `logout` carry the session, `login` issues a credential, `visit` carries no session.
+fn operations() -> Vec<Operation> {
+    let def = |name: &str, sessionless, login| Operation { name: name.into(), path: format!("/{name}"), sessionless, login };
+    vec![def("social", false, false), def("logout", false, false), def("login", false, true), def("visit", true, false)]
+}
+
+fn owner_operations() -> Vec<SessionOperation> {
+    operations().into_iter().map(|def| SessionOperation { name: def.name, path: def.path, sessionless: def.sessionless, login: def.login }).collect()
+}
 
 fn reject(reason: Reason) -> RejectReason {
     match reason {
@@ -32,6 +40,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::Rejected(reason) => Fail::Reason(reason_of(reason)),
         SessionError::Revoked => Fail::Revoked,
         SessionError::SequenceConflict => Fail::SequenceConflict,
+        SessionError::Protocol => Fail::Protocol,
         SessionError::Unauthorized => Fail::Unauthorized,
         SessionError::Http => Fail::Http,
         SessionError::Interrupted => Fail::Interrupted,
@@ -48,11 +57,43 @@ fn cause(cause: EndCause) -> Cause {
     }
 }
 
-fn pending_of(pending: &PendingCall) -> RefPending { RefPending { request_id: pending.request_id, sequence: pending.sequence, operation: pending.operation.clone(), reply: pending.reply } }
+fn pending_of(pending: &PendingCall) -> RefPending {
+    RefPending {
+        request_id: pending.request_id,
+        sequence: pending.sequence,
+        operation: pending.operation.clone(),
+        path: pending.path.clone(),
+        body: pending.body.clone(),
+        sessionless: pending.sessionless,
+        credential: pending.credential,
+        purpose: pending.purpose,
+        author: pending.author,
+        reply: pending.reply,
+    }
+}
+
+fn owner_pending(pending: RefPending) -> PendingCall {
+    PendingCall { request_id: pending.request_id, sequence: pending.sequence, operation: pending.operation, path: pending.path, body: pending.body, sessionless: pending.sessionless, credential: pending.credential, purpose: pending.purpose, author: pending.author, reply: pending.reply }
+}
+
+fn queued_of(queued: &Queued) -> RefQueued {
+    match queued {
+        Queued::Call { operation, body, reply } => RefQueued::Call { operation: operation.clone(), body: body.clone(), reply: *reply },
+        Queued::Mutate { author, req_id, path, body, purpose } => RefQueued::Mutate { author: *author, req_id: *req_id, path: path.clone(), body: body.clone(), purpose: *purpose },
+    }
+}
+
+fn outcome_of(outcome: &AuthorOutcome) -> Outcome {
+    match outcome {
+        AuthorOutcome::Response(body) => Outcome::Response(body.clone()),
+        AuthorOutcome::Error(error) => Outcome::Error(fail_of(error)),
+    }
+}
 
 fn phase_of(phase: &SessionPhase) -> RefState {
     match phase {
         SessionPhase::Idle => RefState::Idle,
+        SessionPhase::Generating { call } => RefState::Generating { call: queued_of(call) },
         SessionPhase::Persisting { pending, batch } => RefState::Persisting { pending: pending_of(pending), batch: *batch },
         SessionPhase::Calling { pending, attempts, sent } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, sent: *sent },
         SessionPhase::Landing { pending, batch, answer, identity } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: answer.clone(), identity: *identity },
@@ -62,10 +103,12 @@ fn phase_of(phase: &SessionPhase) -> RefState {
 
 fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
     Some(match effect {
-        SessionEffect::CommitPending { batch, request_id, sequence } => RefEffect::CommitPending { batch: *batch, request_id: *request_id, sequence: *sequence },
-        SessionEffect::CommitLanding { batch, digest, sequence } => RefEffect::CommitLanding { batch: *batch, digest: *digest, sequence: *sequence },
-        SessionEffect::RemovePending { batch } => RefEffect::RemovePending { batch: *batch },
-        SessionEffect::HttpRequest { request_id } => RefEffect::HttpRequest { request_id: *request_id },
+        SessionEffect::CommitPending { batch, epoch, pending } => RefEffect::CommitPending { batch: *batch, epoch: *epoch, pending: pending_of(pending) },
+        SessionEffect::CommitLanding { batch, epoch, digest, sequence } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: *digest, sequence: *sequence },
+        SessionEffect::RemovePending { batch, epoch } => RefEffect::RemovePending { batch: *batch, epoch: *epoch },
+        SessionEffect::HttpRequest { pending } => RefEffect::HttpRequest { pending: pending_of(pending) },
+        SessionEffect::GenerateCredential => RefEffect::GenerateCredential,
+        SessionEffect::Answer { author, req_id, outcome } => RefEffect::Answer { author: *author, req_id: *req_id, outcome: outcome_of(outcome) },
         SessionEffect::HttpCancel { request_id } => RefEffect::HttpCancel { request_id: *request_id },
         SessionEffect::ScheduleTick { attempts } => RefEffect::ScheduleTick { attempts: *attempts },
         SessionEffect::CredentialCommitted(committed) => RefEffect::CredentialCommitted(committed.identity),
@@ -91,8 +134,8 @@ impl Twin {
     fn with(online: bool) -> Self {
         let mut det = DetScheduler::new(2);
         let log = new_log();
-        let addr = det.add::<SessionCalls>("session", SessionState::new(&DECLARED, online), Recorder::<SessionCalls>::new(&log));
-        let mut twin = Self { det, addr, log, reference: Ref::new(&DECLARED, online), history: Vec::new(), replies: Vec::new() };
+        let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), online), Recorder::<SessionCalls>::new(&log));
+        let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new() };
         twin.feed(Input::Published { epoch: EPOCH });
         twin
     }
@@ -104,8 +147,11 @@ impl Twin {
         };
         let current = batch_of(&self.reference.state);
         let owner_input = match input.clone() {
-            Input::Open { credential, pending } => SessionInput::Open { credential: credential.map(|c| Credential { digest: c.digest, sequence: c.sequence }), pending: pending.map(|p| PendingCall { request_id: p.request_id, sequence: p.sequence, operation: p.operation, reply: p.reply }) },
-            Input::SessionCall { operation, reply } => SessionInput::SessionCall { operation, reply },
+            Input::Open { credential, pending } => SessionInput::Open { credential: credential.map(|c| Credential { digest: c.digest, sequence: c.sequence }), pending: pending.map(owner_pending) },
+            Input::SessionCall { operation, body, reply } => SessionInput::SessionCall { operation, body, reply },
+            Input::Mutate { author, req_id, path, body, purpose } => SessionInput::Mutate { author, req_id, path, body, purpose },
+            Input::CredentialGenerated(credential) => SessionInput::CredentialGenerated { credential },
+            Input::Dropped { request_id } => SessionInput::Dropped { request_id },
             Input::Response { request_id, body, sequence, credential, revoked } => SessionInput::Response { request_id, body, sequence, credential, revoked },
             Input::HttpError { request_id, temporary, auth } => SessionInput::HttpError { request_id, temporary, auth },
             Input::Committed(batch) => SessionInput::Committed(Committed { batch: if batch == 0 { current } else { batch }, revision: 1, tables: vec![], models: vec![] }),
@@ -121,12 +167,18 @@ impl Twin {
             Input::Rejected(0, reason) => Input::Rejected(current, reason),
             other => other,
         };
+        let traced = self.det.trace().len();
         self.det.post(self.addr, EpochStamp::Control, owner_input);
         self.det.run_until_quiet(100).expect("the owner is quiet");
+        let scheduled = self.det.trace()[traced..].iter().filter(|entry| entry.effects.contains("Schedule {")).count();
         let raw = take(&self.log);
         self.history.extend(raw.iter().cloned());
         let want = self.reference.step(reference_input);
-        let effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
+        let mut effects: Vec<RefEffect> = raw.iter().filter_map(effect_of).collect();
+        if scheduled > 0 {
+            let Some(SessionPhase::Calling { attempts, .. }) = self.det.state(self.addr).map(SessionState::phase) else { panic!("a retry timer is scheduled in Calling only") };
+            effects.extend(std::iter::repeat_n(RefEffect::ScheduleTick { attempts: *attempts }, scheduled));
+        }
         let replies: Vec<(u64, Result<String, Fail>)> = raw.iter().filter_map(|effect| match effect {
             SessionEffect::Reply { id, answer } => Some((*id, answer.clone().map_err(|error| fail_of(&error)))),
             _ => None,
@@ -151,7 +203,9 @@ impl Twin {
     }
 }
 
-fn call(reply: u64) -> Input { Input::SessionCall { operation: "social".into(), reply } }
+fn call(reply: u64) -> Input { Input::SessionCall { operation: "social".into(), body: "{}".into(), reply } }
+fn call_of(operation: &str, reply: u64) -> Input { Input::SessionCall { operation: operation.into(), body: "{}".into(), reply } }
+fn mutate(author: u64, req_id: u64) -> Input { Input::Mutate { author, req_id, path: "/graphql".into(), body: "{}".into(), purpose: 0 } }
 fn committed() -> Input { Input::Committed(0) }
 fn response(request_id: u64, sequence: u64, credential: Option<u64>) -> Input { Input::Response { request_id, body: "{}".into(), sequence: Some(sequence), credential, revoked: false } }
 fn error(request_id: u64, temporary: bool, auth: bool) -> Input { Input::HttpError { request_id, temporary, auth } }
@@ -179,7 +233,7 @@ fn landing(credential: Option<u64>) -> Twin {
 fn sess_idle_call() { persisting(); }
 
 #[test]
-fn sess_idle_unknown_call() { Twin::new().feed(Input::SessionCall { operation: "nope".into(), reply: 1 }); }
+fn sess_idle_unknown_call() { Twin::new().feed(call_of("nope", 1)); }
 
 #[test]
 fn sess_idle_stray() {
@@ -380,8 +434,9 @@ fn sess_open_restored() {
 #[test]
 fn sess_open_pending() {
     let mut twin = Twin::new();
-    let effects = twin.feed(Input::Open { credential: Some(RefCredential { digest: 4, sequence: 6 }), pending: Some(RefPending { request_id: 5, sequence: 7, operation: "social".into(), reply: Some(99) }) });
-    assert_eq!(effects, vec![RefEffect::HttpRequest { request_id: 5 }]);
+    let effects = twin.feed(Input::Open { credential: Some(RefCredential { digest: 4, sequence: 6 }), pending: Some(RefPending { request_id: 5, sequence: 7, operation: "social".into(), path: "/social".into(), body: "{}".into(), sessionless: false, credential: None, purpose: 0, author: None, reply: Some(99) }) });
+    assert_eq!(effects.len(), 1, "one Http request of the restored pending");
+    assert!(matches!(&effects[0], RefEffect::HttpRequest { pending } if pending.request_id == 5 && pending.reply.is_none()));
     twin.feed(response(5, 7, None));
     twin.feed(committed());
     assert!(twin.replies.is_empty(), "an answer without a caller shows nothing");
@@ -404,6 +459,153 @@ fn sess_wait_call() {
     assert!(closed.replies.iter().all(|(_, answer)| *answer == Err(Fail::Closed)));
 }
 
+fn signed_in() -> Twin {
+    let mut twin = Twin::new();
+    twin.feed(Input::Open { credential: Some(RefCredential { digest: 4, sequence: 6 }), pending: None });
+    twin
+}
+
+fn generating() -> Twin {
+    let mut twin = Twin::new();
+    assert_eq!(twin.feed(call_of("login", 1)), vec![RefEffect::GenerateCredential]);
+    twin
+}
+
+#[test]
+fn sess_idle_login_generate() {
+    let twin = generating();
+    assert!(matches!(twin.reference.state, RefState::Generating { .. }));
+}
+
+#[test]
+fn sess_generated_persist() {
+    let mut twin = generating();
+    let effects = twin.feed(Input::CredentialGenerated(42));
+    assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.sequence == 1 && pending.credential == Some(42) && !pending.sessionless && pending.author.is_none()));
+}
+
+#[test]
+fn sess_generating_queue() {
+    let mut twin = generating();
+    twin.feed_all([call(2), mutate(7, 1)]);
+    assert_eq!(twin.reference.queue.len(), 2);
+}
+
+#[test]
+fn sess_generating_closing_and_epoch_ended() {
+    let mut twin = generating();
+    twin.feed_all([call(2), mutate(7, 1), Input::Closing]);
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Closed)), (2, Err(Fail::Closed))]);
+    let mut twin = generating();
+    twin.feed_all([call(2), Input::EpochEnded { epoch: EPOCH, cause: EndCause::SessionReset }]);
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Interrupted)), (2, Err(Fail::NoSession))]);
+    assert!(matches!(twin.reference.state, RefState::Idle));
+}
+
+#[test]
+fn sess_login_lands_credential() {
+    let mut twin = generating();
+    twin.feed_all([Input::CredentialGenerated(42), committed()]);
+    let id = twin.request_id();
+    twin.feed(response(id, 1, Some(9)));
+    assert_eq!(twin.feed(committed()), vec![RefEffect::CredentialCommitted(42)], "the identity is the digest of the generated credential, not the answer field");
+    assert_eq!(twin.reference.credential, Some(RefCredential { digest: 42, sequence: 1 }));
+}
+
+#[test]
+fn sess_idle_mutate() {
+    let mut twin = signed_in();
+    let effects = twin.feed(mutate(7, 11));
+    assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.request_id == 11 && pending.sequence == 7 && pending.author == Some(7) && pending.reply.is_none()));
+}
+
+#[test]
+fn sess_idle_mutate_no_session() {
+    let mut twin = Twin::new();
+    let effects = twin.feed(mutate(7, 11));
+    assert_eq!(effects, vec![RefEffect::Answer { author: 7, req_id: 11, outcome: Outcome::Error(Fail::NoSession) }]);
+}
+
+#[test]
+fn sess_mutate_queued() {
+    let mut twin = signed_in();
+    twin.feed_all([call(1), mutate(7, 11)]);
+    assert_eq!(twin.reference.queue.len(), 1);
+    twin.feed(committed());
+    let id = twin.request_id();
+    twin.feed(response(id, 7, None));
+    twin.feed(committed());
+    assert!(matches!(twin.reference.state, RefState::Persisting { .. }), "the queued Mutate follows the call");
+}
+
+#[test]
+fn sess_calling_dropped() {
+    let mut twin = signed_in();
+    twin.feed_all([call(1), committed()]);
+    let id = twin.request_id();
+    assert_eq!(twin.feed(Input::Dropped { request_id: id }), vec![RefEffect::ScheduleTick { attempts: 1 }]);
+    twin.feed(Input::Tick);
+    let mut offline = Twin::with(false);
+    offline.feed_all([call(1), committed()]);
+    let id = offline.request_id();
+    assert!(offline.feed(Input::Dropped { request_id: id }).is_empty());
+    twin.feed(Input::Dropped { request_id: 99 });
+}
+
+#[test]
+fn sess_landing_mutate() {
+    let mut twin = signed_in();
+    twin.feed_all([mutate(7, 11), committed()]);
+    twin.feed(response(11, 7, None));
+    let effects = twin.feed(committed());
+    assert_eq!(effects, vec![RefEffect::Answer { author: 7, req_id: 11, outcome: Outcome::Response("{}".into()) }]);
+    assert_eq!(twin.reference.credential, Some(RefCredential { digest: 4, sequence: 7 }));
+}
+
+#[test]
+fn sess_mutate_error_reaches_author() {
+    let mut twin = signed_in();
+    twin.feed_all([mutate(7, 11), committed()]);
+    let effects = twin.feed(error(11, false, false));
+    assert!(effects.contains(&RefEffect::Answer { author: 7, req_id: 11, outcome: Outcome::Error(Fail::Http) }));
+    let mut twin = signed_in();
+    twin.feed_all([mutate(7, 11), Input::Closing]);
+}
+
+#[test]
+fn sess_calling_no_sequence() {
+    let mut twin = calling();
+    let id = twin.request_id();
+    twin.feed(Input::Response { request_id: id, body: "{}".into(), sequence: None, credential: None, revoked: false });
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Protocol))]);
+}
+
+#[test]
+fn sess_calling_offline_cancel() {
+    let mut twin = calling();
+    let id = twin.request_id();
+    assert_eq!(twin.feed(Input::Online(false)), vec![RefEffect::HttpCancel { request_id: id }]);
+    assert!(matches!(twin.feed(Input::Online(true))[..], [RefEffect::HttpRequest { .. }]), "the same request goes again");
+}
+
+#[test]
+fn sess_calling_offline_idle() {
+    let mut twin = Twin::with(false);
+    twin.feed_all([call(1), committed()]);
+    assert!(twin.feed(Input::Online(false)).is_empty());
+}
+
+#[test]
+fn sess_landing_committed_sessionless() {
+    let mut twin = signed_in();
+    twin.feed_all([call_of("visit", 1), committed()]);
+    let id = twin.request_id();
+    twin.feed(Input::Response { request_id: id, body: "{}".into(), sequence: None, credential: None, revoked: false });
+    twin.feed(committed());
+    assert_eq!(twin.reference.credential, Some(RefCredential { digest: 4, sequence: 6 }), "a call without a session leaves the credential");
+    assert_eq!(twin.replies, vec![(1, Ok("{}".into()))]);
+}
+
 fn next(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
     *seed >> 33
@@ -423,7 +625,7 @@ fn trace(seed: u64) -> Twin {
             RefState::Persisting { pending, .. } | RefState::Calling { pending, .. } | RefState::Landing { pending, .. } => pending.sequence,
             _ => 1,
         };
-        let input = match next(&mut s) % 16 {
+        let input = match next(&mut s) % 20 {
             0..=2 => { reply += 1; call(reply) }
             3 | 4 => committed(),
             5 => Input::Rejected(0, Reason::Storage),
@@ -435,7 +637,11 @@ fn trace(seed: u64) -> Twin {
             12 => Input::Published { epoch: EPOCH + next(&mut s) % 3 },
             13 => Input::EpochEnded { epoch: EPOCH + next(&mut s) % 3, cause: [EndCause::SessionReset, EndCause::ServerEnded, EndCause::Other][(next(&mut s) % 3) as usize] },
             14 => response(request + 50, sequence, None),
-            _ => if next(&mut s) % 5 == 0 { Input::Closing } else { committed() },
+            15 => if next(&mut s) % 5 == 0 { Input::Closing } else { committed() },
+            16 => { reply += 1; mutate(100 + reply, 1_000 + reply) }
+            17 => Input::Dropped { request_id: request },
+            18 => { reply += 1; call_of(["login", "visit"][(next(&mut s) % 2) as usize], reply) }
+            _ => Input::CredentialGenerated(20 + next(&mut s) % 3),
         };
         twin.feed(input);
     }
@@ -452,7 +658,7 @@ fn sess_prop_sequence() {
         twin.feed(response(id, reply, Some(5)));
         twin.feed(committed());
     }
-    let sequences: Vec<u64> = twin.history.iter().filter_map(|e| match e { SessionEffect::CommitPending { sequence, .. } => Some(*sequence), _ => None }).collect();
+    let sequences: Vec<u64> = twin.history.iter().filter_map(|e| match e { SessionEffect::CommitPending { pending, .. } => Some(pending.sequence), _ => None }).collect();
     assert_eq!(sequences, vec![1, 2, 3], "the sequence grows by one without a gap");
     let requests = twin.history.iter().filter(|e| matches!(e, SessionEffect::HttpRequest { .. })).count();
     assert_eq!(requests, 3, "one request in the network per call");

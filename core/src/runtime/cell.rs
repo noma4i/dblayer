@@ -38,11 +38,13 @@ pub(crate) struct Cell<O: StateOwner> {
     keys: HashMap<ScheduleId, (Time, u64)>,
     sequence: u64,
     dropped: u64,
+    /// The time of the last `tick`: the origin of `Schedule{after}`.
+    now: Time,
 }
 
 impl<O: StateOwner> Cell<O> {
     pub fn new(state: O::State) -> Self {
-        Self { state, queue: VecDeque::new(), epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0 }
+        Self { state, queue: VecDeque::new(), epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0) }
     }
 
     pub fn ready(&self) -> bool { !self.queue.is_empty() }
@@ -71,6 +73,7 @@ impl<O: StateOwner> Cell<O> {
     pub fn end_epoch(&mut self, epoch: Epoch, cause: Cause) { self.queue.push_back(Item::EndEpoch(epoch, cause)); }
 
     pub fn tick(&mut self, now: Time) -> bool {
+        self.now = now;
         let mut due = Vec::new();
         while let Some(entry) = self.schedule.first_entry() {
             if entry.key().0 > now {
@@ -113,7 +116,10 @@ impl<O: StateOwner> Cell<O> {
         let mut broadcasts = Vec::new();
         for effect in effects {
             match effect {
-                Effect::Schedule { id, at, input } => self.schedule_input(id, at, out, input),
+                Effect::Schedule { id, after, input } => {
+                    let at = Time(self.now.0.saturating_add(u64::try_from(after.as_millis()).unwrap_or(u64::MAX)));
+                    self.schedule_input(id, at, out, input);
+                }
                 Effect::Cancel(id) => self.cancel(id),
                 Effect::Send(mut outbound) => {
                     outbound.stamp = out;

@@ -15,6 +15,7 @@ use crate::syncstate::clear_sync;
 use super::rows::fetch_stored;
 use super::shape::leaf_value;
 use super::{save_pending, Inner, ModelInfo, Store, StoreError, StoreEvent};
+use crate::transport::encrypted::state::{self, Pending};
 
 pub(crate) struct ResetCommitted<'a> {
     store: &'a Store,
@@ -442,6 +443,45 @@ impl Store {
         let ticket = self.line.ticket();
         drop(inner);
         ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(models.to_vec()), operations }.run();
+        Ok(revision)
+    }
+}
+
+/// A write of the effect `Write` to `encrypted_*`, resolved by the executor: strings and numbers as the tables hold them.
+pub(crate) enum RowOp {
+    PutPending(Pending),
+    RemovePending,
+    /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
+    PutSession { digest: Option<String>, sequence: Option<i64> },
+}
+
+impl Store {
+    /// The effect `Write` of `store.md`: the writes of one batch in one transaction. Returns the new revision.
+    pub(crate) fn write_ops(&self, ops: Vec<RowOp>) -> Result<i64, StoreError> {
+        let inner = self.lock();
+        let transaction = inner.connection.unchecked_transaction()?;
+        for op in ops {
+            match op {
+                RowOp::PutPending(pending) => {
+                    transaction.execute("DELETE FROM encrypted_pending", [])?;
+                    state::store_pending(&transaction, &pending)?;
+                }
+                RowOp::RemovePending => {
+                    transaction.execute("DELETE FROM encrypted_pending", [])?;
+                }
+                RowOp::PutSession { digest, sequence } => {
+                    let stored = state::session(&transaction)?;
+                    let digest = digest.or_else(|| stored.as_ref().map(|session| session.credential_digest.clone())).ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+                    let sequence = sequence.or_else(|| stored.as_ref().map(|session| session.sequence)).unwrap_or(0);
+                    transaction.execute(
+                        "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, ?1, ?2) ON CONFLICT(id) DO UPDATE SET credential_digest = excluded.credential_digest, sequence = excluded.sequence",
+                        params![digest, sequence],
+                    )?;
+                }
+            }
+        }
+        let revision = bump_revision(&transaction)?;
+        transaction.commit()?;
         Ok(revision)
     }
 }

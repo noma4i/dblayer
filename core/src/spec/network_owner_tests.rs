@@ -54,22 +54,22 @@ impl Twin {
 }
 
 #[test]
-fn net_set_online_changed() { assert_eq!(Twin::new().feed(Input::SetOnline(true)), vec![RefEffect::Broadcast(true)]); }
+fn net_set_online_changed() { assert_eq!(Twin::new().feed(Input::SetOnline(false)), vec![RefEffect::Broadcast(false)]); }
 
 #[test]
 fn net_set_online_same() {
     let mut twin = Twin::new();
-    assert!(twin.feed(Input::SetOnline(false)).is_empty(), "online is false at open");
-    twin.feed(Input::SetOnline(true));
-    assert!(twin.feed(Input::SetOnline(true)).is_empty());
+    assert!(twin.feed(Input::SetOnline(true)).is_empty(), "online is true at open");
+    twin.feed(Input::SetOnline(false));
+    assert!(twin.feed(Input::SetOnline(false)).is_empty());
 }
 
 #[test]
 fn net_epoch_started() {
     let mut twin = Twin::new();
-    assert_eq!(twin.feed(Input::EpochStarted), vec![RefEffect::EpochOnline(false)]);
-    twin.feed(Input::SetOnline(true));
     assert_eq!(twin.feed(Input::EpochStarted), vec![RefEffect::EpochOnline(true)]);
+    twin.feed(Input::SetOnline(false));
+    assert_eq!(twin.feed(Input::EpochStarted), vec![RefEffect::EpochOnline(false)]);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn random_inputs(seed: u64, len: usize) -> Vec<Input> {
 fn net_prop_broadcast_per_change() {
     for seed in 1..=40 {
         let mut twin = Twin::new();
-        let (mut online, mut changes, mut epochs, mut closed) = (false, 0, 0, false);
+        let (mut online, mut changes, mut epochs, mut closed) = (true, 0, 0, false);
         for input in random_inputs(seed, 30) {
             if closed { break; }
             match input {
@@ -129,16 +129,17 @@ fn net_prop_broadcast_per_change() {
 #[test]
 fn net_prop_offline_silent() {
     let mut twin = Twin::new();
+    twin.feed(Input::SetOnline(false));
     twin.feed(Input::EpochStarted);
     twin.feed(Input::SetOnline(false));
-    assert!(twin.history.iter().all(|effect| matches!(effect, NetworkEffect::EpochOnline(false) | NetworkEffect::Reply { .. })), "no Online(true) goes out before SetOnline(true)");
+    assert!(twin.history.iter().all(|effect| matches!(effect, NetworkEffect::Broadcast(false) | NetworkEffect::EpochOnline(false) | NetworkEffect::Reply { .. })), "no Online(true) goes out before SetOnline(true)");
 }
 
 #[test]
 fn net_prop_single_source() {
     for seed in 1..=40 {
         let mut twin = Twin::new();
-        let mut last = false;
+        let mut last = true;
         for input in random_inputs(seed, 30) {
             twin.feed(input);
             for effect in &twin.history {

@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 pub type RequestId = u64;
 pub type BatchId = u64;
 pub type ReplyId = u64;
+pub type AuthorId = u64;
 pub type Digest = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +28,7 @@ pub enum Fail {
     Reason(Reason),
     Revoked,
     SequenceConflict,
+    Protocol,
     Unauthorized,
     Http,
     Interrupted,
@@ -43,19 +45,42 @@ pub struct Credential {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Operation {
+    pub name: String,
+    pub path: String,
+    pub sessionless: bool,
+    pub login: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pending {
     pub request_id: RequestId,
     pub sequence: u64,
     pub operation: String,
+    pub path: String,
+    pub body: String,
+    pub sessionless: bool,
+    pub credential: Option<Digest>,
+    pub purpose: u8,
+    pub author: Option<AuthorId>,
     pub reply: Option<ReplyId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Queued {
+    Call { operation: String, body: String, reply: ReplyId },
+    Mutate { author: AuthorId, req_id: RequestId, path: String, body: String, purpose: u8 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input {
     Open { credential: Option<Credential>, pending: Option<Pending> },
-    SessionCall { operation: String, reply: ReplyId },
+    SessionCall { operation: String, body: String, reply: ReplyId },
+    Mutate { author: AuthorId, req_id: RequestId, path: String, body: String, purpose: u8 },
+    CredentialGenerated(Digest),
     Response { request_id: RequestId, body: String, sequence: Option<u64>, credential: Option<Digest>, revoked: bool },
     HttpError { request_id: RequestId, temporary: bool, auth: bool },
+    Dropped { request_id: RequestId },
     Committed(BatchId),
     Rejected(BatchId, Reason),
     Tick,
@@ -66,24 +91,33 @@ pub enum Input {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    Response(String),
+    Error(Fail),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
-    /// Store `Commit{encrypted_pending}`.
-    CommitPending { batch: BatchId, request_id: RequestId, sequence: u64 },
+    /// Store `Commit{encrypted_pending = pending}`.
+    CommitPending { batch: BatchId, epoch: u64, pending: Pending },
     /// Store `Commit{encrypted_session{digest or the previous one, sequence}, remove pending}`.
-    CommitLanding { batch: BatchId, digest: Option<Digest>, sequence: u64 },
+    CommitLanding { batch: BatchId, epoch: u64, digest: Option<Digest>, sequence: Option<u64> },
     /// Store `Commit{remove pending}`.
-    RemovePending { batch: BatchId },
-    HttpRequest { request_id: RequestId },
+    RemovePending { batch: BatchId, epoch: u64 },
+    HttpRequest { pending: Pending },
     HttpCancel { request_id: RequestId },
     ScheduleTick { attempts: u64 },
+    GenerateCredential,
     CredentialCommitted(Digest),
     ServerEnded { epoch: u64 },
+    Answer { author: AuthorId, req_id: RequestId, outcome: Outcome },
     Drained,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
     Idle,
+    Generating { call: Queued },
     Persisting { pending: Pending, batch: BatchId },
     Calling { pending: Pending, attempts: u64, sent: bool },
     Landing { pending: Pending, batch: BatchId, answer: String, identity: Option<Digest> },
@@ -99,19 +133,19 @@ pub struct Out {
 pub struct Session {
     pub state: State,
     pub credential: Option<Credential>,
-    pub queue: VecDeque<(String, ReplyId)>,
+    pub queue: VecDeque<Queued>,
     pub online: bool,
     pub epoch: u64,
-    declared: Vec<String>,
+    operations: Vec<Operation>,
     next_request: RequestId,
     next_batch: BatchId,
-    /// Epoch of the call in `Persisting`, `Calling`, `Landing`.
+    /// Epoch of the call in `Generating`, `Persisting`, `Calling`, `Landing`.
     call_epoch: u64,
 }
 
 impl Session {
-    pub fn new(declared: &[&str], online: bool) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, declared: declared.iter().map(|name| name.to_string()).collect(), next_request: 1, next_batch: 1, call_epoch: 0 }
+    pub fn new(operations: Vec<Operation>, online: bool) -> Self {
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, operations, next_request: 1, next_batch: 1, call_epoch: 0 }
     }
 
     fn batch(&mut self) -> BatchId {
@@ -119,27 +153,66 @@ impl Session {
         self.next_batch - 1
     }
 
-    fn reply(out: &mut Out, reply: Option<ReplyId>, answer: Answer) { out.replies.extend(reply.map(|id| (id, answer))); }
-
-    /// `Idle`, then the next call of the queue as `Idle x SessionCall`.
-    fn idle(&mut self, out: &mut Out) {
-        self.state = State::Idle;
-        if let Some((operation, reply)) = self.queue.pop_front() { self.session_call(operation, reply, out); }
+    fn request(&mut self) -> RequestId {
+        self.next_request += 1;
+        self.next_request - 1
     }
 
-    fn session_call(&mut self, operation: String, reply: ReplyId, out: &mut Out) {
-        if !self.declared.contains(&operation) {
-            out.replies.push((reply, Err(Fail::Invalid)));
-            self.idle(out);
-            return;
+    /// The reply of a call and the answer of a `Mutate` author: the same result for the owner of the pending request.
+    fn finish(out: &mut Out, pending: &Pending, result: Answer) {
+        if let Some(reply) = pending.reply { out.replies.push((reply, result.clone())); }
+        if let Some(author) = pending.author { out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: match result { Ok(body) => Outcome::Response(body), Err(fail) => Outcome::Error(fail) } }); }
+    }
+
+    fn refuse(out: &mut Out, queued: Queued, fail: Fail) {
+        match queued {
+            Queued::Call { reply, .. } => out.replies.push((reply, Err(fail))),
+            Queued::Mutate { author, req_id, .. } => out.effects.push(Effect::Answer { author, req_id, outcome: Outcome::Error(fail) }),
         }
-        let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);
-        let request_id = self.next_request;
-        self.next_request += 1;
+    }
+
+    /// `Idle`, then the next queued entry as `Idle x` its input.
+    fn idle(&mut self, out: &mut Out) {
+        self.state = State::Idle;
+        if let Some(queued) = self.queue.pop_front() { self.begin(queued, out); }
+    }
+
+    fn begin(&mut self, queued: Queued, out: &mut Out) {
+        match queued {
+            Queued::Call { operation, body, reply } => {
+                let Some(def) = self.operations.iter().find(|def| def.name == operation).cloned() else {
+                    out.replies.push((reply, Err(Fail::Invalid)));
+                    self.idle(out);
+                    return;
+                };
+                self.call_epoch = self.epoch;
+                if def.login {
+                    out.effects.push(Effect::GenerateCredential);
+                    self.state = State::Generating { call: Queued::Call { operation, body, reply } };
+                    return;
+                }
+                let sequence = if def.sessionless { 0 } else { self.credential.as_ref().map_or(1, |credential| credential.sequence + 1) };
+                let request_id = self.request();
+                let pending = Pending { request_id, sequence, operation, path: def.path, body, sessionless: def.sessionless, credential: None, purpose: 0, author: None, reply: Some(reply) };
+                self.persist(pending, out);
+            }
+            Queued::Mutate { author, req_id, path, body, purpose } => {
+                let Some(credential) = self.credential.clone() else {
+                    out.effects.push(Effect::Answer { author, req_id, outcome: Outcome::Error(Fail::NoSession) });
+                    self.idle(out);
+                    return;
+                };
+                self.call_epoch = self.epoch;
+                let pending = Pending { request_id: req_id, sequence: credential.sequence + 1, operation: String::new(), path, body, sessionless: false, credential: None, purpose, author: Some(author), reply: None };
+                self.persist(pending, out);
+            }
+        }
+    }
+
+    fn persist(&mut self, pending: Pending, out: &mut Out) {
         let batch = self.batch();
-        self.call_epoch = self.epoch;
-        out.effects.push(Effect::CommitPending { batch, request_id, sequence });
-        self.state = State::Persisting { pending: Pending { request_id, sequence, operation, reply: Some(reply) }, batch };
+        out.effects.push(Effect::CommitPending { batch, epoch: self.call_epoch, pending: pending.clone() });
+        self.state = State::Persisting { pending, batch };
     }
 
     /// One row of the table per match arm, in table order.
@@ -148,22 +221,27 @@ impl Session {
         let state = std::mem::replace(&mut self.state, State::Closed);
         match (state, input) {
             (State::Closed, Input::SessionCall { reply, .. }) => out.replies.push((reply, Err(Fail::Closed))),
+            (State::Closed, Input::Mutate { author, req_id, .. }) => out.effects.push(Effect::Answer { author, req_id, outcome: Outcome::Error(Fail::Closed) }),
             (State::Closed, _) => {}
             (state, Input::Closing) => {
-                if let Some(Pending { request_id, reply, .. }) = pending_of(&state) {
-                    Self::reply(&mut out, reply, Err(Fail::Closed));
-                    out.effects.push(Effect::HttpCancel { request_id });
+                if let Some(pending) = pending_of(&state) {
+                    Self::finish(&mut out, &pending, Err(Fail::Closed));
+                    out.effects.push(Effect::HttpCancel { request_id: pending.request_id });
                 }
-                out.replies.extend(self.queue.drain(..).map(|(_, reply)| (reply, Err(Fail::Closed))));
+                if let State::Generating { call } = state { Self::refuse(&mut out, call, Fail::Closed); }
+                for queued in self.queue.drain(..) { Self::refuse(&mut out, queued, Fail::Closed); }
                 out.effects.push(Effect::Drained);
             }
             (state, Input::Online(online)) => {
                 self.online = online;
                 self.state = state;
-                if online {
-                    if let State::Calling { pending, sent: sent @ false, .. } = &mut self.state {
+                if let State::Calling { pending, sent, .. } = &mut self.state {
+                    if online && !*sent {
                         *sent = true;
-                        out.effects.push(Effect::HttpRequest { request_id: pending.request_id });
+                        out.effects.push(Effect::HttpRequest { pending: pending.clone() });
+                    } else if !online && *sent {
+                        *sent = false;
+                        out.effects.push(Effect::HttpCancel { request_id: pending.request_id });
                     }
                 }
             }
@@ -177,60 +255,82 @@ impl Session {
                     None => self.state = State::Idle,
                     Some(pending) => {
                         self.next_request = self.next_request.max(pending.request_id + 1);
-                        if self.online { out.effects.push(Effect::HttpRequest { request_id: pending.request_id }); }
-                        self.state = State::Calling { pending: Pending { reply: None, ..pending }, attempts: 0, sent: self.online };
+                        let pending = Pending { reply: None, ..pending };
+                        if self.online { out.effects.push(Effect::HttpRequest { pending: pending.clone() }); }
+                        self.state = State::Calling { pending, attempts: 0, sent: self.online };
                     }
                 }
             }
             (state, Input::Open { .. }) => self.state = state,
-            (State::Idle, Input::SessionCall { operation, reply }) => self.session_call(operation, reply, &mut out),
-            (state, Input::SessionCall { operation, reply }) => {
+            (State::Idle, Input::SessionCall { operation, body, reply }) => self.begin(Queued::Call { operation, body, reply }, &mut out),
+            (State::Idle, Input::Mutate { author, req_id, path, body, purpose }) => self.begin(Queued::Mutate { author, req_id, path, body, purpose }, &mut out),
+            (state @ (State::Generating { .. } | State::Persisting { .. } | State::Calling { .. } | State::Landing { .. }), Input::SessionCall { operation, body, reply }) => {
                 self.state = state;
-                self.queue.push_back((operation, reply));
+                self.queue.push_back(Queued::Call { operation, body, reply });
+            }
+            (state @ (State::Generating { .. } | State::Persisting { .. } | State::Calling { .. } | State::Landing { .. }), Input::Mutate { author, req_id, path, body, purpose }) => {
+                self.state = state;
+                self.queue.push_back(Queued::Mutate { author, req_id, path, body, purpose });
+            }
+            (State::Generating { call: Queued::Call { operation, body, reply } }, Input::CredentialGenerated(credential)) => {
+                let def = self.operations.iter().find(|def| def.name == operation).cloned().expect("a generating call is declared");
+                let request_id = self.request();
+                let pending = Pending { request_id, sequence: 1, operation, path: def.path, body, sessionless: false, credential: Some(credential), purpose: 0, author: None, reply: Some(reply) };
+                self.persist(pending, &mut out);
             }
             (State::Idle, Input::EpochEnded { cause, .. }) => {
                 if cause != EndCause::Other { self.credential = None; }
                 self.state = State::Idle;
             }
+            (State::Generating { call }, Input::EpochEnded { epoch, cause }) if epoch == self.call_epoch && cause != EndCause::Other => {
+                Self::refuse(&mut out, call, Fail::Interrupted);
+                for queued in self.queue.drain(..) { Self::refuse(&mut out, queued, Fail::NoSession); }
+                self.credential = None;
+                self.state = State::Idle;
+            }
             (state, Input::EpochEnded { epoch, cause }) => {
                 if epoch == self.call_epoch && cause != EndCause::Other {
-                    let pending = pending_of(&state).expect("a busy state has a pending request");
-                    Self::reply(&mut out, pending.reply, Err(Fail::Interrupted));
-                    out.effects.push(Effect::HttpCancel { request_id: pending.request_id });
-                    out.replies.extend(self.queue.drain(..).map(|(_, reply)| (reply, Err(Fail::NoSession))));
-                    self.credential = None;
-                    self.state = State::Idle;
-                } else {
-                    self.state = state;
+                    if let Some(pending) = pending_of(&state) {
+                        Self::finish(&mut out, &pending, Err(Fail::Interrupted));
+                        out.effects.push(Effect::HttpCancel { request_id: pending.request_id });
+                        for queued in self.queue.drain(..) { Self::refuse(&mut out, queued, Fail::NoSession); }
+                        self.credential = None;
+                        self.state = State::Idle;
+                        return out;
+                    }
                 }
+                self.state = state;
             }
             (State::Persisting { pending, batch }, Input::Committed(committed)) if committed == batch => {
                 let sent = self.online;
-                if sent { out.effects.push(Effect::HttpRequest { request_id: pending.request_id }); }
+                if sent { out.effects.push(Effect::HttpRequest { pending: pending.clone() }); }
                 self.state = State::Calling { pending, attempts: 0, sent };
             }
             (State::Persisting { pending, batch }, Input::Rejected(rejected, reason)) if rejected == batch => {
-                Self::reply(&mut out, pending.reply, Err(Fail::Reason(reason)));
+                Self::finish(&mut out, &pending, Err(Fail::Reason(reason)));
                 self.idle(&mut out);
             }
-            (State::Calling { pending, attempts, sent }, Input::Response { request_id, body, sequence, credential, revoked }) if request_id == pending.request_id => {
+            (State::Calling { pending, .. }, Input::Response { request_id, body, sequence, credential, revoked }) if request_id == pending.request_id => {
                 if revoked {
-                    Self::reply(&mut out, pending.reply, Err(Fail::Revoked));
+                    Self::finish(&mut out, &pending, Err(Fail::Revoked));
                     let batch = self.batch();
-                    out.effects.push(Effect::RemovePending { batch });
+                    out.effects.push(Effect::RemovePending { batch, epoch: self.call_epoch });
                     out.effects.push(Effect::ServerEnded { epoch: self.call_epoch });
                     self.idle(&mut out);
-                } else if sequence == Some(pending.sequence) {
+                } else if pending.sessionless || sequence == Some(pending.sequence) {
                     let batch = self.batch();
-                    out.effects.push(Effect::CommitLanding { batch, digest: credential, sequence: pending.sequence });
-                    self.state = State::Landing { pending, batch, answer: body, identity: credential };
+                    let identity = pending.credential.or(credential);
+                    out.effects.push(Effect::CommitLanding { batch, epoch: self.call_epoch, digest: identity, sequence: (!pending.sessionless).then_some(pending.sequence) });
+                    self.state = State::Landing { pending, batch, answer: body, identity };
+                } else if sequence.is_none() {
+                    Self::finish(&mut out, &pending, Err(Fail::Protocol));
+                    self.idle(&mut out);
                 } else {
-                    Self::reply(&mut out, pending.reply, Err(Fail::SequenceConflict));
+                    Self::finish(&mut out, &pending, Err(Fail::SequenceConflict));
                     self.idle(&mut out);
                 }
-                let _ = (attempts, sent);
             }
-            (State::Calling { pending, attempts, sent }, Input::HttpError { request_id, temporary, auth }) if request_id == pending.request_id => {
+            (State::Calling { pending, attempts, .. }, Input::HttpError { request_id, temporary, auth }) if request_id == pending.request_id => {
                 if temporary && self.online {
                     out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
                     self.state = State::Calling { pending, attempts: attempts + 1, sent: false };
@@ -238,15 +338,22 @@ impl Session {
                     self.state = State::Calling { pending, attempts, sent: false };
                 } else {
                     let batch = self.batch();
-                    out.effects.push(Effect::RemovePending { batch });
-                    Self::reply(&mut out, pending.reply, Err(if auth { Fail::Unauthorized } else { Fail::Http }));
+                    out.effects.push(Effect::RemovePending { batch, epoch: self.call_epoch });
+                    Self::finish(&mut out, &pending, Err(if auth { Fail::Unauthorized } else { Fail::Http }));
                     self.idle(&mut out);
                 }
-                let _ = sent;
+            }
+            (State::Calling { pending, attempts, .. }, Input::Dropped { request_id }) if request_id == pending.request_id => {
+                if self.online {
+                    out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });
+                    self.state = State::Calling { pending, attempts: attempts + 1, sent: false };
+                } else {
+                    self.state = State::Calling { pending, attempts, sent: false };
+                }
             }
             (State::Calling { pending, attempts, .. }, Input::Tick) => {
                 let sent = self.online;
-                if sent { out.effects.push(Effect::HttpRequest { request_id: pending.request_id }); }
+                if sent { out.effects.push(Effect::HttpRequest { pending: pending.clone() }); }
                 self.state = State::Calling { pending, attempts, sent };
             }
             (State::Landing { pending, batch, answer, identity }, Input::Committed(committed)) if committed == batch => {
@@ -255,15 +362,16 @@ impl Session {
                         self.credential = Some(Credential { digest, sequence: pending.sequence });
                         out.effects.push(Effect::CredentialCommitted(digest));
                     }
-                    None => {
+                    None if !pending.sessionless => {
                         if let Some(credential) = &mut self.credential { credential.sequence = pending.sequence; }
                     }
+                    None => {}
                 }
-                Self::reply(&mut out, pending.reply, Ok(answer));
+                Self::finish(&mut out, &pending, Ok(answer));
                 self.idle(&mut out);
             }
             (State::Landing { pending, batch, .. }, Input::Rejected(rejected, reason)) if rejected == batch => {
-                Self::reply(&mut out, pending.reply, Err(Fail::Reason(reason)));
+                Self::finish(&mut out, &pending, Err(Fail::Reason(reason)));
                 self.idle(&mut out);
             }
             (state, _) => self.state = state,

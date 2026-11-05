@@ -3,13 +3,26 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::contract::{BatchId, EpochEnded, Published, RejectReason};
+use super::contract::{BatchAuthor, BatchId, EpochEnded, Published, RejectReason};
+use super::session::PendingCall;
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 use super::lifecycle::Identity;
 
+/// One write of a batch to the tables `encrypted_*`, by value (R3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StoreOp {
+    /// `encrypted_pending` = this row. `credential_digest` is the full digest of the credential, `response_key` seals the answer.
+    PutPending { pending: PendingCall, credential_digest: String, response_key: String },
+    /// Remove the row `encrypted_pending`.
+    RemovePending,
+    /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
+    PutSession { digest: Option<String>, sequence: Option<u64> },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoreBatch {
+    pub author: BatchAuthor,
     pub id: BatchId,
     pub epoch: Epoch,
     pub basis: BTreeMap<String, u64>,
@@ -18,6 +31,8 @@ pub struct StoreBatch {
     pub intents: u64,
     /// The batch writes `encrypted_session` with this identity.
     pub credential: Option<Identity>,
+    /// The writes to `encrypted_*`, in one transaction with `rows`.
+    pub ops: Vec<StoreOp>,
 }
 
 /// What `Boot` found in the database.
@@ -55,7 +70,7 @@ pub enum StoreEffect {
     /// One transaction: erase the account (`erase_encrypted` for `SessionReset` and `ServerEnded`).
     EraseAccount { generation_new: u64, erase_encrypted: bool },
     EraseModels { generation_new: u64, models: BTreeSet<String> },
-    Reply { batch: BatchId, reply: StoreReply },
+    Reply { author: BatchAuthor, batch: BatchId, reply: StoreReply },
     Cleared { epoch_old: Epoch },
     ModelsCleared { generation_new: u64 },
     ClearFailed(String),
@@ -69,7 +84,7 @@ pub enum StoreEffect {
 pub enum StoreInput {
     Boot(BootFound),
     Commit(StoreBatch),
-    Written { batch: BatchId, result: Result<(), String> },
+    Written { author: BatchAuthor, batch: BatchId, result: Result<(), String> },
     ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64 },
     ClearModels { epoch: Epoch, generation_new: u64, models: BTreeSet<String> },
     Erased { result: Result<(), String> },
@@ -99,7 +114,7 @@ pub struct StoreState {
     generations: BTreeMap<String, u64>,
     /// `model_generation[*]` of the models without an entry.
     base_generation: u64,
-    writing: BTreeMap<BatchId, StoreBatch>,
+    writing: BTreeMap<(BatchAuthor, BatchId), StoreBatch>,
     erasing: Option<Erasing>,
 }
 
@@ -152,28 +167,28 @@ impl StoreState {
         }
         if self.mode == StoreMode::Closed {
             if let StoreInput::Commit(batch) = input {
-                fx.push(StoreEffect::Reply { batch: batch.id, reply: StoreReply::Rejected(RejectReason::Closed) });
+                fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::Closed) });
             }
             return;
         }
         match input {
-            StoreInput::Commit(batch) if batch.epoch != self.epoch => fx.push(StoreEffect::Reply { batch: batch.id, reply: StoreReply::Rejected(RejectReason::NoSession) }),
+            StoreInput::Commit(batch) if batch.epoch != self.epoch => fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::NoSession) }),
             StoreInput::Commit(batch) if !self.stale_models(&batch).is_empty() => {
                 let models = self.stale_models(&batch);
-                fx.push(StoreEffect::Reply { batch: batch.id, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models }) });
+                fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models }) });
             }
             StoreInput::Commit(batch) => {
-                self.writing.insert(batch.id, batch.clone());
+                self.writing.insert((batch.author, batch.id), batch.clone());
                 fx.push(StoreEffect::Write { batch });
             }
-            StoreInput::Written { batch, result } => {
-                let Some(written) = self.writing.remove(&batch) else { return };
+            StoreInput::Written { author, batch, result } => {
+                let Some(written) = self.writing.remove(&(author, batch)) else { return };
                 match result {
-                    Err(error) => fx.push(StoreEffect::Reply { batch, reply: StoreReply::Rejected(RejectReason::Storage(error)) }),
+                    Err(error) => fx.push(StoreEffect::Reply { author, batch, reply: StoreReply::Rejected(RejectReason::Storage(error)) }),
                     Ok(()) => {
                         self.revision += 1;
                         let models: Vec<String> = written.rows.iter().map(|(model, _)| model.clone()).collect::<BTreeSet<_>>().into_iter().collect();
-                        fx.push(StoreEffect::Reply { batch, reply: StoreReply::Committed { revision: self.revision } });
+                        fx.push(StoreEffect::Reply { author, batch, reply: StoreReply::Committed { revision: self.revision } });
                         fx.push(StoreEffect::BroadcastCommitted { revision: self.revision, models: Some(models) });
                     }
                 }

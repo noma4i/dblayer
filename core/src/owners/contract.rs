@@ -8,6 +8,17 @@ pub type ReplyId = u64;
 pub type BatchId = u64;
 pub type ConnectionId = u64;
 
+/// The owner that wrote a batch. Store answers the pair `(author, id)` (`store.md`): `id` is unique within one author.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BatchAuthor {
+    Lifecycle,
+    Session,
+    Window,
+    Feed,
+    Outbox,
+    Transfer,
+}
+
 /// `EpochStarted(e, identity, generation)`: a new epoch, `epoch` grows strictly. `identity = None` is an epoch without a session.
 /// `generation` is the generation of every model at the start.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -40,7 +40,7 @@ pub struct Network {
 }
 
 impl Network {
-    pub fn new() -> Self { Self { state: State::Open { online: false } } }
+    pub fn new() -> Self { Self { state: State::Open { online: true } } }
 
     pub fn online(&self) -> Option<bool> {
         match self.state {

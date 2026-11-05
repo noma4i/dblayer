@@ -2,6 +2,7 @@ use std::any::Any;
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub type Epoch = u64;
 
@@ -58,7 +59,8 @@ pub trait StateOwner: Sized + 'static {
 }
 
 pub enum Effect<O: StateOwner> {
-    Schedule { id: ScheduleId, at: Time, input: O::Input },
+    /// The Runtime adds `after` to its own clock when the effect runs (R5).
+    Schedule { id: ScheduleId, after: Duration, input: O::Input },
     Cancel(ScheduleId),
     Send(Outbound),
     Broadcast(Control),
@@ -68,7 +70,7 @@ pub enum Effect<O: StateOwner> {
 impl<O: StateOwner> Debug for Effect<O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Schedule { id, at, input } => f.debug_struct("Schedule").field("id", id).field("at", at).field("input", input).finish(),
+            Self::Schedule { id, after, input } => f.debug_struct("Schedule").field("id", id).field("after", after).field("input", input).finish(),
             Self::Cancel(id) => f.debug_tuple("Cancel").field(id).finish(),
             Self::Send(outbound) => Debug::fmt(outbound, f),
             Self::Broadcast(control) => f.debug_tuple("Broadcast").field(control).finish(),

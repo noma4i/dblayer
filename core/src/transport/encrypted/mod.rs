@@ -3,14 +3,14 @@ use async_trait::async_trait;
 
 use super::error::TransportError;
 
-mod client;
+pub(crate) mod client;
 pub mod cable;
 mod config;
 pub(crate) mod bootstrap;
 #[cfg(test)]
 pub(crate) mod fake_server_tests;
 mod graphql;
-mod jwe;
+pub(crate) mod jwe;
 mod key;
 mod origin;
 pub(crate) mod state;

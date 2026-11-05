@@ -35,8 +35,8 @@ pub struct NetworkState {
 }
 
 impl NetworkState {
-    /// `online = false` until the first `SetOnline`.
-    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: false } } }
+    /// `online = true` until the first `SetOnline` (`network.md`).
+    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: true } } }
 
     pub fn mode(&self) -> NetworkMode { self.mode }
 }

@@ -164,7 +164,7 @@ pub struct QueuedOperation {
 #[derive(Clone, Debug)]
 enum Batch {
     Operation { op_id: OpId, kind: CommitKind },
-    Write { reply: ReplyId, row: String, model: String, expire: Option<Time> },
+    Write { reply: ReplyId, row: String, model: String, expire: Option<(Time, u64)> },
 }
 
 #[derive(Debug)]
@@ -352,11 +352,11 @@ impl OutboxState {
         match batch {
             Batch::Write { reply, row, expire, .. } => {
                 Self::reply(fx, reply, OutboxAnswer::Ok);
-                if let Some(due) = expire {
+                if let Some((due, after)) = expire {
                     self.ephemeral.insert(row.clone(), due);
                     let id = ScheduleId(self.next_schedule);
                     self.next_schedule += 1;
-                    fx.push(Effect::Schedule { id, at: due, input: OutboxInput::Expire { row, due } });
+                    fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::Expire { row, due } });
                 }
             }
             Batch::Operation { op_id, kind } => {
@@ -545,7 +545,7 @@ impl OutboxState {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
         let expire = match write {
-            LocalWriteKind::SetEphemeral { expire_after: Some(after) } => Some(Time(now.0 + after)),
+            LocalWriteKind::SetEphemeral { expire_after: Some(after) } => Some((Time(now.0 + after), after)),
             _ => None,
         };
         let generation = self.generation_of(&model);

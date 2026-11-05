@@ -94,7 +94,7 @@ impl StateOwner for Toy {
             }
             ToyInput::Release => vec![Effect::Run(ToyEffect::ReleaseParked)],
             ToyInput::Resolve(id, value) => vec![Effect::Run(ToyEffect::Settle(id, value))],
-            ToyInput::ScheduleAt(id, at, n) => vec![Effect::Schedule { id: ScheduleId(id), at, input: ToyInput::Fire(n) }],
+            ToyInput::ScheduleAt(id, at, n) => vec![Effect::Schedule { id: ScheduleId(id), after: std::time::Duration::from_millis(at.0), input: ToyInput::Fire(n) }],
             ToyInput::CancelSchedule(id) => vec![Effect::Cancel(ScheduleId(id))],
             ToyInput::Fire(n) => {
                 state.fired.push(n);

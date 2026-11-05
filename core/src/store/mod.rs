@@ -22,6 +22,7 @@ mod open;
 pub(crate) use open::{is_unreadable, remove_database};
 mod readers;
 mod reset;
+pub(crate) use reset::{identity_of, RowOp};
 mod rows;
 mod response;
 mod scopes;

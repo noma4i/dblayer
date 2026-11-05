@@ -2,19 +2,21 @@
 //! An executor does IO and returns the result as an input, it takes no transition. `Session` joins when its table gets `Mutate` and `GenerateCredential`.
 
 mod runners;
+mod session_runner;
 #[cfg(test)]
 mod life_tests;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use super::calls::{CallAnswer, CallError, Calls, CallsInput, CallsState};
-use super::contract::{CredentialCommitted, Published};
+use super::contract::{BatchAuthor, BatchId, Committed, CredentialCommitted, Published, Rejected, RequestId};
+use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
-use super::store::{BootFound, StoreInput, StoreState, StoreWriter};
+use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::db::Db;
 use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, Runtime, RuntimeBuilder, Waiter};
 
@@ -24,6 +26,7 @@ pub enum LifeReply {
     Life(Result<(), LifecycleError>),
     Online { closed: bool },
     Call(CallAnswer),
+    Session(SessionAnswer),
     Closed,
 }
 
@@ -36,6 +39,8 @@ pub struct Ports {
     pub executor: tokio::runtime::Handle,
     pub operations: OperationLookup,
     pub credentials: Option<Arc<dyn crate::transport::CredentialSlot>>,
+    /// The encrypted client: Session installs only with it and `credentials`. It does the encoding and the HTTP exchange, Session decides.
+    pub session: Option<Arc<crate::transport::EncryptedClient>>,
 }
 
 #[derive(Clone, Copy)]
@@ -44,6 +49,7 @@ pub(crate) struct Addresses {
     pub store: Address<StoreWriter>,
     pub network: Address<Network>,
     pub calls: Address<Calls>,
+    pub session: Option<Address<SessionCalls>>,
 }
 
 #[derive(Default)]
@@ -62,6 +68,8 @@ pub(crate) struct Wiring {
     store_closed: (Mutex<bool>, Condvar),
     faults: Mutex<Vec<String>>,
     open_failed: Mutex<Option<String>>,
+    /// Where the answer to a `Mutate` goes, by author: `Transport{req_id, Response/Error}`.
+    mutate_sinks: Mutex<HashMap<AuthorId, Box<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>>>,
 }
 
 impl Wiring {
@@ -75,6 +83,7 @@ impl Wiring {
             store_closed: (Mutex::new(false), Condvar::new()),
             faults: Mutex::new(Vec::new()),
             open_failed: Mutex::new(None),
+            mutate_sinks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -112,6 +121,34 @@ impl Wiring {
         if let Some(addresses) = self.addresses() { self.handle.post(addresses.calls, EpochStamp::Control, input); }
     }
 
+    pub fn to_session(&self, input: SessionInput) {
+        if let Some(Addresses { session: Some(session), .. }) = self.addresses() { self.handle.post(session, EpochStamp::Control, input); }
+    }
+
+    /// The answer of Store to the batch `(author, batch)`.
+    pub fn route_store_reply(&self, author: BatchAuthor, batch: BatchId, reply: StoreReply) {
+        if author == BatchAuthor::Session {
+            self.to_session(match reply {
+                StoreReply::Committed { revision } => SessionInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Vec::new() }),
+                StoreReply::Rejected(reason) => SessionInput::Rejected(Rejected { batch, reason }),
+            });
+            return;
+        }
+        self.fault(format!("no owner installed for the batches of {author:?}"));
+    }
+
+    pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) {
+        self.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).insert(author, Box::new(sink));
+    }
+
+    /// `Transport{req_id, Response/Error{Permanent, X}}` to the author of a `Mutate`.
+    pub fn answer_author(&self, author: AuthorId, req_id: RequestId, outcome: AuthorOutcome) {
+        match self.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).get(&author) {
+            Some(sink) => sink(req_id, outcome),
+            None => self.fault(format!("no author {author} for the answer to request {req_id}")),
+        }
+    }
+
     pub fn to_network(&self, input: NetworkInput) {
         if let Some(addresses) = self.addresses() { self.handle.post(addresses.network, EpochStamp::Control, input); }
     }
@@ -129,9 +166,11 @@ pub struct Life {
 }
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
-fn absent() -> Vec<Peer> {
+fn absent(session: bool) -> Vec<Peer> {
     let mut peers: Vec<Peer> = super::read::ABSENT.into_iter().chain(super::write::ABSENT).collect();
-    peers.push(Peer::Session);
+    if !session {
+        peers.push(Peer::Session);
+    }
     peers
 }
 
@@ -139,14 +178,25 @@ impl Life {
     /// Builds the owners, boots the Store from the booted `Db` and returns after the first `Publish`.
     pub fn start(ports: Ports, wait: Duration) -> Result<Self, LifeError> {
         let found = boot_found(&ports.db)?;
+        let session = ports.session.clone().zip(ports.credentials.clone());
         let mut builder = RuntimeBuilder::new();
         let wiring = Arc::new(Wiring::new(builder.handle()));
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(), held_published: None, held_replies: Vec::new() });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some()), held_published: None, held_replies: Vec::new() });
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
-        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls });
+        let session_address = session.as_ref().map(|(client, credentials)| {
+            let open = session_runner::SessionRunner::stored(client);
+            let state = SessionState::with_operations(client.session_operations(), true);
+            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone()));
+            (address, open)
+        });
+        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address) });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
+        if let Some((_, open)) = session_address {
+            let (credential, pending) = open.map_err(|error| LifeError::Storage(error.to_string()))?;
+            wiring.to_session(SessionInput::Open { credential, pending });
+        }
         wiring.to_store(StoreInput::Boot(found));
         let started = std::time::Instant::now();
         let mut guard = wiring.published.value.lock().unwrap_or_else(PoisonError::into_inner);
@@ -193,6 +243,24 @@ impl Life {
         self.wiring.to_calls(CallsInput::Run { epoch, operation, variables, reply: waiter.id().raw() });
         waiter
     }
+
+    /// `session_call`: the owner Session, the answer by `Outcomes`.
+    pub fn session_call(&self, operation: String, body: String) -> Waiter<LifeReply> {
+        let published = self.published();
+        if published.closed {
+            return self.settled(LifeReply::Closed);
+        }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_session(SessionInput::SessionCall { operation, body, reply: waiter.id().raw() });
+        waiter
+    }
+
+    /// `Mutate` of Outbox and Transfer: the answer comes to the sink the author registered with `on_mutate_answer`.
+    pub fn mutate(&self, author: AuthorId, req_id: RequestId, path: String, body: String, purpose: u8) {
+        self.wiring.to_session(SessionInput::Mutate { author, req_id, path, body, purpose });
+    }
+
+    pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) { self.wiring.on_mutate_answer(author, sink); }
 
     pub fn declare(&self, names: Vec<String>) { self.wiring.to_calls(CallsInput::Declare(names)); }
 

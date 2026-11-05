@@ -14,7 +14,8 @@ use crate::owners::calls::{CallError, Calls, CallsEffect, CallsInput};
 use crate::owners::contract::{Drained, Online};
 use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, Peer};
 use crate::owners::network::{Network, NetworkEffect, NetworkInput};
-use crate::owners::store::{StoreEffect, StoreInput, StoreWriter};
+use crate::owners::session::SessionInput;
+use crate::owners::store::{StoreEffect, StoreInput, StoreOp, StoreWriter};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
 
@@ -32,6 +33,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
         match effect {
             LifecycleEffect::Publish(published) => {
                 self.held_published = Some(published.clone());
+                wiring.to_session(SessionInput::Published(published.clone()));
                 wiring.to_store(StoreInput::Published(published));
             }
             LifecycleEffect::EpochStarted { epoch, .. } => {
@@ -95,7 +97,12 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             }),
             StoreEffect::OpenFailed(error) => wiring.open_failed(error),
             StoreEffect::Write { batch } => {
-                back.reply(EpochStamp::Control, StoreInput::Written { batch: batch.id, result: Err("the batch has no payload: authors of `Commit` join with their own owners".into()) });
+                let result = if batch.rows.is_empty() {
+                    store.write_ops(batch.ops.iter().map(row_op).collect()).map(drop).map_err(|error| error.to_string())
+                } else {
+                    Err("`rows` are written by the owners of Window and Feed: their executors extend `Write`".to_string())
+                };
+                back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
             StoreEffect::EraseAccount { generation_new, erase_encrypted } => {
                 if erase_encrypted {
@@ -112,7 +119,8 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 let models: Vec<String> = models.into_iter().collect();
                 self.erased(back, store.erase_models(Generation::from_value(generation_new), &models));
             }
-            StoreEffect::Reply { .. } | StoreEffect::BroadcastCommitted { .. } => {}
+            StoreEffect::Reply { author, batch, reply } => wiring.route_store_reply(author, batch, reply),
+            StoreEffect::BroadcastCommitted { .. } => {}
             StoreEffect::Cleared { epoch_old } => wiring.to_lifecycle(LifecycleInput::Cleared { epoch_old }),
             StoreEffect::ModelsCleared { generation_new } => wiring.to_lifecycle(LifecycleInput::ModelsCleared { generation_new }),
             StoreEffect::ClearFailed(error) => wiring.to_lifecycle(LifecycleInput::ClearFailed { error }),
@@ -144,9 +152,13 @@ impl EffectRunner<Network> for NetworkRunner {
         match effect {
             NetworkEffect::Broadcast(online) => {
                 self.db.connectivity().change(online);
+                wiring.to_session(SessionInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
             }
-            NetworkEffect::EpochOnline(online) => wiring.to_calls(CallsInput::Online(Online(online))),
+            NetworkEffect::EpochOnline(online) => {
+                wiring.to_calls(CallsInput::Online(Online(online)));
+                wiring.to_session(SessionInput::Online(Online(online)));
+            }
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),
             NetworkEffect::Reply { id, closed } => self.held_replies.push((id, closed)),
         }
@@ -226,5 +238,23 @@ impl EffectRunner<Calls> for CallsRunner {
             }
             CallsEffect::Drained(drained) => self.wiring.to_lifecycle(LifecycleInput::Drained(drained)),
         }
+    }
+}
+
+/// The batch op as the tables hold it: ids as text, the purpose as the enum of the transport.
+fn row_op(op: &StoreOp) -> crate::store::RowOp {
+    match op {
+        StoreOp::PutPending { pending, credential_digest, response_key } => crate::store::RowOp::PutPending(crate::transport::encrypted::state::Pending {
+            credential_digest: credential_digest.clone(),
+            request_id: pending.request_id.to_string(),
+            response_key: response_key.clone(),
+            sequence: i64::try_from(pending.sequence).unwrap_or(i64::MAX),
+            path: pending.path.clone(),
+            body: pending.body.clone(),
+            owner: None,
+            purpose: if pending.purpose == 0 { crate::transport::NetworkPurpose::Standard } else { crate::transport::NetworkPurpose::Transfer },
+        }),
+        StoreOp::RemovePending => crate::store::RowOp::RemovePending,
+        StoreOp::PutSession { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
     }
 }

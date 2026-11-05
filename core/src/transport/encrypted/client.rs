@@ -129,7 +129,7 @@ impl Drop for Loading<'_> {
     }
 }
 
-pub(super) fn digest_of(credential: &str) -> String {
+pub(crate) fn digest_of(credential: &str) -> String {
     Sha256::digest(credential.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -158,7 +158,7 @@ fn confirmed_error(body: &Value) -> Option<&str> {
     body.get("error").and_then(Value::as_str)
 }
 
-pub(super) fn temporary_error(body: &Value) -> Option<TransportError> {
+pub(crate) fn temporary_error(body: &Value) -> Option<TransportError> {
     let codes: Vec<_> = body.get("error").and_then(Value::as_str).into_iter().chain(
         body.get("errors").and_then(Value::as_array).into_iter().flatten().filter_map(|error| error.get("extensions")?.get("code")?.as_str())
     ).collect();
@@ -230,6 +230,26 @@ impl EncryptedClient {
             }
         }
     }
+
+    /// One request of the executor of Session: seals `body` for `path` and posts it once. No retry and no state: the owner Session keeps both.
+    pub(crate) async fn send_once(&self, credential: Option<&str>, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
+        check_path(path)?;
+        let session = credential.map(|credential| RequestSession { credential: credential.into(), sequence });
+        let token = self.request_token(session, request_id, response_key, path, body)?;
+        self.post(path, token, request_id, response_key, purpose).await
+    }
+
+    pub(crate) fn logout_path(&self) -> &str { &self.config.endpoints.logout }
+
+    /// The declared session operations and `logout`, as the owner Session takes them.
+    pub(crate) fn session_operations(&self) -> Vec<crate::owners::session::SessionOperation> {
+        let declared = self.config.endpoints.session_operations.iter().map(|(name, operation)| crate::owners::session::SessionOperation { name: name.clone(), path: operation.path.clone(), sessionless: operation.sessionless, login: false });
+        declared.chain(std::iter::once(crate::owners::session::SessionOperation { name: "logout".into(), path: self.config.endpoints.logout.clone(), sessionless: false, login: false })).collect()
+    }
+
+    pub(crate) fn stored_session(&self) -> Result<Option<state::Session>, TransportError> { self.read_connection(state::session) }
+
+    pub(crate) fn stored_pending(&self) -> Result<Option<Pending>, TransportError> { self.read_connection(state::pending) }
 
     pub fn observed_by(mut self, progress: Arc<RetryCalls>) -> Self {
         self.progress = progress;

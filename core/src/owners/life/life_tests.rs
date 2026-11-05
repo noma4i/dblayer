@@ -27,6 +27,7 @@ fn ports(db: Db, transport: Arc<MockTransport>) -> Ports {
         executor: tokio::runtime::Handle::current(),
         operations: Arc::new(|name| (name == "Op").then(|| ("query Op { feed }".to_string(), "feed".to_string()))),
         credentials: None,
+        session: None,
     }
 }
 
@@ -120,6 +121,7 @@ async fn call_run_answers_by_epoch_and_network() {
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.declare(vec!["Op".into()]);
+    assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::NoSession)), "an epoch without a session has no Calls");
     life.credential_committed(IDENTITY);
     let published = loop {
