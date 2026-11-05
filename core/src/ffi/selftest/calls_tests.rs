@@ -61,11 +61,10 @@ impl Transition {
 }
 
 /// C10, G-02, G-09: every explicit call is in flight at the server when reset, sessionReset or close arrives. The call ends within the bound, the late answer (success or sealed refusal) writes nothing into held handles, and the next request of the same key reads the next account.
-#[tokio::test(flavor = "multi_thread")]
-async fn every_explicit_call_survives_every_transition_with_a_late_answer() {
+async fn every_explicit_call_survives_every_transition_with_a_late_answer(refusal: bool) {
     for call in CALLS {
         for transition in TRANSITIONS {
-            for refusal in [false, true] {
+            {
                 let case = format!("{call:?} x {transition:?} x refusal={refusal}");
                 let rig = Rig::encrypted().await;
                 rig.login_ios("A").await;
@@ -102,6 +101,16 @@ async fn every_explicit_call_survives_every_transition_with_a_late_answer() {
             }
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_explicit_call_survives_every_transition_with_a_late_answer_that_succeeds() {
+    every_explicit_call_survives_every_transition_with_a_late_answer(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_explicit_call_survives_every_transition_with_a_late_sealed_refusal() {
+    every_explicit_call_survives_every_transition_with_a_late_answer(true).await;
 }
 
 /// C11, I24: a call that the server never answers ends when the database closes, without the answer, and a second close returns.

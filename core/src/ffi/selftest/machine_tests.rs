@@ -240,9 +240,8 @@ async fn run_seed(seed: u64, steps: u64) -> Result<(), String> {
 }
 
 /// G09: 16 seeds of 32 steps over login, exit, session reset, data logout, reset, refresh, held views, ticks, offline and overlapping calls. After every step the model decides what each kept view must show and what may reach the server. A failure prints the seed and the shortest failing prefix.
-#[tokio::test(flavor = "multi_thread")]
-async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent() {
-    let runs: Vec<_> = (0..SEEDS).map(|seed| tokio::spawn(async move { (seed, run_seed(seed, STEPS).await) })).collect();
+async fn seeded_lifecycle_steps(seeds: std::ops::Range<u64>) {
+    let runs: Vec<_> = seeds.map(|seed| tokio::spawn(async move { (seed, run_seed(seed, STEPS).await) })).collect();
     for run in runs {
         let (seed, result) = run.await.expect("a seed run did not panic");
         let Err(failure) = result else { continue };
@@ -250,4 +249,14 @@ async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent() {
         let shortest = tokio::task::block_in_place(|| shrink(STEPS, |steps| handle.block_on(run_seed(seed, steps)).is_err(), Duration::from_secs(3)));
         panic!("seed {seed} fails; shortest failing prefix {shortest:?} steps; replay with seed {seed}\n{failure}");
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_first_half() {
+    seeded_lifecycle_steps(0..SEEDS / 2).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_second_half() {
+    seeded_lifecycle_steps(SEEDS / 2..SEEDS).await;
 }

@@ -62,12 +62,14 @@ pub(super) fn session(error: DbError) -> (SessionCode, String) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_entry_point_and_keeps_the_credential() {
+    let mut cases = Vec::new();
     for (wire, code) in TABLE {
         for entry in ["load", "refresh", "run query", "run mutation"] {
             for confirmed in [false, true] {
                 if wire == "REPLAYED_REQUEST" && entry != "run mutation" {
                     continue;
                 }
+                cases.push(tokio::spawn(async move {
                 let rig = Rig::new();
                 let database = signed_in(&rig).await;
                 let credential = rig.credentials.inner.value();
@@ -83,8 +85,12 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                 let case = format!("{wire} {entry} confirmed={confirmed}");
                 assert_eq!(session(error), (code, wire.to_string()), "{case}");
                 assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential, 0), "{case}");
+                }));
             }
         }
+    }
+    for case in cases {
+        case.await.unwrap();
     }
 }
 

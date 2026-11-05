@@ -145,7 +145,10 @@ fn run_sequence(seed: u64) {
 
 #[test]
 fn stepped_lists_equal_a_fresh_query_over_random_edit_sequences() {
-    for seed in 1..=SEQUENCES {
-        run_sequence(seed);
-    }
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = (1..=SEQUENCES).map(|seed| scope.spawn(move || run_sequence(seed))).collect();
+        for run in runs {
+            run.join().unwrap();
+        }
+    });
 }

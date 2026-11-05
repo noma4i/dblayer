@@ -58,7 +58,8 @@ C08	R-9	kotlin	com.noma4i.dblayer.LifecycleSessionTest.theAppExitOrderEndsEveryH
 C09	R-7	core	app_logout_local_only_skips_the_revoke_and_stops_every_read	green	S1: one library step, sessionReset	I AuthSession.swift:141-145, A AccountSignOut.kt:37-46
 C09	R-7	swift	BridgeProbeTests.aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead	green	S1: the data logout leaves the exit	I AuthSession.swift:141-145
 C09	R-7	kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLocalOnlyExitSkipsTheRevokeAndStopsEveryRead	green	S1: the data logout leaves the exit	A AccountSignOut.kt:37-46
-C10	G-09	core	every_explicit_call_survives_every_transition_with_a_late_answer	green	S1: the Logout transition cell merges into SessionReset	library
+C10	G-09	core	every_explicit_call_survives_every_transition_with_a_late_answer_that_succeeds	green	S1: the Logout transition cell merges into SessionReset	library
+C10	G-09	core	every_explicit_call_survives_every_transition_with_a_late_sealed_refusal	green	S1: the Logout transition cell merges into SessionReset	library
 C11	R-4	core	a_call_that_is_never_answered_ends_when_the_database_closes	green	S1: close is awaited	library
 C11		core	close_ends_every_pending_stream_wait_of_a_held_handle	green	S1: close is awaited	library
 C11		swift	BridgeProbeTests.closeEndsACallThatTheServerNeverAnswers	green	S1: close is awaited	library
@@ -80,7 +81,8 @@ C19	R-5	core	login_link_already_authenticated_signs_out_then_repeats_once	green	
 C19	R-5	swift	BridgeProbeTests.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSealedSession loses the data logout	I LoginLinkSignIn.swift:53-78
 C19	R-5	kotlin	com.noma4i.dblayer.LifecycleSessionTest.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSession loses the data logout	A LoginLinkSignIn.kt:36-47
 G01		core	harness_cycles_survive_tests_that_leave_offline_logout_and_subscriptions_behind	green	S1: each test closes its database and the next test opens a new one; the leftover logout becomes a session reset	library
-R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
+R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_first_half	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
+R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_second_half	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
 R11		core	a_refused_refresh_keeps_the_views_and_the_credential	green	S1: the refusal is typed, the credential and the views stay	I LiveEventLifecycle.swift:24
 B01		core	a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
 B01		swift	BridgeProbeTests.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2

@@ -216,8 +216,7 @@ async fn out_sending_offline_run() {
     quiet().await;
     assert!(cell.eff.is_empty() && cell.next == St::Sending && rig.pending(&receipt).await);
     rig.db.set_online(true).unwrap();
-    quiet().await;
-    assert_eq!(rig.server.count("MakeMoment"), 2, "the Session cancelled the request with the network and sends it once more");
+    crate::test_wait::yield_until("the Session cancelled the request with the network and sent it once more", || rig.server.count("MakeMoment") == 2).await;
 
     rig.server.hold(Kind::Mutate, false);
     rig.server.answer(Kind::Mutate, Reply::Ok);

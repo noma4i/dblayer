@@ -438,9 +438,12 @@ fn run_sequence(seed: u64) {
 
 #[test]
 fn windows_equal_the_tail_of_a_fresh_query_over_random_edit_sequences() {
-    for seed in 1..=SEQUENCES {
-        run_sequence(seed);
-    }
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = (1..=SEQUENCES).map(|seed| scope.spawn(move || run_sequence(seed))).collect();
+        for run in runs {
+            run.join().unwrap();
+        }
+    });
 }
 
 fn open_cost(db: &Db) -> (usize, super::window::WindowHandle) {
