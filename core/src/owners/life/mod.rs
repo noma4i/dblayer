@@ -471,7 +471,7 @@ impl Life {
                             None
                         }
                     }),
-                    tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone())),
+                    tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone(), Some(builder.handle()))),
                 };
                 let executor = TransferExecutor::new(
                     wire,

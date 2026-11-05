@@ -19,16 +19,25 @@ pub trait Tasks: Send + Sync {
 }
 
 /// Production tasks: a tokio runtime, through `crate::task`.
-pub struct TokioTasks(pub tokio::runtime::Handle);
+/// The second field is the owners runtime whose barrier waits for the tasks until their first poll or the end of a blocking job.
+pub struct TokioTasks(pub tokio::runtime::Handle, pub Option<crate::runtime::Handle>);
 
 impl Tasks for TokioTasks {
     fn start(&self, task: Task) -> Running {
-        let handle = crate::task::spawn_on(crate::task::Carry::Internal, &self.0, task);
+        let launch = self.1.as_ref().map(crate::runtime::Handle::launch);
+        let handle = crate::task::spawn_on(crate::task::Carry::Internal, &self.0, async move {
+            drop(launch);
+            task.await
+        });
         Running::new(move || crate::db::lock::effect(|| handle.abort()))
     }
 
     fn start_blocking(&self, job: Box<dyn FnOnce() + Send>) -> Running {
-        let handle = crate::task::spawn_blocking_on(crate::task::Carry::Internal, &self.0, job);
+        let launch = self.1.as_ref().map(crate::runtime::Handle::launch);
+        let handle = crate::task::spawn_blocking_on(crate::task::Carry::Internal, &self.0, move || {
+            let _launch = launch;
+            job()
+        });
         Running::new(move || crate::db::lock::effect(|| handle.abort()))
     }
 }
