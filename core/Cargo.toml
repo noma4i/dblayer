@@ -9,7 +9,6 @@ name = "dblayer"
 
 [features]
 cli = ["uniffi/cli"]
-stress = ["tokio/rt-multi-thread", "tokio/test-util", "dep:tempfile"]
 bench = ["dep:tempfile"]
 spec_api = []
 
@@ -18,10 +17,6 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 required-features = ["cli"]
 
-[[bin]]
-name = "stress"
-path = "src/bin/stress.rs"
-required-features = ["stress"]
 
 [[bin]]
 name = "rowbench"

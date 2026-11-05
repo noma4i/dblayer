@@ -17,12 +17,42 @@ use super::codec::{extract, limited_combinations, load_variables, normalize_node
 use crate::transport::{GraphQLRequest, Response, ResponseOutcome};
 use crate::value::read_id;
 
+pub const DEFAULT_PAGE_SIZE: u32 = 20;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReadOperation {
     pub name: String,
     pub document: String,
     pub root_path: String,
     pub page_size: u32,
+}
+
+impl ReadOperation {
+    pub fn new(name: &str, document: &str, root_path: &str) -> Self { Self { name: name.into(), document: document.into(), root_path: root_path.into(), page_size: DEFAULT_PAGE_SIZE } }
+
+    /// The root path is the response key of the first field of the document.
+    pub fn from_document(name: &str, document: &str) -> Option<Self> { Some(Self::new(name, document, &first_field(document)?)) }
+
+    pub fn paged(self, page_size: u32) -> Self { Self { page_size, ..self } }
+}
+
+fn first_field(document: &str) -> Option<String> {
+    let mut depth = 0usize;
+    let mut body = None;
+    for (index, character) in document.char_indices() {
+        match character {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            '{' if depth == 0 => {
+                body = Some(&document[index + 1..]);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let body = body?.trim_start();
+    let end = body.find(|character: char| !(character.is_alphanumeric() || character == '_')).unwrap_or(body.len());
+    (end > 0).then(|| body[..end].to_string())
 }
 
 #[derive(Clone, Default)]
@@ -35,6 +65,8 @@ impl ReadOperations {
             known.insert(operation.name.clone(), Arc::new(operation));
         }
     }
+
+    pub fn is_empty(&self) -> bool { self.0.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty() }
 
     pub fn get(&self, name: &str) -> Option<Arc<ReadOperation>> { self.0.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(name).cloned() }
 }

@@ -141,46 +141,26 @@ impl ByteProgress {
 pub struct PutReply { pub status: u16, pub etag: Option<String> }
 
 #[derive(uniffi::Object)]
-pub struct OnlineSink { pub(crate) sync: Option<crate::sync::WeakSync>, pub(crate) online: Arc<core::Connectivity>, pub(crate) life: std::sync::Weak<crate::owners::life::Life> }
-
-impl OnlineSink {
-    fn live_sync(&self) -> Option<Option<crate::sync::Sync>> {
-        match &self.sync {
-            Some(weak) => weak.upgrade().map(Some),
-            None => Some(None),
-        }
-    }
-}
+pub struct OnlineSink { pub(crate) life: std::sync::Weak<crate::owners::life::Life> }
 
 #[uniffi::export]
 impl OnlineSink {
+    /// Returns once the owners heard the change.
     pub fn set_online(&self, online: bool) {
-        let Some(sync) = self.live_sync() else { return };
         let Some(life) = self.life.upgrade() else { return };
-        let was_online = self.online.is_online();
         let waiter = life.set_online(online);
         let Ok(executor) = super::database::executor() else { return };
         let (sender, receiver) = std::sync::mpsc::channel();
         crate::task::spawn_on(crate::task::Carry::Detached, executor.handle(), async move { let outcome = waiter.wait().await; crate::db::lock::effect(|| sender.send(outcome)); });
-        if crate::blocking::blocking_unit(|| receiver.recv_timeout(std::time::Duration::from_secs(10))).is_err() { return; }
-        if let Some(sync) = sync {
-            let _entered = executor.enter();
-            sync.online_changed(was_online, online);
-        }
+        let _ = crate::blocking::blocking_unit(|| receiver.recv_timeout(std::time::Duration::from_secs(10)));
     }
 
     pub fn set_power_saving(&self, saving: bool) {
-        let Some(Some(sync)) = self.live_sync() else { return };
-        let Ok(executor) = super::database::executor() else { return };
-        let _entered = executor.enter();
-        sync.set_power_saving(saving);
+        if let Some(life) = self.life.upgrade() { drop(life.set_power_saving(saving)); }
     }
 
     pub fn enter_foreground(&self) {
-        let Some(Some(sync)) = self.live_sync() else { return };
-        let Ok(executor) = super::database::executor() else { return };
-        let _entered = executor.enter();
-        sync.enter_foreground();
+        if let Some(life) = self.life.upgrade() { drop(life.foreground()); }
     }
 }
 

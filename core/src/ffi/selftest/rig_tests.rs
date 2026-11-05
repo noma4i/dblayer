@@ -9,10 +9,10 @@ use tokio::sync::{Notify, Semaphore};
 use crate::ffi::lifecycle_tests::{models, named, Rows};
 use crate::ffi::session_guards_tests::WatchedHeld;
 use crate::ffi::{
-    ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSessionOperation, EncryptedSocketEvent, EntityFetch, OpenDatabase, PutReply, SessionCode, StreamRequest,
+    ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSessionOperation, EncryptedSocketEvent, ReadFetch, OpenDatabase, PutReply, SessionCode, ReadRequest,
     SubscriptionSink, TestClock, Transport, TransportRequest,
 };
-use crate::ffi::stream::tape::Watched;
+use crate::ffi::tape::Watched;
 use crate::test_wait::{within_secs, yield_until};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 
@@ -407,7 +407,7 @@ fn message_spec() -> crate::schema::ModelSpec {
         FieldSpec::scalar("at", crate::value::ScalarKind::Int),
     ]);
     let mut thread = RelationSpec::new("thread", &["chatId"]);
-    thread.remote = Some(crate::sync::rig::remote("Thread", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    thread.remote = Some(crate::schema_fixtures::remote("Thread", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
     message.relations.push(thread);
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("SendMessage".into());
@@ -477,7 +477,7 @@ fn member_spec() -> crate::schema::ModelSpec {
     let mut member = crate::schema::ModelSpec::new("Member", vec![FieldSpec::scalar("id", crate::value::ScalarKind::Id), FieldSpec::scalar("name", crate::value::ScalarKind::Str)]);
     let mut members = RelationSpec::new("group_members", &[]);
     members.text_params = vec!["groupId".to_string(), "order".to_string()];
-    members.remote = Some(crate::sync::rig::remote("GroupMembers", crate::schema::RemoteShape::List { coverage: crate::schema::Coverage::Complete }, "5.minutes"));
+    members.remote = Some(crate::schema_fixtures::remote("GroupMembers", crate::schema::RemoteShape::List { coverage: crate::schema::Coverage::Complete }, "5.minutes"));
     member.relations.push(members);
     member
 }
@@ -676,8 +676,8 @@ impl Held {
         if open.first().is_some_and(|stream| stream.epoch == database.session_epoch()) { return; }
         self.stopped.store(false, Ordering::SeqCst);
         for stream in open.drain(..) { stream.cancel(); }
-        open.push(database.watch(StreamRequest::Query { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() }, self.single.clone()));
-        open.push(database.watch(StreamRequest::Entity { model: "User".into(), id: "user".into(), fetch: EntityFetch::Force }, self.entity.clone()));
+        open.push(database.watch(ReadRequest::List { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() }, self.single.clone()));
+        open.push(database.watch(ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: ReadFetch::Force }, self.entity.clone()));
         open.push(database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, self.rows.clone()));
         open.push(database.watch_query(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#, self.window_rows.clone()));
     }

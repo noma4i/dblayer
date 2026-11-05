@@ -8,20 +8,14 @@ fn parsed(name: &str) -> FieldSpec {
     serde_json::from_value(json!({"name": name, "kind": {"type": "raw"}, "parse_json": true, "nullable": true})).unwrap()
 }
 
-fn samples(mut spec: ModelSpec) -> crate::sync::rig::Rig {
+fn samples(mut spec: ModelSpec) -> Db {
     let mut all = RelationSpec::global("all");
-    all.remote = Some(crate::sync::rig::remote("Samples", crate::schema::RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    all.remote = Some(crate::schema_fixtures::remote("Samples", crate::schema::RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
     spec.relations.push(all);
-    let db = Db::open_in_memory(vec![spec], None).unwrap();
-    let rig = crate::sync::rig::rig_on(db, crate::transport::MockTransport::new(), Default::default());
-    rig.sync.register(crate::sync::OperationDef::new("Samples", "query Samples { samples { id } }", "samples"));
-    rig
+    Db::open_in_memory(vec![spec], None).unwrap()
 }
 
-async fn load_samples(rig: &crate::sync::rig::Rig, row: Value) {
-    rig.transport.respond_with(move |request| (request.operation_name == "Samples").then(|| crate::transport::Reply::data(json!({"samples":[row.clone()]}))));
-    crate::test_wait::within(rig.sync.load(&rig.db.admit().unwrap(), "samples", "all", &Default::default(), crate::sync::LoadOptions { force: true })).await.unwrap();
-}
+async fn load_samples(db: &Db, row: Value) { put(db, "samples", row); }
 
 #[test]
 fn edge_fields_reject_json_parsing_with_an_explicit_error() {
@@ -63,8 +57,8 @@ async fn parsed_values_survive_storage_canonical_normalization_and_other_field_p
     items.app_type = Some("Item".into());
     items.fields = vec![parsed("data")];
     let spec = ModelSpec::new("samples", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("label", ScalarKind::Str), parsed("data"), meta, items]);
-    let rig = samples(spec);
-    let db = &rig.db;
+    let db = samples(spec);
+    let db = &db;
     for (i, (input, expected)) in [
         (json!("{\"values\":[1,null,{\"nested\":[true]}]}"), Some(json!({"values":[1,null,{"nested":[true]}]}))),
         (json!("\"text\""), Some(json!("text"))),
@@ -72,7 +66,7 @@ async fn parsed_values_survive_storage_canonical_normalization_and_other_field_p
         (json!("invalid"), None), (json!(""), None), (json!({"v": 1}), None), (json!(false), None), (Value::Null, None),
     ].into_iter().enumerate() {
         let id = format!("s{i}");
-        load_samples(&rig, json!({"id":id,"label":"first","data":input,"meta":{"data":input},"items":[{"data":input}]})).await;
+        load_samples(db, json!({"id":id,"label":"first","data":input,"meta":{"data":input},"items":[{"data":input}]})).await;
         let check = || {
             let row = db.find("samples", &rid(&id)).unwrap().unwrap();
             assert_eq!(row.get("data").filter(|v| !v.is_null()), expected.as_ref(), "top {input}");
@@ -94,9 +88,9 @@ async fn parsed_defaults_ephemeral_and_local_values_keep_their_decoded_objects()
     local.merge = Some(MergeRule::Local);
     let mut spec = ModelSpec::new("samples", vec![FieldSpec::scalar("id", ScalarKind::Id), parsed("data").with_default(json!({"enabled":true})), local]);
     spec.ephemeral.push(EphemeralSpec::new(parsed("live").with_default(json!({"enabled":false}))));
-    let rig = samples(spec);
-    let db = &rig.db;
-    load_samples(&rig, json!({"id":"s1"})).await;
+    let db = samples(spec);
+    let db = &db;
+    load_samples(db, json!({"id":"s1"})).await;
     assert_eq!(db.find("samples", &rid("s1")).unwrap().unwrap().get("data"), Some(&json!({"enabled":true})));
     assert_eq!(db.find("samples", &rid("s1")).unwrap().unwrap().get("live"), Some(&json!({"enabled":false})));
     db.set_ephemeral(&db.admit().unwrap(), "samples", &rid("s1"), obj(json!({"live":"{\"enabled\":true}"}))).unwrap();

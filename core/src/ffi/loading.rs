@@ -1,0 +1,184 @@
+//! The calls of the platform that wait for a window: `begin_load`, `begin_load_all`, `refresh`, `load_more`, `node`, `nodes`.
+//! Each registers one waiter in the owner `Windows` and returns when the window answers.
+
+use std::sync::{Arc, Mutex};
+
+use serde_json::{json, Map, Value};
+
+use super::database::{executor, Database};
+use super::wire::WireRow;
+use super::DbError;
+use crate::identity::RowId;
+use crate::owners::life::LifeReply;
+use crate::owners::read::windows::{Goal, WindowKey, WindowOutcome};
+use crate::schema::{NodeRead, NODE_PARAM};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum LoadMoreResult {
+    Loaded { has_more: bool },
+    NoMore,
+    AlreadyLoading,
+}
+
+/// The interest of one caller in a load that `Database::begin_load` started.
+#[derive(uniffi::Object)]
+pub struct LoadRequest {
+    outcome: tokio::sync::watch::Receiver<Option<Result<(), DbError>>>,
+    held: Mutex<Option<tokio::task::AbortHandle>>,
+}
+
+fn load_cancelled() -> DbError { DbError::Interrupted { detail: "the load was cancelled".into() } }
+
+#[uniffi::export]
+impl LoadRequest {
+    /// Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
+    pub async fn result(&self) -> Result<(), DbError> {
+        let mut outcome = self.outcome.clone();
+        let seen = outcome.wait_for(Option::is_some).await.map_err(|_| load_cancelled())?.clone();
+        seen.unwrap_or_else(|| Err(load_cancelled()))
+    }
+
+    /// Gives up this caller's interest. The request goes on while another caller waits for it.
+    pub fn cancel(&self) {
+        let held = crate::db::locked(&self.held).take();
+        let Some(task) = held else { return };
+        crate::db::lock::effect(|| task.abort());
+    }
+}
+
+impl Drop for LoadRequest {
+    fn drop(&mut self) { self.cancel(); }
+}
+
+struct LoadCall {
+    epoch: u64,
+    waiter: crate::runtime::Waiter<LifeReply>,
+    leave: LeaveLoad,
+}
+
+struct LeaveLoad {
+    life: Arc<crate::owners::life::Life>,
+    key: WindowKey,
+    id: u64,
+    settled: bool,
+}
+
+impl Drop for LeaveLoad {
+    fn drop(&mut self) {
+        if !self.settled { self.life.leave_load(self.key.clone(), self.id); }
+    }
+}
+
+#[uniffi::export]
+impl Database {
+    /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
+    pub fn begin_load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
+        self.begin(self.start_load(epoch, &model, &relation, &params_json, Goal::First, false)?)
+    }
+
+    pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
+        self.require_online(&format!("{model}.{relation} refresh"))?;
+        let call = self.start_load(epoch, &model, &relation, &params_json, Goal::First, true)?;
+        self.finish_load(call).await.map(drop)
+    }
+
+    /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
+    pub fn begin_load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
+        self.begin(self.start_load(epoch, &model, &relation, &params_json, Goal::All, force)?)
+    }
+
+    pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
+        self.require_online(&format!("{model}.{relation} load more"))?;
+        let call = self.start_load(epoch, &model, &relation, &params_json, Goal::Next, false)?;
+        self.finish_load(call).await
+    }
+
+    pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
+        let params = Map::from_iter([(NODE_PARAM.to_string(), json!(row_id))]);
+        self.node_relation(&model, &relation, NodeRead::One)?;
+        let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+        let wire = self.wire(&model)?.clone();
+        let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), Goal::First, force)?;
+        self.finish_load(call).await?;
+        let (db, found) = (self.db.clone(), model.clone());
+        let row = super::database::blocking(move || Ok(if db.window_member(&found, &relation, &params, id.as_str())? { db.find(&found, &id)? } else { None })).await?;
+        Ok(row.map(|row| wire.row(&row)))
+    }
+
+    /// The rows of the ids that the root of the model has now, in the order of the call.
+    pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
+        self.node_relation(&model, &relation, NodeRead::Many)?;
+        let ids = row_ids.iter().map(|id| RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })).collect::<Result<Vec<_>, _>>()?;
+        let wire = self.wire(&model)?.clone();
+        let key = WindowKey::nodes(&model, &row_ids.iter().map(String::as_str).collect::<Vec<_>>());
+        let call = self.start_window(epoch, key, Goal::First, true)?;
+        self.finish_load(call).await?;
+        let (db, found) = (self.db.clone(), model.clone());
+        let rows = super::database::blocking(move || {
+            let mut rows = Vec::with_capacity(ids.len());
+            for id in &ids {
+                rows.extend(db.find(&found, id)?);
+            }
+            Ok(rows)
+        }).await?;
+        Ok(rows.iter().map(|row| wire.row(row)).collect())
+    }
+}
+
+impl Database {
+    fn begin(&self, call: LoadCall) -> Result<Arc<LoadRequest>, DbError> {
+        let (sender, outcome) = tokio::sync::watch::channel(None);
+        let this = self.clone();
+        let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
+            let result = this.finish_load(call).await.map(drop);
+            crate::db::lock::effect(|| sender.send_replace(Some(result)));
+        });
+        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
+        self.begin_load_all(epoch, model, relation, params_json, force)?.result().await
+    }
+
+    fn node_relation(&self, model: &str, relation: &str, kind: NodeRead) -> Result<(), DbError> {
+        let spec = self.db.spec(model)?;
+        match spec.relations.iter().find(|candidate| candidate.name == relation) {
+            Some(declared) if declared.node == Some(kind) => Ok(()),
+            _ => Err(DbError::Invalid { detail: format!("relation {relation} of {model} is not a {kind:?} node read") }),
+        }
+    }
+
+    /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
+    fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
+        let params: Map<String, Value> = serde_json::from_str(params_json)?;
+        self.db.window_record(model, relation, &params)?;
+        let fresh = || self.db.window_is_fresh(model, relation, &params, self.db.shared.store.lock().now_ms());
+        let force = force || (goal == Goal::First && !fresh()?);
+        self.start_window(epoch, WindowKey::relation(model, relation, &params), goal, force)
+    }
+
+    fn start_window(&self, epoch: u64, key: WindowKey, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
+        self.remote()?;
+        self.account_call(epoch)?;
+        let published = self.life.published();
+        if published.epoch != epoch { return Err(super::command::ended()); }
+        if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
+        let (waiter, id) = self.life.load(epoch, key.clone(), goal, force, self.db.revision_seq()?);
+        Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
+    }
+
+    async fn finish_load(&self, mut call: LoadCall) -> Result<LoadMoreResult, DbError> {
+        let reply = self.await_life(call.waiter).await;
+        call.leave.settled = true;
+        let reply = reply?;
+        if !self.admits(call.epoch) { return Err(super::command::ended()); }
+        match reply {
+            LifeReply::Window(WindowOutcome::Loaded { has_more, fetched, .. }) => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
+            LifeReply::Window(WindowOutcome::Failed { source: Some(source), .. }) => Err(DbError::from(source)),
+            LifeReply::Window(WindowOutcome::Failed { error, .. }) => Err(DbError::Database { detail: error }),
+            LifeReply::Window(WindowOutcome::PageLimit) => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
+            _ => Err(super::command::ended()),
+        }
+    }
+}

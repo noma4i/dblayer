@@ -5,7 +5,7 @@ use super::*;
 use crate::commit::{CommitEnvelope, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::db::Db;
 use crate::identity::{ModelKey, RowId};
-use crate::sync::stable_order::rig::{messages_spec, CHAT};
+use crate::schema_fixtures::{messages_spec, CHAT};
 
 fn steps_to_read_30_members(size: usize) -> i32 {
     let db = Db::open_in_memory(vec![messages_spec(true)], None).unwrap();

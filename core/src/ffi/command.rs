@@ -2,7 +2,7 @@ use std::future::Future;
 
 use crate::ffi::legacy::Origin;
 use super::database::on_executor;
-use super::receipt::{receipt, WireOperationReceipt};
+use super::receipt::{WireOperationReceipt};
 use super::upload_wire::WireUploadRequest;
 use super::{Database, DbError};
 

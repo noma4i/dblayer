@@ -95,8 +95,26 @@ impl Db {
         let Some(freshness) = self.shared.store.window_freshness(&key)? else { return Ok(false) };
         let is_empty = self.shared.store.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_none();
         let policy = crate::pacing::selected_policy(is_empty, &remote.stale_time, remote.empty_stale_time.as_deref());
-        let window = crate::sync::stale_window(policy).map_err(|error| DbError::Internal(error.to_string()))?;
+        let window = crate::pacing::parse_duration(policy).ok_or_else(|| DbError::Internal(format!("unknown freshness {policy}")))?;
         Ok(freshness.is_fresh(now_ms, i64::try_from(window.as_millis()).unwrap_or(i64::MAX)))
+    }
+
+    /// The edge values of the rows of a relation window, by row id.
+    pub(crate) fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<BTreeMap<String, Map<String, Value>>, DbError> {
+        let spec = self.spec(model)?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
+        let scope = spec.selection_key(relation, params).map_err(json_fault)?;
+        let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let read = self.shared.store.read(&[model], |reader| reader.scope_edges(model, scope.as_str(), &wanted))?;
+        self.shared.counters.lock().unwrap_or_else(std::sync::PoisonError::into_inner).edge_read_steps += read.steps;
+        self.shared.counters.lock().unwrap_or_else(std::sync::PoisonError::into_inner).edge_read_scans += read.scans;
+        Ok(read.members.into_iter().map(|(id, stored)| {
+            let values = stored.into_iter().filter_map(|(name, value)| {
+                let field = declared.edge_fields.iter().find(|field| field.name == name)?;
+                Some((name, edge_json(&field.kind, value)))
+            }).collect();
+            (id, values)
+        }).collect())
     }
 
     /// Whether the row is in the membership of the scope of a relation with params.
@@ -225,5 +243,14 @@ impl Db {
             .map_err(plan_fault)?;
         committed.publish();
         Ok(())
+    }
+}
+
+fn edge_json(kind: &FieldKind, value: EdgeValue) -> Value {
+    match (kind, value) {
+        (FieldKind::Scalar { kind: ScalarKind::Bool }, EdgeValue::Whole(whole)) => Value::Bool(whole != 0),
+        (_, EdgeValue::Whole(whole)) => Value::from(whole),
+        (_, EdgeValue::Fraction(fraction)) => Value::from(fraction),
+        (_, EdgeValue::Text(text)) => Value::String(text),
     }
 }

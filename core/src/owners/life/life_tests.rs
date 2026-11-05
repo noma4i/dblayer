@@ -29,6 +29,7 @@ fn ports(db: Db, transport: Arc<MockTransport>) -> Ports {
         credentials: None,
         session: None,
         transfer: None,
+        cable: None,
         read_operations: None,
     }
 }

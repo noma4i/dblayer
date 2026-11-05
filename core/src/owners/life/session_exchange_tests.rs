@@ -258,7 +258,7 @@ async fn an_unreadable_stored_request_fails_the_open_with_a_storage_error() {
         inner.connection.execute("INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'r', 'k', 1, '/p', 'not json', 0, 1)", []).unwrap();
     }
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
-    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), transfer: None, read_operations: None };
+    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), transfer: None, cable: None, read_operations: None };
     let error = super::Life::start(ports).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "the read error reaches the caller: {error:?}");
 }
@@ -298,7 +298,7 @@ async fn a_negative_stored_sequence_fails_the_open() {
     db.shared.store.lock().connection.execute("UPDATE encrypted_session SET sequence = -1", []).unwrap();
     let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
-    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), transfer: None, read_operations: None };
+    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), transfer: None, cable: None, read_operations: None };
     let error = super::Life::start(ports).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "{error:?}");
 }

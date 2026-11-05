@@ -71,7 +71,7 @@ async fn first_value(db: &Database) -> (Arc<ReadStream>, ReadValue) {
     (stream, value)
 }
 
-async fn begin(db: &Database) -> Arc<super::database::LoadRequest> { db.begin_load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).unwrap() }
+async fn begin(db: &Database) -> Arc<super::loading::LoadRequest> { db.begin_load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).unwrap() }
 
 async fn refresh(db: &Database) -> Result<(), DbError> { db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await }
 

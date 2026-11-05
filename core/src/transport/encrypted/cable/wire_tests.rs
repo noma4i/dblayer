@@ -162,65 +162,6 @@ pub(super) struct FakeConnect {
 }
 
 #[test]
-fn authenticated_error_retryability_controls_feed_until_resume() { crate::test_wait::paused(async {
-    use crate::schema::{FieldSpec, ModelSpec, RelationSpec, UpdatesSpec};
-    use crate::value::ScalarKind;
-    for (code, retryable) in [("REFUSED", false), ("REFUSED", true), ("NEW_REFUSAL_2", false), ("NEW_REFUSAL_2", true)] {
-        let (incoming, receiver) = mpsc::unbounded_channel();
-        let (outgoing, sent) = mpsc::unbounded_channel();
-        let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
-        let connect = Arc::new(FakeConnect { socket: socket.clone(), opens: AtomicUsize::new(0) });
-        let (kat, config, challenge, _) = super::link_tests::inputs();
-        let mut model = ModelSpec::new("Item", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
-        let mut relation = RelationSpec::global("all");
-        relation.updates.push(UpdatesSpec { apply: None, subscription: "ItemEvents".into(), deleted_by: None, deleted_unless: None, set: Default::default(), removes: false, debounce: None, root: None, id: Vec::new() });
-        model.relations.push(relation);
-        let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
-        let http = Arc::new(Http { key: RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads: AtomicUsize::new(0) });
-        let clock = Arc::new(crate::pacing::TestClock::default());
-        let client = Arc::new(crate::transport::EncryptedClient::new(&config, http.clone(), Arc::new(super::super::fake_server_tests::MemoryCredentials::default()), db.clone(), clock.clone()).unwrap());
-        client.sign_in_for_test().unwrap();
-        let transport = Arc::new(crate::transport::EncryptedTransport::new(client, connect.clone()));
-        let sync = crate::sync::Sync::new(db, transport, clock, Default::default());
-        sync.register(crate::sync::OperationDef::new("ItemEvents", "subscription ItemEvents { itemEvent { id } }", "itemEvent"));
-        let _watch = sync.watch("Item", "all", &Default::default()).unwrap();
-        let status = || sync.inner.lives.lock().unwrap()["ItemEvents|{}"].subscription.as_ref().unwrap().status();
-        let mut peer = Peer { incoming, outgoing: sent, send_key: [0;32], receive_key: [0;32], sequence: 0 };
-        peer.handshake(&kat, &config, challenge.clone()).await;
-        let subscribe = within(peer.next()).await;
-        assert_eq!(subscribe["operationName"], "ItemEvents");
-        peer.emit(json!({"t":"error", "id":subscribe["id"], "code":code, "retryable":retryable}));
-        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        let failure = status().failure.expect(code);
-        assert!(matches!(failure.error, TransportError::Graphql { extensions: Some(ref extensions), .. } if extensions.code.as_deref() == Some(code)), "{code}");
-        assert_eq!(status().stopped, !retryable, "{code}");
-        assert_eq!(socket.closes.load(Ordering::SeqCst), 1, "{code}");
-        assert_eq!(connect.opens.load(Ordering::SeqCst), 1, "retry must wait for backoff: {code}");
-        if retryable {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        } else {
-            for _ in 0..120 {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                assert_eq!(connect.opens.load(Ordering::SeqCst), 1, "stopped feed reopened: {code}");
-            }
-            assert_eq!(status().connects, 1);
-            assert_eq!(socket.closes.load(Ordering::SeqCst), 1);
-            assert!(peer.outgoing.try_recv().is_err());
-            sync.resume(&sync.inner.db.admit().unwrap()).await.unwrap();
-        }
-        peer.sequence = 0;
-        tokio::time::timeout(std::time::Duration::from_secs(1), peer.handshake(&kat, &config, challenge)).await.expect("resume opens a new connection");
-        let resumed = within(peer.next()).await;
-        assert_eq!(resumed["operationName"], "ItemEvents");
-        peer.emit(json!({"t":"subscribed", "id":resumed["id"]}));
-        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-        assert_eq!(connect.opens.load(Ordering::SeqCst), 2, "{code}");
-        assert!(!status().stopped, "{code}");
-        assert_eq!(http.reads.load(Ordering::SeqCst), 0);
-    }
-}) }
-
-#[test]
 fn stopping_subscriptions_drops_pending_open() { crate::test_wait::paused(async {
     struct PendingOpen {
         started: mpsc::UnboundedSender<()>,
@@ -439,45 +380,6 @@ impl crate::transport::HttpExchange for Http {
         Ok(crate::transport::HttpReply { status: 200, body: super::super::fake_server_tests::seal_response(&request, None, body) })
     }
 }
-
-#[test]
-fn encrypted_change_rereads_over_jwe_and_commits_the_http_row() { crate::test_wait::paused(async {
-    use crate::schema::{ChangeRead, FieldSpec, ModelSpec, NodeRead, RelationSpec, VariableSource, NODE_PARAM};
-    use crate::value::ScalarKind;
-    let (kat, config, challenge, _) = super::link_tests::inputs();
-    let (incoming, receiver) = mpsc::unbounded_channel();
-    let (outgoing, sent) = mpsc::unbounded_channel();
-    let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
-    let connect = Arc::new(FakeConnect { socket, opens: AtomicUsize::new(0) });
-    let mut model = ModelSpec::new("Chat", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str).optional()]);
-    let mut relation = RelationSpec::new("node", &[]);
-    relation.node = Some(NodeRead::One);
-    relation.text_params.push(NODE_PARAM.into());
-    relation.remote = Some(serde_json::from_value(json!({"operation":"ChatNode", "shape":{"type":"single"}, "stale_time":"5.minutes"})).unwrap());
-    relation.remote.as_mut().unwrap().variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
-    model.relations.push(relation);
-    model.changes.push(ChangeRead { area:"CHAT".into(), relation:"node".into(), parameter:None, removes_on: vec![], observed: false, id_of: None, payload: None });
-    model.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.changes".into(), area: "area".into(), kind: "kind".into(), id: "entityId".into() });
-    let db = crate::db::Db::open_in_memory(vec![model], None).unwrap();
-    let http = Arc::new(Http { key:RsaPrivateKey::from_pkcs1_pem(kat["hello"]["rsa_private_pem"].as_str().unwrap()).unwrap(), reads:AtomicUsize::new(0) });
-    let clock = Arc::new(crate::pacing::TestClock::default());
-    let client = Arc::new(crate::transport::EncryptedClient::new(&config, http.clone(), Arc::new(super::super::fake_server_tests::MemoryCredentials::default()), db.clone(), clock.clone()).unwrap());
-    client.sign_in_for_test().unwrap();
-    let transport = Arc::new(crate::transport::EncryptedTransport::new(client, connect));
-    let sync = crate::sync::Sync::new(db.clone(), transport, clock, Default::default());
-    sync.register(crate::sync::OperationDef::new("ChatNode", "query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title } } }", "node"));
-    sync.register(crate::sync::OperationDef::new("RecordEvents", "subscription RecordEvents { recordEvents { changes { area kind entityId } } }", "recordEvents"));
-    let _watch = sync.watch("Chat", "node", &serde_json::Map::from_iter([(NODE_PARAM.into(), json!("c1"))])).unwrap();
-    let mut peer = Peer { incoming, outgoing: sent, send_key:[0;32], receive_key:[0;32], sequence:0 };
-    peer.handshake(&kat, &config, challenge).await;
-    let subscription = within(peer.next()).await;
-    peer.emit(json!({"t":"subscribed", "id":subscription["id"]}));
-    peer.emit(json!({"t":"next", "id":subscription["id"], "result":{"data":{"recordEvents":{"changes":[{"area":"CHAT", "kind":"UPDATED", "entityId":"c1", "title":"forged"}]}}}}));
-    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let row = db.find("Chat", &crate::identity::RowId::new("c1").unwrap()).unwrap().expect("HTTP row");
-    assert_eq!(row.text("title"), Some("from HTTP"));
-    assert_eq!(http.reads.load(Ordering::SeqCst), 1);
-}) }
 
 #[test]
 fn no_socket_or_timer_work_without_subscribers() { crate::test_wait::paused(async {

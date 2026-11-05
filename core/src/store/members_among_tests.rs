@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::commit::{CommitEnvelope, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::db::Db;
 use crate::identity::{ModelKey, RowId};
-use crate::sync::stable_order::rig::{messages_spec, CHAT};
+use crate::schema_fixtures::{messages_spec, CHAT};
 
 use super::rows::MEMBER_EXISTS_SQL as MEMBERS_SQL;
 

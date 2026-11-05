@@ -6,7 +6,6 @@ use super::DbError;
 /// What a receipt waits on: the old stack, the owner Outbox or the owner Transfer.
 #[derive(Clone)]
 pub(super) enum Ticket {
-    Sync(Arc<crate::sync::OutcomeTicket>),
     Outbox(crate::owners::write::outbox::Receipt),
     Transfer(crate::owners::write::outbox::Receipt),
 }
@@ -36,10 +35,6 @@ pub struct WireOperationReceipt {
     pub revision: i64,
     pub optimistic_value: Option<WireRow>,
     pub ticket: Arc<WireReceiptTicket>,
-}
-
-pub(super) fn receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Arc<crate::sync::OutcomeTicket>>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
-    held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Sync), streams)
 }
 
 #[allow(clippy::too_many_arguments)]

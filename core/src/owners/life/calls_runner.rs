@@ -39,6 +39,7 @@ fn input_of(call_id: u64, root: &str, result: Result<crate::transport::Response,
             CallsInput::Response { call_id, body, errors: Vec::new() }
         }
         Err(TransportError::Graphql { messages, .. }) => CallsInput::TransportError { call_id, error: CallError::Graphql(messages) },
+        Err(TransportError::Session { code, .. }) => CallsInput::TransportError { call_id, error: CallError::Session(code) },
         Err(TransportError::Http { .. }) => CallsInput::TransportError { call_id, error: CallError::Http },
         Err(TransportError::Interrupted(_)) => CallsInput::TransportError { call_id, error: CallError::Interrupted },
         Err(_) => CallsInput::TransportError { call_id, error: CallError::Network },

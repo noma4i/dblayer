@@ -38,6 +38,20 @@ impl WireTransferStatus {
     }
 }
 
+impl WireTransferStatus {
+    /// The value of the stream `Blob`: the state by name, the progress in percent.
+    pub(super) fn blob_status(&self) -> crate::owners::read::deliveries::BlobStatus {
+        let state = match self.state {
+            WireTransferState::Copying => "copying",
+            WireTransferState::Queued => "queued",
+            WireTransferState::Uploading => "uploading",
+            WireTransferState::Failed => "failed",
+            WireTransferState::Gone => "gone",
+        };
+        crate::owners::read::deliveries::BlobStatus { state: state.into(), progress: (self.progress * 100.0).round() as u64, error: self.error.clone() }
+    }
+}
+
 /// The last `Shown` of every key, with a counter that moves at each change.
 pub(super) struct Shows {
     map: Mutex<HashMap<String, Shown>>,

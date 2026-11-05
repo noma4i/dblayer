@@ -82,6 +82,10 @@ pub enum ReadRequest {
     List { query_json: String },
     Count { query_json: String },
     Entity { model: String, id: String, fetch: ReadFetch },
+    /// The events of a model after the stream opened.
+    Events { model: String },
+    /// The status of the transfer of `uploads[action]`, by its key `model:row:action`.
+    Blob { key: String },
 }
 
 fn state_of(state: WindowState) -> ReadState {
@@ -149,9 +153,14 @@ pub struct ReadStream {
     stream: u64,
     refusal: std::sync::Mutex<Option<DbError>>,
     ended: std::sync::atomic::AtomicBool,
+    /// The task that hands the status of a transfer to the stream.
+    status: Option<tokio::task::AbortHandle>,
 }
 
 impl ReadStream {
+    #[cfg(test)]
+    pub(crate) fn id(&self) -> u64 { self.stream }
+
     fn finished(&self, cause: ReadEnd) -> Option<ReadValue> {
         (!self.ended.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(ReadValue::Ended { cause })
     }
@@ -186,7 +195,10 @@ impl ReadStream {
 }
 
 impl Drop for ReadStream {
-    fn drop(&mut self) { self.life.release_stream(self.stream); }
+    fn drop(&mut self) {
+        if let Some(task) = &self.status { crate::db::lock::effect(|| task.abort()); }
+        self.life.release_stream(self.stream);
+    }
 }
 
 fn fetch_of(fetch: ReadFetch) -> Fetch {
@@ -207,12 +219,18 @@ impl Database {
                 let model = query.model.as_str().to_string();
                 let spec = self.db.spec(&model)?;
                 let kind = if matches!(request, ReadRequest::Count { .. }) { Kind::Count } else { Kind::List };
+                let remote = remote.filter(|(relation, _)| spec.relations.iter().any(|declared| declared.name == *relation && declared.remote.is_some()));
                 let window = match &remote {
                     Some((relation, params)) => WindowKey::relation(&model, relation, params),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
                 Ok(View { kind, model: model.clone(), tables: vec![crate::ddl::table_name(&model)], local: spec.is_local(), remote: remote.is_some(), window, subject: query_json.clone() })
             }
+            ReadRequest::Events { model } => {
+                self.db.spec(model)?;
+                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone() })
+            }
+            ReadRequest::Blob { key } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: key.clone() }),
             ReadRequest::Entity { model, id, fetch } => {
                 let spec = self.db.spec(model)?;
                 let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
@@ -230,8 +248,34 @@ impl Database {
     }
 }
 
+impl Database {
+    /// Hands the status of the transfer of `key` to the stream at each change.
+    fn watch_status(&self, stream: u64, key: &str) -> Option<tokio::task::AbortHandle> {
+        let (shows, life, key) = (self.shows.clone(), Arc::downgrade(&self.life), key.to_string());
+        let mut changes = shows.watch();
+        let task = crate::task::spawn_on(crate::task::Carry::Detached, super::database::executor().ok()?.handle(), async move {
+            let mut last = None;
+            loop {
+                changes.borrow_and_update();
+                let Some(life) = life.upgrade() else { return };
+                let next = shows.status(&key);
+                if last.as_ref() != Some(&next) {
+                    life.push_status(stream, next.blob_status());
+                    last = Some(next);
+                }
+                drop(life);
+                if changes.changed().await.is_err() { return; }
+            }
+        });
+        Some(task.abort_handle())
+    }
+}
+
 #[uniffi::export]
 impl Database {
+    /// The epoch of the session now. A reader that opens streams for an account asks for it once, after the sign-in, and hands it to every stream and command of that account.
+    pub fn session_epoch(&self) -> u64 { self.life.published().epoch }
+
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
         let opened = self.view_of(&request).and_then(|view| Ok((view, self.db.revision_seq()?)));
@@ -240,6 +284,10 @@ impl Database {
             Err(error) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, Some(error)),
         };
         self.life.open_stream(stream, view, epoch, revision, valid);
-        Arc::new(ReadStream { life: self.life.clone(), stream, refusal: std::sync::Mutex::new(refusal), ended: std::sync::atomic::AtomicBool::new(false) })
+        let status = match (&request, valid) {
+            (ReadRequest::Blob { key }, true) => self.watch_status(stream, key),
+            _ => None,
+        };
+        Arc::new(ReadStream { life: self.life.clone(), stream, refusal: std::sync::Mutex::new(refusal), ended: std::sync::atomic::AtomicBool::new(false), status })
     }
 }

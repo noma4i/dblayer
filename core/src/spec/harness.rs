@@ -6,7 +6,8 @@ use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::{Notify, Semaphore};
 
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, LivePhase, PutReply, StreamDelivery, StreamEnd, StreamRequest, StreamValue, SubscriptionSink, TestClock, Transport, TransportRequest, ValueSink};
+use crate::ffi::tape::{Reader, StreamDelivery, Watched};
+use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, ReadEnd, ReadPhase, ReadRequest, ReadValue, SubscriptionSink, TestClock, Transport, TransportRequest};
 use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, PageDirection, RelationSpec, RemoteShape, RemoteSpec, VariableSource, NODE_PARAM};
 use crate::value::ScalarKind;
 
@@ -74,38 +75,39 @@ pub(super) fn outcome_of(result: &Result<(), DbError>) -> Outcome {
     }
 }
 
-fn wstate_of(state: &crate::ffi::StreamState) -> WState {
+fn wstate_of(state: &crate::ffi::ReadState) -> WState {
     let phase = match state.phase {
-        LivePhase::NotLoaded | LivePhase::Closed => Phase::Idle,
-        LivePhase::Loading => Phase::Loading,
-        LivePhase::Loaded | LivePhase::Empty => Phase::Loaded,
-        LivePhase::Failed => Phase::Failed,
+        ReadPhase::Idle => Phase::Idle,
+        ReadPhase::Loading => Phase::Loading,
+        ReadPhase::Loaded => Phase::Loaded,
+        ReadPhase::Failed => Phase::Failed,
     };
-    WState { phase, error: state.error.is_some(), loaded: state.loaded_at.is_some() }
+    WState { phase, error: state.error.is_some(), loaded: state.loaded.is_some() }
 }
 
 pub(super) fn val_of(delivery: &StreamDelivery) -> Val {
     match &delivery.value {
-        StreamValue::Snapshot { rows, state, .. } => Val::Snapshot { rows: rows.iter().map(|row| row.id.clone()).collect(), state: wstate_of(state) },
-        StreamValue::Delta { rows, removed, state: _, .. } => Val::Delta { upserted: rows.iter().map(|row| row.id.clone()).collect(), removed: removed.clone() },
-        StreamValue::State { state } => Val::StateOnly(wstate_of(state)),
-        StreamValue::Count { state, .. } => Val::StateOnly(wstate_of(state)),
-        StreamValue::Event { event } => Val::Event { position: delivery.seq, id: event.id.clone() },
-        StreamValue::Lost { first, last } => Val::Lost { first: *first, last: *last },
-        StreamValue::Status { .. } => Val::StateOnly(WState::IDLE),
-        StreamValue::Ended { reason } => Val::Ended(match reason {
-            StreamEnd::SessionEnded => Cause::SessionEnded,
-            StreamEnd::Closed => Cause::Closed,
-            StreamEnd::Invalid => Cause::Invalid,
-            StreamEnd::OutOfSync => Cause::OutOfSync,
+        ReadValue::Snapshot { rows, state, .. } => Val::Snapshot { rows: rows.iter().map(|row| row.id.clone()).collect(), state: wstate_of(state) },
+        ReadValue::Delta { rows, removed, .. } => Val::Delta { upserted: rows.iter().map(|row| row.id.clone()).collect(), removed: removed.clone() },
+        ReadValue::State { state, .. } => Val::StateOnly(wstate_of(state)),
+        ReadValue::Count { count, state, .. } => Val::Count { count: *count, state: wstate_of(state) },
+        ReadValue::Ready => Val::Ready,
+        ReadValue::Event { position, payload } => Val::Event { position: *position, id: serde_json::from_str::<serde_json::Value>(payload).ok().and_then(|value| value["id"].as_str().map(str::to_string)).unwrap_or_else(|| payload.clone()) },
+        ReadValue::Lost { first, last } => Val::Lost { first: *first, last: *last },
+        ReadValue::Gap | ReadValue::Status { .. } | ReadValue::Retry { .. } => Val::StateOnly(WState::IDLE),
+        ReadValue::Ended { cause } => Val::Ended(match cause {
+            ReadEnd::SessionEnded => Cause::SessionEnded,
+            ReadEnd::Closed => Cause::Closed,
+            ReadEnd::Cancelled => Cause::Cancelled,
+            ReadEnd::Invalid => Cause::Invalid,
         }),
     }
 }
 
 pub(super) fn revision_of(delivery: &StreamDelivery) -> Option<(Option<i64>, i64)> {
     match &delivery.value {
-        StreamValue::Snapshot { revision, .. } => Some((None, *revision)),
-        StreamValue::Delta { base, revision, .. } => Some((Some(*base), *revision)),
+        ReadValue::Snapshot { revision, .. } => Some((None, *revision)),
+        ReadValue::Delta { base, revision, .. } => Some((Some(*base), *revision)),
         _ => None,
     }
 }
@@ -309,7 +311,7 @@ fn models_json() -> String {
     let mut node = RelationSpec::new("node", &[]);
     node.text_params = vec![NODE_PARAM.into()];
     node.node = Some(NodeRead::One);
-    let mut remote = crate::sync::rig::remote("ChatNode", RemoteShape::Single, "5.minutes");
+    let mut remote = crate::schema_fixtures::remote("ChatNode", RemoteShape::Single, "5.minutes");
     remote.variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
     node.remote = Some(remote);
     let mut list = RelationSpec::new("list", &[]);
@@ -317,7 +319,7 @@ fn models_json() -> String {
     list.membership.insert("list".into(), Membership::Contains("lists".into()));
     list.joins_node = true;
     list.joins_events = true;
-    let mut listed = crate::sync::rig::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
+    let mut listed = crate::schema_fixtures::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
     listed.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
     list.remote = Some(listed);
     chat.relations.extend([node, list]);
@@ -335,33 +337,34 @@ const OPERATIONS: &str = r#"[
 
 pub(super) const FEED: &str = r#"{"model":"Moment","relation":"feed","params":{}}"#;
 
-struct Heard(Notify);
-
-impl ValueSink for Heard {
-    fn available(&self) { self.0.notify_one(); }
+#[derive(Default)]
+struct Heard {
+    seen: Mutex<Vec<StreamDelivery>>,
+    wake: Notify,
 }
 
-/// A stream the test reads itself, the way a platform does: `read_stream` after the core says values wait.
+impl Reader for Heard {
+    fn delivered(&self, delivery: StreamDelivery) {
+        self.seen.lock().unwrap().push(delivery);
+        self.wake.notify_one();
+    }
+}
+
+/// A stream the test reads the way a platform does: it pulls values and keeps them.
 pub(super) struct Reading {
-    pub(super) id: u64,
-    db: Arc<Database>,
-    wake: Arc<Heard>,
-    pub(super) seen: Mutex<Vec<StreamDelivery>>,
+    watched: Arc<Watched>,
+    heard: Arc<Heard>,
 }
 
 impl Reading {
-    /// Everything the journal holds now.
-    pub(super) fn drain(&self) -> Vec<StreamDelivery> {
-        let got: Vec<StreamDelivery> = std::iter::from_fn(|| self.db.read_stream(self.id)).collect();
-        self.seen.lock().unwrap().extend(got.iter().cloned());
-        got
-    }
+    /// Everything pulled so far.
+    pub(super) fn all(&self) -> Vec<StreamDelivery> { self.heard.seen.lock().unwrap().clone() }
     /// The values read so far. A state-only value that repeats the state of the one before shows nothing the spec names, so it is left out.
     pub(super) fn vals(&self) -> Vec<Val> {
         let mut last: Option<WState> = None;
         let mut vals = Vec::new();
-        for delivery in self.seen.lock().unwrap().iter() {
-            let val = val_of(delivery);
+        for delivery in self.all() {
+            let val = val_of(&delivery);
             match &val {
                 Val::Snapshot { state, .. } => last = Some(*state),
                 Val::StateOnly(state) => {
@@ -374,13 +377,11 @@ impl Reading {
         }
         vals
     }
-    pub(super) fn all(&self) -> Vec<StreamDelivery> { self.seen.lock().unwrap().clone() }
     /// Reads until `done` holds for everything read so far.
     pub(super) async fn until(&self, mut done: impl FnMut(&[Val]) -> bool) -> Vec<Val> {
         bound(async {
             loop {
-                let notified = self.wake.0.notified();
-                self.drain();
+                let notified = self.heard.wake.notified();
                 let vals = self.vals();
                 if done(&vals) { return vals; }
                 notified.await;
@@ -391,7 +392,7 @@ impl Reading {
     pub(super) async fn first_screen(&self) -> Vec<Val> {
         self.until(|vals| vals.iter().any(|val| matches!(val, Val::Snapshot { state, .. } | Val::StateOnly(state) if state.phase != Phase::Loading && state.phase != Phase::Idle))).await
     }
-    pub(super) fn cancel(&self) { self.db.cancel_stream(self.id); }
+    pub(super) fn cancel(&self) { self.watched.cancel(); }
 }
 
 pub(super) struct Call {
@@ -436,13 +437,13 @@ impl World {
         World { db, net, clock }
     }
     pub(super) fn epoch(&self) -> u64 { self.db.session_epoch() }
-    pub(super) fn open_stream(&self, epoch: u64, request: StreamRequest) -> Reading {
-        let wake = Arc::new(Heard(Notify::new()));
-        let id = self.db.subscribe(epoch, request, wake.clone());
-        Reading { id, db: self.db.clone(), wake, seen: Mutex::default() }
+    pub(super) fn open_stream(&self, request: ReadRequest) -> Reading {
+        let heard = Arc::new(Heard::default());
+        let watched = self.db.watch(request, heard.clone());
+        Reading { watched, heard }
     }
-    pub(super) fn rows_stream(&self) -> Reading { self.open_stream(self.epoch(), StreamRequest::Query { query_json: FEED.into() }) }
-    pub(super) fn events_stream(&self) -> Reading { self.open_stream(self.epoch(), StreamRequest::Events { model: "Chat".into() }) }
+    pub(super) fn rows_stream(&self) -> Reading { self.open_stream(ReadRequest::List { query_json: FEED.into() }) }
+    pub(super) fn events_stream(&self) -> Reading { self.open_stream(ReadRequest::Events { model: "Chat".into() }) }
     pub(super) fn call(&self) -> Call {
         let request = self.db.begin_load(self.epoch(), "Moment".into(), "feed".into(), "{}".into());
         match request {
@@ -474,13 +475,11 @@ impl World {
     /// Reads `stream` until `done` holds, moving the clock a step each round so that a debounce or a backoff on it passes.
     pub(super) async fn pump_until(&self, stream: &Reading, mut done: impl FnMut(&[Val]) -> bool) -> Vec<Val> {
         for _ in 0..300 {
-            stream.drain();
             let vals = stream.vals();
             if done(&vals) { return vals; }
             self.clock.advance(5_000);
             self.breathe().await;
         }
-        stream.drain();
         let vals = stream.vals();
         assert!(done(&vals), "the condition never held, read: {vals:?}");
         vals
@@ -508,7 +507,7 @@ pub(super) fn loaded() -> WState { WState { phase: Phase::Loaded, error: false, 
 /// Every window state the stream showed, also the one a Delta carries.
 pub(super) fn states_of(stream: &Reading) -> Vec<WState> {
     stream.all().iter().filter_map(|delivery| match &delivery.value {
-        StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } | StreamValue::Count { state, .. } => Some(wstate_of(state)),
+        ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } | ReadValue::Count { state, .. } => Some(wstate_of(state)),
         _ => None,
     }).collect()
 }

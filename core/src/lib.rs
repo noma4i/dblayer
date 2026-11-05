@@ -17,11 +17,12 @@ pub mod query;
 pub mod read;
 pub mod db;
 pub mod files;
-pub mod sync;
 pub mod upload;
 pub mod ffi;
 #[cfg(test)]
 mod check;
+#[cfg(test)]
+pub(crate) mod schema_fixtures;
 #[cfg(test)]
 mod spec;
 pub mod runtime;

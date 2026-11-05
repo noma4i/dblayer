@@ -38,7 +38,7 @@ pub(super) fn moment_spec() -> ModelSpec {
     create.has_temp_row_retention = true;
     create.on_failure = crate::schema::OnFailure::Keep;
     model.actions.push(create);
-    let mut upload = crate::sync::rig::upload_declared("upload");
+    let mut upload = crate::schema_fixtures::upload_declared("upload");
     upload.mutation = Some("MakeMoment".to_string());
     model.actions.push(upload);
     model

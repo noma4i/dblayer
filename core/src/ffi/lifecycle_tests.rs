@@ -92,7 +92,7 @@ impl EncryptedHttp for Server {
     }
 }
 
-pub(super) use super::stream::tape::Rows;
+pub(super) use super::tape::Rows;
 
 pub(super) fn models() -> String {
     let mut user = ModelSpec::new("User", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("name", ScalarKind::Str)]);

@@ -49,6 +49,7 @@ impl Database {
 
     /// The id a row has now: a temporary id of a `create` that landed gives the real one.
     pub(super) async fn resolved(&self, epoch: u64, model: &str, row: crate::identity::RowId) -> Result<crate::identity::RowId, DbError> {
+        if self.life.is_shut() { return Err(super::command::closed()); }
         if !row.is_temp() { return Ok(row); }
         match self.await_life(self.life.resolve_row(epoch, model.to_string(), row.to_string())).await? {
             LifeReply::Outbox(OutboxAnswer::Resolved(resolved)) => id(&resolved),
@@ -97,6 +98,7 @@ impl Database {
     }
 
     pub(super) async fn create_row(&self, epoch: u64, model: String, values: Map<String, Value>, args: Map<String, Value>) -> Result<WireOperationReceipt, DbError> {
+        if self.life.is_shut() { return Err(super::command::closed()); }
         let db = self.db.clone();
         let planned = super::database::blocking(move || Ok(db.plan_create(&model, values, args)?)).await?;
         self.write_planned(epoch, "create", planned).await
@@ -197,7 +199,6 @@ impl Database {
                 if receipt.operation.is_some() { return Err(DbError::Invalid { detail: "the operation has no sender".into() }); }
                 Ok(WireOperationOutcome::Confirmed { value: receipt.optimistic_value, answer_json: None })
             }
-            Some(Ticket::Sync(_)) => Err(DbError::Invalid { detail: "the receipt of the old stack".into() }),
             Some(Ticket::Transfer(ticket)) => self.transfer_outcome(receipt, ticket).await,
             Some(Ticket::Outbox(ticket)) => self.operation_outcome(receipt, ticket).await,
         }

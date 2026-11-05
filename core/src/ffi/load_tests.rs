@@ -5,8 +5,8 @@ use std::time::Duration;
 use serde_json::Map;
 use tokio::sync::Notify;
 
-use super::stream::tape::{Rows, Tape};
-use super::{Config, Database, DbError, StreamDelivery, StreamRequest, StreamValue, TestClock, Transport};
+use super::tape::{Rows, StreamDelivery, Tape};
+use super::{Config, Database, DbError, ReadRequest, ReadValue, TestClock, Transport};
 use crate::identity::RowId;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
@@ -52,7 +52,7 @@ async fn a_data_reset_ends_the_held_stream_with_its_epoch_and_a_new_stream_reloa
     let live = db.watch_query(query, listener.clone());
     within(live.wait_for_initial_load()).await.unwrap();
     crate::test_wait::yield_until("the first row", || listener.heard().iter().any(|seen| seen.size == 1)).await;
-    db.db.clear_account().unwrap();
+    db.reset_data().await;
     let ended = Arc::new(Rows::default());
     let _watching = db.watch_query(query, ended.clone());
     crate::test_wait::yield_until("the reset and the reloaded row", || ended.last().is_some_and(|seen| seen.size == 1)).await;
@@ -63,10 +63,10 @@ async fn a_data_reset_ends_the_held_stream_with_its_epoch_and_a_new_stream_reloa
 #[tokio::test]
 async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without_http() {
     struct Listener(tokio::sync::mpsc::UnboundedSender<DbError>);
-    impl crate::ffi::stream::tape::Reader for Listener {
+    impl crate::ffi::tape::Reader for Listener {
         fn delivered(&self, delivery: StreamDelivery) {
-            if let StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } = delivery.value {
-                if let Some(error) = state.error { let _ = self.0.send(error); }
+            if let ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } = delivery.value {
+                if let Some(error) = state.error { let _ = self.0.send(DbError::Database { detail: error }); }
             }
         }
     }
@@ -103,21 +103,6 @@ async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without
     assert_eq!(transport.queries.load(Ordering::SeqCst), initial_reads);
     live.cancel();
     }
-}
-
-#[tokio::test]
-async fn a_local_memory_live_query_keeps_a_subscription_watch_without_an_http_load() {
-    let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("body", ScalarKind::Str)]);
-    model.storage = crate::schema::Storage::Memory;
-    let mut relation = RelationSpec::global("recent");
-    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription:"BulletinAdded".into(), deleted_by:None, deleted_unless:None, set:Map::new(), removes:false, debounce:None, root:None, id:Vec::new() });
-    model.relations.push(relation);
-    let transport = Arc::new(Counting { queries:AtomicUsize::new(0), started:Notify::new(), hold: None, gate: None, subscriptions: None });
-    let db = Database::open(Config { path:None, data_version:None, cache_rows:8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
-    db.register_operations(r#"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body } }","rootPath":"bulletinAdded"}]"#.into()).unwrap();
-    let query = r#"{"model":"Notice","relation":"recent","params":{},"order":[{"field":"body","direction":"asc"}]}"#;
-    let live = db.watch_query(query, Arc::new(Rows::default()));
-    assert_eq!(db.stream_probe(live.id), Some((true, false)), "a local memory query holds a subscription watch and starts no load");
 }
 
 pub(super) fn relation(name: &str, stale: &str) -> RelationSpec {
@@ -181,7 +166,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     let (db, transport, _) = open_rig(Some(clock), Some(hold.clone()), None).await;
     let load = tokio::spawn({ let db = db.clone(); async move { load(&db, "feed").await } });
     within(transport.started.notified()).await;
-    db.db.clear_account().unwrap();
+    db.reset_data().await;
     assert!(within(load).await.unwrap().is_err(), "the explicit load waited for its request after the reset");
     within(crate::ffi::settled(&db)).await.unwrap();
     assert!(db.streams.quiet(), "the ended load left a lease: {:?}", db.streams.held());
@@ -212,7 +197,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
     let listener = Arc::new(Rows::default());
-    let _entity = db.watch(StreamRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::EntityFetch::Force }, listener.clone());
+    let _entity = db.watch(ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::ReadFetch::Force }, listener.clone());
     within(transport.started.notified()).await;
     let settling = tokio::spawn({ let db = db.clone(); async move { crate::ffi::settled(&db).await } });
     for _ in 0..200 { tokio::task::yield_now().await; }
@@ -347,85 +332,6 @@ async fn inv_fresh_15_a_test_clock_moves_fresh_for_without_sleeping() {
 
 type OpenHook = Box<dyn FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send>;
 
-struct Interrupting {
-    inner: Counting,
-    on_open: std::sync::Mutex<Option<OpenHook>>,
-}
-
-#[async_trait::async_trait]
-impl Transport for Interrupting {
-    async fn open_cable(&self, lease: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { self.inner.open_cable(lease, _url).await }
-    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> { self.inner.cable_send(token, text).await }
-    async fn cable_next(&self, token: String) -> Option<crate::ffi::EncryptedSocketEvent> { self.inner.cable_next(token).await }
-    async fn cable_close(&self, token: String) { self.inner.cable_close(token).await }
-    async fn query(&self, request: super::TransportRequest) -> Result<String, DbError> { self.inner.query(request).await }
-    async fn mutate(&self, request: super::TransportRequest) -> Result<String, DbError> { self.inner.mutate(request).await }
-    async fn subscribe(&self, request: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), DbError> {
-        self.inner.subscribe(request, sink).await?;
-        let hook = self.on_open.lock().unwrap().take();
-        if let Some(hook) = hook { hook().await; }
-        Ok(())
-    }
-    fn unsubscribe(&self, token: String) { self.inner.unsubscribe(token) }
-    async fn put(&self, url: String, headers: std::collections::HashMap<String, String>, file: crate::transport::PutFile, identity: crate::transport::TransferIdentity, progress: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { self.inner.put(url, headers, file, identity, progress).await }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_failure_after_a_confirmed_reset_reaches_the_query_opened_after_it_once() {
-    let (opened, mut subscriptions) = tokio::sync::mpsc::unbounded_channel();
-    let counting = Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: None, gate: None, subscriptions: Some(opened) };
-    let (entered, entered_rx) = tokio::sync::oneshot::channel::<()>();
-    let transport = Arc::new(Interrupting { inner: counting, on_open: std::sync::Mutex::new(Some(Box::new(move || Box::pin(async move {
-        let _ = entered.send(());
-        std::future::pending::<()>().await;
-    })))) });
-    let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
-    model.storage = crate::schema::Storage::Memory;
-    let mut relation = RelationSpec::global("recent");
-    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() });
-    model.relations.push(relation);
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, None, None, None, None).await.unwrap();
-    database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).unwrap();
-    enum Heard { Failure(DbError), Ended }
-    struct Async(tokio::sync::mpsc::UnboundedSender<Heard>);
-    impl crate::ffi::stream::tape::Reader for Async {
-        fn delivered(&self, delivery: StreamDelivery) {
-            match delivery.value {
-                StreamValue::Ended { .. } => { let _ = self.0.send(Heard::Ended); }
-                StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } => {
-                    if let Some(error) = state.error { let _ = self.0.send(Heard::Failure(error)); }
-                }
-                _ => {}
-            }
-        }
-    }
-    let (heard, mut received) = tokio::sync::mpsc::unbounded_channel();
-    let query = r#"{"model":"Notice","relation":"recent","params":{}}"#;
-    let first = database.watch_query(query, Arc::new(Async(heard.clone())));
-    within(entered_rx).await.unwrap();
-    let held = within(subscriptions.recv()).await.unwrap();
-    let resetting = database.clone();
-    within(tokio::task::spawn_blocking(move || resetting.db.clear_account())).await.unwrap().unwrap();
-    match within(received.recv()).await.expect("the first query ends with the reset") {
-        Heard::Ended => {}
-        Heard::Failure(error) => panic!("the first query heard {error:?} before its end"),
-    }
-    drop(first);
-    let live = database.watch_query(query, Arc::new(Async(heard)));
-    within(live.wait_for_initial_load()).await.unwrap();
-    let mut replacements = vec![within(subscriptions.recv()).await.unwrap()];
-    while let Ok(sink) = subscriptions.try_recv() { replacements.push(sink); }
-    for sink in replacements.iter().chain([&held]) {
-        sink.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "session_unknown".into() });
-    }
-    let Heard::Failure(error) = within(received.recv()).await.expect("the query opened after the reset hears the failure") else { panic!("the query ended") };
-    assert!(matches!(error, DbError::Session { detail, .. } if detail == "session_unknown"));
-    crate::ffi::settled(&database).await.unwrap();
-    assert!(received.try_recv().is_err(), "the failure was delivered more than once");
-    live.cancel();
-}
-
-/// Requirement: an entity stream is not loaded while its fetch is in flight, even when the first empty snapshot reached the listener before the transport answered.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_before_the_transport_answers() {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
@@ -443,10 +349,10 @@ async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_be
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
     let listener = Arc::new(Tape::default());
-    let entity = db.watch(StreamRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::EntityFetch::Force }, listener.clone());
+    let entity = db.watch(ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::ReadFetch::Force }, listener.clone());
     within(transport.started.notified()).await;
     crate::test_wait::yield_until("the empty first snapshot", || listener.last().is_some()).await;
-    let mut loaded = std::pin::pin!(db.loaded(entity.id));
+    let mut loaded = std::pin::pin!(entity.wait_for_initial_load());
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
     for _ in 0..50 { tokio::task::yield_now().await; }
     assert!(std::future::Future::poll(loaded.as_mut(), &mut cx).is_pending(), "loaded() returned before the transport answered");

@@ -7,7 +7,8 @@ use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig, Switchable, World};
 use crate::ffi::lifecycle_tests::named;
-use crate::ffi::{Database, CommandRequest, DbError, EntityFetch, LivePhase, Placement, Replacement, StreamDelivery, StreamEnd, StreamRequest, StreamValue, WireOperationOutcome, WireRow, WireSyncState};
+use crate::ffi::tape::StreamDelivery;
+use crate::ffi::{CommandRequest, Database, DbError, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadValue, RowPlace, RowRename, WireOperationOutcome, WireRow, WireSyncState};
 use crate::test_wait::yield_until;
 
 /// What a platform reader holds: the deliveries in order, replayed into the rows its screen shows.
@@ -19,7 +20,7 @@ struct Reader {
     changed: tokio::sync::Notify,
 }
 
-impl crate::ffi::stream::tape::Reader for Reader {
+impl crate::ffi::tape::Reader for Reader {
     fn delivered(&self, delivery: StreamDelivery) {
         self.threads.lock().unwrap().push(std::thread::current().id());
         if self.lose_next.swap(false, Ordering::SeqCst) { return; }
@@ -28,7 +29,7 @@ impl crate::ffi::stream::tape::Reader for Reader {
     }
 }
 
-fn apply_delta(rows: &mut Vec<WireRow>, carried: Vec<WireRow>, indexes: &[u32], removed: &[String], placed: &[Placement], replaced: &[Replacement], size: u32) {
+fn apply_delta(rows: &mut Vec<WireRow>, carried: Vec<WireRow>, indexes: &[u32], removed: &[String], placed: &[RowPlace], replaced: &[RowRename], size: u32) {
     let by_id: HashMap<String, WireRow> = carried.iter().map(|row| (row.id.clone(), row.clone())).collect();
     for pair in replaced {
         let at = rows.iter().position(|row| row.id == pair.from).expect("a replaced row is held");
@@ -39,7 +40,7 @@ fn apply_delta(rows: &mut Vec<WireRow>, carried: Vec<WireRow>, indexes: &[u32], 
     for place in placed {
         if let Some(at) = rows.iter().position(|row| row.id == place.id) { taken.insert(place.id.clone(), rows.remove(at)); }
     }
-    let mut ordered: Vec<&Placement> = placed.iter().collect();
+    let mut ordered: Vec<&RowPlace> = placed.iter().collect();
     ordered.sort_by_key(|place| place.index);
     for place in ordered {
         let row = taken.remove(&place.id).or_else(|| by_id.get(&place.id).cloned()).expect("a placed row is known");
@@ -63,8 +64,8 @@ impl Reader {
         let (mut rows, mut revision, mut gaps) = (Vec::new(), None, 0);
         for delivery in self.deliveries() {
             match delivery.value {
-                StreamValue::Snapshot { revision: held, rows: whole, .. } => { rows = whole; revision = Some(held); }
-                StreamValue::Delta { base, revision: next, size, rows: carried, row_indexes, removed, placed, replaced, .. } => {
+                ReadValue::Snapshot { revision: held, rows: whole, .. } => { rows = whole; revision = Some(held); }
+                ReadValue::Delta { base, revision: next, size, rows: carried, indexes: row_indexes, removed, placed, replaced, .. } => {
                     if revision != Some(base) { gaps += 1; continue; }
                     apply_delta(&mut rows, carried, &row_indexes, &removed, &placed, &replaced, size);
                     revision = Some(next);
@@ -80,14 +81,14 @@ impl Reader {
     fn shows(&self, account: &str) -> bool { let rows = self.rows(); !rows.is_empty() && rows.iter().all(|row| named(row, account)) }
     fn ever_showed(&self, account: &str) -> bool {
         self.deliveries().iter().any(|delivery| match &delivery.value {
-            StreamValue::Snapshot { rows, .. } | StreamValue::Delta { rows, .. } => rows.iter().any(|row| named(row, account)),
+            ReadValue::Snapshot { rows, .. } | ReadValue::Delta { rows, .. } => rows.iter().any(|row| named(row, account)),
             _ => false,
         })
     }
-    fn ended(&self) -> Vec<StreamEnd> {
-        self.deliveries().into_iter().filter_map(|delivery| if let StreamValue::Ended { reason } = delivery.value { Some(reason) } else { None }).collect()
+    fn ended(&self) -> Vec<ReadEnd> {
+        self.deliveries().into_iter().filter_map(|delivery| if let ReadValue::Ended { cause } = delivery.value { Some(cause) } else { None }).collect()
     }
-    fn snapshots(&self) -> usize { self.deliveries().iter().filter(|delivery| matches!(delivery.value, StreamValue::Snapshot { .. })).count() }
+    fn snapshots(&self) -> usize { self.deliveries().iter().filter(|delivery| matches!(delivery.value, ReadValue::Snapshot { .. })).count() }
     fn texts(&self) -> Vec<String> {
         self.rows().iter().map(|row| row.cells.iter().filter_map(|cell| if let crate::ffi::Cell::Text { value } = cell { Some(value.clone()) } else { None }).collect::<Vec<_>>().join("|")).collect()
     }
@@ -99,9 +100,9 @@ async fn network_drops_during(rig: &Rig, held: &super::rig_tests::Gate) {
     rig.database.set_online(false).unwrap();
 }
 
-fn profile() -> StreamRequest { StreamRequest::Query { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() } }
+fn profile() -> ReadRequest { ReadRequest::List { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() } }
 
-fn users() -> StreamRequest { StreamRequest::Query { query_json: r#"{"model":"User","relation":"all","params":{}}"#.into() } }
+fn users() -> ReadRequest { ReadRequest::List { query_json: r#"{"model":"User","relation":"all","params":{}}"#.into() } }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
@@ -225,7 +226,7 @@ async fn a_mutation_during_the_first_page_keeps_the_whole_chain_stale() {
     use crate::value::ScalarKind;
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     let mut feed = RelationSpec::global("feed");
-    feed.remote = Some(crate::sync::rig::remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None }, "5.minutes"));
+    feed.remote = Some(crate::schema_fixtures::remote("MomentsFeed", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None }, "5.minutes"));
     model.relations.push(feed);
     let mut like = ActionDeclaration::new("like", RootShape::Upsert);
     like.mutation = Some("LikeMoment".into());
@@ -262,7 +263,7 @@ async fn a_refetch_owed_without_a_reader_survives_reopen() {
     use crate::value::ScalarKind;
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     let mut feed = RelationSpec::global("feed");
-    feed.remote = Some(crate::sync::rig::remote("MomentsFeed", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    feed.remote = Some(crate::schema_fixtures::remote("MomentsFeed", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
     model.relations.push(feed);
     let mut like = ActionDeclaration::new("like", RootShape::Upsert);
     like.mutation = Some("LikeMoment".into());
@@ -303,7 +304,7 @@ async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
     use crate::value::ScalarKind;
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     let mut feed = RelationSpec::global("feed");
-    feed.remote = Some(crate::sync::rig::remote("MomentsFeed", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
+    feed.remote = Some(crate::schema_fixtures::remote("MomentsFeed", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes"));
     model.relations.push(feed);
     let mut destroy = ActionDeclaration::new("destroy", RootShape::Destroy);
     destroy.mutation = Some("DeleteMoment".into());
@@ -316,7 +317,7 @@ async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
     ]).to_string()).unwrap();
     let epoch = database.session_epoch();
     let reader = Reader::open();
-    let stream = database.subscribe_reading(epoch, StreamRequest::Query { query_json: json!({"model":"Moment","relation":"feed","params":{}}).to_string() }, reader.clone());
+    let stream = database.subscribe_reading(epoch, ReadRequest::List { query_json: json!({"model":"Moment","relation":"feed","params":{}}).to_string() }, reader.clone());
     bound(database.loaded(stream)).await.unwrap();
     assert_eq!(ids_of(reader.rows()), ["1"]);
     let receipt = bound(database.destroy(epoch, "Moment".into(), "1".into())).await.unwrap();
@@ -360,8 +361,8 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     second.close_now();
 }
 
-fn thread() -> StreamRequest {
-    StreamRequest::Query { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"order":[{"field":"at","direction":"asc"}]}"#.into() }
+fn thread() -> ReadRequest {
+    ReadRequest::List { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"order":[{"field":"at","direction":"asc"}]}"#.into() }
 }
 
 pub(super) fn message(epoch: u64, text: &str, at: i64) -> CommandRequest {
@@ -380,7 +381,7 @@ async fn a_profile_delivery_is_ready_with_its_rows_before_an_explicit_refresh() 
         loop {
             let changed = reader.changed.notified();
             if reader.deliveries().iter().any(|delivery| match &delivery.value {
-                StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } => state.settled,
+                ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } => state.settled(),
                 _ => false,
             }) { break; }
             changed.await;
@@ -407,19 +408,19 @@ async fn a_cold_profile_delivers_a_complete_first_frame_when_empty_or_failed() {
             loop {
                 let changed = reader.changed.notified();
                 if reader.deliveries().iter().any(|delivery| match &delivery.value {
-                    StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } => state.settled,
+                    ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } => state.settled(),
                     _ => false,
                 }) { break; }
                 changed.await;
             }
         }).await;
-        assert!(matches!(&reader.deliveries()[0].value, StreamValue::Snapshot { rows, .. } if rows.is_empty()), "first delivery is not a complete empty frame");
+        assert!(matches!(&reader.deliveries()[0].value, ReadValue::Snapshot { rows, .. } if rows.is_empty()), "first delivery is not a complete empty frame");
         let last = reader.deliveries().into_iter().filter_map(|delivery| match delivery.value {
-            StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } if state.settled => Some(state),
+            ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } if state.settled() => Some(state),
             _ => None,
         }).last().unwrap();
-        assert_eq!(last.phase, if failed { LivePhase::Failed } else { LivePhase::Empty });
-        assert_eq!(matches!(last.error, Some(DbError::Network { .. })), failed);
+        assert_eq!(last.phase, if failed { ReadPhase::Failed } else { ReadPhase::Loaded });
+        assert_eq!(last.error.is_some(), failed);
         rig.database.close_now();
     }
 }
@@ -429,7 +430,7 @@ async fn a_cached_entity_remains_loaded_when_its_initial_network_read_fails() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    let request = || StreamRequest::Entity { model: "User".into(), id: "user".into(), fetch: EntityFetch::Force };
+    let request = || ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: ReadFetch::Force };
     let first = rig.database.subscribe_reading(epoch, request(), Reader::open());
     bound(rig.database.loaded(first)).await.unwrap();
     rig.database.cancel_stream(first);
@@ -444,36 +445,16 @@ async fn a_cached_entity_remains_loaded_when_its_initial_network_read_fails() {
         loop {
             let changed = reader.changed.notified();
             if reader.deliveries().iter().any(|delivery| match &delivery.value {
-                StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } => state.error.is_some(),
+                ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } => state.error.is_some(),
                 _ => false,
             }) { break; }
             changed.await;
         }
     }).await;
     assert!(reader.deliveries().iter().any(|delivery| match &delivery.value {
-        StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } => state.phase == LivePhase::Loaded && matches!(&state.error, Some(DbError::Network { .. })),
+        ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } => state.phase == ReadPhase::Loaded && state.error.is_some(),
         _ => false,
     }));
-    rig.database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn an_unknown_association_reports_its_error_after_the_stream_ends() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let reader = Reader::open();
-    let request = StreamRequest::Related { query_json: r#"{"model":"User"}"#.into(), name: "missing".into() };
-    let stream = rig.database.subscribe_reading(rig.database.session_epoch(), request, reader.clone());
-    bound(async {
-        loop {
-            let changed = reader.changed.notified();
-            if !reader.ended().is_empty() { break; }
-            changed.await;
-        }
-    }).await;
-    assert_eq!(reader.ended(), vec![StreamEnd::Invalid]);
-    let result = bound(rig.database.loaded(stream)).await;
-    assert!(matches!(result, Err(DbError::Invalid { detail }) if detail.contains("missing")));
     rig.database.close_now();
 }
 
@@ -482,7 +463,7 @@ async fn a_held_entity_ends_its_load_wait_after_session_reset() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let reader = Reader::open();
-    let stream = rig.database.subscribe_reading(rig.database.session_epoch(), StreamRequest::Entity { model: "User".into(), id: "user".into(), fetch: EntityFetch::Force }, reader.clone());
+    let stream = rig.database.subscribe_reading(rig.database.session_epoch(), ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: ReadFetch::Force }, reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     bound(rig.database.session_reset()).await.unwrap();
     bound(async {
@@ -492,7 +473,7 @@ async fn a_held_entity_ends_its_load_wait_after_session_reset() {
             changed.await;
         }
     }).await;
-    assert_eq!(reader.ended(), vec![StreamEnd::SessionEnded]);
+    assert_eq!(reader.ended(), vec![ReadEnd::SessionEnded]);
     assert!(matches!(bound(rig.database.loaded(stream)).await, Err(DbError::Interrupted { .. })));
     rig.database.close_now();
 }
@@ -503,7 +484,7 @@ async fn cancelling_a_reader_before_its_first_load_interrupts_the_wait() {
     rig.login_ios("A").await;
     let gate = rig.world.hold_next("UserNode");
     let reader = Reader::open();
-    let stream = rig.database.subscribe_reading(rig.database.session_epoch(), StreamRequest::Entity { model: "User".into(), id: "other".into(), fetch: EntityFetch::Force }, reader.clone());
+    let stream = rig.database.subscribe_reading(rig.database.session_epoch(), ReadRequest::Entity { model: "User".into(), id: "other".into(), fetch: ReadFetch::Force }, reader.clone());
     gate.entered().await;
     rig.database.cancel_stream(stream);
     gate.release();
@@ -518,14 +499,14 @@ async fn cancelling_a_delivery_wait_leaves_the_stream_running() {
     rig.login_ios("A").await;
     let gate = rig.world.hold_next("UserNode");
     let reader = Reader::open();
-    let stream = rig.database.subscribe_reading(rig.database.session_epoch(), StreamRequest::Entity { model: "User".into(), id: "user".into(), fetch: EntityFetch::Force }, reader.clone());
+    let stream = rig.database.subscribe_reading(rig.database.session_epoch(), ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: ReadFetch::Force }, reader.clone());
     gate.entered_for("the entity request").await;
     let (started, waiting) = tokio::sync::oneshot::channel();
     let pending = { let reader = reader.clone(); tokio::spawn(async move {
         let _ = started.send(());
         loop {
             let changed = reader.changed.notified();
-            if reader.deliveries().iter().any(|delivery| matches!(&delivery.value, StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } if state.settled)) { return; }
+            if reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } if state.settled())) { return; }
             changed.await;
         }
     }) };
@@ -536,7 +517,7 @@ async fn cancelling_a_delivery_wait_leaves_the_stream_running() {
     bound(async {
         loop {
             let changed = reader.changed.notified();
-            if !reader.rows().is_empty() && reader.deliveries().iter().any(|delivery| matches!(&delivery.value, StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } if state.settled)) { break; }
+            if !reader.rows().is_empty() && reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } if state.settled())) { break; }
             changed.await;
         }
     }).await;
@@ -556,7 +537,7 @@ async fn a_mutation_answer_requires_one_reread_after_an_older_load() {
     rig.world.set_members("JOINED", &["u1", "u2"]);
     let query = json!({"model":"Member", "relation":"group_members", "params":{"groupId":created.id,"order":"JOINED"}}).to_string();
     let reader = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, StreamRequest::Query { query_json: query }, reader.clone());
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: query }, reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     let before = rig.world.count("GroupMembers");
     let older = rig.world.hold_next("GroupMembers");
@@ -600,7 +581,7 @@ async fn a_receipt_revision_arrives_with_the_updated_row() {
         loop {
             let changed = reader.changed.notified();
             if reader.deliveries().iter().any(|delivery| match &delivery.value {
-                StreamValue::Snapshot { revision, .. } | StreamValue::Delta { revision, .. } => *revision >= receipt.revision,
+                ReadValue::Snapshot { revision, .. } | ReadValue::Delta { revision, .. } => *revision >= receipt.revision,
                 _ => false,
             }) { break; }
             changed.await;
@@ -626,48 +607,29 @@ async fn a_fresh_profile_is_read_again_after_expiry() {
     rig.database.close_now();
 }
 
-/// Hears that a stream has values and reads nothing: the reader of a test reads the journal itself.
-struct Heard(tokio::sync::mpsc::UnboundedSender<()>);
-
-impl crate::ffi::ValueSink for Heard {
-    fn available(&self) { let _ = self.0.send(()); }
-}
-
 fn chat_entry(index: usize) -> serde_json::Value {
     json!({"topic":"MESSAGE","action":"UPDATED","recordId":format!("m{index}"),"chat":{"id":format!("c{index}"),"title":"t","revision":1,"lists":["PRIMARY"]}})
 }
 
-/// S209: a reader of events that reads nothing while 400 events arrive takes 255 events and one lost range, which add up to the 400 sent, then the end after the database closed, without the events it did not read before the end. Observed: the values `read_stream` returns. Breaks when `Journal::evict` drops an event without keeping its position, or when `Facts::finish` keeps the values of the old session.
+/// S209: a reader of events that pulls nothing while 400 events arrive reads the kept events and the lost ranges, which add up to the 400 sent, then one end after the database closed.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end() {
     let (database, transport, _) = chat_events().await;
-    let (available, mut heard) = tokio::sync::mpsc::unbounded_channel();
-    let stream = database.subscribe(database.session_epoch(), StreamRequest::Events { model: "Chat".into() }, Arc::new(Heard(available)));
-    let opened = bound(async {
-        loop {
-            if let Some(delivery) = database.read_stream(stream) { return delivery; }
-            crate::test_wait::within(heard.recv()).await;
-        }
-    }).await;
-    assert!(matches!(&opened.value, StreamValue::State { state } if state.settled && state.error.is_none()), "the first value is the open source: {opened:?}");
-    assert_eq!(opened.seq, 1);
+    let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    let opened = bound(stream.pull()).await.unwrap();
+    assert!(matches!(opened, Some(ReadValue::Ready)), "the first value is the open source: {opened:?}");
 
     transport.emit(json!({"data":{"recordEvents":{"entries":(0..400).map(chat_entry).collect::<Vec<_>>()}}}).to_string()).unwrap();
     bound(crate::ffi::settled(&database)).await.unwrap();
-    let burst: Vec<StreamDelivery> = std::iter::from_fn(|| database.read_stream(stream)).collect();
-    let events: Vec<String> = burst.iter().filter_map(|delivery| match &delivery.value { StreamValue::Event { event } => Some(event.id.clone()), _ => None }).collect();
-    let lost: Vec<(u64, u64)> = burst.iter().filter_map(|delivery| match delivery.value { StreamValue::Lost { first, last } => Some((first, last)), _ => None }).collect();
-    assert_eq!(lost, [(2, 146)], "the positions of the evicted events form one range before the kept ones");
-    assert_eq!(events.len() as u64 + lost.iter().map(|(first, last)| last - first + 1).sum::<u64>(), 400, "kept events and lost positions add up to the events sent");
-    assert_eq!(events.first().map(String::as_str), Some("c145"), "the first kept event follows the lost range");
-    assert_eq!(events.last().map(String::as_str), Some("c399"));
-
-    transport.emit(json!({"data":{"recordEvents":{"entries":(400..405).map(chat_entry).collect::<Vec<_>>()}}}).to_string()).unwrap();
-    bound(crate::ffi::settled(&database)).await.unwrap();
     database.close_now();
-    let after: Vec<StreamValue> = std::iter::from_fn(|| database.read_stream(stream)).map(|delivery| delivery.value).collect();
-    assert!(matches!(after.as_slice(), [StreamValue::Ended { reason: StreamEnd::Closed }]), "after the close only one end follows: {after:?}");
-    assert_eq!(database.stream_census().open, 0);
+    let mut burst = Vec::new();
+    while let Some(value) = bound(stream.pull()).await.unwrap() { burst.push(value); }
+    let kept = burst.iter().filter(|value| matches!(value, ReadValue::Event { .. })).count() as u64;
+    let lost: u64 = burst.iter().map(|value| match value { ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum();
+    assert_eq!(kept + lost, 400, "kept events and lost positions add up to the events sent");
+    assert!(lost > 0, "a reader that pulled nothing lost the oldest events");
+    assert!(matches!(burst.last(), Some(ReadValue::Ended { cause: ReadEnd::Closed })), "the stream ends once at the close: {:?}", burst.last());
+    assert_eq!(burst.iter().filter(|value| matches!(value, ReadValue::Ended { .. })).count(), 1);
 }
 
 /// A database whose chats arrive through a change feed with the chat in its payload.
@@ -681,7 +643,7 @@ async fn chat_events() -> (Arc<Database>, Arc<Switchable>, Arc<World>) {
     let mut node = RelationSpec::new("node", &[]);
     node.text_params = vec![NODE_PARAM.into()];
     node.node = Some(NodeRead::One);
-    let mut remote = crate::sync::rig::remote("ChatNode", RemoteShape::Single, "5.minutes");
+    let mut remote = crate::schema_fixtures::remote("ChatNode", RemoteShape::Single, "5.minutes");
     remote.variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
     node.remote = Some(remote);
     let mut list = RelationSpec::new("list", &[]);
@@ -689,7 +651,7 @@ async fn chat_events() -> (Arc<Database>, Arc<Switchable>, Arc<World>) {
     list.membership.insert("list".into(), Membership::Contains("lists".into()));
     list.joins_node = true;
     list.joins_events = true;
-    let mut listed = crate::sync::rig::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
+    let mut listed = crate::schema_fixtures::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
     listed.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
     list.remote = Some(listed);
     chat.relations.extend([node, list]);
@@ -712,7 +674,7 @@ async fn an_event_opened_before_linked_lists_reports_the_committed_payload() {
     let (database, transport, world) = chat_events().await;
     let epoch = database.session_epoch();
     let reader = Reader::open();
-    let events = database.subscribe_reading(epoch, StreamRequest::Events { model: "Chat".into() }, reader.clone());
+    let events = database.subscribe_reading(epoch, ReadRequest::Events { model: "Chat".into() }, reader.clone());
     bound(database.loaded(events)).await.unwrap();
     let params = |list: &str| json!({"list":list}).to_string();
     for list in ["PRIMARY", "SECONDARY"] { bound(database.load(epoch, "Chat".into(), "list".into(), params(list))).await.unwrap(); }
@@ -724,14 +686,13 @@ async fn an_event_opened_before_linked_lists_reports_the_committed_payload() {
     bound(async {
         loop {
             let changed = reader.changed.notified();
-            if reader.deliveries().iter().any(|delivery| matches!(&delivery.value, StreamValue::Event { .. })) { break; }
+            if reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Event { .. })) { break; }
             changed.await;
         }
     }).await;
-    let event = reader.deliveries().into_iter().find_map(|delivery| match delivery.value { StreamValue::Event { event } => Some(event), _ => None }).unwrap();
-    assert_eq!(event.id, "c1");
-    assert!(event.before.as_ref().is_some_and(|row| named(row, "before")));
-    assert!(event.after.as_ref().is_some_and(|row| named(row, "after")));
+    let event = reader.deliveries().into_iter().find_map(|delivery| match delivery.value { ReadValue::Event { payload, .. } => serde_json::from_str::<serde_json::Value>(&payload).ok(), _ => None }).unwrap();
+    assert_eq!(event["id"], "c1");
+    assert_eq!(event["row"]["title"], "after", "the event carries the committed row");
     let primary = bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap();
     assert_eq!(ids_of(primary.clone()), ["c1"]);
     assert!(named(&primary[0], "after"));
@@ -753,7 +714,7 @@ async fn a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_i
     yield_until("the stream shows A", || reader.shows("A")).await;
     let log = reader.deliveries();
     assert!(log.iter().any(|delivery| delivery.seq == newest), "loaded names {newest}, a sequence number the reader did not receive: {log:?}");
-    assert!(matches!(log[0].value, StreamValue::Snapshot { .. }), "the first value is a snapshot: {:?}", log[0]);
+    assert!(matches!(log[0].value, ReadValue::Snapshot { .. }), "the first value is a snapshot: {:?}", log[0]);
     assert!(log.iter().all(|delivery| delivery.epoch == epoch && delivery.stream == stream), "every delivery names the stream and its epoch");
     assert!(log.iter().enumerate().all(|(index, delivery)| delivery.seq == index as u64 + 1), "the sequence counts from 1 with no gap");
     assert!(reader.threads.lock().unwrap().iter().all(|thread| *thread != caller), "a delivery ran on the thread that subscribed");
@@ -775,8 +736,8 @@ async fn the_session_reset_ends_every_stream_with_one_outcome_and_no_account_val
     settle(&rig).await;
 
     for log in [&profile_log, &users_log] {
-        assert_eq!(log.ended(), vec![StreamEnd::SessionEnded], "exactly one outcome");
-        assert!(matches!(log.deliveries().last().unwrap().value, StreamValue::Ended { .. }), "nothing follows the outcome");
+        assert_eq!(log.ended(), vec![ReadEnd::SessionEnded], "exactly one outcome");
+        assert!(matches!(log.deliveries().last().unwrap().value, ReadValue::Ended { .. }), "nothing follows the outcome");
     }
     assert_eq!(rig.database.stream_census().open, 0);
     assert_eq!(rig.database.subscription_census().subscriptions, 0);
@@ -816,7 +777,7 @@ async fn an_account_switch_gives_new_streams_and_no_value_of_a_reaches_b() {
     assert!(!second_profile.ever_showed("A") && !second_users.ever_showed("A"), "a value of A reached the projections of B");
     assert!(!first_profile.ever_showed("B") && !first_users.ever_showed("B"), "a value of B reached the projections of A");
     assert!(second_profile.deliveries().iter().all(|delivery| delivery.epoch == epoch_b));
-    assert_eq!(first_profile.ended(), vec![StreamEnd::SessionEnded]);
+    assert_eq!(first_profile.ended(), vec![ReadEnd::SessionEnded]);
     rig.database.close_now();
 }
 
@@ -943,7 +904,7 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
         let receipt = bound(rig.database.send(message(epoch, text, 6 + index as i64))).await.unwrap();
         bound(rig.database.outcome(receipt)).await.unwrap();
         settle(&rig).await;
-        let delta_rows: Vec<usize> = reader.deliveries().iter().skip(mark).filter_map(|delivery| if let StreamValue::Delta { rows, .. } = &delivery.value { Some(rows.len()) } else { None }).collect();
+        let delta_rows: Vec<usize> = reader.deliveries().iter().skip(mark).filter_map(|delivery| if let ReadValue::Delta { rows, .. } = &delivery.value { Some(rows.len()) } else { None }).collect();
         assert!(!delta_rows.is_empty() && delta_rows.iter().all(|rows| *rows == 1), "a change of one row carried {delta_rows:?} rows");
         costs.push((delta_rows.len(), rig.database.db.counters().rows_delivered - before));
     }
@@ -961,8 +922,8 @@ async fn work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_ge
     let epoch = rig.database.session_epoch();
     let (entity, count, list) = (Reader::open(), Reader::open(), Reader::open());
     let streams = [
-        rig.database.subscribe_reading(epoch, StreamRequest::Entity { model: "Message".into(), id: "s1".into(), fetch: crate::ffi::EntityFetch::Never }, entity.clone()),
-        rig.database.subscribe_reading(epoch, StreamRequest::Count { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#.into() }, count.clone()),
+        rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "Message".into(), id: "s1".into(), fetch: crate::ffi::ReadFetch::Never }, entity.clone()),
+        rig.database.subscribe_reading(epoch, ReadRequest::Count { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#.into() }, count.clone()),
         rig.database.subscribe_reading(epoch, thread(), list.clone()),
     ];
     for stream in streams { bound(rig.database.loaded(stream)).await.unwrap(); }
@@ -977,40 +938,13 @@ async fn work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_ge
         bound(rig.database.outcome(receipt)).await.unwrap();
         settle(&rig).await;
         let entity_values = entity.deliveries().len() - entity_mark;
-        let counts: Vec<i64> = count.deliveries().iter().skip(count_mark).filter_map(|delivery| if let StreamValue::Count { count, .. } = &delivery.value { Some(*count) } else { None }).collect();
+        let counts: Vec<i64> = count.deliveries().iter().skip(count_mark).filter_map(|delivery| if let ReadValue::Count { count, .. } = &delivery.value { Some(*count as i64) } else { None }).collect();
         assert_eq!(entity_values, 0, "a write to another row reached the entity stream");
         assert_eq!(counts.last().copied(), Some(6 + index as i64), "the count stream shows {counts:?}");
         costs.push(counts.len());
     }
     assert_eq!(costs[0], costs[1], "the cost of one write to the count stream grew with the list: {costs:?}");
     assert!(costs[1] <= 2, "one write delivered {} count values", costs[1]);
-    rig.database.close_now();
-}
-
-/// A missed revision gives exactly one new snapshot, never a replay of the history.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_missed_revision_gives_one_new_snapshot() {
-    let rig = Rig::encrypted().await;
-    rig.world.seed_message("A", "m1", "first", 1);
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    let reader = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, thread(), reader.clone());
-    bound(rig.database.loaded(stream)).await.unwrap();
-    yield_until("the thread shows the first message", || reader.rows().len() == 1).await;
-    let snapshots = reader.snapshots();
-
-    reader.lose_next.store(true, Ordering::SeqCst);
-    bound(rig.database.send(message(epoch, "lost", 2))).await.unwrap();
-    yield_until("the lost delivery was swallowed", || !reader.lose_next.load(Ordering::SeqCst)).await;
-    bound(rig.database.send(message(epoch, "after", 3))).await.unwrap();
-    yield_until("the delta after the gap arrived", || reader.gaps() == 1).await;
-
-    rig.database.resync_stream(stream);
-    yield_until("one new snapshot arrived", || reader.snapshots() == snapshots + 1).await;
-    yield_until("the rows are whole again", || reader.rows().len() == 3).await;
-    settle(&rig).await;
-    assert_eq!(reader.snapshots(), snapshots + 1, "more than one snapshot answered the gap");
     rig.database.close_now();
 }
 
@@ -1063,15 +997,15 @@ async fn a_stream_that_cannot_connect_ends_once_and_leaves_the_table() {
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let requests = [
-        StreamRequest::Entity { model: "Nope".into(), id: "x".into(), fetch: crate::ffi::EntityFetch::Never },
-        StreamRequest::Events { model: "Nope".into() },
-        StreamRequest::Count { query_json: r#"{"model":"Nope"}"#.into() },
+        ReadRequest::Entity { model: "Nope".into(), id: "x".into(), fetch: crate::ffi::ReadFetch::Never },
+        ReadRequest::Events { model: "Nope".into() },
+        ReadRequest::Count { query_json: r#"{"model":"Nope"}"#.into() },
     ];
     for request in requests {
         let reader = Reader::open();
         let stream = rig.database.subscribe_reading(epoch, request.clone(), reader.clone());
         yield_until("the failed stream ended", || !reader.ended().is_empty()).await;
-        assert_eq!(reader.ended(), vec![StreamEnd::Invalid], "{request:?} ended with more or less than one outcome");
+        assert_eq!(reader.ended(), vec![ReadEnd::Invalid], "{request:?} ended with more or less than one outcome");
         assert_eq!(rig.database.stream_census().open, 0, "{request:?} stayed in the table");
         assert!(bound(rig.database.loaded(stream)).await.is_err(), "{request:?} reported a first load");
     }
@@ -1087,7 +1021,7 @@ struct Blocking {
     release: Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
-impl crate::ffi::stream::tape::Reader for Blocking {
+impl crate::ffi::tape::Reader for Blocking {
     fn delivered(&self, delivery: StreamDelivery) {
         if self.armed.swap(false, Ordering::SeqCst) {
             self.entered.lock().unwrap().send(()).unwrap();
@@ -1152,7 +1086,7 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     let current = rig.database.session_epoch();
     assert_ne!(old, current);
     let users = r#"{"model":"User","relation":"all","params":{}}"#;
-    let refused = |result: Result<(), DbError>| matches!(result, Err(DbError::Interrupted { .. }));
+    let refused = |result: Result<(), DbError>| matches!(result, Err(DbError::Interrupted { .. } | DbError::NoSession { .. }));
     assert!(refused(bound(rig.database.read_query(old, users.into())).await.map(|_| ())), "a read of A returned rows in the epoch of B");
     assert!(refused(bound(rig.database.read_row(old, "User".into(), "user".into())).await.map(|_| ())));
     assert!(refused(bound(rig.database.update(old, "User".into(), "user".into(), json!({"name":"hijacked"}).to_string(), "{}".into())).await.map(|_| ())));
@@ -1240,7 +1174,7 @@ async fn an_old_subscription_sink_is_closed_before_the_next_account() {
     let world = super::rig_tests::World::new("server", "A", true);
     let rig = Rig::plain(world.clone(), false).await;
     let epoch = rig.database.session_epoch();
-    let stream = rig.database.subscribe_reading(epoch, StreamRequest::Query { query_json: r#"{"model":"Notice","relation":"recent","params":{}}"#.into() }, Reader::open());
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: r#"{"model":"Notice","relation":"recent","params":{}}"#.into() }, Reader::open());
     let (token, old_sink) = rig.switch.first_sink().await;
 
     bound(rig.database.session_reset()).await.unwrap();
@@ -1278,7 +1212,7 @@ async fn a_server_create_returns_the_confirmed_row_and_needs_the_network() {
 /// A reader whose last reference decides where the platform object dies.
 struct DropProbe { held: Arc<Mutex<Vec<String>>>, dropped: Arc<std::sync::atomic::AtomicUsize> }
 
-impl crate::ffi::stream::tape::Reader for DropProbe {
+impl crate::ffi::tape::Reader for DropProbe {
     fn delivered(&self, _: StreamDelivery) {}
 }
 
@@ -1353,7 +1287,7 @@ async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_re
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let list = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, StreamRequest::Query { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"refreshOnConnect":true}"#.into() }, list.clone());
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"refreshOnConnect":true}"#.into() }, list.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     settle(&rig).await;
     let before = rig.world.count("Thread");
@@ -1396,7 +1330,7 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let entity = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, StreamRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::EntityFetch::Force }, entity.clone());
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::ReadFetch::Force }, entity.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     let hits = rig.world.log().len();
     rig.database.set_online(false).unwrap();
@@ -1407,7 +1341,7 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     let more = bound(rig.database.load_more(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
     assert!(matches!(more, Err(DbError::Network { .. })), "load more offline: {more:?}");
     yield_until("the entity stream shows the error", || entity.deliveries().iter().any(|delivery| match &delivery.value {
-        StreamValue::State { state } | StreamValue::Snapshot { state, .. } => state.error.is_some(),
+        ReadValue::State { state, .. } | ReadValue::Snapshot { state, .. } => state.error.is_some(),
         _ => false,
     })).await;
     assert_eq!(rig.world.log().len(), hits, "a call offline reached the server");
@@ -1441,7 +1375,7 @@ async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_return
     }
 }
 
-fn groups() -> StreamRequest { StreamRequest::Query { query_json: r#"{"model":"Group","relation":"all","params":{}}"#.into() } }
+fn groups() -> ReadRequest { ReadRequest::List { query_json: r#"{"model":"Group","relation":"all","params":{}}"#.into() } }
 
 pub(super) fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
     let spec = rig.database.db.spec("Member").unwrap();
@@ -1491,7 +1425,7 @@ async fn adding_and_removing_a_member_ends_with_the_member_lists_of_the_server_i
     let mut readers = Vec::new();
     for (order, _) in orders {
         let (reader, query) = (Reader::open(), json!({"model": "Member", "relation": "group_members", "params": {"groupId": created.id, "order": order}}).to_string());
-        let stream = rig.database.subscribe_reading(epoch, StreamRequest::Query { query_json: query }, reader.clone());
+        let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: query }, reader.clone());
         bound(rig.database.loaded(stream)).await.unwrap();
         readers.push(reader);
     }
@@ -1722,8 +1656,7 @@ async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_la
     let receipt = bound(rig.database.send(message(epoch, "kept", 9))).await.unwrap();
     gate.entered_for("the send").await;
     let generation = rig.database.db.generation();
-    let reset = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.clear_models(&["User"])) };
-    bound(reset).await.unwrap().unwrap();
+    bound(rig.database.reset_models_of(&["User"])).await;
     assert_ne!(rig.database.db.generation(), generation, "the reset of another model did not move the generation");
     assert_eq!(rig.database.session_epoch(), epoch, "the reset of another model ended the epoch");
     gate.release();

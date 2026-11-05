@@ -124,7 +124,7 @@ pub fn subscription_channel() -> (SubscriptionSender, SubscriptionReceiver) {
 
 impl Clone for SubscriptionSender {
     fn clone(&self) -> Self {
-        crate::sync::locked(&self.0.queue).senders += 1;
+        crate::db::locked(&self.0.queue).senders += 1;
         Self(self.0.clone())
     }
 }
@@ -132,7 +132,7 @@ impl Clone for SubscriptionSender {
 impl Drop for SubscriptionSender {
     fn drop(&mut self) {
         let ended = {
-            let mut queue = crate::sync::locked(&self.0.queue);
+            let mut queue = crate::db::locked(&self.0.queue);
             queue.senders -= 1;
             queue.senders == 0
         };
@@ -142,9 +142,9 @@ impl Drop for SubscriptionSender {
 
 impl SubscriptionSender {
     pub fn send(&self, event: SubscriptionEvent) -> Result<(), ()> {
-        let hold = crate::sync::locked(&self.0.queue).hold.clone();
+        let hold = crate::db::locked(&self.0.queue).hold.clone();
         let mut lease = hold.and_then(|hold| hold());
-        let mut queue = crate::sync::locked(&self.0.queue);
+        let mut queue = crate::db::locked(&self.0.queue);
         if !queue.receiving { drop(queue); drop(lease); return Err(()); }
         if queue.failure.is_some() { drop(queue); drop(lease); return Ok(()); }
         if queue.held.is_none() { queue.held = lease.take(); }
@@ -175,7 +175,7 @@ impl SubscriptionSender {
 
 impl SubscriptionReceiver {
     pub(crate) fn try_recv(&mut self) -> Result<(SubscriptionEvent, Option<FrameLease>), ()> {
-        let mut queue = crate::sync::locked(&self.0.queue);
+        let mut queue = crate::db::locked(&self.0.queue);
         let event = Self::pop(&mut queue).ok_or(())?;
         let lease = if queue.is_empty() { queue.held.take() } else { None };
         Ok((event, lease))
@@ -196,15 +196,15 @@ impl SubscriptionReceiver {
             let channel = self.0.clone();
             let notified = channel.wake.notified();
             if let Ok(event) = self.try_recv() { return Some(event); }
-            if crate::sync::locked(&self.0.queue).senders == 0 { return None; }
+            if crate::db::locked(&self.0.queue).senders == 0 { return None; }
             notified.await;
         }
     }
 
     fn hold_frames(&self, hold: FrameHold) {
-        let waiting = !crate::sync::locked(&self.0.queue).is_empty();
+        let waiting = !crate::db::locked(&self.0.queue).is_empty();
         let mut lease = if waiting { hold() } else { None };
-        let mut queue = crate::sync::locked(&self.0.queue);
+        let mut queue = crate::db::locked(&self.0.queue);
         if !queue.is_empty() && queue.held.is_none() { queue.held = lease.take(); }
         queue.hold = Some(hold);
         drop(queue);
@@ -215,7 +215,7 @@ impl SubscriptionReceiver {
 impl Drop for SubscriptionReceiver {
     fn drop(&mut self) {
         let (held, hold) = {
-            let mut queue = crate::sync::locked(&self.0.queue);
+            let mut queue = crate::db::locked(&self.0.queue);
             queue.receiving = false;
             (queue.held.take(), queue.hold.take())
         };

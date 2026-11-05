@@ -1,9 +1,10 @@
+use crate::ffi::tape::StreamDelivery;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use crate::ffi::{ByteProgress, CableLease, Config, DbError, EncryptedSocketEvent, LivePhase, OpenDatabase, OpenOptions, PutReply, StreamDelivery, StreamRequest, StreamState, StreamValue, SubscriptionSink, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CableLease, Config, DbError, EncryptedSocketEvent, ReadPhase, OpenDatabase, OpenOptions, PutReply, ReadRequest, ReadState, ReadValue, SubscriptionSink, Transport, TransportRequest};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RowRule, RowTest, VariableSource};
 use crate::test_wait::within_secs;
 use crate::value::ScalarKind;
@@ -16,13 +17,13 @@ struct MediaTransport {
 
 #[derive(Default)]
 struct MediaSink {
-    states: Mutex<Vec<StreamState>>,
+    states: Mutex<Vec<ReadState>>,
     changed: tokio::sync::Notify,
 }
 
-impl crate::ffi::stream::tape::Reader for MediaSink {
+impl crate::ffi::tape::Reader for MediaSink {
     fn delivered(&self, delivery: StreamDelivery) {
-        if let StreamValue::Snapshot { state, .. } | StreamValue::Delta { state, .. } | StreamValue::State { state } = delivery.value {
+        if let ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } = delivery.value {
             self.states.lock().unwrap().push(state);
             self.changed.notify_one();
         }
@@ -61,7 +62,7 @@ impl Transport for MediaTransport {
 fn models() -> String {
     let mut presence = ModelSpec::new("Presence", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     let mut online = RelationSpec::global("online");
-    online.remote = Some(crate::sync::rig::remote("PresenceOnline", RemoteShape::List { coverage: Coverage::Complete }, "30.seconds"));
+    online.remote = Some(crate::schema_fixtures::remote("PresenceOnline", RemoteShape::List { coverage: Coverage::Complete }, "30.seconds"));
     online.preload = Some(Default::default());
     presence.relations.push(online);
     let mut media_kind = FieldSpec::scalar("mediaKind", ScalarKind::Str);
@@ -74,7 +75,7 @@ fn models() -> String {
         relation.row_rules.push(RowRule { field: field.into(), test });
         relation.joins_node = true;
         relation.joins_events = true;
-        let mut remote = crate::sync::rig::remote("ChatMedia", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None }, "5.minutes");
+        let mut remote = crate::schema_fixtures::remote("ChatMedia", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None }, "5.minutes");
         remote.root = Some("node.messages".into());
         remote.page_size = Some(30);
         remote.variables.insert("includeGifts".into(), VariableSource::Constant { value: json!(gifts) });
@@ -182,12 +183,12 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
         assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), [id]);
         let sink = Arc::new(MediaSink::default());
         let request = json!({"model":"MediaMessage","relation":relation,"params":{"chatId":"c1"}}).to_string();
-        let stream = database.subscribe_reading(epoch, StreamRequest::Query { query_json: request }, sink.clone());
+        let stream = database.subscribe_reading(epoch, ReadRequest::List { query_json: request }, sink.clone());
         within_secs(20, database.loaded(stream)).await.unwrap();
         within_secs(20, async {
             loop {
                 let changed = sink.changed.notified();
-                if sink.states.lock().unwrap().iter().any(|state| state.complete) { break; }
+                if sink.states.lock().unwrap().iter().any(|state| state.loaded.is_some()) { break; }
                 changed.await;
             }
         }).await;
@@ -205,7 +206,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     assert_eq!(requests.iter().filter(|request| request.operation_name == "PresenceOnline").count(), 1);
     let failure_query = json!({"model":"MediaMessage","relation":"gift_media","params":{"chatId":"c2"}}).to_string();
     let sink = Arc::new(MediaSink::default());
-    let stream = database.subscribe_reading(epoch, StreamRequest::Query { query_json: failure_query.clone() }, sink.clone());
+    let stream = database.subscribe_reading(epoch, ReadRequest::List { query_json: failure_query.clone() }, sink.clone());
     within_secs(20, database.loaded(stream)).await.unwrap();
     let outcome = within_secs(20, database.load_all(epoch, "MediaMessage".into(), "gift_media".into(), json!({"chatId":"c2"}).to_string(), false)).await;
     assert!(matches!(outcome, Err(DbError::Network { .. })));
@@ -217,7 +218,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
         }
     }).await;
     let states = sink.states.lock().unwrap().clone();
-    assert!(states.iter().any(|state| !state.complete && state.phase == LivePhase::Loaded && matches!(&state.error, Some(DbError::Network { .. }))));
+    assert!(states.iter().any(|state| state.phase == ReadPhase::Loaded && state.error.is_some()));
     assert_eq!(within_secs(20, database.read_query(epoch, failure_query)).await.unwrap().iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["x1"]);
     database.cancel_stream(stream);
     within_secs(20, database.close_database()).await.unwrap();

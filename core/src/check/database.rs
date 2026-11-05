@@ -11,7 +11,7 @@ use super::mock::{Credentials, Mock};
 use super::model::Sut;
 use super::value::{Input, Observation};
 use crate::ffi::{
-    CommandRequest, Config, Database, DbError, EntityFetch, LivePhase, LoadMoreResult, OpenDatabase, StreamEnd, StreamRequest, StreamState, StreamValue, TestClock, ValueSink,
+    CommandRequest, Config, Database, DbError, LoadMoreResult, OpenDatabase, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, TestClock,
     WireOperationOutcome, WireOperationReceipt, WireRow,
 };
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
@@ -25,8 +25,15 @@ const OPERATIONS: &str = include_str!("../../tests/corpus/operations.json");
 #[derive(Default)]
 struct Heard(AtomicU64);
 
-impl ValueSink for Heard {
-    fn available(&self) { self.0.fetch_add(1, Ordering::SeqCst); }
+/// A stream the runner reads: a task pulls it into a queue, `read` takes the next value.
+struct Pulled {
+    stream: Arc<ReadStream>,
+    queue: Arc<std::sync::Mutex<std::collections::VecDeque<(u64, ReadValue)>>>,
+    task: JoinHandle<()>,
+}
+
+impl Drop for Pulled {
+    fn drop(&mut self) { self.task.abort(); }
 }
 
 /// What a finished call hands back to the runner: what to observe and what to remember under a name.
@@ -66,30 +73,30 @@ fn failed(error: &DbError) -> Done {
     Done { observed: self::error(error_kind(error)), ..Done::default() }
 }
 
-fn phase_name(phase: LivePhase) -> &'static str {
+fn phase_name(phase: ReadPhase) -> &'static str {
     match phase {
-        LivePhase::NotLoaded | LivePhase::Closed => "idle",
-        LivePhase::Loading => "loading",
-        LivePhase::Loaded | LivePhase::Empty => "loaded",
-        LivePhase::Failed => "failed",
+        ReadPhase::Idle => "idle",
+        ReadPhase::Loading => "loading",
+        ReadPhase::Loaded => "loaded",
+        ReadPhase::Failed => "failed",
     }
 }
 
-fn cause_name(end: StreamEnd) -> &'static str {
+fn cause_name(end: ReadEnd) -> &'static str {
     match end {
-        StreamEnd::SessionEnded => "session_ended",
-        StreamEnd::Closed => "closed",
-        StreamEnd::Invalid => "invalid",
-        StreamEnd::OutOfSync => "out_of_sync",
+        ReadEnd::SessionEnded => "session_ended",
+        ReadEnd::Closed => "closed",
+        ReadEnd::Cancelled => "cancelled",
+        ReadEnd::Invalid => "invalid",
     }
 }
 
-fn fetch_of(name: &str) -> Option<EntityFetch> {
+fn fetch_of(name: &str) -> Option<ReadFetch> {
     match name {
-        "never" => Some(EntityFetch::Never),
-        "stale" => Some(EntityFetch::Stale),
-        "force" => Some(EntityFetch::Force),
-        "if_missing" => Some(EntityFetch::IfMissing),
+        "never" => Some(ReadFetch::Never),
+        "stale" => Some(ReadFetch::Stale),
+        "force" => Some(ReadFetch::Force),
+        "if_missing" => Some(ReadFetch::IfMissing),
         _ => None,
     }
 }
@@ -104,7 +111,7 @@ pub struct DatabaseSut {
     rows: HashMap<String, String>,
     receipts: HashMap<String, WireOperationReceipt>,
     loads: HashMap<String, Cancel>,
-    streams: HashMap<String, u64>,
+    streams: HashMap<String, Pulled>,
     calls: Vec<JoinHandle<Done>>,
 }
 
@@ -143,27 +150,23 @@ impl DatabaseSut {
         Value::Array(rows.iter().map(|row| Value::String(self.name_of(&row.id))).collect())
     }
 
-    fn state(&self, stream: &str, state: &StreamState, into: &mut Map<String, Value>) {
+    fn state(&self, stream: &str, state: &ReadState, into: &mut Map<String, Value>) {
         into.insert("stream".into(), stream.into());
         into.insert("phase".into(), phase_name(state.phase).into());
-        if let Some(kind) = &state.error_kind { into.insert("error".into(), kind.clone().into()); }
-        if let Some(at) = state.loaded_at { into.insert("loaded".into(), at.into()); }
+        if let Some(error) = &state.error { into.insert("error".into(), error.clone().into()); }
+        if let Some(at) = state.loaded { into.insert("loaded".into(), at.into()); }
     }
 
-    fn stream_name(&self, id: u64) -> String {
-        self.streams.iter().find(|(_, value)| **value == id).map_or_else(|| id.to_string(), |(name, _)| name.clone())
-    }
-
-    fn value(&self, stream: &str, seq: u64, value: &StreamValue) -> Observation {
+    fn value(&self, stream: &str, seq: u64, value: &ReadValue) -> Observation {
         let mut out = Map::new();
         match value {
-            StreamValue::Snapshot { revision, rows, state } => {
+            ReadValue::Snapshot { revision, rows, state } => {
                 self.state(stream, state, &mut out);
                 out.insert("revision".into(), (*revision).into());
                 out.insert("rows".into(), self.names(rows));
                 Observation::new("snapshot", Value::Object(out))
             }
-            StreamValue::Delta { base, revision, rows, removed, state, .. } => {
+            ReadValue::Delta { base, revision, rows, removed, state, .. } => {
                 self.state(stream, state, &mut out);
                 out.insert("base".into(), (*base).into());
                 out.insert("revision".into(), (*revision).into());
@@ -171,20 +174,26 @@ impl DatabaseSut {
                 out.insert("removed".into(), Value::Array(removed.iter().map(|id| Value::String(self.name_of(id))).collect()));
                 Observation::new("delta", Value::Object(out))
             }
-            StreamValue::Count { revision, count, state } => {
+            ReadValue::Count { revision, count, state } => {
                 self.state(stream, state, &mut out);
                 out.insert("revision".into(), (*revision).into());
                 out.insert("count".into(), (*count).into());
                 Observation::new("count", Value::Object(out))
             }
-            StreamValue::State { state } => {
+            ReadValue::State { state, .. } => {
                 self.state(stream, state, &mut out);
                 Observation::new("state", Value::Object(out))
             }
-            StreamValue::Event { event } => Observation::new("event", json!({ "stream": stream, "position": seq, "area": event.area, "kind": event.kind, "row": self.name_of(&event.id) })),
-            StreamValue::Lost { first, last } => Observation::new("lost", json!({ "stream": stream, "first": first, "last": last })),
-            StreamValue::Status { .. } => Observation::new("unsupported", json!("status")),
-            StreamValue::Ended { reason } => Observation::new("ended", json!({ "stream": stream, "cause": cause_name(*reason) })),
+            ReadValue::Event { position, payload } => {
+                let event: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
+                Observation::new("event", json!({ "stream": stream, "position": position, "area": event["area"], "kind": event["kind"], "row": self.name_of(event["id"].as_str().unwrap_or_default()) }))
+            }
+            ReadValue::Ready => Observation::new("ready", json!({ "stream": stream })),
+            ReadValue::Gap => Observation::new("gap", json!({ "stream": stream })),
+            ReadValue::Retry { .. } => Observation::new("unsupported", json!("retry")),
+            ReadValue::Lost { first, last } => Observation::new("lost", json!({ "stream": stream, "first": first, "last": last })),
+            ReadValue::Status { .. } => Observation::new("unsupported", json!("status")),
+            ReadValue::Ended { cause } => Observation::new("ended", json!({ "stream": stream, "cause": cause_name(*cause) })),
         }
     }
 
@@ -455,20 +464,29 @@ impl DatabaseSut {
             None => json!({ "model": "Moment" }).to_string(),
         };
         let request = match input.name.as_str() {
-            "open_list" => StreamRequest::Query { query_json: query(input.text("relation")) },
-            "open_count" => StreamRequest::Count { query_json: query(input.text("relation")) },
+            "open_list" => ReadRequest::List { query_json: query(input.text("relation")) },
+            "open_count" => ReadRequest::Count { query_json: query(input.text("relation")) },
             "open_entity" => {
                 let (Some(row), Some(fetch)) = (input.text("row"), input.text("fetch").and_then(fetch_of)) else { return error("arguments") };
-                StreamRequest::Entity { model: "Moment".into(), id: self.id_of(row), fetch }
+                ReadRequest::Entity { model: "Moment".into(), id: self.id_of(row), fetch }
             }
             _ => {
                 let Some(model) = input.text("model") else { return error("arguments") };
-                StreamRequest::Events { model: model.into() }
+                ReadRequest::Events { model: model.into() }
             }
         };
-        let sink: Arc<dyn ValueSink> = self.heard.clone();
-        let id = database.subscribe(database.session_epoch(), request, sink);
-        self.streams.insert(name.into(), id);
+        let stream = database.subscribe_values(database.session_epoch(), request);
+        let queue: Arc<std::sync::Mutex<std::collections::VecDeque<(u64, ReadValue)>>> = Arc::default();
+        let (pulling, kept, heard) = (stream.clone(), queue.clone(), self.heard.clone());
+        let task = crate::task::spawn(crate::task::Carry::here(), async move {
+            let mut seq = 0;
+            while let Ok(Some(value)) = pulling.pull().await {
+                seq += 1;
+                kept.lock().unwrap().push_back((seq, value));
+                heard.0.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        self.streams.insert(name.into(), Pulled { stream, queue, task });
         Vec::new()
     }
 }
@@ -548,15 +566,16 @@ impl Sut for DatabaseSut {
             "open_list" | "open_count" | "open_entity" | "open_events" => self.open_stream(&database, input),
             "pull" => {
                 let Some(name) = input.text("stream") else { return error("arguments") };
-                let Some(id) = self.streams.get(name).copied() else { return error("unknown_stream") };
-                match database.read_stream(id) {
-                    Some(delivery) => vec![self.value(&self.stream_name(id), delivery.seq, &delivery.value)],
+                let Some(pulled) = self.streams.get(name) else { return error("unknown_stream") };
+                let next = pulled.queue.lock().unwrap().pop_front();
+                match next {
+                    Some((seq, value)) => vec![self.value(name, seq, &value)],
                     None => vec![Observation::new("empty", json!({ "stream": name }))],
                 }
             }
             "cancel" => {
                 let Some(target) = input.text("target") else { return error("arguments") };
-                if let Some(cancel) = self.loads.get(target) { cancel(); } else if let Some(id) = self.streams.get(target) { database.cancel_stream(*id); } else { return error("unknown_target"); }
+                if let Some(cancel) = self.loads.get(target) { cancel(); } else if let Some(pulled) = self.streams.get(target) { let stream = pulled.stream.clone(); drop(crate::task::spawn(crate::task::Carry::here(), async move { stream.cancel().await })); } else { return error("unknown_target"); }
                 Vec::new()
             }
             _ => match self.start(database, input) {

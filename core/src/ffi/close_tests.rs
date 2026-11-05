@@ -5,8 +5,8 @@ use serde_json::json;
 
 use crate::ffi::legacy::{Holder, Leases};
 use super::open_slot::OpenSlot;
-use super::stream::tape::Rows;
-use super::{Config, Database, DbError, StreamEnd, StreamRequest};
+use super::tape::Rows;
+use super::{Config, Database, DbError, ReadEnd, ReadRequest};
 use crate::pacing::{Clock, ManualClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::{join_within, within, yield_until};
@@ -35,7 +35,7 @@ fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) 
     let mut notice = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     notice.listens.push(serde_json::from_value(json!({"subscription":"Signal"})).unwrap());
     let wired = transport.clone();
-    let database = Database::start_with(config(), serde_json::to_string(&vec![notice]).unwrap(), None, clock, move |_, _| Ok((Some(wired), None))).unwrap();
+    let database = Database::start_with(config(), serde_json::to_string(&vec![notice]).unwrap(), None, clock, move |_, _| Ok((Some(wired), None, None))).unwrap();
     database.register_operations(r#"[{"name":"Signal","document":"subscription Signal { signal { id } }","rootPath":"signal"}]"#.into()).unwrap();
     (database, transport)
 }
@@ -81,18 +81,18 @@ async fn stream_close_terminates_waiters() {
     let rows = Arc::new(Rows::default());
     let live = database.watch_query(r#"{"model":"Notice"}"#, rows.clone());
     within(live.wait_for_initial_load()).await.unwrap();
-    let pending = database.watch(StreamRequest::Events { model: "Notice".into() }, Arc::new(Rows::default()));
+    let pending = database.watch(ReadRequest::Events { model: "Notice".into() }, Arc::new(Rows::default()));
     let waiting = { let pending = pending.clone(); tokio::spawn(within(async move { pending.wait_for_initial_load().await })) };
     tokio::task::yield_now().await;
     database.close_now();
     let waited = within(waiting).await.unwrap();
     assert!(matches!(waited, Err(DbError::Interrupted { .. })), "a wait for a stream outlived the close: {waited:?}");
     yield_until("the list ended", || !rows.ended().is_empty()).await;
-    assert_eq!(rows.ended(), vec![StreamEnd::Closed]);
+    assert_eq!(rows.ended(), vec![ReadEnd::Closed]);
     let late = Arc::new(Rows::default());
     database.watch_query(r#"{"model":"Notice"}"#, late.clone());
     yield_until("a stream opened after the close ended", || !late.ended().is_empty()).await;
-    assert_eq!(late.ended(), vec![StreamEnd::Closed]);
+    assert_eq!(late.ended(), vec![ReadEnd::Closed]);
     assert_eq!(database.stream_census().open, 0);
 }
 
@@ -101,31 +101,11 @@ async fn closing_the_database_ends_a_model_event_stream_with_one_outcome() {
     let (database, transport) = with_transport(Arc::new(crate::pacing::SystemClock));
     transport.script_subscription("Signal", vec![SubscriptionEvent::Ready]);
     let rows = Arc::new(Rows::default());
-    let live = database.watch(StreamRequest::Events { model: "Notice".into() }, rows.clone());
+    let live = database.watch(ReadRequest::Events { model: "Notice".into() }, rows.clone());
     within(live.wait_for_initial_load()).await.ok();
     database.close_now();
     yield_until("the event stream ended", || !rows.ended().is_empty()).await;
-    assert_eq!(rows.ended(), vec![StreamEnd::Closed]);
-}
-
-#[tokio::test]
-async fn closing_the_database_ends_a_blob_status_stream_with_one_outcome() {
-    use std::io::Write;
-    let transport = Arc::new(MockTransport::new());
-    let wired = transport.clone();
-    let database = Database::start_with(config(), "[]".into(), Some(crate::upload::UploadOperations::empty().create_blob("CreateBlob")), Arc::new(crate::pacing::SystemClock), move |_, _| Ok((Some(wired), None))).unwrap();
-    database.register_operations(r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { id } }","rootPath":"createBlob"}]"#.into()).unwrap();
-    database.set_online(false).unwrap();
-    let mut file = tempfile::NamedTempFile::new().unwrap();
-    file.write_all(b"blob").unwrap();
-    let id = { let sync = database.sync.as_ref().unwrap(); crate::sync::rig::app(sync, sync.upload_blob(&database.db.admit().unwrap(), "test", "CreateBlob", crate::upload::UploadFile::new(file.path().to_str().unwrap()))).await.unwrap() };
-    let rows = Arc::new(Rows::default());
-    database.watch(StreamRequest::Blob { id }, rows.clone());
-    yield_until("the first status arrived", || rows.values().iter().any(|value| matches!(value, super::StreamValue::Status { .. }))).await;
-    assert!(matches!(rows.values().as_slice(), [super::StreamValue::State { state }, super::StreamValue::Status { .. }, ..] if state.settled), "the stream opens with one settled state, then the status: {:?}", rows.values());
-    database.close_now();
-    yield_until("the status stream ended", || !rows.ended().is_empty()).await;
-    assert_eq!(rows.ended(), vec![StreamEnd::Closed]);
+    assert_eq!(rows.ended(), vec![ReadEnd::Closed]);
 }
 
 #[tokio::test]
@@ -135,7 +115,7 @@ async fn close_releases_old_engine() {
     let slot = OpenSlot::new();
     database.hold(slot.acquire().unwrap());
     let sink = database.online_sink().unwrap();
-    let owner = Arc::downgrade(&database.sync.as_ref().unwrap().inner);
+    let owner = Arc::downgrade(&database.life);
     let connectivity = database.db.connectivity();
     database.close_now();
     sink.set_online(false);

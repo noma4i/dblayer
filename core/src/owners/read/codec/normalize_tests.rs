@@ -1,7 +1,7 @@
 use super::CodecError;
 use super::normalize::*;
 use serde_json::{Map, Value};
-use crate::sync::rig::{rig, Rig};
+use crate::schema_fixtures::specs;
 use serde_json::json;
 use crate::db::Db;
 use crate::schema::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec};
@@ -13,7 +13,7 @@ fn nodes(value: Value) -> Vec<Map<String, Value>> {
 
 #[test]
 fn inv_merge_06_nested_author_becomes_user_row_and_sets_foreign_key() {
-    let Rig { db, .. } = rig();
+    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
     let input = nodes(json!([{"id": "m1", "text": "hi", "author": {"id": "u1", "name": "Ann", "ignored": 1}}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
     assert_eq!(normalized.roots.len(), 1);
@@ -55,7 +55,7 @@ fn a_row_whose_id_comes_from_its_belongs_to_parent_keeps_that_parent_id() {
 
 #[test]
 fn shared_author_is_reported_once() {
-    let Rig { db, .. } = rig();
+    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
     let input = nodes(json!([
         {"id": "m1", "author": {"id": "u1", "name": "Ann"}},
         {"id": "m2", "author": {"id": "u1", "name": "Ann B"}}
@@ -68,7 +68,7 @@ fn shared_author_is_reported_once() {
 
 #[test]
 fn row_without_id_is_dropped_and_counted() {
-    let Rig { db, .. } = rig();
+    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
     let input = nodes(json!([{"text": "no id"}, {"id": "m2", "text": "ok"}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
     assert_eq!(normalized.roots.len(), 1);
@@ -77,7 +77,7 @@ fn row_without_id_is_dropped_and_counted() {
 
 #[test]
 fn inv_merge_06_invalid_author_is_skipped_but_moment_stays() {
-    let Rig { db, .. } = rig();
+    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
     let input = nodes(json!([{"id": "m1", "userId": "u9", "author": {"name": "no id"}}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
     assert_eq!(normalized.roots[0]["userId"], json!("u9"));
@@ -86,14 +86,14 @@ fn inv_merge_06_invalid_author_is_skipped_but_moment_stays() {
 
 #[test]
 fn unknown_model_is_an_error() {
-    let Rig { db, .. } = rig();
+    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
     assert_eq!(normalize_nodes(&db, "ghosts", &[]), Err(CodecError::UnknownModel("ghosts".to_string())));
 }
 
 fn nesting_db() -> crate::db::Db {
     use crate::schema::{AssociationKind, AssociationSpec, FieldSpec};
     use crate::value::ScalarKind;
-    let mut specs = crate::sync::rig::specs();
+    let mut specs = crate::schema_fixtures::specs();
     specs[0].associations.push(AssociationSpec::new("moments", AssociationKind::HasMany, "moments", "userId"));
     let mut mentions = AssociationSpec::new("mentions", AssociationKind::References, "users", "mentionIds");
     mentions.from = Some("likes.nodes".to_string());

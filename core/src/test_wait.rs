@@ -207,7 +207,7 @@ pub(crate) fn limited(limit: Duration, test: impl std::future::Future<Output = (
 
 pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().start_paused(true).build().expect("test runtime");
-    let clock = crate::pacing::TestClock::stopped(Duration::from_millis(crate::sync::rig::START_MS));
+    let clock = crate::pacing::TestClock::stopped(Duration::from_millis(1_000_000));
     WORLD.with(|world| *world.borrow_mut() = Some(World { clock: clock.clone(), dbs: Vec::new() }));
     let _leave = Leave;
     runtime.block_on(async move {

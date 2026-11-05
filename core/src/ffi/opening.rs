@@ -29,11 +29,8 @@ impl OpenDatabase {
         let database = Database::open(config, models_json, transport, encrypted, credentials, http, options.uploads.map(Into::into), retries).await?;
         database.hold(lease);
         if remote {
-            if let Ok(sync) = database.sync() {
-                sync.set_low_ram(options.low_ram);
-                sync.set_power_saving(options.power_saving);
-            }
-            if let Err(error) = database.register_operations(options.operations).and_then(|()| Ok(database.sync()?.check_uploads()?)) {
+            drop(database.life.set_power_saving(options.power_saving));
+            if let Err(error) = database.register_operations(options.operations).and_then(|()| database.check_uploads()) {
                 let _ = database.close_database().await;
                 return Err(error);
             }

@@ -31,15 +31,17 @@ mod selftest;
 #[cfg(test)]
 mod database_tests;
 mod encrypted;
-pub(crate) mod stream;
+mod query;
+#[cfg(test)]
+#[path = "tape_tests.rs"]
+pub(crate) mod tape;
+pub use query::CachedQuery;
 mod command;
+mod loading;
 mod write;
 mod read;
 #[cfg(test)]
 mod read_tests;
-mod related;
-#[cfg(test)]
-mod related_tests;
 mod transport;
 mod upload;
 mod upload_rounds;
@@ -65,7 +67,7 @@ pub use opening::{OpenDatabase, OpenOptions};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, SecurityCode, ServerConfig};
-pub use stream::{CachedQuery, EntityFetch, LivePhase, LoadMoreResult, Placement, Replacement, StreamCensus, StreamDelivery, StreamEnd, StreamRequest, StreamState, StreamValue, ValueSink};
+pub use loading::{LoadMoreResult, LoadRequest};
 pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowPlace, RowRename};
 pub use upload_rounds::RoundJobsSink;
@@ -116,23 +118,19 @@ impl From<crate::db::DbError> for DbError {
     }
 }
 
-impl From<crate::sync::SyncError> for DbError {
-    fn from(error: crate::sync::SyncError) -> Self {
-        use crate::sync::SyncError;
+impl From<crate::transport::TransportError> for DbError {
+    fn from(error: crate::transport::TransportError) -> Self {
         use crate::transport::TransportError;
         match error {
-            SyncError::NoSession(detail) => Self::NoSession { detail },
-            SyncError::Transport(TransportError::Security { code, detail }) => Self::Security { code, detail },
-            SyncError::Transport(TransportError::Config { code, detail }) => Self::Config { code, detail },
-            SyncError::Transport(TransportError::Http { status, body }) => Self::Http { status, detail: body },
-            SyncError::Transport(TransportError::RequestTooLarge { size, limit }) => Self::RequestTooLarge { size, limit },
-            SyncError::Transport(TransportError::Network(detail)) => Self::Network { detail },
-            SyncError::Transport(TransportError::Interrupted(detail)) => Self::Interrupted { detail },
-            SyncError::Transport(TransportError::Decode(detail)) => Self::Invalid { detail },
-            SyncError::Cancelled => Self::Interrupted { detail: error.to_string() },
-            SyncError::Offline => Self::Network { detail: error.to_string() },
-            SyncError::Transport(TransportError::Session { code, detail }) => Self::Session { code, detail },
-            SyncError::Transport(TransportError::Graphql { messages, extensions }) | SyncError::Graphql { messages, extensions } => Self::Graphql { messages, extensions },
+            TransportError::Security { code, detail } => Self::Security { code, detail },
+            TransportError::Config { code, detail } => Self::Config { code, detail },
+            TransportError::Http { status, body } => Self::Http { status, detail: body },
+            TransportError::RequestTooLarge { size, limit } => Self::RequestTooLarge { size, limit },
+            TransportError::Network(detail) => Self::Network { detail },
+            TransportError::Interrupted(detail) => Self::Interrupted { detail },
+            TransportError::Decode(detail) => Self::Invalid { detail },
+            TransportError::Session { code, detail } => Self::Session { code, detail },
+            TransportError::Graphql { messages, extensions } => Self::Graphql { messages, extensions },
             other => Self::Sync { detail: other.to_string() },
         }
     }
@@ -172,12 +170,6 @@ mod load_tests;
 #[cfg(test)]
 mod session_restore_tests;
 #[cfg(test)]
-#[cfg(test)]
-mod reject_tests;
-#[cfg(test)]
-#[cfg(test)]
-mod resync_tests;
-#[cfg(test)]
 mod snapshot_tests;
 #[cfg(test)]
 #[cfg(test)]
@@ -193,6 +185,3 @@ mod read_load_tests;
 mod signed_session_tests;
 #[cfg(test)]
 mod load_all_cancel_tests;
-#[cfg(test)]
-#[cfg(test)]
-mod follow_failures_tests;

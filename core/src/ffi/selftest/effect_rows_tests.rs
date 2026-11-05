@@ -80,10 +80,10 @@ async fn a_refused_destroy_restores_the_row_according_to_its_declaration() {
     }
 }
 
-struct Deliveries(tokio::sync::mpsc::UnboundedSender<crate::ffi::StreamDelivery>);
+struct Deliveries(tokio::sync::mpsc::UnboundedSender<crate::ffi::tape::StreamDelivery>);
 
-impl crate::ffi::stream::tape::Reader for Deliveries {
-    fn delivered(&self, delivery: crate::ffi::StreamDelivery) { let _ = self.0.send(delivery); }
+impl crate::ffi::tape::Reader for Deliveries {
+    fn delivered(&self, delivery: crate::ffi::tape::StreamDelivery) { let _ = self.0.send(delivery); }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -99,7 +99,7 @@ async fn a_member_event_keeps_the_open_join_in_the_list() {
     world.set_members("JOINED", &["u1", "u2", "u3"]);
     let query = json!({"model":"Member","relation":"group_members","params":params});
     let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
-    let stream = rig.database.subscribe_reading(epoch, crate::ffi::StreamRequest::Query { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
     rig.switch.subscription_opened().await;
     let hold = world.hold_next("AddMember");
@@ -109,7 +109,7 @@ async fn a_member_event_keeps_the_open_join_in_the_list() {
     let applied = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         while let Some(delivery) = crate::test_wait::within_secs(20, deliveries.recv()).await {
             let rows = match delivery.value {
-                crate::ffi::StreamValue::Snapshot { rows, .. } | crate::ffi::StreamValue::Delta { rows, .. } => rows,
+                crate::ffi::ReadValue::Snapshot { rows, .. } | crate::ffi::ReadValue::Delta { rows, .. } => rows,
                 _ => continue,
             };
             if rows.iter().any(|row| row.id == "u1" && row.cells.contains(&crate::ffi::Cell::Text { value: "updated".into() })) { return true; }
@@ -137,7 +137,7 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string())).await.unwrap();
     let query = json!({"model": "Member", "relation": "group_members", "params": params});
     let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
-    let stream = rig.database.subscribe_reading(epoch, crate::ffi::StreamRequest::Query { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
     let old = rig.world.hold_next("GroupMembers");
     let refreshing = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string()).await }) };
@@ -154,7 +154,7 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     let shown = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         while let Some(delivery) = crate::test_wait::within_secs(20, deliveries.recv()).await {
             let rows = match delivery.value {
-                crate::ffi::StreamValue::Snapshot { rows, .. } | crate::ffi::StreamValue::Delta { rows, .. } => rows,
+                crate::ffi::ReadValue::Snapshot { rows, .. } | crate::ffi::ReadValue::Delta { rows, .. } => rows,
                 _ => continue,
             };
             if rows.iter().any(|row| row.id == "u9") { return true; }

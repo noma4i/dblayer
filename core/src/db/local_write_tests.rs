@@ -410,7 +410,7 @@ fn a_mapped_patch_value_follows_the_parameter_and_rolls_back_with_the_action() {
 }
 
 fn authored_notes() -> Db {
-    let remote_single = |operation: &str| crate::sync::rig::remote(operation, crate::schema::RemoteShape::Single, "5.minutes");
+    let remote_single = |operation: &str| crate::schema_fixtures::remote(operation, crate::schema::RemoteShape::Single, "5.minutes");
     let singleton = |name: &str| {
         let mut spec = crate::schema::ModelSpec::new(name, vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("balance", ScalarKind::Int)]);
         let mut current = crate::schema::RelationSpec::global("current");

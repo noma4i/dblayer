@@ -75,6 +75,8 @@ pub struct Ports {
     pub session: Option<Arc<crate::transport::EncryptedClient>>,
     /// Transfer installs only with the session and this port.
     pub(crate) transfer: Option<TransferPort>,
+    /// Feed opens its connections through the cable; without it the owner runs no connection.
+    pub cable: Option<Arc<dyn crate::transport::CableLines>>,
     /// The operations of the schema by name, for the requests of the windows.
     pub read_operations: Option<super::read::ReadOperations>,
 }

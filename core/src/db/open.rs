@@ -54,7 +54,6 @@ pub(crate) struct Shared {
     pub commits: Arc<CommitSink>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub operation_queues: Arc<crate::operation::OperationQueues>,
-    pub outcomes: Arc<Mutex<crate::sync::Outcomes>>,
     pub connectivity: Arc<crate::transport::Connectivity>,
     pub ephemeral: Arc<Ephemerals>,
     pub executor: Arc<Executor>,
@@ -254,14 +253,13 @@ impl Db {
         let commits = Arc::new(CommitSink::default());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
-        let outcomes = Arc::new(Mutex::new(crate::sync::Outcomes::default()));
         let replaced_log = dispatch.clone();
         store.set_commit_log(Box::new(move |event| {
             if let StoreEvent::Committed(result) = event {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), commits: commits.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), operation_queues: operation_queues.clone(), outcomes: outcomes.clone() }));
+        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), commits: commits.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), operation_queues: operation_queues.clone() }));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -282,7 +280,6 @@ impl Db {
             commits,
             outbox_changes,
             operation_queues,
-            outcomes,
             connectivity: crate::transport::Connectivity::new(true),
             ephemeral: ephemeral.clone(),
             files: Arc::new(path.map_or_else(FileDirectories::scratch, FileDirectories::beside)),
@@ -396,22 +393,13 @@ struct CommitTargets {
     ephemeral: Arc<Ephemerals>,
     outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     operation_queues: Arc<crate::operation::OperationQueues>,
-    outcomes: Arc<Mutex<crate::sync::Outcomes>>,
-}
-
-fn finish_outcomes(ended: Vec<(Arc<crate::sync::OutcomeTicket>, crate::sync::SendResult)>) {
-    for (ticket, result) in ended {
-        crate::db::lock::effect(|| ticket.finish(crate::sync::FinishedOperation { result, answer: None, value: None, items: Vec::new(), discarded: Vec::new() }));
-    }
 }
 
 fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
-    let CommitTargets { cache, dispatch, commits, ephemeral, outbox_changes, operation_queues, outcomes } = targets;
+    let CommitTargets { cache, dispatch, commits, ephemeral, outbox_changes, operation_queues } = targets;
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             operation_queues.changed(&result.queue_operations);
-            let ended = locked(&outcomes).committed(result);
-            finish_outcomes(ended);
             {
                 let mut cache = locked(&cache);
                 if let Some(revision) = result.revision {
@@ -456,8 +444,6 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
         }
         StoreEvent::Reset { revision, models, operations } => {
             operation_queues.reset(&operations);
-            let ended = locked(&outcomes).reset(&operations);
-            finish_outcomes(ended);
             {
                 let mut cache = locked(&cache);
                 cache.committed(revision);

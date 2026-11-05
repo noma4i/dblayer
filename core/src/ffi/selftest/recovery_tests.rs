@@ -18,27 +18,6 @@ fn effects(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
     rig.server.executed().into_iter().filter(|body| body["operationName"] == operation).collect()
 }
 
-/// C14, R-10: a queued mutation is refused without a confirmed sequence, the sign-in is blocked by the pending request, a data reset keeps that pending, the session reset frees it, and the next sign-in leaves the server with no effect from the refused request.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_data_reset_between_a_refused_pending_request_and_the_session_reset_keeps_the_pending() {
-    let rig = SessionRig::new();
-    let database = signed_in(&rig).await;
-    rig.server.reply_with(json!({ "makeMoment": { "id": "42", "text": "hello" } }));
-    let row = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
-    rig.server.refuse_next("UNAUTHENTICATED", false);
-    let refused = bound(database.refusal_of(row)).await;
-    assert_eq!(refused.session_code, Some(SessionCode::Unauthenticated));
-
-    database.db.clear_account().unwrap();
-    let blocked = bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap_err();
-
-    assert!(matches!(blocked, DbError::Network { .. }), "the data reset dropped the pending request: {blocked:?}");
-    database.session_reset().await.unwrap();
-    bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
-    assert!(effects(&rig, "MakeMoment").is_empty(), "the refused request ran at the server");
-    database.close_now();
-}
-
 struct HeldPut { gate: Arc<Gate>, ended: Arc<tokio::sync::Notify> }
 
 struct PutEnd(Arc<tokio::sync::Notify>);

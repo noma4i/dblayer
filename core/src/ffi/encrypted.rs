@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
-use crate::sync::SyncError;
 use crate::transport::{self as core, EncryptedClient, EncryptedConfig, EncryptedTransport, ServerConfig, SessionCode};
 use super::database::{cancellable, Database, Wiring};
 use crate::owners::life::LifeReply;
@@ -55,7 +54,7 @@ impl core::CredentialSlot for ForeignCredentials {
 fn typed(error: core::TransportError) -> DbError {
     match error {
         core::TransportError::Graphql { messages, .. } if messages.len() == 1 => DbError::Session { code: SessionCode::of(&messages[0]), detail: messages[0].clone() },
-        other => DbError::from(SyncError::Transport(other)),
+        other => DbError::from(other),
     }
 }
 
@@ -82,7 +81,9 @@ pub(super) fn wire(
         None => client,
     };
     let client = Arc::new(client);
-    Ok((Some(Arc::new(EncryptedTransport::new(client.clone(), Arc::new(ForeignTransport(transport))))), Some(client)))
+    let rest: Arc<dyn core::Transport> = Arc::new(ForeignTransport(transport));
+    let cable = client.cable_lines(rest.clone());
+    Ok((Some(Arc::new(EncryptedTransport::new(client.clone(), rest))), Some(client), Some(cable)))
 }
 
 #[uniffi::export(rust, foreign)]

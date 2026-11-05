@@ -19,7 +19,7 @@ use super::{FeedCodec, SchemaFeedCodec};
 use crate::db::fixtures::{chats_spec, messages_spec};
 use crate::db::Db;
 use crate::schema::{ChangeFeed, Coverage, ModelSpec, RelationSpec, RemoteShape, UpdatesSpec};
-use crate::sync::OperationDef;
+use super::ReadOperation;
 use crate::transport::Response;
 
 fn read(value: Value) -> crate::schema::ChangeRead { serde_json::from_value(value).unwrap() }
@@ -27,11 +27,13 @@ fn read(value: Value) -> crate::schema::ChangeRead { serde_json::from_value(valu
 fn updates(value: Value) -> UpdatesSpec { serde_json::from_value(value).unwrap() }
 
 fn operations() -> super::feed_codec::Operations {
-    Arc::new(|name| match name {
-        "Changes" => Some(Arc::new(OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId message { id chatId body } } } }", "recordEvents"))),
-        "MessageChanged" => Some(Arc::new(OperationDef::new("MessageChanged", "subscription MessageChanged { messageChanged { id chatId body deleted } }", "messageChanged"))),
-        _ => None,
-    })
+    let known = super::ReadOperations::default();
+    let declare = |name: &str, document: &str, root: &str| ReadOperation { name: name.into(), document: document.into(), root_path: root.into(), page_size: 0 };
+    known.declare([
+        declare("Changes", "subscription Changes { recordEvents { changes { topic action recordId message { id chatId body } } } }", "recordEvents"),
+        declare("MessageChanged", "subscription MessageChanged { messageChanged { id chatId body deleted } }", "messageChanged"),
+    ]);
+    known
 }
 
 fn specs(with_feed: bool) -> Vec<ModelSpec> {

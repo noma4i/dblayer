@@ -10,15 +10,14 @@ use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::Query;
 use crate::schema::ModelSpec;
 use crate::owners::read::windows::{Goal, WindowKey, WindowOutcome};
-use crate::sync::{LoadOptions, OperationDef, Sync, SyncConfig};
 use crate::transport::{self as core, EncryptedClient};
 use crate::upload::UploadOperations;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
-use super::receipt::{receipt, ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt};
+use super::receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt};
 use super::wire::{WireModel, WireRow};
-use super::{DbError, LoadMoreResult, OnlineSink, Transport};
+use super::{DbError, OnlineSink, Transport};
 use crate::owners::life::LifeReply;
 
 
@@ -102,55 +101,6 @@ pub struct Config { pub path: Option<String>, pub data_version: Option<String>, 
 #[derive(uniffi::Record)]
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64, pub retained_observers: u64 }
 
-/// The interest of one caller in a load that `Database::begin_load` started.
-#[derive(uniffi::Object)]
-pub struct LoadRequest {
-    outcome: tokio::sync::watch::Receiver<Option<Result<(), DbError>>>,
-    held: Mutex<Option<tokio::task::AbortHandle>>,
-}
-
-fn load_cancelled() -> DbError { DbError::Interrupted { detail: "the load was cancelled".into() } }
-
-#[uniffi::export]
-impl LoadRequest {
-    /// Waits for the end of the load. A request cancelled before its end fails with `Interrupted`.
-    pub async fn result(&self) -> Result<(), DbError> {
-        let mut outcome = self.outcome.clone();
-        let seen = outcome.wait_for(Option::is_some).await.map_err(|_| load_cancelled())?.clone();
-        seen.unwrap_or_else(|| Err(load_cancelled()))
-    }
-
-    /// Gives up this caller's interest. The request goes on while another caller waits for it.
-    pub fn cancel(&self) {
-        let held = crate::db::locked(&self.held).take();
-        let Some(task) = held else { return };
-        crate::db::lock::effect(|| task.abort());
-    }
-}
-
-impl Drop for LoadRequest {
-    fn drop(&mut self) { self.cancel(); }
-}
-
-struct LoadCall {
-    epoch: u64,
-    waiter: crate::runtime::Waiter<LifeReply>,
-    leave: LeaveLoad,
-}
-
-struct LeaveLoad {
-    life: Arc<crate::owners::life::Life>,
-    key: WindowKey,
-    id: u64,
-    settled: bool,
-}
-
-impl Drop for LeaveLoad {
-    fn drop(&mut self) {
-        if !self.settled { self.life.leave_load(self.key.clone(), self.id); }
-    }
-}
-
 #[derive(uniffi::Object)]
 pub struct TestClock { clock: Arc<ManualClock> }
 
@@ -162,9 +112,9 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, pub(super) reads: crate::owners::read::ReadOperations, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) remote: bool, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) reads: crate::owners::read::ReadOperations, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
-pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
+pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>, Option<Arc<dyn core::CableLines>>);
 
 impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
@@ -172,7 +122,7 @@ impl Database {
             #[cfg(test)]
             if transport.is_some() { super::signed_session_tests::signed_session(db); }
             let _ = db;
-            Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None))
+            Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None, None))
         })
     }
 
@@ -190,20 +140,18 @@ impl Database {
         let opening = db.admit()?;
         db.expire_blobs_before_use(&opening)?;
         drop(opening);
-        let (transport, session) = wire(&db, &clock)?;
+        let (transport, session, cable) = wire(&db, &clock)?;
         if uploads.is_some() && transport.is_none() {
             return Err(DbError::Invalid { detail: "upload operations require a transport".into() });
         }
-        let operations: Arc<OnceLock<crate::sync::WeakSync>> = Arc::default();
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let shows: Arc<super::transfer_status::Shows> = Arc::default();
-        let life = Self::build_life(&db, transport.clone(), &session, operations.clone(), reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
-        let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads: uploads.clone(), ..SyncConfig::default() }));
-        if let Some(sync) = &sync { let _ = operations.set(sync.downgrade()); }
+        let life = Self::build_life(&db, transport.clone(), &session, cable, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
+        let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), reads, uploads, jobs, shows, outcomes: Arc::default(), wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, remote, session, reads, uploads, jobs, shows, outcomes: Arc::default(), wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -250,13 +198,9 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Db`. It returns after the first `Publish`.
-    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, lookup: Arc<OnceLock<crate::sync::WeakSync>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, cable: Option<Arc<dyn core::CableLines>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
-        let operations: crate::owners::life::OperationLookup = Arc::new(move |name| {
-            let sync = lookup.get()?.upgrade()?;
-            let definition = crate::db::locked(&sync.inner.operations).get(name).cloned()?;
-            Some((definition.document.clone(), definition.root_path.clone()))
-        });
+        let operations = operations_lookup(&read_operations);
         let transfer = uploads.filter(|_| session.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
             codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), crate::upload::UploadConfig::default())),
             jobs,
@@ -271,6 +215,7 @@ impl Database {
             credentials: session.as_ref().map(|client| client.credential_slot()),
             session: session.clone(),
             transfer,
+            cable,
             read_operations: Some(read_operations),
         };
         let _entered = executor_enter()?;
@@ -308,10 +253,9 @@ impl Database {
         Ok(found)
     }
     pub async fn edge_values(&self, epoch: u64, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
-        let sync = self.sync()?.clone();
-        self.read_in_epoch(epoch, "edge values", move |_| {
+        self.read_in_epoch(epoch, "edge values", move |database| {
             let params = serde_json::from_str(&params_json)?;
-            Ok(serde_json::to_string(&sync.edge_values(&model, &relation, &params, &row_ids)?)?)
+            Ok(serde_json::to_string(&database.db.edge_values(&model, &relation, &params, &row_ids)?)?)
         }).await
     }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
@@ -335,85 +279,47 @@ impl Database {
     }
     pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
-        let sync = self.sync()?;
+        self.remote()?;
         let mut names = Vec::new();
         let mut declared = Vec::new();
         for def in defs {
             let text = |key: &str| def[key].as_str().map(str::to_string).ok_or_else(|| DbError::Invalid { detail: format!("operation needs {key}") });
             let (name, document) = (text("name")?, text("document")?);
             let mut operation = match def["rootPath"].as_str() {
-                Some(root) => OperationDef::new(&name, &document, root),
-                None => OperationDef::from_document(&name, &document).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has no root field") })?,
+                Some(root) => crate::owners::read::ReadOperation::new(&name, &document, root),
+                None => crate::owners::read::ReadOperation::from_document(&name, &document).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has no root field") })?,
             };
             if let Some(size) = def["pageSize"].as_u64() { operation = operation.paged(u32::try_from(size).map_err(|error| DbError::Invalid { detail: error.to_string() })?); }
             names.push((name.clone(), if document.trim_start().starts_with("mutation") { crate::owners::calls::CallKind::Mutate } else { crate::owners::calls::CallKind::Query }));
-            declared.push(crate::owners::read::ReadOperation { name: operation.name.clone(), document: operation.document.clone(), root_path: operation.root_path.clone(), page_size: operation.page_size });
-            sync.register(operation);
+            declared.push(operation);
         }
         let registered: Vec<(String, String)> = self.db.shared.specs.values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
         self.reads.declare(declared);
         self.life.declare(names);
         self.life.register_operations(registered);
-        let _entered = executor()?.enter();
-        sync.operations_ready();
+        match crate::owners::read::preload_keys(&self.db, false) {
+            Ok(keys) => self.life.preload(keys),
+            Err(error) => return Err(DbError::Invalid { detail: format!("the preload of the schema is invalid: {error}") }),
+        }
         Ok(())
     }
+
+    /// Declared upload operations need their operations registered.
+    pub(super) fn check_uploads(&self) -> Result<(), DbError> {
+        let Some(uploads) = &self.uploads else { return Ok(()) };
+        if self.reads.is_empty() {
+            return Err(DbError::Invalid { detail: "uploads are declared but operations is empty: pass the upload GraphQLOperation definitions in operations to open".into() });
+        }
+        uploads.check(|name| self.reads.get(name).is_some()).map_err(|detail| DbError::Invalid { detail })
+    }
     pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
-        self.sync()?;
+        self.remote()?;
         serde_json::from_str::<Value>(&variables_json)?;
         match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),
             _ => Err(super::command::ended()),
         }
-    }
-        /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
-    pub fn begin_load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
-        let call = self.start_load(epoch, "load", &model, &relation, &params_json, Goal::First, false)?;
-        let (sender, outcome) = tokio::sync::watch::channel(None);
-        let this = self.clone();
-        let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
-            let result = this.finish_load(call).await.map(drop);
-            crate::db::lock::effect(|| sender.send_replace(Some(result)));
-        });
-        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
-    }
-    pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
-        self.require_online(&format!("{model}.{relation} refresh"))?;
-        let call = self.start_load(epoch, "refresh", &model, &relation, &params_json, Goal::First, true)?;
-        self.finish_load(call).await.map(drop)
-    }
-    /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
-    pub fn begin_load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
-        let sync = self.sync()?.clone();
-        drop(self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, "load all")?);
-        let (sender, outcome) = tokio::sync::watch::channel(None);
-        let this = self.clone();
-        let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
-            let result = this.in_epoch_as(crate::ffi::legacy::Origin::Explicit, epoch, "load all", true, |admitted| async move {
-                let params: Map<String, Value> = serde_json::from_str(&params_json)?;
-                Ok::<_, DbError>(sync.load_all(&admitted, &model, &relation, &params, LoadOptions { force }).await?)
-            }).await;
-            crate::db::lock::effect(|| sender.send_replace(Some(result)));
-        });
-        Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
-    }
-    pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
-        self.require_online(&format!("{model}.{relation} load more"))?;
-        let call = self.start_load(epoch, "load more", &model, &relation, &params_json, Goal::Next, false)?;
-        self.finish_load(call).await
-    }
-    pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
-        let sync = self.sync()?.clone();
-        let wire = self.wire(&model)?;
-        let row = self.serve_in_epoch(epoch, "node", move |admitted| async move { sync.node(&admitted, &model, &relation, &row_id, force).await }).await?;
-        Ok(row.map(|row| wire.row(&row)))
-    }
-    pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
-        let sync = self.sync()?.clone();
-        let wire = self.wire(&model)?;
-        let rows = self.serve_in_epoch(epoch, "nodes", move |admitted| async move { sync.nodes(&admitted, &model, &relation, &row_ids.iter().map(String::as_str).collect::<Vec<_>>()).await }).await?;
-        Ok(rows.iter().map(|row| wire.row(row)).collect())
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
         if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
@@ -425,7 +331,7 @@ impl Database {
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
 
-    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { sync: self.sync.as_ref().map(Sync::downgrade), online: self.db.connectivity(), life: Arc::downgrade(&self.life) })) }
+    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { life: Arc::downgrade(&self.life) })) }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
         if self.life.is_shut() { return Err(super::command::closed()); }
@@ -458,42 +364,10 @@ impl Database {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
-        self.begin_load_all(epoch, model, relation, params_json, force)?.result().await
+    /// Server reads need a transport.
+    pub(super) fn remote(&self) -> Result<(), DbError> {
+        if self.remote { Ok(()) } else { Err(DbError::NoSession { detail: "transport is required for server operations".into() }) }
     }
-
-    /// Registers a call that waits for a load of the window in `Windows`. The window keeps the request while this call or another one waits for it.
-    #[allow(clippy::too_many_arguments)]
-    fn start_load(&self, epoch: u64, target: &'static str, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
-        self.sync()?;
-        let params: Map<String, Value> = serde_json::from_str(params_json)?;
-        self.db.window_record(model, relation, &params)?;
-        drop(self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, target)?);
-        let published = self.life.published();
-        if published.epoch != epoch { return Err(super::command::ended()); }
-        if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
-        let key = WindowKey::relation(model, relation, &params);
-        let force = force || (goal == Goal::First && !self.db.window_is_fresh(model, relation, &params, self.sync()?.inner.now_ms())?);
-        let (waiter, id) = self.life.load(epoch, key.clone(), goal, force, self.db.revision_seq()?);
-        Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
-    }
-
-    async fn finish_load(&self, mut call: LoadCall) -> Result<LoadMoreResult, DbError> {
-        let reply = self.await_life(call.waiter).await;
-        call.leave.settled = true;
-        let reply = reply?;
-        if !self.admits(call.epoch) { return Err(super::command::ended()); }
-        match reply {
-            LifeReply::Window(WindowOutcome::Loaded { has_more, fetched, .. }) => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
-            LifeReply::Window(WindowOutcome::Failed { source: Some(source), .. }) => Err(crate::sync::SyncError::Transport(source).into()),
-            LifeReply::Window(WindowOutcome::Failed { error, .. }) => Err(DbError::Database { detail: error }),
-            LifeReply::Window(WindowOutcome::PageLimit) => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
-            _ => Err(super::command::ended()),
-        }
-    }
-
-    pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() }) }
     /// A call that always goes to the server fails at once while the network is away. It does not wait for the network and does not retry.
     pub(super) fn require_online(&self, what: &str) -> Result<(), DbError> {
         if self.db.connectivity().is_online() { return Ok(()); }
@@ -516,6 +390,7 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
         CallError::Offline => DbError::Network { detail: "the operation needs the network".into() },
         CallError::Network => DbError::Network { detail: "the request did not reach the server".into() },
         CallError::Graphql(messages) => DbError::Graphql { messages, extensions: None },
+        CallError::Session(code) => DbError::Session { code, detail: "the server refused the call".into() },
         CallError::Http => DbError::Http { status: 0, detail: "the server refused the request".into() },
         CallError::Dropped => DbError::Network { detail: "the request left and the answer did not come".into() },
         CallError::InvalidResponse => DbError::Invalid { detail: "the response has no root of the operation".into() },

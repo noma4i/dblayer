@@ -91,7 +91,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         let mut unique = listed.clone();
         unique.dedup();
         assert_eq!(listed, unique, "{case}: a row is listed twice: {listed:?}");
-        database.db.clear_account().unwrap();
+        database.reset_data().await;
         bound(crate::ffi::settled(&database)).await.unwrap();
         let before = pages.queries.load(Ordering::SeqCst);
         let fresh_rows = Arc::new(Rows::default());

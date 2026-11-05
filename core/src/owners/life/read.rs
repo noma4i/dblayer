@@ -1,7 +1,8 @@
 //! Install of the owners of reading: `Windows`, `Deliveries` and `Feed` with the executors of their effects.
 //! An executor does IO and returns the result as an input; the platform side settles its waiters through `Outcomes`.
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
 
 use super::{Addresses, LifeReply, Ports, Wiring};
 use crate::db::Db;
@@ -9,27 +10,61 @@ use crate::owners::contract::{BatchAuthor, Committed, Drained, Models, Rejected}
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
 use crate::owners::read::deliveries::{DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
-use crate::owners::read::feed::{Feed, FeedEffect, FeedPeers, FeedState};
+use crate::owners::read::feed::{Feed, FeedEffect, FeedInput, FeedPeers, FeedState, FramedEvent};
 use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
-use crate::owners::read::{max_pages, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, SchemaWindowCodec, WindowIo};
+use crate::owners::read::{max_pages, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedCodec, FeedIo, ReadOperations, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
 use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, OutcomeId, RuntimeBuilder, Waiter};
-use crate::transport::Transport;
+use crate::transport::{GraphQLRequest, Response, Transport};
 
 /// The ids of waiters that platform calls register in `Windows` carry this bit, the ids of streams stay below it.
 pub(crate) const CALL: u64 = 1 << 62;
 
-/// `Feed` runs no IO here: the owner exists for its address and ends with the database. The runner of its subscription replaces this one.
+/// Without a cable (a database without a session) `Feed` runs no connection: the owner exists for its address and ends with the database.
 struct FeedWithoutIo {
-    wiring: Arc<Wiring>,
+    rest: Rest<FeedEffect>,
 }
 
 impl EffectRunner<Feed> for FeedWithoutIo {
-    fn run(&mut self, _stamp: EpochStamp, effect: FeedEffect, _back: &Back<Feed>) {
-        if let FeedEffect::Drained(drained) = effect {
-            self.wiring.to_lifecycle(LifecycleInput::Drained(drained));
+    fn run(&mut self, stamp: EpochStamp, effect: FeedEffect, _back: &Back<Feed>) { (self.rest)(stamp, effect); }
+}
+
+/// The request and the events of the subscription come from the schema; the operation of the subscription is registered after the open.
+struct LazyFeedCodec {
+    db: Db,
+    operations: ReadOperations,
+    wiring: Arc<Wiring>,
+    built: OnceLock<Arc<SchemaFeedCodec>>,
+}
+
+impl LazyFeedCodec {
+    fn codec(&self) -> Option<&Arc<SchemaFeedCodec>> {
+        if let Some(codec) = self.built.get() { return Some(codec); }
+        match SchemaFeedCodec::new(self.db.clone(), self.operations.clone()) {
+            Ok(codec) => Some(self.built.get_or_init(|| Arc::new(codec))),
+            Err(error) => {
+                self.wiring.fault(format!("the subscription could not be built: {error}"));
+                None
+            }
         }
     }
+}
+
+impl FeedCodec for LazyFeedCodec {
+    fn request(&self, models: &[String]) -> GraphQLRequest {
+        self.codec().map_or_else(|| GraphQLRequest::new("", "", serde_json::json!({})), |codec| codec.request(models))
+    }
+
+    fn events(&self, response: Response) -> Vec<FramedEvent> { self.codec().map(|codec| codec.events(response)).unwrap_or_default() }
+}
+
+/// `updates.debounce` of each model, in milliseconds.
+fn debounce_of(db: &Db) -> BTreeMap<String, u64> {
+    db.shared.specs.values().filter_map(|spec| {
+        let declared = spec.relations.iter().flat_map(|relation| &relation.updates).chain(&spec.listens);
+        let longest = declared.filter_map(|updates| updates.debounce.as_deref().and_then(crate::pacing::parse_duration)).max()?;
+        Some((spec.key.to_string(), u64::try_from(longest.as_millis()).unwrap_or(u64::MAX)))
+    }).collect()
 }
 
 pub(super) struct ReadAt {
@@ -95,7 +130,20 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         }),
     );
     let deliveries = builder.add::<Deliveries>("deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }), delivery_io);
-    let feed = builder.add::<Feed>("feed", FeedState::new(0, FeedPeers { store, windows: windows_at, deliveries: deliveries_at }, Default::default()), FeedWithoutIo { wiring: wiring.clone() });
+    let feed_wiring = wiring.clone();
+    let feed_rest: Rest<FeedEffect> = Box::new(move |_stamp, effect| match effect {
+        FeedEffect::Drained(done) => drained(&feed_wiring, done),
+        FeedEffect::SnapshotRequest { epoch } => feed_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Feed, epoch }),
+        _ => {}
+    });
+    let feed_state = FeedState::new(0, FeedPeers { store, windows: windows_at, deliveries: deliveries_at }, debounce_of(&db));
+    let feed = match &ports.cable {
+        Some(lines) => {
+            let codec = Arc::new(LazyFeedCodec { db: db.clone(), operations: ports.read_operations.clone().unwrap_or_default(), wiring: wiring.clone(), built: OnceLock::new() });
+            builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest))
+        }
+        None => builder.add::<Feed>("feed", feed_state, FeedWithoutIo { rest: feed_rest }),
+    };
     debug_assert!(windows.index() == base && deliveries.index() == base + 1 && feed.index() == base + 2);
 
     let reply_wiring = wiring.clone();
@@ -103,6 +151,13 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         reply_wiring.to_windows(match reply {
             StoreReply::Committed { revision } => WindowsInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Models::default() }),
             StoreReply::Rejected(reason) => WindowsInput::Rejected(Rejected { batch, reason }),
+        });
+    });
+    let feed_reply = wiring.clone();
+    wiring.on_store_reply(BatchAuthor::Feed, move |batch, reply| {
+        feed_reply.to_feed(match reply {
+            StoreReply::Committed { revision } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Models::default() }),
+            StoreReply::Rejected(reason) => FeedInput::Rejected(Rejected { batch, reason }),
         });
     });
     let commit_wiring = wiring.clone();
@@ -135,6 +190,9 @@ impl super::Life {
         }
         (waiter, id)
     }
+
+    /// The keys of the schema declared `preload` start loading once their operations are registered.
+    pub fn preload(&self, keys: Vec<WindowKey>) { self.wiring.to_windows(WindowsInput::PreloadKeys { keys }); }
 
     /// The platform calls that wait for an outcome of `Windows` now.
     #[cfg(test)]
@@ -171,6 +229,9 @@ impl super::Life {
         }
         waiter
     }
+
+    /// The transfer a stream of kind `Blob` follows changed its status.
+    pub fn push_status(&self, stream: StreamId, blob: crate::owners::read::deliveries::BlobStatus) { self.wiring.to_deliveries(DeliveryInput::TransferStatus { stream, blob }); }
 
     /// The last handle of the stream is gone.
     pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream }); }

@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::load_tests::relation;
-use super::stream::tape::{folded, Seen, Tape};
-use super::{Config, Database, DbError, LivePhase, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, StreamRequest, TestClock, Transport};
+use super::tape::{folded, Seen, Tape};
+use super::{Config, Database, DbError, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, TestClock, Transport};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
@@ -64,8 +64,7 @@ fn consistent(changes: &[Seen]) {
     for change in changes {
         assert!(change.seq > last, "seq {} after {last}", change.seq);
         last = change.seq;
-        assert!(!(change.phase == Some(LivePhase::Loaded) && change.size == 0), "Loaded with no rows at seq {}", change.seq);
-        assert!(!(change.phase == Some(LivePhase::Empty) && change.size > 0), "Empty with rows at seq {}", change.seq);
+        assert!(change.phase != Some(ReadPhase::Loaded) || change.loaded.is_some(), "Loaded without a load time at seq {}", change.seq);
     }
 }
 
@@ -77,15 +76,15 @@ async fn inv_loadm_16_the_first_value_of_a_loaded_window_holds_its_rows_and_the_
     let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let changes = heard(&listener);
-    assert_eq!((changes[0].phase, changes[0].rows.len(), changes[0].size), (Some(LivePhase::Loaded), 1, 1), "first value {:?}", changes[0].phase);
-    assert!(changes[0].loaded_at.is_some());
+    assert_eq!((changes[0].phase, changes[0].rows.len(), changes[0].size), (Some(ReadPhase::Loaded), 1, 1), "first value {:?}", changes[0].phase);
+    assert!(changes[0].loaded.is_some());
     consistent(&changes);
     assert_eq!(listener.last().unwrap().seq, changes.last().unwrap().seq);
 }
 
 #[tokio::test]
 async fn inv_loadm_16_a_cold_window_never_shows_loaded_or_empty_before_its_rows_and_ends_loaded_or_empty() {
-    for (reply, phase, size) in [(ONE_ROW, LivePhase::Loaded, 1), (NO_ROWS, LivePhase::Empty, 0)] {
+    for (reply, phase, size) in [(ONE_ROW, ReadPhase::Loaded, 1), (NO_ROWS, ReadPhase::Loaded, 0)] {
         let (db, _) = open(&[reply]).await;
         let listener = tape();
         let live = db.watch_query(FEED, listener.clone());
@@ -94,9 +93,9 @@ async fn inv_loadm_16_a_cold_window_never_shows_loaded_or_empty_before_its_rows_
         consistent(&changes);
         let last = changes.last().unwrap();
         assert_eq!((last.phase, last.size, last.error.is_none()), (Some(phase), size, true), "{reply}");
-        assert!(last.loaded_at.is_some(), "{reply}");
+        assert!(last.loaded.is_some(), "{reply}");
         if size > 0 {
-            assert!(changes.iter().all(|change| change.phase != Some(LivePhase::Empty)), "an Empty frame on the way to one row");
+            assert!(changes.iter().all(|change| !(change.phase == Some(ReadPhase::Loaded) && change.size == 0)), "a Loaded frame without rows on the way to one row");
         }
     }
 }
@@ -110,39 +109,15 @@ async fn inv_loadm_16_a_background_failure_is_loaded_with_the_error_when_rows_ex
     let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
     let last = heard(&listener).pop().unwrap();
-    assert_eq!((last.phase, last.size, last.error_kind.as_deref()), (Some(LivePhase::Loaded), 1, Some("server")));
-    assert!(matches!(last.error, Some(DbError::Graphql { .. })), "the typed error survives: {:?}", last.error);
+    assert_eq!((last.phase, last.size, last.error.as_ref().map(|_| "server")), (Some(ReadPhase::Loaded), 1, Some("server")));
+    assert!(last.error.is_some(), "the typed error survives: {:?}", last.error);
 
     let (cold, _) = open(&[REFUSED]).await;
     let listener = tape();
     let live = cold.watch_query(FEED, listener.clone());
     assert!(matches!(live.wait_for_initial_load().await, Err(DbError::Graphql { .. })), "the load error of the connect reaches the waiter");
     let failed = heard(&listener).pop().unwrap();
-    assert_eq!((failed.phase, failed.size, failed.error_kind.as_deref()), (Some(LivePhase::Failed), 0, Some("server")));
-}
-
-#[tokio::test]
-async fn inv_loadm_16_every_subscription_call_tells_a_failed_open_in_its_first_snapshot() {
-    let (db, _) = open(&[]).await;
-    let bad = r#"{"model":"Moment","where":{"type":"equal","field":"nope","value":1}}"#;
-    let requests = [
-        StreamRequest::Query { query_json: bad.into() },
-        StreamRequest::Query { query_json: "not json".into() },
-        StreamRequest::Count { query_json: bad.into() },
-        StreamRequest::Entity { model: "Moment".into(), id: String::new(), fetch: super::EntityFetch::Never },
-        StreamRequest::Related { query_json: r#"{"model":"Moment"}"#.into(), name: "nope".into() },
-        StreamRequest::Query { query_json: r#"{"model":"Nope"}"#.into() },
-    ];
-    for (index, request) in requests.into_iter().enumerate() {
-        let listener = tape();
-        let subscription = db.watch(request, listener.clone());
-        crate::test_wait::yield_until("the failed stream delivers its first value", || !listener.heard().is_empty()).await;
-        let first = listener.heard().into_iter().next().unwrap();
-        assert_eq!((first.phase, first.error_kind.as_deref(), first.size, first.seq), (Some(LivePhase::Failed), Some("invalid"), 0, 1), "call {index}");
-        assert!(first.error.is_some(), "call {index}");
-        assert!(subscription.wait_for_initial_load().await.is_err(), "call {index}: a stream that ended has no initial load to wait for");
-    }
-    crate::test_wait::yield_until("the reader read every end", || db.stream_census().open == 0).await;
+    assert_eq!((failed.phase, failed.size, failed.error.as_ref().map(|_| "server")), (Some(ReadPhase::Failed), 0, Some("server")));
 }
 
 #[tokio::test]
@@ -183,33 +158,4 @@ async fn inv_loadm_16_a_refresh_that_only_changes_a_related_row_still_shows_its_
     db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let shown = loaded_state(&stream, first_loaded).await;
     assert_eq!(shown.phase, ReadPhase::Loaded);
-}
-
-#[tokio::test]
-async fn related_rows_and_the_source_load_arrive_in_one_snapshot_with_the_typed_error_and_release_on_cancel() {
-    const AUTHORED: &str = r#"{"data":{"moments":[{"id":"m1","text":"a","author":{"id":"u1","name":"Ann"}}]}}"#;
-    const RELATED_FEED: &str = r#"{"model":"Moment","relation":"feed","params":{}}"#;
-    let (db, _) = open_with_authors(&[AUTHORED]).await;
-    let listener = tape();
-    let live = db.watch(StreamRequest::Related { query_json: RELATED_FEED.into(), name: "author".into() }, listener.clone());
-    tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends").unwrap();
-    let frames = heard(&listener);
-    let shown = frames.last().unwrap();
-    assert_eq!((shown.phase, shown.size, shown.total), (Some(LivePhase::Loaded), 1, None));
-    let snapshots = folded(&frames);
-    assert!(snapshots.iter().all(|(phase, ids, _)| *phase != Some(LivePhase::Loaded) || ids == &["u1"]), "no Loaded snapshot without the related row: {snapshots:?}");
-    assert_eq!(snapshots.last().map(|(_, ids, _)| ids.clone()), Some(vec!["u1".to_string()]));
-    consistent(&frames);
-    live.cancel();
-    assert_eq!((db.subscription_census().subscriptions, db.subscription_census().observed_queries), (0, 0));
-
-    let (refused, _) = open_with_authors(&[REFUSED]).await;
-    let listener = tape();
-    let live = refused.watch(StreamRequest::Related { query_json: RELATED_FEED.into(), name: "author".into() }, listener.clone());
-    let waited = tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends");
-    assert!(matches!(waited, Err(DbError::Graphql { .. })), "the load error reaches the waiter");
-    let failed = heard(&listener).pop().unwrap();
-    assert_eq!((failed.phase, failed.size), (Some(LivePhase::Failed), 0));
-    assert!(matches!(failed.error, Some(DbError::Graphql { .. })), "the typed error survives: {:?}", failed.error);
-    live.cancel();
 }

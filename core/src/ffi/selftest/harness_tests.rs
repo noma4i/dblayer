@@ -2,15 +2,15 @@ use std::sync::Arc;
 
 use super::rig_tests::{bound, Held, Rig, World};
 use crate::ffi::lifecycle_tests::{named, Rows};
-use crate::ffi::stream::tape::Watched;
+use crate::ffi::tape::Watched;
 use crate::ffi::{DbError, Transport};
 use crate::test_wait::yield_until;
 
 const ALL: &str = r#"{"model":"User","relation":"all","params":{}}"#;
 
-fn first_error(rows: &Rows) -> Option<DbError> { rows.1.lock().unwrap().iter().find_map(|change| change.error.clone()) }
+fn first_error(rows: &Rows) -> Option<String> { rows.1.lock().unwrap().iter().find_map(|change| change.error.clone()) }
 
-fn trace(rows: &Rows) -> Vec<String> { rows.1.lock().unwrap().iter().map(|change| format!("rev={} size={} phase={:?} kind={:?} error={:?}", change.revision, change.size, change.phase, change.error_kind, change.error)).collect() }
+fn trace(rows: &Rows) -> Vec<String> { rows.1.lock().unwrap().iter().map(|change| format!("rev={} size={} phase={:?} error={:?}", change.revision, change.size, change.phase, change.error)).collect() }
 
 fn never_listed(rows: &Rows, account: &str) -> bool { rows.1.lock().unwrap().iter().all(|change| change.rows.iter().all(|row| !named(row, account))) }
 

@@ -32,7 +32,7 @@ fn nullable_relation_membership_moves_to_null_and_back() {
     use crate::value::ScalarKind;
     let mut spec = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("folder", ScalarKind::Str).nullable().with_default(json!("a")).indexed()]);
     let mut relation = RelationSpec::new("folder", &["folder"]);
-    relation.remote = Some(crate::sync::rig::remote("Notes", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
+    relation.remote = Some(crate::schema_fixtures::remote("Notes", RemoteShape::List { coverage: Coverage::Complete }, "1.minute"));
     spec.relations.push(relation);
     let target = |value| ScopeRef::new(model("notes"), spec.selection_key("folder", &row(json!({"folder": value}))).unwrap());
     let (named, null) = (target(json!("a")), target(json!(null)));

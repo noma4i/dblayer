@@ -16,6 +16,8 @@ pub enum CallError {
     Network,
     Graphql(Vec<String>),
     Http,
+    /// A query the server refused with a session code: the call ends, the session stays.
+    Session(crate::transport::SessionCode),
     Dropped,
     InvalidResponse,
     Interrupted,

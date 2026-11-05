@@ -384,6 +384,12 @@ impl EncryptedClient {
         }
     }
 
+    /// The cable of the owner Feed: it opens sockets through `rest` and signs in with the stored credential.
+    pub(crate) fn cable_lines(self: &Arc<Self>, rest: Arc<dyn crate::transport::Transport>) -> Arc<dyn crate::transport::CableLines> {
+        let client = self.clone();
+        Arc::new(crate::transport::EncryptedLines::new(rest, self.config.clone(), Arc::new(move || client.cable_credential(&client.admit("cable")?))))
+    }
+
     pub(super) fn cable_credential(&self, admitted: &Admitted) -> Result<String, TransportError> {
         self.credential(admitted)
     }

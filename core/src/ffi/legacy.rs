@@ -53,10 +53,6 @@ impl From<Ended> for crate::transport::TransportError {
     fn from(_: Ended) -> Self { crate::transport::TransportError::Interrupted("the database closed, reset or ended its session".into()) }
 }
 
-impl From<Ended> for crate::sync::SyncError {
-    fn from(ended: Ended) -> Self { crate::sync::SyncError::Transport(ended.into()) }
-}
-
 impl Default for Snapshot {
     fn default() -> Self {
         Self { generation: Generation::INITIAL, session: None, ended: false, ending: false, closed: false, revision: 0, notice: 0, session_epoch: 0, change: Change::SessionStarted(None) }

@@ -1,19 +1,14 @@
+//! Model declarations the tests share: users, moments with a feed, vibes.
+
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
-use crate::db::Db;
-use crate::pacing::TestClock;
 use crate::schema::{
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
     RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec, MergeRule,
 };
-use crate::transport::MockTransport;
 use crate::value::ScalarKind;
-
-use super::{OperationDef, Sync, SyncConfig};
 
 pub const START_MS: u64 = 1_000_000;
 
@@ -174,198 +169,39 @@ pub fn keeping_specs() -> Vec<ModelSpec> {
     vec![users_spec(), moments, vibes_spec()]
 }
 
-pub struct Rig {
-    pub sync: Sync,
-    pub db: Db,
-    pub transport: MockTransport,
-    pub(crate) clock: TestClock,
+use crate::schema::{Sort, SortField};
+use crate::value::SortDirection;
+
+
+pub const CHAT: &str = "c1";
+
+pub fn messages_spec(stable: bool) -> ModelSpec {
+    let mut spec = ModelSpec::new(
+        "messages",
+        vec![
+            FieldSpec::scalar("id", ScalarKind::Id),
+            FieldSpec::scalar("chatId", ScalarKind::Id).indexed(),
+            FieldSpec::scalar("text", ScalarKind::Str).optional(),
+            FieldSpec::scalar("sequenceNumber", ScalarKind::Int).nullable().optional(),
+            FieldSpec::scalar("createdAt", ScalarKind::Date).optional(),
+        ],
+    );
+    let mut thread = RelationSpec::new("thread", &["chatId"]);
+    thread.remote = Some(remote("MessagesThread", RemoteShape::Connection { direction: PageDirection::Forward, coverage: Coverage::Page, max_pages: None, cursor: None }, "1.minute"));
+    thread.joins_events = true;
+    thread.order_stable = stable;
+    thread.sort = Sort::Fields(vec![
+        SortField { column: "sequenceNumber".to_string(), direction: SortDirection::AscNullsLast },
+        SortField { column: "createdAt".to_string(), direction: SortDirection::Asc },
+    ]);
+    spec.relations.push(thread);
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.mutation = Some("CreateMessage".to_string());
+    create.has_optimistic = true;
+    create.has_temp_row_retention = true;
+    create.variables.insert("chatId".to_string(), "chatId".to_string());
+    create.variables.insert("text".to_string(), "text".to_string());
+    spec.actions.push(create);
+    spec
 }
 
-pub fn rig() -> Rig {
-    rig_with(SyncConfig::default())
-}
-
-pub fn register_operations(sync: &Sync) {
-    for (name, root) in [
-        ("MomentsFeed", "feed"),
-        ("MomentsHistory", "history"),
-        ("MomentsByUser", "moments"),
-        ("MomentsSearch", "moments"),
-        ("MomentListen", "momentListen"),
-        ("MomentWrapped", "momentWrapped"),
-        ("MomentDebounced", "momentDebounced"),
-        ("MomentsByMood", "moments"),
-        ("MomentsPulse", "feed"),
-        ("CurrentUser", "me"),
-        ("MomentEvents", "momentEvent"),
-        ("MomentRemoved", "momentRemoved"),
-        ("VibeEvents", "momentEvent"),
-        ("CreateMoment", "createMoment"),
-        ("UpdateMoment", "updateMoment"),
-        ("DeleteMoment", "deleteMoment"),
-        ("LikeMoment", "likeMoment"),
-        ("StarMoment", "starMoment"),
-        ("PokeMoment", "pokeMoment"),
-    ] {
-        sync.register(OperationDef::new(name, &format!("operation {name} {{ x }}"), root).paged(2));
-    }
-}
-
-pub fn app<F: std::future::Future>(sync: &Sync, work: F) -> impl std::future::Future<Output = F::Output> {
-    sync.inner.db.admit().expect("the test call is admitted").scope(work)
-}
-
-pub fn keeping_rig() -> Rig {
-    rig_on(Db::open_in_memory(keeping_specs(), None).unwrap(), MockTransport::new(), SyncConfig::default())
-}
-
-pub fn rig_with(config: SyncConfig) -> Rig {
-    let db = Db::open_in_memory(specs(), None).unwrap();
-    rig_on(db, MockTransport::new(), config)
-}
-
-pub fn rig_on(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
-    let rig = rig_without_operations(db, transport, config);
-    register_operations(&rig.sync);
-    rig
-}
-
-pub fn rig_without_operations(db: Db, transport: MockTransport, config: SyncConfig) -> Rig {
-    #[cfg(test)]
-    if crate::test_wait::world_clock().is_some() {
-        let clock = crate::test_wait::clock(Duration::from_millis(START_MS));
-        transport.delay_on(Arc::new(clock.clone()));
-        crate::test_wait::enter_world(&db);
-        return rig_on_clock(db, transport, config, clock);
-    }
-    rig_on_clock(db, transport, config, TestClock::new(Duration::from_millis(START_MS)))
-}
-
-pub(crate) fn rig_on_clock(db: Db, transport: MockTransport, config: SyncConfig, clock: TestClock) -> Rig {
-    let sync = Sync::new(db.clone(), Arc::new(transport.clone()), Arc::new(clock.clone()), config);
-    Rig { sync, db, transport, clock }
-}
-
-#[cfg(test)]
-pub(crate) type Ticket = Arc<super::OutcomeTicket>;
-
-#[cfg(test)]
-pub(crate) fn create_claimed(sync: &Sync, model: &str, values: Map<String, Value>) -> (crate::db::Row, Ticket) {
-    let admitted = sync.inner.db.admit().unwrap();
-    let (row, _, _, ticket) = sync.inner.db.create_claiming(&admitted, None, model, values, Map::new(), |operation| sync.claim_outcome(operation.expect("the create queues an operation"))).unwrap();
-    (row, ticket)
-}
-
-#[cfg(test)]
-pub(crate) fn update_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId, patch: Map<String, Value>) -> Ticket {
-    let admitted = sync.inner.db.admit().unwrap();
-    sync.inner.db.update_claiming(&admitted, model, id, patch, Map::new(), |operation| sync.claim_outcome(operation.expect("the update queues an operation"))).unwrap().3
-}
-
-#[cfg(test)]
-pub(crate) fn destroy_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId) -> Ticket {
-    let admitted = sync.inner.db.admit().unwrap();
-    sync.inner.db.destroy_claiming(&admitted, model, id, |operation| sync.claim_outcome(operation.expect("the destroy queues an operation"))).unwrap().3
-}
-
-#[cfg(test)]
-pub(crate) fn act_claimed(sync: &Sync, model: &str, action: &str, id: &crate::identity::RowId, patch: Map<String, Value>, args: Map<String, Value>) -> (crate::db::Acted, Ticket) {
-    let admitted = sync.inner.db.admit().unwrap();
-    sync.inner.db.act_claiming(&admitted, model, action, id, patch, args, |operation| sync.claim_outcome(operation)).unwrap()
-}
-
-#[cfg(test)]
-pub(crate) fn retry_claimed(sync: &Sync, model: &str, id: &crate::identity::RowId, action: Option<&str>) -> Ticket {
-    let admitted = sync.inner.db.admit().unwrap();
-    sync.inner.db.retry_claiming(&admitted, model, id, action, |operation| sync.claim_outcome(operation)).unwrap().3.expect("a failed operation to retry")
-}
-
-#[cfg(test)]
-pub(crate) async fn flushed(rig: &Rig) -> super::FlushReport {
-    let admitted = rig.sync.inner.db.admit().unwrap();
-    app(&rig.sync, rig.sync.flush(&admitted)).await.unwrap()
-}
-
-#[cfg(test)]
-#[track_caller]
-pub(crate) fn settled(ticket: &Ticket) -> super::SendResult {
-    ticket.finished().expect("the flush settled the operation").result
-}
-
-#[cfg(test)]
-#[track_caller]
-pub(crate) fn refusal(ticket: &Ticket) -> String {
-    match settled(ticket) {
-        super::SendResult::Rejected(failure) => failure.message,
-        other => panic!("expected a refusal, got {other:?}"),
-    }
-}
-
-pub fn params(value: Value) -> Map<String, Value> {
-    value.as_object().unwrap().clone()
-}
-
-pub fn moment(id: &str, text: &str) -> Value {
-    json!({"id": id, "text": text, "userId": null})
-}
-
-pub fn feed_page(nodes: Vec<Value>, has_next: bool, cursor: &str) -> Value {
-    json!({"feed": {"nodes": nodes, "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}}})
-}
-
-pub async fn await_outbox(changes: &mut tokio::sync::watch::Receiver<u64>, ready: impl Fn() -> bool) {
-    let wait = async {
-        while !ready() {
-            changes.changed().await.expect("outbox changes");
-        }
-    };
-    tokio::time::timeout(Duration::from_secs(60), wait).await.expect("the outbox never reached the awaited state");
-}
-
-pub async fn await_tasks_ended() {
-    let metrics = tokio::runtime::Handle::current().metrics();
-    #[cfg(test)]
-    let driver = usize::from(crate::test_wait::world_clock().is_some());
-    #[cfg(not(test))]
-    let driver = 0;
-    for _ in 0..10_000 {
-        if metrics.num_alive_tasks() <= driver {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    panic!("{} tasks are still alive", metrics.num_alive_tasks() - driver);
-}
-
-pub async fn await_state(state: &super::RelationWatch, ready: impl Fn(&super::RelationState) -> bool) {
-    let mut state = state.clone();
-    tokio::time::timeout(Duration::from_secs(60), async {
-        while !ready(&state.borrow_and_update()) {
-            state.changed().await.expect("state sender dropped");
-        }
-    }).await.expect("the state never reached the awaited value");
-}
-
-pub fn member_ids(rig: &Rig, model: &str, relation: &str, params: &Map<String, Value>) -> Vec<String> {
-    let spec = rig.db.spec(model).unwrap();
-    let key = spec.selection_key(relation, params).unwrap();
-    rig.db.shared.store.scope_members(model, key.as_str()).unwrap().into_iter().map(|(id, _)| id).collect()
-}
-
-pub fn text_of(rig: &Rig, model: &str, id: &str) -> Option<String> {
-    let row = rig.db.find(model, &crate::identity::RowId::new(id).unwrap()).unwrap()?;
-    row.text("text").map(str::to_string)
-}
-
-pub fn feed_reply(ids: &[&str], has_next: bool, cursor: &str) -> crate::transport::Reply {
-    crate::transport::Reply::data(feed_page(ids.iter().map(|id| moment(id, id)).collect(), has_next, cursor))
-}
-
-pub fn put(rig: &Rig, model: &str, row: Value) {
-    use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
-    let row = row.as_object().unwrap().clone();
-    let id = crate::identity::RowId::new(row["id"].as_str().unwrap()).unwrap();
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, rig.db.generation());
-    envelope.entity_ops.push(EntityOp::Upsert { model: crate::identity::ModelKey::new(model), id, row });
-    rig.db.land(&rig.db.admit().unwrap(), envelope).unwrap();
-}

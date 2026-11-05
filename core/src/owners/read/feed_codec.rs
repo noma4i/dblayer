@@ -17,7 +17,7 @@ use super::codec::{normalize_nodes, root_value};
 use crate::transport::{GraphQLRequest, Response};
 use crate::value::read_id;
 
-pub type Operations = Arc<dyn Fn(&str) -> Option<Arc<crate::sync::OperationDef>> + Send + Sync>;
+pub type Operations = super::ReadOperations;
 
 pub struct SchemaFeedCodec {
     db: Db,
@@ -45,7 +45,7 @@ impl SchemaFeedCodec {
     /// Fails when the schema declares no subscription or the operation of it is not registered.
     pub fn new(db: Db, operations: Operations) -> Result<Self, String> {
         let name = Self::subscription_of(&db).ok_or("the schema declares no subscription")?;
-        let operation = operations(&name).ok_or_else(|| format!("operation {name} is not registered"))?;
+        let operation = operations.get(&name).ok_or_else(|| format!("operation {name} is not registered"))?;
         let request = GraphQLRequest::new(&operation.document, &operation.name, json!({}));
         Ok(Self { db, operations, request })
     }
@@ -138,7 +138,7 @@ impl SchemaFeedCodec {
         let mut events = Vec::new();
         for spec in self.specs() {
             for updates in &spec.listens {
-                let Some(operation) = (self.operations)(&updates.subscription) else { continue };
+                let Some(operation) = self.operations.get(&updates.subscription) else { continue };
                 let root = updates.root.clone().unwrap_or_else(|| operation.root_path.clone());
                 let Some(node) = root_value(data, &root) else { continue };
                 events.extend(self.listen_event(spec, updates, node));
