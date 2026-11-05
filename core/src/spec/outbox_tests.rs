@@ -1,5 +1,5 @@
 use super::ref_outbox::{step_of, Ctx, Eff, In, Obs, Out, Policy, St, Step};
-use super::rig::{bounded, quiet, until, within, Kind, Reply, Rig, Server};
+use super::rig::{bounded, until, within, Kind, Reply, Rig, Server};
 use crate::ffi::{CommandRequest, WireOperationOutcome, WireOperationReceipt, WireSyncState};
 use crate::schema::OnFailure;
 
@@ -42,7 +42,7 @@ async fn out_submit_run() {
     assert_eq!(submitted.obs, []);
     assert!(committed.obs.contains(&Obs::Receipt) && receipt.operation.is_some());
     assert!(committed.obs.contains(&Obs::OptimismVisibleAtRevision) && rig.row(&temp_id(&receipt)).await.is_some());
-    quiet().await;
+    rig.quiet().await;
     assert_eq!(sends(&committed), rig.server.mutations() > 0);
 }
 
@@ -92,7 +92,7 @@ async fn out_queued_send_run() {
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.db.set_online(false).unwrap();
     let receipt = rig.create("a").await;
-    quiet().await;
+    rig.quiet().await;
     assert_eq!(rig.server.mutations(), 0);
     rig.db.set_online(true).unwrap();
     rig.server.wait_seen("MakeMoment", 1).await;
@@ -103,7 +103,7 @@ async fn out_queued_send_run() {
     let first = rig.create("a").await;
     rig.server.wait_held(Kind::Mutate, 1).await;
     let second = rig.update(&temp_id(&first), "b").await.unwrap();
-    quiet().await;
+    rig.quiet().await;
     assert_eq!(rig.server.count("UpdateMoment"), 0);
     rig.server.hold(Kind::Mutate, false);
     rig.server.answer(Kind::Mutate, Reply::Ok);
@@ -121,7 +121,7 @@ async fn out_queued_offline_run() {
     let receipt = rig.create("a").await;
 
     rig.db.set_online(false).unwrap();
-    quiet().await;
+    rig.quiet().await;
 
     assert_eq!((cell.next, cell.eff.is_empty()), (St::Queued, true));
     assert_eq!(rig.server.mutations(), 0);
@@ -176,7 +176,7 @@ async fn out_sending_temp_run() {
     let receipt = rig.create("hello").await;
     rig.server.wait_seen("MakeMoment", 1).await;
 
-    quiet().await;
+    rig.quiet().await;
     assert_eq!((cell.next, cell.eff.contains(&Eff::ScheduleTick)), (St::Sending, true));
     assert_eq!(rig.server.count("MakeMoment"), 1);
     assert!(rig.pending(&receipt).await);
@@ -213,7 +213,7 @@ async fn out_sending_offline_run() {
     rig.server.wait_held(Kind::Mutate, 1).await;
 
     rig.db.set_online(false).unwrap();
-    quiet().await;
+    rig.quiet().await;
     assert!(cell.eff.is_empty() && cell.next == St::Sending && rig.pending(&receipt).await);
     rig.db.set_online(true).unwrap();
     crate::test_wait::yield_until("the Session cancelled the request with the network and sent it once more", || rig.server.count("MakeMoment") == 2).await;

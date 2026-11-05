@@ -1,7 +1,7 @@
 //! Reference-level tests of the `outbox` machine: the traces against the model and the properties through the real database.
 
 use super::ref_outbox::{step_of, Ctx, In, Out, Policy, St, Step};
-use super::rig::{bounded, quiet, step, until, within, Kind, Reply, Rig, Server};
+use super::rig::{bounded, step, until, within, Kind, Reply, Rig, Server};
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
 use crate::schema::OnFailure;
 use super::outbox_tests::*;
@@ -117,7 +117,7 @@ async fn run_trace(trace: &[Act], check: Check) {
         until(&format!("{label} step {index}: requests in flight {requesting}"), || rig.server.held(Kind::Mutate) == requesting).await;
         let expected: Vec<_> = model.ops.iter().map(|op| op.resolved.is_some()).collect();
         until(&format!("{label} step {index}: resolved {expected:?}"), || model.ops.iter().all(|op| op.resolved.is_none() || op.handle.is_finished())).await;
-        quiet().await;
+        rig.quiet().await;
         for (number, op) in model.ops.iter().enumerate() {
             assert_eq!(op.handle.is_finished(), op.resolved.is_some(), "{label} step {index}: op {number} {:?}", op.state);
             if let (Some(want_out), true) = (op.resolved, op.handle.is_finished()) {
@@ -133,7 +133,7 @@ async fn run_trace(trace: &[Act], check: Check) {
     if check == Check::Idle {
         let before = rig.server.mutations();
         rig.clock.advance(3_600_000);
-        quiet().await;
+        rig.quiet().await;
         assert_eq!(rig.server.mutations(), before, "{label}: requests without an event");
     }
 }
@@ -192,7 +192,7 @@ async fn out_prop_row_order_run() {
         let id = temp_id(&first);
         let second = rig.update(&id, "b").await.unwrap();
         let third = rig.update(&id, "c").await.unwrap();
-        quiet().await;
+        rig.quiet().await;
         assert_eq!(rig.server.mutations(), 1, "only the first operation of a row is in the network");
 
         rig.server.answer(Kind::Mutate, first_reply);
@@ -232,7 +232,7 @@ async fn out_prop_intent_kept_run() {
                 }
             }
         }
-        quiet().await;
+        first.quiet().await;
         let survivors = model.ops.iter().filter(|op| matches!(op.state, St::Queued | St::Sending)).count();
 
         within(first.db.close_database()).await.unwrap();
@@ -240,7 +240,7 @@ async fn out_prop_intent_kept_run() {
         let server = Server::new();
         let second = Rig::open_at(OnFailure::Rollback, Some(path), server.clone()).await;
         crate::test_wait::yield_until("the restored intents reached the server", || server.count("MakeMoment") >= survivors).await;
-        quiet().await;
+        second.quiet().await;
 
         assert_eq!(server.count("MakeMoment"), survivors, "{acts:?}");
         drop(second);

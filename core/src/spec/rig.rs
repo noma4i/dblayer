@@ -337,7 +337,10 @@ pub async fn until(what: &str, mut condition: impl FnMut() -> bool) {
     }
 }
 
-pub async fn quiet() { tokio::time::sleep(Duration::from_millis(150)).await }
+impl Rig {
+    /// Returns once the owners handled every input and every started effect task.
+    pub async fn quiet(&self) { within(crate::ffi::settled(&self.db)).await.unwrap(); }
+}
 
 struct Steps { count: AtomicU64, label: Mutex<String> }
 

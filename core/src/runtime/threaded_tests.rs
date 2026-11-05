@@ -20,7 +20,7 @@ fn idle_runtime_has_zero_wakeups_and_schedule_fires_once() {
     runtime.start_epoch(1);
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(60), 9));
     assert_eq!(fired.recv_timeout(WAIT), Ok(9));
-    sleep(Duration::from_millis(50));
+    assert!(runtime.barrier(WAIT));
     let settled = runtime.wakeups(toy);
     sleep(Duration::from_millis(200));
     assert_eq!(runtime.wakeups(toy), settled);
