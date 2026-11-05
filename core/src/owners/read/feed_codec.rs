@@ -9,7 +9,6 @@ use serde_json::{json, Map, Value};
 
 use super::feed::FramedEvent;
 use super::feed_io::FeedCodec;
-use super::schema_io::Operations;
 use super::windows::WindowKey;
 use crate::db::Db;
 use crate::identity::RowId;
@@ -17,6 +16,8 @@ use crate::schema::{ChangeRead, ModelSpec, NodeRead, SubscriptionAction, Updates
 use super::codec::{normalize_nodes, root_value};
 use crate::transport::{GraphQLRequest, Response};
 use crate::value::read_id;
+
+pub type Operations = Arc<dyn Fn(&str) -> Option<Arc<crate::sync::OperationDef>> + Send + Sync>;
 
 pub struct SchemaFeedCodec {
     db: Db,

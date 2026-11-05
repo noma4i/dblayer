@@ -25,7 +25,7 @@ fn read(value: Value) -> crate::schema::ChangeRead { serde_json::from_value(valu
 
 fn updates(value: Value) -> UpdatesSpec { serde_json::from_value(value).unwrap() }
 
-fn operations() -> super::Operations {
+fn operations() -> super::feed_codec::Operations {
     Arc::new(|name| match name {
         "Changes" => Some(Arc::new(OperationDef::new("Changes", "subscription Changes { recordEvents { changes { topic action recordId message { id chatId body } } } }", "recordEvents"))),
         "MessageChanged" => Some(Arc::new(OperationDef::new("MessageChanged", "subscription MessageChanged { messageChanged { id chatId body deleted } }", "messageChanged"))),

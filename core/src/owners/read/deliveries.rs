@@ -207,6 +207,8 @@ struct Delivery {
     stage: DeliveryStage,
     read_revision: i64,
     read_id: u64,
+    /// The revision of the last read that finished: the rows of the stream are current up to it, `revision` is the revision of the last value of rows.
+    read_seen: i64,
     revision: i64,
     acknowledged: Option<i64>,
     rows: Vec<StreamRow>,
@@ -248,6 +250,7 @@ impl Delivery {
             stage,
             read_revision: revision,
             read_id: 0,
+            read_seen: 0,
             revision: 0,
             acknowledged: None,
             rows: Vec::new(),
@@ -443,6 +446,7 @@ impl Delivery {
         if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }
+        self.read_seen = self.read_seen.max(revision);
         match (self.stage, data) {
             (DeliveryStage::Opening, ReadData::Rows { rows, .. }) if self.view.kind != Kind::Count => {
                 let missing = rows.is_empty() && self.view.kind == (Kind::Entity { fetch: Fetch::IfMissing });
@@ -560,8 +564,10 @@ impl Delivery {
         match self.stage {
             DeliveryStage::Opening => self.held_state = Some(state),
             DeliveryStage::Live if self.view.kind.reads_rows() => {
-                if visible_after(&state) > self.revision {
+                let visible = visible_after(&state);
+                if visible > self.read_seen {
                     self.held_state = Some(state);
+                    fx.push(self.new_read(visible));
                 } else if state != self.window {
                     self.window = state.clone();
                     self.held_state = None;

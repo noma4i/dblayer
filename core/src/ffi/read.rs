@@ -4,9 +4,8 @@
 use std::sync::Arc;
 
 use super::database::Database;
-use super::wire::{WireModel, WireRow};
+use super::wire::WireRow;
 use super::DbError;
-use crate::db::Db;
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::owners::life::Life;
 use crate::owners::read::deliveries::{EndCause, Fetch, Kind, PullAnswer, StreamRow, Value, View};
@@ -83,9 +82,6 @@ pub enum ReadRequest {
     List { query_json: String },
     Count { query_json: String },
     Entity { model: String, id: String, fetch: ReadFetch },
-    Events { model: String },
-    Blob { id: String },
-    RetryStatus,
 }
 
 fn state_of(state: WindowState) -> ReadState {
@@ -110,27 +106,16 @@ fn end_of(cause: EndCause) -> ReadEnd {
     }
 }
 
-/// The row of an entry: the owner reads ids with their stamps, the full row comes from the cache of the database.
-fn full_row(db: &Db, wire: Option<&WireModel>, model: &str, row: &StreamRow) -> Option<WireRow> {
-    if let Some(row) = &row.row {
-        return Some(row.clone());
-    }
-    let wire = wire?;
-    let id = crate::identity::RowId::new(&row.id).ok()?;
-    db.find(model, &id).ok().flatten().map(|found| wire.row(&found))
+fn full_row(row: &StreamRow) -> Result<WireRow, DbError> {
+    row.row.clone().ok_or_else(|| DbError::Database { detail: format!("the read gave row {} without its values", row.id) })
 }
 
-fn read_value(db: &Db, wire: Option<&WireModel>, model: &str, value: Value) -> ReadValue {
-    match value {
-        Value::Snapshot { revision, rows, state } => ReadValue::Snapshot { revision, rows: rows.iter().filter_map(|row| full_row(db, wire, model, row)).collect(), state: state_of(state) },
+fn read_value(value: Value) -> Result<ReadValue, DbError> {
+    Ok(match value {
+        Value::Snapshot { revision, rows, state } => ReadValue::Snapshot { revision, rows: rows.iter().map(full_row).collect::<Result<_, _>>()?, state: state_of(state) },
         Value::Delta(delta) => {
-            let (mut rows, mut indexes) = (Vec::with_capacity(delta.rows.len()), Vec::with_capacity(delta.rows.len()));
-            for (row, index) in delta.rows.iter().zip(&delta.indexes) {
-                if let Some(row) = full_row(db, wire, model, row) {
-                    rows.push(row);
-                    indexes.push(*index);
-                }
-            }
+            let rows = delta.rows.iter().map(full_row).collect::<Result<Vec<_>, _>>()?;
+            let indexes = delta.indexes.clone();
             let pairs = |pairs: Vec<(String, String)>| pairs.into_iter().map(|(from, to)| RowRename { from, to }).collect();
             ReadValue::Delta {
                 base: delta.base,
@@ -154,26 +139,40 @@ fn read_value(db: &Db, wire: Option<&WireModel>, model: &str, value: Value) -> R
         Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, progress: blob.progress, error: blob.error },
         Value::Retry(retry) => ReadValue::Retry { attempts: retry.attempts, phase: retry.phase },
         Value::Ended(cause) => ReadValue::Ended { cause: end_of(cause) },
-    }
+    })
 }
 
 /// An open stream. Dropping the last handle releases it in the core.
 #[derive(uniffi::Object)]
 pub struct ReadStream {
     life: Arc<Life>,
-    db: Db,
-    wire: Option<Arc<WireModel>>,
-    model: String,
     stream: u64,
+    refusal: std::sync::Mutex<Option<DbError>>,
+    ended: std::sync::atomic::AtomicBool,
+}
+
+impl ReadStream {
+    fn finished(&self, cause: ReadEnd) -> Option<ReadValue> {
+        (!self.ended.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(ReadValue::Ended { cause })
+    }
 }
 
 #[uniffi::export]
 impl ReadStream {
     /// The next value of the stream, `None` once the stream ended and its last value was taken.
     pub async fn pull(&self) -> Result<Option<ReadValue>, DbError> {
+        if let Some(error) = self.refusal.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() {
+            return Err(error);
+        }
         match self.life.pull(self.stream).wait().await {
-            Outcome::Value(PullAnswer::Value(value)) => Ok(Some(read_value(&self.db, self.wire.as_deref(), &self.model, value))),
-            Outcome::Value(PullAnswer::Done) | Outcome::EpochEnded(_) | Outcome::Closing => Ok(None),
+            Outcome::Value(PullAnswer::Value(value)) => {
+                if matches!(value, Value::Ended(_)) {
+                    self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                read_value(value).map(Some)
+            }
+            Outcome::Value(PullAnswer::Done) | Outcome::Closing => Ok(self.finished(ReadEnd::Closed)),
+            Outcome::EpochEnded(_) => Ok(self.finished(ReadEnd::SessionEnded)),
             Outcome::Value(PullAnswer::Invalid) => Err(DbError::Invalid { detail: "a pull of this stream is waiting already".into() }),
         }
     }
@@ -181,6 +180,7 @@ impl ReadStream {
     /// Returns when no value of this stream is delivered any more.
     pub async fn cancel(&self) {
         let _ = self.life.cancel_stream(self.stream).wait().await;
+        self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -225,29 +225,20 @@ impl Database {
                 };
                 Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: vec![crate::ddl::table_name(model)], local: spec.is_local(), remote: fetch != Fetch::Never, window, subject: id.clone() })
             }
-            ReadRequest::Events { model } => {
-                self.db.spec(model)?;
-                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: String::new() })
-            }
-            ReadRequest::Blob { id } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: id.clone() }),
-            ReadRequest::RetryStatus => Ok(View { kind: Kind::RetryStatus, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }),
         }
     }
 }
 
 #[uniffi::export]
 impl Database {
-    /// Opens a stream of the session epoch of the caller. A request that cannot be read opens a stream that ends as `Invalid`.
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
-        let (view, valid) = match self.view_of(&request) {
-            Ok(view) => (view, true),
-            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, false),
+        let opened = self.view_of(&request).and_then(|view| Ok((view, self.db.revision_seq()?)));
+        let (view, revision, valid, refusal) = match opened {
+            Ok((view, revision)) => (view, revision, true, None),
+            Err(error) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, Some(error)),
         };
-        let wire = self.wire(&view.model).ok().cloned();
-        let model = view.model.clone();
-        let revision = self.db.revision_seq().unwrap_or(0);
         self.life.open_stream(stream, view, epoch, revision, valid);
-        Arc::new(ReadStream { life: self.life.clone(), db: self.db.clone(), wire, model, stream })
+        Arc::new(ReadStream { life: self.life.clone(), stream, refusal: std::sync::Mutex::new(refusal), ended: std::sync::atomic::AtomicBool::new(false) })
     }
 }

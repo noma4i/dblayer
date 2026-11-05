@@ -126,6 +126,7 @@ enum Emit {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowsEffect {
     Window { key: WindowKey, effect: WindowEffect },
+    SnapshotRequest { epoch: Epoch },
     Drained(Drained),
 }
 
@@ -931,6 +932,7 @@ impl StateOwner for Windows {
                 state.online = None;
                 state.foreground_seen = 0;
                 if started.identity.is_some() {
+                    out.push(Effect::Run(WindowsEffect::SnapshotRequest { epoch: started.epoch }));
                     for key in state.preload.clone() {
                         Self::interest_plus(state, key, PRELOAD, &mut out);
                     }

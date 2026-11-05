@@ -79,7 +79,10 @@ impl EffectRunner<Windows> for WindowIo {
 }
 
 async fn ask(transport: &dyn Transport, codec: &dyn WindowCodec, admit: &Admit, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
-    let Some(admitted) = admit() else { return TransportOutcome::Dropped };
+    let admitted = match admit() {
+        Ok(admitted) => admitted,
+        Err(refused) => return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent }),
+    };
     let request = match codec.request(key, page, cursor) {
         Ok(request) => request,
         Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent }),

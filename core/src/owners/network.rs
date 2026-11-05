@@ -12,11 +12,17 @@ pub enum NetworkMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotOwner {
+    Windows,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkEffect {
     /// `Online(value)` to every owner.
     Broadcast(bool),
     /// `Online(online)` to the owners of the new epoch.
     EpochOnline(bool),
+    Snapshot { owner: SnapshotOwner, epoch: Epoch, online: bool },
     Drained(Drained),
     /// The answer to `set_online`.
     Reply { id: ReplyId, closed: bool },
@@ -26,6 +32,7 @@ pub enum NetworkEffect {
 pub enum NetworkInput {
     SetOnline { online: bool, reply: ReplyId },
     EpochStarted,
+    SnapshotRequest { owner: SnapshotOwner, epoch: Epoch },
     Closing,
     Idle,
 }
@@ -59,6 +66,7 @@ impl StateOwner for Network {
             }
             (NetworkMode::Open { .. }, NetworkInput::SetOnline { reply, .. }) => run(NetworkEffect::Reply { id: reply, closed: false }),
             (NetworkMode::Open { online }, NetworkInput::EpochStarted) => run(NetworkEffect::EpochOnline(online)),
+            (NetworkMode::Open { online }, NetworkInput::SnapshotRequest { owner, epoch }) => run(NetworkEffect::Snapshot { owner, epoch, online }),
             (NetworkMode::Open { .. }, NetworkInput::Closing) => {
                 state.mode = NetworkMode::Closed;
                 run(NetworkEffect::Drained(Drained { owner: "network" }))

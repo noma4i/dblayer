@@ -248,6 +248,7 @@ impl Twin {
                     WindowEffect::Outcome { id, outcome } => outcomes.push((u32::try_from(id).expect("a test id"), result_of(&outcome))),
                 },
                 Emitted::Run(WindowsEffect::Drained(_)) => modelled.push(Effect::Drained),
+                Emitted::Run(WindowsEffect::SnapshotRequest { .. }) => {}
                 Emitted::Send { to: STORE, input } if input.contains("author: Window") => modelled.push(Effect::Commit { request: number_after(&input, "id: ").expect("the batch id"), replace_all: input.contains("replace_all: true") }),
                 Emitted::Send { to: DELIVERIES, .. } if modelled.last() == Some(&Effect::WindowState) => {}
                 Emitted::Send { to: DELIVERIES, .. } => modelled.push(Effect::WindowState),

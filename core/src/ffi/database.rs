@@ -227,7 +227,7 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::legacy::Leases>, pub(super) db: Db, pub(super) sync: Option<Sync>, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) stream_table: Arc<super::stream::StreamTable>, pub(super) reads: crate::owners::read::ReadOperations, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>);
 
@@ -255,12 +255,13 @@ impl Database {
             return Err(DbError::Invalid { detail: "upload operations require a transport".into() });
         }
         let operations: Arc<OnceLock<crate::sync::WeakSync>> = Arc::default();
-        let life = Self::build_life(&db, transport.clone(), &session, operations.clone())?;
+        let reads = crate::owners::read::ReadOperations::default();
+        let life = Self::build_life(&db, transport.clone(), &session, operations.clone(), reads.clone())?;
         let sync = transport.map(|transport| Sync::new(db.clone(), transport, clock.clone(), SyncConfig { uploads, ..SyncConfig::default() }));
         if let Some(sync) = &sync { let _ = operations.set(sync.downgrade()); }
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, sync, session, stream_table: Arc::default(), reads, wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -307,18 +308,12 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Db`. It returns after the first `Publish`.
-    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, lookup: Arc<OnceLock<crate::sync::WeakSync>>) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, lookup: Arc<OnceLock<crate::sync::WeakSync>>, read_operations: crate::owners::read::ReadOperations) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
-        let read_lookup = lookup.clone();
         let operations: crate::owners::life::OperationLookup = Arc::new(move |name| {
             let sync = lookup.get()?.upgrade()?;
             let definition = crate::db::locked(&sync.inner.operations).get(name).cloned()?;
             Some((definition.document.clone(), definition.root_path.clone()))
-        });
-        let read_operations: crate::owners::read::Operations = Arc::new(move |name| {
-            let sync = read_lookup.get()?.upgrade()?;
-            let definition = crate::db::locked(&sync.inner.operations).get(name).cloned();
-            definition
         });
         let ports = crate::owners::life::Ports {
             db: db.clone(),
@@ -471,6 +466,7 @@ impl Database {
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
         let sync = self.sync()?;
         let mut names = Vec::new();
+        let mut declared = Vec::new();
         for def in defs {
             let text = |key: &str| def[key].as_str().map(str::to_string).ok_or_else(|| DbError::Invalid { detail: format!("operation needs {key}") });
             let (name, document) = (text("name")?, text("document")?);
@@ -480,8 +476,10 @@ impl Database {
             };
             if let Some(size) = def["pageSize"].as_u64() { operation = operation.paged(u32::try_from(size).map_err(|error| DbError::Invalid { detail: error.to_string() })?); }
             names.push(name.clone());
+            declared.push(crate::owners::read::ReadOperation { name: operation.name.clone(), document: operation.document.clone(), root_path: operation.root_path.clone(), page_size: operation.page_size });
             sync.register(operation);
         }
+        self.reads.declare(declared);
         self.life.declare(names);
         let _entered = executor()?.enter();
         sync.operations_ready();

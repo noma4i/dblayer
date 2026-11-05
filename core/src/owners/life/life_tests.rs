@@ -230,7 +230,9 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     session_row(&db);
     transport.enqueue("Mine", MockReply::data(json!({"mine": {"edges": [{"node": {"id": "m1", "userId": "u1", "text": "one"}}, {"node": {"id": "m2", "userId": "u1", "text": "two"}}], "pageInfo": {"hasNextPage": false, "endCursor": null}}})));
     let mut setup = ports(db.clone(), transport.clone());
-    setup.read_operations = Some(Arc::new(|name| (name == "Mine").then(|| Arc::new(crate::sync::OperationDef::new("Mine", "query Mine { mine { edges { node { id userId text } } pageInfo { hasNextPage endCursor } } }", "mine")))));
+    let operations = crate::owners::read::ReadOperations::default();
+    operations.declare([crate::owners::read::ReadOperation { name: "Mine".into(), document: "query Mine { mine { edges { node { id userId text } } pageInfo { hasNextPage endCursor } } }".into(), root_path: "mine".into(), page_size: 20 }]);
+    setup.read_operations = Some(operations);
     let life = tokio::task::spawn_blocking(move || Life::start(setup, LIMIT).expect("the first publish comes")).await.unwrap();
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
     let key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "u1"}).as_object().unwrap());

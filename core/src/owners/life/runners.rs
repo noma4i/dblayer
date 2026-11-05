@@ -13,7 +13,7 @@ use crate::identity::Generation;
 use crate::owners::calls::{CallError, Calls, CallsEffect, CallsInput};
 use crate::owners::contract::{Drained, Online};
 use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, Peer};
-use crate::owners::network::{Network, NetworkEffect, NetworkInput};
+use crate::owners::network::{Network, NetworkEffect, NetworkInput, SnapshotOwner};
 use crate::owners::read::deliveries::DeliveryInput;
 use crate::owners::read::feed::FeedInput;
 use crate::owners::read::windows::WindowsInput;
@@ -196,8 +196,8 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.to_session(SessionInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
             }
+            NetworkEffect::Snapshot { owner: SnapshotOwner::Windows, epoch, online } => wiring.to_windows_in(epoch, WindowsInput::Online(Online(online))),
             NetworkEffect::EpochOnline(online) => {
-                wiring.to_windows(WindowsInput::Online(Online(online)));
                 wiring.to_feed(FeedInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
                 wiring.to_outbox(OutboxInput::Online(Online(online)));

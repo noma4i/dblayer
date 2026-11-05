@@ -164,6 +164,7 @@ pub(super) struct Delivery {
     window: Ws,
     held_state: Option<Ws>,
     read_revision: i64,
+    read_seen: i64,
     next_feed: Option<u64>,
     position: u64,
     ready: bool,
@@ -197,6 +198,7 @@ impl Delivery {
             window: Ws::idle(),
             held_state: None,
             read_revision: 0,
+            read_seen: 0,
             next_feed: None,
             position: 0,
             ready: false,
@@ -353,6 +355,7 @@ impl Delivery {
             (Stage::Nothing, Input::OpenNoSession) => self.dead_on_open(Cause::SessionEnded, fx),
             (Stage::Nothing, Input::OpenInvalid) => self.dead_on_open(Cause::Invalid, fx),
             (Stage::Opening, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
+                self.read_seen = self.read_seen.max(revision);
                 let missing = rows.is_empty() && self.kind == Kind::Entity(Fetch::IfMissing);
                 let state = self.state_at(revision);
                 self.rows = rows.clone();
@@ -409,8 +412,12 @@ impl Delivery {
             (Stage::Live, Input::Committed { revision, touches }) => {
                 if touches && self.kind.reads_rows() { fx.push(Effect::Read(revision)); }
             }
-            (Stage::Live, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => self.live_rows(revision, rows, fx),
+            (Stage::Live, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
+                self.read_seen = self.read_seen.max(revision);
+                self.live_rows(revision, rows, fx)
+            }
             (Stage::Live, Input::CountDone { revision, count }) if self.kind == Kind::Count => {
+                self.read_seen = self.read_seen.max(revision);
                 if revision <= self.revision { return; }
                 if self.count == Some(count) { self.same_rows(revision, fx); return; }
                 let state = self.state_at(revision);
@@ -426,7 +433,10 @@ impl Delivery {
                 self.append(Val::State { revision: self.revision, state }, fx);
             }
             (Stage::Live, Input::WindowState(state)) if self.kind.reads_rows() => {
-                if state.visible_after() > self.revision { self.held_state = Some(state); }
+                if state.visible_after() > self.read_seen {
+                    fx.push(Effect::Read(state.visible_after()));
+                    self.held_state = Some(state);
+                }
                 else if state != self.window {
                     self.window = state.clone();
                     self.held_state = None;

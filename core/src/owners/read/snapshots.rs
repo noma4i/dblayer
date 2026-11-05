@@ -64,10 +64,20 @@ impl Snapshots for SqliteSnapshots {
 /// Reads of the snapshot through `Db`: the query of the view runs in the read pool, the rows of the answer are ids with their stamps.
 pub struct DbSnapshots {
     db: crate::db::Db,
+    wires: Mutex<std::collections::HashMap<String, Arc<crate::ffi::wire::WireModel>>>,
 }
 
 impl DbSnapshots {
-    pub fn new(db: crate::db::Db) -> Self { Self { db } }
+    pub fn new(db: crate::db::Db) -> Self { Self { db, wires: Mutex::new(std::collections::HashMap::new()) } }
+
+    fn wire(&self, model: &str) -> Result<Arc<crate::ffi::wire::WireModel>, String> {
+        if let Some(wire) = self.wires.lock().unwrap_or_else(PoisonError::into_inner).get(model) {
+            return Ok(wire.clone());
+        }
+        let wire = Arc::new(crate::ffi::wire::WireModel::of(self.db.spec(model).map_err(|error| error.to_string())?));
+        self.wires.lock().unwrap_or_else(PoisonError::into_inner).insert(model.to_string(), wire.clone());
+        Ok(wire)
+    }
 }
 
 impl Snapshots for DbSnapshots {
@@ -81,7 +91,10 @@ impl Snapshots for DbSnapshots {
         let (seen, read) = self.db.read_view(&query, count, revision).map_err(|error| error.to_string())?;
         Ok((seen, match read {
             crate::db::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
-            crate::db::ViewRead::Rows(keys) => ReadData::Rows { rows: keys.into_iter().map(|(id, stamp)| StreamRow { id, stamp, row: None }).collect(), replaced: Vec::new() },
+            crate::db::ViewRead::Rows(rows) => {
+                let wire = self.wire(&view.model)?;
+                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: Vec::new() }
+            }
         }))
     }
 }

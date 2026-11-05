@@ -38,8 +38,41 @@ async fn a_list_stream_gives_a_snapshot_then_a_delta_with_the_final_order() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_request_that_cannot_be_read_ends_as_invalid() {
+async fn a_request_that_cannot_be_read_reports_the_refusal_then_ends_as_invalid() {
     let db = open().await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Entity { model: "Ghost".into(), id: "g1".into(), fetch: super::ReadFetch::Never });
+    let refusal = tokio::time::timeout(LIMIT, stream.pull()).await.expect("an answer within 5 s");
+    assert!(matches!(refusal, Err(super::DbError::Database { .. })), "{refusal:?}");
     assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Invalid }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delta_after_a_removal_carries_the_rows_of_its_own_snapshot() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let ReadValue::Snapshot { .. } = next(&stream).await else { panic!("the first value is a snapshot") };
+    db.destroy(epoch, "Note".into(), "n1".into()).await.unwrap();
+    db.create(epoch, "Note".into(), r#"{"id":"n2","text":"two"}"#.into(), "{}".into()).await.unwrap();
+    loop {
+        match next(&stream).await {
+            ReadValue::Delta { size, rows, indexes, .. } => {
+                assert_eq!(rows.len(), indexes.len(), "every index has the values of its row");
+                if size == 1 { break; }
+            }
+            ReadValue::Snapshot { rows, .. } if rows.len() == 1 => break,
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_held_across_close_gets_one_ended_then_nothing() {
+    let db = open().await;
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let ReadValue::Snapshot { .. } = next(&stream).await else { panic!("the first value is a snapshot") };
+    db.close_database().await.unwrap();
+    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Closed }));
+    assert!(tokio::time::timeout(LIMIT, stream.pull()).await.expect("an answer within 5 s").unwrap().is_none());
 }

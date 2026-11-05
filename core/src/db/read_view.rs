@@ -10,9 +10,8 @@ use super::open::Db;
 /// A query with the relation of its window: `Some((name, params))` when the relation is remote and watched.
 pub(crate) type ParsedQuery = (Query, Option<(String, Map<String, Value>)>);
 
-/// What a read of a stream gives: the ids with their stamps in order, or the count.
 pub(crate) enum ViewRead {
-    Rows(Vec<(String, i64)>),
+    Rows(Vec<(String, i64, super::Row)>),
     Count(i64),
 }
 
@@ -48,7 +47,12 @@ impl Db {
                 let statement = compile_count(query, self.spec(model)?)?;
                 return Ok((seen, ViewRead::Count(fetch_count(reader.connection(), &statement)?)));
             }
-            Ok((seen, ViewRead::Rows(self.shared.query_keys(reader, query)?)))
+            let keys = self.shared.query_keys(reader, query)?;
+            let rows = self.shared.rows_for_keys(reader, model, &keys)?;
+            if rows.len() != keys.len() {
+                return Err(DbError::Internal(format!("the snapshot at revision {seen} lost {} of {} rows of {model}", keys.len() - rows.len(), keys.len())));
+            }
+            Ok((seen, ViewRead::Rows(keys.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp, row)).collect())))
         })
     }
 }

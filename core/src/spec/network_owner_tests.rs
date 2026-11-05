@@ -36,7 +36,7 @@ impl Twin {
             NetworkEffect::Broadcast(value) => Some(RefEffect::Broadcast(*value)),
             NetworkEffect::EpochOnline(value) => Some(RefEffect::EpochOnline(*value)),
             NetworkEffect::Drained(_) => Some(RefEffect::Drained),
-            NetworkEffect::Reply { .. } => None,
+            NetworkEffect::Reply { .. } | NetworkEffect::Snapshot { .. } => None,
         }).collect();
         let reply = raw.iter().find_map(|effect| match effect {
             NetworkEffect::Reply { closed, .. } => Some(if *closed { RefReply::Closed } else { RefReply::Ok }),

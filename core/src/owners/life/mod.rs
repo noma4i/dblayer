@@ -62,7 +62,7 @@ pub struct Ports {
     /// Transfer installs only with the session and this port.
     pub(crate) transfer: Option<TransferPort>,
     /// The operations of the schema by name, for the requests of the windows.
-    pub read_operations: Option<super::read::Operations>,
+    pub read_operations: Option<super::read::ReadOperations>,
 }
 
 #[derive(Clone, Copy)]
@@ -275,6 +275,10 @@ impl Wiring {
 
     pub fn to_windows(&self, input: super::read::windows::WindowsInput) {
         if let Some(Addresses { windows: Some(windows), .. }) = self.addresses() { self.handle.post(windows, EpochStamp::Control, input); }
+    }
+
+    pub fn to_windows_in(&self, epoch: Epoch, input: super::read::windows::WindowsInput) {
+        if let Some(Addresses { windows: Some(windows), .. }) = self.addresses() { self.handle.post(windows, EpochStamp::Epoch(epoch), input); }
     }
 
     pub fn to_deliveries(&self, input: super::read::deliveries::DeliveryInput) {

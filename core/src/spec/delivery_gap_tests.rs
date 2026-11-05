@@ -719,7 +719,8 @@ fn dlv_live_window() {
 fn dlv_live_window_held() {
     let mut twin = live_rows();
     let (effects, values) = twin.step_read(Input::WindowState(Ws::loaded_at(2)));
-    assert!(effects.is_empty() && values.is_empty(), "the state is visible only with revision 2");
+    assert!(values.is_empty(), "the state is visible only with revision 2");
+    assert_eq!(effects, [Effect::Read(2)], "a state past the last read starts a read");
     let (_, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
     assert_eq!(values, [Val::Delta { base: 1, revision: 2, size: 2, upserted: ids(&["r2"]), removed: Vec::new(), state: Ws::loaded_at(2) }]);
 }

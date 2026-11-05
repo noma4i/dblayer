@@ -14,22 +14,40 @@ use crate::owners::store::RowValue;
 use crate::read::EDGE_KEY;
 use crate::schema::{Coverage, NodeRead, PreloadChoice, RemoteShape};
 use super::codec::{extract, limited_combinations, load_variables, normalize_nodes, stamp_scope_values, Normalized};
-use crate::sync::OperationDef;
 use crate::transport::{GraphQLRequest, Response, ResponseOutcome};
 use crate::value::read_id;
 
-/// The operation of a name, with its document and root path.
-pub type Operations = Arc<dyn Fn(&str) -> Option<Arc<OperationDef>> + Send + Sync>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadOperation {
+    pub name: String,
+    pub document: String,
+    pub root_path: String,
+    pub page_size: u32,
+}
+
+#[derive(Clone, Default)]
+pub struct ReadOperations(Arc<std::sync::RwLock<std::collections::HashMap<String, Arc<ReadOperation>>>>);
+
+impl ReadOperations {
+    pub fn declare(&self, operations: impl IntoIterator<Item = ReadOperation>) {
+        let mut known = self.0.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        for operation in operations {
+            known.insert(operation.name.clone(), Arc::new(operation));
+        }
+    }
+
+    pub fn get(&self, name: &str) -> Option<Arc<ReadOperation>> { self.0.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(name).cloned() }
+}
 
 pub struct SchemaWindowCodec {
     db: Db,
-    operations: Operations,
+    operations: ReadOperations,
 }
 
 impl SchemaWindowCodec {
-    pub fn new(db: Db, operations: Operations) -> Self { Self { db, operations } }
+    pub fn new(db: Db, operations: ReadOperations) -> Self { Self { db, operations } }
 
-    fn operation(&self, name: &str) -> Result<Arc<OperationDef>, String> { (self.operations)(name).ok_or_else(|| format!("operation {name} is not registered")) }
+    fn operation(&self, name: &str) -> Result<Arc<ReadOperation>, String> { self.operations.get(name).ok_or_else(|| format!("operation {name} is not registered")) }
 
     fn nodes_relation(&self, model: &str) -> Result<&crate::schema::RelationSpec, String> {
         let spec = self.db.spec(model).map_err(|error| error.to_string())?;
