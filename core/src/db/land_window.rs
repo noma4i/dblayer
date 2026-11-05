@@ -85,7 +85,7 @@ impl Db {
         }
         let (relation, params) = match page.key.kind() {
             WindowKind::Relation { relation, params } => (relation, params),
-            WindowKind::Node { .. } | WindowKind::Nodes { .. } => return self.land_loose_rows(model, &roots, &related, page.base_revision),
+            WindowKind::Nodes { .. } => return self.land_loose_rows(model, &roots, &related, page.base_revision),
         };
         let spec = self.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;

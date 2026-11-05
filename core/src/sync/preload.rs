@@ -111,7 +111,7 @@ impl Drop for FirstScreenHold {
 
 type Window = (String, String, Map<String, Value>);
 
-fn limited_combinations(parameters: &[(&String, Vec<Value>)], at: usize, params: &mut Map<String, Value>, limit: usize, out: &mut Vec<Map<String, Value>>) {
+pub(crate) fn limited_combinations(parameters: &[(&String, Vec<Value>)], at: usize, params: &mut Map<String, Value>, limit: usize, out: &mut Vec<Map<String, Value>>) {
     if out.len() >= limit { return; }
     let Some((name, choices)) = parameters.get(at) else {
         if !out.contains(params) { out.push(params.clone()); }

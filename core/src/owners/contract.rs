@@ -53,7 +53,18 @@ pub struct Committed {
     pub batch: BatchId,
     pub revision: i64,
     pub tables: Vec<String>,
-    pub models: Vec<String>,
+    pub models: Models,
+}
+
+/// The models a commit touched: `All` touches every stream, a `Set` touches the streams of its tables (the empty set touches none).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Models {
+    All,
+    Set(std::collections::BTreeSet<String>),
+}
+
+impl Default for Models {
+    fn default() -> Self { Models::Set(std::collections::BTreeSet::new()) }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

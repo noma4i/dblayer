@@ -600,7 +600,7 @@ impl Sync {
     }
 }
 
-pub(super) fn stamp_scope_values(mut nodes: Vec<Map<String, Value>>, values: &Map<String, Value>) -> Vec<Map<String, Value>> {
+pub(crate) fn stamp_scope_values(mut nodes: Vec<Map<String, Value>>, values: &Map<String, Value>) -> Vec<Map<String, Value>> {
     for node in &mut nodes {
         for (column, value) in values {
             node.entry(column.clone()).or_insert_with(|| value.clone());

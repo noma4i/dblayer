@@ -206,21 +206,21 @@ impl Wiring {
     pub fn route_store_reply(&self, author: BatchAuthor, batch: BatchId, reply: StoreReply) {
         if author == BatchAuthor::Session {
             self.to_session(match reply {
-                StoreReply::Committed { revision } => SessionInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Vec::new() }),
+                StoreReply::Committed { revision } => SessionInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Default::default() }),
                 StoreReply::Rejected(reason) => SessionInput::Rejected(Rejected { batch, reason }),
             });
             return;
         }
         if author == BatchAuthor::Transfer {
             self.to_transfer(match reply {
-                StoreReply::Committed { revision } => TransferInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Vec::new() }),
+                StoreReply::Committed { revision } => TransferInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Default::default() }),
                 StoreReply::Rejected(reason) => TransferInput::Rejected(Rejected { batch, reason }),
             });
             return;
         }
         if author == BatchAuthor::Outbox {
             self.to_outbox(match reply {
-                StoreReply::Committed { revision } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Vec::new() }),
+                StoreReply::Committed { revision } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Default::default() }),
                 StoreReply::Rejected(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
             });
             return;

@@ -6,7 +6,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::ref_delivery::{self as r, row, rows, Cause, Delivery, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws};
-use crate::owners::contract::{Committed, EpochEnded, ModelsReset, WindowPhase, WindowState};
+use crate::owners::contract::{Committed, EpochEnded, Models, ModelsReset, WindowPhase, WindowState};
 use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
 use crate::owners::read::windows::{WindowKey, Windows};
@@ -165,7 +165,7 @@ impl Twin {
             }
             Input::Committed { revision, touches } => {
                 let table = if *touches { "moments" } else { "other" };
-                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], models: Vec::new() }));
+                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], models: Default::default() }));
             }
             Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new() } }),
             Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Count(*count) }),
@@ -411,6 +411,15 @@ fn dlv_opening_unrelated() {
     let mut twin = open_rows();
     let (effects, values) = twin.step_read(Input::Committed { revision: 2, touches: false });
     assert!(effects.is_empty() && values.is_empty());
+}
+
+/// dlv_opening_committed (D-34): a commit of `All` models touches a stream whose tables it does not list; the empty set touches none.
+#[test]
+fn dlv_committed_all_models_touch_every_stream() {
+    let mut twin = open_rows();
+    take(&twin.log);
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["other".into()], models: Models::All }));
+    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(2)]);
 }
 
 #[test]
@@ -964,7 +973,7 @@ fn rows_script(rev: &[(i64, &[&str])]) -> Vec<d::DeliveryInput> {
     let mut script = Vec::new();
     for (index, (revision, list)) in rev.iter().enumerate() {
         if index > 0 {
-            script.push(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec!["moments".into()], models: Vec::new() }));
+            script.push(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec!["moments".into()], models: Default::default() }));
         }
         let rows = list.iter().map(|id| d::StreamRow::new(id, 0)).collect();
         script.push(d::DeliveryInput::ReadDone { stream: STREAM, read_id: index as u64 + 1, revision: *revision, data: d::ReadData::Rows { rows, replaced: Vec::new() } });
@@ -1337,7 +1346,7 @@ fn dlv_prop_delta_order() {
         let read_id = inner(&det, addr).read_id(STREAM);
         let rows: Vec<d::StreamRow> = list.iter().map(|id| d::StreamRow::new(id, if next(5) == 0 { revision } else { 0 })).collect();
         det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, data: d::ReadData::Rows { rows, replaced: Vec::new() } });
-        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], models: Vec::new() }));
+        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], models: Default::default() }));
         if next(2) == 0 {
             det.post(addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id() });
         }

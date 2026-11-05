@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, VecDeque};
 use crate::db::{Diff, Entry, Stamp};
 use crate::ffi::WireRow;
 use crate::identity::RowId;
-use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, ReplyId, WindowPhase, WindowState};
+use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Models, ModelsReset, ReplyId, WindowPhase, WindowState};
 use crate::owners::read::feed::{Feed, FeedInput};
 use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput};
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
@@ -409,7 +409,7 @@ impl Delivery {
         })
     }
 
-    fn touches(&self, committed: &Committed) -> bool { (committed.tables.is_empty() && committed.models.is_empty()) || committed.tables.iter().any(|table| self.view.tables.contains(table)) }
+    fn touches(&self, committed: &Committed) -> bool { committed.models == Models::All || committed.tables.iter().any(|table| self.view.tables.contains(table)) }
 
     fn committed(&mut self, committed: &Committed, fx: &mut Vec<Emit>) {
         if !self.view.kind.reads_rows() || !self.touches(committed) {

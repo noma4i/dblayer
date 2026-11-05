@@ -218,7 +218,7 @@ impl Twin {
     fn committed(&mut self, id: OpId) -> Vec<OutboxEffect> {
         self.revision += 1;
         let batch = self.batches[&id];
-        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], models: vec![] }))
+        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], models: Default::default() }))
     }
 
     fn rejected(&mut self, id: OpId, reason: RReason) -> Vec<OutboxEffect> {
@@ -601,7 +601,7 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
     let _ = write_batch;
     let effects = match input {
         WIn::Write => twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: if ctx.epoch_current { EPOCH } else { EPOCH + 1 }, write: LocalWriteKind::SetEphemeral { expire_after: ctx.ephemeral_expiry.then_some(10) }, row: "w".into(), values: "{}".into(), reply, now: Time(100) }),
-        WIn::Committed => twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: vec![] })),
+        WIn::Committed => twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: Default::default() })),
         WIn::Rejected(reason) => {
             twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: reject(reason) }))
         }
@@ -610,7 +610,7 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
         WIn::Expire => {
             if ctx.renewed {
                 twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(1_000) }, row: "w".into(), values: "{}".into(), reply: 51, now: Time(105) });
-                twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 12, tables: vec!["moments".into()], models: vec![] }));
+                twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 12, tables: vec!["moments".into()], models: Default::default() }));
             }
             twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) })
         }
@@ -758,7 +758,7 @@ fn out_wait_local_write() {
     let mut twin = Twin::new();
     let effects = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 81, now: Time(0) });
     assert!(replies_of(&effects, 81).is_empty());
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: vec![] }));
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: Default::default() }));
     assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Ok]);
     let mut twin = Twin::new();
     twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::Attach, row: "w".into(), values: "{}".into(), reply: 82, now: Time(0) });
@@ -815,7 +815,7 @@ fn net_script() -> Vec<OutboxInput> {
 }
 
 fn store_script() -> Vec<OutboxInput> {
-    (1..=4).map(|batch| OutboxInput::Committed(Committed { batch, revision: 10 + batch as i64, tables: vec!["moments".into()], models: vec![] })).collect()
+    (1..=4).map(|batch| OutboxInput::Committed(Committed { batch, revision: 10 + batch as i64, tables: vec!["moments".into()], models: Default::default() })).collect()
 }
 
 fn effects_now() -> Vec<OutboxEffect> { LOG.with(|cell| cell.borrow().as_ref().map(|log| crate::owners::support::snapshot(log).into_iter().filter_map(|emitted| lower(emitted, None)).collect()).unwrap_or_default()) }
@@ -880,7 +880,7 @@ fn out_prop_idle() {
     det.run_until_quiet(10_000).unwrap();
     det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Response { op_id: 1, rows: server_rows() });
     det.run_until_quiet(10_000).unwrap();
-    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![], models: vec![] }));
+    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![], models: Default::default() }));
     det.run_until_quiet(10_000).unwrap();
     let before = det.trace().len();
     det.tick(Time(u64::MAX / 2));

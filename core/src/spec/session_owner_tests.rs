@@ -163,7 +163,7 @@ impl Twin {
             Input::Cancel { req_id } => SessionInput::Cancel { req_id },
             Input::Response { request_id, body, sequence, credential, revoked } => SessionInput::Response { request_id, body, sequence, credential, revoked },
             Input::HttpError { request_id, temporary, auth } => SessionInput::HttpError { request_id, temporary, auth },
-            Input::Committed(batch) => SessionInput::Committed(Committed { batch: if batch == 0 { current } else { batch }, revision: 1, tables: vec![], models: vec![] }),
+            Input::Committed(batch) => SessionInput::Committed(Committed { batch: if batch == 0 { current } else { batch }, revision: 1, tables: vec![], models: Default::default() }),
             Input::Rejected(batch, reason) => SessionInput::Rejected(Rejected { batch: if batch == 0 { current } else { batch }, reason: reject(reason) }),
             Input::Tick => SessionInput::Tick(Time(0)),
             Input::Online(online) => SessionInput::Online(Online(online)),
@@ -776,7 +776,7 @@ impl Solo {
             SessionPhase::Persisting { batch, .. } | SessionPhase::Landing { batch, .. } => batch,
             other => panic!("no batch in {other:?}"),
         };
-        self.feed(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: vec![] }))
+        self.feed(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default() }))
     }
 
     fn calling(&mut self, operation: &str) -> u64 {

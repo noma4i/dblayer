@@ -132,7 +132,7 @@ impl Twin {
             Input::Dropped => self.frame(self.connection, Frame::Dropped),
             Input::Committed => {
                 let batch = self.batch();
-                self.post(f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Vec::new() }));
+                self.post(f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Default::default() }));
             }
             Input::Rejected(reason) => {
                 let batch = self.batch();
@@ -143,7 +143,7 @@ impl Twin {
                 };
                 self.post(f::FeedInput::Rejected(Rejected { batch, reason }));
             }
-            Input::StrayBatch => self.post(f::FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), models: Vec::new() })),
+            Input::StrayBatch => self.post(f::FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), models: Default::default() })),
             Input::Tick => self.post(f::FeedInput::Tick(Time(0))),
             Input::Online(on) => self.post(f::FeedInput::Online(Online(*on))),
             Input::ModelsReset { models } => {

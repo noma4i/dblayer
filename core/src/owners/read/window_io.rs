@@ -15,7 +15,7 @@ use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Transp
 
 /// The wire form of a window: how a page is asked and how its answer reads.
 pub trait WindowCodec: Send + Sync + 'static {
-    fn request(&self, key: &WindowKey, page: u32, cursor: Option<&str>) -> GraphQLRequest;
+    fn request(&self, key: &WindowKey, page: u32, cursor: Option<&str>) -> Result<GraphQLRequest, String>;
     fn answer(&self, key: &WindowKey, page: u32, response: Response) -> Result<AnswerPage, String>;
 
     fn refusal(&self, response: &Response) -> Option<RequestError> {
@@ -80,7 +80,11 @@ impl EffectRunner<Windows> for WindowIo {
 
 async fn ask(transport: &dyn Transport, codec: &dyn WindowCodec, admit: &Admit, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
     let Some(admitted) = admit() else { return TransportOutcome::Dropped };
-    match transport.query(&admitted, codec.request(key, page, cursor)).await {
+    let request = match codec.request(key, page, cursor) {
+        Ok(request) => request,
+        Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent }),
+    };
+    match transport.query(&admitted, request).await {
         Ok(response) => match codec.refusal(&response) {
             Some(error) => TransportOutcome::Error(error),
             None => match codec.answer(key, page, response) {
