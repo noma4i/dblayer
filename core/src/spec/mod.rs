@@ -25,3 +25,13 @@ mod delivery_gap_tests;
 mod feed_gap_tests;
 #[cfg(feature = "spec_api")]
 mod window_gap_tests;
+
+mod ref_outbox;
+mod ref_transfer;
+mod rig;
+mod outbox_tests;
+mod transfer_tests;
+#[cfg(feature = "spec_api")]
+mod outbox_api_tests;
+#[cfg(feature = "spec_api")]
+mod transfer_api_tests;
