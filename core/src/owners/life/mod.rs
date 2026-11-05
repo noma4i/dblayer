@@ -212,7 +212,9 @@ pub enum LifeError {
 
 pub struct Life {
     wiring: Arc<Wiring>,
-    _runtime: Runtime,
+    runtime: Mutex<Option<Runtime>>,
+    shut: AtomicBool,
+    alive: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
@@ -258,8 +260,22 @@ impl Life {
             guard = crate::blocking::blocking_unit(|| wiring.published.changed.wait_timeout(guard, left).unwrap_or_else(PoisonError::into_inner).0);
         }
         drop(guard);
-        Ok(Self { wiring, _runtime: runtime })
+        let alive = runtime.alive();
+        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), alive })
     }
+
+    /// Stops the owner threads and joins them. The caller is not an owner thread. A second call does nothing.
+    pub fn shutdown(&self) {
+        self.shut.store(true, Ordering::SeqCst);
+        let runtime = self.runtime.lock().unwrap_or_else(PoisonError::into_inner).take();
+        drop(runtime);
+    }
+
+    /// Whether `shutdown` ran: the database is closed for good.
+    pub fn is_shut(&self) -> bool { self.shut.load(Ordering::SeqCst) }
+
+    /// The owner threads of this `Life` that have not ended.
+    pub fn owners_alive(&self) -> usize { self.alive.load(Ordering::SeqCst) }
 
     pub fn published(&self) -> Published {
         self.wiring.published.value.lock().unwrap_or_else(PoisonError::into_inner).clone().unwrap_or(Published { epoch: 0, identity: None, generation: 0, closed: false })
@@ -275,6 +291,7 @@ impl Life {
 
     /// `set_online`: Network answers after its `step`.
     pub fn set_online(&self, online: bool) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_network(NetworkInput::SetOnline { online, reply: waiter.id().raw() });
         waiter
@@ -282,6 +299,7 @@ impl Life {
 
     /// `run`: the platform call rule of `lifecycle.md`, then the owner Calls.
     pub fn run(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let published = self.published();
         if published.closed {
             return self.settled(LifeReply::Closed);
@@ -296,6 +314,7 @@ impl Life {
 
     /// `session_call`: the owner Session, the answer by `Outcomes`.
     pub fn session_call(&self, operation: String, body: String) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let published = self.published();
         if published.closed {
             return self.settled(LifeReply::Closed);
@@ -312,6 +331,7 @@ impl Life {
 
     /// A `Mutate` of the old stack: the answer comes to the waiter. Its request ids start high, apart from the ids Session gives to its own calls.
     pub fn mutate_wait(&self, owner: Option<super::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         let author = LEGACY_AUTHORS + waiter.id().raw();
         let (wiring, id) = (self.wiring.clone(), waiter.id());
@@ -330,12 +350,14 @@ impl Life {
     pub fn declare(&self, names: Vec<String>) { self.wiring.to_calls(CallsInput::Declare(names)); }
 
     pub fn session_reset(&self) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: waiter.id().raw() });
         waiter
     }
 
     pub fn reset_models(&self, models: BTreeSet<String>) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_lifecycle(LifecycleInput::ResetModels { models, reply: Some(waiter.id().raw()) });
         waiter
@@ -345,6 +367,7 @@ impl Life {
     pub fn credential_committed(&self, identity: u64) { self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(CredentialCommitted { identity })); }
 
     pub fn close(&self) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_lifecycle(LifecycleInput::Close { reply: waiter.id().raw() });
         waiter

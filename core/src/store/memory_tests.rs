@@ -72,7 +72,7 @@ fn the_disk_file_holds_no_memory_rows_or_fingerprints() {
 }
 
 #[test]
-fn reset_incompatible_empties_memory_tables_too() {
+fn clearing_the_account_empties_memory_tables_too() {
     let store = Store::open_in_memory().unwrap();
     store.boot(&models(), None).unwrap();
     seed(&store);

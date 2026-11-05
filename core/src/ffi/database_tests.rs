@@ -71,7 +71,9 @@ impl Database {
         let waiter = self.life.close();
         let handle = super::database::executor().expect("the executor").handle().clone();
         handle.spawn(async move { let _ = sender.send(waiter.wait().await); });
-        receiver.recv_timeout(std::time::Duration::from_secs(10)).expect("the owners closed within 10 s");
+        if std::thread::current().name() != Some("lifecycle") {
+            receiver.recv_timeout(std::time::Duration::from_secs(10)).expect("the owners closed within 10 s");
+        }
         if let Some(lease) = self.lease.get() { lease.release(); }
     }
 }

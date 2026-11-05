@@ -131,7 +131,6 @@ pub fn kind(error: &DbError) -> &'static str {
         DbError::Database { .. } => "database",
         DbError::Network { .. } => "network",
         DbError::Session { .. } => "session",
-        #[cfg(feature = "spec_api")]
         DbError::Closed { .. } => "closed",
         _ => "other",
     }

@@ -149,6 +149,8 @@ pub struct SessionState {
     operations: Vec<SessionOperation>,
     next_request: RequestId,
     next_batch: BatchId,
+    /// A pending restored at open waits for the first `Published`: it belongs to that epoch.
+    restored: bool,
 }
 
 impl SessionState {
@@ -158,7 +160,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: bool) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, call_epoch: 0, operations, next_request: 1, next_batch: 1 }
+        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, call_epoch: 0, operations, next_request: 1, next_batch: 1, restored: false }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -321,6 +323,7 @@ impl SessionState {
             }
             (phase, SessionInput::Published(published)) => {
                 self.epoch = published.epoch;
+                if std::mem::take(&mut self.restored) { self.call_epoch = published.epoch; }
                 self.phase = phase;
             }
             (SessionPhase::Idle, SessionInput::Open { credential, pending }) => {
@@ -334,6 +337,7 @@ impl SessionState {
                         fx.push(SessionEffect::HttpRequest { pending: pending.clone() });
                     }
                     self.phase = SessionPhase::Calling { pending, attempts: 0, sent: self.online };
+                    if self.epoch == 0 { self.restored = true; } else { self.call_epoch = self.epoch; }
                 }
             }
             (phase, SessionInput::Open { .. }) => self.phase = phase,

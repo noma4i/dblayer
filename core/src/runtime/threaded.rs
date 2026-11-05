@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -34,6 +34,13 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> { mutex.lock().unwrap_or_else(
 
 struct Router {
     boxes: Vec<Arc<Mailbox>>,
+}
+
+/// Counts the owner threads of one `Runtime` that run now.
+struct Alive(Arc<AtomicUsize>);
+
+impl Drop for Alive {
+    fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); }
 }
 
 impl Router {
@@ -88,6 +95,7 @@ impl Handle {
 pub struct Runtime {
     router: Arc<Router>,
     joins: Vec<JoinHandle<()>>,
+    alive: Arc<AtomicUsize>,
 }
 
 impl RuntimeBuilder {
@@ -109,11 +117,14 @@ impl RuntimeBuilder {
         let _ = self.handle.router.set(router.clone());
         let origin = Instant::now();
         let mut joins = Vec::new();
+        let alive = Arc::new(AtomicUsize::new(0));
         for (name, body) in self.bodies {
             let router = router.clone();
-            joins.push(spawn_thread(Carry::Internal, name, move || body(router, origin))?);
+            alive.fetch_add(1, Ordering::SeqCst);
+            let running = Alive(alive.clone());
+            joins.push(spawn_thread(Carry::Internal, name, move || { let _running = running; body(router, origin) })?);
         }
-        Ok(Runtime { router, joins })
+        Ok(Runtime { router, joins, alive })
     }
 }
 
@@ -126,6 +137,9 @@ impl Runtime {
 
     pub fn close(&self) { self.router.broadcast(Control::Closing); }
 
+    /// The number of owner threads of this runtime that have not ended.
+    pub fn alive(&self) -> Arc<AtomicUsize> { self.alive.clone() }
+
     pub fn wakeups<O: StateOwner>(&self, address: Address<O>) -> u64 { self.router.boxes[address.index].wakeups.load(Ordering::SeqCst) }
 }
 
@@ -133,6 +147,7 @@ impl Drop for Runtime {
     fn drop(&mut self) {
         self.router.each(|| Command::Stop);
         for join in self.joins.drain(..) {
+            if join.thread().id() == std::thread::current().id() { continue; }
             let _ = join.join();
         }
     }

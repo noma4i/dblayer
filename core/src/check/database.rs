@@ -52,6 +52,7 @@ fn error_kind(error: &DbError) -> &'static str {
         DbError::RequestTooLarge { .. } => "request_too_large",
         DbError::Graphql { .. } => "graphql",
         DbError::Session { .. } => "session",
+        DbError::Closed { .. } => "interrupted",
     }
 }
 

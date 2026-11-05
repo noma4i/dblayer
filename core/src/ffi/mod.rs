@@ -92,6 +92,9 @@ pub enum DbError {
     Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     #[error("session {code:?}: {detail}")]
     Session { code: SessionCode, detail: String },
+    /// The database is closed (`lifecycle.md`: calls after `Close` get `Err(Closed)`).
+    #[error("closed: {detail}")]
+    Closed { detail: String },
 }
 
 impl From<crate::db::DbError> for DbError {

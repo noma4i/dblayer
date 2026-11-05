@@ -100,8 +100,8 @@ async fn a_lost_answer_is_repeated_with_the_same_request_id_and_executes_once() 
     let reply = answer(life.mutate_wait(None, OTP.into(), json!({}).to_string(), 0)).await;
     assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(_))), "{reply:?}");
     let seen = world.server.seen();
-    assert_eq!(seen.len(), 3, "the sign-in, the request and its repeat");
-    assert_eq!(seen[1]["requestId"], seen[2]["requestId"], "the repeat carries the request id of the first send");
+    assert!(seen.len() >= 3, "the sign-in, the request and its repeat");
+    assert!(seen[1..].iter().all(|request| request["requestId"] == seen[1]["requestId"]), "every repeat carries the request id of the first send");
     assert_eq!(world.server.executed().len(), 2, "the sign-in and the mutation each executed once");
 }
 

@@ -153,11 +153,12 @@ pub struct Session {
     next_batch: BatchId,
     /// Epoch of the call in `Generating`, `Persisting`, `Calling`, `Landing`.
     call_epoch: u64,
+    restored: bool,
 }
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: bool) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, operations, next_request: 1, next_batch: 1, call_epoch: 0 }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, operations, next_request: 1, next_batch: 1, call_epoch: 0, restored: false }
     }
 
     fn batch(&mut self) -> BatchId {
@@ -259,6 +260,7 @@ impl Session {
             }
             (state, Input::Published { epoch }) => {
                 self.epoch = epoch;
+                if std::mem::take(&mut self.restored) { self.call_epoch = epoch; }
                 self.state = state;
             }
             (State::Idle, Input::Open { credential, pending }) => {
@@ -271,6 +273,7 @@ impl Session {
                         let pending = Pending { reply: None, author, ..pending };
                         if self.online { out.effects.push(Effect::HttpRequest { pending: pending.clone() }); }
                         self.state = State::Calling { pending, attempts: 0, sent: self.online };
+                        if self.epoch == 0 { self.restored = true; } else { self.call_epoch = self.epoch; }
                     }
                 }
             }

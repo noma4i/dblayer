@@ -144,11 +144,13 @@ impl Database {
         let client = self.session()?;
         if !client.has_session_operation(&operation) { return Err(DbError::Invalid { detail: format!("unknown session operation {operation}") }); }
         serde_json::from_str::<Value>(&body_json)?;
+        let name = operation.clone();
         match self.await_life(self.life.session_call(operation, body_json)).await? {
             LifeReply::Session(Ok(body)) => {
                 let answer = core::Answer { sequence: None, body: serde_json::from_str(&body)? };
                 Ok(refused(answer)?.body.to_string())
             }
+            LifeReply::Session(Err(crate::owners::session::SessionError::Revoked)) if name == "logout" => Ok(serde_json::json!({ "revoked": true }).to_string()),
             LifeReply::Session(Err(error)) => Err(session_failure(error)),
             _ => Err(super::command::ended()),
         }

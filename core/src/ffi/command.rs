@@ -28,6 +28,9 @@ pub struct CommandRequest {
 
 pub(super) fn ended() -> DbError { DbError::Interrupted { detail: "the session of this command ended".into() } }
 
+/// The error of a call that finds the database closed.
+pub(super) fn closed() -> DbError { DbError::Closed { detail: "the database is closed".into() } }
+
 #[cfg(test)]
 struct WriteProbe(std::sync::Arc<crate::ffi::legacy::Leases>);
 
@@ -40,10 +43,11 @@ fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model}
 
 impl Database {
     pub(super) fn acquire(&self, origin: Origin, epoch: u64, target: &'static str) -> Result<crate::ffi::legacy::Admitted, DbError> {
-        if !self.streams.admits_epoch(epoch) { return Err(ended()); }
+        self.account_call(epoch)?;
         let admitted = self.streams.admit(origin, target).map_err(|_| {
             let state = self.streams.snapshot();
-            if origin == Origin::Session && !state.closed && !state.ending && !state.signed_in() {
+            if state.closed { closed() }
+            else if origin == Origin::Session && !state.ending && !state.signed_in() {
                 DbError::NoSession { detail: "the database has no session".into() }
             } else { ended() }
         })?;
@@ -116,7 +120,17 @@ impl Database {
 
     /// A call that holds no future: refused when the epoch of the caller is not current.
     pub(super) fn admit_now(&self, epoch: u64) -> Result<(), DbError> {
-        if self.admits(epoch) { Ok(()) } else { Err(ended()) }
+        self.account_call(epoch)
+    }
+
+    /// The rule of `lifecycle.md` for a call of account data: `Closed` after the close, `NoSession` when the epoch of the caller is not the current one or a database with a session has none.
+    pub(super) fn account_call(&self, epoch: u64) -> Result<(), DbError> {
+        let state = self.streams.snapshot();
+        if state.closed { return Err(closed()); }
+        if !self.streams.admits_epoch(epoch) || (self.session.is_some() && !state.signed_in()) {
+            return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() });
+        }
+        Ok(())
     }
 
 }

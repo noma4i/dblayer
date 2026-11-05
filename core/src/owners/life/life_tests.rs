@@ -81,6 +81,21 @@ async fn life_open_no_session_saves_the_epoch() {
     assert_eq!(reopened.shared.store.saved().unwrap(), (1, 0, None), "Published was saved by the Store executor");
 }
 
+/// P-LIFE-05: after `close` and `shutdown` no owner thread of the database runs.
+#[tokio::test(flavor = "multi_thread")]
+async fn close_stops_every_owner_thread_of_the_database() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let transport = Arc::new(MockTransport::new());
+    let db = open(&path);
+    let life = Arc::new(start(&db, &transport).await);
+    assert_eq!(life.owners_alive(), 4, "lifecycle, store, network and calls run");
+    closed(&life).await;
+    let stopping = life.clone();
+    tokio::task::spawn_blocking(move || stopping.shutdown()).await.unwrap();
+    assert_eq!(life.owners_alive(), 0);
+}
+
 /// life_open_session: a stored session opens as `Session{saved_epoch + 1, identity}` and `saved_epoch` grows with every open.
 #[tokio::test(flavor = "multi_thread")]
 async fn life_open_session_continues_the_saved_epoch() {

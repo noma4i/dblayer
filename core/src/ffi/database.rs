@@ -469,6 +469,7 @@ impl Database {
     pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
         let sync = self.sync()?;
+        let mut names = Vec::new();
         for def in defs {
             let text = |key: &str| def[key].as_str().map(str::to_string).ok_or_else(|| DbError::Invalid { detail: format!("operation needs {key}") });
             let (name, document) = (text("name")?, text("document")?);
@@ -477,8 +478,10 @@ impl Database {
                 None => OperationDef::from_document(&name, &document).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has no root field") })?,
             };
             if let Some(size) = def["pageSize"].as_u64() { operation = operation.paged(u32::try_from(size).map_err(|error| DbError::Invalid { detail: error.to_string() })?); }
+            names.push(name.clone());
             sync.register(operation);
         }
+        self.life.declare(names);
         let _entered = executor()?.enter();
         sync.operations_ready();
         Ok(())
@@ -705,18 +708,22 @@ impl Database {
     }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
+        if self.life.is_shut() { return Err(super::command::closed()); }
         let waiter = self.life.close();
         let answered = on_executor(async move {
-            tokio::time::timeout(Duration::from_secs(10), async { waiter.wait().await }).await.map(drop).map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
-        }).await;
+            tokio::time::timeout(Duration::from_secs(10), async { waiter.wait().await }).await.map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
+        }).await.and_then(|outcome| match outcome {
+            crate::runtime::Outcome::Value(LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed))) => Err(super::command::closed()),
+            _ => Ok(()),
+        });
         let life = self.life.clone();
         let stored = blocking(move || Ok(life.wait_store_closed(Duration::from_secs(10)))).await;
         let leases = self.streams.clone();
         let drained = on_executor(async move {
             tokio::time::timeout(Duration::from_secs(10), leases.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", leases.held().join("; ")) })
         }).await;
-        let db = self.db.clone();
-        let ended = blocking(move || Ok(db.close()?)).await;
+        let (db, life) = (self.db.clone(), self.life.clone());
+        let ended = blocking(move || { life.shutdown(); Ok(db.close()?) }).await;
         if let Some(lease) = self.lease.get() { lease.release(); }
         answered.and(stored.and_then(|closed| if closed { Ok(()) } else { Err(DbError::Invalid { detail: "close timed out while the store was open".into() }) })).and(drained).and(ended)
     }
@@ -726,7 +733,8 @@ impl Database {
     /// Waits for the answer of an owner. An answer other than a value ends the call with the end of its epoch.
     pub(super) async fn await_life(&self, waiter: crate::runtime::Waiter<LifeReply>) -> Result<LifeReply, DbError> {
         match waiter.wait().await {
-            crate::runtime::Outcome::Value(LifeReply::Closed) | crate::runtime::Outcome::EpochEnded(_) | crate::runtime::Outcome::Closing => Err(super::command::ended()),
+            crate::runtime::Outcome::Value(LifeReply::Closed) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
+            crate::runtime::Outcome::EpochEnded(_) => Err(super::command::ended()),
             crate::runtime::Outcome::Value(reply) => Ok(reply),
         }
     }
