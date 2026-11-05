@@ -17,7 +17,7 @@ pub struct FeedEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    Off,
+    Off { gap: bool },
     Opening { gap: bool },
     Live,
     Ended,
@@ -30,11 +30,14 @@ pub enum FeedEffect {
     /// The old connection closes after the new one is ready.
     CloseConnection { connection: ConnectionId },
     ScheduleTick { after_ms: u64 },
-    ScheduleResubscribe { connection: ConnectionId },
+    ScheduleResubscribe { connection: ConnectionId, attempt: u32 },
     Commit { batch: BatchId, events: Vec<FeedEvent> },
     /// Windows of the models reread (`reread` windows only decide in the executor) after a batch was delivered.
     RereadWindows(Vec<String>),
     StaleWindows(Vec<String>),
+    /// Delivery answer to `Want+`: the position of the model at the join.
+    Joined { model: String, position: u64 },
+    ModelReady { model: String },
     /// Observable for `Events` streams.
     ModelEvent { model: String, position: u64, payload: String },
     ModelLost { model: String, first: u64, last: u64 },
@@ -44,8 +47,8 @@ pub enum FeedEffect {
 
 #[derive(Clone, Debug)]
 pub enum FeedInput {
-    /// `debounce_ms` is `updates.debounce` of the model, 0 when not declared.
-    WantPlus { model: String, debounce_ms: u64 },
+    /// `debounce_ms` is `updates.debounce` of the model, 0 when not declared. `delivery` = the want comes from a `Events` stream.
+    WantPlus { model: String, debounce_ms: u64, delivery: bool },
     WantMinus { model: String },
     Frame(SubscriptionFrame),
     Committed(Committed),
@@ -59,38 +62,45 @@ pub enum FeedInput {
     Closing,
 }
 
+struct Want {
+    count: u32,
+    debounce_ms: u64,
+}
+
 pub struct FeedState {
     epoch: Epoch,
     mode: Mode,
     online: bool,
-    session: bool,
-    want: BTreeMap<String, u64>,
+    want: BTreeMap<String, Want>,
     position: BTreeMap<String, u64>,
     generation: BTreeMap<String, u64>,
+    base_generation: u64,
     pending: Vec<FeedEvent>,
     landing: Vec<(BatchId, Vec<FeedEvent>)>,
     connection: ConnectionId,
     switching: Option<ConnectionId>,
     next_connection: ConnectionId,
     next_batch: BatchId,
+    attempts: u32,
 }
 
 impl FeedState {
-    pub fn new(epoch: Epoch, online: bool, session: bool) -> Self {
+    pub fn new(epoch: Epoch, online: bool) -> Self {
         Self {
             epoch,
-            mode: Mode::Off,
+            mode: Mode::Off { gap: false },
             online,
-            session,
             want: BTreeMap::new(),
             position: BTreeMap::new(),
             generation: BTreeMap::new(),
+            base_generation: 0,
             pending: Vec::new(),
             landing: Vec::new(),
             connection: 0,
             switching: None,
             next_connection: 1,
             next_batch: 1,
+            attempts: 0,
         }
     }
 
@@ -106,11 +116,14 @@ impl FeedState {
 
     fn models(&self) -> Vec<String> { self.want.keys().cloned().collect() }
 
+    fn gap(&self) -> bool { matches!(self.mode, Mode::Off { gap: true } | Mode::Opening { gap: true }) }
+
     fn subscribe(&mut self, fx: &mut Vec<FeedEffect>) {
         let connection = self.next_connection;
         self.next_connection += 1;
         self.connection = connection;
         self.switching = None;
+        self.attempts = 0;
         fx.push(FeedEffect::Subscribe { connection, models: self.models() });
     }
 
@@ -168,12 +181,12 @@ impl FeedState {
         Some(self.landing.remove(at).1)
     }
 
-    /// `Committed` and `Rejected` of a batch of `landing`: delivered on `Committed`, lost on `Rejected`. In `Live`, `NoSession` ends the feed.
+    /// `Committed` and `Rejected` of a batch of `landing`: delivered on `Committed`, lost on `Rejected`. `NoSession` ends a `Live` feed.
     fn verdict(&mut self, batch: BatchId, rejected: Option<RejectReason>, fx: &mut Vec<FeedEffect>) {
         let Some(events) = self.take_batch(batch) else { return };
         match rejected {
             None => self.deliver(events, fx),
-            Some(RejectReason::StaleGeneration { models, .. }) => {
+            Some(RejectReason::StaleGeneration { models }) => {
                 let lost = self.lose_events(&events, Some(&models), fx);
                 fx.push(FeedEffect::StaleWindows(lost));
                 let rest: Vec<FeedEvent> = events.into_iter().filter(|event| !models.contains(&event.model)).collect();
@@ -188,25 +201,28 @@ impl FeedState {
             Some(RejectReason::NoSession) => {
                 if self.mode == Mode::Live {
                     self.mode = Mode::Ended;
+                    self.connection = 0;
+                    self.switching = None;
+                    fx.push(FeedEffect::Unsubscribe);
                 }
             }
         }
     }
 
-    fn wake(&mut self, fx: &mut Vec<FeedEffect>) {
-        if self.session && self.online && !self.want.is_empty() {
-            self.mode = Mode::Opening { gap: false };
-            self.subscribe(fx);
+    fn ready_all(&self, fx: &mut Vec<FeedEffect>) {
+        for model in self.models() {
+            fx.push(FeedEffect::ModelReady { model });
         }
     }
 
     fn frame(&mut self, frame: SubscriptionFrame, fx: &mut Vec<FeedEffect>) {
-        let known = frame.connection_id == self.connection || self.switching == Some(frame.connection_id);
+        let current = frame.connection_id == self.connection;
+        let known = current || self.switching == Some(frame.connection_id);
         if !known {
             return;
         }
         match (self.mode, frame.frame) {
-            (Mode::Opening { gap }, Frame::Ready) if frame.connection_id == self.connection => {
+            (Mode::Opening { gap }, Frame::Ready) if current => {
                 self.mode = Mode::Live;
                 if gap {
                     for model in self.models() {
@@ -214,41 +230,57 @@ impl FeedState {
                     }
                     fx.push(FeedEffect::StaleWindows(self.models()));
                 }
+                self.ready_all(fx);
             }
             (Mode::Live, Frame::Ready) if self.switching == Some(frame.connection_id) => {
                 let old = self.connection;
                 self.connection = frame.connection_id;
                 self.switching = None;
                 fx.push(FeedEffect::CloseConnection { connection: old });
+                self.ready_all(fx);
             }
-            (Mode::Opening { gap }, Frame::Dropped | Frame::Ended) if frame.connection_id == self.connection => {
-                self.mode = Mode::Opening { gap };
-                self.connection = self.next_connection;
-                self.next_connection += 1;
-                if self.online {
-                    fx.push(FeedEffect::ScheduleResubscribe { connection: self.connection });
+            (Mode::Opening { .. } | Mode::Live, Frame::Event { model, payload }) if current => self.event(model, payload, fx),
+            (Mode::Opening { .. }, Frame::ChannelLost { dropped, models }) if current => {
+                for model in &models {
+                    self.lose(model, dropped, fx);
                 }
+                fx.push(FeedEffect::StaleWindows(models));
             }
-            (Mode::Live, Frame::Event { model, payload }) if frame.connection_id == self.connection => self.event(model, payload, fx),
-            (Mode::Live, Frame::ChannelLost { dropped, models }) if frame.connection_id == self.connection => {
+            (Mode::Live, Frame::ChannelLost { dropped, models }) if current => {
                 self.flush_pending(fx);
                 for model in &models {
                     self.lose(model, dropped, fx);
                 }
                 fx.push(FeedEffect::StaleWindows(models));
             }
-            (Mode::Live, Frame::Dropped | Frame::Ended) if frame.connection_id == self.connection => {
-                self.mode = Mode::Opening { gap: true };
+            (Mode::Opening { gap }, Frame::Dropped | Frame::Ended) if current => {
+                if self.online {
+                    self.connection = self.next_connection;
+                    self.next_connection += 1;
+                    self.attempts += 1;
+                    fx.push(FeedEffect::ScheduleResubscribe { connection: self.connection, attempt: self.attempts });
+                } else {
+                    self.mode = Mode::Off { gap };
+                }
+            }
+            (Mode::Live, Frame::Dropped | Frame::Ended) if current => {
                 self.flush_pending(fx);
-                self.subscribe(fx);
+                if self.online {
+                    self.mode = Mode::Opening { gap: true };
+                    self.subscribe(fx);
+                } else {
+                    self.mode = Mode::Off { gap: true };
+                    self.connection = 0;
+                    self.switching = None;
+                }
             }
             _ => {}
         }
     }
 
     fn event(&mut self, model: String, payload: String, fx: &mut Vec<FeedEffect>) {
-        let Some(&debounce_ms) = self.want.get(&model) else { return };
-        let basis = self.generation.get(&model).copied().unwrap_or(0);
+        let Some(debounce_ms) = self.want.get(&model).map(|want| want.debounce_ms) else { return };
+        let basis = self.generation.get(&model).copied().unwrap_or(self.base_generation);
         let event = FeedEvent { model, payload, basis };
         if debounce_ms == 0 {
             self.commit(vec![event], fx);
@@ -261,30 +293,51 @@ impl FeedState {
         }
     }
 
-    fn want_plus(&mut self, model: String, debounce_ms: u64, fx: &mut Vec<FeedEffect>) {
-        let changed = self.want.insert(model, debounce_ms).is_none();
+    fn want_plus(&mut self, model: String, debounce_ms: u64, delivery: bool, fx: &mut Vec<FeedEffect>) {
+        let joined = FeedEffect::Joined { model: model.clone(), position: self.position(&model) };
+        let new = !self.want.contains_key(&model);
+        self.want.entry(model.clone()).and_modify(|want| want.count += 1).or_insert(Want { count: 1, debounce_ms });
+        if delivery {
+            fx.push(joined);
+        }
         match self.mode {
-            Mode::Off => self.wake(fx),
-            Mode::Opening { .. } | Mode::Live if changed => {
-                if self.mode == Mode::Live {
-                    let connection = self.next_connection;
-                    self.next_connection += 1;
-                    self.switching = Some(connection);
-                    fx.push(FeedEffect::Subscribe { connection, models: self.models() });
-                } else {
-                    self.subscribe(fx);
-                }
+            Mode::Off { gap } if self.online => {
+                self.mode = Mode::Opening { gap };
+                self.subscribe(fx);
             }
+            Mode::Opening { .. } if new => {
+                fx.push(FeedEffect::Unsubscribe);
+                self.subscribe(fx);
+            }
+            Mode::Live if new => {
+                let connection = self.next_connection;
+                self.next_connection += 1;
+                self.switching = Some(connection);
+                fx.push(FeedEffect::Subscribe { connection, models: self.models() });
+            }
+            Mode::Live if delivery => fx.push(FeedEffect::ModelReady { model }),
             _ => {}
         }
     }
 
     fn want_minus(&mut self, model: &str, fx: &mut Vec<FeedEffect>) {
-        let changed = self.want.remove(model).is_some();
+        let Some(want) = self.want.get_mut(model) else { return };
+        want.count -= 1;
+        if want.count > 0 {
+            return;
+        }
+        self.want.remove(model);
+        if !self.want.is_empty() {
+            return;
+        }
         match self.mode {
-            Mode::Opening { .. } if changed => self.subscribe(fx),
-            Mode::Live if self.want.is_empty() => {
-                self.mode = Mode::Off;
+            Mode::Opening { gap } => {
+                self.mode = Mode::Off { gap };
+                self.connection = 0;
+                fx.push(FeedEffect::Unsubscribe);
+            }
+            Mode::Live => {
+                self.mode = Mode::Off { gap: false };
                 self.flush_pending(fx);
                 self.connection = 0;
                 self.switching = None;
@@ -297,15 +350,36 @@ impl FeedState {
     fn online_changed(&mut self, online: bool, fx: &mut Vec<FeedEffect>) {
         self.online = online;
         match self.mode {
-            Mode::Off if online => self.wake(fx),
+            Mode::Off { gap } if online && !self.want.is_empty() => {
+                self.mode = Mode::Opening { gap };
+                self.subscribe(fx);
+            }
+            Mode::Opening { gap } if !online => {
+                self.mode = Mode::Off { gap };
+                self.connection = 0;
+                fx.push(FeedEffect::Unsubscribe);
+            }
             Mode::Live if !online => {
-                self.mode = Mode::Opening { gap: true };
+                self.mode = Mode::Off { gap: true };
                 self.flush_pending(fx);
                 self.connection = 0;
                 self.switching = None;
                 fx.push(FeedEffect::Unsubscribe);
             }
             _ => {}
+        }
+    }
+
+    fn resubscribe(&mut self, connection: ConnectionId, fx: &mut Vec<FeedEffect>) {
+        let Mode::Opening { gap } = self.mode else { return };
+        if connection != self.connection {
+            return;
+        }
+        if self.online {
+            fx.push(FeedEffect::Subscribe { connection, models: self.models() });
+        } else {
+            self.mode = Mode::Off { gap };
+            self.connection = 0;
         }
     }
 
@@ -343,28 +417,20 @@ impl StateOwner for Feed {
                 }
             }
             FeedInput::EpochStarted(started) => {
-                state.session = true;
                 state.epoch = started.epoch;
-                if state.mode == Mode::Off {
-                    state.wake(&mut fx);
-                }
+                state.base_generation = started.generation;
             }
             FeedInput::Closing if ended => fx.push(FeedEffect::Drained(Drained { owner: "Feed" })),
             _ if ended => {}
             FeedInput::EpochEnded(ended) if ended.epoch == state.epoch => state.end(false, &mut fx),
             FeedInput::EpochEnded(_) => {}
             FeedInput::Closing => state.end(true, &mut fx),
-            FeedInput::WantPlus { model, debounce_ms } => state.want_plus(model, debounce_ms, &mut fx),
+            FeedInput::WantPlus { model, debounce_ms, delivery } => state.want_plus(model, debounce_ms, delivery, &mut fx),
             FeedInput::WantMinus { model } => state.want_minus(&model, &mut fx),
             FeedInput::Frame(frame) => state.frame(frame, &mut fx),
             FeedInput::Committed(committed) => state.verdict(committed.batch, None, &mut fx),
             FeedInput::Rejected(rejected) => state.verdict(rejected.batch, Some(rejected.reason), &mut fx),
-            FeedInput::ResubscribeDue { connection } => {
-                if matches!(state.mode, Mode::Opening { .. }) && state.online && connection == state.connection {
-                    let models = state.models();
-                    fx.push(FeedEffect::Subscribe { connection, models });
-                }
-            }
+            FeedInput::ResubscribeDue { connection } => state.resubscribe(connection, &mut fx),
             FeedInput::Tick(_) => {
                 if state.mode == Mode::Live {
                     state.flush_pending(&mut fx);

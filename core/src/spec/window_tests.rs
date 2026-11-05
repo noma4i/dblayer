@@ -42,7 +42,7 @@ async fn win_idle_interest_fresh() {
     world.load_ok().await;
     let before = world.net.feed_requests();
     let mut reference = Window::idle_fresh();
-    let effects = reference.step(Input::InterestPlus { id: 1, force: false });
+    let effects = reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let mut call = world.call();
     assert_eq!(call.outcome().await, Outcome::Loaded);
     assert_eq!(sorted(reference.take_outcomes()), [(1, res(Outcome::Loaded))]);
@@ -54,7 +54,7 @@ async fn win_idle_interest_load() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    let effects = reference.step(Input::InterestPlus { id: 1, force: false });
+    let effects = reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let mut call = world.call();
     gate.entered().await;
     assert_eq!(world.net.feed_requests(), requests_in(&effects));
@@ -71,7 +71,7 @@ async fn win_idle_interest_offline() {
     go_offline(&world);
     let mut reference = Window::new();
     reference.online = false;
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     assert!(matches!(reference.state, State::Waiting { .. }));
     let mut call = world.call();
     assert_eq!(call.outcome_within(300).await, Outcome::Pending, "offline the call waits for the network");
@@ -145,7 +145,7 @@ async fn win_idle_stray() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let call = world.call();
     gate.entered().await;
     reference.step(Input::InterestMinus { id: 1 });
@@ -162,8 +162,8 @@ async fn win_loading_join() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
-    assert!(reference.step(Input::InterestPlus { id: 2, force: false }).is_empty());
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    assert!(reference.step(Input::InterestPlus { id: 2, force: false, all: false }).is_empty());
     let mut first = world.call();
     gate.entered().await;
     let mut second = world.call();
@@ -179,8 +179,8 @@ async fn win_loading_leave() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
-    reference.step(Input::InterestPlus { id: 2, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::InterestPlus { id: 2, force: false, all: false });
     let first = world.call();
     gate.entered().await;
     let mut second = world.call();
@@ -199,7 +199,7 @@ async fn win_loading_last_leave() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let call = world.call();
     gate.entered().await;
     let effects = reference.step(Input::InterestMinus { id: 1 });
@@ -214,7 +214,7 @@ async fn win_loading_response() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let mut call = world.call();
     gate.entered().await;
     gate.release();
@@ -230,7 +230,7 @@ async fn win_loading_temp_error() {
     world.net.script(Reply::network());
     world.net.script(Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Network });
     assert_eq!(effects, [Effect::ScheduleRetry]);
     let mut call = world.call();
@@ -252,14 +252,14 @@ async fn win_loading_attempts_exhausted() {
     let world = World::open().await;
     for _ in 0..3 { world.net.script(Reply::network()); }
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     for attempt in 0..2 {
         assert_eq!(reference.step(Input::TransportError { request: 1, failure: Failure::Network }), [Effect::ScheduleRetry], "attempt {attempt} is retried");
         reference.step(Input::RetryDue);
     }
     let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Network });
     assert_eq!(effects, [Effect::WindowState]);
-    assert_eq!(reference.state, State::Idle { fresh: false, stale: false, last_error: Some(true) });
+    assert_eq!(reference.state, State::Idle { fresh: false, last_error: Some(true) });
     let stream = world.rows_stream();
     let mut call = world.call();
     for _ in 0..120 {
@@ -283,7 +283,7 @@ async fn network_failed() -> (World, super::harness::Reading, Window) {
     world.pump_until(&stream, |_| states_of(&stream).iter().any(|state| state.error)).await;
     world.settle().await;
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     for _ in 0..2 {
         reference.step(Input::TransportError { request: 1, failure: Failure::Network });
         reference.step(Input::RetryDue);
@@ -322,7 +322,7 @@ async fn win_loading_error() {
     let world = World::open().await;
     world.net.script(Reply::refused());
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Permanent });
     assert_eq!(effects, [Effect::WindowState]);
     let stream = world.rows_stream();
@@ -339,7 +339,7 @@ async fn win_loading_offline() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let mut call = world.call();
     gate.entered().await;
     let effects = reference.step(Input::Online(false));
@@ -355,7 +355,7 @@ async fn win_loading_offline() {
 async fn win_landing_committed() {
     let world = World::open().await;
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let stream = world.rows_stream();
     let mut call = world.call();
     assert_eq!(res(call.outcome().await), Result3::Loaded);
@@ -374,7 +374,7 @@ async fn win_waiting_resume() {
     go_offline(&world);
     let mut reference = Window::new();
     reference.online = false;
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let mut call = world.call();
     assert_eq!(call.outcome_within(200).await, Outcome::Pending);
     let effects = reference.step(Input::Online(true));
@@ -391,8 +391,8 @@ async fn win_waiting_join() {
     go_offline(&world);
     let mut reference = Window::new();
     reference.online = false;
-    reference.step(Input::InterestPlus { id: 1, force: false });
-    assert!(reference.step(Input::InterestPlus { id: 2, force: false }).is_empty());
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    assert!(reference.step(Input::InterestPlus { id: 2, force: false, all: false }).is_empty());
     let (mut first, mut second) = (world.call(), world.call());
     assert_eq!(first.outcome_within(150).await, Outcome::Pending);
     assert_eq!(second.outcome_within(150).await, Outcome::Pending);
@@ -408,7 +408,7 @@ async fn win_waiting_leave() {
     go_offline(&world);
     let mut reference = Window::new();
     reference.online = false;
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     assert!(reference.step(Input::InterestMinus { id: 1 }).is_empty());
     let call = world.call();
     world.breathe().await;
@@ -424,7 +424,7 @@ async fn win_closing() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false });
+    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
     let mut call = world.call();
     gate.entered().await;
     let effects = reference.step(Input::Closing);

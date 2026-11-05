@@ -18,8 +18,8 @@ fn rows_of(rows: &[String]) -> Vec<d::StreamRow> { rows.iter().map(|id| d::Strea
 
 fn view(kind: Kind) -> d::View {
     match kind {
-        Kind::Rows => d::View { kind: d::Kind::Rows, model: "Moment".into(), tables: vec!["moments".into()] },
-        Kind::Events => d::View { kind: d::Kind::Events, model: "Chat".into(), tables: Vec::new() },
+        Kind::Rows => d::View { kind: d::Kind::Rows, model: "Moment".into(), tables: vec!["moments".into()], local: false },
+        Kind::Events => d::View { kind: d::Kind::Events, model: "Chat".into(), tables: Vec::new(), local: false },
     }
 }
 
@@ -47,6 +47,8 @@ fn val_of(value: &d::Value) -> Val {
     match value {
         d::Value::Snapshot { rows, state, .. } => Val::Snapshot { rows: rows.iter().map(|row| row.id.clone()).collect(), state: state_of(state) },
         d::Value::Delta { upserted, removed, .. } => Val::Delta { upserted: upserted.iter().map(|row| row.id.clone()).collect(), removed: removed.clone() },
+        d::Value::State { state, .. } => Val::StateOnly(state_of(state)),
+        d::Value::Ready => Val::Ready,
         d::Value::Event { position, payload } => Val::Event { position: *position, id: payload.clone() },
         d::Value::Lost { first, last } => Val::Lost { first: *first, last: *last },
         d::Value::Ended(cause) => Val::Ended(match cause {
@@ -116,9 +118,19 @@ impl Twin {
         match &input {
             Input::Open { kind, epoch_current } => {
                 let epoch = if *epoch_current { EPOCH } else { EPOCH + 1 };
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(*kind), epoch, revision: 0 });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(*kind), epoch, revision: 0, identity: true, valid: true });
                 self.run();
             }
+            Input::OpenNoSession => {
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Rows), epoch: EPOCH, revision: 0, identity: false, valid: true });
+                self.run();
+            }
+            Input::OpenInvalid => {
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Rows), epoch: EPOCH, revision: 0, identity: true, valid: false });
+                self.run();
+            }
+            Input::Joined { position } => self.post(d::DeliveryInput::Joined { stream: STREAM, position: *position }),
+            Input::ModelReady => self.post(d::DeliveryInput::ModelReady { stream: STREAM }),
             Input::Committed { revision, touches } => {
                 let table = if *touches { "moments" } else { "other" };
                 self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], models: Vec::new() }));
@@ -196,6 +208,7 @@ fn open_rows() -> Twin {
 fn open_events() -> Twin {
     let mut twin = Twin::new();
     twin.step(Input::Open { kind: Kind::Events, epoch_current: true });
+    twin.step(Input::Joined { position: 0 });
     twin
 }
 
@@ -376,7 +389,7 @@ fn dlv_live_read_changed_owner() {
 #[test]
 fn dlv_live_read_changed_big_shift() {
     let mut twin = Twin::new();
-    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Rows), epoch: EPOCH, revision: 0 });
+    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Rows), epoch: EPOCH, revision: 0, identity: true, valid: true });
     twin.run();
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, revision: 1, rows: Vec::new() });
     twin.post(d::DeliveryInput::Pull { stream: STREAM });
@@ -414,14 +427,14 @@ fn dlv_live_read_old() {
 fn dlv_live_read_failed() {
     let mut twin = live_rows();
     let (_, values) = twin.step_drain(Input::ReadFailed { revision: 2 });
-    assert_eq!(values, [snapshot_val(&["r1"], WState { phase: Phase::Loaded, error: true, loaded: true })], "Loaded with an error at the same rows");
+    assert_eq!(values, [Val::StateOnly(WState { phase: Phase::Loaded, error: true, loaded: true })], "Loaded with an error at the same rows, as a State value");
 }
 
 #[test]
 fn dlv_live_window_owner() {
     let mut twin = live_rows();
     let (_, values) = twin.step_drain(Input::WindowState(loading()));
-    assert_eq!(values, [snapshot_val(&["r1"], loading())]);
+    assert_eq!(values, [Val::StateOnly(loading())]);
 }
 
 #[test]
@@ -546,7 +559,10 @@ fn rig(kind: Kind) -> Rig {
     let log = new_log();
     let deliveries = det.add::<Deliveries>("deliveries", d::DeliveriesState::new(EPOCH), Recorder::<Deliveries>::new(&log));
     det.start_epoch(EPOCH);
-    det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(kind), epoch: EPOCH, revision: 0 });
+    det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(kind), epoch: EPOCH, revision: 0, identity: true, valid: true });
+    if kind == Kind::Events {
+        det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Joined { stream: STREAM, position: 0 });
+    }
     det.run_until_quiet(100).expect("open");
     take(&log);
     Rig { det, log, deliveries }
@@ -759,7 +775,7 @@ fn dlv_prop_same_revision_owner() {
     twin.step(Input::WindowState(loading()));
     twin.step(Input::ReadDone { revision: 2, rows: ids(&["r1", "r2"]) });
     let journal = twin.state().journal(STREAM);
-    assert!(matches!(&journal[0], d::Value::Snapshot { revision: 1, rows, state } if rows.len() == 1 && state.phase == d::Phase::Loading), "{journal:?}");
+    assert!(matches!(&journal[0], d::Value::State { revision: 1, state } if state.phase == d::Phase::Loading), "{journal:?}");
     assert!(matches!(&journal[1], d::Value::Delta { base: 1, revision: 2, .. }), "{journal:?}");
     twin.drain();
 }
@@ -771,7 +787,7 @@ fn dlv_prop_failed_without_rows_owner() {
     assert_eq!(empty.step_drain(Input::ReadFailed { revision: 1 }).1, [snapshot_val(&[], failed())]);
     let mut with_rows = live_rows();
     let (_, values) = with_rows.step_drain(Input::ReadFailed { revision: 2 });
-    assert!(matches!(values.as_slice(), [Val::Snapshot { state: WState { phase: Phase::Loaded, error: true, .. }, .. }]));
+    assert!(matches!(values.as_slice(), [Val::StateOnly(WState { phase: Phase::Loaded, error: true, .. })]));
 }
 
 /// P-DLV-07: no commit touches the stream: no read and no value.
@@ -813,7 +829,7 @@ fn dlv_prop_bounded_owner() {
 #[test]
 fn dlv_dictionary_owner() {
     let mut rig = rig(Kind::Rows);
-    rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: 2, view: view(Kind::Events), epoch: EPOCH, revision: 0 });
+    rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: 2, view: view(Kind::Events), epoch: EPOCH, revision: 0, identity: true, valid: true });
     rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Cancel { stream: 2 });
     rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, revision: 1, rows: rows_of(&ids(&["r1"])) });
     rig.det.close();
@@ -832,4 +848,144 @@ fn dlv_epoch_started_unknown_cause() {
     rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::EpochEnded(EpochEnded { epoch: 2, cause: Ended::SessionReset }));
     rig.det.run_until_quiet(100).expect("quiet");
     assert_eq!(rig.det.state(rig.deliveries).expect("state").stage(STREAM), Some(d::DeliveryStage::Opening), "the stream of epoch 1 is not touched by the end of epoch 2");
+}
+
+// Cells of the second revision of `delivery.md`: `Joined`, `ModelReady`, `State`, the refused `open`, the waits.
+
+#[test]
+fn dlv_open_no_session_owner() {
+    let mut twin = Twin::new();
+    assert!(twin.step(Input::OpenNoSession).is_empty());
+    assert_eq!(twin.state().stage(STREAM), Some(d::DeliveryStage::Ended));
+    assert_eq!(twin.drain(), [Val::Ended(Cause::SessionEnded)]);
+}
+
+#[test]
+fn dlv_open_invalid_owner() {
+    let mut twin = Twin::new();
+    assert!(twin.step(Input::OpenInvalid).is_empty());
+    assert_eq!(twin.drain(), [Val::Ended(Cause::Invalid)]);
+}
+
+#[test]
+fn dlv_live_joined_owner() {
+    let mut twin = Twin::new();
+    twin.step(Input::Open { kind: Kind::Events, epoch_current: true });
+    assert!(twin.step(Input::Joined { position: 4 }).is_empty());
+    let (_, values) = twin.step_drain(Input::ModelEvent { position: 5, id: "c5".into() });
+    assert_eq!(values, [Val::Event { position: 1, id: "c5".into() }], "the first event after the join is position 1 of the stream");
+    assert!(twin.step(Input::Joined { position: 9 }).is_empty(), "a second Joined changes nothing");
+    let (_, values) = twin.step_drain(Input::ModelEvent { position: 6, id: "c6".into() });
+    assert_eq!(values, [Val::Event { position: 2, id: "c6".into() }]);
+}
+
+#[test]
+fn dlv_live_event_before_join_owner() {
+    let mut twin = Twin::new();
+    twin.step(Input::Open { kind: Kind::Events, epoch_current: true });
+    let (effects, values) = twin.step_drain(Input::ModelEvent { position: 1, id: "c1".into() });
+    assert!(effects.is_empty() && values.is_empty(), "an event before Joined gives nothing");
+    let (_, values) = twin.step_drain(Input::ModelLost { first: 1, last: 2 });
+    assert!(values.is_empty(), "a loss before Joined gives nothing");
+}
+
+#[test]
+fn dlv_live_lost_old_owner() {
+    let mut twin = open_events();
+    twin.step_drain(Input::ModelEvent { position: 3, id: "c3".into() });
+    let (_, values) = twin.step_drain(Input::ModelLost { first: 1, last: 2 });
+    assert!(values.is_empty(), "a loss behind the next position gives nothing");
+    let (_, values) = twin.step_drain(Input::ModelLost { first: 3, last: 6 });
+    assert_eq!(values, [Val::Lost { first: 4, last: 6 }], "only the positions from next_feed are lost, counted in stream positions");
+}
+
+#[test]
+fn dlv_live_ready_owner() {
+    let mut twin = open_events();
+    let (_, values) = twin.step_drain(Input::ModelReady);
+    assert_eq!(values, [Val::Ready]);
+}
+
+#[test]
+fn dlv_live_ready_again_owner() {
+    let mut twin = open_events();
+    twin.step_drain(Input::ModelReady);
+    let (effects, values) = twin.step_drain(Input::ModelReady);
+    assert!(effects.is_empty() && values.is_empty(), "Ready comes once per stream");
+}
+
+#[test]
+fn dlv_live_read_same_new_state_owner() {
+    let mut twin = live_rows();
+    let (_, values) = twin.step_drain(Input::WindowState(loading()));
+    assert_eq!(values, [Val::StateOnly(loading())]);
+    let (_, values) = twin.step_drain(Input::ReadDone { revision: 2, rows: ids(&["r1"]) });
+    assert!(values.is_empty(), "the same rows and the state already given: no value");
+}
+
+#[test]
+fn dlv_ended_closing_owner() {
+    let mut twin = live_rows();
+    twin.step(Input::EpochEnded { own: true });
+    take(&twin.log);
+    twin.det.close();
+    twin.run();
+    let drained = take(&twin.log).iter().filter(|effect| matches!(effect, DeliveryEffect::Drained(_))).count();
+    assert_eq!(drained, 1, "an ended stream still lets the owner answer Closing once");
+}
+
+/// Waits: `pull` gives the first value or none at once, the sink is woken once by the first value of an empty journal, `cancel` ends at once.
+#[test]
+fn dlv_wait_pull_owner() {
+    let mut twin = live_rows();
+    twin.step(Input::WindowState(loading()));
+    twin.step(Input::EpochEnded { own: true });
+    assert_eq!(twin.drain(), [Val::StateOnly(loading()), Val::Ended(Cause::SessionEnded)], "the journal is read in order, `Ended` last");
+    assert!(twin.pull_all().is_empty(), "after Ended the stream gives nothing");
+}
+
+#[test]
+fn dlv_wait_available_owner() {
+    let mut twin = live_rows();
+    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM });
+    twin.run();
+    take(&twin.log);
+    twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: load_state(loading()) });
+    let wakes = take(&twin.log).iter().filter(|effect| matches!(effect, DeliveryEffect::Stream { effect: StreamEffect::Wake, .. })).count();
+    assert_eq!(wakes, 1, "the first value of an empty journal wakes the sink");
+    twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: load_state(loaded()) });
+    let wakes = take(&twin.log).iter().filter(|effect| matches!(effect, DeliveryEffect::Stream { effect: StreamEffect::Wake, .. })).count();
+    assert_eq!(wakes, 0, "a value added to a journal that is not empty wakes nobody");
+}
+
+#[test]
+fn dlv_wait_cancel_owner() {
+    let mut twin = live_rows();
+    let (effects, values) = twin.step_drain(Input::Cancel);
+    assert_eq!(effects, [Effect::InterestMinus]);
+    assert_eq!(values, [Val::Ended(Cause::Cancelled)]);
+}
+
+/// P-DLV-10: `Ready` is one value per `Events` stream, however often `ModelReady` comes.
+#[test]
+fn dlv_prop_ready_once_owner() {
+    let mut twin = open_events();
+    for _ in 0..3 {
+        twin.step(Input::ModelReady);
+        twin.step(Input::ModelEvent { position: 1, id: "c1".into() });
+    }
+    let values = twin.drain();
+    assert_eq!(values.iter().filter(|value| matches!(value, Val::Ready)).count(), 1);
+}
+
+/// P-DLV-11: the rows of a `Delta` are the changed rows; the whole result only goes in the first value and over 256 changes.
+#[test]
+fn dlv_prop_delta_size_owner() {
+    let mut twin = live_rows();
+    let (_, values) = twin.step_drain(Input::ReadDone { revision: 2, rows: ids(&["r1", "r2"]) });
+    assert_eq!(values, [Val::Delta { upserted: ids(&["r2"]), removed: Vec::new() }], "one changed row, one row in the value");
+    let many: Vec<String> = (0..300).map(|n| format!("n{n}")).collect();
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, revision: 3, rows: rows_of(&many) });
+    let values = twin.pull_all();
+    assert!(matches!(values.as_slice(), [Val::Snapshot { rows, .. }] if rows.len() == 300), "over 256 changes the whole result goes");
 }

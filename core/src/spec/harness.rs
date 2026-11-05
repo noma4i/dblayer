@@ -51,6 +51,7 @@ pub(super) enum Val {
     Snapshot { rows: Vec<String>, state: WState },
     Delta { upserted: Vec<String>, removed: Vec<String> },
     StateOnly(WState),
+    Ready,
     Event { position: u64, id: String },
     Lost { first: u64, last: u64 },
     Ended(Cause),

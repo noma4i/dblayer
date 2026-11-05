@@ -39,16 +39,16 @@ pub(super) enum Reject {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Input {
-    InterestPlus { id: u32, force: bool },
+    InterestPlus { id: u32, force: bool, all: bool },
     InterestMinus { id: u32 },
     LoadMore { id: u32 },
     Response { request: u64 },
     TransportError { request: u64, failure: Failure },
+    Dropped { request: u64 },
     Committed { request: u64 },
     Rejected { request: u64, reason: Reject },
-    Stale { newer_than_issue: bool },
+    Stale,
     Online(bool),
-    EpochStarted,
     EpochEnded,
     ModelsReset { own_model: bool },
     Closing,
@@ -67,22 +67,27 @@ pub(super) enum Effect {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum State {
-    Idle { fresh: bool, stale: bool, last_error: Option<bool> },
-    Loading { request: u64, page: u32, interest: BTreeSet<u32>, force: bool, again: bool, attempts: u32 },
-    Landing { request: u64, interest: BTreeSet<u32>, again: bool },
-    Waiting { interest: BTreeSet<u32>, force: bool },
+    Idle { fresh: bool, last_error: Option<bool> },
+    Loading { request: u64, page: u32, force: bool, again: bool, more: bool, attempts: u32 },
+    Landing { request: u64, page: u32, again: bool, more: bool },
+    Waiting { force: bool, page: u32 },
     Ended,
 }
 
-/// What the environment of the key is: session, network, whether a next page exists, whether rows are in the base.
+/// What the environment of the key is: network, whether a next page exists, whether rows are in the base, and the interest set.
 pub(super) struct Window {
     pub(super) state: State,
     pub(super) online: bool,
-    pub(super) session: bool,
+    /// A next page exists (the cursor of the last response).
     pub(super) cursor: bool,
     pub(super) has_rows: bool,
-    /// Whether the key has interest while it is `Idle` (the state itself keeps none).
-    pub(super) watched: bool,
+    /// New interest ids join as streams: they stay after their outcome.
+    pub(super) stream_mode: bool,
+    pub(super) interest: BTreeSet<u32>,
+    pub(super) all: BTreeSet<u32>,
+    streams: BTreeSet<u32>,
+    /// The page the last landing wrote.
+    pub(super) page: u32,
     pub(super) phase: Phase,
     pub(super) outcomes: Vec<(u32, Result3)>,
     next_request: u64,
@@ -90,14 +95,15 @@ pub(super) struct Window {
 
 impl Window {
     pub(super) fn new() -> Self {
-        Self { state: State::Idle { fresh: false, stale: false, last_error: None }, online: true, session: true, cursor: false, has_rows: false, watched: false, phase: Phase::Idle, outcomes: Vec::new(), next_request: 1 }
+        Self { state: State::Idle { fresh: false, last_error: None }, online: true, cursor: false, has_rows: false, stream_mode: false, interest: BTreeSet::new(), all: BTreeSet::new(), streams: BTreeSet::new(), page: 0, phase: Phase::Idle, outcomes: Vec::new(), next_request: 1 }
     }
 
     pub(super) fn idle_fresh() -> Self {
         let mut window = Self::new();
-        window.state = State::Idle { fresh: true, stale: false, last_error: None };
+        window.state = State::Idle { fresh: true, last_error: None };
         window.phase = Phase::Loaded;
         window.has_rows = true;
+        window.page = 1;
         window
     }
 
@@ -107,222 +113,262 @@ impl Window {
         request
     }
 
-    fn answer(&mut self, ids: &BTreeSet<u32>, result: Result3) {
-        for id in ids { self.outcomes.push((*id, result)); }
+    fn join(&mut self, id: u32, all: bool) {
+        self.interest.insert(id);
+        if self.stream_mode { self.streams.insert(id); }
+        if all { self.all.insert(id); }
     }
+
+    fn leave(&mut self, id: u32) {
+        self.interest.remove(&id);
+        self.streams.remove(&id);
+        self.all.remove(&id);
+    }
+
+    fn answer_one(&mut self, id: u32, result: Result3) {
+        self.outcomes.push((id, result));
+        if !self.streams.contains(&id) { self.leave(id); }
+    }
+
+    fn answer_ids(&mut self, ids: Vec<u32>, result: Result3) {
+        for id in ids { self.answer_one(id, result); }
+    }
+
+    fn answer(&mut self, result: Result3) { self.answer_ids(self.interest.iter().copied().collect(), result); }
 
     pub(super) fn take_outcomes(&mut self) -> Vec<(u32, Result3)> { std::mem::take(&mut self.outcomes) }
 
+    /// A load of `page`: a request online, `Waiting` offline. `announce` adds the window state to the effects.
+    fn load(&mut self, page: u32, force: bool, announce: bool) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if self.online {
+            let request = self.request();
+            self.state = State::Loading { request, page, force, again: false, more: false, attempts: 0 };
+            self.phase = Phase::Loading;
+            effects.push(Effect::Request { request, page });
+        } else {
+            self.state = State::Waiting { force, page };
+        }
+        if announce { effects.push(Effect::WindowState); }
+        effects
+    }
+
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
-        match input {
-            Input::EpochEnded if self.state != State::Ended => return self.end(false),
-            Input::Closing if self.state != State::Ended => return self.end(true),
+        match (&self.state, &input) {
+            (State::Ended, Input::Closing) => return vec![Effect::Drained],
+            (State::Ended, _) => return Vec::new(),
+            (_, Input::EpochEnded) => return self.end(false),
+            (_, Input::Closing) => return self.end(true),
             _ => {}
         }
+        if let Input::Online(on) = input { self.online = on; }
         let state = std::mem::replace(&mut self.state, State::Ended);
-        let can_run = self.online && self.session;
-        match (state, input) {
-            (State::Idle { fresh, stale, last_error }, Input::InterestPlus { id, force }) => {
-                if fresh && !force && !stale {
-                    self.state = State::Idle { fresh, stale, last_error };
-                    self.phase = Phase::Loaded;
-                    self.outcomes.push((id, Result3::Loaded));
-                    vec![Effect::WindowState]
-                } else if can_run {
-                    let request = self.request();
-                    self.state = State::Loading { request, page: 1, interest: [id].into(), force, again: false, attempts: 0 };
-                    self.phase = Phase::Loading;
-                    vec![Effect::Request { request, page: 1 }, Effect::WindowState]
-                } else {
-                    self.state = State::Waiting { interest: [id].into(), force };
-                    vec![Effect::WindowState]
-                }
-            }
-            (State::Idle { fresh, stale, last_error }, Input::InterestMinus { .. }) => { self.state = State::Idle { fresh, stale, last_error }; Vec::new() }
-            (State::Idle { fresh, stale, last_error }, Input::LoadMore { id }) => {
-                if self.cursor && can_run {
-                    let request = self.request();
-                    self.state = State::Loading { request, page: 2, interest: [id].into(), force: false, again: false, attempts: 0 };
-                    self.phase = Phase::Loading;
-                    vec![Effect::Request { request, page: 2 }]
-                } else {
-                    self.state = State::Idle { fresh, stale, last_error };
-                    self.outcomes.push((id, Result3::Loaded));
-                    Vec::new()
-                }
-            }
-            (State::Idle { fresh: _, stale: _, last_error }, Input::Stale { .. }) => {
-                if self.watched && self.online {
-                    self.load_for_watchers()
-                } else {
-                    self.state = State::Idle { fresh: false, stale: true, last_error };
-                    Vec::new()
-                }
-            }
-            (State::Idle { fresh, stale, last_error }, Input::Online(on)) => {
-                self.online = on;
-                if on && last_error == Some(true) && self.watched {
-                    self.load_for_watchers()
-                } else {
-                    self.state = State::Idle { fresh, stale, last_error };
-                    Vec::new()
-                }
-            }
-            (State::Idle { fresh, stale, last_error }, Input::ModelsReset { own_model }) => {
-                if own_model && self.watched {
-                    self.state = State::Idle { fresh: false, stale, last_error };
-                    self.load_for_watchers()
-                } else {
-                    self.state = if own_model { State::Idle { fresh: false, stale, last_error } } else { State::Idle { fresh, stale, last_error } };
-                    Vec::new()
-                }
-            }
-            (State::Loading { request, page, mut interest, force, again, attempts }, Input::InterestPlus { id, force: more }) => {
-                interest.insert(id);
-                self.state = State::Loading { request, page, interest, force: force || more, again, attempts };
-                Vec::new()
-            }
-            (State::Loading { request, page, mut interest, force, again, attempts }, Input::InterestMinus { id }) => {
-                interest.remove(&id);
-                if interest.is_empty() {
-                    self.state = State::Idle { fresh: false, stale: false, last_error: None };
-                    self.phase = if self.has_rows { Phase::Loaded } else { Phase::Idle };
-                    vec![Effect::Cancel { request }]
-                } else {
-                    self.state = State::Loading { request, page, interest, force, again, attempts };
-                    Vec::new()
-                }
-            }
-            (State::Loading { request, page, interest, force, again, attempts }, Input::Response { request: got }) => {
-                if got == request {
-                    self.state = State::Landing { request, interest, again };
-                    vec![Effect::Commit { request }]
-                } else {
-                    self.state = State::Loading { request, page, interest, force, again, attempts };
-                    Vec::new()
-                }
-            }
-            (State::Loading { request, page, interest, force, again, attempts }, Input::TransportError { request: got, failure }) => {
-                if got != request {
-                    self.state = State::Loading { request, page, interest, force, again, attempts };
-                    Vec::new()
-                } else if failure != Failure::Permanent && self.online && attempts + 1 < failure.retry_limit() {
-                    self.state = State::Loading { request, page, interest, force, again, attempts: attempts + 1 };
-                    vec![Effect::ScheduleRetry]
-                } else {
-                    self.state = State::Idle { fresh: false, stale: false, last_error: Some(failure == Failure::Network) };
-                    self.phase = if self.has_rows { Phase::Loaded } else { Phase::Failed };
-                    self.answer(&interest, Result3::Failed);
-                    vec![Effect::WindowState]
-                }
-            }
-            (State::Loading { request, page, interest, force, again, attempts }, Input::RetryDue) => {
-                self.state = State::Loading { request, page, interest, force, again, attempts };
-                vec![Effect::Request { request, page }]
-            }
-            (State::Loading { request, interest, force, .. }, Input::Online(false)) => {
-                self.online = false;
-                self.state = State::Waiting { interest, force };
-                self.phase = Phase::Loading;
-                vec![Effect::Cancel { request }]
-            }
-            (State::Loading { request, page, interest, force, again, attempts }, Input::Online(true)) => {
-                self.online = true;
-                self.state = State::Loading { request, page, interest, force, again, attempts };
-                Vec::new()
-            }
-            (State::Loading { request, page, interest, force, again, attempts }, Input::Stale { newer_than_issue }) => {
-                self.state = State::Loading { request, page, interest, force, again: again || newer_than_issue, attempts };
-                Vec::new()
-            }
-            (State::Loading { request, page, interest, force, again, attempts }, Input::ModelsReset { own_model }) => {
-                if own_model {
-                    let new = self.request();
-                    self.state = State::Loading { request: new, page, interest, force, again, attempts: 0 };
-                    vec![Effect::Cancel { request }, Effect::Request { request: new, page }]
-                } else {
-                    self.state = State::Loading { request, page, interest, force, again, attempts };
-                    Vec::new()
-                }
-            }
-            (State::Landing { request, interest, again }, Input::Committed { request: got }) if got == request => {
-                self.has_rows = true;
-                self.answer(&interest, Result3::Loaded);
-                if again {
-                    let new = self.request();
-                    self.state = State::Loading { request: new, page: 1, interest, force: false, again: false, attempts: 0 };
-                    self.phase = Phase::Loading;
-                    vec![Effect::Request { request: new, page: 1 }, Effect::WindowState]
-                } else {
-                    self.state = State::Idle { fresh: true, stale: false, last_error: None };
-                    self.phase = Phase::Loaded;
-                    vec![Effect::WindowState]
-                }
-            }
-            (State::Landing { request, interest, .. }, Input::Rejected { request: got, reason }) if got == request => match reason {
-                Reject::StaleGeneration => {
-                    let new = self.request();
-                    self.state = State::Loading { request: new, page: 1, interest, force: false, again: false, attempts: 0 };
-                    vec![Effect::Request { request: new, page: 1 }]
-                }
-                Reject::NoSession => { self.answer(&interest, Result3::Interrupted); self.state = State::Ended; Vec::new() }
-                Reject::Storage => {
-                    self.state = State::Idle { fresh: false, stale: false, last_error: Some(false) };
-                    self.answer(&interest, Result3::Failed);
-                    vec![Effect::WindowState]
-                }
-            },
-            (State::Landing { request, mut interest, again }, Input::InterestPlus { id, .. }) => {
-                interest.insert(id);
-                self.state = State::Landing { request, interest, again };
-                Vec::new()
-            }
-            (State::Landing { request, interest, again }, Input::Stale { newer_than_issue }) => {
-                self.state = State::Landing { request, interest, again: again || newer_than_issue };
-                Vec::new()
-            }
-            (State::Waiting { interest, force }, Input::Online(true) | Input::EpochStarted) => {
-                self.online = true;
-                self.session = true;
-                let request = self.request();
-                self.state = State::Loading { request, page: 1, interest, force, again: false, attempts: 0 };
-                self.phase = Phase::Loading;
-                vec![Effect::Request { request, page: 1 }]
-            }
-            (State::Waiting { mut interest, force }, Input::InterestPlus { id, force: more }) => {
-                interest.insert(id);
-                self.state = State::Waiting { interest, force: force || more };
-                Vec::new()
-            }
-            (State::Waiting { mut interest, force }, Input::InterestMinus { id }) => {
-                interest.remove(&id);
-                self.state = if interest.is_empty() { State::Idle { fresh: false, stale: false, last_error: None } } else { State::Waiting { interest, force } };
-                Vec::new()
-            }
-            (state, _) => {
-                // Every other pair is a cell that changes nothing: a stray answer, a wait in `Landing`, `Ended`.
-                self.state = state;
-                Vec::new()
-            }
+        match state {
+            State::Idle { fresh, last_error } => self.idle(fresh, last_error, input),
+            State::Loading { request, page, force, again, more, attempts } => self.loading(request, page, force, again, more, attempts, input),
+            State::Landing { request, page, again, more } => self.landing(request, page, again, more, input),
+            State::Waiting { force, page } => self.waiting(force, page, input),
+            State::Ended => Vec::new(),
         }
     }
 
-    fn load_for_watchers(&mut self) -> Vec<Effect> {
-        let request = self.request();
-        self.state = State::Loading { request, page: 1, interest: BTreeSet::new(), force: false, again: false, attempts: 0 };
-        self.phase = Phase::Loading;
-        vec![Effect::Request { request, page: 1 }]
+    fn idle(&mut self, fresh: bool, last_error: Option<bool>, input: Input) -> Vec<Effect> {
+        self.state = State::Idle { fresh, last_error };
+        match input {
+            Input::InterestPlus { id, force, all } => {
+                self.join(id, all);
+                if fresh && !force && !(all && self.cursor) {
+                    self.phase = Phase::Loaded;
+                    self.answer_one(id, Result3::Loaded);
+                    vec![Effect::WindowState]
+                } else if fresh && !force {
+                    self.load(self.page + 1, false, true)
+                } else {
+                    self.load(1, force, true)
+                }
+            }
+            Input::InterestMinus { id } => { self.leave(id); Vec::new() }
+            Input::LoadMore { id } => {
+                if self.cursor {
+                    self.join(id, false);
+                    self.load(self.page + 1, false, true)
+                } else {
+                    self.answer_one(id, Result3::Loaded);
+                    Vec::new()
+                }
+            }
+            Input::Stale => {
+                if self.interest.is_empty() {
+                    self.state = State::Idle { fresh: false, last_error };
+                    Vec::new()
+                } else {
+                    self.load(1, false, self.online)
+                }
+            }
+            Input::Online(true) if last_error == Some(true) && !self.interest.is_empty() => self.load(1, false, true),
+            Input::ModelsReset { own_model: true } => {
+                self.state = State::Idle { fresh: false, last_error };
+                if self.interest.is_empty() { Vec::new() } else { self.load(1, false, self.online) }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn loading(&mut self, request: u64, page: u32, force: bool, again: bool, more: bool, attempts: u32, input: Input) -> Vec<Effect> {
+        self.state = State::Loading { request, page, force, again, more, attempts };
+        match input {
+            Input::InterestPlus { id, force: wider, all } => {
+                self.join(id, all);
+                self.state = State::Loading { request, page, force: force || wider, again, more, attempts };
+                Vec::new()
+            }
+            Input::InterestMinus { id } => {
+                self.leave(id);
+                if self.interest.is_empty() {
+                    self.state = State::Idle { fresh: false, last_error: None };
+                    self.phase = if self.has_rows { Phase::Loaded } else { Phase::Idle };
+                    vec![Effect::Cancel { request }]
+                } else {
+                    Vec::new()
+                }
+            }
+            Input::LoadMore { id } => {
+                self.join(id, false);
+                if page == 1 { self.state = State::Loading { request, page, force, again: true, more: true, attempts }; }
+                Vec::new()
+            }
+            Input::Response { request: got } if got == request => {
+                self.state = State::Landing { request, page, again, more };
+                vec![Effect::Commit { request }]
+            }
+            Input::TransportError { request: got, failure } if got == request => self.failed(request, page, force, again, more, attempts, failure),
+            Input::Dropped { request: got } if got == request => self.failed(request, page, force, again, more, attempts, Failure::Network),
+            Input::RetryDue => {
+                if self.online { vec![Effect::Request { request, page }] } else { self.state = State::Waiting { force, page }; Vec::new() }
+            }
+            Input::Online(false) => {
+                self.state = State::Waiting { force, page };
+                vec![Effect::Cancel { request }]
+            }
+            Input::Stale => { self.state = State::Loading { request, page, force, again: true, more, attempts }; Vec::new() }
+            Input::ModelsReset { own_model: true } => {
+                let new = self.request();
+                self.state = State::Loading { request: new, page, force, again, more, attempts: 0 };
+                vec![Effect::Cancel { request }, Effect::Request { request: new, page }]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn failed(&mut self, request: u64, page: u32, force: bool, again: bool, more: bool, attempts: u32, failure: Failure) -> Vec<Effect> {
+        let temporary = failure != Failure::Permanent;
+        if temporary && !self.online {
+            self.state = State::Waiting { force, page };
+            Vec::new()
+        } else if temporary && attempts + 1 < failure.retry_limit() {
+            self.state = State::Loading { request, page, force, again, more, attempts: attempts + 1 };
+            vec![Effect::ScheduleRetry]
+        } else {
+            self.state = State::Idle { fresh: false, last_error: Some(failure == Failure::Network) };
+            self.phase = if self.has_rows { Phase::Loaded } else { Phase::Failed };
+            self.answer(Result3::Failed);
+            vec![Effect::WindowState]
+        }
+    }
+
+    fn landing(&mut self, request: u64, page: u32, again: bool, more: bool, input: Input) -> Vec<Effect> {
+        self.state = State::Landing { request, page, again, more };
+        match input {
+            Input::Committed { request: got } if got == request => {
+                self.has_rows = true;
+                self.page = page;
+                let watched = !self.interest.is_empty();
+                let waiting_all = self.interest.iter().any(|id| self.all.contains(id)) && self.cursor;
+                let calls: Vec<u32> = self.interest.iter().copied().filter(|id| !(waiting_all && self.all.contains(id))).collect();
+                self.answer_ids(calls, Result3::Loaded);
+                if waiting_all {
+                    let next = page + 1;
+                    return if self.online {
+                        let new = self.request();
+                        self.state = State::Loading { request: new, page: next, force: false, again, more, attempts: 0 };
+                        self.phase = Phase::Loading;
+                        vec![Effect::Request { request: new, page: next }, Effect::WindowState]
+                    } else {
+                        self.state = State::Waiting { force: false, page: next };
+                        self.phase = Phase::Loaded;
+                        vec![Effect::WindowState]
+                    };
+                }
+                self.phase = Phase::Loaded;
+                if !again {
+                    self.state = State::Idle { fresh: true, last_error: None };
+                    return vec![Effect::WindowState];
+                }
+                if !watched {
+                    self.state = State::Idle { fresh: false, last_error: None };
+                    return vec![Effect::WindowState];
+                }
+                let next = if more && self.cursor { page + 1 } else { 1 };
+                self.load(next, false, true)
+            }
+            Input::Rejected { request: got, reason } if got == request => match reason {
+                Reject::StaleGeneration => {
+                    if self.interest.is_empty() {
+                        self.state = State::Idle { fresh: false, last_error: None };
+                        Vec::new()
+                    } else {
+                        self.load(1, false, false)
+                    }
+                }
+                Reject::NoSession => { self.answer(Result3::Interrupted); self.state = State::Ended; Vec::new() }
+                Reject::Storage => {
+                    self.state = State::Idle { fresh: false, last_error: Some(false) };
+                    self.phase = if self.has_rows { Phase::Loaded } else { Phase::Failed };
+                    self.answer(Result3::Failed);
+                    vec![Effect::WindowState]
+                }
+            },
+            Input::InterestPlus { id, all, .. } => { self.join(id, all); Vec::new() }
+            Input::LoadMore { id } => {
+                self.join(id, false);
+                self.state = State::Landing { request, page, again: true, more: true };
+                Vec::new()
+            }
+            Input::Stale => { self.state = State::Landing { request, page, again: true, more }; Vec::new() }
+            _ => Vec::new(),
+        }
+    }
+
+    fn waiting(&mut self, force: bool, page: u32, input: Input) -> Vec<Effect> {
+        self.state = State::Waiting { force, page };
+        match input {
+            Input::Online(true) => self.load(page, force, true),
+            Input::InterestPlus { id, force: wider, all } => {
+                self.join(id, all);
+                self.state = State::Waiting { force: force || wider, page };
+                Vec::new()
+            }
+            Input::LoadMore { id } => { self.join(id, false); Vec::new() }
+            Input::InterestMinus { id } => {
+                self.leave(id);
+                if self.interest.is_empty() { self.state = State::Idle { fresh: false, last_error: None }; }
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Rows `win_idle_stale_watched` and `win_idle_stale_unwatched`: the row depends on whether the key has interest.
     pub(super) fn stale_idle(&mut self, watched: bool) -> Vec<Effect> {
-        self.watched = watched;
-        self.step(Input::Stale { newer_than_issue: true })
+        if watched { self.interest.insert(0); }
+        self.step(Input::Stale)
     }
 
-    /// Row `win_idle_online_retry`: Online(true) in Idle after a network error with interest.
+    /// Row `win_idle_online_retry`: `Online(true)` in `Idle` after a network error, with interest or without.
     pub(super) fn online_idle(&mut self, has_interest: bool) -> Vec<Effect> {
-        self.watched = has_interest;
+        if has_interest { self.interest.insert(0); }
         self.step(Input::Online(true))
     }
 
@@ -331,15 +377,15 @@ impl Window {
         let state = std::mem::replace(&mut self.state, State::Ended);
         let mut effects = Vec::new();
         match state {
-            State::Loading { request, interest, .. } => { self.answer(&interest, Result3::Interrupted); effects.push(Effect::Cancel { request }); }
-            State::Landing { interest, .. } | State::Waiting { interest, .. } => self.answer(&interest, Result3::Interrupted),
+            State::Loading { request, .. } => { self.answer(Result3::Interrupted); effects.push(Effect::Cancel { request }); }
+            State::Landing { .. } | State::Waiting { .. } => self.answer(Result3::Interrupted),
             State::Idle { .. } | State::Ended => {}
         }
         if closing { effects.push(Effect::Drained); }
         effects
     }
 
-    /// Row `win_ended`: a new interest on an ended key.
+    /// Row `win_ended`: a new interest or `LoadMore` on an ended key.
     pub(super) fn ended_interest(&mut self, id: u32) {
         assert_eq!(self.state, State::Ended);
         self.outcomes.push((id, Result3::Interrupted));

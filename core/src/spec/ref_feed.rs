@@ -1,6 +1,6 @@
 //! `specs/machines/feed.md` as code: one match arm per table row. No library code.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Reject {
@@ -11,12 +11,20 @@ pub(super) enum Reject {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Input {
+    /// A want of a window with `live`: no `Joined` answer.
     WantPlus { model: String },
+    /// A want of an `Events` stream: `Joined` answers it.
+    WantDelivery { model: String },
     WantMinus { model: String },
     Ready,
     Event { current: bool, model: String, id: String },
     ChannelLost { dropped: u64, models: Vec<String> },
     Dropped,
+    /// `SubscriptionEnded`: the cells of `Dropped`.
+    Ended,
+    Resubscribe,
+    /// Every frame and every `Resubscribe` of a connection that is not the current one.
+    Stray,
     Committed,
     Rejected(Reject),
     /// `Committed` or `Rejected` of a batch that is not in `landing`.
@@ -37,6 +45,8 @@ pub(super) enum Effect {
     ScheduleResubscribe,
     Commit,
     StaleWindows(Vec<String>),
+    Joined(String),
+    ModelReady(String),
     Drained,
 }
 
@@ -50,7 +60,7 @@ pub(super) enum Obs {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
-    Off,
+    Off { gap: bool },
     Opening { gap: bool },
     Live,
     Ended,
@@ -58,25 +68,27 @@ pub(super) enum Mode {
 
 pub(super) struct Feed {
     pub(super) mode: Mode,
-    pub(super) want: BTreeSet<String>,
+    /// Readers per model: `Want-` removes the model at zero.
+    pub(super) want: BTreeMap<String, u32>,
     pub(super) position: BTreeMap<String, u64>,
     pub(super) pending: Vec<(String, String)>,
     pub(super) landing: VecDeque<Vec<(String, String)>>,
-    /// Models with a window that rereads on events, besides `want`.
-    pub(super) windows: BTreeSet<String>,
     /// `updates.debounce` of the model is declared: an event waits for a `Tick`.
     pub(super) debounce: bool,
     pub(super) online: bool,
-    pub(super) session: bool,
+    /// A `Want+` of a new model opened a connection beside the live one.
+    switching: bool,
     pub(super) obs: Vec<Obs>,
 }
 
 impl Feed {
     pub(super) fn new() -> Self {
-        Self { mode: Mode::Off, want: BTreeSet::new(), position: BTreeMap::new(), pending: Vec::new(), landing: VecDeque::new(), windows: BTreeSet::new(), debounce: true, online: true, session: true, obs: Vec::new() }
+        Self { mode: Mode::Off { gap: false }, want: BTreeMap::new(), position: BTreeMap::new(), pending: Vec::new(), landing: VecDeque::new(), debounce: true, online: true, switching: false, obs: Vec::new() }
     }
 
     fn at(&self, model: &str) -> u64 { self.position.get(model).copied().unwrap_or(0) }
+
+    fn wanted(&self) -> Vec<String> { self.want.keys().cloned().collect() }
 
     fn deliver(&mut self, events: Vec<(String, String)>) {
         for (model, id) in events {
@@ -121,124 +133,167 @@ impl Feed {
                 let lost = self.lose_events(batch, None);
                 vec![Effect::StaleWindows(lost)]
             }
-            Some(Reject::NoSession) => Vec::new(),
+            Some(Reject::NoSession) => {
+                if self.mode == Mode::Live {
+                    self.mode = Mode::Ended;
+                    vec![Effect::Unsubscribe]
+                } else {
+                    Vec::new()
+                }
+            }
         }
     }
 
     pub(super) fn take_obs(&mut self) -> Vec<Obs> { std::mem::take(&mut self.obs) }
 
+    /// Commits `pending` as a batch of `landing`.
+    fn flush(&mut self, effects: &mut Vec<Effect>) {
+        if self.pending.is_empty() { return; }
+        self.landing.push_back(std::mem::take(&mut self.pending));
+        effects.push(Effect::Commit);
+    }
+
+    fn ready_all(&self, effects: &mut Vec<Effect>) { effects.extend(self.wanted().into_iter().map(Effect::ModelReady)); }
+
+    /// `Event` of the current connection in `Opening` or `Live`.
+    fn event(&mut self, model: String, id: String) -> Vec<Effect> {
+        if !self.want.contains_key(&model) { return Vec::new(); }
+        if !self.debounce {
+            self.landing.push_back(vec![(model, id)]);
+            return vec![Effect::Commit];
+        }
+        let first = self.pending.is_empty();
+        self.pending.push((model, id));
+        if first { vec![Effect::ScheduleTick] } else { Vec::new() }
+    }
+
+    fn want_plus(&mut self, model: String, delivery: bool) -> Vec<Effect> {
+        let new = !self.want.contains_key(&model);
+        *self.want.entry(model.clone()).or_insert(0) += 1;
+        let mut effects = Vec::new();
+        if delivery { effects.push(Effect::Joined(model.clone())); }
+        match self.mode {
+            Mode::Off { gap } if self.online => { self.mode = Mode::Opening { gap }; effects.push(Effect::Subscribe); }
+            Mode::Opening { .. } if new => { effects.push(Effect::Unsubscribe); effects.push(Effect::Subscribe); }
+            Mode::Live if new => { self.switching = true; effects.push(Effect::Subscribe); }
+            Mode::Live if delivery => effects.push(Effect::ModelReady(model)),
+            _ => {}
+        }
+        effects
+    }
+
+    fn want_minus(&mut self, model: &str) -> Vec<Effect> {
+        let Some(count) = self.want.get_mut(model) else { return Vec::new() };
+        *count -= 1;
+        if *count > 0 { return Vec::new(); }
+        self.want.remove(model);
+        if !self.want.is_empty() { return Vec::new(); }
+        match self.mode {
+            Mode::Opening { gap } => { self.mode = Mode::Off { gap }; vec![Effect::Unsubscribe] }
+            Mode::Live => {
+                self.mode = Mode::Off { gap: false };
+                let mut effects = Vec::new();
+                self.flush(&mut effects);
+                effects.push(Effect::Unsubscribe);
+                effects
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
         match (self.mode, input) {
+            (Mode::Ended, Input::Closing) => vec![Effect::Drained],
             (Mode::Ended, _) => Vec::new(),
-            (Mode::Off | Mode::Opening { .. } | Mode::Live, Input::EpochEnded) => {
+            (_, Input::EpochEnded) => {
                 self.mode = Mode::Ended;
                 self.pending.clear();
                 self.obs.push(Obs::Ended);
                 vec![Effect::Unsubscribe]
             }
-            (Mode::Off | Mode::Opening { .. } | Mode::Live, Input::Closing) => {
+            (_, Input::Closing) => {
                 self.mode = Mode::Ended;
                 self.obs.push(Obs::Ended);
                 vec![Effect::Unsubscribe, Effect::Drained]
             }
-            (Mode::Off, Input::WantPlus { model }) => {
-                self.want.insert(model);
-                if self.session && self.online {
-                    self.mode = Mode::Opening { gap: false };
-                    vec![Effect::Subscribe]
-                } else {
-                    Vec::new()
-                }
-            }
-            (Mode::Off, Input::WantMinus { model }) => { self.want.remove(&model); Vec::new() }
-            (Mode::Off, Input::Online(on)) => {
+            (_, Input::WantPlus { model }) => self.want_plus(model, false),
+            (_, Input::WantDelivery { model }) => self.want_plus(model, true),
+            (_, Input::WantMinus { model }) => self.want_minus(&model),
+            (_, Input::Committed) => self.verdict(None),
+            (_, Input::Rejected(reason)) => self.verdict(Some(reason)),
+            (_, Input::StrayBatch | Input::Stray | Input::ModelsReset { .. } | Input::EpochStarted) => Vec::new(),
+            (Mode::Off { gap }, Input::Online(on)) => {
                 self.online = on;
-                if on && !self.want.is_empty() { self.mode = Mode::Opening { gap: false }; vec![Effect::Subscribe] } else { Vec::new() }
+                if on && !self.want.is_empty() { self.mode = Mode::Opening { gap }; vec![Effect::Subscribe] } else { Vec::new() }
             }
-            (Mode::Off, Input::EpochStarted) => {
-                self.session = true;
-                if self.online && !self.want.is_empty() { self.mode = Mode::Opening { gap: false }; vec![Effect::Subscribe] } else { Vec::new() }
-            }
-            (Mode::Off | Mode::Opening { .. }, Input::Committed) => self.verdict(None),
-            (Mode::Off | Mode::Opening { .. }, Input::Rejected(reason)) => self.verdict(Some(reason)),
-            (Mode::Off, _) => Vec::new(),
+            (Mode::Off { .. }, _) => Vec::new(),
             (Mode::Opening { gap }, Input::Ready) => {
                 self.mode = Mode::Live;
-                if !gap { return Vec::new(); }
-                let wanted: Vec<String> = self.want.iter().cloned().collect();
-                for model in &wanted { self.lose(model, 1); }
-                vec![Effect::StaleWindows(wanted)]
-            }
-            (Mode::Opening { gap }, Input::Dropped) => {
-                self.mode = Mode::Opening { gap };
-                if self.online { vec![Effect::ScheduleResubscribe] } else { Vec::new() }
-            }
-            (Mode::Opening { .. }, Input::WantPlus { model }) => { let changed = self.want.insert(model); if changed { vec![Effect::Subscribe] } else { Vec::new() } }
-            (Mode::Opening { .. }, Input::WantMinus { model }) => { let changed = self.want.remove(&model); if changed { vec![Effect::Subscribe] } else { Vec::new() } }
-            (Mode::Opening { .. }, Input::Online(on)) => { self.online = on; Vec::new() }
-            (Mode::Opening { .. }, _) => Vec::new(),
-            (Mode::Live, Input::Event { current: true, model, id }) => {
-                if !self.want.contains(&model) && !self.windows.contains(&model) { return Vec::new(); }
-                if !self.debounce {
-                    self.landing.push_back(vec![(model, id)]);
-                    return vec![Effect::Commit];
-                }
-                let first = self.pending.is_empty();
-                self.pending.push((model, id));
-                if first { vec![Effect::ScheduleTick] } else { Vec::new() }
-            }
-            (Mode::Live, Input::Event { current: false, .. }) => Vec::new(),
-            (Mode::Live, Input::Tick) => {
-                if self.pending.is_empty() { return Vec::new(); }
-                let batch = std::mem::take(&mut self.pending);
-                self.landing.push_back(batch);
-                vec![Effect::Commit]
-            }
-            (Mode::Live, Input::Committed) => self.verdict(None),
-            (Mode::Live, Input::Rejected(Reject::NoSession)) => {
-                self.landing.pop_front();
-                self.mode = Mode::Ended;
-                Vec::new()
-            }
-            (Mode::Live, Input::Rejected(reason)) => self.verdict(Some(reason)),
-            (Mode::Live, Input::ChannelLost { dropped, models }) => {
-                let pending = std::mem::take(&mut self.pending);
                 let mut effects = Vec::new();
-                if !pending.is_empty() {
-                    self.landing.push_back(pending);
-                    effects.push(Effect::Commit);
+                if gap {
+                    let wanted = self.wanted();
+                    for model in &wanted { self.lose(model, 1); }
+                    effects.push(Effect::StaleWindows(wanted));
                 }
+                self.ready_all(&mut effects);
+                effects
+            }
+            (Mode::Opening { gap }, Input::Dropped | Input::Ended) => {
+                if self.online { vec![Effect::ScheduleResubscribe] } else { self.mode = Mode::Off { gap }; Vec::new() }
+            }
+            (Mode::Opening { gap }, Input::Resubscribe) => {
+                if self.online { vec![Effect::Subscribe] } else { self.mode = Mode::Off { gap }; Vec::new() }
+            }
+            (Mode::Opening { .. }, Input::Event { current: true, model, id }) => self.event(model, id),
+            (Mode::Opening { .. }, Input::ChannelLost { dropped, models }) => {
+                for model in &models { self.lose(model, dropped); }
+                vec![Effect::StaleWindows(models)]
+            }
+            (Mode::Opening { gap }, Input::Online(on)) => {
+                self.online = on;
+                if on { Vec::new() } else { self.mode = Mode::Off { gap }; vec![Effect::Unsubscribe] }
+            }
+            (Mode::Opening { .. }, _) => Vec::new(),
+            (Mode::Live, Input::Event { current: true, model, id }) => self.event(model, id),
+            (Mode::Live, Input::Tick) => {
+                let mut effects = Vec::new();
+                self.flush(&mut effects);
+                effects
+            }
+            (Mode::Live, Input::ChannelLost { dropped, models }) => {
+                let mut effects = Vec::new();
+                self.flush(&mut effects);
                 for model in &models { self.lose(model, dropped); }
                 effects.push(Effect::StaleWindows(models));
                 effects
             }
-            (Mode::Live, Input::Dropped) => {
-                self.mode = Mode::Opening { gap: true };
+            (Mode::Live, Input::Dropped | Input::Ended) => {
                 let mut effects = Vec::new();
-                if !self.pending.is_empty() { self.landing.push_back(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
-                effects.push(Effect::Subscribe);
+                self.flush(&mut effects);
+                if self.online {
+                    self.mode = Mode::Opening { gap: true };
+                    effects.push(Effect::Subscribe);
+                } else {
+                    self.mode = Mode::Off { gap: true };
+                }
                 effects
             }
             (Mode::Live, Input::Online(on)) => {
                 self.online = on;
                 if on { return Vec::new(); }
-                self.mode = Mode::Opening { gap: true };
+                self.mode = Mode::Off { gap: true };
                 let mut effects = Vec::new();
-                if !self.pending.is_empty() { self.landing.push_back(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
+                self.flush(&mut effects);
                 effects.push(Effect::Unsubscribe);
                 effects
             }
-            (Mode::Live, Input::ModelsReset { .. }) => Vec::new(),
-            (Mode::Live, Input::WantMinus { model }) => {
-                self.want.remove(&model);
-                if !self.want.is_empty() { return Vec::new(); }
-                self.mode = Mode::Off;
-                let mut effects = Vec::new();
-                if !self.pending.is_empty() { self.landing.push_back(std::mem::take(&mut self.pending)); effects.push(Effect::Commit); }
-                effects.push(Effect::Unsubscribe);
+            (Mode::Live, Input::Ready) => {
+                if !self.switching { return Vec::new(); }
+                self.switching = false;
+                let mut effects = vec![Effect::Unsubscribe];
+                self.ready_all(&mut effects);
                 effects
             }
-            (Mode::Live, Input::WantPlus { model }) => { let changed = self.want.insert(model); if changed { vec![Effect::Subscribe] } else { Vec::new() } }
             (Mode::Live, _) => Vec::new(),
         }
     }

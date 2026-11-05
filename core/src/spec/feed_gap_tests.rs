@@ -21,7 +21,7 @@ fn names(models: &[&str]) -> Vec<String> { models.iter().map(|model| model.to_st
 
 fn mode_of(mode: f::Mode) -> Mode {
     match mode {
-        f::Mode::Off => Mode::Off,
+        f::Mode::Off { gap } => Mode::Off { gap },
         f::Mode::Opening { gap } => Mode::Opening { gap },
         f::Mode::Live => Mode::Live,
         f::Mode::Ended => Mode::Ended,
@@ -41,19 +41,18 @@ struct Twin {
 }
 
 impl Twin {
-    fn new() -> Self { Self::with(true, true, true) }
+    fn new() -> Self { Self::with(true, true) }
 
     /// Events land at once: `updates.debounce` is not declared.
-    fn immediate() -> Self { Self::with(true, true, false) }
+    fn immediate() -> Self { Self::with(true, false) }
 
-    fn with(online: bool, session: bool, debounce: bool) -> Self {
+    fn with(online: bool, debounce: bool) -> Self {
         let mut det = DetScheduler::new(11);
         let log = new_log();
-        let addr = det.add::<Feed>("feed", f::FeedState::new(EPOCH, online, session), Recorder::<Feed>::new(&log));
+        let addr = det.add::<Feed>("feed", f::FeedState::new(EPOCH, online), Recorder::<Feed>::new(&log));
         det.start_epoch(EPOCH);
         let mut reference = Ref::new();
         reference.online = online;
-        reference.session = session;
         reference.debounce = debounce;
         Self { det, addr, log, reference, debounce_ms: if debounce { DEBOUNCE_MS } else { 0 }, connection: 0, batches: VecDeque::new(), generation: 0 }
     }
@@ -75,7 +74,19 @@ impl Twin {
     fn step(&mut self, input: Input) -> Vec<Effect> {
         take(&self.log);
         match &input {
-            Input::WantPlus { model } => self.post(f::FeedInput::WantPlus { model: model.clone(), debounce_ms: self.debounce_ms }),
+            Input::WantPlus { model } => self.post(f::FeedInput::WantPlus { model: model.clone(), debounce_ms: self.debounce_ms, delivery: false }),
+            Input::WantDelivery { model } => self.post(f::FeedInput::WantPlus { model: model.clone(), debounce_ms: self.debounce_ms, delivery: true }),
+            Input::Ended => self.frame(self.connection, Frame::Ended),
+            Input::Stray => {
+                for frame in [Frame::Ready, Frame::Dropped, Frame::Ended, Frame::ChannelLost { dropped: 1, models: vec!["Chat".into()] }, Frame::Event { model: "Chat".into(), payload: "x".into() }] {
+                    self.frame(9_999, frame);
+                }
+                self.post(f::FeedInput::ResubscribeDue { connection: 9_999 });
+            }
+            Input::Resubscribe => {
+                let connection = self.connection;
+                self.post(f::FeedInput::ResubscribeDue { connection });
+            }
             Input::WantMinus { model } => self.post(f::FeedInput::WantMinus { model: model.clone() }),
             Input::Ready => self.frame(self.connection, Frame::Ready),
             Input::Event { current, model, id } => {
@@ -104,7 +115,7 @@ impl Twin {
                 self.generation += 1;
                 self.post(f::FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: self.generation, models: models.clone() }));
             }
-            Input::EpochStarted => self.post(f::FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: None, generation: 0 })),
+            Input::EpochStarted => self.post(f::FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(7), generation: 0 })),
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
                 self.run();
@@ -132,7 +143,7 @@ impl Twin {
                 }
                 FeedEffect::Unsubscribe => modelled.push(Effect::Unsubscribe),
                 FeedEffect::ScheduleTick { .. } => modelled.push(Effect::ScheduleTick),
-                FeedEffect::ScheduleResubscribe { connection } => {
+                FeedEffect::ScheduleResubscribe { connection, .. } => {
                     self.connection = connection;
                     modelled.push(Effect::ScheduleResubscribe);
                 }
@@ -145,7 +156,10 @@ impl Twin {
                 FeedEffect::ModelEvent { model, position, payload } => seen.push(Obs::Event { model, position, id: payload }),
                 FeedEffect::ModelLost { model, first, last } => seen.push(Obs::Lost { model, first, last }),
                 FeedEffect::Ended => seen.push(Obs::Ended),
-                FeedEffect::CloseConnection { .. } | FeedEffect::RereadWindows(_) => {}
+                FeedEffect::CloseConnection { .. } => modelled.push(Effect::Unsubscribe),
+                FeedEffect::Joined { model, .. } => modelled.push(Effect::Joined(model)),
+                FeedEffect::ModelReady { model } => modelled.push(Effect::ModelReady(model)),
+                FeedEffect::RereadWindows(_) => {}
             }
         }
         (modelled, seen)
@@ -176,16 +190,15 @@ fn feed_off_want_owner() {
 
 #[test]
 fn feed_off_want_offline_owner() {
-    for mut twin in [Twin::with(false, true, true), Twin::with(true, false, true)] {
-        assert!(want(&mut twin, "Chat").is_empty());
-        assert_eq!(twin.state().mode(), f::Mode::Off);
-        assert_eq!(twin.state().wants(), names(&["Chat"]));
-    }
+    let mut twin = Twin::with(false, true);
+    assert!(want(&mut twin, "Chat").is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+    assert_eq!(twin.state().wants(), names(&["Chat"]));
 }
 
 #[test]
 fn feed_off_unwant_owner() {
-    let mut twin = Twin::with(false, true, true);
+    let mut twin = Twin::with(false, true);
     want(&mut twin, "Chat");
     assert!(twin.step(Input::WantMinus { model: "Chat".into() }).is_empty());
     assert!(twin.step(Input::Online(true)).is_empty(), "no reader is left, so coming online subscribes to nothing");
@@ -193,17 +206,14 @@ fn feed_off_unwant_owner() {
 
 #[test]
 fn feed_off_resume_owner() {
-    let mut by_network = Twin::with(false, true, true);
+    let mut by_network = Twin::with(false, true);
     want(&mut by_network, "Chat");
     assert_eq!(by_network.step(Input::Online(true)), [Effect::Subscribe]);
-    let mut by_session = Twin::with(true, false, true);
-    want(&mut by_session, "Chat");
-    assert_eq!(by_session.step(Input::EpochStarted), [Effect::Subscribe]);
 }
 
 #[test]
 fn feed_off_stray_owner() {
-    let mut twin = Twin::with(false, true, true);
+    let mut twin = Twin::with(false, true);
     want(&mut twin, "Chat");
     twin.connection = 77;
     for input in [Input::Event { current: false, model: "Chat".into(), id: "c1".into() }, Input::Ready, Input::ChannelLost { dropped: 1, models: names(&["Chat"]) }, Input::Dropped, Input::Tick] {
@@ -227,7 +237,7 @@ fn feed_stray_batch() {
     let mut twin = live();
     assert!(twin.step(Input::StrayBatch).is_empty());
     assert_eq!(twin.state().position("Chat"), 0);
-    let mut off = Twin::with(false, true, true);
+    let mut off = Twin::with(false, true);
     assert!(off.step(Input::StrayBatch).is_empty());
 }
 
@@ -235,7 +245,7 @@ fn feed_stray_batch() {
 fn feed_opening_ready_owner() {
     let mut twin = Twin::new();
     want(&mut twin, "Chat");
-    assert!(twin.step(Input::Ready).is_empty());
+    assert_eq!(twin.step(Input::Ready), [Effect::ModelReady("Chat".into())]);
     assert_eq!(twin.state().mode(), f::Mode::Live);
 }
 
@@ -243,7 +253,7 @@ fn feed_opening_ready_owner() {
 fn feed_opening_ready_after_gap_owner() {
     let mut twin = live();
     twin.step(Input::Dropped);
-    assert_eq!(twin.step(Input::Ready), [Effect::StaleWindows(names(&["Chat"]))]);
+    assert_eq!(twin.step(Input::Ready), [Effect::StaleWindows(names(&["Chat"])), Effect::ModelReady("Chat".into())]);
     assert_eq!(twin.state().position("Chat"), 1, "the break is one Lost position");
 }
 
@@ -268,9 +278,9 @@ fn feed_opening_want() {
     let mut twin = Twin::new();
     want(&mut twin, "Chat");
     let first = twin.connection;
-    assert_eq!(want(&mut twin, "Post"), [Effect::Subscribe]);
+    assert_eq!(want(&mut twin, "Post"), [Effect::Unsubscribe, Effect::Subscribe]);
     assert_ne!(twin.connection, first, "a changed set subscribes on a new connection");
-    assert!(twin.step(Input::WantMinus { model: "Post".into() }) == [Effect::Subscribe]);
+    assert!(twin.step(Input::WantMinus { model: "Post".into() }).is_empty(), "the subscription narrows at the next Subscribe");
     assert!(want(&mut twin, "Chat").is_empty(), "the same set does not subscribe again");
 }
 
@@ -343,7 +353,7 @@ fn feed_live_rejected_storage() {
 fn feed_live_rejected_session() {
     let mut twin = live_immediate();
     event(&mut twin, "Chat", "c1");
-    assert!(twin.step(Input::Rejected(Reject::NoSession)).is_empty());
+    assert_eq!(twin.step(Input::Rejected(Reject::NoSession)), [Effect::Unsubscribe]);
     assert_eq!(twin.state().mode(), f::Mode::Ended);
 }
 
@@ -362,7 +372,7 @@ fn feed_live_dropped_owner() {
     let mut twin = live();
     event(&mut twin, "Chat", "c1");
     assert_eq!(twin.step(Input::Dropped), [Effect::Commit, Effect::Subscribe]);
-    assert_eq!(twin.step(Input::Ready), [Effect::StaleWindows(names(&["Chat"]))]);
+    assert_eq!(twin.step(Input::Ready), [Effect::StaleWindows(names(&["Chat"])), Effect::ModelReady("Chat".into())]);
 }
 
 #[test]
@@ -370,7 +380,7 @@ fn feed_live_offline_owner() {
     let mut twin = live();
     event(&mut twin, "Chat", "c1");
     assert_eq!(twin.step(Input::Online(false)), [Effect::Commit, Effect::Unsubscribe]);
-    assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
+    assert!(matches!(twin.state().mode(), f::Mode::Off { gap: true }));
 }
 
 #[test]
@@ -387,7 +397,7 @@ fn feed_live_last_unwant_owner() {
     let mut twin = live();
     event(&mut twin, "Chat", "c1");
     assert_eq!(twin.step(Input::WantMinus { model: "Chat".into() }), [Effect::Commit, Effect::Unsubscribe]);
-    assert_eq!(twin.state().mode(), f::Mode::Off);
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
 }
 
 #[test]
@@ -407,7 +417,7 @@ fn feed_epoch_ended() {
     event(&mut twin, "Chat", "c1");
     assert_eq!(twin.step(Input::EpochEnded), [Effect::Unsubscribe]);
     assert_eq!(twin.state().pending(), 0, "the pending events of the ended epoch are dropped");
-    for mode in [Twin::new(), Twin::with(false, true, true)] {
+    for mode in [Twin::new(), Twin::with(false, true)] {
         let mut off = mode;
         assert_eq!(off.step(Input::EpochEnded), [Effect::Unsubscribe]);
     }
@@ -446,7 +456,7 @@ impl EffectRunner<Feed> for Executor {
         self.log.lock().unwrap_or_else(PoisonError::into_inner).push(effect.clone());
         match effect {
             FeedEffect::Subscribe { connection, .. } => back.reply(stamp, f::FeedInput::Frame(SubscriptionFrame { connection_id: connection, frame: Frame::Ready })),
-            FeedEffect::ScheduleResubscribe { connection } => back.reply(stamp, f::FeedInput::ResubscribeDue { connection }),
+            FeedEffect::ScheduleResubscribe { connection, .. } => back.reply(stamp, f::FeedInput::ResubscribeDue { connection }),
             FeedEffect::Commit { batch, events } => {
                 let stale = self.post_generation.load(Ordering::SeqCst);
                 let refused: Vec<String> = events.iter().filter(|event| event.model == "Post" && event.basis < stale).map(|event| event.model.clone()).collect();
@@ -473,9 +483,9 @@ fn rig(debounce_ms: u64, frames: Vec<f::FeedInput>, with_reset: bool) -> DetSche
     let mut det = DetScheduler::new(1);
     let log = new_log();
     let post_generation = Arc::new(AtomicU64::new(0));
-    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, true, true), Executor { log: log.clone(), post_generation: post_generation.clone() });
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, true), Executor { log: log.clone(), post_generation: post_generation.clone() });
     det.start_epoch(EPOCH);
-    let readers = det.add::<Source<Feed>>("readers", SourceState { to: feed, script: vec![f::FeedInput::WantPlus { model: "Chat".into(), debounce_ms }, f::FeedInput::WantPlus { model: "Post".into(), debounce_ms }] }, Silent);
+    let readers = det.add::<Source<Feed>>("readers", SourceState { to: feed, script: vec![f::FeedInput::WantPlus { model: "Chat".into(), debounce_ms, delivery: false }, f::FeedInput::WantPlus { model: "Post".into(), debounce_ms, delivery: false }] }, Silent);
     let transport = det.add::<Source<Feed>>("transport", SourceState { to: feed, script: frames }, Silent);
     let clock = det.add::<Source<Feed>>("clock", SourceState { to: feed, script: vec![f::FeedInput::Tick(Time(1)), f::FeedInput::Tick(Time(2))] }, Silent);
     for source in [readers, transport, clock] {
@@ -569,7 +579,7 @@ fn feed_prop_gap_visible_owner() {
     let before = (twin.state().position("Chat"), twin.state().position("Post"));
     twin.step(Input::Dropped);
     let effects = twin.step(Input::Ready);
-    assert_eq!(effects, [Effect::StaleWindows(names(&["Chat", "Post"]))]);
+    assert_eq!(effects, [Effect::StaleWindows(names(&["Chat", "Post"])), Effect::ModelReady("Chat".into()), Effect::ModelReady("Post".into())]);
     assert_eq!((twin.state().position("Chat"), twin.state().position("Post")), (before.0 + 1, before.1 + 1), "one position per model");
 }
 
@@ -622,4 +632,217 @@ fn feed_prop_idle_owner() {
     assert!(take(&twin.log).is_empty(), "a live feed without frames asks nothing");
     let mut off = Twin::new();
     assert!(off.step(Input::Tick).is_empty());
+}
+
+// Cells of the second revision of `feed.md`: `Joined`, `ModelReady`, `SubscriptionEnded`, `Off{gap}`, events and losses while `Opening`.
+
+fn want_delivery(twin: &mut Twin, model: &str) -> Vec<Effect> { twin.step(Input::WantDelivery { model: model.into() }) }
+
+#[test]
+fn feed_created_owner() {
+    let mut twin = Twin::immediate();
+    assert!(twin.step(Input::EpochStarted).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+    twin.post(f::FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(7), generation: 4 }));
+    want(&mut twin, "Chat");
+    twin.step(Input::Ready);
+    take(&twin.log);
+    twin.frame(twin.connection, Frame::Event { model: "Chat".into(), payload: "c1".into() });
+    let effects = take(&twin.log);
+    assert!(effects.iter().any(|effect| matches!(effect, FeedEffect::Commit { events, .. } if events[0].basis == 4)), "the basis of an event is the generation of the epoch: {effects:?}");
+}
+
+#[test]
+fn feed_off_models_reset_owner() {
+    let mut twin = Twin::with(false, true);
+    assert!(twin.step(Input::ModelsReset { models: names(&["Chat"]) }).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+}
+
+#[test]
+fn feed_off_offline_owner() {
+    let mut twin = Twin::with(false, true);
+    want(&mut twin, "Chat");
+    assert!(twin.step(Input::Online(false)).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+}
+
+#[test]
+fn feed_off_online_no_want_owner() {
+    let mut twin = Twin::with(false, true);
+    assert!(twin.step(Input::Online(true)).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+}
+
+#[test]
+fn feed_opening_channel_lost_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert_eq!(twin.step(Input::ChannelLost { dropped: 2, models: names(&["Chat"]) }), [Effect::StaleWindows(names(&["Chat"]))]);
+    assert_eq!(twin.state().position("Chat"), 2);
+}
+
+#[test]
+fn feed_opening_event_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert_eq!(event(&mut twin, "Chat", "c1"), [Effect::ScheduleTick]);
+    twin.step(Input::Ready);
+    assert_eq!(twin.step(Input::Tick), [Effect::Commit]);
+}
+
+#[test]
+fn feed_opening_last_unwant_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert_eq!(twin.step(Input::WantMinus { model: "Chat".into() }), [Effect::Unsubscribe]);
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+}
+
+#[test]
+fn feed_opening_models_reset_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert!(twin.step(Input::ModelsReset { models: names(&["Chat"]) }).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
+}
+
+#[test]
+fn feed_opening_offline_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert_eq!(twin.step(Input::Online(false)), [Effect::Unsubscribe]);
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+    assert_eq!(twin.step(Input::Online(true)), [Effect::Subscribe], "the want is kept: coming online opens the subscription again");
+}
+
+#[test]
+fn feed_opening_online_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert!(twin.step(Input::Online(true)).is_empty());
+    assert!(twin.step(Input::Tick).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
+}
+
+#[test]
+fn feed_opening_resubscribe_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert_eq!(twin.step(Input::Ended), [Effect::ScheduleResubscribe], "SubscriptionEnded takes the cells of Dropped");
+    assert_eq!(twin.step(Input::Resubscribe), [Effect::Subscribe]);
+}
+
+#[test]
+fn feed_opening_stray_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert!(twin.step(Input::Stray).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
+}
+
+#[test]
+fn feed_opening_unwant_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    want(&mut twin, "Post");
+    assert!(twin.step(Input::WantMinus { model: "Post".into() }).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
+}
+
+#[test]
+fn feed_opening_want_same_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert_eq!(want_delivery(&mut twin, "Chat"), [Effect::Joined("Chat".into())], "a model that is wanted already joins without a new subscription");
+    assert!(twin.step(Input::WantMinus { model: "Chat".into() }).is_empty(), "the counter keeps the model");
+    assert_eq!(twin.state().wants(), names(&["Chat"]));
+}
+
+#[test]
+fn feed_live_online_owner() {
+    let mut twin = live();
+    assert!(twin.step(Input::Online(true)).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+}
+
+#[test]
+fn feed_live_stray_owner() {
+    let mut twin = live();
+    assert!(twin.step(Input::Stray).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+    assert_eq!(twin.state().pending(), 0);
+}
+
+#[test]
+fn feed_live_stray_batch_owner() {
+    let mut twin = live();
+    assert!(twin.step(Input::StrayBatch).is_empty());
+    assert_eq!(twin.state().position("Chat"), 0);
+}
+
+#[test]
+fn feed_live_tick_empty_owner() {
+    let mut twin = live();
+    assert!(twin.step(Input::Tick).is_empty());
+}
+
+#[test]
+fn feed_live_unwant_owner() {
+    let mut twin = live();
+    want(&mut twin, "Post");
+    twin.step(Input::Ready);
+    assert!(twin.step(Input::WantMinus { model: "Post".into() }).is_empty(), "the subscription narrows at the next Subscribe");
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+}
+
+#[test]
+fn feed_live_want_same_owner() {
+    let mut twin = live();
+    assert_eq!(want_delivery(&mut twin, "Chat"), [Effect::Joined("Chat".into()), Effect::ModelReady("Chat".into())]);
+}
+
+#[test]
+fn feed_live_ready_switch_owner() {
+    let mut twin = live();
+    want(&mut twin, "Post");
+    assert_eq!(twin.step(Input::Ready), [Effect::Unsubscribe, Effect::ModelReady("Chat".into()), Effect::ModelReady("Post".into())]);
+}
+
+#[test]
+fn feed_ended_closing_owner() {
+    let mut twin = live();
+    twin.step(Input::EpochEnded);
+    assert_eq!(twin.step(Input::Closing), [Effect::Drained]);
+}
+
+#[test]
+fn feed_wait_ready_owner() {
+    let mut opening = Twin::new();
+    assert_eq!(want_delivery(&mut opening, "Chat"), [Effect::Joined("Chat".into()), Effect::Subscribe]);
+    assert_eq!(opening.step(Input::Ready), [Effect::ModelReady("Chat".into())], "Ready comes with the subscription of the server");
+    let mut live = live();
+    assert_eq!(want_delivery(&mut live, "Chat"), [Effect::Joined("Chat".into()), Effect::ModelReady("Chat".into())], "a live subscription answers at once");
+}
+
+/// P-FEED-07: no `Want+` means no `Subscribe`, however often the network comes back.
+#[test]
+fn feed_prop_subscribe_needs_want_owner() {
+    let mut twin = Twin::with(false, true);
+    for on in [true, false, true, false, true] {
+        assert!(twin.step(Input::Online(on)).is_empty());
+    }
+    assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
+}
+
+/// P-FEED-08: every `Want+` of a stream gets one `Joined`, and it comes before the first event of the model.
+#[test]
+fn feed_prop_joined_first_owner() {
+    let mut twin = Twin::immediate();
+    let first = want_delivery(&mut twin, "Chat");
+    assert_eq!(first.iter().filter(|effect| matches!(effect, Effect::Joined(_))).count(), 1);
+    twin.step(Input::Ready);
+    event(&mut twin, "Chat", "c1");
+    twin.step(Input::Committed);
+    assert_eq!(twin.state().position("Chat"), 1, "the event came after the join");
 }

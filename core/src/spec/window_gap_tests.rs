@@ -10,7 +10,7 @@ use std::sync::{Arc, PoisonError};
 
 use super::harness::Phase;
 use super::ref_window::{Effect, Failure, Input, Reject, Result3, State, Window};
-use crate::owners::contract::{Committed, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, Transport, RequestError, TransportOutcome};
+use crate::owners::contract::{Committed, EpochStarted, ErrorClass, Stale, ModelsReset, Online, RejectReason, Rejected, Transport, RequestError, TransportOutcome};
 use crate::owners::deliveries::{LoadState, Phase as OwnerPhase};
 use crate::owners::support::{new_log, snapshot, take, Log, Recorder, Reset, ResetState, Silent, Source, SourceInput, SourceState, StoreGeneration};
 use crate::owners::windows::{self as w, WindowOutcome, AnswerPage, WindowStage, WindowEffect, WindowKey, Windows, WindowsEffect};
@@ -56,22 +56,20 @@ struct Twin {
     /// Interest ids join as streams: they stay in the interest after the outcome.
     streams: bool,
     revision: i64,
-    stale_mark: i64,
     generation: u64,
 }
 
 impl Twin {
-    fn new() -> Self { Self::with(true, true) }
+    fn new() -> Self { Self::with(true) }
 
-    fn with(online: bool, session: bool) -> Self {
+    fn with(online: bool) -> Self {
         let mut det = DetScheduler::new(3);
         let log = new_log();
-        let addr = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, online, session), Recorder::<Windows>::new(&log));
+        let addr = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, online), Recorder::<Windows>::new(&log));
         det.start_epoch(EPOCH);
         let mut reference = Window::new();
         reference.online = online;
-        reference.session = session;
-        Self { det, addr, log, reference, cursor: false, streams: false, revision: 10, stale_mark: 0, generation: 0 }
+        Self { det, addr, log, reference, cursor: false, streams: false, revision: 10, generation: 0 }
     }
 
     fn state(&self) -> &w::WindowsState { self.det.state(self.addr).expect("the owner state") }
@@ -103,11 +101,9 @@ impl Twin {
         take(&self.log);
         let k = key();
         match &input {
-            Input::InterestPlus { id, force } => {
-                if self.streams {
-                    self.reference.watched = true;
-                }
-                self.post_call(w::WindowsInput::InterestPlus { key: k, id: *id, force: *force, stream: self.streams });
+            Input::InterestPlus { id, force, all } => {
+                self.reference.stream_mode = self.streams;
+                self.post_call(w::WindowsInput::InterestPlus { key: k, id: *id, force: *force, all: *all, stream: self.streams });
             }
             Input::InterestMinus { id } => self.post_call(w::WindowsInput::InterestMinus { key: k, id: *id }),
             Input::LoadMore { id } => self.post_call(w::WindowsInput::LoadMore { key: k, id: *id }),
@@ -132,17 +128,9 @@ impl Twin {
                 };
                 self.post(w::WindowsInput::Rejected(Rejected { batch: *request, reason }));
             }
-            Input::Stale { newer_than_issue } => {
-                let revision = if *newer_than_issue {
-                    self.stale_mark += 1000;
-                    self.stale_mark
-                } else {
-                    0
-                };
-                self.post(w::WindowsInput::Stale { key: k, revision });
-            }
+            Input::Stale => self.post(w::WindowsInput::Stale(Stale { model: "Moment".into() })),
+            Input::Dropped { request } => self.post(w::WindowsInput::Transport(Transport { req_id: *request, outcome: TransportOutcome::Dropped })),
             Input::Online(on) => self.post(w::WindowsInput::Online(Online(*on))),
-            Input::EpochStarted => self.post(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: None, generation: 0 })),
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
                 self.run();
@@ -221,7 +209,7 @@ impl RefRequest for Window {
 /// A window that loaded its first page for caller 1: `Idle{fresh}`, rows in the base. The reference outcome of the call is read.
 fn fresh() -> Twin {
     let mut twin = Twin::new();
-    twin.step(Input::InterestPlus { id: 1, force: false });
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
     run_load(&mut twin, 1);
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
     twin
@@ -231,14 +219,14 @@ fn fresh() -> Twin {
 fn fresh_watched() -> Twin {
     let mut twin = Twin::new();
     twin.streams = true;
-    twin.step(Input::InterestPlus { id: 1, force: false });
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
     run_load(&mut twin, 1);
     twin
 }
 
 fn loading() -> Twin {
     let mut twin = Twin::new();
-    twin.step(Input::InterestPlus { id: 1, force: false });
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
     twin
 }
@@ -251,8 +239,8 @@ fn landing() -> Twin {
 }
 
 fn waiting() -> Twin {
-    let mut twin = Twin::with(false, true);
-    twin.step(Input::InterestPlus { id: 1, force: false });
+    let mut twin = Twin::with(false);
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
     twin
 }
@@ -260,7 +248,7 @@ fn waiting() -> Twin {
 #[test]
 fn win_idle_interest_fresh_owner() {
     let mut twin = fresh();
-    let effects = twin.step(Input::InterestPlus { id: 2, force: false });
+    let effects = twin.step(Input::InterestPlus { id: 2, force: false, all: false });
     assert_eq!(effects, [Effect::WindowState]);
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
     assert_eq!(twin.phase(), Phase::Loaded);
@@ -269,20 +257,17 @@ fn win_idle_interest_fresh_owner() {
 #[test]
 fn win_idle_interest_load_owner() {
     let mut twin = Twin::new();
-    assert_eq!(twin.step(Input::InterestPlus { id: 1, force: false }), [Effect::Request { request: 1, page: 1 }, Effect::WindowState]);
+    assert_eq!(twin.step(Input::InterestPlus { id: 1, force: false, all: false }), [Effect::Request { request: 1, page: 1 }, Effect::WindowState]);
     assert_eq!(twin.phase(), Phase::Loading);
     let mut forced = fresh();
-    assert_eq!(forced.step(Input::InterestPlus { id: 2, force: true }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState], "force loads a fresh window");
+    assert_eq!(forced.step(Input::InterestPlus { id: 2, force: true, all: false }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState], "force loads a fresh window");
 }
 
 #[test]
 fn win_idle_interest_offline_owner() {
-    let mut twin = Twin::with(false, true);
-    assert_eq!(twin.step(Input::InterestPlus { id: 1, force: false }), [Effect::WindowState]);
+    let mut twin = Twin::with(false);
+    assert_eq!(twin.step(Input::InterestPlus { id: 1, force: false, all: false }), [Effect::WindowState]);
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    let mut no_session = Twin::with(true, false);
-    assert_eq!(no_session.step(Input::InterestPlus { id: 1, force: false }), [Effect::WindowState]);
-    assert_eq!(no_session.stage(), Some(WindowStage::Waiting));
 }
 
 #[test]
@@ -297,9 +282,9 @@ fn win_idle_interest_minus_owner() {
 fn win_idle_load_more_owner() {
     let mut twin = Twin::new();
     twin.cursor = true;
-    twin.step(Input::InterestPlus { id: 1, force: false });
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
     run_load(&mut twin, 1);
-    assert_eq!(twin.step(Input::LoadMore { id: 2 }), [Effect::Request { request: 2, page: 2 }]);
+    assert_eq!(twin.step(Input::LoadMore { id: 2 }), [Effect::Request { request: 2, page: 2 }, Effect::WindowState]);
     assert_eq!(twin.phase(), Phase::Loading);
 }
 
@@ -313,7 +298,7 @@ fn win_idle_load_more_end_owner() {
 #[test]
 fn win_idle_stale_watched() {
     let mut twin = fresh_watched();
-    assert_eq!(twin.step(Input::Stale { newer_than_issue: true }), [Effect::Request { request: 2, page: 1 }]);
+    assert_eq!(twin.step(Input::Stale), [Effect::Request { request: 2, page: 1 }, Effect::WindowState]);
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
     assert_eq!(twin.phase(), Phase::Loading);
 }
@@ -322,16 +307,16 @@ fn win_idle_stale_watched() {
 fn win_idle_stale_unwatched() {
     let mut twin = fresh();
     assert!(Window::idle_fresh().stale_idle(false).is_empty(), "the reference gives no effect for an unwatched window");
-    assert!(twin.step(Input::Stale { newer_than_issue: true }).is_empty());
+    assert!(twin.step(Input::Stale).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
-    assert_eq!(twin.step(Input::InterestPlus { id: 2, force: false }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState], "the next interest loads because the window is stale");
+    assert_eq!(twin.step(Input::InterestPlus { id: 2, force: false, all: false }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState], "the next interest loads because the window is stale");
 }
 
 /// Drives a load to `Idle{last_error = network}`: three temporary network errors.
 fn network_failed() -> Twin {
     let mut twin = Twin::new();
     twin.streams = true;
-    twin.step(Input::InterestPlus { id: 1, force: false });
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
     for _ in 0..2 {
         assert_eq!(twin.step(Input::TransportError { request: 1, failure: Failure::Network }), [Effect::ScheduleRetry]);
         assert_eq!(twin.step(Input::RetryDue), [Effect::Request { request: 1, page: 1 }]);
@@ -344,7 +329,7 @@ fn network_failed() -> Twin {
 #[test]
 fn win_idle_online_retry_owner() {
     let mut twin = network_failed();
-    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, page: 1 }]);
+    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, page: 1 }, Effect::WindowState]);
 }
 
 #[test]
@@ -353,7 +338,7 @@ fn win_idle_online_owner() {
     assert!(twin.step(Input::Online(true)).is_empty());
     assert!(twin.step(Input::Online(false)).is_empty());
     let mut failed = Twin::new();
-    failed.step(Input::InterestPlus { id: 1, force: false });
+    failed.step(Input::InterestPlus { id: 1, force: false, all: false });
     failed.step(Input::TransportError { request: 1, failure: Failure::Permanent });
     assert!(failed.step(Input::Online(true)).is_empty(), "a permanent error is not retried when the network returns");
 }
@@ -361,17 +346,17 @@ fn win_idle_online_owner() {
 #[test]
 fn win_idle_models_reset() {
     let mut watched = fresh_watched();
-    assert_eq!(watched.step(Input::ModelsReset { own_model: true }), [Effect::Request { request: 2, page: 1 }]);
+    assert_eq!(watched.step(Input::ModelsReset { own_model: true }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState]);
     let mut unwatched = fresh();
     assert!(unwatched.step(Input::ModelsReset { own_model: true }).is_empty());
-    assert_eq!(unwatched.step(Input::InterestPlus { id: 2, force: false }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState], "a reset window is no longer fresh");
+    assert_eq!(unwatched.step(Input::InterestPlus { id: 2, force: false, all: false }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState], "a reset window is no longer fresh");
 }
 
 #[test]
 fn win_idle_models_other() {
     let mut twin = fresh_watched();
     assert!(twin.step(Input::ModelsReset { own_model: false }).is_empty());
-    assert_eq!(twin.step(Input::InterestPlus { id: 2, force: false }), [Effect::WindowState], "the window of another model stays fresh");
+    assert_eq!(twin.step(Input::InterestPlus { id: 2, force: false, all: false }), [Effect::WindowState], "the window of another model stays fresh");
 }
 
 #[test]
@@ -386,7 +371,7 @@ fn win_idle_stray_owner() {
 #[test]
 fn win_loading_join_owner() {
     let mut twin = loading();
-    assert!(twin.step(Input::InterestPlus { id: 2, force: true }).is_empty());
+    assert!(twin.step(Input::InterestPlus { id: 2, force: true, all: false }).is_empty());
     twin.step(Input::Response { request: 1 });
     let effects = twin.step(Input::Committed { request: 1 });
     assert_eq!(effects, [Effect::WindowState]);
@@ -395,7 +380,7 @@ fn win_loading_join_owner() {
 #[test]
 fn win_loading_leave_owner() {
     let mut twin = loading();
-    twin.step(Input::InterestPlus { id: 2, force: false });
+    twin.step(Input::InterestPlus { id: 2, force: false, all: false });
     assert!(twin.step(Input::InterestMinus { id: 2 }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
@@ -419,7 +404,7 @@ fn win_loading_response_owner() {
 fn win_loading_temp_error_owner() {
     for (failure, retries) in [(Failure::Network, 2), (Failure::Server, 1)] {
         let mut twin = Twin::new();
-        twin.step(Input::InterestPlus { id: 1, force: false });
+        twin.step(Input::InterestPlus { id: 1, force: false, all: false });
         for _ in 0..retries {
             assert_eq!(twin.step(Input::TransportError { request: 1, failure }), [Effect::ScheduleRetry]);
             assert_eq!(twin.step(Input::RetryDue), [Effect::Request { request: 1, page: 1 }]);
@@ -433,7 +418,7 @@ fn win_loading_attempts_exhausted_owner() {
     let twin = network_failed();
     assert_eq!(twin.phase(), Phase::Failed, "no rows: Failed");
     let mut with_rows = fresh();
-    with_rows.step(Input::InterestPlus { id: 2, force: true });
+    with_rows.step(Input::InterestPlus { id: 2, force: true, all: false });
     for _ in 0..2 {
         with_rows.step(Input::TransportError { request: 2, failure: Failure::Network });
         with_rows.step(Input::RetryDue);
@@ -462,17 +447,9 @@ fn win_loading_offline_owner() {
 #[test]
 fn win_loading_stale() {
     let mut twin = loading();
-    assert!(twin.step(Input::Stale { newer_than_issue: true }).is_empty());
+    assert!(twin.step(Input::Stale).is_empty());
     twin.step(Input::Response { request: 1 });
     assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState], "a mark made during the load loads once more after the answer");
-}
-
-#[test]
-fn win_loading_stale_covered() {
-    let mut twin = loading();
-    assert!(twin.step(Input::Stale { newer_than_issue: false }).is_empty());
-    twin.step(Input::Response { request: 1 });
-    assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::WindowState], "a mark the request already covers does not load again");
 }
 
 #[test]
@@ -501,7 +478,7 @@ fn win_landing_committed_owner() {
 #[test]
 fn win_landing_committed_again() {
     let mut twin = landing();
-    assert!(twin.step(Input::Stale { newer_than_issue: true }).is_empty());
+    assert!(twin.step(Input::Stale).is_empty());
     assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState]);
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
@@ -531,21 +508,21 @@ fn win_landing_storage() {
 #[test]
 fn win_landing_join() {
     let mut twin = landing();
-    assert!(twin.step(Input::InterestPlus { id: 2, force: false }).is_empty());
+    assert!(twin.step(Input::InterestPlus { id: 2, force: false, all: false }).is_empty());
     assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::WindowState], "both callers get the outcome of the landing");
 }
 
 #[test]
 fn win_landing_stale() {
     let mut twin = landing();
-    assert!(twin.step(Input::Stale { newer_than_issue: true }).is_empty());
+    assert!(twin.step(Input::Stale).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Landing));
 }
 
 #[test]
 fn win_landing_wait() {
     let mut twin = landing();
-    for input in [Input::InterestMinus { id: 9 }, Input::Stale { newer_than_issue: false }, Input::Online(true), Input::ModelsReset { own_model: true }] {
+    for input in [Input::InterestMinus { id: 9 }, Input::Stale, Input::Online(true), Input::ModelsReset { own_model: true }] {
         assert!(twin.step(input).is_empty());
         assert_eq!(twin.stage(), Some(WindowStage::Landing), "the landing ends by the verdict of the store alone");
     }
@@ -554,18 +531,14 @@ fn win_landing_wait() {
 #[test]
 fn win_waiting_resume_owner() {
     let mut by_network = waiting();
-    assert_eq!(by_network.step(Input::Online(true)), [Effect::Request { request: 1, page: 1 }]);
-    let mut by_session = Twin::with(true, false);
-    by_session.step(Input::InterestPlus { id: 1, force: false });
-    assert_eq!(by_session.step(Input::EpochStarted), [Effect::Request { request: 1, page: 1 }]);
-    assert_eq!(by_session.stage(), Some(WindowStage::Loading));
+    assert_eq!(by_network.step(Input::Online(true)), [Effect::Request { request: 1, page: 1 }, Effect::WindowState]);
 }
 
 #[test]
 fn win_waiting_join_owner() {
     let mut twin = waiting();
-    assert!(twin.step(Input::InterestPlus { id: 2, force: false }).is_empty());
-    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 1, page: 1 }]);
+    assert!(twin.step(Input::InterestPlus { id: 2, force: false, all: false }).is_empty());
+    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 1, page: 1 }, Effect::WindowState]);
     assert_eq!(twin.state().interest(&key()), [1, 2]);
 }
 
@@ -602,7 +575,7 @@ fn win_closing_owner() {
 fn win_ended_owner() {
     let mut twin = loading();
     twin.step(Input::EpochEnded);
-    assert!(twin.step(Input::InterestPlus { id: 5, force: false }).is_empty());
+    assert!(twin.step(Input::InterestPlus { id: 5, force: false, all: false }).is_empty());
     assert!(twin.step(Input::Online(true)).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Ended));
 }
@@ -666,13 +639,13 @@ fn explore_rig() -> DetScheduler {
     let mut det = DetScheduler::new(1);
     let log = new_log();
     let generation = Arc::new(AtomicU64::new(0));
-    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true, true), Executor { log: log.clone(), store_generation: generation.clone(), revision: 0 });
+    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true), Executor { log: log.clone(), store_generation: generation.clone(), revision: 0 });
     det.start_epoch(EPOCH);
     let callers = det.add::<Source<Windows>>("callers", SourceState { to: windows, script: vec![
-        w::WindowsInput::InterestPlus { key: key(), id: 1, force: false, stream: false },
-        w::WindowsInput::InterestPlus { key: key(), id: 2, force: false, stream: false },
+        w::WindowsInput::InterestPlus { key: key(), id: 1, force: false, all: false, stream: false },
+        w::WindowsInput::InterestPlus { key: key(), id: 2, force: false, all: false, stream: false },
     ] }, Silent);
-    let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale { key: key(), revision: 500 }] }, Silent);
+    let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale(Stale { model: "Moment".into() })] }, Silent);
     let network = det.add::<Source<Windows>>("network", SourceState { to: windows, script: vec![w::WindowsInput::Online(Online(false)), w::WindowsInput::Online(Online(true))] }, Silent);
     let lifecycle = det.add::<Reset<Windows>>("lifecycle", ResetState { to: windows, input: w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Moment".into()] }), generation: 1 }, StoreGeneration(generation.clone()));
     for source in [callers, marks, network] {
@@ -798,7 +771,8 @@ fn win_prop_generation() {
         if det.ready().is_empty() && events.iter().any(|event| matches!(event, Seen::Rejected(_))) {
             let landed_new = events.iter().any(|event| matches!(event, Seen::Landed { basis, .. } if *basis >= current));
             let waiting = det.state(Address::<Windows>::new(0)).is_some_and(|windows| windows.stage(&key()) == Some(WindowStage::Waiting));
-            if !landed_new && !waiting {
+            let idle = det.state(Address::<Windows>::new(0)).is_some_and(|windows| windows.stage(&key()) == Some(WindowStage::Idle) && windows.interest(&key()).is_empty());
+            if !landed_new && !waiting && !idle {
                 return Err("a refused answer was not asked again".into());
             }
         }
@@ -811,7 +785,7 @@ fn win_prop_generation() {
 #[test]
 fn win_prop_online_once_owner() {
     let mut twin = network_failed();
-    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, page: 1 }]);
+    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, page: 1 }, Effect::WindowState]);
     assert!(twin.step(Input::Online(true)).is_empty(), "a second signal does not read again");
     let mut quiet = fresh();
     assert!(quiet.step(Input::Online(true)).is_empty(), "a window without an error is not reread");
@@ -824,7 +798,7 @@ fn win_prop_idle_owner() {
     assert_eq!(twin.det.ready().len(), 0);
     assert!(take(&twin.log).is_empty());
     let mut offline = Twin::new();
-    offline.step(Input::InterestPlus { id: 1, force: false });
+    offline.step(Input::InterestPlus { id: 1, force: false, all: false });
     offline.step(Input::Online(false));
     let effects = offline.step(Input::TransportError { request: 1, failure: Failure::Network });
     assert!(!effects.contains(&Effect::ScheduleRetry), "no retry is scheduled offline");
@@ -843,11 +817,11 @@ fn win_prop_cancel_owner() {
 fn win_dictionary_owner() {
     let mut det = DetScheduler::new(5);
     let log = new_log();
-    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true, true), Recorder::<Windows>::new(&log));
+    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true), Recorder::<Windows>::new(&log));
     det.start_epoch(EPOCH);
     let other = WindowKey { model: "Chat".into(), name: "room".into() };
     for (key, id) in [(key(), 1), (other.clone(), 2)] {
-        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::InterestPlus { key, id, force: false, stream: false });
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::InterestPlus { key, id, force: false, all: false, stream: false });
     }
     det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Transport(Transport { req_id: 2, outcome: TransportOutcome::Response(AnswerPage { page: 1, rows: vec!["c1".into()], cursor: None }) }));
     det.run_until_quiet(100).expect("quiet");
@@ -862,4 +836,377 @@ fn win_dictionary_owner() {
     assert!(effects.iter().any(|effect| matches!(effect, WindowsEffect::Window { key, effect: WindowEffect::Cancel { request: 1 } } if *key == self::key())), "the loading window is cancelled at Closing");
     let state = det.state(windows).expect("state");
     assert_eq!((state.stage(&key()), state.stage(&other)), (Some(WindowStage::Ended), Some(WindowStage::Ended)));
+}
+
+// Cells of the second revision of `window.md`: `all` interest, offline variants, `Dropped`, preload, `nodes`, the stray cells.
+
+fn with_cursor() -> Twin {
+    let mut twin = Twin::new();
+    twin.cursor = true;
+    twin
+}
+
+/// A fresh window whose last response had a next page.
+fn fresh_with_cursor() -> Twin {
+    let mut twin = with_cursor();
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
+    run_load(&mut twin, 1);
+    twin
+}
+
+fn load_all(id: u32) -> Input { Input::InterestPlus { id, force: false, all: true } }
+
+#[test]
+fn win_created_owner() {
+    let mut twin = Twin::new();
+    assert!(twin.step(Input::LoadMore { id: 1 }).is_empty(), "a window without a cursor ends the call at once");
+    assert_eq!(twin.state().windows(), 1);
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+#[test]
+fn win_nodes_empty_owner() {
+    let mut twin = Twin::new();
+    take(&twin.log);
+    let empty = WindowKey::nodes("Moment", &[]);
+    twin.post_call(w::WindowsInput::InterestPlus { key: empty.clone(), id: 1, force: false, all: false, stream: false });
+    assert_eq!(take(&twin.log), [WindowsEffect::Window { key: empty, effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 0 } } }]);
+    assert_eq!(twin.state().windows(), 0, "an empty list of ids creates no machine");
+}
+
+#[test]
+fn win_preload_created_owner() {
+    let mut det = DetScheduler::new(3);
+    let log = new_log();
+    let state = w::WindowsState::new(EPOCH, true).with_preload(vec![key()]);
+    let windows = det.add::<Windows>("windows", state, Recorder::<Windows>::new(&log));
+    det.start_epoch(EPOCH);
+    det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(7), generation: 3 }));
+    det.run_until_quiet(10_000).expect("quiet");
+    let effects = take(&log);
+    assert!(matches!(&effects[0], WindowsEffect::Window { effect: WindowEffect::Request { request: 1, page: 1, basis: 3, .. }, .. }), "the preload key loads at the generation of the epoch: {effects:?}");
+    assert_eq!(det.state(windows).expect("state").interest(&key()), [w::PRELOAD]);
+}
+
+#[test]
+fn win_idle_interest_all_more_owner() {
+    let mut twin = fresh_with_cursor();
+    assert_eq!(twin.step(load_all(2)), [Effect::Request { request: 2, page: 2 }, Effect::WindowState]);
+    assert_eq!(twin.phase(), Phase::Loading);
+    twin.cursor = false;
+    run_load(&mut twin, 2);
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+#[test]
+fn win_idle_interest_all_offline_owner() {
+    let mut twin = fresh_with_cursor();
+    twin.step(Input::Online(false));
+    assert_eq!(twin.step(load_all(2)), [Effect::WindowState]);
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, page: 2 }, Effect::WindowState], "the page after the cursor loads once the network is back");
+}
+
+#[test]
+fn win_idle_load_more_offline_owner() {
+    let mut twin = fresh_with_cursor();
+    twin.step(Input::Online(false));
+    assert_eq!(twin.step(Input::LoadMore { id: 2 }), [Effect::WindowState]);
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+}
+
+#[test]
+fn win_idle_stale_watched_offline_owner() {
+    let mut twin = fresh_watched();
+    twin.step(Input::Online(false));
+    assert!(twin.step(Input::Stale).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+}
+
+#[test]
+fn win_idle_models_reset_offline_owner() {
+    let mut twin = fresh_watched();
+    twin.step(Input::Online(false));
+    assert!(twin.step(Input::ModelsReset { own_model: true }).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+}
+
+#[test]
+fn win_idle_models_reset_unwatched_owner() {
+    let mut twin = fresh();
+    assert!(twin.step(Input::ModelsReset { own_model: true }).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+    assert_eq!(twin.step(Input::InterestPlus { id: 2, force: false, all: false }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState], "the reset window is not fresh");
+}
+
+#[test]
+fn win_loading_load_more_owner() {
+    let mut twin = with_cursor();
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
+    assert!(twin.step(Input::LoadMore { id: 2 }).is_empty());
+    twin.step(Input::Response { request: 1 });
+    assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::Request { request: 2, page: 2 }, Effect::WindowState], "the next page loads after the landing of the first");
+}
+
+#[test]
+fn win_loading_online_owner() {
+    let mut twin = loading();
+    assert!(twin.step(Input::Online(true)).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Loading));
+}
+
+#[test]
+fn win_loading_retry_owner() {
+    let mut twin = loading();
+    assert_eq!(twin.step(Input::TransportError { request: 1, failure: Failure::Network }), [Effect::ScheduleRetry]);
+    assert_eq!(twin.step(Input::RetryDue), [Effect::Request { request: 1, page: 1 }]);
+    assert_eq!(twin.step(Input::Dropped { request: 1 }), [Effect::ScheduleRetry], "a dropped request is a temporary error");
+}
+
+#[test]
+fn win_loading_stray_owner() {
+    let mut twin = loading();
+    for input in [Input::Response { request: 99 }, Input::TransportError { request: 99, failure: Failure::Network }, Input::Dropped { request: 99 }] {
+        assert!(twin.step(input).is_empty());
+        assert_eq!(twin.stage(), Some(WindowStage::Loading));
+    }
+}
+
+#[test]
+fn win_loading_stray_store_owner() {
+    let mut twin = loading();
+    assert!(twin.step(Input::Committed { request: 1 }).is_empty());
+    assert!(twin.step(Input::Rejected { request: 1, reason: Reject::Storage }).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Loading), "the Store holds no batch of a loading key");
+}
+
+#[test]
+fn win_landing_committed_all_next_owner() {
+    let mut twin = with_cursor();
+    twin.step(load_all(1));
+    twin.step(Input::Response { request: 1 });
+    assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::Request { request: 2, page: 2 }, Effect::WindowState], "the caller of `all` waits, the next page loads");
+    twin.cursor = false;
+    run_load(&mut twin, 1);
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+#[test]
+fn win_landing_committed_all_offline_owner() {
+    let mut twin = with_cursor();
+    twin.step(load_all(1));
+    twin.step(Input::Response { request: 1 });
+    twin.step(Input::Online(false));
+    assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::WindowState]);
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+}
+
+#[test]
+fn win_landing_committed_again_offline_owner() {
+    let mut twin = landing();
+    twin.step(Input::Stale);
+    twin.step(Input::Online(false));
+    assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::WindowState]);
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+}
+
+#[test]
+fn win_landing_stale_generation_offline_owner() {
+    let mut twin = landing();
+    twin.step(Input::Online(false));
+    assert!(twin.step(Input::Rejected { request: 1, reason: Reject::StaleGeneration }).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+}
+
+#[test]
+fn win_landing_load_more_owner() {
+    let mut twin = with_cursor();
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
+    twin.step(Input::Response { request: 1 });
+    assert!(twin.step(Input::LoadMore { id: 2 }).is_empty());
+    assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::Request { request: 2, page: 2 }, Effect::WindowState]);
+}
+
+#[test]
+fn win_waiting_stray_owner() {
+    let mut twin = waiting();
+    for input in [Input::Response { request: 1 }, Input::TransportError { request: 1, failure: Failure::Network }, Input::Dropped { request: 1 }, Input::Committed { request: 1 }, Input::Rejected { request: 1, reason: Reject::Storage }] {
+        assert!(twin.step(input).is_empty());
+        assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+    }
+}
+
+#[test]
+fn win_waiting_stale_owner() {
+    let mut twin = waiting();
+    assert!(twin.step(Input::Stale).is_empty());
+    assert!(twin.step(Input::ModelsReset { own_model: true }).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+}
+
+#[test]
+fn win_waiting_last_leave_owner() {
+    let mut twin = waiting();
+    assert!(twin.step(Input::InterestMinus { id: 1 }).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+#[test]
+fn win_waiting_load_more_owner() {
+    let mut twin = waiting();
+    assert!(twin.step(Input::LoadMore { id: 2 }).is_empty());
+    assert_eq!(twin.state().interest(&key()), [1, 2]);
+}
+
+#[test]
+fn win_waiting_offline_owner() {
+    let mut twin = waiting();
+    assert!(twin.step(Input::Online(false)).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+}
+
+#[test]
+fn win_ended_closing_owner() {
+    let mut twin = loading();
+    twin.step(Input::EpochEnded);
+    assert_eq!(twin.step(Input::Closing), [Effect::Drained]);
+}
+
+// Waits: every call of the platform ends with one outcome on every terminal cell.
+
+#[test]
+fn win_wait_load_owner() {
+    let mut loaded = loading();
+    loaded.step(Input::Response { request: 1 });
+    loaded.step(Input::Committed { request: 1 });
+    let mut failed = loading();
+    failed.step(Input::TransportError { request: 1, failure: Failure::Permanent });
+    let mut ended = loading();
+    ended.step(Input::EpochEnded);
+    let mut closed = loading();
+    closed.step(Input::Closing);
+}
+
+#[test]
+fn win_wait_load_more_owner() {
+    let mut twin = fresh_with_cursor();
+    twin.step(Input::LoadMore { id: 2 });
+    run_load(&mut twin, 2);
+    twin.cursor = false;
+    let mut ended = fresh();
+    ended.step(Input::LoadMore { id: 3 });
+}
+
+#[test]
+fn win_wait_load_all_owner() {
+    let mut twin = with_cursor();
+    twin.step(load_all(1));
+    run_load(&mut twin, 1);
+    twin.cursor = false;
+    run_load(&mut twin, 1);
+    let mut failed = with_cursor();
+    failed.step(load_all(1));
+    run_load(&mut failed, 1);
+    failed.step(Input::TransportError { request: 2, failure: Failure::Permanent });
+}
+
+#[test]
+fn win_wait_cancel_owner() {
+    let mut twin = loading();
+    assert_eq!(twin.step(Input::InterestMinus { id: 1 }), [Effect::Cancel { request: 1 }]);
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+#[test]
+fn win_wait_offline_owner() {
+    let mut twin = waiting();
+    twin.step(Input::Online(true));
+    twin.step(Input::Response { request: 1 });
+    twin.step(Input::Committed { request: 1 });
+    let mut failed = waiting();
+    failed.step(Input::Online(true));
+    failed.step(Input::TransportError { request: 1, failure: Failure::Permanent });
+}
+
+#[test]
+fn win_wait_nodes_owner() {
+    let mut twin = Twin::new();
+    let nodes = WindowKey::nodes("Moment", &["m1", "m2"]);
+    take(&twin.log);
+    twin.post_call(w::WindowsInput::InterestPlus { key: nodes.clone(), id: 1, force: false, all: false, stream: false });
+    assert!(matches!(take(&twin.log).as_slice(), [WindowsEffect::Window { effect: WindowEffect::Request { page: 1, .. }, .. }, WindowsEffect::Window { effect: WindowEffect::Announce(_), .. }]));
+    twin.post(w::WindowsInput::Transport(Transport { req_id: 1, outcome: TransportOutcome::Response(AnswerPage { page: 1, rows: vec!["m1".into()], cursor: None }) }));
+    twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 11, tables: Vec::new(), models: Vec::new() }));
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 11 } }, .. })));
+}
+
+// Properties.
+
+#[test]
+fn win_prop_fields_only_owner() {
+    let mut twin = Twin::with(false);
+    twin.post(w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 5, models: vec!["Moment".into()] }));
+    twin.step(Input::InterestPlus { id: 1, force: false, all: false });
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting), "a machine created after Online(false) reads the field of the dictionary");
+    take(&twin.log);
+    twin.post(w::WindowsInput::Online(Online(true)));
+    let effects = take(&twin.log);
+    assert!(matches!(&effects[0], WindowsEffect::Window { effect: WindowEffect::Request { basis: 5, .. }, .. }), "the basis is the generation of the dictionary: {effects:?}");
+}
+
+#[test]
+fn win_prop_stale_reload_once_owner() {
+    let mut twin = loading();
+    for _ in 0..3 {
+        twin.step(Input::Stale);
+    }
+    twin.step(Input::Response { request: 1 });
+    let again = twin.step(Input::Committed { request: 1 });
+    assert_eq!(again.iter().filter(|effect| matches!(effect, Effect::Request { .. })).count(), 1, "three marks make one more load");
+    twin.step(Input::Response { request: 2 });
+    let last = twin.step(Input::Committed { request: 2 });
+    assert!(!last.iter().any(|effect| matches!(effect, Effect::Request { .. })));
+}
+
+#[test]
+fn win_prop_load_all_complete_owner() {
+    let mut twin = with_cursor();
+    twin.step(load_all(1));
+    let mut requests = 0;
+    for page in 1..=3u32 {
+        twin.cursor = page < 3;
+        let request = twin.reference.state_request();
+        twin.step(Input::Response { request });
+        let effects = twin.step(Input::Committed { request });
+        requests += effects.iter().filter(|effect| matches!(effect, Effect::Request { .. })).count();
+    }
+    assert_eq!(requests, 2, "one request per page after the first");
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+/// A window whose second load runs with no interest: the calls of the first load were answered, `Stale` made it load again.
+fn loading_unwatched() -> Twin {
+    let mut twin = loading();
+    twin.step(Input::Stale);
+    twin.step(Input::Response { request: 1 });
+    assert_eq!(twin.step(Input::Committed { request: 1 }), [Effect::Request { request: 2, page: 1 }, Effect::WindowState]);
+    assert!(twin.state().interest(&key()).is_empty());
+    twin
+}
+
+#[test]
+fn win_landing_committed_again_unwatched_owner() {
+    let mut twin = loading_unwatched();
+    twin.step(Input::Stale);
+    twin.step(Input::Response { request: 2 });
+    assert_eq!(twin.step(Input::Committed { request: 2 }), [Effect::WindowState], "no interest, no further load");
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+#[test]
+fn win_landing_stale_generation_unwatched_owner() {
+    let mut twin = loading_unwatched();
+    twin.step(Input::Response { request: 2 });
+    assert!(twin.step(Input::Rejected { request: 2, reason: Reject::StaleGeneration }).is_empty());
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
 }
