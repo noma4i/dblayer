@@ -178,7 +178,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::BroadcastCommitted { revision, models } => wiring.tell_committed(crate::owners::contract::CommittedBroadcast {
                 revision,
                 tables: Vec::new(),
-                models: models.map_or(crate::owners::contract::CommittedModels::All, crate::owners::contract::CommittedModels::Set),
+                models: models.map_or(crate::owners::contract::Models::All, |models| crate::owners::contract::Models::Set(models.into_iter().collect())),
             }),
             StoreEffect::Cleared { erase_id, .. } => wiring.to_lifecycle(LifecycleInput::Cleared { erase_id }),
             StoreEffect::ModelsCleared { generation_new, erase_id } => wiring.to_lifecycle(LifecycleInput::ModelsCleared { generation_new, erase_id }),

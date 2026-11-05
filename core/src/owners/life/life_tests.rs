@@ -363,7 +363,7 @@ async fn the_rows_of_a_batch_land_through_the_common_path() {
 /// store_commit_ok: every subscriber hears one `Committed` with the revision and the models of the batch.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_committed_batch_is_broadcast_to_every_subscriber() {
-    use crate::owners::contract::{BatchAuthor, CommittedModels};
+    use crate::owners::contract::{BatchAuthor, Models};
     use crate::owners::store::{StoreBatch, StoreInput, StoreReply};
     let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
     let transport = Arc::new(MockTransport::new());
@@ -380,7 +380,7 @@ async fn a_committed_batch_is_broadcast_to_every_subscriber() {
     let StoreReply::Committed { revision } = reply.recv_timeout(LIMIT).expect("the author got its reply") else { panic!("the batch was refused") };
     for heard in [heard_first, heard_second] {
         let broadcast = heard.recv_timeout(LIMIT).expect("the subscriber heard the broadcast");
-        assert_eq!((broadcast.revision, broadcast.models), (revision, CommittedModels::Set(vec!["moments".into()])));
+        assert_eq!((broadcast.revision, broadcast.models), (revision, Models::Set(["moments".to_string()].into())));
     }
     closed(&life).await;
 }
