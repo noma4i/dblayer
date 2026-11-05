@@ -17,7 +17,7 @@ impl OutboxState {
     pub(super) fn maybe_drained(&mut self, fx: &mut Effects<Outbox>) {
         if self.closing && self.writes_active() == 0 && !self.drained {
             self.drained = true;
-            fx.push(Effect::Run(OutboxEffect::Drained(Drained { owner: "outbox" })));
+            fx.push(Effect::Run(OutboxEffect::Drained(Drained { owner: if self.author == crate::owners::contract::BatchAuthor::LocalWrites { "local_writes" } else { "outbox" } })));
         }
     }
 
@@ -56,6 +56,7 @@ impl OutboxState {
     pub(super) fn commit_write(&self, batch: BatchId, model: &str, kind: &LocalWriteKind, row: &str, values: &str, generation: u64, fx: &mut Effects<Outbox>) {
         let rows = vec![RowValue { row_id: row.into(), values: values.into() }];
         let op = match kind {
+            LocalWriteKind::Model(effects) => StoreOp::Planned { effects: effects.clone() },
             LocalWriteKind::SetEphemeral { .. } => StoreOp::EphemeralRows { model: model.into(), rows },
             LocalWriteKind::SetLocalPending => StoreOp::LocalPending { model: model.into(), rows },
             _ => StoreOp::LocalRows { model: model.into(), rows },

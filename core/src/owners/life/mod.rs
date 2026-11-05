@@ -8,6 +8,7 @@ mod call_rule;
 mod attempt_tests;
 #[cfg(test)]
 mod call_rule_tests;
+mod api;
 mod calls_runner;
 mod runners;
 pub(crate) mod session_runner;
@@ -18,13 +19,13 @@ mod session_exchange_tests;
 
 pub use observers::{ObserverPort, StopDone};
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
-use super::calls::{CallAnswer, CallError, CallKind, Calls, CallsInput, CallsState};
-use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, CredentialCommitted, NetworkEvent, Published, PublishedState, Rejected, RequestId};
+use super::calls::{CallAnswer, Calls, CallsInput, CallsState};
+use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, NetworkEvent, Published, Rejected, RequestId};
 use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
@@ -86,6 +87,8 @@ pub(crate) struct Addresses {
     pub session: Option<Address<SessionCalls>>,
     /// Installed with the session: an operation needs the sequence of the session.
     pub outbox: Option<Address<Outbox>>,
+    /// The owner LocalWrites: it lives in every epoch, with a session or without.
+    pub local_writes: Address<Outbox>,
     pub transfer: Option<Address<Transfers>>,
     pub rounds: Option<Address<Rounds>>,
     pub windows: Option<Address<super::read::windows::Windows>>,
@@ -289,6 +292,13 @@ impl Wiring {
             });
             return;
         }
+        if author == BatchAuthor::LocalWrites {
+            self.to_local_writes_at(stamp, match reply {
+                StoreReply::Committed { revision } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Default::default() }),
+                StoreReply::Rejected(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
+            });
+            return;
+        }
         if author == BatchAuthor::Outbox {
             self.to_outbox_at(stamp, match reply {
                 StoreReply::Committed { revision } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Default::default() }),
@@ -328,6 +338,12 @@ impl Wiring {
 
     pub fn to_transfer_at(&self, stamp: EpochStamp, input: TransferInput) {
         if let Some(Addresses { transfer: Some(transfer), .. }) = self.addresses() { self.handle.post(transfer, stamp, input); }
+    }
+
+    pub fn to_local_writes(&self, input: OutboxInput) { self.to_local_writes_at(EpochStamp::Control, input); }
+
+    pub fn to_local_writes_at(&self, stamp: EpochStamp, input: OutboxInput) {
+        if let Some(addresses) = self.addresses() { self.handle.post(addresses.local_writes, stamp, input); }
     }
 
     pub fn to_outbox(&self, input: OutboxInput) { self.to_outbox_at(EpochStamp::Control, input); }
@@ -380,9 +396,9 @@ fn restore_participants(session: bool) -> Vec<Peer> {
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
 fn absent(session: bool, transfer: bool) -> Vec<Peer> {
     let mut peers: Vec<Peer> = Vec::new();
-    peers.push(Peer::LocalWrites);
     if !session {
         peers.push(Peer::Session);
+        peers.push(Peer::Outbox);
     }
     if !transfer {
         peers.push(Peer::Transfer);
@@ -412,14 +428,21 @@ impl Life {
         });
         let transfer_at = session_address.as_ref().zip(ports.transfer.as_ref()).map(|((session, _), _)| Address::<Transfers>::new(session.index() + 2));
         let rounds_at = transfer_at.map(|at| Address::<Rounds>::new(at.index() + 1));
-        let outbox = Some(()).map(|()| {
-            let peers = OutboxPeers { store, session: session_address.as_ref().map(|(session, _)| *session), transfer: transfer_at };
+        let outbox = session_address.as_ref().map(|(session, _)| {
+            let peers = OutboxPeers { store, session: Some(*session), transfer: transfer_at };
             let (settle_wiring, drained_wiring) = (wiring.clone(), wiring.clone());
             let executor = OutboxExecutor {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
                 copy: None,
+                decode: ports.read_operations.clone().map(|operations| {
+                    let db = ports.db.clone();
+                    let decode: Arc<dyn Fn(&super::write::answer::DecodeJob) -> super::write::answer::Decoded + Send + Sync> = Arc::new(move |job| super::write::answer::decode_answer(&db, &|name| operations.get(name).map(|operation| operation.root_path.clone()), job));
+                    (ports.executor.clone(), decode)
+                }),
             };
+            let answers = wiring.clone();
+            wiring.on_mutate_answer(super::session::OUTBOX_AUTHOR, move |req_id, outcome| answers.to_outbox(OutboxInput::Answered { req_id, outcome }));
             builder.add::<Outbox>("outbox", OutboxState::new(0, peers), executor)
         });
         let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref()) {
@@ -462,6 +485,16 @@ impl Life {
             }
             _ => None,
         };
+        let local_writes = {
+            let (settle_wiring, drained_wiring) = (wiring.clone(), wiring.clone());
+            let executor = OutboxExecutor {
+                settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
+                drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
+                copy: None,
+                decode: None,
+            };
+            builder.add::<Outbox>("local_writes", OutboxState::local_writes(0, store), executor)
+        };
         {
             let reads_wiring = wiring.clone();
             ports.db.shared.store.reads().attach(move |event| reads_wiring.to_store(match event {
@@ -475,9 +508,9 @@ impl Life {
                 if let (NetworkEvent::Foreground(seq), Some(wiring)) = (event, weak.upgrade()) { wiring.to_session(SessionInput::Foreground { seq }); }
             });
         }
-        let last = [Some(calls.index()), session_address.as_ref().map(|(address, _)| address.index()), outbox.map(|address| address.index()), transfer.map(|(address, _)| address.index())].into_iter().flatten().max().unwrap_or(0);
+        let last = [Some(calls.index()), session_address.as_ref().map(|(address, _)| address.index()), outbox.map(|address| address.index()), transfer.map(|(address, _)| address.index()), Some(local_writes.index())].into_iter().flatten().max().unwrap_or(0);
         let read = read::add(&mut builder, &wiring, &ports, store, last + 1);
-        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read));
+        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read));
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, restored)) = session_address {
             *wiring.session_open.lock().unwrap_or_else(PoisonError::into_inner) = Some(SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });
@@ -529,132 +562,6 @@ impl Life {
     fn settled(&self, reply: LifeReply) -> Waiter<LifeReply> {
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.outcomes.settle(waiter.id(), reply);
-        waiter
-    }
-
-    /// `set_online`: Network answers after its `step`.
-    pub fn set_online(&self, online: bool) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_network(NetworkInput::SetOnline { online, reply: waiter.id().raw() });
-        waiter
-    }
-
-    /// `foreground`: Network answers after its `step`.
-    pub fn foreground(&self) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_network(NetworkInput::Foreground { reply: waiter.id().raw() });
-        waiter
-    }
-
-    /// `set_power_saving`: Network answers after its `step`.
-    pub fn set_power_saving(&self, saving: bool) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_network(NetworkInput::PowerSaving { saving, reply: waiter.id().raw() });
-        waiter
-    }
-
-    /// `run`: the platform call rule, then the owner Calls.
-    pub fn run(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let published = self.published();
-        match call_rule::call_verdict(&published, epoch, self.with_session) {
-            call_rule::CallVerdict::Closed => return self.settled(LifeReply::Closed),
-            call_rule::CallVerdict::Refuse(error) => return self.settled(LifeReply::Call(Err(error))),
-            call_rule::CallVerdict::Pass => {}
-        }
-        self.call(epoch, operation, variables)
-    }
-
-    fn call(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
-        let waiter = self.wiring.outcomes.register(epoch);
-        self.wiring.to_calls(CallsInput::Run { epoch, operation, variables, reply: waiter.id().raw() });
-        waiter
-    }
-
-    /// `session_call`: the owner Session, the answer by `Outcomes`.
-    pub fn session_call(&self, operation: String, body: String) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let published = self.published();
-        if published.closed {
-            return self.settled(LifeReply::Closed);
-        }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_session(SessionInput::SessionCall { operation, body, reply: waiter.id().raw() });
-        waiter
-    }
-
-    /// `Mutate` of Outbox and Transfer: the answer comes to the sink the author registered with `on_mutate_answer`.
-    pub fn mutate(&self, author: AuthorId, owner: Option<super::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) {
-        self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, epoch: self.published().epoch, path, body, purpose });
-    }
-
-    /// One `Mutate` of the old stack: the outcome comes to the waiter, a repeat is the business of its caller.
-    pub fn mutate_wait(&self, owner: Option<super::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        let author = LEGACY_AUTHORS + waiter.id().raw();
-        let (wiring, id) = (self.wiring.clone(), waiter.id());
-        self.wiring.on_mutate_answer(author, move |_, outcome| {
-            wiring.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).remove(&author);
-            wiring.outcomes.settle(id, LifeReply::Mutated(outcome));
-        });
-        self.mutate(author, owner, super::contract::next_request_id(), path, body, purpose);
-        waiter
-    }
-
-    pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) { self.wiring.on_mutate_answer(author, sink); }
-
-    pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) { self.wiring.on_store_reply(author, sink); }
-
-    /// A call of the platform to the owner Outbox: the answer is `LifeReply::Outbox` or the end of the epoch.
-    fn outbox_call(&self, epoch: Epoch, input: impl FnOnce(u64) -> OutboxInput) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(epoch);
-        self.wiring.to_outbox_at(EpochStamp::Epoch(epoch), input(waiter.id().raw()));
-        waiter
-    }
-
-    pub fn submit(&self, epoch: Epoch, op: super::write::outbox::NewOp) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Submit { epoch, op, reply }) }
-
-    pub fn retry_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Retry { model, row_id, reply }) }
-
-    pub fn discard_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Discard { model, row_id, reply }) }
-
-    pub fn operation_outcome(&self, epoch: Epoch, receipt: super::write::outbox::Receipt) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Outcome { receipt, reply }) }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn local_write(&self, epoch: Epoch, model: String, write: super::write::outbox::LocalWriteKind, row: String, values: String, now: crate::runtime::Time) -> Waiter<LifeReply> {
-        self.outbox_call(epoch, |reply| OutboxInput::LocalWrite { model, epoch, write, row, values, reply, now })
-    }
-
-    pub fn register_operations(&self, declarations: Vec<(String, String)>) { self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations }); }
-
-    pub fn declare(&self, names: Vec<(String, CallKind)>) { self.wiring.to_calls(CallsInput::Declare(names)); }
-
-    pub fn session_reset(&self) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: Some(waiter.id().raw()) });
-        waiter
-    }
-
-    pub fn reset_models(&self, models: BTreeSet<String>) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_lifecycle(LifecycleInput::ResetModels { models, reply: Some(waiter.id().raw()) });
-        waiter
-    }
-
-    /// Until `Session` executes the sign-in, the old path reports the committed credential here.
-    pub fn credential_committed(&self, identity: u64) { self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(CredentialCommitted { identity })); }
-
-    pub fn close(&self) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_lifecycle(LifecycleInput::Close { reply: waiter.id().raw() });
         waiter
     }
 }

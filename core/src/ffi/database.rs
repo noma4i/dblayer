@@ -101,15 +101,22 @@ pub struct Config { pub path: Option<String>, pub data_version: Option<String>, 
 #[derive(uniffi::Record)]
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64, pub retained_observers: u64 }
 
+/// What a receipt waits on: the old stack (uploads) or the owner Outbox.
+#[derive(Clone)]
+pub(super) enum Ticket {
+    Sync(Arc<crate::sync::OutcomeTicket>),
+    Outbox(crate::owners::write::outbox::Receipt),
+}
+
 #[derive(uniffi::Object)]
 pub struct WireReceiptTicket {
-    ticket: Option<Arc<crate::sync::OutcomeTicket>>,
-    life: Arc<crate::ffi::legacy::Leases>,
-    epoch: u64,
-    model: String,
-    operation: Option<i64>,
-    revision: i64,
-    optimistic_value: Option<WireRow>,
+    pub(super) ticket: Option<Ticket>,
+    pub(super) streams: Arc<crate::ffi::legacy::Leases>,
+    pub(super) epoch: u64,
+    pub(super) model: String,
+    pub(super) operation: Option<i64>,
+    pub(super) revision: i64,
+    pub(super) optimistic_value: Option<WireRow>,
 }
 
 impl std::fmt::Debug for WireReceiptTicket {
@@ -128,8 +135,17 @@ pub struct WireOperationReceipt {
     pub ticket: Arc<WireReceiptTicket>,
 }
 
-pub(super) fn receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Arc<crate::sync::OutcomeTicket>>, life: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
-    let held = WireReceiptTicket { ticket, life, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone() };
+pub(super) fn receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Arc<crate::sync::OutcomeTicket>>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
+    held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Sync), streams)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn receipt_of(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<crate::owners::write::outbox::Receipt>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
+    held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Outbox), streams)
+}
+
+fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Ticket>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
+    let held = WireReceiptTicket { ticket, streams, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone() };
     WireOperationReceipt { epoch, model, operation, revision, optimistic_value, ticket: Arc::new(held) }
 }
 
@@ -392,80 +408,6 @@ impl Database {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64, retained_observers: census.retained as u64 }
     }
-    pub async fn create(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        let declared = self.db.spec(&model)?.actions.iter().find(|action| action.name == "create").cloned();
-        let remote = declared.as_ref().is_some_and(|action| action.mutation.is_some());
-        if declared.as_ref().is_some_and(|action| action.durable) {
-            return Err(DbError::Invalid { detail: format!("{model} sends its create as a durable command: use send") });
-        }
-        let origin = if remote { crate::ffi::legacy::Origin::Session } else { crate::ffi::legacy::Origin::Explicit };
-        self.write_in_epoch(origin, epoch, "create", move |database, admitted| {
-            let sync = database.sync.clone();
-            let (row, operation, revision, ticket) = database.db.create_claiming(admitted, None, &model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?, |operation| operation.and_then(|operation| sync.as_ref().map(|sync| sync.claim_outcome(operation))))?;
-            database.send_writes();
-            Ok(receipt(epoch, model.clone(), operation, revision, Some(database.wire(&model)?.row(&row)), ticket, database.streams.clone()))
-        }).await
-    }
-    pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        let origin = self.write_origin(&model, "update")?;
-        self.write_in_epoch(origin, epoch, "update", move |database, admitted| {
-            let sync = database.sync.clone();
-            let (row, operation, revision, ticket) = database.db.update_claiming(admitted, &model, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?, |operation| operation.and_then(|operation| sync.as_ref().map(|sync| sync.claim_outcome(operation))))?;
-            database.send_writes();
-            Ok(receipt(epoch, model.clone(), operation, revision, Some(database.wire(&model)?.row(&row)), ticket, database.streams.clone()))
-        }).await
-    }
-    pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
-        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "set local", move |database, admitted| {
-            Ok(database.db.set_local(admitted, &model, &id(&row_id)?, &path, serde_json::from_str(&value_json)?)?)
-        }).await
-    }
-    pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        let origin = self.write_origin(&model, &action)?;
-        self.write_in_epoch(origin, epoch, "act", move |database, admitted| {
-            let sync = database.sync()?.clone();
-            let (acted, ticket) = database.db.act_claiming(admitted, &model, &action, &id(&row_id)?, serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?, |operation| sync.claim_outcome(operation))?;
-            database.send_writes();
-            Ok(receipt(epoch, model.clone(), Some(acted.operation), acted.revision, Some(database.wire(&model)?.row(&acted.row)), Some(ticket), database.streams.clone()))
-        }).await
-    }
-    pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
-        let origin = self.write_origin(&model, "destroy")?;
-        self.write_in_epoch(origin, epoch, "destroy", move |database, admitted| {
-            let sync = database.sync.clone();
-            let (_, operation, revision, ticket) = database.db.destroy_claiming(admitted, &model, &id(&row_id)?, |operation| operation.and_then(|operation| sync.as_ref().map(|sync| sync.claim_outcome(operation))))?;
-            database.send_writes();
-            Ok(receipt(epoch, model, operation, revision, None, ticket, database.streams.clone()))
-        }).await
-    }
-    pub async fn outcome(&self, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
-        if !Arc::ptr_eq(&receipt.ticket.life, &self.streams) { return Err(DbError::Invalid { detail: "the receipt belongs to another database".into() }); }
-        if receipt.epoch != receipt.ticket.epoch || receipt.model != receipt.ticket.model || receipt.operation != receipt.ticket.operation || receipt.revision != receipt.ticket.revision || receipt.optimistic_value != receipt.ticket.optimistic_value {
-            return Err(DbError::Invalid { detail: "the receipt was changed".into() });
-        }
-        if !self.admits(receipt.epoch) { return Ok(WireOperationOutcome::Interrupted); }
-        let Some(ticket) = receipt.ticket.ticket.clone() else {
-            if receipt.operation.is_some() { return Err(DbError::Invalid { detail: "the operation has no sender".into() }); }
-            return Ok(WireOperationOutcome::Confirmed { value: receipt.optimistic_value, answer_json: None });
-        };
-        let result = self.in_epoch(receipt.epoch, "operation outcome", async move { Ok::<_, DbError>(ticket.result().await) }).await;
-        let result = match result {
-            Ok(result) => result,
-            Err(DbError::NoSession { .. } | DbError::Interrupted { .. }) => return Ok(WireOperationOutcome::Interrupted),
-            Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),
-            Err(error) => return Err(error),
-        };
-        match result.result {
-            crate::sync::SendResult::Committed => {
-                let value = result.value.map(|row| self.wire(&receipt.model).map(|wire| wire.row(&row))).transpose()?;
-                Ok(WireOperationOutcome::Confirmed { value, answer_json: result.answer.map(|answer| answer.to_string()) })
-            }
-            crate::sync::SendResult::Rejected(failure) => Ok(WireOperationOutcome::Rejected { failure: super::wire::failure(&failure) }),
-            crate::sync::SendResult::DeliveryUnknown | crate::sync::SendResult::Quarantined => Ok(WireOperationOutcome::DeliveryUnknown),
-            crate::sync::SendResult::Discarded => Ok(WireOperationOutcome::Interrupted),
-            crate::sync::SendResult::Deferred | crate::sync::SendResult::Skipped(_) => Err(DbError::Invalid { detail: "operation has not finished".into() }),
-        }
-    }
     pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
         self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "set ephemeral", move |database, admitted| {
             Ok(database.db.set_ephemeral(admitted, &model, &id(&row_id)?, serde_json::from_str(&values_json)?)?)
@@ -509,8 +451,10 @@ impl Database {
             declared.push(crate::owners::read::ReadOperation { name: operation.name.clone(), document: operation.document.clone(), root_path: operation.root_path.clone(), page_size: operation.page_size });
             sync.register(operation);
         }
+        let registered: Vec<(String, String)> = self.db.shared.specs.values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
         self.reads.declare(declared);
         self.life.declare(names);
+        self.life.register_operations(registered);
         let _entered = executor()?.enter();
         sync.operations_ready();
         Ok(())
@@ -583,33 +527,7 @@ impl Database {
                 Ok::<_, DbError>(receipt(epoch, model, Some(operation), revision, row.map(|row| wire.row(&row)), Some(ticket), life))
             })).await;
         }
-        if self.sync.is_none() {
-            let row = self.db.find(&model, &id(&row_id)?)?.map(|row| self.wire(&model).map(|wire| wire.row(&row))).transpose()?;
-            return Ok(receipt(epoch, model, None, self.db.revision_seq()?, row, None, self.streams.clone()));
-        }
-        self.write_in_epoch(crate::ffi::legacy::Origin::Session, epoch, "retry", move |database, admitted| {
-            let sync = database.sync()?.clone();
-            let id = id(&row_id)?;
-            let (operation, revision, row, ticket) = database.db.retry_claiming(admitted, &model, &id, action.as_deref(), |operation| sync.claim_outcome(operation))?;
-            let row = row.map(|row| database.wire(&model).map(|wire| wire.row(&row))).transpose()?;
-            if operation.is_some() {
-                sync.inner.start_uploads().map_err(DbError::from)?;
-                database.send_writes();
-            }
-            Ok(receipt(epoch, model, operation, revision, row, ticket, database.streams.clone()))
-        }).await
-    }
-    pub async fn discard(&self, epoch: u64, model: String, row_id: String, action: Option<String>) -> Result<(), DbError> {
-        let sync = self.sync.clone();
-        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "discard", move |database, admitted| {
-            let row = id(&row_id)?;
-            database.db.discard(admitted, &model, &row, action.as_deref())?;
-            if let Some(sync) = &sync {
-                let _entered = executor()?.enter();
-                sync.inner.start_uploads()?;
-            }
-            Ok(())
-        }).await
+        self.retry_operation(epoch, model, row_id).await
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
 
@@ -734,22 +652,10 @@ impl Database {
     }
 
     pub(super) fn sync(&self) -> Result<&Sync, DbError> { self.sync.as_ref().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() }) }
-    pub(super) fn send_writes(&self) {
-        if let (Some(sync), Ok(executor)) = (self.sync.as_ref(), executor()) {
-            let _entered = executor.enter();
-            sync.inner.spawn_flush(Duration::ZERO);
-        }
-    }
     /// A call that always goes to the server fails at once while the network is away. It does not wait for the network and does not retry.
     pub(super) fn require_online(&self, what: &str) -> Result<(), DbError> {
         if self.db.connectivity().is_online() { return Ok(()); }
         Err(DbError::Network { detail: format!("{what} needs the network") })
-    }
-
-    /// An action that needs the server fails at once while the network is away. Only sending a message and a media upload wait for it (`send`, `upload`).
-    fn write_origin(&self, model: &str, action: &str) -> Result<crate::ffi::legacy::Origin, DbError> {
-        let declared = self.db.spec(model)?.actions.iter().any(|declared| declared.name == action && declared.mutation.is_some());
-        Ok(if declared { crate::ffi::legacy::Origin::Session } else { crate::ffi::legacy::Origin::Explicit })
     }
 
     pub(super) fn parsed_query(&self, json: &str) -> Result<crate::db::ParsedQuery, DbError> {

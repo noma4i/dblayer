@@ -110,6 +110,7 @@ pub enum OutboxAnswer {
     Receipt(Receipt),
     Outcome(OutboxOutcome),
     Ok,
+    Resolved(String),
     Err(Fault),
 }
 
@@ -122,6 +123,8 @@ pub enum LocalWriteKind {
     /// `source` is a file outside the directory of the files: it is copied first.
     Attach { source: Option<String> },
     Detach,
+    /// The final rows of a call on a local model or of an action without a mutation.
+    Model(IntentEffects),
 }
 
 #[derive(Clone, Debug)]
@@ -136,10 +139,16 @@ pub enum OutboxInput {
     /// `errors = Some(temporary)`: the answer carries errors, the codec classified them.
     Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, errors: Option<bool> },
     TransportError { op_id: OpId, temporary: bool },
+    /// The answer of Session to the `Mutate` with `req_id`: Outbox finds its operation and has the answer read.
+    Answered { req_id: RequestId, outcome: crate::owners::session::AuthorOutcome },
+    /// The answer could not be landed: `detail` is the text the row and the outcome show.
+    Refused { op_id: OpId, temporary: bool, detail: String },
     Dropped { op_id: OpId },
     Retry { model: String, row_id: String, reply: ReplyId },
     Discard { model: String, row_id: String, reply: ReplyId },
     Outcome { receipt: Receipt, reply: ReplyId },
+    /// The id a temporary id has after its `create` landed (the same id before).
+    Resolve { model: String, row: String, reply: ReplyId },
     Online(Online),
     /// The generation of every model at the start of the epoch.
     EpochStarted(EpochStarted),
@@ -175,6 +184,8 @@ pub enum OutboxEffect {
     Drained(Drained),
     /// Copy `source` into the directory of the files in chunks, outside the writer of SQLite; the result is `CopyDone{id}` or `CopyFailed{id}`.
     Copy { id: u64, source: String },
+    /// Read the answer of an operation outside the actor: the result is `Response` or `Refused`.
+    Decode(super::answer::DecodeJob),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

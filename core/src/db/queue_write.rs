@@ -55,7 +55,14 @@ impl Db {
                     envelope.origin = WriteOrigin::Response;
                     envelope.entity_ops.extend(upserts(model, rows)?);
                 }
-                StoreOp::LocalRows { model, rows } | StoreOp::EphemeralRows { model, rows } | StoreOp::LocalPending { model, rows } => {
+                StoreOp::LocalPending { model, rows } => {
+                    for row in rows {
+                        let pending: Value = serde_json::from_str(&row.values).map_err(json_fault)?;
+                        let path = pending.get("path").and_then(Value::as_str).ok_or_else(|| DbError::Internal("a pending local value has no path".into()))?;
+                        envelope.pending_locals.push(crate::commit::PendingLocal { model: model.clone(), row_id: row.row_id.clone(), path: path.to_string(), value: pending.get("value").cloned().unwrap_or(Value::Null) });
+                    }
+                }
+                StoreOp::LocalRows { model, rows } | StoreOp::EphemeralRows { model, rows } => {
                     envelope.writes_local = true;
                     envelope.entity_ops.extend(upserts(model, rows)?);
                 }
@@ -67,7 +74,7 @@ impl Db {
                 StoreOp::MarkError { op_id, error } => {
                     let seq = i64::try_from(*op_id).unwrap_or(i64::MAX);
                     envelope.operation_transitions.push(match error {
-                        Some(message) => OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, message.clone()) },
+                        Some(message) => OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: crate::owners::write::failure::parse(message) },
                         None => OperationTransition::Retry { seq },
                     });
                 }

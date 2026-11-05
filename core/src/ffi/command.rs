@@ -140,29 +140,16 @@ impl Database {
     /// Writes the row locally in the epoch of the caller and queues it for the server. The SQL commit is refused when the epoch moved or the database closed before it.
     pub async fn send(&self, request: CommandRequest) -> Result<WireOperationReceipt, DbError> {
         self.admit_command(&request)?;
+        if request.upload.is_none() {
+            return self.create_row(request.epoch, request.model, serde_json::from_str(&request.values_json)?, serde_json::from_str(&request.args_json)?).await;
+        }
         let this = self.clone();
         let epoch = request.epoch;
         let model = request.model.clone();
         let work = move |admitted: crate::ffi::legacy::Admitted| async move {
             let values: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&request.values_json)?;
             let (row, operation, revision, ticket) = match request.upload {
-                None => {
-                    let args = serde_json::from_str(&request.args_json)?;
-                    let (database, model) = (this.clone(), request.model.clone());
-                    blocking(move || {
-                        #[cfg(test)]
-                        let _probe = {
-                            let life = database.db.shared.store.lifecycle.clone();
-                            life.writes_entered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            WriteProbe(life)
-                        };
-                        let sync = database.sync()?.clone();
-                        let result = database.db.create_claiming(&admitted, None, &model, values, args, |operation| operation.map(|operation| sync.claim_outcome(operation)));
-                        let (row, operation, revision, ticket) = result.map_err(|error| if database.admits(epoch) { DbError::from(error) } else { ended() })?;
-                        database.send_writes();
-                        Ok((database.wire(&model)?.row(&row), operation, revision, ticket))
-                    }).await?
-                }
+                None => return Err(DbError::Invalid { detail: "a command without a file goes through the owners".into() }),
                 Some(upload) => {
                     let sync = this.sync()?.clone();
                     let (wire, model) = (this.wire(&request.model)?.clone(), request.model.clone());

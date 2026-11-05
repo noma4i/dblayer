@@ -108,6 +108,7 @@ impl World {
         Arc::new(Self { label: label.into(), state: Mutex::new(State { account: account.into(), signed, ..State::default() }) })
     }
     pub(super) fn set_account(&self, account: &str) { self.state.lock().unwrap().account = account.into(); }
+    pub(super) fn account(&self) -> String { self.state.lock().unwrap().account.clone() }
     pub(super) fn signed(&self) -> bool { self.state.lock().unwrap().signed }
     pub(super) fn empty_profile(&self) { self.state.lock().unwrap().profile_empty = true; }
     pub(super) fn forbid(&self, forbidden: bool) { self.state.lock().unwrap().forbidden = forbidden; }
@@ -539,20 +540,23 @@ impl Rig {
         Rig { opener, database, world, switch, clock }
     }
 
-    /// A plain transport sends independent mutations side by side: the reaction model on it.
+    /// A signed-in database with the reaction model on it.
     pub(super) async fn plain_for_reactions(first: Arc<World>) -> Rig {
-        let switch = Switchable::new(Some(first.clone()), false);
+        Self::signed_as(first, false, add_reactions).await
+    }
+
+    /// The harness path of the apps: a plain transport with a switchable target and no session client. It carries no mutation of a server model.
+    pub(super) async fn bare(first: Arc<World>, invalid: bool) -> Rig {
+        let switch = Switchable::new(Some(first.clone()), invalid);
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
-        let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
-        add_reactions(&mut models);
-        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), None, None, None, None).await.unwrap();
+        let database = opener.open_with_clock(config(), plain_models(), Some(switch.clone()), None, clock.clone(), None, None, None, None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
         database.set_online(true).unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
 
-    /// The harness path of the apps: a plain transport with a switchable target and no session client.
+    /// A signed-in database on the world `first`.
     pub(super) async fn plain(first: Arc<World>, invalid: bool) -> Rig {
         Self::plain_with_create_policy(first, invalid, false).await
     }
@@ -566,30 +570,40 @@ impl Rig {
     }
 
     pub(super) async fn plain_with_group_destroy(first: Arc<World>, invalid: bool, keep: bool, events: bool, destroy: bool) -> Rig {
+        Self::signed_as(first, invalid, move |models| {
+            if keep {
+                let group = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Group").unwrap();
+                let create = group["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
+                create["on_failure"] = json!("keep");
+            }
+            if events {
+                let member = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Member").unwrap();
+                let relation = member["relations"].as_array_mut().unwrap().iter_mut().find(|relation| relation["name"] == "group_members").unwrap();
+                relation["updates"] = json!([{"subscription":"MemberChanged","set":{},"removes":false}]);
+            }
+            if destroy {
+                let group = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Group").unwrap();
+                let mut action = crate::schema::ActionDeclaration::new("destroy", crate::schema::RootShape::Destroy);
+                action.mutation = Some("DeleteGroup".into());
+                action.variables.insert("id".into(), "id".into());
+                group["actions"].as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
+            }
+        }).await
+    }
+
+    /// The app path with an existing world: a real session client on the fake HTTP of `first`, signed in as its account. `edit` changes the models before the database opens.
+    pub(super) async fn signed_as(first: Arc<World>, invalid: bool, edit: impl FnOnce(&mut Value)) -> Rig {
         let switch = Switchable::new(Some(first.clone()), invalid);
+        let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+        encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
         let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
-        if keep {
-            let group = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Group").unwrap();
-            let create = group["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "create").unwrap();
-            create["on_failure"] = json!("keep");
-        }
-        if events {
-            let member = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Member").unwrap();
-            let relation = member["relations"].as_array_mut().unwrap().iter_mut().find(|relation| relation["name"] == "group_members").unwrap();
-            relation["updates"] = json!([{"subscription":"MemberChanged","set":{},"removes":false}]);
-        }
-        if destroy {
-            let group = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Group").unwrap();
-            let mut action = crate::schema::ActionDeclaration::new("destroy", crate::schema::RootShape::Destroy);
-            action.mutation = Some("DeleteGroup".into());
-            action.variables.insert("id".into(), "id".into());
-            group["actions"].as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
-        }
-        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), None, None, None, None).await.unwrap();
+        edit(&mut models);
+        let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), Some(encrypted), Some(Arc::new(WatchedHeld::default())), Some(first.clone()), None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
         database.set_online(true).unwrap();
+        bound(database.session_call("login_link".into(), json!({"account": first.account()}).to_string())).await.unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
 

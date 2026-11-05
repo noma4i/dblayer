@@ -24,6 +24,7 @@ pub enum BatchAuthor {
     Window,
     Feed,
     Outbox,
+    LocalWrites,
     Transfer,
 }
 

@@ -1,0 +1,149 @@
+//! The calls of the platform to the owners: each registers a waiter, posts one input and returns the waiter.
+
+use std::collections::BTreeSet;
+use std::sync::atomic::Ordering;
+use std::sync::PoisonError;
+
+use super::{Life, LifeReply, LEGACY_AUTHORS};
+use crate::owners::calls::{CallKind, CallsInput};
+use crate::owners::contract::{BatchAuthor, BatchId, CredentialCommitted, RequestId};
+use crate::owners::store::StoreReply;
+use crate::owners::lifecycle::LifecycleInput;
+use crate::owners::network::NetworkInput;
+use crate::owners::session::{AuthorId, AuthorOutcome, SessionInput};
+use crate::owners::write::outbox::OutboxInput;
+use crate::runtime::{Epoch, EpochStamp, Waiter};
+
+impl Life {
+    /// `set_online`: Network answers after its `step`.
+    pub fn set_online(&self, online: bool) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_network(NetworkInput::SetOnline { online, reply: waiter.id().raw() });
+        waiter
+    }
+
+    /// `foreground`: Network answers after its `step`.
+    pub fn foreground(&self) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_network(NetworkInput::Foreground { reply: waiter.id().raw() });
+        waiter
+    }
+
+    /// `set_power_saving`: Network answers after its `step`.
+    pub fn set_power_saving(&self, saving: bool) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_network(NetworkInput::PowerSaving { saving, reply: waiter.id().raw() });
+        waiter
+    }
+
+    /// `run`: the platform call rule, then the owner Calls.
+    pub fn run(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let published = self.published();
+        match super::call_rule::call_verdict(&published, epoch, self.with_session) {
+            super::call_rule::CallVerdict::Closed => return self.settled(LifeReply::Closed),
+            super::call_rule::CallVerdict::Refuse(error) => return self.settled(LifeReply::Call(Err(error))),
+            super::call_rule::CallVerdict::Pass => {}
+        }
+        self.call(epoch, operation, variables)
+    }
+
+    fn call(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
+        let waiter = self.wiring.outcomes.register(epoch);
+        self.wiring.to_calls(CallsInput::Run { epoch, operation, variables, reply: waiter.id().raw() });
+        waiter
+    }
+
+    /// `session_call`: the owner Session, the answer by `Outcomes`.
+    pub fn session_call(&self, operation: String, body: String) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let published = self.published();
+        if published.closed {
+            return self.settled(LifeReply::Closed);
+        }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_session(SessionInput::SessionCall { operation, body, reply: waiter.id().raw() });
+        waiter
+    }
+
+    /// `Mutate` of Outbox and Transfer: the answer comes to the sink the author registered with `on_mutate_answer`.
+    pub fn mutate(&self, author: AuthorId, owner: Option<crate::owners::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) {
+        self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, epoch: self.published().epoch, path, body, purpose });
+    }
+
+    /// One `Mutate` of the old stack: the outcome comes to the waiter, a repeat is the business of its caller.
+    pub fn mutate_wait(&self, owner: Option<crate::owners::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        let author = LEGACY_AUTHORS + waiter.id().raw();
+        let (wiring, id) = (self.wiring.clone(), waiter.id());
+        self.wiring.on_mutate_answer(author, move |_, outcome| {
+            wiring.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).remove(&author);
+            wiring.outcomes.settle(id, LifeReply::Mutated(outcome));
+        });
+        self.mutate(author, owner, crate::owners::contract::next_request_id(), path, body, purpose);
+        waiter
+    }
+
+    pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) { self.wiring.on_mutate_answer(author, sink); }
+
+    pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) { self.wiring.on_store_reply(author, sink); }
+
+    /// A call of the platform to the owner Outbox: the answer is `LifeReply::Outbox` or the end of the epoch.
+    fn outbox_call(&self, epoch: Epoch, input: impl FnOnce(u64) -> OutboxInput) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(epoch);
+        self.wiring.to_outbox_at(EpochStamp::Epoch(epoch), input(waiter.id().raw()));
+        waiter
+    }
+
+    pub fn submit(&self, epoch: Epoch, op: crate::owners::write::outbox::NewOp) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Submit { epoch, op, reply }) }
+
+    pub fn retry_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Retry { model, row_id, reply }) }
+
+    /// The id a row has now: a temporary id of a `create` that landed gives the real one.
+    pub fn resolve_row(&self, epoch: Epoch, model: String, row: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Resolve { model, row, reply }) }
+
+    pub fn discard_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Discard { model, row_id, reply }) }
+
+    pub fn operation_outcome(&self, epoch: Epoch, receipt: crate::owners::write::outbox::Receipt) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Outcome { receipt, reply }) }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn local_write(&self, epoch: Epoch, model: String, write: crate::owners::write::outbox::LocalWriteKind, row: String, values: String, now: crate::runtime::Time) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(epoch);
+        self.wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::LocalWrite { model, epoch, write, row, values, reply: waiter.id().raw(), now });
+        waiter
+    }
+
+    pub fn register_operations(&self, declarations: Vec<(String, String)>) { self.wiring.to_outbox(OutboxInput::RegisterOperations { declarations }); }
+
+    pub fn declare(&self, names: Vec<(String, CallKind)>) { self.wiring.to_calls(CallsInput::Declare(names)); }
+
+    pub fn session_reset(&self) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: Some(waiter.id().raw()) });
+        waiter
+    }
+
+    pub fn reset_models(&self, models: BTreeSet<String>) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_lifecycle(LifecycleInput::ResetModels { models, reply: Some(waiter.id().raw()) });
+        waiter
+    }
+
+    /// Until `Session` executes the sign-in, the old path reports the committed credential here.
+    pub fn credential_committed(&self, identity: u64) { self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(CredentialCommitted { identity })); }
+
+    pub fn close(&self) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_lifecycle(LifecycleInput::Close { reply: waiter.id().raw() });
+        waiter
+    }
+}

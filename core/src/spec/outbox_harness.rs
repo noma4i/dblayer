@@ -55,6 +55,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         Emitted::Run(Run::Reply { reply, answer }) => OutboxEffect::Reply { reply, answer },
         Emitted::Run(Run::Drained(_)) => OutboxEffect::Drained,
         Emitted::Run(Run::Copy { id, source }) => OutboxEffect::Copy { id, source },
+        Emitted::Run(Run::Decode(_)) => return None,
         Emitted::Send { to: STORE_AT, input } => {
             let kind = kind_in(&input);
             let op_id = matches!(kind, CommitKind::Intent | CommitKind::Attempt | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark).then(|| number_after(&input, "op_id: ")).flatten();
@@ -366,6 +367,7 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
                     OutboxAnswer::Outcome(outcome) if outcome_call => { let _ = outcome; obs.push(Obs::OutcomeNow) }
                     OutboxAnswer::Outcome(outcome) => obs.push(Obs::Outcome(out_of(&outcome))),
                     OutboxAnswer::Ok => obs.push(Obs::DiscardOk),
+                    OutboxAnswer::Resolved(_) => {}
                     OutboxAnswer::Err(fault) => obs.push(Obs::Fails(fault_of(&fault))),
                 }
             }

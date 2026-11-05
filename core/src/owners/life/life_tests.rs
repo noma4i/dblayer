@@ -443,3 +443,21 @@ fn open_waits_for_restore_classified_of_the_installed_session() {
     let ready = run(&mut state, LifecycleInput::RestoreClassified { owner: Peer::Session, epoch });
     assert!(ready.iter().any(|effect| matches!(effect, LifecycleEffect::RestoreReady { .. })), "{ready:?}");
 }
+
+/// out_local_write: a database without a session writes a local row through the owner LocalWrites and the row is in the base when the owner answers.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_database_without_a_session_writes_a_local_row_through_local_writes() {
+    use crate::owners::store::{EffectRow, IntentEffects};
+    use crate::owners::write::outbox::{LocalWriteKind, OutboxAnswer};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let transport = Arc::new(MockTransport::new());
+    let db = open(&path);
+    let life = start(&db, &transport).await;
+    let epoch = life.published().epoch;
+    let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1"}).to_string() }], ..Default::default() };
+    let reply = answer(life.local_write(epoch, "moments".into(), LocalWriteKind::Model(effects), "m1".into(), String::new(), crate::runtime::Time(0))).await;
+    assert_eq!(reply, Reply::Outbox(OutboxAnswer::Ok));
+    assert!(db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().is_some());
+    closed(&life).await;
+}

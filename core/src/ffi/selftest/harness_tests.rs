@@ -33,7 +33,7 @@ async fn shows(rows: &Rows, account: &str) {
 async fn closing_with_the_target_unset_sends_nothing_and_leaves_the_next_database_clean() {
     for invalid in [false, true] {
         let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
-        let mut rig = Rig::plain(a.clone(), invalid).await;
+        let mut rig = Rig::bare(a.clone(), invalid).await;
         let held = Held::open(&rig.database);
         held.shows("A").await;
         held.lists_show("A").await;
@@ -62,7 +62,7 @@ async fn closing_with_the_target_unset_sends_nothing_and_leaves_the_next_databas
 async fn a_late_answer_of_the_previous_transport_reaches_no_window_of_the_next_test() {
     let (a, b) = (World::new("A", "A-late", true), World::new("B", "B", true));
     let gate = a.hold_next("Users");
-    let mut rig = Rig::plain(a.clone(), false).await;
+    let mut rig = Rig::bare(a.clone(), false).await;
     let (old, old_rows) = window(&rig).await;
     gate.entered().await;
 
@@ -88,7 +88,7 @@ async fn a_late_answer_of_the_previous_transport_reaches_no_window_of_the_next_t
 #[tokio::test(flavor = "multi_thread")]
 async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database() {
     let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
-    let rig = Rig::plain(a.clone(), false).await;
+    let rig = Rig::bare(a.clone(), false).await;
     let held = Held::open(&rig.database);
     held.shows("A").await;
     assert!(rig.open_again(None).await.is_err(), "a second open succeeded while the first database was open");
@@ -120,7 +120,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
 async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscriptions_behind() {
     let leftovers = ["offline", "logout", "subscription", "held window"];
     let worlds: Vec<Arc<World>> = (0..=leftovers.len()).map(|index| World::new(&format!("T{index}"), &format!("T{index}"), true)).collect();
-    let mut rig = Rig::plain(worlds[0].clone(), false).await;
+    let mut rig = Rig::bare(worlds[0].clone(), false).await;
     let mut kept = Vec::new();
     for (index, leftover) in leftovers.iter().enumerate() {
         let world = &worlds[index];
@@ -156,7 +156,7 @@ async fn harness_cycles_survive_tests_that_leave_offline_logout_and_subscription
 async fn the_harness_cycle_releases_the_token_of_a_held_server_subscription_exactly_once() {
     for invalid in [false, true] {
         let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
-        let mut rig = Rig::plain(a.clone(), invalid).await;
+        let mut rig = Rig::bare(a.clone(), invalid).await;
         let rows = Arc::new(Rows::default());
         let live = rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, rows.clone());
         bound(live.wait_for_initial_load()).await.unwrap();
@@ -177,7 +177,7 @@ async fn the_harness_cycle_releases_the_token_of_a_held_server_subscription_exac
 async fn a_subscription_declared_on_the_next_database_opens_once_on_the_next_target() {
     for invalid in [false, true] {
         let (a, b) = (World::new("A", "A", true), World::new("B", "B", true));
-        let mut rig = Rig::plain(a.clone(), invalid).await;
+        let mut rig = Rig::bare(a.clone(), invalid).await;
         let rows = Arc::new(Rows::default());
         let live = rig.database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, rows.clone());
         bound(live.wait_for_initial_load()).await.unwrap();

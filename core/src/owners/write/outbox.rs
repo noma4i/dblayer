@@ -10,7 +10,8 @@ use crate::owners::session::{SessionInput, OUTBOX_AUTHOR};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
 use crate::pacing::RetryPolicy;
 use crate::schema::OnFailure;
-use crate::runtime::{Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
+use crate::owners::store::StoreWriter;
+use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 /// What a batch sent to the Store is for.
 #[derive(Clone, Debug)]
@@ -39,6 +40,7 @@ pub struct OutboxState {
     pub(super) outcome_waiters: Vec<(OpId, ReplyId)>,
     pub(super) ephemeral: BTreeMap<String, Time>,
     pub(super) drained: bool,
+    pub(super) author: BatchAuthor,
     pub(super) closing: bool,
     pub(super) queue_error: Option<String>,
     pub phase: Phase,
@@ -54,6 +56,14 @@ pub struct OutboxState {
 }
 
 impl OutboxState {
+    /// The owner LocalWrites: the same machine in every epoch, it takes only the local writes and talks to Store under its own author.
+    pub fn local_writes(epoch: Epoch, store: Address<StoreWriter>) -> Self {
+        let mut state = Self::new(epoch, OutboxPeers { store, session: None, transfer: None });
+        state.author = BatchAuthor::LocalWrites;
+        state.phase = Phase::Ready;
+        state
+    }
+
     pub fn new(epoch: Epoch, peers: OutboxPeers) -> Self {
         Self {
             peers,
@@ -73,6 +83,7 @@ impl OutboxState {
             outcome_waiters: Vec::new(),
             ephemeral: BTreeMap::new(),
             drained: false,
+            author: BatchAuthor::Outbox,
             closing: false,
             queue_error: None,
             phase: Phase::Restoring,
@@ -88,7 +99,9 @@ impl OutboxState {
     }
 
     /// A new epoch: a fresh instance. The platform call gate keeps calls out of an epoch without an identity.
-    pub(super) fn begin_epoch(&mut self, epoch: Epoch) { *self = Self::new(epoch, self.peers); }
+    pub(super) fn begin_epoch(&mut self, epoch: Epoch) {
+        *self = if self.author == BatchAuthor::LocalWrites { Self::local_writes(epoch, self.peers.store) } else { Self::new(epoch, self.peers) };
+    }
 
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }
 
@@ -176,7 +189,7 @@ impl OutboxState {
     }
 
     pub(super) fn commit(&self, id: BatchId, basis: BTreeMap<String, u64>, ops: Vec<StoreOp>, intents: u64, fx: &mut Effects<Outbox>) {
-        let batch = StoreBatch { author: BatchAuthor::Outbox, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
+        let batch = StoreBatch { author: self.author, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -289,7 +302,8 @@ impl OutboxState {
     pub(super) fn reject_or_keep(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
         let keep = self.ops.get(&op_id).is_some_and(|operation| operation.op.on_failure == OnFailure::Keep);
         if keep {
-            self.fail_with(op_id, "refused".into(), fx);
+            let detail = self.ops.get(&op_id).and_then(|operation| operation.reject_error.clone()).unwrap_or_else(|| "refused".into());
+            self.fail_with(op_id, detail, fx);
         } else {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::RollingBack(Why::Rejected);
@@ -349,9 +363,17 @@ impl OutboxState {
             OutboxInput::Response { op_id, rows, swap, errors } => self.on_response(op_id, rows, swap, errors, fx),
             OutboxInput::TransportError { op_id, temporary } => self.transport_failed(op_id, temporary, fx),
             OutboxInput::Dropped { op_id } => self.transport_failed(op_id, true, fx),
+            OutboxInput::Answered { req_id, outcome } => self.answered(req_id, outcome, fx),
+            OutboxInput::Refused { op_id, temporary, detail } => {
+                if self.stage_of(op_id) == Some(Stage::Sending) {
+                    if let Some(operation) = self.ops.get_mut(&op_id) { operation.reject_error = Some(detail); }
+                    self.transport_failed(op_id, temporary, fx);
+                }
+            }
             OutboxInput::Retry { model, row_id, reply } => self.retry(&model, &row_id, reply, fx),
             OutboxInput::Discard { model, row_id, reply } => self.discard(&model, &row_id, reply, fx),
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
+            OutboxInput::Resolve { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
             OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
             OutboxInput::ModelsReset(reset) => {
@@ -386,6 +408,11 @@ impl StateOwner for Outbox {
 
     fn step(state: &mut OutboxState, input: OutboxInput) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
+        if let OutboxInput::Resolve { model, row, reply } = input {
+            let resolved = state.aliases.get(&(model, row.clone())).cloned().unwrap_or(row);
+            OutboxState::reply(&mut fx, reply, OutboxAnswer::Resolved(resolved));
+            return fx;
+        }
         if state.phase == Phase::Restoring {
             state.restoring(input, &mut fx);
         } else {

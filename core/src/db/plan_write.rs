@@ -1,8 +1,6 @@
 //! The plan of a call of the platform: `create`, `update`, `act` and `destroy` read the base once and give the owner Outbox (or LocalWrites) the effects the call has before the server answers.
 //! Nothing is written here. The owner Store writes the effects and reads the prior state for the rollback in the same transaction.
 
-use std::collections::HashSet;
-
 use serde_json::{json, Map, Value};
 
 use crate::commit::{EntityOp, ScopeOp};
@@ -202,7 +200,55 @@ impl Db {
     }
 }
 
-/// The ids of the rows the effects write: the receipt shows the first one.
-pub(crate) fn written_rows(effects: &IntentEffects) -> HashSet<(String, String)> {
-    effects.rows.iter().map(|row| (row.model.clone(), row.row_id.clone())).collect()
+/// The request of an action with a mutation: the name of the mutation, its variables, the rule on refusal and whether the call waits for the network.
+#[derive(Debug, Clone)]
+pub(crate) struct MutationCall {
+    pub mutation: String,
+    pub variables: Value,
+    pub on_failure: crate::schema::OnFailure,
+    pub durable: bool,
+}
+
+/// What `set_local` writes: the whole row when it is in the base, the value that waits for the row when it is not.
+#[derive(Debug, Clone)]
+pub(crate) enum LocalPlan {
+    Row { row_id: RowId, values: Row },
+    Pending { row_id: RowId, path: String, value: Value },
+}
+
+impl Db {
+    /// The action of `model` that has a mutation, or `None` for a local model and an action without one.
+    pub(crate) fn mutation_call(&self, model: &str, action: &str, planned: &Planned, client_mutation_id: &str) -> Result<Option<MutationCall>, DbError> {
+        let spec = self.shared.spec(model)?;
+        if spec.is_local() { return Ok(None); }
+        let Some(declaration) = spec.actions.iter().find(|declared| declared.name == action) else { return Ok(None) };
+        let Some(mutation) = declaration.mutation.clone() else { return Ok(None) };
+        let is_id = |field: &str| spec.field(field).is_some_and(|field| matches!(field.kind, crate::schema::FieldKind::Scalar { kind: crate::value::ScalarKind::Id }));
+        let temp = planned.row_id.is_temp().then_some(&planned.row_id);
+        let variables = crate::write::variables::mutation_variables(declaration, &planned.input, temp, &is_id);
+        let variables = crate::write::variables::idempotent_variables(declaration, &planned.input, variables, client_mutation_id);
+        Ok(Some(MutationCall { mutation, variables, on_failure: declaration.on_failure, durable: declaration.durable || declaration.upload }))
+    }
+
+    /// The write of a local field: the value goes on the row, or waits for the row when it is not in the base.
+    pub(crate) fn plan_set_local(&self, model: &str, id: &RowId, path: &str, value: Value) -> Result<LocalPlan, DbError> {
+        let spec = self.shared.spec(model)?;
+        let slot = spec.local_slot(path).ok_or_else(|| DbError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
+        let value = match slot.key {
+            None if !value.is_null() => match slot.field.fault(&value, path, true, &mut Vec::new()) {
+                Some(crate::schema::ValueFault::Unknown(field)) => return Err(DbError::UnknownField { model: model.to_string(), field }),
+                Some(crate::schema::ValueFault::Invalid(_)) => return Err(DbError::LocalValue { model: model.to_string(), path: path.to_string() }),
+                None => slot.field.decode(&value).ok_or_else(|| DbError::LocalValue { model: model.to_string(), path: path.to_string() })?,
+            },
+            _ => value,
+        };
+        let row = self.shared.read(&[model], |reader| Ok(reader.point(model, id.as_str())?))?;
+        Ok(match row {
+            Some(mut row) => {
+                slot.write(&mut row, value);
+                LocalPlan::Row { row_id: id.clone(), values: row }
+            }
+            None => LocalPlan::Pending { row_id: id.clone(), path: path.to_string(), value },
+        })
+    }
 }

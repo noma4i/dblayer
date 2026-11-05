@@ -31,6 +31,7 @@ mod database_tests;
 mod encrypted;
 pub(crate) mod stream;
 mod command;
+mod write;
 mod read;
 #[cfg(test)]
 mod read_tests;

@@ -30,7 +30,7 @@ mod queue_write;
 mod plan_write;
 #[cfg(test)]
 mod plan_write_tests;
-pub(crate) use plan_write::Planned;
+pub(crate) use plan_write::{LocalPlan, MutationCall, Planned};
 mod upload_rows;
 #[cfg(test)]
 mod queue_write_tests;

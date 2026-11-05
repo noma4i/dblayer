@@ -62,6 +62,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));
                 wiring.to_feed(FeedInput::EpochStarted(started.clone()));
                 wiring.to_outbox(OutboxInput::EpochStarted(started.clone()));
+                wiring.to_local_writes(OutboxInput::EpochStarted(started.clone()));
                 wiring.to_rounds(RoundsInput::EpochStarted(started.clone()));
                 wiring.to_transfer(TransferInput::EpochStarted(started));
                 for owner in [Peer::Feed, Peer::Outbox, Peer::Calls, Peer::Session] {
@@ -82,7 +83,8 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_windows(WindowsInput::ModelsReset(reset.clone()));
                 wiring.to_deliveries(DeliveryInput::ModelsReset(reset.clone()));
                 wiring.to_feed(FeedInput::ModelsReset(reset.clone()));
-                wiring.to_outbox(OutboxInput::ModelsReset(reset));
+                wiring.to_outbox(OutboxInput::ModelsReset(reset.clone()));
+                wiring.to_local_writes(OutboxInput::ModelsReset(reset));
             }
             LifecycleEffect::Closing => {
                 wiring.release_held();

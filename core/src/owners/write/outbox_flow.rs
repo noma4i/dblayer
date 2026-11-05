@@ -3,11 +3,12 @@
 
 use super::outbox::{Outbox, OutboxState};
 use super::outbox_types::*;
+use crate::owners::contract::RequestId;
 
 use crate::owners::contract::{ReplyId};
 
 use crate::owners::store::{RowValue};
-use crate::runtime::{Effects, Epoch};
+use crate::runtime::{Effect, Effects, Epoch};
 
 
 
@@ -172,4 +173,25 @@ impl OutboxState {
         }
     }
 
+}
+
+impl OutboxState {
+    /// A `Mutate` of this owner got its answer. An answer of an operation that is not in flight (a late one) is dropped.
+    pub(super) fn answered(&mut self, req_id: RequestId, outcome: crate::owners::session::AuthorOutcome, fx: &mut Effects<Outbox>) {
+        use crate::owners::contract::ErrorClass;
+        use crate::owners::session::AuthorOutcome;
+        let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
+        match outcome {
+            AuthorOutcome::Response(body) => {
+                let operation = &self.ops[&op_id];
+                let temp = Some(operation.op.row_id.clone()).filter(|row| crate::identity::is_temp_id(row));
+                fx.push(Effect::Run(OutboxEffect::Decode(super::answer::DecodeJob { op_id, model: operation.op.model.clone(), action: operation.op.action.clone(), temp, body })));
+            }
+            AuthorOutcome::Error { class, error } => {
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.reject_error = Some(super::failure::of_session(&error, class)); }
+                self.transport_failed(op_id, matches!(class, ErrorClass::Network | ErrorClass::Server), fx);
+            }
+            AuthorOutcome::Dropped => self.transport_failed(op_id, true, fx),
+        }
+    }
 }
