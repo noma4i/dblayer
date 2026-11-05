@@ -9,6 +9,7 @@ use tokio::sync::watch;
 
 use crate::db::dispatch::{Effects, OrderedEffects};
 use crate::identity::Generation;
+use crate::lifecycle::authority::{Authority, Internal};
 use crate::runtime::Cause;
 
 /// What work needs to start: `Explicit` work runs without a session, `Session` work needs one.
@@ -247,28 +248,6 @@ impl Default for Leases {
     }
 }
 
-/// What lets a SQL commit run: the epoch of admitted work, the proof of the opening, or a batch of an owner whose epoch and basis the Store owner checked against its `Published` snapshot before the write.
-pub(crate) enum Authority {
-    Admitted(Admitted),
-    Internal(Internal),
-    Owner,
-}
-
-pub(crate) struct Internal(());
-
-impl Internal {
-    #[cfg(test)]
-    pub(crate) fn for_tests() -> Self { Self(()) }
-}
-
-impl From<Admitted> for Authority {
-    fn from(admitted: Admitted) -> Self { Self::Admitted(admitted) }
-}
-
-impl From<Internal> for Authority {
-    fn from(token: Internal) -> Self { Self::Internal(token) }
-}
-
 /// One piece of work in the database. It is issued before the work is queued and ends with the single outcome of that work. The end of its epoch ends every lease of the old epoch.
 #[derive(Clone)]
 pub struct Admitted {
@@ -316,7 +295,7 @@ impl Drop for Admission {
 
 impl Leases {
     pub(crate) fn opening(&self) -> Option<Internal> {
-        (!self.opening_issued.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(Internal(()))
+        (!self.opening_issued.swap(true, std::sync::atomic::Ordering::SeqCst)).then(Internal::opening)
     }
 
     pub(crate) fn admit(self: &Arc<Self>, origin: Origin, target: &'static str) -> Result<Admitted, Ended> {

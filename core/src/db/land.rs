@@ -13,7 +13,7 @@ impl Db {
             return Err(DbError::OriginNotLandable(envelope.origin));
         }
         let generation = envelope.generation;
-        self.commit_following(&crate::ffi::legacy::Authority::Admitted(admitted.clone()), generation, |_| Ok(Some(envelope.clone())))
+        self.commit_following(&crate::lifecycle::authority::Authority::Admitted(admitted.clone()), generation, |_| Ok(Some(envelope.clone())))
             .map_err(|error| if admitted.is_current() { plan_fault(error) } else { DbError::NoSession { detail: "the session of this write ended".into() } })
     }
 }

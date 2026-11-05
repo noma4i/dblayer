@@ -108,7 +108,7 @@ impl Store {
 
     #[cfg(test)]
     pub fn save_window(&self, record: &WindowRecord) -> Result<(), StoreError> {
-        self.write_store(&crate::ffi::legacy::Authority::Internal(crate::ffi::legacy::Internal::for_tests()), |inner| upsert_window(&inner.connection, record, inner.now_ms()))
+        self.write_store(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), |inner| upsert_window(&inner.connection, record, inner.now_ms()))
     }
 
     pub fn window(&self, key: &str) -> Result<Option<WindowRecord>, StoreError> {
@@ -148,16 +148,16 @@ impl Store {
             .optional()?)
     }
 
-    pub(crate) fn invalidate_family(&self, authority: &crate::ffi::legacy::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
+    pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::authority::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
         self.write_store(authority, |inner| {
-            if let crate::ffi::legacy::Authority::Admitted(admitted) = authority {
+            if let crate::lifecycle::authority::Authority::Admitted(admitted) = authority {
                 if !admitted.is_current() { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
             }
             mark_families(&inner.connection, &[(model.to_string(), relation.to_string())], since)
         })
     }
 
-    pub(crate) fn invalidate_windows(&self, authority: &crate::ffi::legacy::Authority, keys: &[String], since: i64) -> Result<usize, StoreError> {
+    pub(crate) fn invalidate_windows(&self, authority: &crate::lifecycle::authority::Authority, keys: &[String], since: i64) -> Result<usize, StoreError> {
         self.write_store(authority, |inner| {
             let mut marked = 0;
             for key in keys {

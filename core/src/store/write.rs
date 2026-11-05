@@ -1,4 +1,4 @@
-use crate::ffi::legacy::Authority;
+use crate::lifecycle::authority::Authority;
 
 use super::{Inner, Store, StoreError};
 

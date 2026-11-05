@@ -10,7 +10,8 @@ use super::key::ServerKey;
 use super::state::{self, Pending};
 use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
-use crate::ffi::legacy::{Admitted, Authority, Origin};
+use crate::ffi::legacy::{Admitted, Origin};
+use crate::lifecycle::authority::{Authority, Internal};
 use crate::pacing::{Clock, RetryPolicy};
 use crate::transport::{SessionCode, TransportError};
 use crate::transport::retry::{RetryClass, RetryCalls, Retrying};
@@ -390,7 +391,7 @@ impl EncryptedClient {
     pub(crate) fn sign_in_for_test(&self) -> Result<(), TransportError> {
         let admitted = self.admit("test sign in")?;
         self.credential(&admitted)?;
-        self.write_as(&Authority::Internal(crate::ffi::legacy::Internal::for_tests()), |connection| state::commit(connection, 1))
+        self.write_as(&Authority::Internal(Internal::for_tests()), |connection| state::commit(connection, 1))
     }
 
     fn read_connection<T>(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {

@@ -22,7 +22,7 @@ use super::shape::{delete_tables, insert_children, member_values, normalize, nor
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
-use crate::ffi::legacy::Authority;
+use crate::lifecycle::authority::{Authority, Internal};
 
 use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
@@ -43,7 +43,7 @@ impl<E> From<StoreError> for PlanCommitError<E> {
 impl Store {
     #[cfg(test)]
     pub(crate) fn commit(&self, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
-        self.commit_as(&Authority::Internal(crate::ffi::legacy::Internal::for_tests()), envelope)
+        self.commit_as(&Authority::Internal(Internal::for_tests()), envelope)
     }
 
     pub(crate) fn commit_as(&self, authority: &Authority, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
@@ -78,7 +78,7 @@ impl Store {
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<CommitResult, PlanCommitError<E>> {
-        self.commit_prepared_deferred(&Authority::Internal(crate::ffi::legacy::Internal::for_tests()), generation, plan).map(Committed::publish)
+        self.commit_prepared_deferred(&Authority::Internal(Internal::for_tests()), generation, plan).map(Committed::publish)
     }
 
     pub(crate) fn commit_prepared_deferred<E>(

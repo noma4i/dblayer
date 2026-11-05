@@ -67,7 +67,7 @@ pub(crate) fn prune_tombstones(
 impl Store {
     #[cfg(test)]
     pub fn mark_tombstone(&self, model: &str, id: &str, seq: i64, deleted_at: i64) -> Result<(), StoreError> {
-        self.write_store(&crate::ffi::legacy::Authority::Internal(crate::ffi::legacy::Internal::for_tests()), |inner| write_tombstone(&inner.connection, model, id, seq, deleted_at))
+        self.write_store(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), |inner| write_tombstone(&inner.connection, model, id, seq, deleted_at))
     }
 
     #[cfg(test)]
@@ -88,6 +88,6 @@ impl Store {
 
     #[cfg(test)]
     pub fn evict_tombstones(&self, retention: &TombstoneRetention) -> Result<usize, StoreError> {
-        self.write_store(&crate::ffi::legacy::Authority::Internal(crate::ffi::legacy::Internal::for_tests()), |inner| prune_tombstones(&inner.connection, inner.now_ms(), retention))
+        self.write_store(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), |inner| prune_tombstones(&inner.connection, inner.now_ms(), retention))
     }
 }

@@ -8,7 +8,7 @@ use crate::files::references_of_row;
 use crate::identity::{Generation, ModelKey, RowId};
 use crate::store::{Reader, StoreError};
 
-use super::commit::Gate;
+use crate::lifecycle::authority::Authority;
 use super::error::DbError;
 use super::local_write::{plan_fault, OutboxOperation};
 use super::open::Db;
@@ -298,9 +298,9 @@ impl Db {
         self.roll_back_gated(&admitted.authority(), seq, generation, still)
     }
 
-    pub(crate) fn roll_back_gated(&self, gate: &Gate, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
+    pub(crate) fn roll_back_gated(&self, authority: &Authority, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
-        let result = self.commit_following(gate, generation, |reader| {
+        let result = self.commit_following(authority, generation, |reader| {
                 discarded = Vec::new();
                 let found = OutboxOperation::read(reader, seq)?;
                 let entry = match (found, still) {

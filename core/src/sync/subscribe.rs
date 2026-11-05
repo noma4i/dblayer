@@ -582,7 +582,7 @@ impl Feed {
         let mut count = 0;
         let mut announced: Vec<(String, RowId, Map<String, Value>)> = Vec::new();
         let mut held_files: Vec<String> = Vec::new();
-        let committed = db.commit_following_report(&crate::ffi::legacy::Authority::Admitted(self.now()), generation, |reader| {
+        let committed = db.commit_following_report(&crate::lifecycle::authority::Authority::Admitted(self.now()), generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();

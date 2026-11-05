@@ -90,7 +90,7 @@ fn inv_conc_02_no_store_lock_is_held_while_the_hook_calls_into_other_components(
 
 fn deferred<'a>(store: &'a Store, row_id: &str) -> Committed<'a> {
     let mut planned = Some(envelope(store, vec![upsert("messages", message(row_id, "c1"))], vec![]));
-    store.commit_prepared_deferred(&crate::ffi::legacy::Authority::Internal(crate::ffi::legacy::Internal::for_tests()), store.generation(), |_| Ok::<_, StoreError>(planned.take())).unwrap()
+    store.commit_prepared_deferred(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), store.generation(), |_| Ok::<_, StoreError>(planned.take())).unwrap()
 }
 
 #[test]

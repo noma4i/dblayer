@@ -48,7 +48,7 @@ impl super::Store {
         Ok(rows)
     }
 
-    pub(crate) fn settle_transfer_abort(&self, authority: &crate::ffi::legacy::Authority, id: i64) -> Result<(), StoreError> {
+    pub(crate) fn settle_transfer_abort(&self, authority: &crate::lifecycle::authority::Authority, id: i64) -> Result<(), StoreError> {
         self.write_store(authority, |inner| {
             inner.connection.execute("DELETE FROM transfer_abort WHERE id = ?1", [id])?;
             Ok(())

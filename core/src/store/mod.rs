@@ -74,8 +74,8 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
-    pub(crate) fn ensure_generation(&self, authority: &crate::ffi::legacy::Authority, generation: Generation) -> Result<(), StoreError> {
-        if let crate::ffi::legacy::Authority::Admitted(admitted) = authority {
+    pub(crate) fn ensure_generation(&self, authority: &crate::lifecycle::authority::Authority, generation: Generation) -> Result<(), StoreError> {
+        if let crate::lifecycle::authority::Authority::Admitted(admitted) = authority {
             if !admitted.life().admits_epoch(admitted.value()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
         }
         if generation != self.generation {

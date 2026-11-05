@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use super::fixtures::*;
-use crate::ffi::legacy::{Authority, Origin};
+use crate::ffi::legacy::Origin;
+use crate::lifecycle::authority::Authority;
 
 fn stale(store: &super::Store) -> Authority {
     let admitted = store.lifecycle.admit(Origin::Explicit, "test write").unwrap();

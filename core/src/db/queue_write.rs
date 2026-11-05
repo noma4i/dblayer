@@ -13,7 +13,7 @@ use crate::owners::write::transfer::{Source, Steps, StoredTransfer};
 use crate::runtime::Time;
 use crate::schema::OnFailure;
 
-use super::commit::Gate;
+use crate::lifecycle::authority::Authority;
 use super::error::DbError;
 use super::local_write::plan_fault;
 use super::open::Db;
@@ -72,12 +72,12 @@ impl Db {
             }
         }
         for seq in rolled_back {
-            self.roll_back_gated(&Gate::Owner, seq, generation, None)?;
+            self.roll_back_gated(&Authority::Owner, seq, generation, None)?;
         }
         if envelope.entity_ops.is_empty() && envelope.operation_transitions.is_empty() {
             return Ok(());
         }
-        self.commit_following(&Gate::Owner, generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
+        self.commit_following(&Authority::Owner, generation, |_| Ok::<_, DbError>(Some(envelope.clone()))).map_err(plan_fault)?;
         Ok(())
     }
 
@@ -89,7 +89,7 @@ impl Db {
         let input: Value = serde_json::from_str(payload).map_err(json_fault)?;
         let owner = row_id(id)?;
         let (result, _) = self
-            .commit_following_deferred(&Gate::Owner, generation, |reader| {
+            .commit_following_deferred(&Authority::Owner, generation, |reader| {
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 let mut prior = Prior::default();
                 for EffectRow { model: row_model, row_id: row_key, values: text } in &effects.rows {
@@ -145,7 +145,7 @@ impl Db {
         };
         self.shared
             .store
-            .write_store(&Gate::Owner, |stored| {
+            .write_store(&Authority::Owner, |stored| {
                 stored.connection.execute(
                     "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, seq, source, batch, upload_id, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
@@ -226,7 +226,7 @@ impl Db {
         let [model, id, action] = key_parts(key)?;
         self.shared
             .store
-            .write_store(&Gate::Owner, |stored| {
+            .write_store(&Authority::Owner, |stored| {
                 stored.connection.execute("DELETE FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND action = ?3", rusqlite::params![model, id, action])?;
                 Ok(())
             })

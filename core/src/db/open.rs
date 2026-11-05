@@ -469,7 +469,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
     }
     let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, store.generation());
     envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
-    store.commit_as(&crate::ffi::legacy::Authority::Internal(opening), envelope)?;
+    store.commit_as(&crate::lifecycle::authority::Authority::Internal(opening), envelope)?;
     Ok(())
 }
 

@@ -2,16 +2,13 @@ use std::collections::HashSet;
 
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, OperationTransition, WriteOrigin};
 use crate::identity::Generation;
-use crate::ffi::legacy::Authority;
+use crate::lifecycle::authority::Authority;
 use crate::store::{Committed, PlanCommitError, Reader};
 
 use super::error::DbError;
 use super::merge::Admission;
 use super::open::Db;
 use super::parent_pointer::Followed;
-
-/// What lets a commit run: the writes of the owners come with `Gate::Owner`.
-pub(crate) type Gate = Authority;
 
 impl Db {
     pub fn admit(&self) -> Result<crate::ffi::legacy::Admitted, DbError> {
