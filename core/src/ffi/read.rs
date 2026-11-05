@@ -249,6 +249,15 @@ impl Database {
 }
 
 impl Database {
+    /// A remote window older than its `stale_time` loads again when a stream opens on it.
+    fn stale_before_open(&self, view: &View) {
+        if !view.remote { return; }
+        let crate::owners::read::windows::WindowKind::Relation { relation, params } = view.window.kind() else { return };
+        let now = self.db.shared.store.lock().now_ms();
+        if self.db.window_is_fresh(&view.model, &relation, &params, now).unwrap_or(false) { return; }
+        self.life.stale_window(view.window.clone());
+    }
+
     /// Hands the status of the transfer of `key` to the stream at each change.
     fn watch_status(&self, stream: u64, key: &str) -> Option<tokio::task::AbortHandle> {
         let (shows, life, key) = (self.shows.clone(), Arc::downgrade(&self.life), key.to_string());
@@ -283,6 +292,7 @@ impl Database {
             Ok((view, revision)) => (view, revision, true, None),
             Err(error) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, Some(error)),
         };
+        if valid { self.stale_before_open(&view); }
         self.life.open_stream(stream, view, epoch, revision, valid);
         let status = match (&request, valid) {
             (ReadRequest::Blob { key }, true) => self.watch_status(stream, key),

@@ -18,9 +18,10 @@ async fn a_database_without_a_transport_hands_out_an_online_sink_that_ignores_th
 }
 
 #[tokio::test]
-async fn a_retry_does_nothing_without_a_transport() {
+async fn a_retry_needs_a_session_without_a_transport() {
     let database = local().await;
-    assert_eq!(database.retry(database.session_epoch(), "Note".into(), "1".into(), None, None).await.unwrap().operation, None, "retry without a transport starts no operation");
+    let refused = database.retry(database.session_epoch(), "Note".into(), "1".into(), None, None).await;
+    assert!(matches!(refused, Err(super::DbError::NoSession { .. })), "{refused:?}");
 }
 
 #[tokio::test]

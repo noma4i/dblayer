@@ -50,6 +50,15 @@ impl Drop for LoadRequest {
     fn drop(&mut self) { self.cancel(); }
 }
 
+struct LoadArgs {
+    epoch: u64,
+    model: String,
+    relation: String,
+    params_json: String,
+    goal: Goal,
+    force: bool,
+}
+
 struct LoadCall {
     epoch: u64,
     waiter: crate::runtime::Waiter<LifeReply>,
@@ -73,23 +82,23 @@ impl Drop for LeaveLoad {
 impl Database {
     /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
     pub fn begin_load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
-        self.begin(self.start_load(epoch, &model, &relation, &params_json, Goal::First, false)?)
+        self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::First, force: false })
     }
 
     pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
         self.require_online(&format!("{model}.{relation} refresh"))?;
-        let call = self.start_load(epoch, &model, &relation, &params_json, Goal::First, true)?;
+        let call = self.start_load(epoch, &model, &relation, &params_json, Goal::First, true).await?;
         self.finish_load(call).await.map(drop)
     }
 
     /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
     pub fn begin_load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
-        self.begin(self.start_load(epoch, &model, &relation, &params_json, Goal::All, force)?)
+        self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::All, force })
     }
 
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.require_online(&format!("{model}.{relation} load more"))?;
-        let call = self.start_load(epoch, &model, &relation, &params_json, Goal::Next, false)?;
+        let call = self.start_load(epoch, &model, &relation, &params_json, Goal::Next, false).await?;
         self.finish_load(call).await
     }
 
@@ -98,7 +107,7 @@ impl Database {
         self.node_relation(&model, &relation, NodeRead::One)?;
         let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
         let wire = self.wire(&model)?.clone();
-        let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), Goal::First, force)?;
+        let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), Goal::First, force).await?;
         self.finish_load(call).await?;
         let (db, found) = (self.db.clone(), model.clone());
         let row = super::database::blocking(move || Ok(if db.window_member(&found, &relation, &params, id.as_str())? { db.find(&found, &id)? } else { None })).await?;
@@ -126,11 +135,16 @@ impl Database {
 }
 
 impl Database {
-    fn begin(&self, call: LoadCall) -> Result<Arc<LoadRequest>, DbError> {
+    fn begin(&self, args: LoadArgs) -> Result<Arc<LoadRequest>, DbError> {
+        self.remote()?;
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
         let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
-            let result = this.finish_load(call).await.map(drop);
+            let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
+            let result = match this.start_load(epoch, &model, &relation, &params_json, goal, force).await {
+                Ok(call) => this.finish_load(call).await.map(drop),
+                Err(error) => Err(error),
+            };
             crate::db::lock::effect(|| sender.send_replace(Some(result)));
         });
         Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
@@ -150,11 +164,16 @@ impl Database {
     }
 
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
-    fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
-        let params: Map<String, Value> = serde_json::from_str(params_json)?;
-        self.db.window_record(model, relation, &params)?;
-        let fresh = || self.db.window_is_fresh(model, relation, &params, self.db.shared.store.lock().now_ms());
-        let force = force || (goal == Goal::First && !fresh()?);
+    async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
+        self.remote()?;
+        let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
+        let (params, force) = super::database::blocking(move || {
+            let params: Map<String, Value> = serde_json::from_str(&text)?;
+            db.window_record(&found, &name, &params)?;
+            let now = db.shared.store.lock().now_ms();
+            let force = force || (goal == Goal::First && !db.window_is_fresh(&found, &name, &params, now)?);
+            Ok((params, force))
+        }).await?;
         self.start_window(epoch, WindowKey::relation(model, relation, &params), goal, force)
     }
 

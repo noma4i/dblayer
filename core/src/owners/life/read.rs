@@ -194,6 +194,12 @@ impl super::Life {
     /// The keys of the schema declared `preload` start loading once their operations are registered.
     pub fn preload(&self, keys: Vec<WindowKey>) { self.wiring.to_windows(WindowsInput::PreloadKeys { keys }); }
 
+    /// The window of a stream that is about to open outlived its `stale_time`: Windows loads it again for the new interest.
+    pub fn stale_window(&self, key: WindowKey) {
+        let model = key.model.clone();
+        self.wiring.to_windows(WindowsInput::Stale { model, keys: crate::owners::read::windows::StaleKeys::Set(std::collections::BTreeSet::from([key])) });
+    }
+
     /// The platform calls that wait for an outcome of `Windows` now.
     #[cfg(test)]
     pub fn waiting_calls(&self) -> usize { self.wiring.outcomes.waiting() }

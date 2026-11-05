@@ -50,6 +50,7 @@ async fn open() -> (Arc<Database>, Arc<Endless>) {
     let transport = Arc::new(Endless { queries: AtomicUsize::new(0), sixth_started: tokio::sync::Notify::new(), sixth_cancelled: tokio::sync::Notify::new() });
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
+    db.set_online(true).unwrap();
     (db, transport)
 }
 

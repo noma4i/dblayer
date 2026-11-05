@@ -131,7 +131,7 @@ impl Database {
 impl Database {
     pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
-        let file = request.into_file()?;
+        let file = blocking(move || request.into_file()).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let item = self.single_upload(&model, row.as_str(), &action, &file, IntentEffects::default())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
@@ -142,8 +142,7 @@ impl Database {
 
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
         self.account_call(epoch)?;
-        let items = items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?;
-        let request = request.into_input()?;
+        let (items, request) = blocking(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
         let spec = self.db.spec(&model)?;
         let action = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
         let batch = action.batch.as_ref().ok_or_else(|| invalid("operation has no upload batch declaration"))?;
@@ -190,10 +189,8 @@ impl Database {
         let epoch = request.epoch;
         self.account_call(epoch)?;
         let Some(upload) = request.upload else { return Err(invalid("a command without a file goes through the owners")) };
-        let file = upload.request.into_file()?;
-        let (values, args) = (serde_json::from_str(&request.values_json)?, serde_json::from_str(&request.args_json)?);
-        let (db, name) = (self.db.clone(), request.model.clone());
-        let planned = blocking(move || Ok(db.plan_create(&name, values, args)?)).await?;
+        let (db, name, texts) = (self.db.clone(), request.model.clone(), (request.values_json.clone(), request.args_json.clone()));
+        let (file, planned) = blocking(move || Ok((upload.request.into_file()?, db.plan_create(&name, serde_json::from_str(&texts.0)?, serde_json::from_str(&texts.1)?)?))).await?;
         let item = self.single_upload(&request.model, planned.row_id.as_str(), &upload.action, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Database { detail: "the owner answered a send with no receipt".into() }) };
@@ -231,6 +228,7 @@ impl Database {
 
     /// `retry` with no source: the transfers of the row first, then the mutations. `None` when no transfer has the row.
     pub(super) async fn retry_declared_transfer(&self, epoch: u64, model: &str, row: &str) -> Result<Option<WireOperationReceipt>, DbError> {
+        if self.uploads.is_none() { return Ok(None); }
         for action in self.upload_actions(model)? {
             let waiter = self.life.retry_upload(epoch, key_of(model, row, &action), None);
             match self.await_life(waiter).await? {
@@ -248,6 +246,7 @@ impl Database {
 
     /// `discard` of a transfer: `false` when no transfer of the row exists, the caller asks the mutations then.
     pub(super) async fn discard_transfer(&self, epoch: u64, model: &str, row: &str, action: Option<&str>) -> Result<bool, DbError> {
+        if self.uploads.is_none() { return Ok(false); }
         let actions = match action {
             Some(action) => vec![action.to_string()],
             None => self.upload_actions(model)?,

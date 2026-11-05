@@ -170,6 +170,7 @@ pub(crate) struct Watched {
     settled: Settled,
     pump: tokio::task::JoinHandle<()>,
     request: ReadRequest,
+    ended: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Watched {
@@ -177,6 +178,9 @@ impl Watched {
     pub(crate) async fn wait_for_initial_load(&self) -> Result<u64, DbError> {
         let mut settled = self.settled.clone();
         let seen = settled.wait_for(Option::is_some).await.map_err(|_| DbError::Interrupted { detail: "the stream is gone".into() })?.clone();
+        if self.ended.load(std::sync::atomic::Ordering::SeqCst) && !matches!(seen, Some(Err(DbError::Invalid { .. }))) {
+            return Err(DbError::Interrupted { detail: "the stream ended".into() });
+        }
         seen.unwrap_or_else(|| Err(DbError::Interrupted { detail: "the stream is gone".into() }))
     }
 
@@ -213,12 +217,15 @@ impl Database {
         let stream = self.subscribe_values(epoch, request.clone());
         let (outcome, settled) = tokio::sync::watch::channel(None);
         let pulled = stream.clone();
+        let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = ended.clone();
         let pump = tokio::spawn(async move {
             let mut seq = 0;
             loop {
                 match pulled.pull().await {
                     Ok(Some(value)) => {
                         seq += 1;
+                        if matches!(value, ReadValue::Ended { .. }) { flag.store(true, std::sync::atomic::Ordering::SeqCst); }
                         if let Some(done) = settled_by(&value, seq) {
                             outcome.send_if_modified(|current| current.is_none().then(|| *current = Some(done)).is_some());
                         }
@@ -232,7 +239,7 @@ impl Database {
                 }
             }
         });
-        let watched = Arc::new(Watched { stream, epoch, settled, pump, request });
+        let watched = Arc::new(Watched { stream, epoch, settled, pump, request, ended });
         registry().lock().unwrap().insert((Arc::as_ptr(&self.life) as usize, watched.stream.id()), watched.clone());
         watched
     }

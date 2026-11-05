@@ -314,7 +314,7 @@ impl Database {
     }
     pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
         self.remote()?;
-        serde_json::from_str::<Value>(&variables_json)?;
+        let variables_json = blocking(move || { serde_json::from_str::<Value>(&variables_json)?; Ok(variables_json) }).await?;
         match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),
@@ -389,9 +389,9 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
         CallError::Invalid => DbError::Invalid { detail: "the operation is not registered".into() },
         CallError::Offline => DbError::Network { detail: "the operation needs the network".into() },
         CallError::Network => DbError::Network { detail: "the request did not reach the server".into() },
-        CallError::Graphql(messages) => DbError::Graphql { messages, extensions: None },
-        CallError::Session(code) => DbError::Session { code, detail: "the server refused the call".into() },
-        CallError::Http => DbError::Http { status: 0, detail: "the server refused the request".into() },
+        CallError::Graphql { messages, extensions } => DbError::Graphql { messages, extensions },
+        CallError::Session { code, detail } => DbError::Session { code, detail },
+        CallError::Http { status, detail } => DbError::Http { status, detail },
         CallError::Dropped => DbError::Network { detail: "the request left and the answer did not come".into() },
         CallError::InvalidResponse => DbError::Invalid { detail: "the response has no root of the operation".into() },
         CallError::Interrupted => super::command::ended(),
