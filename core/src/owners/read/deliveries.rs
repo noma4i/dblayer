@@ -4,18 +4,19 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, WindowPhase, WindowState};
+use crate::db::{Diff, Entry, Stamp};
+use crate::ffi::WireRow;
+use crate::identity::RowId;
+use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, ReplyId, WindowPhase, WindowState};
 use crate::owners::read::feed::{Feed, FeedInput};
 use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput};
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
 
 pub const JOURNAL_LIMIT: usize = 256;
-/// A read that moves more rows than this arrives as a `Snapshot`, not a `Delta`.
 pub const DELTA_LIMIT: usize = 256;
 
 pub type StreamId = u64;
 
-/// How an `Entity` stream asks the window of its node (`delivery.md`, kinds of streams).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fetch {
     Never,
@@ -30,43 +31,39 @@ pub enum Kind {
     Entity { fetch: Fetch },
     Count,
     Events,
+    Blob,
+    RetryStatus,
 }
 
 impl Kind {
-    /// `Some(force)` when `open` sends `Interest+` to the window.
-    fn interest_at_open(self) -> Option<bool> {
-        match self {
-            Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale } => Some(false),
-            Kind::Entity { fetch: Fetch::Force } => Some(true),
-            Kind::Entity { .. } | Kind::Events => None,
-        }
-    }
+    fn reads_rows(self) -> bool { matches!(self, Kind::List | Kind::Entity { .. } | Kind::Count) }
 }
 
-/// What a read gives back: the rows of a `List` or `Entity`, the number of a `Count`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ReadData {
-    Rows(Vec<StreamRow>),
+    Rows { rows: Vec<StreamRow>, replaced: Vec<(String, String)> },
     Count(u64),
 }
 
-/// What a stream shows: `tables` are the tables of its rows, `model` is the model of its rows or events.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct View {
     pub kind: Kind,
     pub model: String,
     pub tables: Vec<String>,
-    /// The model is `storage: local`: the stream needs no session.
     pub local: bool,
-    /// The window of the stream; an `Events` stream has none and the key is not used.
     pub window: WindowKey,
+    pub subject: String,
 }
 
-/// A row of a snapshot: `stamp` changes when the content of the row changes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StreamRow {
     pub id: String,
     pub stamp: i64,
+    pub row: Option<WireRow>,
+}
+
+impl StreamRow {
+    pub fn new(id: &str, stamp: i64) -> Self { Self { id: id.to_string(), stamp, row: None } }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,51 +75,84 @@ pub enum EndCause {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlobStatus {
+    pub state: String,
+    pub progress: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RetryStatus {
+    pub attempts: u32,
+    pub phase: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Delta {
+    pub base: i64,
+    pub revision: i64,
+    pub size: u32,
+    pub rows: Vec<StreamRow>,
+    pub indexes: Vec<u32>,
+    pub removed: Vec<String>,
+    pub placed: Vec<(String, u32)>,
+    pub replaced: Vec<(String, String)>,
+    pub renamed: Vec<(String, String)>,
+    pub state: WindowState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Snapshot { revision: i64, rows: Vec<StreamRow>, state: WindowState },
-    Delta { base: i64, revision: i64, upserted: Vec<StreamRow>, removed: Vec<String> },
+    Delta(Delta),
     Count { revision: i64, count: u64, state: WindowState },
-    /// The window changed, the rows of `revision` are the same.
     State { revision: i64, state: WindowState },
-    /// The server subscription is alive: once per `Events` stream.
     Ready,
     Event { position: u64, payload: String },
     Lost { first: u64, last: u64 },
+    Gap,
+    Status { revision: i64, blob: BlobStatus },
+    Retry(RetryStatus),
     Ended(EndCause),
 }
 
-/// The answer of `Pull`: the first value of the journal, or the end of a stream that was over.
-#[derive(Clone, Debug, PartialEq, Eq)]
+impl Value {
+    fn is_rows(&self) -> bool { matches!(self, Value::Snapshot { .. } | Value::Delta(_) | Value::Count { .. }) }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum PullAnswer {
     Value(Value),
     Done,
+    Invalid,
 }
 
-/// The effects of the runner: a read of the snapshot carries its view by value, an answer settles the outcome of a `Pull`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum StreamEffect {
     Read { read_id: u64, revision: i64, view: View },
     Answer { outcome: OutcomeId, answer: PullAnswer },
+    Available,
+    CloseSink,
+    Cancelled { reply: ReplyId },
+    StatusInterest { plus: bool },
 }
 
-/// What a machine gives out: an effect of the runner or an input for the Windows or the Feed.
 enum Emit {
-    Read { read_id: u64, revision: i64 },
-    InterestPlus { force: bool },
+    Run(StreamEffect),
+    Load { force: bool },
+    InterestPlus,
     InterestMinus,
     WantPlus,
     WantMinus,
-    Answer { outcome: OutcomeId, answer: PullAnswer },
 }
 
-/// The owners `Deliveries` sends inputs to.
 #[derive(Clone, Copy, Debug)]
 pub struct DeliveryPeers {
     pub windows: Address<Windows>,
     pub feed: Address<Feed>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DeliveryEffect {
     Stream { stream: StreamId, effect: StreamEffect },
     Drained(Drained),
@@ -130,7 +160,6 @@ pub enum DeliveryEffect {
 
 #[derive(Clone, Debug)]
 pub enum DeliveryInput {
-    /// `identity` = the published value has an identity, `valid` = the model, relation and params of the request are valid.
     Open { stream: StreamId, view: View, epoch: Epoch, revision: i64, identity: bool, valid: bool },
     Committed(Committed),
     ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
@@ -140,8 +169,13 @@ pub enum DeliveryInput {
     ModelReady { stream: StreamId },
     ModelEvent { stream: StreamId, position: u64, payload: String },
     ModelLost { stream: StreamId, first: u64, last: u64 },
+    ModelGap { stream: StreamId },
+    TransferStatus { stream: StreamId, blob: BlobStatus },
+    RetryState { stream: StreamId, retry: RetryStatus },
     Pull { stream: StreamId, outcome: OutcomeId },
-    Cancel { stream: StreamId },
+    Cancel { stream: StreamId, reply: ReplyId },
+    Release { stream: StreamId },
+    SinkClosed { stream: StreamId },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     ModelsReset(ModelsReset),
@@ -153,74 +187,184 @@ pub enum DeliveryInput {
 pub enum DeliveryStage {
     Opening,
     Live,
+    Cancelling,
     Ended,
 }
 
-/// One machine of `delivery.md`.
+#[derive(Clone, Debug)]
+enum Held {
+    Event { position: u64, payload: String },
+    Lost { first: u64, last: u64 },
+    Gap,
+}
+
 #[derive(Debug)]
 struct Delivery {
     epoch: Epoch,
     view: View,
     stage: DeliveryStage,
-    /// The revision the current read asks for.
-    read: i64,
+    read_revision: i64,
     read_id: u64,
     revision: i64,
+    acknowledged: Option<i64>,
     rows: Vec<StreamRow>,
+    acked_rows: Vec<StreamRow>,
     count: Option<u64>,
     window: WindowState,
-    /// The next expected position of the Feed (`Joined.position + 1`), `None` before `Joined`.
+    held_state: Option<WindowState>,
     next_feed: Option<u64>,
-    /// The last position given to the stream.
     position: u64,
     ready: bool,
+    held_events: Vec<Held>,
+    blob: Option<BlobStatus>,
+    retry: Option<RetryStatus>,
+    status_revision: i64,
     journal: VecDeque<Value>,
+    waiting: Option<OutcomeId>,
     ended_given: bool,
-    /// Pulls that wait for the next value.
-    readers: VecDeque<OutcomeId>,
-    /// The revision of the Store at the open of the stream.
+    cause: EndCause,
+    replies: Vec<ReplyId>,
+    closing: bool,
+    released: bool,
+    sink_closed: bool,
+    interested: bool,
     opened: i64,
 }
 
+fn visible_after(state: &WindowState) -> i64 { state.loaded.unwrap_or(0) }
+
+fn entry(row: &StreamRow) -> Result<Entry, String> {
+    let id = RowId::new(&row.id).map_err(|error| error.to_string())?;
+    Ok(Entry { id, stamp: Stamp { revision: row.stamp, ..Stamp::default() } })
+}
+
 impl Delivery {
+    fn new(epoch: Epoch, view: View, stage: DeliveryStage, revision: i64) -> Self {
+        Self {
+            epoch,
+            view,
+            stage,
+            read_revision: revision,
+            read_id: 0,
+            revision: 0,
+            acknowledged: None,
+            rows: Vec::new(),
+            acked_rows: Vec::new(),
+            count: None,
+            window: WindowState::idle(),
+            held_state: None,
+            next_feed: None,
+            position: 0,
+            ready: false,
+            held_events: Vec::new(),
+            blob: None,
+            retry: None,
+            status_revision: 0,
+            journal: VecDeque::new(),
+            waiting: None,
+            ended_given: false,
+            cause: EndCause::Cancelled,
+            replies: Vec::new(),
+            closing: false,
+            released: false,
+            sink_closed: false,
+            interested: false,
+            opened: revision,
+        }
+    }
+
     fn open(view: View, epoch: Epoch, revision: i64, fx: &mut Vec<Emit>) -> Self {
-        let mut machine = Self { epoch, view, stage: DeliveryStage::Opening, read: revision, read_id: 0, revision: 0, rows: Vec::new(), count: None, window: WindowState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false, readers: VecDeque::new(), opened: 0 };
-        if machine.view.kind == Kind::Events {
-            machine.opened = revision;
-            machine.stage = DeliveryStage::Live;
-            fx.push(Emit::WantPlus);
-            return machine;
+        let kind = view.kind;
+        let mut machine = Self::new(epoch, view, DeliveryStage::Opening, revision);
+        match kind {
+            Kind::Events => {
+                machine.stage = DeliveryStage::Live;
+                fx.push(Emit::WantPlus);
+                machine.interested = true;
+            }
+            Kind::Blob | Kind::RetryStatus => {
+                fx.push(Emit::Run(StreamEffect::StatusInterest { plus: true }));
+                machine.interested = true;
+            }
+            Kind::List | Kind::Count | Kind::Entity { .. } => {
+                fx.push(machine.new_read(revision));
+                match kind {
+                    Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale } => {
+                        fx.push(Emit::InterestPlus);
+                        machine.interested = true;
+                    }
+                    Kind::Entity { fetch: Fetch::Force } => {
+                        fx.push(Emit::Load { force: true });
+                        machine.interested = true;
+                    }
+                    _ => {}
+                }
+            }
         }
-        machine.opened = revision;
-        fx.push(machine.new_read(revision));
-        if let Some(force) = machine.view.kind.interest_at_open() {
-            fx.push(Emit::InterestPlus { force });
-        }
+        machine
+    }
+
+    fn ended(view: View, epoch: Epoch, cause: EndCause, fx: &mut Vec<Emit>) -> Self {
+        let mut machine = Self::new(epoch, view, DeliveryStage::Ended, 0);
+        machine.journal.push_back(Value::Ended(cause));
+        machine.cause = cause;
+        machine.sink_closed = true;
+        fx.push(Emit::Run(StreamEffect::Available));
         machine
     }
 
     fn new_read(&mut self, revision: i64) -> Emit {
         self.read_id += 1;
-        Emit::Read { read_id: self.read_id, revision }
+        self.read_revision = revision;
+        Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, view: self.view.clone() })
     }
 
-    fn stale(view: View, epoch: Epoch, cause: EndCause, fx: &mut Vec<Emit>) -> Self {
-        let mut machine = Self { epoch, view, stage: DeliveryStage::Ended, read: 0, read_id: 0, revision: 0, rows: Vec::new(), count: None, window: WindowState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false, readers: VecDeque::new(), opened: 0 };
-        machine.push(Value::Ended(cause), fx);
-        machine
+    fn sink_open(&self) -> bool { matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) }
+
+    fn take_first(&mut self) -> Option<PullAnswer> {
+        match self.journal.pop_front() {
+            Some(value) => {
+                match &value {
+                    Value::Ended(_) => {
+                        self.ended_given = true;
+                        self.journal.clear();
+                    }
+                    Value::Snapshot { revision, .. } | Value::Count { revision, .. } => self.acknowledge(*revision),
+                    Value::Delta(delta) => self.acknowledge(delta.revision),
+                    _ => {}
+                }
+                Some(PullAnswer::Value(value))
+            }
+            None if self.ended_given => Some(PullAnswer::Done),
+            None => None,
+        }
+    }
+
+    fn acknowledge(&mut self, revision: i64) {
+        self.acknowledged = Some(revision);
+        self.acked_rows = self.rows.clone();
     }
 
     fn push(&mut self, value: Value, fx: &mut Vec<Emit>) {
-        match value {
-            Value::Snapshot { .. } | Value::Count { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta { .. } | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
+        let was_empty = self.journal.is_empty();
+        match &value {
+            Value::Snapshot { .. } | Value::Count { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
+            Value::Delta(_) if self.journal.iter().any(Value::is_rows) => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
             Value::State { .. } => self.journal.retain(|kept| !matches!(kept, Value::State { .. })),
+            Value::Status { .. } => self.journal.retain(|kept| !matches!(kept, Value::Status { .. })),
+            Value::Retry(_) => self.journal.retain(|kept| !matches!(kept, Value::Retry(_))),
             _ => {}
         }
         self.journal.push_back(value);
         if self.journal.len() > JOURNAL_LIMIT {
             self.compact();
         }
-        self.serve(fx);
+        if let Some(outcome) = self.waiting.take() {
+            let answer = self.take_first().unwrap_or(PullAnswer::Done);
+            fx.push(Emit::Run(StreamEffect::Answer { outcome, answer }));
+        } else if was_empty && self.sink_open() {
+            fx.push(Emit::Run(StreamEffect::Available));
+        }
     }
 
     fn compact(&mut self) {
@@ -245,154 +389,209 @@ impl Delivery {
         }
     }
 
-    fn end(&mut self, cause: EndCause, fx: &mut Vec<Emit>) {
-        self.stage = DeliveryStage::Ended;
-        self.push(Value::Ended(cause), fx);
-    }
-
-    fn leave(&self) -> Emit {
-        match self.view.kind {
-            Kind::Events => Emit::WantMinus,
-            _ => Emit::InterestMinus,
-        }
-    }
-
-    fn take(&mut self) -> Option<PullAnswer> {
-        match self.journal.pop_front() {
-            Some(value) => {
-                self.ended_given |= matches!(value, Value::Ended(_));
-                Some(PullAnswer::Value(value))
+    fn state_at(&mut self, revision: i64) -> WindowState {
+        if self.held_state.as_ref().is_some_and(|held| visible_after(held) <= revision) {
+            if let Some(held) = self.held_state.take() {
+                self.window = held;
             }
-            None if self.ended_given => Some(PullAnswer::Done),
-            None => None,
         }
+        self.window.clone()
     }
 
-    fn serve(&mut self, fx: &mut Vec<Emit>) {
-        while let Some(outcome) = self.readers.front().copied() {
-            let Some(answer) = self.take() else { return };
-            self.readers.pop_front();
-            fx.push(Emit::Answer { outcome, answer });
+    fn leave(&mut self) -> Option<Emit> {
+        if !std::mem::take(&mut self.interested) {
+            return None;
         }
+        Some(match self.view.kind {
+            Kind::Events => Emit::WantMinus,
+            Kind::Blob | Kind::RetryStatus => Emit::Run(StreamEffect::StatusInterest { plus: false }),
+            _ => Emit::InterestMinus,
+        })
     }
 
-    fn pull(&mut self, outcome: OutcomeId, fx: &mut Vec<Emit>) {
-        self.readers.push_back(outcome);
-        self.serve(fx);
-    }
-
-    fn touches(&self, committed: &Committed) -> bool { committed.tables.iter().any(|table| self.view.tables.contains(table)) }
+    fn touches(&self, committed: &Committed) -> bool { (committed.tables.is_empty() && committed.models.is_empty()) || committed.tables.iter().any(|table| self.view.tables.contains(table)) }
 
     fn committed(&mut self, committed: &Committed, fx: &mut Vec<Emit>) {
-        if !self.touches(committed) {
+        if !self.view.kind.reads_rows() || !self.touches(committed) {
             return;
         }
-        match self.stage {
-            DeliveryStage::Opening => {
-                self.read = committed.revision;
-                fx.push(self.new_read(committed.revision));
-            }
-            DeliveryStage::Live => fx.push(self.new_read(committed.revision)),
-            DeliveryStage::Ended => {}
+        if matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) {
+            fx.push(self.new_read(committed.revision));
         }
     }
 
     fn read_done(&mut self, read_id: u64, revision: i64, data: ReadData, fx: &mut Vec<Emit>) {
-        if read_id != self.read_id || self.view.kind == Kind::Events {
+        if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }
-        let count = self.view.kind == Kind::Count;
         match (self.stage, data) {
-            (DeliveryStage::Opening, ReadData::Rows(rows)) if !count => {
+            (DeliveryStage::Opening, ReadData::Rows { rows, .. }) if self.view.kind != Kind::Count => {
                 let missing = rows.is_empty() && self.view.kind == (Kind::Entity { fetch: Fetch::IfMissing });
-                self.push(Value::Snapshot { revision, rows: rows.clone(), state: self.window.clone() }, fx);
+                let state = self.state_at(revision);
+                self.rows = rows.clone();
                 self.revision = revision;
-                self.rows = rows;
                 self.stage = DeliveryStage::Live;
+                self.push(Value::Snapshot { revision, rows, state }, fx);
                 if missing {
-                    fx.push(Emit::InterestPlus { force: false });
+                    fx.push(Emit::Load { force: false });
+                    self.interested = true;
                 }
             }
-            (DeliveryStage::Opening, ReadData::Count(now)) if count => {
-                self.push(Value::Count { revision, count: now, state: self.window.clone() }, fx);
-                self.revision = revision;
+            (DeliveryStage::Opening, ReadData::Count(now)) if self.view.kind == Kind::Count => {
+                let state = self.state_at(revision);
                 self.count = Some(now);
+                self.revision = revision;
                 self.stage = DeliveryStage::Live;
+                self.push(Value::Count { revision, count: now, state }, fx);
             }
-            (DeliveryStage::Live, ReadData::Rows(rows)) if !count && revision > self.revision && rows != self.rows => {
-                let upserted: Vec<StreamRow> = rows.iter().filter(|row| !self.rows.contains(row)).cloned().collect();
-                let removed: Vec<String> = self.rows.iter().filter(|row| !rows.iter().any(|now| now.id == row.id)).map(|row| row.id.clone()).collect();
-                let base = self.revision;
-                if upserted.len() + removed.len() > DELTA_LIMIT {
-                    self.push(Value::Snapshot { revision, rows: rows.clone(), state: self.window.clone() }, fx);
+            (DeliveryStage::Live, ReadData::Rows { rows, replaced }) if self.view.kind != Kind::Count => self.live_rows(revision, rows, replaced, fx),
+            (DeliveryStage::Live, ReadData::Count(now)) if self.view.kind == Kind::Count && revision > self.revision => {
+                if self.count != Some(now) {
+                    let state = self.state_at(revision);
+                    self.count = Some(now);
+                    self.revision = revision;
+                    self.push(Value::Count { revision, count: now, state }, fx);
                 } else {
-                    self.push(Value::Delta { base, revision, upserted, removed }, fx);
+                    self.same_rows(revision, fx);
                 }
-                self.revision = revision;
-                self.rows = rows;
-            }
-            (DeliveryStage::Live, ReadData::Count(now)) if count && revision > self.revision && self.count != Some(now) => {
-                self.push(Value::Count { revision, count: now, state: self.window.clone() }, fx);
-                self.revision = revision;
-                self.count = Some(now);
             }
             _ => {}
         }
     }
 
+    fn same_rows(&mut self, read: i64, fx: &mut Vec<Emit>) {
+        if self.held_state.as_ref().is_some_and(|held| visible_after(held) <= read) {
+            let state = self.state_at(read);
+            self.push(Value::State { revision: self.revision, state }, fx);
+        }
+    }
+
+    fn live_rows(&mut self, revision: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, fx: &mut Vec<Emit>) {
+        if revision <= self.revision {
+            return;
+        }
+        if rows == self.rows {
+            self.same_rows(revision, fx);
+            return;
+        }
+        let state = self.state_at(revision);
+        self.rows = rows.clone();
+        self.revision = revision;
+        let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Value::Snapshot { .. }));
+        let Some(base) = self.acknowledged.filter(|_| !unread_snapshot) else {
+            self.push(Value::Snapshot { revision, rows, state }, fx);
+            return;
+        };
+        match self.delta(base, revision, &rows, &replaced, state.clone()) {
+            Some(delta) => self.push(Value::Delta(delta), fx),
+            None => self.push(Value::Snapshot { revision, rows, state }, fx),
+        }
+    }
+
+    fn delta(&self, base: i64, revision: i64, rows: &[StreamRow], replaced: &[(String, String)], state: WindowState) -> Option<Delta> {
+        let old: Vec<Entry> = self.acked_rows.iter().map(entry).collect::<Result<_, _>>().ok()?;
+        let new: Vec<Entry> = rows.iter().map(entry).collect::<Result<_, _>>().ok()?;
+        let pairs: Vec<(RowId, RowId)> = replaced.iter().map(|(from, to)| Ok((RowId::new(from).map_err(|e| e.to_string())?, RowId::new(to).map_err(|e| e.to_string())?))).collect::<Result<_, String>>().ok()?;
+        let diff = Diff::between(&old[..], &new[..], &pairs);
+        if diff.at.len() + diff.removed.len() > DELTA_LIMIT {
+            return None;
+        }
+        let mut at: Vec<(String, usize)> = diff.at.iter().map(|(id, index)| (id.to_string(), *index)).collect();
+        at.sort_by_key(|(_, index)| *index);
+        let by_id: BTreeMap<&str, &StreamRow> = rows.iter().map(|row| (row.id.as_str(), row)).collect();
+        let changed: Vec<StreamRow> = at.iter().filter_map(|(id, _)| by_id.get(id.as_str()).map(|row| (*row).clone())).collect();
+        let pair = |list: &[(RowId, RowId)]| list.iter().map(|(from, to)| (from.to_string(), to.to_string())).collect::<Vec<_>>();
+        Some(Delta {
+            base,
+            revision,
+            size: u32::try_from(rows.len()).unwrap_or(u32::MAX),
+            indexes: at.iter().map(|(_, index)| u32::try_from(*index).unwrap_or(u32::MAX)).collect(),
+            rows: changed,
+            removed: diff.removed.iter().map(ToString::to_string).collect(),
+            placed: diff.placed().into_iter().map(|(id, index)| (id.to_string(), u32::try_from(index).unwrap_or(u32::MAX))).collect(),
+            replaced: pair(&diff.replaced),
+            renamed: pair(&diff.renamed),
+            state,
+        })
+    }
+
     fn read_failed(&mut self, read_id: u64, revision: i64, error: String, fx: &mut Vec<Emit>) {
-        if read_id != self.read_id {
+        if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }
         match self.stage {
             DeliveryStage::Opening => {
                 let state = WindowState { phase: WindowPhase::Failed, error: Some(error), loaded: None };
-                self.push(Value::Snapshot { revision, rows: Vec::new(), state: state.clone() }, fx);
+                self.window = state.clone();
                 self.revision = revision;
                 self.rows = Vec::new();
-                self.window = state;
                 self.stage = DeliveryStage::Live;
+                self.push(Value::Snapshot { revision, rows: Vec::new(), state }, fx);
             }
             DeliveryStage::Live if revision > self.revision => {
                 let phase = if self.rows.is_empty() { WindowPhase::Failed } else { WindowPhase::Loaded };
                 let state = WindowState { phase, error: Some(error), loaded: self.window.loaded };
-                self.push(Value::State { revision: self.revision, state: state.clone() }, fx);
-                self.window = state;
+                self.window = state.clone();
+                self.push(Value::State { revision: self.revision, state }, fx);
             }
-            DeliveryStage::Live | DeliveryStage::Ended => {}
+            _ => {}
         }
     }
 
     fn window_state(&mut self, state: WindowState, fx: &mut Vec<Emit>) {
         match self.stage {
-            DeliveryStage::Opening => self.window = state,
-            DeliveryStage::Live => {
-                if state != self.window {
-                    self.push(Value::State { revision: self.revision, state: state.clone() }, fx);
+            DeliveryStage::Opening => self.held_state = Some(state),
+            DeliveryStage::Live if self.view.kind.reads_rows() => {
+                if visible_after(&state) > self.revision {
+                    self.held_state = Some(state);
+                } else if state != self.window {
+                    self.window = state.clone();
+                    self.held_state = None;
+                    self.push(Value::State { revision: self.revision, state }, fx);
                 }
-                self.window = state;
             }
-            DeliveryStage::Ended => {}
+            _ => {}
         }
     }
 
-    fn is_live_events(&self) -> bool { self.stage == DeliveryStage::Live && self.view.kind == Kind::Events }
+    fn events_open(&self) -> bool { self.stage == DeliveryStage::Live && self.view.kind == Kind::Events }
 
-    fn joined(&mut self, position: u64) {
-        if self.is_live_events() && self.next_feed.is_none() {
+    fn joined(&mut self, position: u64, fx: &mut Vec<Emit>) {
+        if self.events_open() && self.next_feed.is_none() {
             self.next_feed = Some(position + 1);
+            self.replay(fx);
         }
     }
 
     fn model_ready(&mut self, fx: &mut Vec<Emit>) {
-        if self.is_live_events() && !self.ready {
+        if self.events_open() && !self.ready {
             self.ready = true;
             self.push(Value::Ready, fx);
+            self.replay(fx);
         }
     }
 
+    fn replay(&mut self, fx: &mut Vec<Emit>) {
+        for held in std::mem::take(&mut self.held_events) {
+            match held {
+                Held::Event { position, payload } => self.model_event(position, payload, fx),
+                Held::Lost { first, last } => self.model_lost(first, last, fx),
+                Held::Gap => self.model_gap(fx),
+            }
+        }
+    }
+
+    fn holds(&self) -> bool { self.next_feed.is_none() || !self.ready }
+
     fn model_event(&mut self, position: u64, payload: String, fx: &mut Vec<Emit>) {
-        let Some(next) = self.next_feed.filter(|_| self.is_live_events()) else { return };
+        if !self.events_open() {
+            return;
+        }
+        if self.holds() {
+            self.held_events.push(Held::Event { position, payload });
+            return;
+        }
+        let next = self.next_feed.unwrap_or(0);
         if position < next {
             return;
         }
@@ -407,7 +606,14 @@ impl Delivery {
     }
 
     fn model_lost(&mut self, first: u64, last: u64, fx: &mut Vec<Emit>) {
-        let Some(next) = self.next_feed.filter(|_| self.is_live_events()) else { return };
+        if !self.events_open() {
+            return;
+        }
+        if self.holds() {
+            self.held_events.push(Held::Lost { first, last });
+            return;
+        }
+        let next = self.next_feed.unwrap_or(0);
         if last < next {
             return;
         }
@@ -417,51 +623,169 @@ impl Delivery {
         self.next_feed = Some(last + 1);
     }
 
+    fn model_gap(&mut self, fx: &mut Vec<Emit>) {
+        if !self.events_open() {
+            return;
+        }
+        if self.holds() {
+            self.held_events.push(Held::Gap);
+            return;
+        }
+        self.push(Value::Gap, fx);
+    }
+
+    fn status(&mut self, blob: BlobStatus, fx: &mut Vec<Emit>) {
+        if self.view.kind != Kind::Blob || !self.sink_open() || self.blob.as_ref() == Some(&blob) {
+            return;
+        }
+        self.stage = DeliveryStage::Live;
+        self.status_revision += 1;
+        self.blob = Some(blob.clone());
+        self.push(Value::Status { revision: self.status_revision, blob }, fx);
+    }
+
+    fn retry_state(&mut self, retry: RetryStatus, fx: &mut Vec<Emit>) {
+        if self.view.kind != Kind::RetryStatus || !self.sink_open() || self.retry.as_ref() == Some(&retry) {
+            return;
+        }
+        self.stage = DeliveryStage::Live;
+        self.retry = Some(retry.clone());
+        self.push(Value::Retry(retry), fx);
+    }
+
     fn models_reset(&mut self, reset: &ModelsReset, fx: &mut Vec<Emit>) {
-        if self.view.kind == Kind::Events || !reset.models.contains(&self.view.model) {
+        if !self.view.kind.reads_rows() || !reset.models.contains(&self.view.model) {
             return;
         }
         match self.stage {
-            DeliveryStage::Opening => fx.push(self.new_read(self.read)),
+            DeliveryStage::Opening => fx.push(self.new_read(self.read_revision)),
             DeliveryStage::Live => fx.push(self.new_read(self.revision)),
+            DeliveryStage::Cancelling | DeliveryStage::Ended => {}
+        }
+    }
+
+    fn pull(&mut self, outcome: OutcomeId, fx: &mut Vec<Emit>) {
+        if self.waiting.is_some() {
+            fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Invalid }));
+            return;
+        }
+        match self.take_first() {
+            Some(answer) => fx.push(Emit::Run(StreamEffect::Answer { outcome, answer })),
+            None if self.stage == DeliveryStage::Ended => fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Done })),
+            None => self.waiting = Some(outcome),
+        }
+    }
+
+    fn cancel(&mut self, reply: ReplyId, fx: &mut Vec<Emit>) {
+        match self.stage {
+            DeliveryStage::Opening | DeliveryStage::Live => {
+                fx.extend(self.leave());
+                self.stage = DeliveryStage::Cancelling;
+                self.cause = EndCause::Cancelled;
+                self.replies.push(reply);
+                fx.push(Emit::Run(StreamEffect::CloseSink));
+            }
+            DeliveryStage::Cancelling => self.replies.push(reply),
+            DeliveryStage::Ended if self.sink_closed => fx.push(Emit::Run(StreamEffect::Cancelled { reply })),
+            DeliveryStage::Ended => self.replies.push(reply),
+        }
+    }
+
+    fn release(&mut self, fx: &mut Vec<Emit>) {
+        match self.stage {
+            DeliveryStage::Opening | DeliveryStage::Live => {
+                fx.extend(self.leave());
+                self.stage = DeliveryStage::Cancelling;
+                self.cause = EndCause::Cancelled;
+                self.released = true;
+                fx.push(Emit::Run(StreamEffect::CloseSink));
+            }
+            DeliveryStage::Cancelling | DeliveryStage::Ended => self.released = true,
+        }
+    }
+
+    fn finish(&mut self, cause: EndCause, closing: bool, fx: &mut Vec<Emit>) {
+        fx.extend(self.leave());
+        self.stage = DeliveryStage::Ended;
+        self.cause = cause;
+        self.closing = closing;
+        self.journal.clear();
+        self.journal.push_back(Value::Ended(cause));
+        match self.waiting.take() {
+            Some(outcome) => {
+                let answer = self.take_first().unwrap_or(PullAnswer::Done);
+                fx.push(Emit::Run(StreamEffect::Answer { outcome, answer }));
+            }
+            None => fx.push(Emit::Run(StreamEffect::Available)),
+        }
+        fx.push(Emit::Run(StreamEffect::CloseSink));
+    }
+
+    fn epoch_ended(&mut self, ended: &EpochEnded, fx: &mut Vec<Emit>) {
+        if ended.epoch != self.epoch {
+            return;
+        }
+        match self.stage {
+            DeliveryStage::Opening | DeliveryStage::Live => self.finish(EndCause::SessionEnded, false, fx),
+            DeliveryStage::Cancelling => self.cause = EndCause::SessionEnded,
             DeliveryStage::Ended => {}
         }
     }
 
-    fn cancel(&mut self, fx: &mut Vec<Emit>) {
-        if self.stage == DeliveryStage::Ended {
-            return;
-        }
-        let leave = self.leave();
-        self.end(EndCause::Cancelled, fx);
-        fx.push(leave);
-    }
-
-    fn epoch_ended(&mut self, ended: &EpochEnded, fx: &mut Vec<Emit>) {
-        if self.stage == DeliveryStage::Ended || ended.epoch != self.epoch {
-            return;
-        }
-        let leave = self.leave();
-        self.end(EndCause::SessionEnded, fx);
-        fx.push(leave);
-    }
-
     fn closing(&mut self, fx: &mut Vec<Emit>) {
-        if self.stage != DeliveryStage::Ended {
-            self.end(EndCause::Closed, fx);
+        match self.stage {
+            DeliveryStage::Opening | DeliveryStage::Live => self.finish(EndCause::Closed, true, fx),
+            DeliveryStage::Cancelling => {
+                self.cause = EndCause::Closed;
+                self.closing = true;
+            }
+            DeliveryStage::Ended => self.closing = true,
         }
     }
+
+    fn sink_closed(&mut self, fx: &mut Vec<Emit>) {
+        match self.stage {
+            DeliveryStage::Cancelling => {
+                for reply in self.replies.drain(..) {
+                    fx.push(Emit::Run(StreamEffect::Cancelled { reply }));
+                }
+                self.stage = DeliveryStage::Ended;
+                self.sink_closed = true;
+                if self.released {
+                    return;
+                }
+                self.journal.clear();
+                self.journal.push_back(Value::Ended(self.cause));
+                if let Some(outcome) = self.waiting.take() {
+                    let answer = self.take_first().unwrap_or(PullAnswer::Done);
+                    fx.push(Emit::Run(StreamEffect::Answer { outcome, answer }));
+                }
+            }
+            DeliveryStage::Ended if !self.sink_closed => {
+                self.sink_closed = true;
+                for reply in self.replies.drain(..) {
+                    fx.push(Emit::Run(StreamEffect::Cancelled { reply }));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn gone(&self) -> bool { self.stage == DeliveryStage::Ended && self.released && self.sink_closed }
+
+    fn settled(&self) -> bool { self.stage == DeliveryStage::Ended && self.sink_closed }
 }
 
-/// The state of the owner: the epoch it knows, the machines and the addresses of the owners it sends to.
 pub struct DeliveriesState {
     epoch: Epoch,
     streams: BTreeMap<StreamId, Delivery>,
     peers: DeliveryPeers,
+    closing: bool,
+    drained: bool,
 }
 
 impl DeliveriesState {
-    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), peers } }
+    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), peers, closing: false, drained: false } }
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
@@ -471,25 +795,19 @@ impl DeliveriesState {
 
     pub fn streams(&self) -> usize { self.streams.len() }
 
-    /// The unread values of a stream, oldest first.
     pub fn journal(&self, stream: StreamId) -> Vec<Value> { self.streams.get(&stream).map(|machine| machine.journal.iter().cloned().collect()).unwrap_or_default() }
+
+    pub fn acknowledged(&self, stream: StreamId) -> Option<i64> { self.streams.get(&stream).and_then(|machine| machine.acknowledged) }
 }
 
 pub struct Deliveries;
 
 fn lower(peers: DeliveryPeers, stream: StreamId, machine: &Delivery, emits: Vec<Emit>, out: &mut Effects<Deliveries>) {
     for emit in emits {
-        let run = |effect| Effect::Run(DeliveryEffect::Stream { stream, effect });
         let effect = match emit {
-            Emit::Read { read_id, revision } => run(StreamEffect::Read { read_id, revision, view: machine.view.clone() }),
-            Emit::Answer { outcome, answer } => run(StreamEffect::Answer { outcome, answer }),
-            Emit::InterestPlus { force } => {
-                out.push(Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream })));
-                if !force {
-                    continue;
-                }
-                Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force: true, store_revision: machine.opened }))
-            }
+            Emit::Run(effect) => Effect::Run(DeliveryEffect::Stream { stream, effect }),
+            Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream })),
+            Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: machine.opened })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
             Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), debounce_ms: 0, delivery: Some(stream) })),
             Emit::WantMinus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantMinus { model: machine.view.model.clone(), delivery: Some(stream) })),
@@ -514,9 +832,9 @@ impl StateOwner for Deliveries {
                 }
                 let mut fx = Vec::new();
                 let machine = if !valid {
-                    Delivery::stale(view, epoch, EndCause::Invalid, &mut fx)
-                } else if epoch != state.epoch || (!identity && !view.local) {
-                    Delivery::stale(view, epoch, EndCause::SessionEnded, &mut fx)
+                    Delivery::ended(view, epoch, EndCause::Invalid, &mut fx)
+                } else if epoch != state.epoch || (!identity && !view.local && !matches!(view.kind, Kind::Blob | Kind::RetryStatus)) {
+                    Delivery::ended(view, epoch, EndCause::SessionEnded, &mut fx)
                 } else {
                     Delivery::open(view, epoch, revision, &mut fx)
                 };
@@ -526,11 +844,22 @@ impl StateOwner for Deliveries {
             DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
             DeliveryInput::ReadFailed { stream, read_id, revision, error } => on(state, stream, &mut out, |machine, fx| machine.read_failed(read_id, revision, error, fx)),
             DeliveryInput::WindowState { stream, state: window } => on(state, stream, &mut out, |machine, fx| machine.window_state(window, fx)),
-            DeliveryInput::Joined { stream, position } => on(state, stream, &mut out, |machine, _| machine.joined(position)),
+            DeliveryInput::Joined { stream, position } => on(state, stream, &mut out, |machine, fx| machine.joined(position, fx)),
             DeliveryInput::ModelReady { stream } => on(state, stream, &mut out, |machine, fx| machine.model_ready(fx)),
             DeliveryInput::ModelEvent { stream, position, payload } => on(state, stream, &mut out, |machine, fx| machine.model_event(position, payload, fx)),
             DeliveryInput::ModelLost { stream, first, last } => on(state, stream, &mut out, |machine, fx| machine.model_lost(first, last, fx)),
-            DeliveryInput::Cancel { stream } => on(state, stream, &mut out, |machine, fx| machine.cancel(fx)),
+            DeliveryInput::ModelGap { stream } => on(state, stream, &mut out, |machine, fx| machine.model_gap(fx)),
+            DeliveryInput::TransferStatus { stream, blob } => on(state, stream, &mut out, |machine, fx| machine.status(blob, fx)),
+            DeliveryInput::RetryState { stream, retry } => on(state, stream, &mut out, |machine, fx| machine.retry_state(retry, fx)),
+            DeliveryInput::Cancel { stream, reply } => {
+                if state.streams.contains_key(&stream) {
+                    on(state, stream, &mut out, |machine, fx| machine.cancel(reply, fx));
+                } else {
+                    out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Cancelled { reply } }));
+                }
+            }
+            DeliveryInput::Release { stream } => on(state, stream, &mut out, |machine, fx| machine.release(fx)),
+            DeliveryInput::SinkClosed { stream } => on(state, stream, &mut out, |machine, fx| machine.sink_closed(fx)),
             DeliveryInput::Pull { stream, outcome } => {
                 if state.streams.contains_key(&stream) {
                     on(state, stream, &mut out, |machine, fx| machine.pull(outcome, fx));
@@ -543,12 +872,16 @@ impl StateOwner for Deliveries {
             DeliveryInput::EpochEnded(ended) => every(state, &mut out, |machine, fx| machine.epoch_ended(&ended, fx)),
             DeliveryInput::EpochStarted(started) => state.epoch = started.epoch,
             DeliveryInput::Closing => {
+                state.closing = true;
                 every(state, &mut out, |machine, fx| machine.closing(fx));
-                out.push(Effect::Run(DeliveryEffect::Drained(Drained { owner: "Deliveries" })));
             }
             DeliveryInput::Tick(_) => {}
         }
-        state.streams.retain(|_, machine| !(machine.ended_given && machine.journal.is_empty()));
+        state.streams.retain(|_, machine| !machine.gone());
+        if state.closing && !state.drained && state.streams.values().all(Delivery::settled) {
+            state.drained = true;
+            out.push(Effect::Run(DeliveryEffect::Drained(Drained { owner: "Deliveries" })));
+        }
         out
     }
 

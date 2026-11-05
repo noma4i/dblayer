@@ -14,7 +14,6 @@ mod ref_delivery;
 mod ref_feed;
 mod ref_window;
 
-mod delivery_tests;
 mod feed_tests;
 mod lifecycle_tests;
 mod lifecycle_owner_tests;

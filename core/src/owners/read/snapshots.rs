@@ -49,9 +49,9 @@ impl Snapshots for SqliteSnapshots {
                 return Err(format!("the snapshot is at revision {seen}, older than {revision}"));
             }
             let data = match view.kind {
-                Kind::Events => return Err("an Events stream reads no rows".to_string()),
+                Kind::Events | Kind::Blob | Kind::RetryStatus => return Err("a stream of this kind reads no rows".to_string()),
                 Kind::Count => ReadData::Count(u64::try_from(fetch_count(&connection, &statement).map_err(|error| error.to_string())?).unwrap_or(0)),
-                Kind::List | Kind::Entity { .. } => ReadData::Rows(fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| StreamRow { id, stamp }).collect()),
+                Kind::List | Kind::Entity { .. } => ReadData::Rows { rows: fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| StreamRow { id, stamp, row: None }).collect(), replaced: Vec::new() },
             };
             drop(snapshot);
             Ok((seen, data))
