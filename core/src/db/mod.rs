@@ -16,6 +16,7 @@ mod upload_round;
 #[cfg(test)]
 mod upload_round_tests;
 mod land;
+mod land_event;
 mod land_window;
 mod read_view;
 pub(crate) use read_view::{ParsedQuery, ViewRead};

@@ -632,6 +632,39 @@ async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
     rig.database.close_now();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn an_event_opened_before_linked_lists_reports_the_committed_payload() {
+    let (database, transport, world) = chat_events().await;
+    let epoch = database.session_epoch();
+    let reader = Reader::open();
+    database.subscribe_reading(epoch, ReadRequest::Events { model: "Chat".into() }, reader.clone());
+    yield_until("the events stream is open", || reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Ready))).await;
+    let params = |list: &str| json!({"list":list}).to_string();
+    for list in ["PRIMARY", "SECONDARY"] { bound(database.load(epoch, "Chat".into(), "list".into(), params(list))).await.unwrap(); }
+    let before = bound(database.node(epoch, "Chat".into(), "node".into(), "c1".into(), true)).await.unwrap().unwrap();
+    assert!(named(&before, "before"));
+    let query = |list: &str| json!({"model":"Chat","relation":"list","params":{"list":list}}).to_string();
+    assert_eq!(ids_of(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap()), ["c1"]);
+    transport.subscription().await;
+    transport.emit(json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}}));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Event { .. })) {
+        assert!(std::time::Instant::now() < deadline, "no event arrived: {:?}", reader.deliveries().iter().map(|delivery| format!("{:?}", delivery.value)).collect::<Vec<_>>());
+        tokio::task::yield_now().await;
+    }
+    let event = reader.deliveries().into_iter().find_map(|delivery| match delivery.value { ReadValue::Event { payload, .. } => serde_json::from_str::<serde_json::Value>(&payload).ok(), _ => None }).unwrap();
+    assert_eq!(event["id"], "c1");
+    assert_eq!(event["row"]["title"], "after", "the event carries the committed row");
+    let primary = bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap();
+    assert_eq!(ids_of(primary.clone()), ["c1"]);
+    assert!(named(&primary[0], "after"));
+    assert!(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap().is_empty());
+    let calls = world.log().into_iter().map(|entry| entry.operation).collect::<Vec<_>>();
+    assert_eq!(calls, ["login_link", "ChatList", "ChatList", "ChatNode"]);
+    database.close_now();
+}
+
+
 /// B01: after the login a stream delivers the account as one snapshot in the epoch of the session, in order, and the first value does not come from the calling thread.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch() {

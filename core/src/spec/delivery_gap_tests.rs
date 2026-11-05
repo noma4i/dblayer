@@ -239,6 +239,7 @@ fn snap(revision: i64, list: &[&str], state: Ws) -> Val { Val::Snapshot { revisi
 fn open_as(kind: Kind) -> Twin {
     let mut twin = Twin::new();
     twin.step(Input::Open { kind, epoch_current: true });
+    if matches!(kind, Kind::List | Kind::Count | Kind::Entity(Fetch::Stale | Fetch::IfMissing | Fetch::Force)) { twin.step(Input::WindowState(Ws::idle())); }
     twin
 }
 
@@ -351,6 +352,17 @@ fn dlv_open_invalid() {
     let mut twin = Twin::new();
     assert_eq!(twin.step(Input::OpenInvalid), [Effect::Available]);
     assert_eq!(twin.read_all(), [Val::Ended(Cause::Invalid)]);
+}
+
+#[test]
+fn dlv_opening_read_holds() {
+    let mut twin = Twin::new();
+    twin.step(Input::Open { kind: Kind::List, epoch_current: true });
+    let (effects, values) = twin.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
+    assert_eq!((effects, values), (Vec::new(), Vec::new()), "the read of a watched window waits for the first state of the window");
+    let (effects, values) = twin.step_read(Input::WindowState(Ws::loaded_at(1)));
+    assert_eq!(effects, [Effect::Available]);
+    assert_eq!(values, [snap(1, &["r1"], Ws::loaded_at(1))], "the first value holds the loaded phase");
 }
 
 #[test]
@@ -1344,6 +1356,7 @@ fn dlv_prop_delta_order() {
     let addr = add_deliveries(&mut det, &log);
     det.start_epoch(EPOCH);
     det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::List), epoch: EPOCH, revision: 0, identity: true, valid: true });
+    det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::WindowState { stream: STREAM, state: window_state(&Ws::idle()) });
     let mut seed = 12_345u64;
     let mut next = move |bound: u64| {
         seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);

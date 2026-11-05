@@ -163,6 +163,7 @@ pub(super) struct Delivery {
     count: Option<u64>,
     window: Ws,
     held_state: Option<Ws>,
+    pending_read: Option<Input>,
     read_revision: i64,
     read_seen: i64,
     next_feed: Option<u64>,
@@ -197,6 +198,7 @@ impl Delivery {
             count: None,
             window: Ws::idle(),
             held_state: None,
+            pending_read: None,
             read_revision: 0,
             read_seen: 0,
             next_feed: None,
@@ -354,6 +356,7 @@ impl Delivery {
             (Stage::Nothing, Input::Open { kind, epoch_current: false }) => { self.kind = kind; self.dead_on_open(Cause::SessionEnded, fx); }
             (Stage::Nothing, Input::OpenNoSession) => self.dead_on_open(Cause::SessionEnded, fx),
             (Stage::Nothing, Input::OpenInvalid) => self.dead_on_open(Cause::Invalid, fx),
+            (Stage::Opening, input @ (Input::ReadDone { .. } | Input::CountDone { .. })) if self.interested && self.held_state.is_none() && self.kind.reads_rows() => self.pending_read = Some(input),
             (Stage::Opening, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
                 self.read_seen = self.read_seen.max(revision);
                 let missing = rows.is_empty() && self.kind == Kind::Entity(Fetch::IfMissing);
@@ -382,7 +385,10 @@ impl Delivery {
             (Stage::Opening, Input::Committed { revision, touches }) => {
                 if touches && self.kind.reads_rows() { self.read_revision = revision; fx.push(Effect::Read(revision)); }
             }
-            (Stage::Opening, Input::WindowState(state)) => self.held_state = Some(state),
+            (Stage::Opening, Input::WindowState(state)) => {
+                self.held_state = Some(state);
+                if let Some(read) = self.pending_read.take() { self.apply(read, fx); }
+            }
             (Stage::Opening, Input::Pull) => {
                 if self.waiting { fx.push(Effect::Answer(Pulled::Invalid)); } else { self.waiting = true; }
             }

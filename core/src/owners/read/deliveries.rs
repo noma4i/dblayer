@@ -239,6 +239,8 @@ struct Delivery {
     interested: bool,
     /// A read stream of a live model holds a `Want+` of the Feed.
     wants: bool,
+    /// The first read of a watched window waits for the first `WindowState`: the first value holds the phase of the window.
+    pending_read: Option<(u64, i64, ReadData)>,
     opened: i64,
 }
 
@@ -283,6 +285,7 @@ impl Delivery {
             sink_closed: false,
             interested: false,
             wants: false,
+            pending_read: None,
             opened: revision,
         }
     }
@@ -462,6 +465,10 @@ impl Delivery {
         if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }
+        if self.stage == DeliveryStage::Opening && self.interested && self.view.remote && self.held_state.is_none() {
+            self.pending_read = Some((read_id, revision, data));
+            return;
+        }
         self.read_seen = self.read_seen.max(revision);
         match (self.stage, data) {
             (DeliveryStage::Opening, ReadData::Rows { rows, .. }) if self.view.kind != Kind::Count => {
@@ -578,7 +585,12 @@ impl Delivery {
 
     fn window_state(&mut self, state: WindowState, fx: &mut Vec<Emit>) {
         match self.stage {
-            DeliveryStage::Opening => self.held_state = Some(state),
+            DeliveryStage::Opening => {
+                self.held_state = Some(state);
+                if let Some((read_id, revision, data)) = self.pending_read.take() {
+                    self.read_done(read_id, revision, data, fx);
+                }
+            }
             DeliveryStage::Live if self.view.kind.reads_rows() => {
                 let visible = visible_after(&state);
                 if visible > self.read_seen {

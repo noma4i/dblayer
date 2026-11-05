@@ -174,12 +174,13 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
         let credentials = Arc::new(MemoryCredentials::default());
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(Reply(status))), None, None).await.unwrap();
+        database.set_online(true).unwrap();
         let result = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(result.unwrap(), "{}"); }
-        else { assert!(matches!(result, Err(DbError::Http { status: 400, .. })), "{result:?}"); }
+        else { assert!(matches!(result, Err(DbError::Network { .. })), "{result:?}"); }
         let second = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(second.unwrap(), "{}"); }
-        else { assert!(matches!(second, Err(DbError::Http { status: 400, .. })), "{second:?}"); }
+        else { assert!(matches!(second, Err(DbError::Network { .. })), "{second:?}"); }
         {
             let inner = database.db.shared.store.lock();
             let counts: (i64, i64) = inner.connection.query_row("SELECT (SELECT count(*) FROM encrypted_session), (SELECT count(*) FROM encrypted_pending)", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();

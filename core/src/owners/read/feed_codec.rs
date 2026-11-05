@@ -104,7 +104,11 @@ impl SchemaFeedCodec {
         let path = read.payload.as_deref().unwrap_or_default();
         let Some(node) = root_value(change, path).and_then(Value::as_object) else { return invalid(model, format!("missing full payload {model}.{path}")) };
         match self.upsert(model, node.clone(), &Map::new()) {
-            Ok(Some(payload)) => event(model, payload, StaleKeys::none()),
+            Ok(Some(mut payload)) => {
+                payload["area"] = json!(read.area);
+                payload["kind"] = json!(kind);
+                event(model, payload, StaleKeys::none())
+            }
             Ok(None) => invalid(model, "payload without id"),
             Err(error) => invalid(model, error),
         }

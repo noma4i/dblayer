@@ -239,10 +239,11 @@ impl Database {
                         if halt.load(std::sync::atomic::Ordering::SeqCst) { return; }
                         seq += 1;
                         if matches!(value, ReadValue::Ended { .. }) { flag.store(true, std::sync::atomic::Ordering::SeqCst); }
-                        if let Some(done) = settled_by(&value, seq) {
+                        let done = settled_by(&value, seq);
+                        reader.delivered(StreamDelivery { stream: pulled.id(), epoch, seq, value });
+                        if let Some(done) = done {
                             outcome.send_if_modified(|current| current.is_none().then(|| *current = Some(done)).is_some());
                         }
-                        reader.delivered(StreamDelivery { stream: pulled.id(), epoch, seq, value });
                     }
                     Ok(None) => return,
                     Err(error) => {

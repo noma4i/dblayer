@@ -312,7 +312,10 @@ impl EffectRunner<Network> for NetworkRunner {
 pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
     let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Attempt { .. } | StoreOp::Session { .. }));
     let (removals, encrypted): (Vec<&StoreOp>, Vec<&StoreOp>) = encrypted.into_iter().partition(|op| matches!(op, StoreOp::RemoveAnswer { .. }));
-    let row_ops = if batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) { Vec::new() } else { row_ops(&batch.rows)? };
+    if batch.author == crate::owners::contract::BatchAuthor::Feed && !batch.rows.is_empty() {
+        db.land_events(&batch.rows).map_err(|error| error.to_string())?;
+    }
+    let row_ops = if batch.author == crate::owners::contract::BatchAuthor::Feed || batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) { Vec::new() } else { row_ops(&batch.rows)? };
     if !encrypted.is_empty() {
         db.shared.store.write_ops(encrypted.into_iter().filter_map(row_op).collect()).map(drop).map_err(|error| error.to_string())?;
     }
