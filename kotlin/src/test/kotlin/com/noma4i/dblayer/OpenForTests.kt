@@ -4,7 +4,10 @@ suspend fun openDatabase(config: Config, modelsJson: String, transport: Transpor
     OpenDatabase().open(config, modelsJson, OpenOptions(operations, uploads?.wire(), false, false), transport, encrypted, credentials, http, null)
 
 suspend fun adopt(database: Database): Database {
-    DBlayer.close()
+    try {
+        DBlayer.close()
+    } catch (_: DbException.Closed) {
+    }
     DBlayer.database = database
     return database
 }

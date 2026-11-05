@@ -35,12 +35,13 @@ object DBlayer {
 
     /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
     suspend fun close() {
-        opening.withLock {
+        val closing = opening.withLock {
             ForegroundEvents.stop()
             PowerSaving.stop()
             Reachability.disconnect()
-            opened?.let { offCaller { it.closeDatabase() } }
+            opened
         }
+        closing?.let { offCaller { it.closeDatabase() } }
     }
 
     fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
