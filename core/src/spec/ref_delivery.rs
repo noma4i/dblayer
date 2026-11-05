@@ -327,8 +327,8 @@ impl Delivery {
                         self.stage = Stage::Opening;
                         fx.push(Effect::Read(0));
                         match kind {
-                            Kind::List | Kind::Count | Kind::Entity(Fetch::Stale) => { self.interested = true; fx.push(Effect::InterestPlus); }
-                            Kind::Entity(Fetch::Force) => { self.interested = true; fx.push(Effect::Load { force: true }); }
+                            Kind::List | Kind::Count | Kind::Entity(Fetch::Stale | Fetch::IfMissing) => { self.interested = true; fx.push(Effect::InterestPlus); }
+                            Kind::Entity(Fetch::Force) => { self.interested = true; fx.push(Effect::InterestPlus); fx.push(Effect::Load { force: true }); }
                             _ => {}
                         }
                     }
@@ -344,7 +344,7 @@ impl Delivery {
                 self.revision = revision;
                 self.stage = Stage::Live;
                 self.append(Val::Snapshot { revision, rows: rows.into_iter().map(|(id, _)| id).collect(), state }, fx);
-                if missing { self.interested = true; fx.push(Effect::Load { force: false }); }
+                if missing { fx.push(Effect::Load { force: false }); }
             }
             (Stage::Opening, Input::CountDone { revision, count }) if self.kind == Kind::Count => {
                 let state = self.state_at(revision);

@@ -424,7 +424,7 @@ impl FeedState {
         }
         fx.push(Fx::Run(FeedEffect::Unsubscribe));
         if drained {
-            fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "Feed" })));
+            fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" })));
         }
         fx.push(Fx::Run(FeedEffect::Ended));
     }
@@ -500,7 +500,7 @@ impl StateOwner for Feed {
                 state.epoch = started.epoch;
                 state.base_generation = started.generation;
             }
-            FeedInput::Closing if ended => fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "Feed" }))),
+            FeedInput::Closing if ended => fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" }))),
             _ if ended => {}
             FeedInput::EpochEnded(ended) if ended.epoch == state.epoch => state.end(false, &mut fx),
             FeedInput::EpochEnded(_) => {}

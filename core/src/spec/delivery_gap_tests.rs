@@ -41,7 +41,7 @@ fn view(kind: Kind) -> d::View {
         Kind::Blob => (d::Kind::Blob, "Moment"),
         Kind::Retry => (d::Kind::RetryStatus, "Moment"),
     };
-    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, window: window(), subject: "t1".into() }
+    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, window: window(), subject: "t1".into() }
 }
 
 fn rows_of(rows: &[r::Row]) -> Vec<d::StreamRow> { rows.iter().map(|(id, stamp)| d::StreamRow::new(id, *stamp)).collect() }
@@ -275,8 +275,8 @@ fn dlv_open_rows() {
         (Kind::Count, vec![Effect::Read(0), Effect::InterestPlus]),
         (Kind::Entity(Fetch::Never), vec![Effect::Read(0)]),
         (Kind::Entity(Fetch::Stale), vec![Effect::Read(0), Effect::InterestPlus]),
-        (Kind::Entity(Fetch::Force), vec![Effect::Read(0), Effect::Load { force: true }]),
-        (Kind::Entity(Fetch::IfMissing), vec![Effect::Read(0)]),
+        (Kind::Entity(Fetch::Force), vec![Effect::Read(0), Effect::InterestPlus, Effect::Load { force: true }]),
+        (Kind::Entity(Fetch::IfMissing), vec![Effect::Read(0), Effect::InterestPlus]),
     ] {
         assert_eq!(Twin::new().step(Input::Open { kind, epoch_current: true }), effects, "{kind:?}");
     }
@@ -411,6 +411,15 @@ fn dlv_opening_unrelated() {
     let mut twin = open_rows();
     let (effects, values) = twin.step_read(Input::Committed { revision: 2, touches: false });
     assert!(effects.is_empty() && values.is_empty());
+}
+
+/// dlv_open_rows: a stream that reads no window (its relation is not remote) reads the rows and asks the window for nothing.
+#[test]
+fn dlv_open_rows_without_a_window_asks_for_nothing() {
+    let mut twin = Twin::new();
+    take(&twin.log);
+    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, revision: 0, identity: true, valid: true });
+    assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(0)]);
 }
 
 /// dlv_opening_committed (D-34): a commit of `All` models touches a stream whose tables it does not list; the empty set touches none.

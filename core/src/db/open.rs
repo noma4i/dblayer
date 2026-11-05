@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use crate::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::files::FileDirectories;
 use crate::identity::{Generation, RowRef};
-use crate::commit::{CommitEnvelope, EntityOp, RowChangeKind, WriteOrigin};
+use crate::commit::{CommitEnvelope, CommitResult, EntityOp, RowChangeKind, WriteOrigin};
 use crate::identity::ModelKey;
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
 use crate::syncstate::rebuild_sync_with;
@@ -51,6 +51,7 @@ pub(crate) struct Shared {
     pub row_build_hook: Mutex<Option<RowBuildHook>>,
     pub counters: Arc<Mutex<Counters>>,
     pub dispatch: Arc<Dispatch>,
+    pub commits: Arc<CommitSink>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub operation_queues: Arc<crate::operation::OperationQueues>,
     pub outcomes: Arc<Mutex<crate::sync::Outcomes>>,
@@ -240,6 +241,7 @@ impl Db {
         let dispatch = Arc::new(Dispatch::new());
         let threads = super::threads::LiveThreads::new(dispatch.progress.clone());
         let reads = ReadPool::new(dispatch.clone(), threads.clone());
+        let commits = Arc::new(CommitSink::default());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
         let outcomes = Arc::new(Mutex::new(crate::sync::Outcomes::default()));
@@ -249,7 +251,7 @@ impl Db {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), operation_queues: operation_queues.clone(), outcomes: outcomes.clone() }));
+        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), commits: commits.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), operation_queues: operation_queues.clone(), outcomes: outcomes.clone() }));
         let shared = Arc::new(Shared {
             store,
             opened,
@@ -267,6 +269,7 @@ impl Db {
             reads: reads.clone(),
             threads,
             dispatch: dispatch.clone(),
+            commits,
             outbox_changes,
             operation_queues,
             outcomes,
@@ -293,6 +296,8 @@ impl Db {
         self.shared.stop_threads();
         self.shared.threads.wait_ended()
     }
+
+    pub(crate) fn on_commit(&self, sink: impl Fn(CommitNotice) + Send + Sync + 'static) { let _ = self.shared.commits.0.set(Arc::new(sink)); }
 
     pub fn connectivity(&self) -> Arc<crate::transport::Connectivity> {
         self.shared.connectivity.clone()
@@ -343,9 +348,39 @@ impl Db {
     }
 }
 
+/// A commit as the owners of reading hear it: the revision and the tables it touched, or every table.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CommitNotice {
+    pub revision: i64,
+    pub tables: Vec<String>,
+    pub all: bool,
+}
+
+impl CommitNotice {
+    fn of_commit(result: &CommitResult) -> Self {
+        let models: std::collections::BTreeSet<&str> = result.rows.iter().map(|change| change.row.model.as_str()).chain(result.scopes.iter().map(|scope| scope.model.as_str())).chain(result.members.iter().map(|row| row.model.as_str())).collect();
+        Self { revision: result.revision.unwrap_or_default(), tables: models.into_iter().map(table_name).collect(), all: false }
+    }
+
+    fn of_reset(revision: i64, models: Option<&[String]>) -> Self {
+        Self { revision, tables: models.into_iter().flatten().map(|model| table_name(model)).collect(), all: models.is_none() }
+    }
+}
+
+/// Where the commits go: the owner `Deliveries` listens once `Life` started.
+#[derive(Default)]
+pub(crate) struct CommitSink(std::sync::OnceLock<Arc<dyn Fn(CommitNotice) + Send + Sync>>);
+
+impl CommitSink {
+    fn notify(&self, notice: CommitNotice) {
+        if let Some(sink) = self.0.get() { sink(notice); }
+    }
+}
+
 struct CommitTargets {
     cache: Arc<Mutex<RowCache>>,
     dispatch: Arc<Dispatch>,
+    commits: Arc<CommitSink>,
     ephemeral: Arc<Ephemerals>,
     outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     operation_queues: Arc<crate::operation::OperationQueues>,
@@ -359,7 +394,7 @@ fn finish_outcomes(ended: Vec<(Arc<crate::sync::OutcomeTicket>, crate::sync::Sen
 }
 
 fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
-    let CommitTargets { cache, dispatch, ephemeral, outbox_changes, operation_queues, outcomes } = targets;
+    let CommitTargets { cache, dispatch, commits, ephemeral, outbox_changes, operation_queues, outcomes } = targets;
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             operation_queues.changed(&result.queue_operations);
@@ -396,6 +431,7 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
             }
             ephemeral.nudge();
             dispatch.push(Event::of_commit(result));
+            commits.notify(CommitNotice::of_commit(result));
         }
         StoreEvent::Renewed(rows) => {
             {
@@ -421,6 +457,7 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
             ephemeral.lock().clear(models.as_deref());
             crate::db::lock::effect(|| outbox_changes.send_modify(|version| *version += 1));
             dispatch.push(Event::of_reset(revision, models.as_deref()));
+            commits.notify(CommitNotice::of_reset(revision, models.as_deref()));
         }
     })
 }

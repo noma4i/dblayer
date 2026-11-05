@@ -51,6 +51,8 @@ pub struct View {
     pub model: String,
     pub tables: Vec<String>,
     pub local: bool,
+    /// The stream reads a window: its relation is loaded from the server.
+    pub remote: bool,
     pub window: WindowKey,
     pub subject: String,
 }
@@ -288,16 +290,14 @@ impl Delivery {
             }
             Kind::List | Kind::Count | Kind::Entity { .. } => {
                 fx.push(machine.new_read(revision));
-                match kind {
-                    Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale } => {
-                        fx.push(Emit::InterestPlus);
-                        machine.interested = true;
-                    }
-                    Kind::Entity { fetch: Fetch::Force } => {
+                let watches = machine.view.remote
+                    && matches!(kind, Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale | Fetch::Force | Fetch::IfMissing });
+                if watches {
+                    fx.push(Emit::InterestPlus);
+                    machine.interested = true;
+                    if kind == (Kind::Entity { fetch: Fetch::Force }) {
                         fx.push(Emit::Load { force: true });
-                        machine.interested = true;
                     }
-                    _ => {}
                 }
             }
         }
@@ -434,7 +434,6 @@ impl Delivery {
                 self.push(Value::Snapshot { revision, rows, state }, fx);
                 if missing {
                     fx.push(Emit::Load { force: false });
-                    self.interested = true;
                 }
             }
             (DeliveryStage::Opening, ReadData::Count(now)) if self.view.kind == Kind::Count => {
@@ -880,7 +879,7 @@ impl StateOwner for Deliveries {
         state.streams.retain(|_, machine| !machine.gone());
         if state.closing && !state.drained && state.streams.values().all(Delivery::settled) {
             state.drained = true;
-            out.push(Effect::Run(DeliveryEffect::Drained(Drained { owner: "Deliveries" })));
+            out.push(Effect::Run(DeliveryEffect::Drained(Drained { owner: "deliveries" })));
         }
         out
     }

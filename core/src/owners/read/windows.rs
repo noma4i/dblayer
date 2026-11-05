@@ -924,7 +924,7 @@ impl StateOwner for Windows {
             }
             WindowsInput::Closing => {
                 Self::every(state, &Ev::Closing, &mut out);
-                out.push(Effect::Run(WindowsEffect::Drained(Drained { owner: "Windows" })));
+                out.push(Effect::Run(WindowsEffect::Drained(Drained { owner: "windows" })));
             }
             WindowsInput::Tick(_) => {}
         }
