@@ -1,194 +1,625 @@
-//! Tests of `feed.md` that need hooks the public API does not have (`api_gap.md`). Compiled only with the feature `spec_api`.
-//! Hooks used on `World`: `events_stream_of(model)` (a second model with a change feed), `reject_next_commit(reason)`, `inject_channel_lost(models, dropped)`, `reset_models(&[model])`, `end_epoch(cause)`, `hold_commit()`, `release_commit()`, `inject_stray_commit_reply()`.
+//! Owner-level tests of `specs/machines/feed.md`: the owner `Feed` on `DetScheduler`, every row of the table and every property.
+//! A row test feeds the same input to the reference (`ref_feed.rs`) and to the owner through its address, then compares the effects
+//! and the observable (`ModelEvent`, `ModelLost`, `Ended`). Names are the `Test` column, `_owner` marks the owner twin of a test that also runs on the API.
 
-use super::harness::{chat_entry, Cause, Reading, Val, World};
-use super::ref_feed::{Effect, Feed, Input, Mode, Obs, Reject};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, PoisonError};
 
-fn obs_of(stream: &Reading) -> Vec<Obs> {
-    stream.vals().into_iter().filter_map(|val| match val {
-        Val::Event { position, id } => Some(Obs::Event { model: "Chat".into(), position, id }),
-        Val::Lost { first, last } => Some(Obs::Lost { model: "Chat".into(), first, last }),
-        Val::Ended(Cause::SessionEnded | Cause::Closed) => Some(Obs::Ended),
+use super::ref_feed::{Effect, Feed as Ref, Input, Mode, Obs, Reject};
+use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, SubscriptionFrame};
+use crate::owners::feed::{self as f, Feed, FeedEffect};
+use crate::owners::support::{new_log, snapshot, take, Log, Recorder, Reset, ResetState, Silent, Source, SourceInput, SourceState, StoreGeneration};
+use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, EffectRunner, EpochStamp, Limits, Time};
+
+const EPOCH: u64 = 1;
+const DEBOUNCE_MS: u64 = 50;
+
+fn names(models: &[&str]) -> Vec<String> { models.iter().map(|model| model.to_string()).collect() }
+
+fn mode_of(mode: f::Mode) -> Mode {
+    match mode {
+        f::Mode::Off => Mode::Off,
+        f::Mode::Opening { gap } => Mode::Opening { gap },
+        f::Mode::Live => Mode::Live,
+        f::Mode::Ended => Mode::Ended,
+    }
+}
+
+/// The owner and the reference side by side.
+struct Twin {
+    det: DetScheduler,
+    addr: Address<Feed>,
+    log: Log<FeedEffect>,
+    reference: Ref,
+    debounce_ms: u64,
+    connection: ConnectionId,
+    batches: VecDeque<BatchId>,
+    generation: u64,
+}
+
+impl Twin {
+    fn new() -> Self { Self::with(true, true, true) }
+
+    /// Events land at once: `updates.debounce` is not declared.
+    fn immediate() -> Self { Self::with(true, true, false) }
+
+    fn with(online: bool, session: bool, debounce: bool) -> Self {
+        let mut det = DetScheduler::new(11);
+        let log = new_log();
+        let addr = det.add::<Feed>("feed", f::FeedState::new(EPOCH, online, session), Recorder::<Feed>::new(&log));
+        det.start_epoch(EPOCH);
+        let mut reference = Ref::new();
+        reference.online = online;
+        reference.session = session;
+        reference.debounce = debounce;
+        Self { det, addr, log, reference, debounce_ms: if debounce { DEBOUNCE_MS } else { 0 }, connection: 0, batches: VecDeque::new(), generation: 0 }
+    }
+
+    fn state(&self) -> &f::FeedState { self.det.state(self.addr).expect("the owner state") }
+
+    fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
+
+    fn post(&mut self, input: f::FeedInput) {
+        self.det.post(self.addr, EpochStamp::Epoch(EPOCH), input);
+        self.run();
+    }
+
+    fn frame(&mut self, connection: ConnectionId, frame: Frame) { self.post(f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection, frame })); }
+
+    fn batch(&mut self) -> BatchId { self.batches.pop_front().unwrap_or(9_999) }
+
+    /// Feeds one input of the table to both sides, checks the effects and the observable and returns the effects of the reference.
+    fn step(&mut self, input: Input) -> Vec<Effect> {
+        take(&self.log);
+        match &input {
+            Input::WantPlus { model } => self.post(f::FeedInput::WantPlus { model: model.clone(), debounce_ms: self.debounce_ms }),
+            Input::WantMinus { model } => self.post(f::FeedInput::WantMinus { model: model.clone() }),
+            Input::Ready => self.frame(self.connection, Frame::Ready),
+            Input::Event { current, model, id } => {
+                let connection = if *current { self.connection } else { 9_999 };
+                self.frame(connection, Frame::Event { model: model.clone(), payload: id.clone() });
+            }
+            Input::ChannelLost { dropped, models } => self.frame(self.connection, Frame::Lost { dropped: *dropped, models: models.clone() }),
+            Input::Dropped => self.frame(self.connection, Frame::Dropped),
+            Input::Committed => {
+                let batch = self.batch();
+                self.post(f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new() }));
+            }
+            Input::Rejected(reason) => {
+                let batch = self.batch();
+                let reason = match reason {
+                    Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generation: self.generation },
+                    Reject::Storage => RejectReason::Storage("disk".into()),
+                    Reject::NoSession => RejectReason::NoSession,
+                };
+                self.post(f::FeedInput::Rejected(Rejected { batch, reason }));
+            }
+            Input::StrayBatch => self.post(f::FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new() })),
+            Input::Tick => self.post(f::FeedInput::Tick(Time(0))),
+            Input::Online(on) => self.post(f::FeedInput::Online(Online(*on))),
+            Input::ModelsReset { models } => {
+                self.generation += 1;
+                self.post(f::FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: self.generation, models: models.clone() }));
+            }
+            Input::EpochStarted => self.post(f::FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: None })),
+            Input::EpochEnded => {
+                self.det.end_epoch(EPOCH, Ended::SessionReset);
+                self.run();
+            }
+            Input::Closing => {
+                self.det.close();
+                self.run();
+            }
+        }
+        let (got, seen) = self.split(take(&self.log));
+        let want = self.reference.step(input);
+        assert_eq!(got, want, "the owner and the reference give the same effects");
+        assert_eq!(seen, self.reference.take_obs(), "the owner and the reference show the same events");
+        assert_eq!(mode_of(self.state().mode()), self.reference.mode, "the same mode");
+        want
+    }
+
+    fn split(&mut self, effects: Vec<FeedEffect>) -> (Vec<Effect>, Vec<Obs>) {
+        let (mut modelled, mut seen) = (Vec::new(), Vec::new());
+        for effect in effects {
+            match effect {
+                FeedEffect::Subscribe { connection, .. } => {
+                    self.connection = connection;
+                    modelled.push(Effect::Subscribe);
+                }
+                FeedEffect::Unsubscribe => modelled.push(Effect::Unsubscribe),
+                FeedEffect::ScheduleTick { .. } => modelled.push(Effect::ScheduleTick),
+                FeedEffect::ScheduleResubscribe { connection } => {
+                    self.connection = connection;
+                    modelled.push(Effect::ScheduleResubscribe);
+                }
+                FeedEffect::Commit { batch, .. } => {
+                    self.batches.push_back(batch);
+                    modelled.push(Effect::Commit);
+                }
+                FeedEffect::StaleWindows(models) => modelled.push(Effect::StaleWindows(models)),
+                FeedEffect::Drained(_) => modelled.push(Effect::Drained),
+                FeedEffect::ModelEvent { model, position, payload } => seen.push(Obs::Event { model, position, id: payload }),
+                FeedEffect::ModelLost { model, first, last } => seen.push(Obs::Lost { model, first, last }),
+                FeedEffect::Ended => seen.push(Obs::Ended),
+                FeedEffect::CloseConnection { .. } | FeedEffect::RereadWindows(_) => {}
+            }
+        }
+        (modelled, seen)
+    }
+}
+
+fn want(twin: &mut Twin, model: &str) -> Vec<Effect> { twin.step(Input::WantPlus { model: model.into() }) }
+
+fn event(twin: &mut Twin, model: &str, id: &str) -> Vec<Effect> { twin.step(Input::Event { current: true, model: model.into(), id: id.into() }) }
+
+fn live_with(mut twin: Twin) -> Twin {
+    want(&mut twin, "Chat");
+    twin.step(Input::Ready);
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+    twin
+}
+
+fn live() -> Twin { live_with(Twin::new()) }
+
+fn live_immediate() -> Twin { live_with(Twin::immediate()) }
+
+#[test]
+fn feed_off_want_owner() {
+    let mut twin = Twin::new();
+    assert_eq!(want(&mut twin, "Chat"), [Effect::Subscribe]);
+    assert_eq!(twin.state().mode(), f::Mode::Opening { gap: false });
+}
+
+#[test]
+fn feed_off_want_offline_owner() {
+    for mut twin in [Twin::with(false, true, true), Twin::with(true, false, true)] {
+        assert!(want(&mut twin, "Chat").is_empty());
+        assert_eq!(twin.state().mode(), f::Mode::Off);
+        assert_eq!(twin.state().wants(), names(&["Chat"]));
+    }
+}
+
+#[test]
+fn feed_off_unwant_owner() {
+    let mut twin = Twin::with(false, true, true);
+    want(&mut twin, "Chat");
+    assert!(twin.step(Input::WantMinus { model: "Chat".into() }).is_empty());
+    assert!(twin.step(Input::Online(true)).is_empty(), "no reader is left, so coming online subscribes to nothing");
+}
+
+#[test]
+fn feed_off_resume_owner() {
+    let mut by_network = Twin::with(false, true, true);
+    want(&mut by_network, "Chat");
+    assert_eq!(by_network.step(Input::Online(true)), [Effect::Subscribe]);
+    let mut by_session = Twin::with(true, false, true);
+    want(&mut by_session, "Chat");
+    assert_eq!(by_session.step(Input::EpochStarted), [Effect::Subscribe]);
+}
+
+#[test]
+fn feed_off_stray_owner() {
+    let mut twin = Twin::with(false, true, true);
+    want(&mut twin, "Chat");
+    twin.connection = 77;
+    for input in [Input::Event { current: false, model: "Chat".into(), id: "c1".into() }, Input::Ready, Input::ChannelLost { dropped: 1, models: names(&["Chat"]) }, Input::Dropped, Input::Tick] {
+        assert!(twin.step(input).is_empty());
+    }
+}
+
+#[test]
+fn feed_landing_after_drop() {
+    let mut twin = live_immediate();
+    assert_eq!(event(&mut twin, "Chat", "c1"), [Effect::Commit]);
+    twin.step(Input::Dropped);
+    assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
+    assert!(twin.step(Input::Committed).is_empty());
+    assert_eq!(twin.reference.take_obs(), Vec::new());
+    assert_eq!(twin.state().position("Chat"), 1, "a batch that lands after the break is still delivered");
+}
+
+#[test]
+fn feed_stray_batch() {
+    let mut twin = live();
+    assert!(twin.step(Input::StrayBatch).is_empty());
+    assert_eq!(twin.state().position("Chat"), 0);
+    let mut off = Twin::with(false, true, true);
+    assert!(off.step(Input::StrayBatch).is_empty());
+}
+
+#[test]
+fn feed_opening_ready_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert!(twin.step(Input::Ready).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+}
+
+#[test]
+fn feed_opening_ready_after_gap_owner() {
+    let mut twin = live();
+    twin.step(Input::Dropped);
+    assert_eq!(twin.step(Input::Ready), [Effect::StaleWindows(names(&["Chat"]))]);
+    assert_eq!(twin.state().position("Chat"), 1, "the break is one Lost position");
+}
+
+#[test]
+fn feed_opening_dropped_owner() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    assert_eq!(twin.step(Input::Dropped), [Effect::ScheduleResubscribe]);
+    let connection = twin.connection;
+    take(&twin.log);
+    twin.post(f::FeedInput::ResubscribeDue { connection });
+    let again = take(&twin.log);
+    assert!(matches!(again.as_slice(), [FeedEffect::Subscribe { connection: found, .. }] if *found == connection), "the timer resubscribes the connection it was set for");
+    let mut offline = Twin::new();
+    want(&mut offline, "Chat");
+    offline.step(Input::Online(false));
+    assert!(offline.step(Input::Dropped).is_empty(), "no resubscribe is scheduled offline");
+}
+
+#[test]
+fn feed_opening_want() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Chat");
+    let first = twin.connection;
+    assert_eq!(want(&mut twin, "Post"), [Effect::Subscribe]);
+    assert_ne!(twin.connection, first, "a changed set subscribes on a new connection");
+    assert!(twin.step(Input::WantMinus { model: "Post".into() }) == [Effect::Subscribe]);
+    assert!(want(&mut twin, "Chat").is_empty(), "the same set does not subscribe again");
+}
+
+#[test]
+fn feed_live_event_owner() {
+    let mut twin = live();
+    assert_eq!(event(&mut twin, "Chat", "c1"), [Effect::ScheduleTick]);
+    assert!(event(&mut twin, "Chat", "c2").is_empty(), "the tick is scheduled once");
+    assert_eq!(twin.state().pending(), 2);
+}
+
+#[test]
+fn feed_live_event_now_owner() {
+    let mut twin = live_immediate();
+    assert_eq!(event(&mut twin, "Chat", "c1"), [Effect::Commit]);
+    assert_eq!(twin.state().landing(), 1);
+}
+
+#[test]
+fn feed_live_event_unwatched() {
+    let mut twin = Twin::new();
+    want(&mut twin, "Post");
+    twin.step(Input::Ready);
+    assert!(event(&mut twin, "Chat", "c1").is_empty(), "an event of a model with no reader is not applied");
+    assert_eq!(twin.state().pending(), 0);
+}
+
+#[test]
+fn feed_live_flush_owner() {
+    let mut twin = live();
+    event(&mut twin, "Chat", "c1");
+    assert_eq!(twin.step(Input::Tick), [Effect::Commit]);
+    assert!(twin.step(Input::Tick).is_empty(), "a tick with nothing pending does nothing");
+}
+
+#[test]
+fn feed_live_committed_owner() {
+    let mut twin = live();
+    for id in ["c1", "c2", "c3"] {
+        event(&mut twin, "Chat", id);
+    }
+    twin.step(Input::Tick);
+    assert!(twin.step(Input::Committed).is_empty());
+    assert_eq!(twin.state().position("Chat"), 3, "positions of a batch follow one another from 1");
+}
+
+#[test]
+fn feed_live_rejected_generation() {
+    let mut twin = live();
+    want(&mut twin, "Post");
+    twin.step(Input::Ready);
+    event(&mut twin, "Chat", "c1");
+    event(&mut twin, "Post", "p1");
+    twin.step(Input::Tick);
+    let effects = twin.step(Input::Rejected(Reject::StaleGeneration(names(&["Chat"]))));
+    assert_eq!(effects.first(), Some(&Effect::StaleWindows(names(&["Chat"]))));
+    assert_eq!(effects.last(), Some(&Effect::Commit), "the events of the other models land in a new batch");
+    twin.step(Input::Committed);
+}
+
+#[test]
+fn feed_live_rejected_storage() {
+    let mut twin = live_immediate();
+    event(&mut twin, "Chat", "c1");
+    assert_eq!(twin.step(Input::Rejected(Reject::Storage)), [Effect::StaleWindows(names(&["Chat"]))]);
+    assert_eq!(twin.state().position("Chat"), 1, "the lost event holds its position");
+}
+
+#[test]
+fn feed_live_rejected_session() {
+    let mut twin = live_immediate();
+    event(&mut twin, "Chat", "c1");
+    assert!(twin.step(Input::Rejected(Reject::NoSession)).is_empty());
+    assert_eq!(twin.state().mode(), f::Mode::Ended);
+}
+
+#[test]
+fn feed_live_channel_lost() {
+    let mut twin = live();
+    event(&mut twin, "Chat", "c1");
+    let effects = twin.step(Input::ChannelLost { dropped: 5, models: names(&["Chat"]) });
+    assert_eq!(effects, [Effect::Commit, Effect::StaleWindows(names(&["Chat"]))]);
+    twin.step(Input::Committed);
+    assert_eq!(twin.state().position("Chat"), 6, "the pending event and the 5 dropped hold 6 positions");
+}
+
+#[test]
+fn feed_live_dropped_owner() {
+    let mut twin = live();
+    event(&mut twin, "Chat", "c1");
+    assert_eq!(twin.step(Input::Dropped), [Effect::Commit, Effect::Subscribe]);
+    assert_eq!(twin.step(Input::Ready), [Effect::StaleWindows(names(&["Chat"]))]);
+}
+
+#[test]
+fn feed_live_offline_owner() {
+    let mut twin = live();
+    event(&mut twin, "Chat", "c1");
+    assert_eq!(twin.step(Input::Online(false)), [Effect::Commit, Effect::Unsubscribe]);
+    assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
+}
+
+#[test]
+fn feed_live_models_reset() {
+    let mut twin = live();
+    event(&mut twin, "Chat", "c1");
+    assert!(twin.step(Input::ModelsReset { models: names(&["Chat"]) }).is_empty(), "the Store decides about the pending events");
+    twin.step(Input::Tick);
+    assert_eq!(twin.state().landing(), 1);
+}
+
+#[test]
+fn feed_live_last_unwant_owner() {
+    let mut twin = live();
+    event(&mut twin, "Chat", "c1");
+    assert_eq!(twin.step(Input::WantMinus { model: "Chat".into() }), [Effect::Commit, Effect::Unsubscribe]);
+    assert_eq!(twin.state().mode(), f::Mode::Off);
+}
+
+#[test]
+fn feed_live_want_more() {
+    let mut twin = live();
+    assert_eq!(want(&mut twin, "Post"), [Effect::Subscribe]);
+    let new_connection = twin.connection;
+    take(&twin.log);
+    twin.frame(new_connection, Frame::Ready);
+    let closed = take(&twin.log);
+    assert!(closed.iter().any(|effect| matches!(effect, FeedEffect::CloseConnection { connection } if *connection != new_connection)), "the old connection closes after the new one is ready");
+}
+
+#[test]
+fn feed_epoch_ended() {
+    let mut twin = live();
+    event(&mut twin, "Chat", "c1");
+    assert_eq!(twin.step(Input::EpochEnded), [Effect::Unsubscribe]);
+    assert_eq!(twin.state().pending(), 0, "the pending events of the ended epoch are dropped");
+    for mode in [Twin::new(), Twin::with(false, true, true)] {
+        let mut off = mode;
+        assert_eq!(off.step(Input::EpochEnded), [Effect::Unsubscribe]);
+    }
+}
+
+#[test]
+fn feed_closing_owner() {
+    for mut twin in [live(), Twin::new()] {
+        assert_eq!(twin.step(Input::Closing), [Effect::Unsubscribe, Effect::Drained]);
+        assert_eq!(twin.state().mode(), f::Mode::Ended);
+    }
+}
+
+#[test]
+fn feed_ended_owner() {
+    let mut twin = live();
+    twin.step(Input::EpochEnded);
+    for input in [Input::WantPlus { model: "Post".into() }, Input::Ready, Input::Tick, Input::Online(true), Input::Committed, Input::Event { current: true, model: "Chat".into(), id: "c9".into() }] {
+        assert!(twin.step(input).is_empty());
+    }
+    twin.det.close();
+    twin.run();
+    assert!(take(&twin.log).iter().any(|effect| matches!(effect, FeedEffect::Drained(_))), "an ended feed still answers Closing with Drained");
+}
+
+// Properties. An executor stub in the scheduler subscribes, commits and resubscribes; the explorer orders what the sources send.
+
+struct Executor {
+    log: Log<FeedEffect>,
+    /// Generation of the model `Post` in the Store.
+    post_generation: Arc<AtomicU64>,
+}
+
+impl EffectRunner<Feed> for Executor {
+    fn run(&mut self, stamp: EpochStamp, effect: FeedEffect, back: &Back<Feed>) {
+        self.log.lock().unwrap_or_else(PoisonError::into_inner).push(effect.clone());
+        match effect {
+            FeedEffect::Subscribe { connection, .. } => back.reply(stamp, f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection, frame: Frame::Ready })),
+            FeedEffect::ScheduleResubscribe { connection } => back.reply(stamp, f::FeedInput::ResubscribeDue { connection }),
+            FeedEffect::Commit { batch, events } => {
+                let stale = self.post_generation.load(Ordering::SeqCst);
+                let refused: Vec<String> = events.iter().filter(|event| event.model == "Post" && event.basis < stale).map(|event| event.model.clone()).collect();
+                if refused.is_empty() {
+                    back.reply(stamp, f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new() }));
+                } else {
+                    back.reply(stamp, f::FeedInput::Rejected(Rejected { batch, reason: RejectReason::StaleGeneration { models: refused, generation: stale } }));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+thread_local! {
+    static SEEN: RefCell<Option<Rc<(Log<FeedEffect>, Arc<AtomicU64>)>>> = const { RefCell::new(None) };
+}
+
+fn seen() -> Log<FeedEffect> { SEEN.with(|slot| slot.borrow().clone()).expect("a rig was built").0.clone() }
+
+fn event_frame(model: &str, payload: &str) -> f::FeedInput { f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 1, frame: Frame::Event { model: model.into(), payload: payload.into() } }) }
+
+fn rig(debounce_ms: u64, frames: Vec<f::FeedInput>, with_reset: bool) -> DetScheduler {
+    let mut det = DetScheduler::new(1);
+    let log = new_log();
+    let post_generation = Arc::new(AtomicU64::new(0));
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, true, true), Executor { log: log.clone(), post_generation: post_generation.clone() });
+    det.start_epoch(EPOCH);
+    let readers = det.add::<Source<Feed>>("readers", SourceState { to: feed, script: vec![f::FeedInput::WantPlus { model: "Chat".into(), debounce_ms }, f::FeedInput::WantPlus { model: "Post".into(), debounce_ms }] }, Silent);
+    let transport = det.add::<Source<Feed>>("transport", SourceState { to: feed, script: frames }, Silent);
+    let clock = det.add::<Source<Feed>>("clock", SourceState { to: feed, script: vec![f::FeedInput::Tick(Time(1)), f::FeedInput::Tick(Time(2))] }, Silent);
+    for source in [readers, transport, clock] {
+        det.post(source, EpochStamp::Control, SourceInput::Go);
+    }
+    if with_reset {
+        let reset = det.add::<Reset<Feed>>("lifecycle", ResetState { to: feed, input: f::FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Post".into()] }), generation: 1 }, StoreGeneration(post_generation.clone()));
+        det.post(reset, EpochStamp::Control, SourceInput::Go);
+    }
+    SEEN.with(|slot| *slot.borrow_mut() = Some(Rc::new((log, post_generation))));
+    det
+}
+
+const LIMITS: Limits = Limits { depth: 4, max_traces: 30_000 };
+
+/// Positions of the `ModelEvent` and the `ModelLost` of one model, in the order of the effects.
+fn positions(log: &Log<FeedEffect>, model: &str) -> Vec<(u64, u64)> {
+    snapshot(log).into_iter().filter_map(|effect| match effect {
+        FeedEffect::ModelEvent { model: found, position, .. } if found == model => Some((position, position)),
+        FeedEffect::ModelLost { model: found, first, last } if found == model => Some((first, last)),
         _ => None,
     }).collect()
 }
 
-async fn live() -> (World, Reading, Feed) {
-    let world = World::open().await;
-    let stream = world.events_stream();
-    world.net.wait_subscribes(1).await;
-    let mut reference = Feed::new();
-    reference.step(Input::WantPlus { model: "Chat".into() });
-    reference.step(Input::Ready);
-    assert_eq!(reference.mode, Mode::Live);
-    (world, stream, reference)
+fn covers(positions: &[(u64, u64)]) -> Result<u64, String> {
+    let mut next = 1;
+    for (first, last) in positions {
+        if *first != next || last < first {
+            return Err(format!("{first}..={last} where {next} was due"));
+        }
+        next = last + 1;
+    }
+    Ok(next - 1)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_opening_want() {
-    let world = World::open().await;
-    world.net.fail_subscribes(true);
-    let mut reference = Feed::new();
-    reference.step(Input::WantPlus { model: "Chat".into() });
-    let effects = reference.step(Input::WantPlus { model: "Post".into() });
-    assert_eq!(effects, [Effect::Subscribe]);
-    let _chat = world.events_stream();
-    let _post = world.events_stream_of("Post");
-    world.breathe().await;
-    assert_eq!(world.net.subscribes(), 2, "a changed set subscribes again");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_live_want_more() {
-    let (world, _stream, mut reference) = live().await;
-    let effects = reference.step(Input::WantPlus { model: "Post".into() });
-    assert_eq!(effects, [Effect::Subscribe]);
-    let _post = world.events_stream_of("Post");
-    world.net.wait_subscribes(2).await;
-    assert_eq!(world.net.unsubscribes(), 1, "the old connection closes after the new one is ready");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_live_rejected_generation() {
-    let (world, stream, mut reference) = live().await;
-    reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() });
-    reference.step(Input::Tick);
-    reference.step(Input::Rejected(Reject::StaleGeneration(vec!["Chat".into()])));
-    world.reject_next_commit("stale_generation");
-    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
-    world.clock.advance(60_000);
-    world.settle().await;
-    stream.drain();
-    assert_eq!(obs_of(&stream), reference.take_obs());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_live_rejected_storage() {
-    let (world, stream, mut reference) = live().await;
-    reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() });
-    reference.step(Input::Tick);
-    reference.step(Input::Rejected(Reject::Storage));
-    world.reject_next_commit("storage");
-    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
-    world.clock.advance(60_000);
-    world.settle().await;
-    stream.drain();
-    assert_eq!(obs_of(&stream), reference.take_obs());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_live_rejected_session() {
-    let (world, stream, mut reference) = live().await;
-    reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() });
-    reference.step(Input::Tick);
-    reference.step(Input::Rejected(Reject::NoSession));
-    assert_eq!(reference.mode, Mode::Ended);
-    world.reject_next_commit("no_session");
-    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
-    world.clock.advance(60_000);
-    world.settle().await;
-    stream.drain();
-    assert!(obs_of(&stream).iter().all(|obs| !matches!(obs, Obs::Event { .. })));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_live_channel_lost() {
-    let (world, stream, mut reference) = live().await;
-    reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() });
-    let effects = reference.step(Input::ChannelLost { dropped: 5, models: vec!["Chat".into()] });
-    assert_eq!(effects[0], Effect::Commit);
-    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
-    world.inject_channel_lost(&["Chat"], 5);
-    world.clock.advance(60_000);
-    world.settle().await;
-    stream.drain();
-    assert_eq!(obs_of(&stream), {
-        reference.step(Input::Committed);
-        reference.take_obs()
+/// P-FEED-01: for every model the delivered events and the lost positions are 1..position without gaps and repeats.
+#[test]
+fn feed_prop_cover_owner() {
+    let frames = vec![
+        event_frame("Chat", "c1"),
+        event_frame("Chat", "c2"),
+        f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 1, frame: Frame::Lost { dropped: 2, models: vec!["Chat".into()] } }),
+        f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 1, frame: Frame::Dropped }),
+    ];
+    let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), false), LIMITS, |_| {
+        let log = seen();
+        for model in ["Chat", "Post"] {
+            covers(&positions(&log, model))?;
+        }
+        Ok(())
     });
+    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
+    assert!(report.traces > 10);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_live_models_reset() {
-    let (world, stream, mut reference) = live().await;
-    reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() });
-    assert!(reference.step(Input::ModelsReset { models: vec!["Chat".into()] }).is_empty());
-    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
-    world.reset_models(&["Chat"]).await;
-    world.clock.advance(60_000);
-    world.settle().await;
-    stream.drain();
-    let obs = obs_of(&stream);
-    assert!(obs.iter().any(|obs| matches!(obs, Obs::Event { .. } | Obs::Lost { .. })), "the event is delivered or lost after a reset of its model");
+/// P-FEED-02: an event of `pending` or `landing` is delivered, lost, or still counted; the sum never drops below what was accepted.
+#[test]
+fn feed_prop_pending_never_vanishes_owner() {
+    let frames = vec![
+        event_frame("Chat", "c1"),
+        event_frame("Chat", "c2"),
+        f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 1, frame: Frame::Dropped }),
+        event_frame("Chat", "c3"),
+    ];
+    let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), false), Limits { depth: 40, max_traces: 4_000 }, |det| {
+        if !det.ready().is_empty() {
+            return Ok(());
+        }
+        let log = seen();
+        let effects = snapshot(&log);
+        let committed: usize = effects.iter().map(|effect| if let FeedEffect::Commit { events, .. } = effect { events.len() } else { 0 }).sum();
+        let covered = covers(&positions(&log, "Chat"))? as usize;
+        let state = det.state(Address::<Feed>::new(0)).ok_or("no state")?;
+        if covered < committed.saturating_sub(0) && state.landing() == 0 {
+            return Err(format!("{committed} events were committed but {covered} positions are covered"));
+        }
+        if state.landing() != 0 {
+            return Err("a batch is left in landing after the store answered".into());
+        }
+        Ok(())
+    });
+    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_epoch_ended() {
-    let (world, stream, mut reference) = live().await;
-    let effects = reference.step(Input::EpochEnded);
-    assert_eq!(effects, [Effect::Unsubscribe]);
-    world.end_epoch(Cause::SessionEnded);
-    world.settle().await;
-    stream.drain();
-    assert_eq!(obs_of(&stream), reference.take_obs());
-    assert_eq!(world.net.unsubscribes(), 1);
+/// P-FEED-03: a break after `Live` gives each model of `want` exactly one `ModelLost` at the next `Ready`, and `Stale` for its windows.
+#[test]
+fn feed_prop_gap_visible_owner() {
+    let mut twin = live_with(Twin::new());
+    want(&mut twin, "Post");
+    twin.step(Input::Ready);
+    let before = (twin.state().position("Chat"), twin.state().position("Post"));
+    twin.step(Input::Dropped);
+    let effects = twin.step(Input::Ready);
+    assert_eq!(effects, [Effect::StaleWindows(names(&["Chat", "Post"]))]);
+    assert_eq!((twin.state().position("Chat"), twin.state().position("Post")), (before.0 + 1, before.1 + 1), "one position per model");
 }
 
-/// P-FEED-04: a reset of model X does not lose the events of model Y.
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_prop_reset_other_model() {
-    let (world, stream, _) = live().await;
-    let _post = world.events_stream_of("Post");
-    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
-    world.reset_models(&["Post"]).await;
-    world.clock.advance(60_000);
-    world.settle().await;
-    stream.drain();
-    assert!(obs_of(&stream).iter().any(|obs| matches!(obs, Obs::Event { id, .. } if id == "c1")), "the Chat event survives a reset of Post");
+/// P-FEED-04: a reset of the model `Post` does not lose the events of `Chat`.
+#[test]
+fn feed_prop_reset_other_model() {
+    let frames = vec![event_frame("Chat", "c1"), event_frame("Post", "p1"), event_frame("Chat", "c2")];
+    let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), true), LIMITS, |_| {
+        let lost = snapshot(&seen()).into_iter().any(|effect| matches!(effect, FeedEffect::ModelLost { model, .. } if model == "Chat"));
+        if lost {
+            return Err("a Chat event was lost".into());
+        }
+        Ok(())
+    });
+    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_landing_after_drop() {
-    let (world, stream, mut reference) = live().await;
-    world.hold_commit();
-    reference.debounce = false;
-    assert_eq!(reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() }), [Effect::Commit]);
-    reference.step(Input::Dropped);
-    assert!(matches!(reference.mode, Mode::Opening { gap: true }));
-    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
-    world.breathe().await;
-    world.net.drop_connection();
-    world.release_commit();
-    reference.step(Input::Committed);
-    world.clock.advance(60_000);
-    world.settle().await;
-    stream.drain();
-    assert!(obs_of(&stream).contains(&Obs::Event { model: "Chat".into(), position: 1, id: "c1".into() }), "a batch that lands after the break is still delivered");
-    assert_eq!(reference.take_obs()[0], Obs::Event { model: "Chat".into(), position: 1, id: "c1".into() });
+/// P-FEED-05: a frame of a connection that is not the current one changes nothing and is not delivered.
+#[test]
+fn feed_prop_stale_connection_owner() {
+    let report = explore(
+        || {
+            let frames = vec![
+                f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 77, frame: Frame::Event { model: "Chat".into(), payload: "x".into() } }),
+                f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 77, frame: Frame::Dropped }),
+                f::FeedInput::Frame(SubscriptionFrame { epoch: EPOCH, connection: 77, frame: Frame::Lost { dropped: 3, models: vec!["Chat".into()] } }),
+            ];
+            rig(0, frames, false)
+        },
+        LIMITS,
+        |_| {
+            let effects = snapshot(&seen());
+            if effects.iter().any(|effect| matches!(effect, FeedEffect::ModelEvent { .. } | FeedEffect::ModelLost { model: _, .. } | FeedEffect::Commit { .. })) {
+                return Err("a frame of another connection had an effect".into());
+            }
+            Ok(())
+        },
+    );
+    assert!(report.violations.is_empty(), "{:?}", report.violations.first());
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_stray_batch() {
-    let (world, stream, mut reference) = live().await;
-    assert!(reference.step(Input::StrayBatch).is_empty());
-    world.inject_stray_commit_reply();
-    world.settle().await;
-    stream.drain();
-    assert!(obs_of(&stream).is_empty(), "a reply for a batch the feed did not send changes nothing");
-    assert!(reference.take_obs().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn feed_live_event_unwatched() {
-    let world = World::open().await;
-    let _post = world.events_stream_of("Post");
-    world.net.wait_subscribes(1).await;
-    let mut reference = Feed::new();
-    reference.step(Input::WantPlus { model: "Post".into() });
-    reference.step(Input::Ready);
-    assert!(reference.step(Input::Event { current: true, model: "Chat".into(), id: "c1".into() }).is_empty());
-    world.net.emit(vec![chat_entry(1, "a")]).unwrap();
-    world.clock.advance(60_000);
-    world.settle().await;
-    assert!(world.chat_ids().await.is_empty(), "an event of a model with no reader and no window is not applied");
+/// P-FEED-06: no reader or no frames: no request and no tick.
+#[test]
+fn feed_prop_idle_owner() {
+    let mut twin = live();
+    take(&twin.log);
+    assert_eq!(twin.det.ready().len(), 0);
+    twin.det.tick(Time(100));
+    twin.run();
+    assert!(take(&twin.log).is_empty(), "a live feed without frames asks nothing");
+    let mut off = Twin::new();
+    assert!(off.step(Input::Tick).is_empty());
 }

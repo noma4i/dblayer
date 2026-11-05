@@ -1,5 +1,5 @@
-//! Executable references of the machine specs and the tests that compare the core with them: `Lifecycle` and `Store` (direction A), `Delivery`, `Window` and `Feed` (direction B).
-//! Every test is named like the `Test` column of `specs/machines/*.md`. Tests that need an input or an observable the public API does not have live in `*_gap_tests.rs` under the feature `spec_api` (see `api_gap.md`).
+//! Executable references of the machine specs and the tests that compare the core with them: `Lifecycle` and `Store` (direction A), `Delivery`, `Window` and `Feed` (direction B), `Outbox` and `Transfer` (direction C).
+//! Every test is named like the `Test` column of `specs/machines/*.md`. Tests of `Delivery`, `Window` and `Feed` in `*_gap_tests.rs` run at the level of the owner (`core/src/owners`) on `DetScheduler`; tests under the feature `spec_api` wait for the owners of their direction.
 
 mod harness;
 mod harness_life;
@@ -19,11 +19,8 @@ mod window_tests;
 
 #[cfg(feature = "spec_api")]
 mod owner_sut;
-#[cfg(feature = "spec_api")]
 mod delivery_gap_tests;
-#[cfg(feature = "spec_api")]
 mod feed_gap_tests;
-#[cfg(feature = "spec_api")]
 mod window_gap_tests;
 
 mod ref_outbox;

@@ -25,6 +25,7 @@ mod check;
 #[cfg(test)]
 mod spec;
 pub mod runtime;
+pub mod owners;
 mod blocking;
 mod lifecycle;
 mod task;
