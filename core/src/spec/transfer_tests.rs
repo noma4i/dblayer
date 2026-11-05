@@ -278,7 +278,7 @@ async fn xfer_complete_fail() {
     wait_shown(&rig, shows(&cell).unwrap()).await;
     quiet().await;
 
-    assert!(cell.eff.contains(&Eff::NoAbort));
+    assert!(!cell.eff.contains(&Eff::Abort));
     assert_eq!(rig.server.count("AbortMultipart"), 0);
     assert_eq!(rig.server.seen().iter().filter(|seen| seen.kind == Kind::Put).count(), 3);
 }
@@ -407,7 +407,7 @@ async fn xfer_closing() {
 
     within(rig.db.close_database()).await.unwrap();
 
-    assert_eq!(cell.next, St::Ready);
+    assert_eq!(cell.next, St::Done);
     assert!(matches!(rig.outcome(&receipt).await, WireOperationOutcome::Interrupted));
     until("the step is cancelled", || rig.server.cancelled() >= 1).await;
     let server = Server::new();

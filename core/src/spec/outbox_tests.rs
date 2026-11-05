@@ -176,10 +176,12 @@ async fn out_sending_offline() {
     rig.server.wait_held(Kind::Mutate, 1).await;
 
     rig.db.set_online(false).unwrap();
-    until("the request is cancelled", || rig.server.cancelled() >= 1).await;
-    assert!(cell.eff.contains(&Eff::Cancel) && rig.pending(&receipt).await);
+    quiet().await;
+    assert!(cell.eff.is_empty() && cell.next == St::Sending && rig.pending(&receipt).await);
+    assert_eq!(rig.server.cancelled(), 0, "the request is not cancelled by Online(false)");
     rig.db.set_online(true).unwrap();
-    rig.server.wait_seen("MakeMoment", 2).await;
+    quiet().await;
+    assert_eq!(rig.server.count("MakeMoment"), 1, "Online(true) sends nothing for an operation in the network");
 
     rig.server.hold(Kind::Mutate, false);
     rig.server.answer(Kind::Mutate, Reply::Ok);
@@ -242,7 +244,7 @@ async fn out_failed_retry() {
     let retried = within(rig.db.retry(rig.epoch(), "Moment".into(), id.clone(), None, None)).await.unwrap();
     rig.server.wait_held(Kind::Mutate, 1).await;
 
-    assert_eq!(cell.next, St::Queued);
+    assert_eq!(cell.next, St::Sending);
     assert!(cell.obs.contains(&Obs::RowErrorCleared) && rig.row(&id).await.unwrap().sync.error.is_none());
     assert!(sends(&cell));
     rig.server.hold(Kind::Mutate, false);
@@ -263,7 +265,7 @@ async fn out_closing() {
 
     within(rig.db.close_database()).await.unwrap();
 
-    assert_eq!((sending.next, queued.next), (St::Done, St::Queued));
+    assert_eq!((sending.next, queued.next), (St::Done, St::Done));
     assert_eq!(kind_of(&rig.outcome(&first).await), wire_of(Out::Interrupted));
     assert_eq!(kind_of(&rig.outcome(&second).await), wire_of(Out::Interrupted));
     assert!(sending.eff.contains(&Eff::Cancel) && sending.eff.contains(&Eff::Drained));
@@ -356,8 +358,12 @@ fn model_apply(model: &mut Model, act: Act) {
             let ctx = ctx_of(model);
             for op in model.ops.iter_mut().filter(|op| matches!(op.state, St::Queued | St::Sending)) {
                 let step = want(op.state, &ctx, In::Online(model.online));
+                op.requesting = match (op.state, step.next) {
+                    (St::Sending, St::Sending) => op.requesting,
+                    (_, St::Sending) => true,
+                    _ => false,
+                };
                 op.state = step.next;
-                op.requesting = model.online && step.next == St::Sending;
             }
         }
         Act::Ok | Act::Refuse => {

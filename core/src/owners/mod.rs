@@ -4,9 +4,10 @@ pub mod deliveries;
 pub mod feed;
 pub mod lifecycle;
 pub mod network;
+pub mod outbox;
 pub mod session;
 pub mod store;
+pub mod transfer;
 pub mod windows;
-
 #[cfg(test)]
 pub(crate) mod support;

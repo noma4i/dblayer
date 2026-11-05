@@ -34,7 +34,5 @@ mod ref_transfer;
 mod rig;
 mod outbox_tests;
 mod transfer_tests;
-#[cfg(feature = "spec_api")]
-mod outbox_api_tests;
-#[cfg(feature = "spec_api")]
-mod transfer_api_tests;
+mod outbox_owner_tests;
+mod transfer_owner_tests;
