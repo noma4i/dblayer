@@ -526,6 +526,9 @@ impl Session {
                 if let (State::Idle, Some(pending)) = (&self.state, pending) {
                     if pending.owner.is_none() { self.restored_direct = Some(Pending { epoch, ..pending }); }
                 }
+                if self.restore_ready && matches!(self.state, State::Idle) {
+                    if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, out); }
+                }
             }
             Input::RestoreReady { .. } => {
                 self.state = state;

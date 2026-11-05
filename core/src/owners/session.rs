@@ -560,6 +560,9 @@ impl SessionState {
                 if let (SessionPhase::Idle, Some(pending)) = (&self.phase, pending) {
                     if pending.owner.is_none() { self.restored_direct = Some(PendingCall { epoch, ..pending }); }
                 }
+                if self.restore_ready && matches!(self.phase, SessionPhase::Idle) {
+                    if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, fx); }
+                }
             }
             SessionInput::RestoreReady { .. } => {
                 self.phase = phase;
