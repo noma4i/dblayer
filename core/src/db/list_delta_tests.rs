@@ -19,9 +19,12 @@ fn by_name() -> Query {
 
 fn list_of(count: usize, query: Query) -> (Db, ChangeLog, ObserverHandle) {
     let db = booted();
+    let mut seed = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     for n in 0..count {
-        put(&db, "users", json!({"id": format!("u{n:05}"), "name": format!("n{n:05}")}));
+        let id = format!("u{n:05}");
+        seed.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row: obj(json!({"id": id, "name": format!("n{n:05}")})) });
     }
+    db.land(&db.admit().unwrap(), seed).unwrap();
     let (log, callback) = recorder();
     let observer = db.observe(query, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
@@ -69,18 +72,26 @@ fn operate(db: &Db, seed: &mut Seed, pool: u64) {
 
 #[test]
 fn inv_observe_15_deliveries_rebuild_the_list_that_a_fresh_query_returns() {
-    for query in [by_name(), by_name().limited(8), by_name().filtered(Where::in_list("name", (0..15).map(|n| json!(format!("n{n:02}"))).collect()))] {
-        let db = booted();
-        let mirror = Arc::new(Mutex::new(Vec::<Row>::new()));
-        let sink = mirror.clone();
-        let _observer = db.observe(query.clone(), move |change| change.apply_to(&mut sink.lock().unwrap())).unwrap();
-        let mut seed = Seed(0x9E3779B97F4A7C15);
-        for step in 0..300 {
-            operate(&db, &mut seed, 40);
-            db.await_revision(db.revision_seq().unwrap());
-            let fresh = ids_of(&db.query(&query).unwrap());
-            assert_eq!(ids_of(&mirror.lock().unwrap()), fresh, "step {step} of {query:?}");
+    let queries = [by_name(), by_name().limited(8), by_name().filtered(Where::in_list("name", (0..15).map(|n| json!(format!("n{n:02}"))).collect()))];
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = queries.into_iter().map(|query| scope.spawn(move || rebuild_matches_fresh(query))).collect();
+        for run in runs {
+            run.join().unwrap();
         }
+    });
+}
+
+fn rebuild_matches_fresh(query: Query) {
+    let db = booted();
+    let mirror = Arc::new(Mutex::new(Vec::<Row>::new()));
+    let sink = mirror.clone();
+    let _observer = db.observe(query.clone(), move |change| change.apply_to(&mut sink.lock().unwrap())).unwrap();
+    let mut seed = Seed(0x9E3779B97F4A7C15);
+    for step in 0..300 {
+        operate(&db, &mut seed, 40);
+        db.await_revision(db.revision_seq().unwrap());
+        let fresh = ids_of(&db.query(&query).unwrap());
+        assert_eq!(ids_of(&mirror.lock().unwrap()), fresh, "step {step} of {query:?}");
     }
 }
 

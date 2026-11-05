@@ -54,26 +54,50 @@ fn random_row(dice: &mut Dice, id: &str) -> serde_json::Map<String, serde_json::
     obj(row)
 }
 
-fn commit(db: &Db, dice: &mut Dice, op: EntityOp) {
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+/// The scope operation that goes with an entity operation.
+fn plan(dice: &mut Dice, op: &EntityOp) -> Option<ScopeOp> {
     let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("roster"));
     let row = op.row_ref().id;
     let order_key = format!("a1{}{}", &row.as_str()[1..], 1 + dice.below(9));
-    match (&op, dice.below(4)) {
-        (EntityOp::Upsert { .. }, 0 | 1) => envelope.scope_ops.push(ScopeOp::Append { scope, row, order_key }),
-        (EntityOp::Upsert { .. }, 2) => envelope.scope_ops.push(ScopeOp::Move { scope, row, order_key }),
-        (EntityOp::Upsert { .. }, _) => envelope.scope_ops.push(ScopeOp::Detach { scope, row }),
-        _ => {}
+    match (op, dice.below(4)) {
+        (EntityOp::Upsert { .. }, 0 | 1) => Some(ScopeOp::Append { scope, row, order_key }),
+        (EntityOp::Upsert { .. }, 2) => Some(ScopeOp::Move { scope, row, order_key }),
+        (EntityOp::Upsert { .. }, _) => Some(ScopeOp::Detach { scope, row }),
+        _ => None,
     }
-    envelope.entity_ops.push(op);
+}
+
+/// Lands the prepared edits in one transaction: of the edits of one row only the last one counts, and a row created and destroyed in the batch never lands.
+fn land_prepared(db: &Db, prepared: Vec<(EntityOp, Option<ScopeOp>)>) {
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    let rows: Vec<_> = prepared.iter().map(|(op, _)| op.row_ref().id).collect();
+    for (at, (op, scope)) in prepared.into_iter().enumerate() {
+        if rows[at + 1..].contains(&rows[at]) { continue; }
+        if matches!(op, EntityOp::Destroy { .. }) && rows[..at].contains(&rows[at]) { continue; }
+        envelope.scope_ops.extend(scope);
+        envelope.entity_ops.push(op);
+    }
     db.land(&db.admit().unwrap(), envelope).unwrap();
 }
 
 fn edit(db: &Db, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) -> String {
+    let mut prepared = Vec::new();
+    let id = edit_into(&mut prepared, dice, known, fresh);
+    for (op, scope) in prepared {
+        let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+        envelope.scope_ops.extend(scope);
+        envelope.entity_ops.push(op);
+        db.land(&db.admit().unwrap(), envelope).unwrap();
+    }
+    id
+}
+
+fn edit_into(prepared: &mut Vec<(EntityOp, Option<ScopeOp>)>, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) -> String {
     let moments = ModelKey::new("moments");
     if !known.is_empty() && dice.below(5) == 0 {
         let id = known.swap_remove(dice.below(known.len()));
-        commit(db, dice, EntityOp::Destroy { model: moments, id: rid(&id), reason: DestroyReason::Server });
+        let op = EntityOp::Destroy { model: moments, id: rid(&id), reason: DestroyReason::Server };
+        prepared.push((op.clone(), plan(dice, &op)));
         return id;
     }
     let id = if known.is_empty() || dice.below(3) == 0 {
@@ -85,7 +109,8 @@ fn edit(db: &Db, dice: &mut Dice, known: &mut Vec<String>, fresh: &mut usize) ->
         known[dice.below(known.len())].clone()
     };
     let row = random_row(dice, &id);
-    commit(db, dice, EntityOp::Upsert { model: moments, id: rid(&id), row });
+    let op = EntityOp::Upsert { model: moments, id: rid(&id), row };
+    prepared.push((op.clone(), plan(dice, &op)));
     id
 }
 
@@ -98,9 +123,11 @@ fn run_sequence(seed: u64) {
     let db = booted();
     let query = query_of(seed as usize);
     let (mut known, mut fresh) = (Vec::new(), 0);
+    let mut prepared = Vec::new();
     for _ in 0..dice.below(25) {
-        edit(&db, &mut dice, &mut known, &mut fresh);
+        edit_into(&mut prepared, &mut dice, &mut known, &mut fresh);
     }
+    land_prepared(&db, prepared);
     let mirror: Arc<Mutex<Vec<Row>>> = Arc::default();
     let sink = mirror.clone();
     let subscriber = Subscriber::new(Listener::Rows(Box::new(move |change: &Change| change.apply_to(&mut sink.lock().unwrap()))), Default::default());

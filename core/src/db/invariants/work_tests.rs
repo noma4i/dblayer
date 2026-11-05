@@ -12,8 +12,13 @@ use crate::upload::{UploadStatus, UploadState};
 
 fn with_open_operations(count: usize) -> (Db, i64) {
     let db = booted();
+    let mut seed = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, db.generation());
     for turn in 0..count {
-        put(&db, "moments", json!({"id": format!("x{turn}"), "userId": "u1", "text": "one"}));
+        let id = format!("x{turn}");
+        seed.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new("moments"), id: rid(&id), row: obj(json!({"id": id, "userId": "u1", "text": "one"})) });
+    }
+    db.land(&db.admit().unwrap(), seed).unwrap();
+    for turn in 0..count {
         db.update(&db.admit().unwrap(), "moments", &rid(&format!("x{turn}")), obj(json!({"text": "two"}))).unwrap();
     }
     put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
