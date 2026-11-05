@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
-use tokio::task::JoinHandle;
 
 use super::mock::{Credentials, Mock};
 use super::model::Sut;
@@ -25,15 +24,10 @@ const OPERATIONS: &str = include_str!("../../tests/corpus/operations.json");
 #[derive(Default)]
 struct Heard(AtomicU64);
 
-/// A stream the runner reads: a task pulls it into a queue, `read` takes the next value.
+/// A stream the runner reads: a call of the runner pulls it into a queue, `read` takes the next value.
 struct Pulled {
     stream: Arc<ReadStream>,
     queue: Arc<std::sync::Mutex<std::collections::VecDeque<(u64, ReadValue)>>>,
-    task: JoinHandle<()>,
-}
-
-impl Drop for Pulled {
-    fn drop(&mut self) { self.task.abort(); }
 }
 
 /// What a finished call hands back to the runner: what to observe and what to remember under a name.
@@ -519,15 +513,16 @@ impl DatabaseSut {
         let stream = database.subscribe_values(database.session_epoch(), request);
         let queue: Arc<std::sync::Mutex<std::collections::VecDeque<(u64, ReadValue)>>> = Arc::default();
         let (pulling, kept, heard) = (stream.clone(), queue.clone(), self.heard.clone());
-        let task = crate::task::spawn(crate::task::Carry::here(), async move {
+        self.launch(async move {
             let mut seq = 0;
             while let Ok(Some(value)) = pulling.pull().await {
                 seq += 1;
                 kept.lock().unwrap().push_back((seq, value));
                 heard.0.fetch_add(1, Ordering::SeqCst);
             }
+            Done::default()
         });
-        self.streams.insert(name.into(), Pulled { stream, queue, task });
+        self.streams.insert(name.into(), Pulled { stream, queue });
         Vec::new()
     }
 }
@@ -616,7 +611,7 @@ impl Sut for DatabaseSut {
             }
             "cancel" => {
                 let Some(target) = input.text("target") else { return error("arguments") };
-                if let Some(cancel) = self.loads.get(target) { cancel(); } else if let Some(pulled) = self.streams.get(target) { let stream = pulled.stream.clone(); drop(crate::task::spawn(crate::task::Carry::here(), async move { stream.cancel().await })); } else { return error("unknown_target"); }
+                if let Some(cancel) = self.loads.get(target) { cancel(); } else if let Some(pulled) = self.streams.get(target) { let stream = pulled.stream.clone(); self.launch(async move { let _ = stream.cancel().await; Done::default() }); } else { return error("unknown_target"); }
                 Vec::new()
             }
             _ => match self.start(database, input) {
