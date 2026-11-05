@@ -243,20 +243,24 @@ struct ProbeSlot {
     fail_get: std::sync::atomic::AtomicBool,
     db: std::sync::Mutex<Option<Db>>,
     session_at_clear: std::sync::Mutex<Vec<bool>>,
+    threads: std::sync::Mutex<Vec<Option<String>>>,
 }
 
 impl CredentialSlot for ProbeSlot {
     fn get(&self) -> Result<Option<String>, TransportError> {
+        self.threads.lock().unwrap().push(std::thread::current().name().map(str::to_string));
         if self.fail_get.load(std::sync::atomic::Ordering::SeqCst) { return Err(TransportError::Network("keychain locked".into())); }
         self.memory.get()
     }
 
     fn set(&self, credential: &str) -> Result<(), TransportError> {
+        self.threads.lock().unwrap().push(std::thread::current().name().map(str::to_string));
         if self.fail_set.load(std::sync::atomic::Ordering::SeqCst) { return Err(TransportError::Network("keychain full".into())); }
         self.memory.set(credential)
     }
 
     fn clear(&self) -> Result<(), TransportError> {
+        self.threads.lock().unwrap().push(std::thread::current().name().map(str::to_string));
         if let Some(db) = self.db.lock().unwrap().as_ref() { self.session_at_clear.lock().unwrap().push(rows(db).0.is_some()); }
         self.memory.clear()
     }
@@ -276,6 +280,21 @@ async fn until(what: &str, mut done: impl FnMut() -> bool) {
         assert!(started.elapsed() < LIMIT, "{what}");
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_credential_store_is_called_off_the_threads_of_the_owners() {
+    let world = World::new();
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let slot = Arc::new(ProbeSlot::default());
+    let (client, life) = open_with(&world, slot.clone(), &db);
+    sign_in(&client).await;
+    drop(life.session_reset());
+    until("the secret was never cleared", || slot.memory.get().unwrap().is_none()).await;
+    let threads = slot.threads.lock().unwrap().clone();
+    assert!(threads.len() >= 3, "the open read, the store and the clear: {threads:?}");
+    let owners = ["lifecycle", "store", "network", "calls", "session", "outbox", "transfer"];
+    assert!(threads.iter().all(|name| name.as_deref().is_none_or(|name| !owners.contains(&name))), "{threads:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

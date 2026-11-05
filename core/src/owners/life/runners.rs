@@ -120,6 +120,7 @@ pub(super) struct StoreRunner {
     pub db: Db,
     pub credentials: Option<Arc<dyn crate::transport::CredentialSlot>>,
     pub client: Option<Arc<crate::transport::EncryptedClient>>,
+    pub executor: tokio::runtime::Handle,
 }
 
 impl StoreRunner {
@@ -160,15 +161,18 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 self.erased(back, io_id, store.erase_models(Generation::from_value(generation_new), &models));
             }
             StoreEffect::ClearSecret { io_id } => {
-                let cleared = match (&self.client, &self.credentials) {
-                    (Some(client), _) => client.erase_credential(),
-                    (None, Some(credentials)) => credentials.clear(),
-                    (None, None) => Ok(()),
-                };
-                if let Err(error) = &cleared {
-                    wiring.fault(format!("clear secret: {error}"));
-                }
-                back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result: cleared.map(|()| Done { revision: 0 }).map_err(|error| error.to_string()) });
+                let (client, credentials, wiring, back) = (self.client.clone(), self.credentials.clone(), wiring.clone(), back.clone());
+                drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || {
+                    let cleared = match (&client, &credentials) {
+                        (Some(client), _) => client.erase_credential(),
+                        (None, Some(credentials)) => credentials.clear(),
+                        (None, None) => Ok(()),
+                    };
+                    if let Err(error) = &cleared {
+                        wiring.fault(format!("clear secret: {error}"));
+                    }
+                    back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result: cleared.map(|()| Done { revision: 0 }).map_err(|error| error.to_string()) });
+                }));
             }
             StoreEffect::SavePublished { io_id, published, .. } => {
                 let saved = store.save_published(published.epoch, published.generation).map_err(|error| error.to_string()).and_then(|()| self.revision()).map(|revision| Done { revision });

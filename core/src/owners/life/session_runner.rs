@@ -2,7 +2,7 @@
 //! the `CredentialStore` calls and the writes of `encrypted_*` that go to Store as batches by value. It does IO and returns the result as an input; it takes no transition.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use serde_json::Value;
 use tokio::task::AbortHandle;
@@ -37,9 +37,9 @@ pub(super) struct SessionRunner {
     executor: tokio::runtime::Handle,
     running: HashMap<AttemptId, AbortHandle>,
     /// The identity of a credential to its full digest.
-    digests: HashMap<u64, String>,
+    digests: Arc<Mutex<HashMap<u64, String>>>,
     /// The generated secrets that `StoreSecret` has not written yet, by identity.
-    generated: HashMap<u64, String>,
+    generated: Arc<Mutex<HashMap<u64, String>>>,
     wires: HashMap<RequestId, Wire>,
     /// The epoch that the last step ended on the server: the `Reply` of the same step waits for the next epoch.
     ending: Option<u64>,
@@ -59,8 +59,8 @@ pub(crate) struct Restored {
 impl SessionRunner {
     pub fn new(wiring: Arc<Wiring>, client: Arc<EncryptedClient>, credentials: Arc<dyn CredentialSlot>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone() })).collect();
-        let digests = restored.digest.iter().cloned().collect();
-        Self { wiring, client, credentials, executor, running: HashMap::new(), digests, generated: HashMap::new(), wires, ending: None }
+        let digests = Arc::new(Mutex::new(restored.digest.iter().cloned().collect()));
+        Self { wiring, client, credentials, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, ending: None }
     }
 
     /// What `Open` of the owner takes: the stored `encrypted_session`, the stored `encrypted_pending` and what `CredentialStore.get` found.
@@ -114,9 +114,15 @@ impl SessionRunner {
             return Ok(String::new());
         }
         match pending.credential {
-            Some(identity) => self.digests.get(&identity).cloned().ok_or_else(|| TransportError::Decode(format!("no digest for the identity {identity}"))),
+            Some(identity) => self.digests.lock().unwrap_or_else(PoisonError::into_inner).get(&identity).cloned().ok_or_else(|| TransportError::Decode(format!("no digest for the identity {identity}"))),
             None => Ok(self.client.stored_session()?.map_or_else(String::new, |session| session.credential_digest)),
         }
+    }
+
+    /// The IO of the secret runs off the thread of the owners: the result comes back as an input with the same `secret_op_id`.
+    fn off_thread(&self, back: &Back<SessionCalls>, work: impl FnOnce() -> SessionInput + Send + 'static) {
+        let back = back.clone();
+        drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || back.reply(EpochStamp::Control, work())));
     }
 
     fn secret_for(&self, pending: &PendingCall) -> Result<Option<String>, SecretFailure> {
@@ -185,29 +191,38 @@ impl EffectRunner<SessionCalls> for SessionRunner {
         let control = EpochStamp::Control;
         match effect {
             SessionEffect::GenerateCredential { secret_op_id } => {
-                let secret = random_token();
-                let digest = digest_of(&secret);
-                let Some(identity) = crate::store::identity_of(&digest) else { return back.reply(control, SessionInput::SecretStored { secret_op_id, ok: false }) };
-                self.digests.insert(identity, digest);
-                self.generated.insert(identity, secret);
-                back.reply(control, SessionInput::CredentialGenerated { secret_op_id, credential: identity });
+                let (digests, generated) = (self.digests.clone(), self.generated.clone());
+                self.off_thread(back, move || {
+                    let secret = random_token();
+                    let digest = digest_of(&secret);
+                    let Some(identity) = crate::store::identity_of(&digest) else { return SessionInput::SecretStored { secret_op_id, ok: false } };
+                    digests.lock().unwrap_or_else(PoisonError::into_inner).insert(identity, digest);
+                    generated.lock().unwrap_or_else(PoisonError::into_inner).insert(identity, secret);
+                    SessionInput::CredentialGenerated { secret_op_id, credential: identity }
+                });
             }
             SessionEffect::StoreSecret { credential, secret_op_id } => {
-                let ok = self.generated.get(&credential).is_some_and(|secret| crate::blocking::blocking_unit(|| self.credentials.set(secret)).is_ok());
-                self.generated.remove(&credential);
-                back.reply(control, SessionInput::SecretStored { secret_op_id, ok });
+                let (generated, credentials) = (self.generated.clone(), self.credentials.clone());
+                self.off_thread(back, move || {
+                    let secret = generated.lock().unwrap_or_else(PoisonError::into_inner).remove(&credential);
+                    let ok = secret.is_some_and(|secret| credentials.set(&secret).is_ok());
+                    SessionInput::SecretStored { secret_op_id, ok }
+                });
             }
             SessionEffect::ClearSecret { secret_op_id } => {
-                let ok = self.client.erase_credential().is_ok();
-                back.reply(control, SessionInput::SecretCleared { secret_op_id, ok });
+                let client = self.client.clone();
+                self.off_thread(back, move || SessionInput::SecretCleared { secret_op_id, ok: client.erase_credential().is_ok() });
             }
             SessionEffect::ReadSecret { secret_op_id } => {
-                let read = match crate::blocking::blocking_unit(|| self.credentials.get()) {
-                    Ok(Some(secret)) => crate::store::identity_of(&digest_of(&secret)).map_or(SecretState::Missing, SecretState::Present),
-                    Ok(None) => SecretState::Missing,
-                    Err(error) => SecretState::Error(error.to_string()),
-                };
-                back.reply(control, SessionInput::SecretRead { secret_op_id, read });
+                let credentials = self.credentials.clone();
+                self.off_thread(back, move || {
+                    let read = match credentials.get() {
+                        Ok(Some(secret)) => crate::store::identity_of(&digest_of(&secret)).map_or(SecretState::Missing, SecretState::Present),
+                        Ok(None) => SecretState::Missing,
+                        Err(error) => SecretState::Error(error.to_string()),
+                    };
+                    SessionInput::SecretRead { secret_op_id, read }
+                });
             }
             SessionEffect::CommitPending { batch, epoch, pending, session } => {
                 let credential_digest = match self.digest_for(&pending) {
@@ -222,7 +237,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 self.commit(batch, epoch, ops);
             }
             SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => {
-                let digest = match digest.map(|identity| self.digests.get(&identity).cloned().ok_or(identity)).transpose() {
+                let digest = match digest.map(|identity| self.digests.lock().unwrap_or_else(PoisonError::into_inner).get(&identity).cloned().ok_or(identity)).transpose() {
                     Ok(digest) => digest,
                     Err(identity) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(format!("no digest for the identity {identity}")) })),
                 };
