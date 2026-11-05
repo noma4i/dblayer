@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use tokio::runtime::Handle;
 
 use super::ports::{Admit, Rest};
-use crate::owners::contract::{ErrorClass, RequestError, RequestId, Transport as Answer, TransportOutcome};
+use crate::owners::contract::{ErrorClass, RequestError, RequestId, TransportOutcome};
 use crate::owners::read::windows::{AnswerPage, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
 use crate::runtime::{Back, EffectRunner, EpochStamp};
 use crate::task::{spawn_on, Carry};
@@ -19,7 +19,7 @@ pub trait WindowCodec: Send + Sync + 'static {
     fn answer(&self, key: &WindowKey, page: u32, response: Response) -> Result<AnswerPage, String>;
 }
 
-type Open = Arc<Mutex<HashMap<RequestId, CancelToken>>>;
+type Open = Arc<Mutex<HashMap<(RequestId, u32), CancelToken>>>;
 
 pub struct WindowIo {
     transport: Arc<dyn Transport>,
@@ -35,24 +35,28 @@ impl WindowIo {
         Self { transport, codec, admit, handle, open: Open::default(), rest }
     }
 
-    fn request(&self, stamp: EpochStamp, key: WindowKey, request: RequestId, page: u32, cursor: Option<String>, back: &Back<Windows>) {
+    fn request(&self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), page: u32, cursor: Option<String>, back: &Back<Windows>) {
         let token = CancelToken::new();
-        self.open.lock().unwrap_or_else(PoisonError::into_inner).insert(request, token.clone());
+        self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
         let (transport, codec, admit, open, back) = (self.transport.clone(), self.codec.clone(), self.admit.clone(), self.open.clone(), back.clone());
         spawn_on(Carry::Detached, &self.handle, async move {
             let outcome = tokio::select! {
                 () = token.cancelled() => None,
                 outcome = ask(transport.as_ref(), codec.as_ref(), &admit, &key, page, cursor.as_deref()) => Some(outcome),
             };
-            open.lock().unwrap_or_else(PoisonError::into_inner).remove(&request);
+            open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
             if let Some(outcome) = outcome.filter(|_| !token.is_cancelled()) {
-                back.reply(stamp, WindowsInput::Transport(Answer { req_id: request, outcome }));
+                back.reply(stamp, match outcome {
+                    TransportOutcome::Response(page) => WindowsInput::Response { request, attempt, page },
+                    TransportOutcome::Error(error) => WindowsInput::Failure { request, attempt, error },
+                    TransportOutcome::Dropped => WindowsInput::Dropped { request, attempt },
+                });
             }
         });
     }
 
-    fn cancel(&self, request: RequestId) {
-        let token = self.open.lock().unwrap_or_else(PoisonError::into_inner).remove(&request);
+    fn cancel(&self, request: RequestId, attempt: u32) {
+        let token = self.open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
         if let Some(token) = token {
             token.cancel();
         }
@@ -62,8 +66,8 @@ impl WindowIo {
 impl EffectRunner<Windows> for WindowIo {
     fn run(&mut self, stamp: EpochStamp, effect: WindowsEffect, back: &Back<Windows>) {
         match effect {
-            WindowsEffect::Window { key, effect: WindowEffect::Request { request, page, cursor, .. } } => self.request(stamp, key, request, page, cursor, back),
-            WindowsEffect::Window { effect: WindowEffect::Cancel { request }, .. } => self.cancel(request),
+            WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor } } => self.request(stamp, key, (request, attempt), page, cursor, back),
+            WindowsEffect::Window { effect: WindowEffect::Cancel { request, attempt }, .. } => self.cancel(request, attempt),
             other => (self.rest)(stamp, other),
         }
     }

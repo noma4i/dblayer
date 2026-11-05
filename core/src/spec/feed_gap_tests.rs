@@ -198,7 +198,7 @@ impl Twin {
                     self.batches.push_back(number_after(&input, "id: ").expect("the batch id"));
                     modelled.push(Effect::Commit);
                 }
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale(") => {
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {") => {
                     let model = text_after(&input, "model: ").expect("the model");
                     match modelled.last_mut() {
                         Some(Effect::StaleWindows(models)) => models.push(model),

@@ -107,6 +107,8 @@ pub enum StoreOp {
     RemoveRows { model: String, ids: Vec<String> },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
+    /// A page of a window: the rows of the answer, the window record (`page`, `cursor`) and whether it replaces the rows of the window.
+    Window { key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

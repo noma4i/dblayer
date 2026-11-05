@@ -5,10 +5,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, Stale, SubscriptionFrame};
+use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, SubscriptionFrame};
 use crate::owners::read::deliveries::{DeliveryInput, Deliveries, StreamId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
-use crate::owners::read::windows::{Windows, WindowsInput};
+use crate::owners::read::windows::{StaleKeys, Windows, WindowsInput};
 use crate::pacing::RetryPolicy;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
@@ -468,7 +468,7 @@ impl Feed {
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
                 Fx::RereadWindows(models) => out.extend(models.into_iter().map(|model| Effect::Send(Outbound::new(peers.windows, WindowsInput::Reread { model })))),
-                Fx::StaleWindows(models) => out.extend(models.into_iter().map(|model| Effect::Send(Outbound::new(peers.windows, WindowsInput::Stale(Stale { model }))))),
+                Fx::StaleWindows(models) => out.extend(models.into_iter().map(|model| Effect::Send(Outbound::new(peers.windows, WindowsInput::Stale { model, keys: StaleKeys::All })))),
                 Fx::Joined { stream, position } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::Joined { stream, position }))),
                 Fx::ModelReady { stream: Some(stream), .. } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::ModelReady { stream }))),
                 Fx::ModelReady { model, stream: None } => Self::to_streams(state, &model, &mut out, |stream| DeliveryInput::ModelReady { stream }),

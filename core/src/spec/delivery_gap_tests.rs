@@ -125,21 +125,27 @@ impl Twin {
 
     /// The effects the reference models, in the order the owner produced them. Drained is keyless.
     fn modelled(&self, emitted: Vec<Emitted<DeliveryEffect>>) -> Vec<Effect> {
-        emitted
-            .into_iter()
-            .filter_map(|entry| match entry {
+        let mut modelled = Vec::new();
+        for entry in emitted {
+            match entry {
                 Emitted::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { revision, .. } }) => {
                     assert_eq!(stream, STREAM);
-                    Some(Effect::Read(revision))
+                    modelled.push(Effect::Read(revision));
                 }
-                Emitted::Run(DeliveryEffect::Drained(_)) => Some(Effect::Drained),
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") => Some(Effect::InterestPlus { force: input.contains("force: true") }),
-                Emitted::Send { to: WINDOWS, .. } => Some(Effect::InterestMinus),
-                Emitted::Send { to: FEED, input } if input.starts_with("WantPlus") => Some(Effect::WantPlus),
-                Emitted::Send { to: FEED, .. } => Some(Effect::WantMinus),
-                _ => None,
-            })
-            .collect()
+                Emitted::Run(DeliveryEffect::Drained(_)) => modelled.push(Effect::Drained),
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") => modelled.push(Effect::InterestPlus { force: false }),
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") => {
+                    if let Some(Effect::InterestPlus { force }) = modelled.last_mut() {
+                        *force = input.contains("force: true");
+                    }
+                }
+                Emitted::Send { to: WINDOWS, .. } => modelled.push(Effect::InterestMinus),
+                Emitted::Send { to: FEED, input } if input.starts_with("WantPlus") => modelled.push(Effect::WantPlus),
+                Emitted::Send { to: FEED, .. } => modelled.push(Effect::WantMinus),
+                _ => {}
+            }
+        }
+        modelled
     }
 
     /// Feeds one input of the table to both sides, checks that the effects are equal and returns them.

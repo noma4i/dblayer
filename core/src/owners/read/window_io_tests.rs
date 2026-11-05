@@ -12,7 +12,7 @@ use super::rig::{admit, collector, pump, pump_for, runtime, saw_input, BatchPeer
 use super::{WindowCodec, WindowIo};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
-use crate::owners::store::StoreWriter;
+use crate::owners::store::{RowValue, StoreWriter};
 use crate::owners::support::Sink;
 use crate::runtime::{Address, DetScheduler, EpochStamp};
 use crate::transport::{GraphQLRequest, MockTransport, Reply, Response, TransportError};
@@ -27,13 +27,15 @@ impl WindowCodec for Pages {
     fn answer(&self, _key: &WindowKey, page: u32, response: Response) -> Result<AnswerPage, String> {
         let data = response.data.ok_or("no data")?;
         let rows = data["rows"].as_array().ok_or("no rows")?.iter().filter_map(|row| row.as_str().map(str::to_string)).collect();
-        Ok(AnswerPage { page, rows, cursor: data["cursor"].as_str().map(str::to_string) })
+        let mut answer = AnswerPage::new(page, rows, data["cursor"].as_str().map(str::to_string));
+        answer.payload.roots = answer.rows.iter().map(|id| RowValue { row_id: id.clone(), values: "{}".into() }).collect();
+        Ok(answer)
     }
 }
 
 fn key() -> WindowKey { WindowKey { model: "Moment".into(), name: "list".into() } }
 
-fn interest(id: u64) -> WindowsInput { WindowsInput::InterestPlus { key: key(), id, force: false, all: false, stream: false, store_revision: 0 } }
+fn interest(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0 } }
 
 struct Rig {
     det: DetScheduler,
@@ -54,7 +56,7 @@ fn rig() -> Rig {
     let store = det.add::<BatchPeer>("store", batches.clone(), crate::owners::support::Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::owners::support::Discard);
     let peers = w::WindowsPeers { store: Address::<StoreWriter>::new(store.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
-    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true, peers), io);
+    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, Some(true), peers), io);
     det.start_epoch(EPOCH);
     Rig { det, windows, mock, batches, rest, _runtime: runtime }
 }
@@ -72,7 +74,7 @@ fn win_io_request_lands() {
     assert_eq!((batch.epoch, batch.intents), (EPOCH, 0));
     assert_eq!(batch.rows, [("Moment".to_string(), "r1".to_string()), ("Moment".to_string(), "r2".to_string())]);
     assert_eq!(batch.basis.get("Moment"), Some(&0));
-    assert_eq!(saw_input(&rig.det, "Transport"), 1, "the answer came back as one input");
+    assert_eq!(saw_input(&rig.det, "Response"), 1, "the answer came back as one input");
 }
 
 #[test]
@@ -101,6 +103,6 @@ fn win_io_cancel_no_answer() {
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestMinus { key: key(), id: 1 });
     pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Cancel")));
     pump_for(&mut rig.det, rig.windows, Duration::from_millis(900));
-    assert_eq!(saw_input(&rig.det, "Transport"), 0, "a cancelled request gives no answer");
+    assert_eq!(saw_input(&rig.det, "Response"), 0, "a cancelled request gives no answer");
     assert!(rig.batches.all().is_empty());
 }

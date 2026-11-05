@@ -207,12 +207,6 @@ pub struct ModelLost {
     pub last: u64,
 }
 
-/// `Stale(model)`: Feed to Windows, the windows of the model are out of date.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stale {
-    pub model: String,
-}
-
 /// `Published{epoch, identity, generation, closed}`: Lifecycle to Store and Session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Published {

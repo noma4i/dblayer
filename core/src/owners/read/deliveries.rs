@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, WindowPhase, WindowState};
 use crate::owners::read::feed::{Feed, FeedInput};
-use crate::owners::read::windows::{WindowKey, Windows, WindowsInput};
+use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput};
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
 
 pub const JOURNAL_LIMIT: usize = 256;
@@ -480,14 +480,21 @@ pub struct Deliveries;
 fn lower(peers: DeliveryPeers, stream: StreamId, machine: &Delivery, emits: Vec<Emit>, out: &mut Effects<Deliveries>) {
     for emit in emits {
         let run = |effect| Effect::Run(DeliveryEffect::Stream { stream, effect });
-        out.push(match emit {
+        let effect = match emit {
             Emit::Read { read_id, revision } => run(StreamEffect::Read { read_id, revision, view: machine.view.clone() }),
             Emit::Answer { outcome, answer } => run(StreamEffect::Answer { outcome, answer }),
-            Emit::InterestPlus { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream, force, all: false, stream: true, store_revision: machine.opened })),
+            Emit::InterestPlus { force } => {
+                out.push(Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream })));
+                if !force {
+                    continue;
+                }
+                Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force: true, store_revision: machine.opened }))
+            }
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
             Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), debounce_ms: 0, delivery: Some(stream) })),
             Emit::WantMinus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantMinus { model: machine.view.model.clone(), delivery: Some(stream) })),
-        });
+        };
+        out.push(effect);
     }
 }
 

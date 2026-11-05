@@ -1,7 +1,7 @@
 //! Tests of `specs/machines/window.md`. Names are the `Test` column.
 
 use super::harness::{states_of, loaded, sequences, Call, Gate, Outcome, Phase, Reply, Val, World};
-use super::ref_window::{Effect, Failure, Input, Result3, State, Window};
+use super::ref_window::{Effect, Failure, Goal, Input, Result3, State, Window};
 use crate::ffi::LoadMoreResult;
 
 fn res(outcome: Outcome) -> Result3 {
@@ -30,10 +30,17 @@ fn held(world: &World, then: Reply) -> std::sync::Arc<Gate> {
 fn go_offline(world: &World) { world.db.set_online(false).unwrap(); }
 
 /// Ref: the happy end of a load that is in `Loading`.
-fn answer_and_land(window: &mut Window, request: u64) {
-    let effects = window.step(Input::Response { request });
-    assert_eq!(effects, [Effect::Commit { request }]);
-    window.step(Input::Committed { request });
+fn answer_and_land(window: &mut Window) {
+    let State::Loading { request, attempt, .. } = window.state else { panic!("no request in flight") };
+    let effects = window.step(Input::Response { request, attempt, cursor: None, rows: true });
+    assert_eq!(effects, [Effect::Commit { request, replace_all: false }]);
+    window.step(Input::Committed { request, revision: 1 });
+}
+
+/// Ref: the request in flight fails with `failure`.
+fn error(window: &mut Window, failure: Failure) -> Vec<Effect> {
+    let State::Loading { request, attempt, .. } = window.state else { panic!("no request in flight") };
+    window.step(Input::TransportError { request, attempt, failure })
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -42,7 +49,7 @@ async fn win_idle_interest_fresh() {
     world.load_ok().await;
     let before = world.net.feed_requests();
     let mut reference = Window::idle_fresh();
-    let effects = reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    let effects = reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let mut call = world.call();
     assert_eq!(call.outcome().await, Outcome::Loaded);
     assert_eq!(sorted(reference.take_outcomes()), [(1, res(Outcome::Loaded))]);
@@ -54,14 +61,14 @@ async fn win_idle_interest_load() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    let effects = reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    let effects = reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let mut call = world.call();
     gate.entered().await;
     assert_eq!(world.net.feed_requests(), requests_in(&effects));
     assert_eq!(reference.phase, Phase::Loading);
     assert_eq!(call.outcome_within(150).await, Outcome::Pending);
     gate.release();
-    answer_and_land(&mut reference, 1);
+    answer_and_land(&mut reference);
     assert_eq!(res(call.outcome().await), reference.take_outcomes()[0].1);
 }
 
@@ -70,8 +77,8 @@ async fn win_idle_interest_offline() {
     let world = World::open().await;
     go_offline(&world);
     let mut reference = Window::new();
-    reference.online = false;
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.online = Some(false);
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     assert!(matches!(reference.state, State::Waiting { .. }));
     let mut call = world.call();
     assert_eq!(call.outcome_within(300).await, Outcome::Pending, "offline the call waits for the network");
@@ -100,13 +107,13 @@ async fn win_idle_load_more() {
     world.load_ok().await;
     world.net.script(Reply::page(&["r2"], false));
     let mut reference = Window::idle_fresh();
-    reference.cursor = true;
-    let effects = reference.step(Input::LoadMore { id: 1 });
-    assert_eq!(effects, [Effect::Request { request: 1, page: 2 }]);
+    reference.cursor = Some(2);
+    let effects = reference.step(Input::Load { id: 1, goal: Goal::Next, force: false });
+    assert_eq!(effects, [Effect::Request { request: 2, attempt: 2, page: 2 }, Effect::WindowState]);
     let result = world.load_more().await;
     assert_eq!(result, Ok(LoadMoreResult::Loaded { has_more: false }));
     assert_eq!(world.net.feed_requests(), 2);
-    answer_and_land(&mut reference, 1);
+    answer_and_land(&mut reference);
     assert_eq!(reference.take_outcomes(), [(1, Result3::Loaded)]);
 }
 
@@ -116,7 +123,7 @@ async fn win_idle_load_more_end() {
     world.net.script(Reply::page(&["r1"], false));
     world.load_ok().await;
     let mut reference = Window::idle_fresh();
-    let effects = reference.step(Input::LoadMore { id: 1 });
+    let effects = reference.step(Input::Load { id: 1, goal: Goal::Next, force: false });
     assert!(effects.is_empty());
     let result = world.load_more().await;
     assert!(matches!(result, Ok(LoadMoreResult::NoMore | LoadMoreResult::Loaded { .. })), "the end of the pages is an answer, not an error: {result:?}");
@@ -132,7 +139,7 @@ async fn win_idle_online() {
     stream.first_screen().await;
     let before = world.net.feed_requests();
     let mut reference = Window::idle_fresh();
-    let effects = reference.online_idle(true);
+    let effects = reference.step(Input::Online(true));
     go_offline(&world);
     world.db.set_online(true).unwrap();
     world.breathe().await;
@@ -145,7 +152,7 @@ async fn win_idle_stray() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let call = world.call();
     gate.entered().await;
     reference.step(Input::InterestMinus { id: 1 });
@@ -153,7 +160,7 @@ async fn win_idle_stray() {
     world.breathe().await;
     gate.release();
     world.breathe().await;
-    assert!(reference.step(Input::Response { request: 1 }).is_empty());
+    assert!(reference.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true }).is_empty());
     assert!(world.feed_ids().await.is_empty(), "the answer of a cancelled request lands nowhere");
 }
 
@@ -162,15 +169,15 @@ async fn win_loading_join() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
-    assert!(reference.step(Input::InterestPlus { id: 2, force: false, all: false }).is_empty());
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
+    assert!(reference.step(Input::Load { id: 2, goal: Goal::First, force: false }).is_empty());
     let mut first = world.call();
     gate.entered().await;
     let mut second = world.call();
     world.breathe().await;
     assert_eq!(world.net.feed_requests(), 1, "a second interest shares the request in flight");
     gate.release();
-    answer_and_land(&mut reference, 1);
+    answer_and_land(&mut reference);
     assert_eq!(sorted(reference.take_outcomes()), [(1, res(first.outcome().await)), (2, res(second.outcome().await))]);
 }
 
@@ -179,8 +186,8 @@ async fn win_loading_leave() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
-    reference.step(Input::InterestPlus { id: 2, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
+    reference.step(Input::Load { id: 2, goal: Goal::First, force: false });
     let first = world.call();
     gate.entered().await;
     let mut second = world.call();
@@ -190,7 +197,7 @@ async fn win_loading_leave() {
     world.breathe().await;
     assert_eq!(world.net.cancelled(), 0, "the request goes on while another interest waits");
     gate.release();
-    answer_and_land(&mut reference, 1);
+    answer_and_land(&mut reference);
     assert_eq!(reference.take_outcomes(), [(2, res(second.outcome().await))]);
 }
 
@@ -199,11 +206,11 @@ async fn win_loading_last_leave() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let call = world.call();
     gate.entered().await;
     let effects = reference.step(Input::InterestMinus { id: 1 });
-    assert_eq!(effects, [Effect::Cancel { request: 1 }]);
+    assert_eq!(effects, [Effect::Cancel { request: 1, attempt: 1 }]);
     call.cancel();
     world.breathe().await;
     assert_eq!(world.net.cancelled(), effects.len(), "the last interest to leave cancels the request");
@@ -214,12 +221,12 @@ async fn win_loading_response() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let mut call = world.call();
     gate.entered().await;
     gate.release();
     assert_eq!(res(call.outcome().await), Result3::Loaded);
-    answer_and_land(&mut reference, 1);
+    answer_and_land(&mut reference);
     assert_eq!(world.feed_ids().await, ["r1"], "the answer was written to the base");
     assert_eq!(reference.take_outcomes(), [(1, Result3::Loaded)]);
 }
@@ -230,9 +237,9 @@ async fn win_loading_temp_error() {
     world.net.script(Reply::network());
     world.net.script(Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
-    let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Network });
-    assert_eq!(effects, [Effect::ScheduleRetry]);
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
+    let effects = error(&mut reference, Failure::Network);
+    assert_eq!(effects, [Effect::ScheduleRetry { request: 1 }]);
     let mut call = world.call();
     assert_eq!(call.outcome_within(300).await, Outcome::Pending, "a temporary error is retried, the call has no outcome yet");
     for _ in 0..60 {
@@ -241,8 +248,8 @@ async fn win_loading_temp_error() {
         world.breathe().await;
     }
     assert_eq!(world.net.feed_requests(), 2, "the retry is one request after the backoff");
-    assert_eq!(reference.step(Input::RetryDue), [Effect::Request { request: 1, page: 1 }]);
-    answer_and_land(&mut reference, 1);
+    assert_eq!(reference.step(Input::Retry { request: 1 }), [Effect::Request { request: 1, attempt: 2, page: 1 }]);
+    answer_and_land(&mut reference);
     assert_eq!(res(call.outcome().await), reference.take_outcomes()[0].1);
 }
 
@@ -252,14 +259,14 @@ async fn win_loading_attempts_exhausted() {
     let world = World::open().await;
     for _ in 0..3 { world.net.script(Reply::network()); }
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     for attempt in 0..2 {
-        assert_eq!(reference.step(Input::TransportError { request: 1, failure: Failure::Network }), [Effect::ScheduleRetry], "attempt {attempt} is retried");
-        reference.step(Input::RetryDue);
+        assert_eq!(error(&mut reference, Failure::Network), [Effect::ScheduleRetry { request: 1 }], "attempt {attempt} is retried");
+        reference.step(Input::Retry { request: 1 });
     }
-    let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Network });
+    let effects = error(&mut reference, Failure::Network);
     assert_eq!(effects, [Effect::WindowState]);
-    assert_eq!(reference.state, State::Idle { fresh: false, last_error: Some(true) });
+    assert_eq!((reference.state, reference.fresh, reference.last_error), (State::Idle, false, Some(true)));
     let stream = world.rows_stream();
     let mut call = world.call();
     for _ in 0..120 {
@@ -283,13 +290,14 @@ async fn network_failed() -> (World, super::harness::Reading, Window) {
     world.pump_until(&stream, |_| states_of(&stream).iter().any(|state| state.error)).await;
     world.settle().await;
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     for _ in 0..2 {
-        reference.step(Input::TransportError { request: 1, failure: Failure::Network });
-        reference.step(Input::RetryDue);
+        error(&mut reference, Failure::Network);
+        reference.step(Input::Retry { request: 1 });
     }
-    reference.step(Input::TransportError { request: 1, failure: Failure::Network });
-    reference.online = false;
+    error(&mut reference, Failure::Network);
+    reference.online = Some(false);
+    reference.interest.insert(100);
     (world, stream, reference)
 }
 
@@ -297,7 +305,7 @@ async fn network_failed() -> (World, super::harness::Reading, Window) {
 async fn win_idle_online_retry() {
     let (world, _stream, mut reference) = network_failed().await;
     let before = world.net.feed_requests();
-    let effects = reference.online_idle(true);
+    let effects = reference.step(Input::Online(true));
     go_offline(&world);
     world.db.set_online(true).unwrap();
     world.breathe().await;
@@ -322,8 +330,8 @@ async fn win_loading_error() {
     let world = World::open().await;
     world.net.script(Reply::refused());
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
-    let effects = reference.step(Input::TransportError { request: 1, failure: Failure::Permanent });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
+    let effects = error(&mut reference, Failure::Permanent);
     assert_eq!(effects, [Effect::WindowState]);
     let stream = world.rows_stream();
     let mut call = world.call();
@@ -339,11 +347,11 @@ async fn win_loading_offline() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let mut call = world.call();
     gate.entered().await;
     let effects = reference.step(Input::Online(false));
-    assert_eq!(effects, [Effect::Cancel { request: 1 }]);
+    assert_eq!(effects, [Effect::Cancel { request: 1, attempt: 1 }]);
     go_offline(&world);
     world.breathe().await;
     assert_eq!(world.net.cancelled(), 1, "going offline cancels the request");
@@ -355,11 +363,11 @@ async fn win_loading_offline() {
 async fn win_landing_committed() {
     let world = World::open().await;
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let stream = world.rows_stream();
     let mut call = world.call();
     assert_eq!(res(call.outcome().await), Result3::Loaded);
-    answer_and_land(&mut reference, 1);
+    answer_and_land(&mut reference);
     let vals = world.pump_until(&stream, |_| states_of(&stream).iter().any(|state| state.loaded)).await;
     let _ = vals;
     let last = *states_of(&stream).last().unwrap();
@@ -373,15 +381,15 @@ async fn win_waiting_resume() {
     let world = World::open().await;
     go_offline(&world);
     let mut reference = Window::new();
-    reference.online = false;
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.online = Some(false);
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let mut call = world.call();
     assert_eq!(call.outcome_within(200).await, Outcome::Pending);
     let effects = reference.step(Input::Online(true));
     world.db.set_online(true).unwrap();
     assert_eq!(res(call.outcome().await), Result3::Loaded);
     assert_eq!(world.net.feed_requests(), requests_in(&effects));
-    answer_and_land(&mut reference, 1);
+    answer_and_land(&mut reference);
     assert_eq!(reference.take_outcomes(), [(1, Result3::Loaded)]);
 }
 
@@ -390,9 +398,9 @@ async fn win_waiting_join() {
     let world = World::open().await;
     go_offline(&world);
     let mut reference = Window::new();
-    reference.online = false;
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
-    assert!(reference.step(Input::InterestPlus { id: 2, force: false, all: false }).is_empty());
+    reference.online = Some(false);
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
+    assert!(reference.step(Input::Load { id: 2, goal: Goal::First, force: false }).is_empty());
     let (mut first, mut second) = (world.call(), world.call());
     assert_eq!(first.outcome_within(150).await, Outcome::Pending);
     assert_eq!(second.outcome_within(150).await, Outcome::Pending);
@@ -407,8 +415,8 @@ async fn win_waiting_leave() {
     let world = World::open().await;
     go_offline(&world);
     let mut reference = Window::new();
-    reference.online = false;
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.online = Some(false);
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     assert!(reference.step(Input::InterestMinus { id: 1 }).is_empty());
     let call = world.call();
     world.breathe().await;
@@ -416,7 +424,7 @@ async fn win_waiting_leave() {
     world.db.set_online(true).unwrap();
     world.breathe().await;
     assert_eq!(world.net.feed_requests(), 0, "no interest is left, so coming online loads nothing");
-    assert!(matches!(reference.state, State::Idle { .. }));
+    assert!(matches!(reference.state, State::Idle));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -424,11 +432,11 @@ async fn win_closing() {
     let world = World::open().await;
     let gate = held(&world, Reply::page(&["r1"], false));
     let mut reference = Window::new();
-    reference.step(Input::InterestPlus { id: 1, force: false, all: false });
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     let mut call = world.call();
     gate.entered().await;
     let effects = reference.step(Input::Closing);
-    assert_eq!(effects, [Effect::Cancel { request: 1 }, Effect::Drained]);
+    assert_eq!(effects, [Effect::Cancel { request: 1, attempt: 1 }, Effect::Drained]);
     world.close().await;
     assert_eq!(world.net.cancelled(), 1);
     assert_eq!(reference.take_outcomes(), [(1, res(call.outcome().await))]);
@@ -439,7 +447,7 @@ async fn win_ended() {
     let world = World::open().await;
     let mut reference = Window::new();
     reference.step(Input::Closing);
-    reference.ended_interest(1);
+    reference.step(Input::Load { id: 1, goal: Goal::First, force: false });
     world.close().await;
     let mut call = world.call();
     assert_eq!(reference.take_outcomes(), [(1, res(call.outcome().await))], "an interest on a closed key is interrupted");
