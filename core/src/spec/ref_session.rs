@@ -174,7 +174,7 @@ pub enum Effect {
     /// Store `Commit{encrypted_pending = pending}`, with `Session{digest, 0}` at the first sign-in.
     CommitPending { batch: BatchId, epoch: u64, pending: Pending, session: Option<Digest> },
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`.
-    CommitLanding { batch: BatchId, epoch: u64, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, Answer)> },
+    CommitLanding { batch: BatchId, epoch: u64, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, Answer)>, erase_session: bool },
     HttpRequest { pending: Pending, attempt_id: AttemptId, full_document: bool },
     HttpCancel { attempt_id: AttemptId },
     ScheduleTick { attempts: u64 },
@@ -441,7 +441,8 @@ impl Session {
     fn land(&mut self, pending: Pending, answer: Answer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, out: &mut Out) {
         let batch = self.batch();
         let record = pending.author.map(|_| (pending.request_id, answer.clone()));
-        out.effects.push(Effect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record });
+        let erase_session = pending.class == Class::Login && pending.credential.is_some() && answer.is_err() && !server_ended;
+        out.effects.push(Effect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, erase_session });
         self.state = State::Landing { pending, batch, answer, identity, sequence, server_ended };
     }
 
@@ -827,6 +828,13 @@ impl Session {
                         self.credential = Some(Credential { digest, sequence: pending.sequence });
                         if let (Some(reply), Ok(body)) = (pending.reply, &answer) { self.after_publish = Some((reply, body.clone())); }
                         out.effects.push(Effect::CredentialCommitted(digest));
+                    }
+                    None if pending.class == Class::Login && pending.credential.is_some() && answer.is_err() && !server_ended => {
+                        self.credential = None;
+                        let call = pending.reply.map(|reply| Queued::Call { operation: pending.operation.clone(), body: pending.body.clone(), reply });
+                        let reason = if call.is_some() { answer.err() } else { None };
+                        self.clearing(call, reason, AfterClear::Idle, out);
+                        return;
                     }
                     None => {
                         if let (Some(sequence), Some(credential)) = (sequence, &mut self.credential) { credential.sequence = sequence; }

@@ -178,7 +178,8 @@ pub enum SessionEffect {
     /// Store `Commit{encrypted_pending = pending}`, with `Session{digest, 0}` at the first sign-in.
     CommitPending { batch: BatchId, epoch: Epoch, pending: PendingCall, session: Option<Digest> },
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`; no `sequence` for a call without a session.
-    CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)> },
+    /// `erase_session`: the sign-in failed, `encrypted_session` of its new credential goes with the pending.
+    CommitLanding { batch: BatchId, epoch: Epoch, digest: Option<Digest>, sequence: Option<u64>, answer: Option<(RequestId, SessionAnswer)>, erase_session: bool },
     HttpRequest { pending: PendingCall, attempt_id: AttemptId, full_document: bool },
     HttpCancel { attempt_id: AttemptId },
     /// `Schedule Tick` by the Backoff of Http for the attempt number `attempts`. `step` turns it into the Runtime effect `Schedule` (R5).
@@ -256,6 +257,11 @@ fn is_ended(cause: Cause) -> bool { matches!(cause, Cause::SessionReset | Cause:
 
 fn author_error(fx: &mut Vec<SessionEffect>, author: AuthorId, req_id: RequestId, class: ErrorClass, error: SessionError) {
     fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error { class, error } });
+}
+
+/// A sign-in that the server did not accept: the credential its call issued goes, the server did not end the session.
+fn login_failed(pending: &PendingCall, answer: &SessionAnswer, server_ended: bool) -> bool {
+    pending.class == OperationClass::Login && pending.credential.is_some() && answer.is_err() && !server_ended
 }
 
 fn reply(fx: &mut Vec<SessionEffect>, id: ReplyId, answer: SessionAnswer) { fx.push(SessionEffect::Reply { id, answer }); }
@@ -496,7 +502,8 @@ impl SessionState {
     fn land(&mut self, pending: PendingCall, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, fx: &mut Vec<SessionEffect>) {
         let batch = self.batch();
         let record = pending.author.map(|_| (pending.request_id, answer.clone()));
-        fx.push(SessionEffect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record });
+        let erase_session = login_failed(&pending, &answer, server_ended);
+        fx.push(SessionEffect::CommitLanding { batch, epoch: pending.epoch, digest: identity, sequence, answer: record, erase_session });
         self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
     }
 
@@ -878,6 +885,13 @@ impl SessionState {
                         self.credential = Some(Credential { digest, sequence: pending.sequence });
                         if let (Some(id), Ok(body)) = (pending.reply, &answer) { self.after_publish = Some((id, body.clone())); }
                         fx.push(SessionEffect::CredentialCommitted(CredentialCommitted { identity: digest }));
+                    }
+                    None if login_failed(&pending, &answer, server_ended) => {
+                        self.credential = None;
+                        let call = pending.reply.map(|id| Queued::Call { operation: pending.operation.clone(), body: pending.body.clone(), reply: id });
+                        let reason = call.as_ref().and(answer.err());
+                        self.clearing(call, reason, AfterClear::Idle, fx);
+                        return;
                     }
                     None => {
                         if let (Some(sequence), Some(credential)) = (sequence, &mut self.credential) { credential.sequence = sequence; }

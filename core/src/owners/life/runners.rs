@@ -364,7 +364,7 @@ impl EffectRunner<Calls> for CallsRunner {
 
 /// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
 fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
-    let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. }));
+    let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. }));
     let row_ops = row_ops(&batch.rows)?;
     if !encrypted.is_empty() {
         db.shared.store.write_ops(encrypted.into_iter().filter_map(row_op).collect()).map(drop).map_err(|error| error.to_string())?;
@@ -404,6 +404,7 @@ fn row_op(op: &StoreOp) -> Option<crate::store::RowOp> {
             purpose: if pending.purpose == 0 { crate::transport::NetworkPurpose::Standard } else { crate::transport::NetworkPurpose::Transfer },
         }),
         StoreOp::RemovePending => crate::store::RowOp::RemovePending,
+        StoreOp::EraseSession => crate::store::RowOp::RemoveSession,
         StoreOp::Answer { request_id, result } => crate::store::RowOp::PutAnswer { request_id: *request_id, answer: result.clone() },
         StoreOp::RemoveAnswer { request_id } => crate::store::RowOp::RemoveAnswer { request_id: *request_id },
         StoreOp::Session { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },

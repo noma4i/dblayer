@@ -195,7 +195,7 @@ fn retry_phase(phase: owner::RetryPhase) -> RetryPhase {
 fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
     Some(match effect {
         SessionEffect::CommitPending { batch, epoch, pending, session } => RefEffect::CommitPending { batch: *batch, epoch: *epoch, pending: pending_of(pending), session: *session },
-        SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: *digest, sequence: *sequence, answer: answer.as_ref().map(|(id, answer)| (*id, answer.clone().map_err(|error| fail_of(&error)))) },
+        SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: *digest, sequence: *sequence, answer: answer.as_ref().map(|(id, answer)| (*id, answer.clone().map_err(|error| fail_of(&error)))), erase_session: *erase_session },
         SessionEffect::HttpRequest { pending, attempt_id, full_document } => RefEffect::HttpRequest { pending: pending_of(pending), attempt_id: *attempt_id, full_document: *full_document },
         SessionEffect::HttpCancel { attempt_id } => RefEffect::HttpCancel { attempt_id: *attempt_id },
         SessionEffect::ScheduleTick { attempts } => RefEffect::ScheduleTick { attempts: *attempts },
@@ -1246,6 +1246,26 @@ fn sess_published_login_failed() {
         assert_eq!(twin.replies, vec![(1, Err(want))]);
         assert!(twin.reference.after_publish.is_none());
     }
+}
+
+#[test]
+fn sess_landing_login_failed_clears() {
+    let mut twin = generating();
+    let op = twin.op();
+    twin.feed(Input::CredentialGenerated { op, credential: 42 });
+    let op = twin.op();
+    twin.feed_all([Input::SecretStored { op, ok: true }, committed()]);
+    let input = twin.http_error(false, false);
+    let landing = twin.feed(input);
+    assert!(matches!(&landing[..], [RefEffect::CommitLanding { erase_session: true, answer: None, .. }]), "{landing:?}");
+    let cleared = twin.feed(committed());
+    assert!(matches!(&cleared[..], [RefEffect::ClearSecret { .. }]), "{cleared:?}");
+    assert!(twin.replies.is_empty(), "the call hears the error after the secret is gone");
+    let op = twin.op();
+    twin.feed(Input::SecretCleared { op, ok: true });
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Http))]);
+    assert_eq!(twin.reference.credential, None);
+    assert!(matches!(&twin.feed(call_of("login", 2))[..], [RefEffect::GenerateCredential { .. }]), "the next sign-in goes as the first");
 }
 
 #[test]

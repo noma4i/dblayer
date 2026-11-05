@@ -221,12 +221,12 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 self.wires.insert(pending.request_id, wire);
                 self.commit(batch, epoch, ops);
             }
-            SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer } => {
+            SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => {
                 let digest = match digest.map(|identity| self.digests.get(&identity).cloned().ok_or(identity)).transpose() {
                     Ok(digest) => digest,
                     Err(identity) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(format!("no digest for the identity {identity}")) })),
                 };
-                let mut ops = if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
+                let mut ops = if erase_session { vec![StoreOp::EraseSession, StoreOp::RemovePending] } else if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
                 ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, result: stored_answer(&answer)? })));
                 self.commit(batch, epoch, ops);
             }

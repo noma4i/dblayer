@@ -92,6 +92,8 @@ pub enum StoreOp {
     Pending { pending: PendingCall, credential_digest: String, wire_id: String, response_key: String },
     /// Remove the row `encrypted_pending`.
     RemovePending,
+    /// Remove the row `encrypted_session` (a sign-in that the server refused).
+    EraseSession,
     /// `encrypted_answer`: the terminal outcome of the `Mutate` of `request_id`, written with `RemovePending` and kept until `RemoveAnswer`.
     Answer { request_id: u64, result: crate::transport::encrypted::state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
