@@ -8,6 +8,8 @@ mod outbox_restore;
 pub mod outbox_types;
 pub mod outbox_executor;
 pub mod transfer;
+mod transfer_flow;
+pub mod transfer_types;
 pub(crate) mod transfer_executor;
 pub mod wire;
 

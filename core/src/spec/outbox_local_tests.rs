@@ -107,7 +107,10 @@ fn out_local_write_epoch_ended() {
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
     assert!(answers(&take_fx(&twin.log, state_of(&twin.det)), WRITE).is_empty(), "the Store decides");
-    let refused = twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::NoSession }));
+    take_fx(&twin.log, None);
+    twin.det.post(crate::runtime::Address::<crate::owners::write::outbox::Outbox>::new(3), crate::runtime::EpochStamp::Control, OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::NoSession }));
+    twin.run();
+    let refused = take_fx(&twin.log, state_of(&twin.det));
     assert_eq!(answers(&refused, WRITE), vec![OutboxAnswer::Err(Fault::Rejected(RejectReason::NoSession))]);
 }
 
