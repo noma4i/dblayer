@@ -118,42 +118,11 @@ class MutationReceipt<Model : DBModel>(private val database: Database, private v
 
 data class ItemReceipt<Model : DBModel>(val item: ItemId, val optimisticValue: Model)
 
-sealed interface ItemOutcome<out Model : DBModel> {
-    class Confirmed<Model : DBModel>(val item: ItemId, val value: Model) : ItemOutcome<Model>
-    class Discarded(val item: ItemId) : ItemOutcome<Nothing>
-}
-
-sealed interface BatchResult {
-    data object Confirmed : BatchResult
-    class Rejected(val failure: WireFailure) : BatchResult
-    data object DeliveryUnknown : BatchResult
-    data object Interrupted : BatchResult
-}
-
-data class BatchOutcome<Model : DBModel>(val result: BatchResult, val items: List<ItemOutcome<Model>>)
-
-class OperationReceipt<Model : DBModel>(private val database: Database, private val decoder: ModelDecoder<Model>, private val wire: WireBatchReceipt) {
+class OperationReceipt<Model : DBModel>(internal val database: Database, internal val decoder: ModelDecoder<Model>, internal val wire: WireBatchReceipt) {
     val epoch: ULong = wire.epoch
     val operation: Long = wire.operation
     val revision: Long = wire.revision
     val items: List<ItemReceipt<Model>> = wire.items.map { ItemReceipt(it.item, decoder.read(it.optimisticValue)) }
-
-    suspend fun outcome(): BatchOutcome<Model> = offCaller {
-        val outcome = database.batchOutcome(wire)
-        val result = when (val value = outcome.result) {
-            WireBatchResult.Confirmed -> BatchResult.Confirmed
-            is WireBatchResult.Rejected -> BatchResult.Rejected(value.failure)
-            WireBatchResult.DeliveryUnknown -> BatchResult.DeliveryUnknown
-            WireBatchResult.Interrupted -> BatchResult.Interrupted
-        }
-        val items = outcome.items.map { item ->
-            when (item) {
-                is WireItemOutcome.Confirmed -> ItemOutcome.Confirmed(item.item, decoder.read(item.value))
-                is WireItemOutcome.Discarded -> ItemOutcome.Discarded(item.item)
-            }
-        }
-        BatchOutcome(result, items)
-    }
 }
 
 class ModelEvent<Model : DBModel>(val area: String, val kind: String, val id: String, val before: Model?, val after: Model?)

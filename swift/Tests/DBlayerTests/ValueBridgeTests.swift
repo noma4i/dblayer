@@ -225,28 +225,6 @@ extension BridgeProbeTests {
     withExtendedLifetime(profile) {}
   }
 
-  /// B08, R7: a delivery the reader never received leaves a gap. The reader asks for one new snapshot, drops the deltas that were already queued behind the gap, and continues from the snapshot.
-  @MainActor
-  @Test
-  func aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt() async throws {
-    _ = try await Self.openBridgeSession()
-    try await Self.signIn("A")
-    let scope = try DB.account()
-    let reader = LossyReader()
-    let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
-    reader.bind(stream)
-    await eventually("the first snapshot is settled") { reader.snapshots == 1 && reader.settled }
-
-    try DB.database.setOnline(online: false)
-    reader.dropNext()
-    for number in 1...3 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
-    await eventually("the reader holds the three rows again") { reader.rows == 3 && reader.snapshots == 2 }
-
-    #expect(reader.resyncs == 1, "the queue of later deltas asked for more than one new snapshot")
-    #expect(reader.snapshots == 2, "a missed revision gives exactly one new snapshot")
-    try DB.database.cancelStream(stream: stream)
-  }
-
   /// B10: the outcome of a command sent offline waits, and ends with the session of its receipt.
   @MainActor
   @Test
@@ -330,26 +308,21 @@ extension BridgeProbeTests {
   }
 }
 
-/// Reads a stream the way a platform does and can drop one value it read, so the projection meets a delta it cannot apply.
+/// Reads a stream the way a platform does.
 private final class LossyReader: ValueSink, @unchecked Sendable {
   private let lock = NSLock()
   private let reading = NSLock()
   private var projection = ListProjection<Moment>()
-  private var dropping = false
   private var endings: [StreamEnd] = []
   private var snapshotCount = 0
-  private var resyncCount = 0
   private var stream: UInt64?
 
   var snapshots: Int { lock.withLock { snapshotCount } }
-  var resyncs: Int { lock.withLock { resyncCount } }
   var settled: Bool { lock.withLock { projection.state?.settled ?? false } }
   var failure: DbError? { lock.withLock { projection.state?.error } }
 
   var rows: Int { lock.withLock { projection.rows.count } }
   var ended: [StreamEnd] { lock.withLock { endings } }
-
-  func dropNext() { lock.withLock { dropping = true } }
 
   func bind(_ stream: UInt64) {
     lock.withLock { self.stream = stream }
@@ -359,20 +332,16 @@ private final class LossyReader: ValueSink, @unchecked Sendable {
   func available() {
     guard let stream = lock.withLock({ self.stream }) else { return }
     reading.withLock {
-      for delivery in AnyIterator({ try? DB.database.readStream(stream: stream) }) { take(delivery, stream: stream) }
+      for delivery in AnyIterator({ try? DB.database.readStream(stream: stream) }) { take(delivery) }
     }
   }
 
-  private func take(_ delivery: StreamDelivery, stream: UInt64) {
-    let ask = lock.withLock { () -> Bool in
-      if dropping { dropping = false; return false }
+  private func take(_ delivery: StreamDelivery) {
+    lock.withLock {
       if case .snapshot = delivery.value { snapshotCount += 1 }
       if case let .ended(reason) = delivery.value { endings.append(reason) }
-      let applied = projection.apply(delivery)
-      if applied == .resync { resyncCount += 1 }
-      return applied == .resync
+      _ = projection.apply(delivery)
     }
-    if ask { try? DB.database.resyncStream(stream: stream) }
   }
 }
 
@@ -394,40 +363,6 @@ extension BridgeProbeTests {
     await #expect(throws: DbError.self) { _ = try await User.profile.read(in: oldScope) }
     let current = try await User.profile.read().first
     #expect(current?.name == "A", "a command of the old scope changed the new database")
-  }
-
-  /// K15 (iOS findings b and c): the first delivery of a projection is a snapshot with no list of edits, edits come with a delta, and one missed revision gives exactly one new snapshot to each of two streams.
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func theFirstDeliveryHasNoEditsAndAMissedRevisionGivesEachStreamOneSnapshot() async throws {
-    _ = try await Self.openBridgeSession()
-    try await Self.signIn("A")
-    let scope = try DB.account()
-    let thread = Projected<Moment>(try scope.stream(Moment.recent))
-    try await thread.loaded()
-    await eventually("the first snapshot arrives") { thread.projection.revision != nil }
-    #expect(thread.projection.lastEdits == nil, "the first delivery carried a list of edits")
-    #expect(thread.takeEdits() == nil, "a screen that asks before the first change must read the rows, not apply nothing")
-
-    let first = LossyReader()
-    let second = LossyReader()
-    let streams = try [first, second].map { reader -> UInt64 in
-      let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Moment.recent.json), sink: reader)
-      reader.bind(stream)
-      return stream
-    }
-    await eventually("both first snapshots are settled") { first.snapshots == 1 && second.snapshots == 1 && first.settled && second.settled }
-
-    try DB.database.setOnline(online: false)
-    first.dropNext()
-    second.dropNext()
-    for number in 1...3 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
-    await eventually("both readers hold the three rows again") { first.rows == 3 && second.rows == 3 }
-
-    #expect(first.snapshots == 2 && second.snapshots == 2, "a missed revision gives exactly one new snapshot per stream")
-    #expect(first.resyncs == 1 && second.resyncs == 1)
-    for stream in streams { try DB.database.cancelStream(stream: stream) }
-    withExtendedLifetime(thread) {}
   }
 
   /// K16 (B8): a reader that falls behind reads at most 256 values of a burst from the journal of the core and ends with the whole list from one new snapshot.
@@ -472,13 +407,12 @@ private final class BufferedDeliveries: @unchecked Sendable {
   var settled: Bool { lock.withLock { projection.state?.settled ?? false } }
 
   func apply(_ delivery: StreamDelivery, stream: ValueStream) {
-    let ask = lock.withLock { () -> Bool in
+    lock.withLock {
       received += 1
       kept += 1
       if delivery.seq <= lastSeq { inOrder = false }
       lastSeq = max(lastSeq, delivery.seq)
-      return projection.apply(delivery) == .resync
+      _ = projection.apply(delivery)
     }
-    if ask { stream.resync() }
   }
 }

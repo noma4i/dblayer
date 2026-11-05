@@ -21,19 +21,6 @@ object DBlayer {
 
     internal fun openedDatabase(): Database? = opened
 
-    /** Reloads the stale relations that have readers. The library already reloads stale windows when the app returns to the foreground, when the network returns and after a sign-in. Call this for a manual refresh: it also restarts stopped subscriptions. */
-    suspend fun resume() {
-        onAccount(null) { database, epoch -> database.resume(epoch) }
-    }
-
-    /** Tells the library whether the app lets the model subscriptions run. `open(listening = false)` starts none from a committed credential until `setListening(true)`. Allowed with a committed credential, they start once. `setListening(false)` and `sessionReset()` stop them. Call it from the app state that gates subscriptions, for example registration complete. */
-    fun setListening(allowed: Boolean) = database.setListening(allowed)
-
-    /** Reloads every `preload` scope now, fresh or not, and returns when all have settled. Offline it throws without a request. When some scopes fail the error names them. Call it for pull to refresh instead of refreshing each reference list. */
-    suspend fun refreshPreloads(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.refreshPreloads(epoch) }
-
-    suspend fun retryAll(account: AccountScope? = null): ULong = onAccount(account) { database, epoch -> database.retryAll(epoch) }
-
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
         offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
 
@@ -92,10 +79,9 @@ object DBlayer {
         http: EncryptedHttp? = null,
         retries: RetryProgress? = null,
         uploadNotification: UploadNotification,
-        listening: Boolean = true,
     ) = opening.withLock {
         try {
-            openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, uploads, http, retries, uploadNotification, listening)
+            openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, uploads, http, retries, uploadNotification)
         } catch (error: Throwable) {
             ready.completeExceptionally(error)
             ready = CompletableDeferred()
@@ -117,11 +103,10 @@ object DBlayer {
         http: EncryptedHttp?,
         retries: RetryProgress?,
         uploadNotification: UploadNotification,
-        listening: Boolean,
     ) {
         UploadNotifications.store(context, uploadNotification)
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire(), PowerSaving.saving(context), PowerSaving.lowRam(context), true, listening)
+        val options = OpenOptions(JsonArray(definitions).jsonText(), uploads?.wire(), PowerSaving.saving(context), PowerSaving.lowRam(context), true, true)
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers, cablePath = encrypted?.endpoints?.cable) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }, retries)

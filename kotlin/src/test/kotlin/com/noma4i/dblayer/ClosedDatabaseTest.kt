@@ -21,7 +21,6 @@ class ClosedDatabaseTest {
             refusal { DBlayer.database },
             refusal { DBlayer.subscriptionCensus() },
             refusal { Moment.send(AccountScope.current(), text = "late").optimisticValue!! },
-            refusal { Moment.recent.warm() },
             refusal { Moment.recent.live.flow.first() },
             refusal { Moment.recent.live.current() },
         )

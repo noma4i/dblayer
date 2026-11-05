@@ -14,8 +14,7 @@ class LandsTest {
         database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]""")
         val receipt = database.send(CommandRequest(database.sessionEpoch(), "Record", "{}", "{}", null))
         assertTrue(database.outcome(receipt) is WireOperationOutcome.Confirmed)
-        database.warm(database.sessionEpoch(), """{"model":"Record"}""")
-        assertEquals("r2", database.peekRow(database.sessionEpoch(), "Record", "r2")?.id)
+        assertEquals("r2", database.readRow(database.sessionEpoch(), "Record", "r2")?.id)
     }
 
 }

@@ -43,8 +43,7 @@ A full journal of a list drops the values that a new snapshot replaces and sends
 The end of a stream is kept apart from the journal and comes once, after every other value. When the session ends or the database closes, the values of the old account that were not read are dropped and only the end follows.
 Each state says whether the first load `settled` and up to which `revision` of the database its rows are read.
 A projection ignores a value of another epoch.
-A delta whose `base` is not the held revision asks for one new snapshot.
-`Projected` does that for you: it calls `resync`.
+A delta whose `base` is not the held revision is not applied: `apply` returns `resync` and the projection waits for the next snapshot.
 
 ## Reading a projection on screen
 
@@ -87,8 +86,6 @@ One owner in the core serves each stream. The wrappers keep no registry, no lock
 | --- | --- |
 | `refresh()` | Loads the relation again. |
 | `loadMore()` | Loads the next page. |
-| `loaded()` | On `Projected`: returns when the projection shows the settled state of the first load. With rows it returns for any error of the load, and the state keeps the error in the `Loaded` phase. It throws the error of the `Failed` phase, which the core gives only without rows. The outcome of an own request comes from `beginLoad(...).result()`. |
-| `shown(revision)` | On `Projected`: returns when the projection shows the database at that revision or later, also when the write of that revision changed none of its rows. |
 
 A call that outlives its epoch ends as `Interrupted`.
 Server work without a session or transport fails with `NoSession`.
@@ -141,7 +138,7 @@ val rows = Chat.list.read(scope)
 ## What the work costs
 
 An idle stream sends no request and wakes nothing.
-A stream that ended leaves no observer: a write after its last reader left reads nothing. `retainedObservers` counts only the observers of an explicit `warm`.
+A stream that ended leaves no observer: a write after its last reader left reads nothing. `retainedObservers` counts only the observers of an explicit read that keeps them.
 A reader that falls behind finds at most 256 values in the journal. A list reader then gets one new snapshot, an events reader gets one `lost` range before the events that were kept.
 A change of one row sends one row and decodes one row.
 The number of subscriptions is the number of readers.

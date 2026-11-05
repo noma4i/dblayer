@@ -45,26 +45,6 @@ struct BridgeProbeTests {
     #expect(await changes.first("the empty list") { $0.isEmpty } != nil)
   }
 
-  @Test @MainActor
-  func aWarmQueryAnswersFromMemoryAndAFinishedLiveReadLeavesNothingWarm() async throws {
-    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
-    #expect(try await Moment.recent.cached() == nil)
-    let moment = try await Moment.send(in: DB.account(), text: "m").optimisticValue!
-    try await Moment.recent.warm()
-    let cached = try await Moment.recent.cached()
-    let warm = try #require(cached)
-    #expect(warm.value.map(\.id) == [moment.id] && warm.value.first?.text == "m")
-    #expect(try await Moment.recent.cachedRow("ghost") == nil)
-    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
-    #expect(try await Moment.recent.cached() == nil)
-    _ = try await Moment.send(in: DB.account(), text: "n").optimisticValue!
-    do {
-      let list = Projected<Moment>(try AccountScope().stream(Moment.recent))
-      await eventually("the stream shows the row") { list.rows.count == 1 }
-    }
-    await eventually("a finished live read leaves nothing warm") { (try? await Moment.recent.cached()) == nil }
-  }
-
 
 
   @MainActor
@@ -265,23 +245,6 @@ struct BridgeProbeTests {
     #expect(withUser.reactions.first?.user?.name == "Ann")
     let withoutUser = try await record.react(reactionBody: "B", userId: "nobody").optimisticValue!
     #expect(withoutUser.reactions.first { $0.userId == "nobody" }?.user == nil)
-  }
-
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() async throws {
-    let transport = MockTransport()
-    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
-    transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request"))
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
-    await eventually("the relation fails") { list.phase == .failed }
-    let before = transport.calls.count
-
-    try await DB.resume()
-
-    #expect(transport.calls.count > before)
   }
 
   private func openWithAMoment(_ transport: MockTransport) async throws -> Moment {

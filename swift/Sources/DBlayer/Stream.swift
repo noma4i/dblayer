@@ -44,12 +44,6 @@ public struct ValueStream: AsyncSequence, Sendable {
     }
   }
 
-  /// The projection could not apply a delta. The core sends one new snapshot.
-  public func resync() { database.resyncStream(stream: id) }
-
-  /// Asks the stream to deliver a state of this revision of the database once its rows are read through it.
-  public func reach(_ revision: Int64) { database.reachStream(stream: id, revision: revision) }
-
   /// Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended.
   public func refresh() async throws { try await database.refreshStream(stream: id) }
 
@@ -222,7 +216,6 @@ public final class Projected<Model: DBModel> {
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored var reading: Task<Void, Never>?
   @ObservationIgnored private var pending: [ListEdit<Model>]?
-  private var readerEnded = false
 
   public init(_ stream: ValueStream) {
     self.stream = stream
@@ -231,18 +224,12 @@ public final class Projected<Model: DBModel> {
         guard let self else { return }
         self.receive(delivery)
       }
-      self?.finishReading()
     }
   }
 
   private func receive(_ delivery: StreamDelivery) {
     let applied = projection.apply(delivery)
-    if applied == .resync { stream.resync() }
     if applied == .changed { pending = ListEdit.composing(pending, projection.lastEdits, within: projection.rows.count) }
-  }
-
-  private func finishReading() {
-    readerEnded = true
   }
 
   /// The steps since the last call, to apply to a list the screen keeps. `nil`: the screen reads `rows` again.
@@ -253,37 +240,6 @@ public final class Projected<Model: DBModel> {
 
   public func refresh() async throws { try await stream.refresh() }
   public func loadMore() async throws -> LoadMoreResult { try await stream.loadMore() }
-  public func loaded() async throws {
-    try await waitForProjection { projection in
-      guard let state = projection.state, state.settled else { return false }
-      if state.phase == .failed, let error = state.error { throw error }
-      return true
-    }
-  }
-
-  /// Returns when the projection shows the database at `revision` or later, such as the revision in the receipt of a write.
-  public func shown(_ revision: Int64) async throws {
-    stream.reach(revision)
-    try await waitForProjection { projection in
-      if let failure = projection.failure { throw DbError.Invalid(detail: failure) }
-      return (projection.state?.revision ?? -1) >= revision
-    }
-  }
-
-  private func waitForProjection(_ ready: (ListProjection<Model>) throws -> Bool) async throws {
-    let (changes, signal) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-    defer { signal.finish() }
-    var iterator = changes.makeAsyncIterator()
-    while !Task.isCancelled {
-      let current = withObservationTracking { (projection, readerEnded) } onChange: { signal.yield(()) }
-      if let reason = current.0.ended, reason != .invalid { throw DbError.Interrupted(detail: "the stream ended before its rows were shown") }
-      if current.1 && current.0.ended != .invalid { throw DbError.Interrupted(detail: "the stream ended before its rows were shown") }
-      if try ready(current.0) { return }
-      if current.1 { throw DbError.Interrupted(detail: "the stream ended before its rows were shown") }
-      guard await iterator.next() != nil else { break }
-    }
-    throw CancellationError()
-  }
 
   isolated deinit {
     reading?.cancel()

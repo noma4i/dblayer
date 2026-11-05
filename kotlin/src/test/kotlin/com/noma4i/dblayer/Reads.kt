@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -49,7 +50,6 @@ class TestSnapshots<M : DBModel>(private val query: Query<M>) {
         stream.deliveries.collect { delivery ->
             val step = projection.apply(delivery, query.decoder)
             projection = step.projection
-            if (step.applied == Applied.Resync) stream.resync()
             if (step.applied == Applied.Changed) {
                 val state = projection.state
                 emit(Snapshot(projection.rows, projection.phase, state?.error, state?.total, state?.hasMore ?: false, state?.complete ?: false, state?.loadedAt, state?.errorKind))
@@ -82,3 +82,16 @@ class ListReader<M : DBModel>(private val query: Query<M>, scope: CoroutineScope
 }
 
 fun heldUser(): Projected<User> = Projected(AccountScope.current().stream(User.profile), User, CoroutineScope(SupervisorJob()))
+
+/** Returns when the projection shows a settled state, throws the failed state's error or `Interrupted` when the stream ended. Bounded by the hang guard. */
+suspend fun <M : DBModel> Projected<M>.loaded() {
+    val shown = awaitWithin("the projection shows a settled state") { projection.first { it.state?.settled == true || it.ended != null } }
+    if (shown.ended != null && shown.ended != StreamEnd.INVALID) throw DbException.Interrupted("the stream ended before its rows were shown")
+    val state = shown.state
+    if (state?.settled == true) {
+        val error = state.error ?: return
+        if (state.phase == LivePhase.FAILED) throw error
+        return
+    }
+    throw DbException.Interrupted("the stream ended before its rows were shown")
+}

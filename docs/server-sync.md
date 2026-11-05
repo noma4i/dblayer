@@ -154,7 +154,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | Mutation receipt `outcome()` | the queued mutation got the sealed refusal. The rejected outcome carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
 | streams (`scope.stream`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
-`flush()` and `retry(action)` do not throw for the refusal of one operation. `sessionResume()` throws sealed refusals but returns `nil` / `null` for permanent HTTP refusals listed below. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
+`retry(action)` does not throw for the refusal of one operation. `sessionResume()` throws sealed refusals but returns `nil` / `null` for permanent HTTP refusals listed below. A refusal that confirms the sequence spends the request and removes it. A refusal that does not confirm it (`sequenceConflict`, `unauthenticated`, `sessionEnded`) keeps the request pending. The credential stays for every code. Sign-in state changes only through `sessionReset()` and a `logout` answer with `revoked`. Unknown refusal codes stay `Graphql` errors. Temporary codes follow the automatic retry rules below, including codes inside `errors[].extensions.code`.
 
 The errors `UNAUTHENTICATED` and `ACCOUNT_UNAVAILABLE` inside `errors[].extensions.code` reach the rejected outcome with the same code. The action's declaration decides whether to keep its optimistic value.
 
@@ -172,7 +172,7 @@ Recovery depends on the response and whether it confirms the sequence:
 | stored request whose path is now declared sessionless | removed without sending or advancing the sequence | `sessionResume()` returns `nil` / `null` |
 
 The permanent statuses apply to the first send and every repeat through the same settlement code.
-The first send still throws its HTTP error. A second resume sends nothing after removal.
+The first send still throws its HTTP error. A second `sessionResume()` sends nothing after removal.
 The server refuses these requests before consuming their sequence, so the next request reuses that sequence.
 The [retry owner](#retries) preserves Pending across temporary failures.
 HTTP 401, 403, 407, 418, 425 and other unlisted statuses return immediately with pending preserved.
@@ -182,14 +182,14 @@ Opening the database does not call `sessionResume()`. The application calls it e
 `sessionResume()` closes the queued operation that owns the pending request with the answer, like a normal send. The server runs the mutation once, and `retry` after it finds nothing to send. Without `sessionReset()` a sign-in call after an unconfirmed refusal fails with a network error, because the stored request is still pending.
 
 In Swift and Kotlin, `sessionResume()` holds the right to send from reading the stored request until the operation closes.
-Parallel `flush`, `retry`, `retryAll` and automatic retries wait for the resume to finish.
+Parallel `retry` and automatic retries wait for the resume to finish.
 For an upload, the resume first waits for the active sender and takes its entry in `uploads.active`.
 If the sender already finished the stored request, the resume returns `nil` in Swift and `null` in Kotlin.
 
 For mutations with `clientMutationId` in the SDL input type, the generator sets `client_mutation_id` in the action spec.
 The model needs no field declaration. Without SDL, automatic key passing is off.
 SQLite gives each new operation a random 128-bit key and stores it in the column `op.client_mutation_id`.
-The key survives restart, `flush`, `retry`, `retryAll`, `sessionResume` and a retry of the final upload mutation.
+The key survives restart, `retry`, `sessionResume` and a retry of the final upload mutation.
 A new encrypted request gets the old key of the operation. A new operation gets a new key.
 An app value in `input.clientMutationId` takes priority, including an explicit `null`.
 The technical upload steps use the same `key`, `uploadId` and stored encrypted request.
@@ -216,7 +216,6 @@ do {
 } catch DbError.Session(let code, _) where code == .unauthenticated {
   try await DB.sessionReset()
   try await DB.sessionCall("social", body: signIn)
-  try await DB.retryAll()
 }
 ```
 
@@ -227,7 +226,6 @@ try {
     if (error.code == SessionCode.UNAUTHENTICATED) {
         DBlayer.sessionReset()
         DBlayer.sessionCall("social", signIn)
-        DBlayer.retryAll()
     }
 }
 ```
@@ -862,7 +860,7 @@ model User do
 end
 ```
 
-The core starts these subscriptions when a session credential is committed (a session call that changes the session, or a session that is already stored at start) and stops them at `logout()` and `sessionReset()`. The core listens only while a credential is committed and the app allows it. The app allows it by default. An app that opens no subscription before registration is complete passes `listening: false` to `open` and calls `setListening(true)` when registration completes (`DB.setListening(_:)`, `DBlayer.setListening(allowed)`). The call is idempotent and starts the subscriptions once. `setListening(false)`, `logout()` and `sessionReset()` stop them, and `logout()` and `sessionReset()` stop them whatever the flag says. The flag gates only the subscriptions that a committed credential starts. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. A `Model.events()` collector and a screen that watches a relation with `subscribe` open their own subscription when they start, so the app starts them after registration too. A `Model.events()` stream stays open across sign-out and the next sign-in and never sends a closing element. Subscriptions that a refusal stopped restart with the next committed credential or with `resume()`.
+The core starts these subscriptions when a session credential is committed (a session call that changes the session, or a session that is already stored at start) and stops them at `logout()` and `sessionReset()`. The core listens only while a credential is committed. Preloads and reloads after a sign-in are requests, not subscriptions, and run either way. A `Model.events()` collector and a screen that watches a relation with `subscribe` open their own subscription when they start, so the app starts them after registration too. A `Model.events()` stream stays open across sign-out and the next sign-in and never sends a closing element. Subscriptions that a refusal stopped restart with the next committed credential or with `resume()`.
 
 ## Automatic refetching
 
@@ -871,8 +869,7 @@ The core starts these subscriptions when a session credential is committed (a se
 | Successful `create` or `destroy` of a model | scopes of that model become stale and are refetched at once if someone is reading them. After a `create`, a scope with `insert_on: [:event, :response]` is not refetched: the answer of the mutation already placed the row |
 | Successful mutation with `refetch` | the listed scopes become stale and are refetched once the loads of the same list that were in flight at the commit have finished, so the reply that lands last is always issued after the commit. A load that began before the commit does not settle the refetch, whatever it lands. The call that sent the mutation returns with its own answer and never waits for the refetch, and the next mutation is sent meanwhile. A session change drops a refetch the old session owed |
 | `freshness` expired | refetched when next read or when the app resumes |
-| App returns to the foreground, network returns after offline | the library reloads the stale relations with readers in small groups. Events that coincide share one run. An offline foreground does nothing, close cancels the run, stopped subscriptions with a non-terminal failure restart, and a session refusal of a subscription or of a window load stays stopped. A committed credential (a session call that changes the session) does the same once, and also restarts the subscriptions a session refusal stopped, so the app calls nothing after sign-in. `DB.resume()` (Swift) and `DBlayer.resume()` (Kotlin) stay as the manual refresh |
-| Explicit resume after logout | stopped singleton subscriptions restart, existing singleton entities receive values again |
+| App returns to the foreground, network returns after offline | the library reloads the stale relations with readers in small groups. Events that coincide share one run. An offline foreground does nothing, close cancels the run, stopped subscriptions with a non-terminal failure restart, and a session refusal of a subscription or of a window load stays stopped. A committed credential (a session call that changes the session) does the same once, and also restarts the subscriptions a session refusal stopped, so the app calls nothing after sign-in. |
 | Network is back | the queue is sent and stale relations are refetched |
 | Subscription reconnects | stale watched relations are refetched |
 

@@ -8,9 +8,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -32,12 +30,6 @@ class ValueStream internal constructor(val id: ULong, val epoch: ULong, private 
             close()
         }
     }
-
-    /** The projection could not apply a delta. The core sends one new snapshot. */
-    fun resync() = database.resyncStream(id)
-
-    /** Asks the stream to deliver a state of this revision of the database once its rows are read through it. */
-    fun reach(revision: Long) = database.reachStream(id, revision)
 
     /** Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended. */
     suspend fun refresh() = offCaller { database.refreshStream(id) }
@@ -193,15 +185,13 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
     private val held = MutableStateFlow(ListProjection<Model>())
     val projection: StateFlow<ListProjection<Model>> = held.asStateFlow()
     private val pending = java.util.concurrent.atomic.AtomicReference<List<ListEdit<Model>>?>(null)
-    private val readerEnded = MutableStateFlow(false)
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
         stream.deliveries.collect { delivery ->
             val step = held.value.apply(delivery, decoder)
             held.value = step.projection
-            if (step.applied == Applied.Resync) stream.resync()
             if (step.applied == Applied.Changed) pending.updateAndGet { ListEdit.composing(it, step.projection.lastEdits, step.projection.rows.size) }
         }
-    }.also { job -> job.invokeOnCompletion { readerEnded.value = true; stream.close() } }
+    }.also { job -> job.invokeOnCompletion { stream.close() } }
 
     val value: Model? get() = held.value.rows.firstOrNull()
 
@@ -211,29 +201,6 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
     suspend fun refresh() = stream.refresh()
 
     suspend fun loadMore(): LoadMoreResult = stream.loadMore()
-
-    suspend fun loaded() {
-        val (projection, ended) = combine(held, readerEnded) { projection, ended -> projection to ended }
-            .first { (projection, ended) -> projection.state?.settled == true || projection.ended != null || ended }
-        if (projection.ended != null && projection.ended != StreamEnd.INVALID) throw DbException.Interrupted("the stream ended before its rows were shown")
-        if (ended && projection.ended != StreamEnd.INVALID) throw DbException.Interrupted("the stream ended before its rows were shown")
-        val state = projection.state
-        if (state?.settled == true) {
-            val error = state.error ?: return
-            if (state.phase == LivePhase.FAILED) throw error
-            return
-        }
-        if (ended || projection.ended != null) throw DbException.Interrupted("the stream ended before its rows were shown")
-    }
-
-    /** Returns when the projection shows the database at [revision] or later, such as the revision in the receipt of a write. */
-    suspend fun shown(revision: Long) {
-        stream.reach(revision)
-        val (projection, ended) = combine(held, readerEnded) { projection, ended -> projection to ended }
-            .first { (projection, ended) -> (projection.state?.revision ?: -1) >= revision || projection.failure != null || projection.ended != null || ended }
-        if (ended || projection.ended != null) throw DbException.Interrupted("the stream ended before its rows were shown")
-        projection.failure?.let { throw DbException.Invalid(it) }
-    }
 
     fun close() {
         reading.cancel()

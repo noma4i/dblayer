@@ -40,7 +40,6 @@ class ForegroundTestingTest {
             val transport = MockTransport()
             DBlayer.openTesting(transport, JsonArray(models).toString(), operations = listOf(ForegroundFeed))
             DBlayer.enterForegroundForTesting()
-            DBlayer.resume()
             assertEquals(emptyList<String>(), transport.calls.map { it.operationName })
 
             transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
@@ -49,7 +48,6 @@ class ForegroundTestingTest {
             list.waitForInitialLoad()
             assertEquals(listOf("MomentsFeed"), transport.calls.map { it.operationName })
             DBlayer.enterForegroundForTesting()
-            DBlayer.resume()
             withTimeout(5000) { list.ids.first { it == listOf("m2") } }
             assertEquals(listOf("MomentsFeed", "MomentsFeed"), transport.calls.map { it.operationName })
         } finally {

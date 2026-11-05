@@ -13,7 +13,6 @@ private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed(
 private final class RefusedRetry: Database, @unchecked Sendable {
   override func sessionEpoch() -> UInt64 { 1 }
   override func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws -> WireOperationReceipt { throw DbError.Invalid(detail: "retry refused") }
-  override func retryAll(epoch: UInt64) async throws -> UInt64 { throw DbError.Invalid(detail: "retry refused") }
 }
 
 extension BridgeProbeTests {
@@ -24,7 +23,6 @@ extension BridgeProbeTests {
     let row = try await Moment.send(in: DB.account(), text: "saved").optimisticValue!
     DB.current = RefusedRetry(noHandle: .init())
     await #expect(throws: DbError.self) { try await row.retry(action: nil) }
-    await #expect(throws: DbError.self) { try await DB.retryAll() }
   }
   @MainActor
   private func openSealedRig(_ transport: MockTransport) async throws {

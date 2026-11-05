@@ -25,10 +25,6 @@ private final class RecordingSession: Database, @unchecked Sendable {
     record("retry \(model) \(rowId) \(action ?? "nil")")
     throw DbError.Invalid(detail: "recorded")
   }
-  override func retryAll(epoch: UInt64) async throws -> UInt64 {
-    record("retryAll")
-    return 7
-  }
 }
 
 extension BridgeProbeTests {
@@ -58,13 +54,11 @@ extension BridgeProbeTests {
     }
   }
 
-  @Test @MainActor func retryByIdAndRetryAllReachTheCore() async throws {
+  @Test @MainActor func retryByIdReachesTheCore() async throws {
     try await withRecordingSession { recording in
       await #expect(throws: DbError.self) { try await Moment.retry(id: "42", action: "like") }
       await #expect(throws: DbError.self) { try await Moment.retry(id: "43", action: nil) }
-      let retried = try await DB.retryAll()
-      #expect(retried == 7)
-      #expect(recording.calls == ["retry Moment 42 like", "retry Moment 43 nil", "retryAll"])
+      #expect(recording.calls == ["retry Moment 42 like", "retry Moment 43 nil"])
     }
   }
 }

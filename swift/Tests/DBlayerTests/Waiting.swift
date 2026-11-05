@@ -186,7 +186,6 @@ struct TestLive<Model: DBModel>: Sendable {
         var projection = ListProjection<Model>()
         for await delivery in value {
           let applied = projection.apply(delivery)
-          if applied == .resync { value.resync() }
           if applied == .changed, carriesRows(delivery) { continuation.yield(projection.rows) }
         }
         continuation.finish()
@@ -206,7 +205,6 @@ struct TestSnapshots<Model: DBModel>: Sendable {
         var projection = ListProjection<Model>()
         for await delivery in value {
           let applied = projection.apply(delivery)
-          if applied == .resync { value.resync() }
           if applied == .changed { continuation.yield(TestSnapshot(rows: projection.rows, phase: projection.phase, error: projection.state?.error, total: projection.state?.total.map { Int($0) }, hasMore: projection.state?.hasMore ?? false)) }
         }
         continuation.finish()
@@ -322,4 +320,21 @@ func opened<Model: DBModel>(_ events: EventStream<Model>, sourceLocation: Source
 func networkDrops(during held: Hold) async throws {
   await held.entered()
   try DB.database.setOnline(online: false)
+}
+
+extension Projected {
+  /// Returns when the projection shows a settled state, throws the failed state's error or `Interrupted` when the stream ended. Bounded by `hangGuard`.
+  func loaded() async throws {
+    var result: Result<Void, any Error>?
+    await eventually("the projection shows a settled state") {
+      if let reason = projection.ended, reason != .invalid {
+        result = .failure(DbError.Interrupted(detail: "the stream ended before its rows were shown"))
+        return true
+      }
+      guard let state = projection.state, state.settled else { return false }
+      if state.phase == .failed, let error = state.error { result = .failure(error) } else { result = .success(()) }
+      return true
+    }
+    try result?.get()
+  }
 }

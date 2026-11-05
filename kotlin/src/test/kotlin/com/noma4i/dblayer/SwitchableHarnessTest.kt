@@ -51,7 +51,6 @@ class SwitchableHarnessTest {
                 switchable.target = second
                 DBlayer.openTesting(switchable, modelsJSON)
                 DBlayer.database.registerOperations(operations)
-                DBlayer.setListening(true)
 
                 val next = heldUser()
                 next.loaded()

@@ -100,11 +100,6 @@ public struct Query<Model: DBModel>: Sendable {
     return try Model.decode(row)
   }
 
-  @concurrent public func warm(in scope: AccountScope? = nil) async throws {
-    let (database, epoch) = try DB.admitted(scope)
-    try await database.warm(epoch: epoch, queryJson: json)
-  }
-
   @concurrent public func edgeValues(of id: String, in scope: AccountScope? = nil) async throws -> [String: JSONValue]? {
     let (database, epoch) = try DB.admitted(scope)
     return try JSONValue.read(try await database.edgeValues(epoch: epoch, model: Model.modelName, relation: relation ?? "", paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue

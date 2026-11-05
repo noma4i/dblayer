@@ -27,13 +27,9 @@ extension BridgeProbeTests {
     }
     transport.enqueue("CreateAssets", reply: #"{"data":{"createAssets":{"assets":[{"id":"a1","clientKey":"key-1","size":2},{"id":"a0","clientKey":"key-0","size":2}]}}}"#)
     try DB.database.setOnline(online: true)
-    let waiting = Task { try await receipt.outcome() }
-    let outcome = try await valueBeforeDeadline(waiting, release: {})
-    guard case .confirmed = outcome.result else { throw WaitFailure.unexpectedOutcome }
-    let ids = outcome.items.compactMap { item -> String? in
-      guard case let .confirmed(key, value) = item else { return nil }
-      return "\(key.value):\(value.id)"
-    }
+    let waiting = Task { try await confirmedPairs(receipt) }
+    let pairs = try await valueBeforeDeadline(waiting, release: {})
+    let ids = pairs.compactMap { pair in pair.map { "\($0.key):\($0.id)" } }
     #expect(ids == ["key-0:a0", "key-1:a1"])
     let calls = transport.calls.filter { $0.operationName == "CreateAssets" }
     #expect(calls.count == 1)

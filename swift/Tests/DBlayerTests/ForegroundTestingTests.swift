@@ -24,7 +24,6 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     try await DB.openTesting(transport: transport, modelsJSON: schema, operations: [ForegroundFeed.self])
     try DB.enterForegroundForTesting()
-    try await DB.resume()
     #expect(transport.calls.isEmpty)
 
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"id":"m1","uuid":"first","createdAt":"2026-10-27T00:00:00Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
@@ -33,7 +32,6 @@ extension BridgeProbeTests {
     try await list.waitForInitialLoad()
     #expect(transport.calls.map(\.operationName) == ["MomentsFeed"])
     try DB.enterForegroundForTesting()
-    try await DB.resume()
     await eventually("the refreshed row reaches the reader") { list.ids == ["m2"] }
     #expect(transport.calls.map(\.operationName) == ["MomentsFeed", "MomentsFeed"])
   }

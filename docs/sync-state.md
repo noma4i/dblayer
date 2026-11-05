@@ -85,21 +85,13 @@ Moment.failed          // records waiting for a decision
 
 Use them for an "unsent" banner, a retry-all button or a badge with the number of pending changes. `sync` is a reserved name: a model cannot have a field called `sync`.
 
-`retry(action)` resets the one failed operation and returns a new receipt; read its `outcome()` for the result of the retry. `DB.retryAll()` (`DBlayer.retryAll()` in Kotlin) returns the number of reset operations or upload items. Both throw errors to the caller.
+`retry(action)` resets the one failed operation and returns a new receipt; read its `outcome()` for the result of the retry. It throws errors to the caller.
 
 ## How a mutation is sent
 
 The network decides what happens to a mutation that did not get an answer:
 
-- Unreachable before the transfer starts (no connection, connection refused, offline): the request never left, so sending it again is safe. The record stays `pending`, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change stays `failed` for retry or discard. To send every such record again, call `DB.retryAll()` in Swift or `DBlayer.retryAll()` in Kotlin:
-
-```swift
-try await DB.retryAll()
-```
-
-```kotlin
-DBlayer.retryAll()
-```
+- Unreachable before the transfer starts (no connection, connection refused, offline): the request never left, so sending it again is safe. The record stays `pending`, `sync.attempts` counts the tries, and the next try comes after a growing pause with random spread. After 40 tries the change stays `failed` for retry or discard. To send one such record again, call `retry(action)`.
 
 Later changes to the same record wait behind it.
 - Offline (`setOnline(false)`): the change waits and spends no attempts. When `setOnline(true)` is called, waiting changes are sent by themselves.

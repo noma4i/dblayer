@@ -34,9 +34,7 @@ class UploadBatchTest {
             repeat(2) { transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""") }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a1","clientKey":"key-1","size":2},{"id":"a0","clientKey":"key-0","size":2}]}}}""")
             database.setOnline(true)
-            val outcome = withTimeout(5000) { receipt.outcome() }
-            assertTrue(outcome.result is BatchResult.Confirmed)
-            val ids = outcome.items.map { item -> (item as ItemOutcome.Confirmed<*>).let { "${it.item.value}:${it.value.id}" } }
+            val ids = withTimeout(5000) { confirmedPairs(receipt) }.map { "${it!!.first}:${it.second}" }
             assertEquals(listOf("key-0:a0", "key-1:a1"), ids)
             val calls = transport.calls.filter { it.operationName == "CreateAssets" }
             assertEquals(1, calls.size)

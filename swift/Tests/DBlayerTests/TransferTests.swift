@@ -12,13 +12,18 @@ private func transferFixture(_ name: String) throws -> String {
   return try String(contentsOf: root.appendingPathComponent("fixtures/\(name)"), encoding: .utf8)
 }
 
-private func confirmedIds<Model: DBModel>(_ receipt: OperationReceipt<Model>) async throws -> [String?] {
-  let outcome = try await receipt.outcome()
+/// The item outcomes of a batch, read from the core: the API has no item outcome yet (`holes` of the d4 report).
+func confirmedPairs<Model: DBModel>(_ receipt: OperationReceipt<Model>) async throws -> [(key: String, id: String)?] {
+  let outcome = try await receipt.database.batchOutcome(receipt: receipt.wire)
   guard case .confirmed = outcome.result else { throw DbError.Invalid(detail: "the batch did not confirm: \(outcome.result)") }
-  return outcome.items.map { item -> String? in
-    if case let .confirmed(_, value) = item { return value.id }
+  return try outcome.items.map { item in
+    if case let .confirmed(key, value) = item { return (key.value, try Model.decode(value).id) }
     return nil
   }
+}
+
+private func confirmedIds<Model: DBModel>(_ receipt: OperationReceipt<Model>) async throws -> [String?] {
+  try await confirmedPairs(receipt).map { $0?.id }
 }
 
 private func finishTransfers() async throws { try await DB.database.resumeUploads(epoch: DB.database.sessionEpoch()) }

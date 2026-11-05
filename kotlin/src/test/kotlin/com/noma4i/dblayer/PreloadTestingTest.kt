@@ -23,25 +23,6 @@ class PreloadTestingTest {
     }
 
     @Test
-    fun refreshPreloadsReloadsEveryPreloadScopeEvenWhenItIsFresh() = bounded {
-        DBlayer.close()
-        val transport = MockTransport()
-        val online = """{"data":{"presenceOnline":[{"id":"p1","userId":"u1","room":"a"},{"id":"p2","userId":"u2","room":"b"}]}}"""
-        transport.enqueue("PresenceOnline", online)
-        transport.enqueue("PresenceOnline", online)
-        repeat(4) {
-            transport.enqueue("PresenceHistory", """{"data":{"presenceHistory":[]}}""")
-            transport.enqueue("PresenceOnChannel", """{"data":{"presenceOnChannel":[]}}""")
-        }
-        DBlayer.openTesting(transport, modelsJSON, operations = listOf(PresenceOnline, PresenceHistory, PresenceOnChannel), preload = true)
-        eventually("the preload loads every scope") { transport.calls.size == 5 }
-        DBlayer.refreshPreloads()
-        assertEquals(10, transport.calls.size)
-        assertTrue(transport.unscripted.isEmpty())
-        DBlayer.close()
-    }
-
-    @Test
     fun aPreloadScopeDerivedFromAnotherScopeLoadsOnceForEachRowOfIt() = bounded {
         DBlayer.close()
         val transport = MockTransport()

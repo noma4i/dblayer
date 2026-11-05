@@ -28,10 +28,6 @@ class SessionBridgeTest {
             throw DbException.Invalid("recorded")
         }
         override fun sessionEpoch(): ULong = 1uL
-        override suspend fun retryAll(epoch: ULong): ULong {
-            calls.add("retryAll")
-            return 7u
-        }
     }
 
     private suspend fun withRecordingSession(block: suspend (RecordingSession) -> Unit) {
@@ -63,12 +59,11 @@ class SessionBridgeTest {
         }
     }
 
-    @Test fun retryByIdAndRetryAllReachTheCore() = bounded {
+    @Test fun retryByIdReachesTheCore() = bounded {
         withRecordingSession { recording ->
             assertTrue(runCatching { Moment.retry("42", "like") }.exceptionOrNull() is DbException.Invalid)
             assertTrue(runCatching { Moment.retry("43", null) }.exceptionOrNull() is DbException.Invalid)
-            assertEquals(7uL, DBlayer.retryAll())
-            assertEquals(listOf("retry Moment 42 like", "retry Moment 43 null", "retryAll"), recording.calls)
+            assertEquals(listOf("retry Moment 42 like", "retry Moment 43 null"), recording.calls)
         }
     }
 }

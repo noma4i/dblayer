@@ -90,16 +90,19 @@ private class RefuseFirstFile(private val mock: MockTransport) : Transport by mo
     }
 }
 
-private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Model>): List<String?> {
-    val outcome = receipt.outcome()
-    assertEquals(BatchResult.Confirmed, outcome.result)
+/** The item outcomes of a batch, read from the core: the API has no item outcome yet (`holes` of the d4 report). */
+internal suspend fun <Model : DBModel> confirmedPairs(receipt: OperationReceipt<Model>): List<Pair<String, String>?> {
+    val outcome = receipt.database.batchOutcome(receipt.wire)
+    assertEquals(WireBatchResult.Confirmed, outcome.result)
     return outcome.items.map {
         when (it) {
-            is ItemOutcome.Confirmed -> it.value.id
-            is ItemOutcome.Discarded -> null
+            is WireItemOutcome.Confirmed -> it.item.value to receipt.decoder.read(it.value).id
+            is WireItemOutcome.Discarded -> null
         }
     }
 }
+
+private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Model>): List<String?> = confirmedPairs(receipt).map { it?.second }
 
 private suspend fun finishTransfers() = DBlayer.database.resumeUploads(DBlayer.database.sessionEpoch())
 

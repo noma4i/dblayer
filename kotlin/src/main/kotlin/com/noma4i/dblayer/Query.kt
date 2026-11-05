@@ -105,8 +105,6 @@ class Query<Model : DBModel>(
     suspend fun cachedRow(id: String, account: AccountScope? = null): Model? =
         admit(account).let { admission -> offCaller { admission.database.peekRow(admission.epoch, modelName, id)?.let(decoder::read) } }
 
-    suspend fun warm(account: AccountScope? = null) = onAccount(account) { database, epoch -> database.warm(epoch, json) }
-
     suspend fun edgeValues(id: String, account: AccountScope? = null): JsonObject? =
         onAccount(account) { database, epoch -> (Json.parseToJsonElement(database.edgeValues(epoch, modelName, relation.orEmpty(), params.jsonText(), listOf(id))) as JsonObject)[id] as? JsonObject }
 

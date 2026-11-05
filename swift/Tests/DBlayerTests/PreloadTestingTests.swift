@@ -59,22 +59,4 @@ extension BridgeProbeTests {
     try await DB.close()
   }
 
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func refreshPreloadsReloadsEveryPreloadScopeEvenWhenItIsFresh() async throws {
-    try await DB.close()
-    let transport = MockTransport()
-    transport.enqueue("PresenceOnline", reply: #"{"data":{"presenceOnline":[{"id":"p1","userId":"u1","room":"a"},{"id":"p2","userId":"u2","room":"b"}]}}"#)
-    transport.enqueue("PresenceOnline", reply: #"{"data":{"presenceOnline":[{"id":"p1","userId":"u1","room":"a"},{"id":"p2","userId":"u2","room":"b"}]}}"#)
-    for _ in 0..<4 {
-      transport.enqueue("PresenceHistory", reply: #"{"data":{"presenceHistory":[]}}"#)
-      transport.enqueue("PresenceOnChannel", reply: #"{"data":{"presenceOnChannel":[]}}"#)
-    }
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [PresenceOnline.self, PresenceHistory.self, PresenceOnChannel.self], preload: true)
-    await eventually("the preload loads every scope") { transport.calls.count == 5 }
-    try await DB.refreshPreloads()
-    #expect(transport.calls.count == 10)
-    #expect(transport.unscripted.isEmpty)
-    try await DB.close()
-  }
 }

@@ -32,7 +32,7 @@ A live query loads by itself when something subscribes, and an explicit refresh 
 
 Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. `advance` expires due memory rows and resets due ephemeral values at once, with no waiting. The production `open` has no clock parameter. `openTesting` takes `preload`, default false: a scope declared with `preload` sends no request on open, session, network return or the end of power saving. Pass `preload: true` to load like the production `open`. In Kotlin, `openTesting` and `TestClock.advance` need `@OptIn(DBlayerTestingApi::class)` on the calling declaration.
 
-`openTesting` takes `listening`, default true, like `open`. Pass false to hold model subscriptions until registration completes, then call `DB.setListening(true)` or `DBlayer.setListening(true)`. When declaring `uploads`, pass their `GraphQLOperation` definitions in `operations`.
+When declaring `uploads`, pass their `GraphQLOperation` definitions in `operations`.
 
 `DB.enterForegroundForTesting()` in Swift (`DBlayerTesting`) and `DBlayer.enterForegroundForTesting()` in Kotlin (`@DBlayerTestingApi`) require a database opened with `openTesting`. They send the same core event as a system foreground notice, without posting notifications or changing the process lifecycle. A scope with `refresh_on_foreground: true` reloads when it has a reader, even while fresh. No reader means no request. The call schedules the event. Await the window's result to check its effect.
 

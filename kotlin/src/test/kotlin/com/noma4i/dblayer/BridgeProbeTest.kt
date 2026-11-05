@@ -50,23 +50,6 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aWarmQueryAnswersFromMemoryAndAFinishedLiveReadLeavesNothingWarm() = bounded {
-        reopenSigned(Config(null, null, 32u), modelsJSON)
-        assertNull(Moment.recent.cached())
-        val moment = Moment.send(AccountScope.current(), text = "m").optimisticValue!!
-        Moment.recent.warm()
-        val warm = Moment.recent.cached()!!
-        assertEquals(listOf(moment.id), warm.value.map { it.id })
-        assertEquals("m", warm.value.first().text)
-        assertNull(Moment.recent.cachedRow("ghost"))
-        reopenSigned(Config(null, null, 32u), modelsJSON)
-        assertNull(Moment.recent.cached())
-        Moment.send(AccountScope.current(), text = "n").optimisticValue!!
-        assertEquals(1, withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.size)
-        eventually("a finished live read leaves nothing warm") { Moment.recent.cached() == null }
-    }
-
-    @Test
     fun updateAndDestroyReachTypedLiveRows() = bounded {
         val transport = MockTransport()
         transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
@@ -234,23 +217,6 @@ class BridgeProbeTest {
         assertEquals(1, sent.size)
         assertEquals(true, sent.first().variablesJson.contains("\"signedId\":\"sid\""))
         assertEquals(false, sent.first().variablesJson.contains("blobId"))
-    }
-
-    @Test
-    fun resumeReachesTheCoreAndReloadsAWatchedRelationWithoutAFreshWindow() = bounded {
-        val transport = MockTransport()
-        repeat(2) { transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request")) }
-        reopen(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
-        val listScope = CoroutineScope(SupervisorJob())
-        val list = ListReader(Moment.feed, listScope)
-        withTimeout(5000) { list.snapshot.first { it.phase == LoadPhase.Failed } }
-        val before = transport.calls.size
-
-        DBlayer.resume()
-
-        assertEquals(true, transport.calls.size > before)
-        listScope.cancel()
     }
 
 }

@@ -275,31 +275,6 @@ class ValueBridgeTest {
         }
     }
 
-    /** B08, R7: a delivery the reader never received leaves a gap. The reader asks for one new snapshot, drops the deltas that were already queued behind the gap, and continues from the snapshot. */
-    @Test
-    fun aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt() = bounded {
-        try {
-            openSession()
-            signIn("A")
-            val scope = AccountScope.current()
-            val reader = LossyReader()
-            val stream = DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Moment.recent.json), reader)
-            reader.bind(stream)
-            eventually("the first snapshot is settled") { reader.snapshots.get() == 1 && reader.settled() }
-
-            DBlayer.database.setOnline(false)
-            reader.dropNext()
-            for (number in 1..3) scope.send(Moment, text("m$number"))
-            eventually("the reader holds the three rows again") { reader.rows() == 3 && reader.snapshots.get() == 2 }
-
-            assertEquals("the queue of later deltas asked for more than one new snapshot", 1, reader.resyncs.get())
-            assertEquals("a missed revision gives exactly one new snapshot", 2, reader.snapshots.get())
-            DBlayer.database.cancelStream(stream)
-        } finally {
-            DBlayer.close()
-        }
-    }
-
     /** B10: the outcome of a command sent offline waits, and ends with the session of its receipt. */
     @Test
     fun theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt() = bounded {
@@ -425,39 +400,6 @@ class ValueBridgeTest {
         }
     }
 
-    /** K15 (iOS findings b and c): the first delivery of a projection is a snapshot with no list of edits, edits come with a delta, and one missed revision gives exactly one new snapshot to each of two streams. */
-    @Test
-    fun theFirstDeliveryHasNoEditsAndAMissedRevisionGivesEachStreamOneSnapshot() = bounded {
-        val screen = screens()
-        try {
-            openSession()
-            signIn("A")
-            val scope = AccountScope.current()
-            val thread = Projected(scope.stream(Moment.recent), Moment, screen)
-            thread.loaded()
-            eventually("the first snapshot arrives") { thread.projection.value.revision != null }
-            assertTrue("the first delivery carried a list of edits", thread.projection.value.lastEdits == null)
-            assertTrue("a screen that asks before the first change must read the rows, not apply nothing", thread.takeEdits() == null)
-
-            val readers = listOf(LossyReader(), LossyReader())
-            val streams = readers.map { reader ->
-                DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Moment.recent.json), reader).also { reader.bind(it) }
-            }
-            eventually("both first snapshots are settled") { readers.all { it.snapshots.get() == 1 && it.settled() } }
-
-            DBlayer.database.setOnline(false)
-            readers.forEach { it.dropNext() }
-            for (number in 1..3) scope.send(Moment, text("m$number"))
-            eventually("both readers hold the three rows again") { readers.all { it.rows() == 3 } }
-
-            assertTrue("a missed revision gives exactly one new snapshot per stream", readers.all { it.snapshots.get() == 2 && it.resyncs.get() == 1 })
-            streams.forEach { DBlayer.database.cancelStream(it) }
-        } finally {
-            screen.cancel()
-            DBlayer.close()
-        }
-    }
-
     /** K16 (B8): a reader that falls behind reads at most 256 values of a burst from the journal of the core and ends with the whole list from one new snapshot. */
     @Test
     fun aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList() = bounded {
@@ -478,7 +420,6 @@ class ValueBridgeTest {
                     val step = projection.apply(delivery, Moment)
                     projection = step.projection
                     rowCount.set(projection.rows.size)
-                    if (step.applied == Applied.Resync) stream.resync()
                     if (projection.state?.settled == true) settled.complete(Unit)
                 }
             }
@@ -500,21 +441,18 @@ class ValueBridgeTest {
     }
 }
 
-/** Reads a stream the way a platform does and can drop one value it read, so the projection meets a delta it cannot apply. */
+/** Reads a stream the way a platform does. */
 private class LossyReader : ValueSink {
     private var projection = ListProjection<Moment>()
-    private var dropping = false
     private val endings = java.util.concurrent.CopyOnWriteArrayList<StreamEnd>()
     private val reading = Any()
     val snapshots = AtomicInteger(0)
-    val resyncs = AtomicInteger(0)
     @Volatile private var stream: ULong? = null
 
     fun rows(): Int = synchronized(this) { projection.rows.size }
     fun settled(): Boolean = synchronized(this) { projection.state?.settled == true }
     fun failure(): DbException? = synchronized(this) { projection.state?.error }
     fun ended(): List<StreamEnd> = endings.toList()
-    fun dropNext() = synchronized(this) { dropping = true }
 
     fun bind(stream: ULong) {
         this.stream = stream
@@ -524,21 +462,16 @@ private class LossyReader : ValueSink {
     override fun available() {
         val stream = stream ?: return
         synchronized(reading) {
-            while (true) take(DBlayer.database.readStream(stream) ?: break, stream)
+            while (true) take(DBlayer.database.readStream(stream) ?: break)
         }
     }
 
-    private fun take(delivery: StreamDelivery, stream: ULong) {
-        val ask = synchronized(this) {
-            if (dropping) { dropping = false; return@synchronized false }
+    private fun take(delivery: StreamDelivery) {
+        synchronized(this) {
             if (delivery.value is StreamValue.Snapshot) snapshots.incrementAndGet()
             (delivery.value as? StreamValue.Ended)?.let { endings.add(it.reason) }
-            val step = projection.apply(delivery, Moment)
-            projection = step.projection
-            if (step.applied == Applied.Resync) resyncs.incrementAndGet()
-            step.applied == Applied.Resync
+            projection = projection.apply(delivery, Moment).projection
         }
-        if (ask) DBlayer.database.resyncStream(stream)
     }
 }
 

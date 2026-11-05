@@ -66,7 +66,6 @@ extension BridgeProbeTests {
       switchable.target = second
       try await DB.openTesting(transport: switchable, modelsJSON: modelsJSON)
       try DB.database.registerOperations(defsJson: Self.operations)
-      try DB.setListening(true)
 
       let next = Projected<User>(try DB.account().stream(User.profile))
       try await next.loaded()

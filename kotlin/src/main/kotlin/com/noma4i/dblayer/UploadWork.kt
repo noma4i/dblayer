@@ -141,7 +141,6 @@ private fun abandonUploadRound(round: RunningUploadRound) {
 private suspend fun runUploadRound(round: RunningUploadRound) {
     while (true) {
         val step = try {
-            round.database.resumeUploads(round.epoch)
             round.database.roundNext(round.epoch, round.owner)
         } catch (cancelled: CancellationException) {
             throw cancelled

@@ -102,10 +102,26 @@ Make a new `AccountScope` after each sign-in and build the screens again for it.
 
 ## Journal of a stream
 
-Read the state of a projection instead of waiting on the raw stream: `Projected.loaded()` returns with the settled state of the first load. `ValueStream.loaded()` is gone.
-Wait for your own write with `Projected.shown(revision)`, with the revision from its receipt, instead of polling the rows.
+Read the state of a projection instead of waiting on the raw stream. `loaded()` and `shown(revision)` are gone (see API v2).
 Handle `ModelEventItem.ready` and `ModelEventItem.lost(first, last)` in an events loop. `missed(count)` is gone: the count is `last - first + 1`.
 A test or a screen that must hear every event after a moment waits for `ready` first.
 Give each caller of a shared load its own `beginLoad()` request and cancel it when the caller leaves. The request stops only after every caller cancelled.
-Pass nothing to `DB.resume` and `DBlayer.resume`: they resume the session that is signed in.
 A custom `ValueSink` implements `available()` and reads the stream with `readStream` until it returns nothing.
+
+## API v2
+
+The platform wrappers no longer expose these calls. Each one has an outcome in the core or needs no call.
+
+| Removed call | What the app does instead |
+| --- | --- |
+| `DB.resume()` / `DBlayer.resume()` | Nothing. The core reloads stale relations on foreground, on network return and after sign-in. |
+| `flush` | Nothing. The queue of writes is sent by the core. Read the outcome of each write from its receipt. |
+| `resumeUploads` | Nothing. The core resumes uploads. |
+| `Query.warm()` | Nothing. Reads and streams fill the memory themselves. |
+| `ValueStream.reach(revision)` / `Projected.shown(revision)` | Read the outcome of the receipt of the write. |
+| `ValueStream.resync()` | Nothing. A projection that meets a delta it cannot apply waits for the next snapshot. |
+| `DB.refreshPreloads()` | Nothing. Declare `preload` scopes in the `.dbl` file. The core loads them. |
+| `DB.retryAll()` | Nothing. The queue repeats by itself. Use `retry(action)` for one record. |
+| `OperationReceipt.outcome()` (batch outcome) | Read the outcome of the receipt of each item. |
+| `Projected.loaded()` | Read the result of `begin_load()` for the relation. |
+| `DB.setListening(_:)` and the `listening` argument of `open` | Nothing. The subscription of the server lives only while a reader wants it. |

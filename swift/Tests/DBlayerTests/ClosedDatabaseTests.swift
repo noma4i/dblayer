@@ -15,7 +15,6 @@ extension BridgeProbeTests {
     #expect(await refused { _ = try DB.subscriptionCensus() })
     #expect(await refused { _ = try DB.account() })
     #expect(await refused { try await row.destroy() })
-    #expect(await refused { try await Moment.recent.warm() })
     #expect(await refused { _ = try await Moment.recent.current() })
   }
 }

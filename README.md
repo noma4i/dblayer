@@ -13,7 +13,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 ## Highlights
 
 - **Always live.** Every read of a model is a stream: a snapshot, then keyed deltas. There is no separate "observe" call to remember.
-- **Refresh on entry.** A stream loads a stale relation on connect while keeping cached rows visible. `loaded()` waits for that load without starting another one.
+- **Refresh on entry.** A stream loads a stale relation on connect while keeping cached rows visible. `beginLoad()` gives the result of that load without starting another one.
 - **Local first.** Data lives in SQLite. Reads never wait for the network, and writes are applied locally at once.
 - Repeat `local` in a create operation to fill attributes from different singleton models.
 - Filter subscription applications with value lists or `not`. Model declarations share one incoming stream.
