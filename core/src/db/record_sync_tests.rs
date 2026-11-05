@@ -140,7 +140,7 @@ fn discard_rolls_back_a_failed_create_and_its_queued_followers() {
     db.update(&db.admit().unwrap(), "moments", &row.id, obj(json!({"text": "edited"}))).unwrap();
     rejected(&db, db.outbox().unwrap()[0].operation.id.0);
     assert_eq!(state_of(&db, "moments", row.id.as_str()), SyncState::Failed);
-    assert_eq!(db.discard(&db.admit().unwrap(), "moments", &row.id, None).unwrap(), 1);
+    assert_eq!(db.discard(&db.admit().unwrap(), "moments", &row.id, None).unwrap(), 2);
     assert!(db.find("moments", &row.id).unwrap().is_none());
     assert!(db.outbox().unwrap().is_empty());
     assert_eq!(state_of(&db, "moments", row.id.as_str()), SyncState::Synced);

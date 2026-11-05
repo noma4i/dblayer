@@ -15,7 +15,12 @@ fn samples(mut spec: ModelSpec) -> Db {
     Db::open_in_memory(vec![spec], None).unwrap()
 }
 
-async fn load_samples(db: &Db, row: Value) { put(db, "samples", row); }
+/// A page of the server lands the way the codec of Windows gives it to the Store: text fields that parse JSON are decoded first.
+async fn load_samples(db: &Db, row: Value) {
+    let mut patch = db.spec("samples").unwrap().patch(&obj(row));
+    db.shared.store.decode_values("samples", &mut patch, crate::schema::read_path).unwrap();
+    put(db, "samples", Value::Object(patch));
+}
 
 #[test]
 fn edge_fields_reject_json_parsing_with_an_explicit_error() {

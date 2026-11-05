@@ -85,14 +85,14 @@ fn inv_rollback_02_rolling_back_every_update_restores_the_original_in_either_ord
 }
 
 #[test]
-fn rolling_back_a_create_with_an_explicit_id_removes_the_row_and_its_queued_edits() {
+fn rolling_back_a_create_with_an_explicit_id_removes_the_row_and_leaves_its_queued_edits_to_the_outbox() {
     let db = booted();
     db.create(&db.admit().unwrap(), "moments", obj(json!({"id": "m9", "userId": "u1", "text": "new"}))).unwrap();
     let create = only_seq(&db);
     db.update(&db.admit().unwrap(), "moments", &rid("m9"), obj(json!({"text": "edited"}))).unwrap();
     db.roll_back(&db.admit().unwrap(), create).unwrap();
     assert!(db.find("moments", &rid("m9")).unwrap().is_none());
-    assert!(db.outbox().unwrap().is_empty());
+    assert_eq!(db.outbox().unwrap().len(), 1);
 }
 
 #[test]

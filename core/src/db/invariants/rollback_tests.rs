@@ -101,9 +101,9 @@ fn inv_rollback_04_rolling_back_a_create_removes_the_row_with_its_edits_file_and
         db.roll_back(&db.admit().unwrap(), create).unwrap();
         assert!(db.find("moments", &id).unwrap().is_none(), "explicit {explicit}");
         assert_eq!(db.read("moments", &id, "media").unwrap(), None, "explicit {explicit}");
-        assert!(db.outbox().unwrap().is_empty(), "explicit {explicit}");
+        assert_eq!(db.outbox().unwrap().len(), 1, "the edit of the row stays queued, the owner Outbox runs it next: explicit {explicit}");
         assert!(db.shared.store.scope_members("moments", "feed").unwrap().is_empty(), "explicit {explicit}");
-        assert_eq!(db.sync_info("moments", &id).unwrap().state, SyncState::Synced, "explicit {explicit}");
+        assert_eq!(db.sync_info("moments", &id).unwrap().state, SyncState::Pending, "the queued edit still shows: explicit {explicit}");
     }
 }
 
