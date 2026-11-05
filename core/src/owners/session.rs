@@ -226,6 +226,8 @@ pub enum SessionInput {
     Rejected(Rejected),
     Tick(Time),
     Online(Online),
+    /// The first online value that Network addresses to Session for `epoch`; one of an ended epoch is dropped.
+    Snapshot { epoch: Epoch, online: bool },
     Published(Published),
     EpochEnded(EpochEnded),
     Idle,
@@ -248,6 +250,8 @@ pub struct SessionState {
     next_attempt: AttemptId,
     next_secret: SecretOpId,
     restore_ready: bool,
+    /// The first epoch whose `Restored` and `RestoreReady` count: an ended epoch raises it.
+    restore_floor: Epoch,
     adopt: bool,
     held: Option<SessionPhase>,
     reported: (u64, RetryPhase),
@@ -350,7 +354,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -432,6 +436,7 @@ impl SessionState {
                 PublishedState::Ending | PublishedState::Closing => return,
                 _ => {}
             }
+            if self.awaits_publication() { return; }
             let Some(queued) = self.queue.pop_front() else { return };
             self.begin(queued, fx);
         }
@@ -540,6 +545,11 @@ impl SessionState {
         if let SessionPhase::PendingHeld { pending } | SessionPhase::Calling { pending, .. } = &mut self.phase { pending.epoch = epoch; }
     }
 
+    fn current(&self, epoch: Epoch) -> bool { epoch >= self.epoch && epoch >= self.restore_floor }
+
+    /// A signed-in call waits for the publication that confirms its credential.
+    fn awaits_publication(&self) -> bool { self.after_publish.is_some() }
+
     fn queue_mutate(&mut self, queued: Queued) {
         let Queued::Mutate { req_id, .. } = &queued else { return };
         if !self.queue.iter().any(|entry| matches!(entry, Queued::Mutate { req_id: seen, .. } if seen == req_id)) { self.queue.push_back(queued); }
@@ -567,6 +577,8 @@ impl SessionState {
                 self.phase = phase;
             }
             SessionInput::Online(Online(online)) => self.online_changed(phase, online, fx),
+            SessionInput::Snapshot { epoch, online } if self.current(epoch) => self.online_changed(phase, online, fx),
+            SessionInput::Snapshot { .. } => self.phase = phase,
             SessionInput::Published(Published { epoch, identity, state, .. }) => {
                 self.epoch = epoch;
                 self.published = state;
@@ -578,16 +590,16 @@ impl SessionState {
             SessionInput::Restored { epoch, pending, .. } => {
                 self.phase = phase;
                 fx.push(SessionEffect::RestoreClassified { epoch });
-                if let (SessionPhase::Idle, Some(pending)) = (&self.phase, pending) {
+                if let (SessionPhase::Idle, Some(pending), true) = (&self.phase, pending, self.current(epoch)) {
                     if pending.owner.is_none() { self.restored_direct = Some(PendingCall { epoch, ..pending }); }
                 }
                 if self.restore_ready && matches!(self.phase, SessionPhase::Idle) {
                     if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, fx); }
                 }
             }
-            SessionInput::RestoreReady { .. } => {
+            SessionInput::RestoreReady { epoch } => {
                 self.phase = phase;
-                self.restore_ready = true;
+                self.restore_ready = self.restore_ready || self.current(epoch);
                 if matches!(self.phase, SessionPhase::Idle) {
                     if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, fx); }
                 }
@@ -600,6 +612,8 @@ impl SessionState {
             }
             SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
                 self.restored_direct = None;
+                self.restore_ready = false;
+                self.restore_floor = epoch + 1;
                 if is_ended(cause) {
                     if let Some((id, _)) = self.after_publish.take() { reply(fx, id, Err(SessionError::Interrupted)); }
                     self.held = None;
@@ -743,6 +757,7 @@ impl SessionState {
         match self.published {
             PublishedState::EndingFailed | PublishedState::StorageFailed => reply(fx, id, Err(SessionError::Storage("the session could not be saved".into()))),
             PublishedState::Ending => self.queue.push_back(Queued::Call { operation, body, reply: id }),
+            _ if self.awaits_publication() => self.queue.push_back(Queued::Call { operation, body, reply: id }),
             _ => self.begin(Queued::Call { operation, body, reply: id }, fx),
         }
     }
@@ -772,6 +787,10 @@ impl SessionState {
             (SessionPhase::Idle, SessionInput::SessionCall { operation, body, reply: id }) => self.idle_call(operation, body, id, fx),
             (SessionPhase::Idle, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
                 self.phase = SessionPhase::Idle;
+                if self.awaits_publication() {
+                    self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
+                    return;
+                }
                 self.begin(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose }, fx);
             }
             (SessionPhase::SecretMismatch, SessionInput::SessionCall { operation, body, reply: id }) => self.held_call(SessionPhase::SecretMismatch, operation, body, id, SessionError::StateLost, fx),
@@ -822,10 +841,15 @@ impl SessionState {
                 }
             },
             (SessionPhase::ClearingSecret { call, reason, op, after }, SessionInput::SecretCleared { secret_op_id, .. }) if secret_op_id == op => {
-                if let (Some(call), Some(reason)) = (call, reason) { refuse(fx, call, reason); }
                 match after {
-                    AfterClear::Idle => self.idle(fx),
-                    AfterClear::Drain => self.drained(fx),
+                    AfterClear::Idle => {
+                        if let (Some(call), Some(reason)) = (call, reason) { refuse(fx, call, reason); }
+                        self.idle(fx);
+                    }
+                    AfterClear::Drain => {
+                        if let Some(call) = call { refuse(fx, call, SessionError::Closed); }
+                        self.drained(fx);
+                    }
                 }
             }
             (phase @ (SessionPhase::Generating { .. } | SessionPhase::Storing { .. } | SessionPhase::ClearingSecret { .. }), SessionInput::SessionCall { operation, body, reply: id }) => {

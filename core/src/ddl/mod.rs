@@ -415,7 +415,8 @@ const CORE_STATEMENTS: [&str; 44] = [
   owner_operation_id INTEGER,
   owner_item_id TEXT,
   owner_step TEXT,
-  purpose INTEGER NOT NULL CHECK (purpose IN (0, 1))
+  purpose INTEGER NOT NULL CHECK (purpose IN (0, 1)),
+  req_id INTEGER NOT NULL
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS encrypted_answer (
   request_id INTEGER PRIMARY KEY,

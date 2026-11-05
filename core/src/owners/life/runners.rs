@@ -221,7 +221,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                     }
                 }
                 match &self.client {
-                    Some(client) => match super::session_runner::SessionRunner::stored(client) {
+                    Some(client) => match super::session_runner::SessionRunner::rows(client) {
                         Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending, answers: stored.answers, pending_lost: stored.dropped_pending }),
                         Err(error) => wiring.restore_failed_for(Peer::Session, error.to_string()),
                     },
@@ -271,7 +271,7 @@ impl EffectRunner<Network> for NetworkRunner {
                     Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Online(Online(online))),
                     Peer::Outbox => wiring.to_outbox_at(stamp, OutboxInput::Online(Online(online))),
                     Peer::Transfer => wiring.to_transfer_at(stamp, TransferInput::Online(Online(online))),
-                    Peer::Session => wiring.to_session_at(stamp, SessionInput::Online(Online(online))),
+                    Peer::Session => wiring.to_session_at(stamp, SessionInput::Snapshot { epoch, online }),
                     _ => {}
                 }
                 wiring.tell_network(&[owner], NetworkEvent::Online { online, epoch: Some(epoch) });
@@ -406,6 +406,7 @@ fn row_op(op: &StoreOp) -> Option<crate::store::RowOp> {
             body: pending.body.clone(),
             owner: pending.owner.clone(),
             purpose: if pending.purpose == 0 { crate::transport::NetworkPurpose::Standard } else { crate::transport::NetworkPurpose::Transfer },
+            req_id: pending.request_id,
         }),
         StoreOp::RemovePending => crate::store::RowOp::RemovePending,
         StoreOp::EraseSession => crate::store::RowOp::RemoveSession,

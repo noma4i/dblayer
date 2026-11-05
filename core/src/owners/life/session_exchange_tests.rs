@@ -18,6 +18,12 @@ const LIMIT: Duration = Duration::from_secs(10);
 const OTP: &str = "/api/auth/otp";
 
 fn config() -> EncryptedConfig {
+    let mut config = config_plain();
+    config.endpoints.session_operations.insert("first_login".into(), crate::transport::EncryptedSessionOperation { path: "/api/auth/social".into(), class: crate::transport::EncryptedOperationClass::Login });
+    config
+}
+
+fn config_plain() -> EncryptedConfig {
     EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() }
 }
 
@@ -53,13 +59,26 @@ async fn answer(waiter: crate::runtime::Waiter<LifeReply>) -> LifeReply {
     }
 }
 
-/// The author of the old stack: it repeats a request with the same `req_id` after `Dropped` or a temporary error, as Outbox does.
+static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 40);
+
+/// One `Mutate` of an author under its own id; the outcome comes through the sink of the author.
+async fn attempt(life: &crate::owners::life::Life, req_id: u64, body: String) -> LifeReply {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let sender = std::sync::Mutex::new(Some(sender));
+    life.on_mutate_answer(1 << 32, move |_, outcome| {
+        if let Some(sender) = sender.lock().unwrap().take() { let _ = sender.send(outcome); }
+    });
+    life.mutate(1 << 32, None, req_id, OTP.into(), body, 0);
+    LifeReply::Mutated(tokio::time::timeout(LIMIT, receiver).await.expect("the owner answered within 10 s").unwrap())
+}
+
+/// The author repeats a request with the same `req_id` after `Dropped` or a temporary error, as Outbox does.
 async fn mutate_retrying(life: &crate::owners::life::Life, body: String) -> LifeReply {
     use crate::owners::contract::ErrorClass;
     use crate::owners::session::AuthorOutcome;
-    let req_id = life.legacy_request();
+    let req_id = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     for _ in 0..20 {
-        match answer(life.mutate_wait(req_id, None, OTP.into(), body.clone(), 0)).await {
+        match attempt(life, req_id, body.clone()).await {
             LifeReply::Mutated(AuthorOutcome::Dropped | AuthorOutcome::Error { class: ErrorClass::Network | ErrorClass::Server, .. }) => continue,
             other => return other,
         }
@@ -90,6 +109,18 @@ async fn sign_in_saves_the_credential_before_the_request_and_publishes_its_ident
     let published = life.published();
     assert_eq!(published.identity, crate::store::identity_of(&session.credential_digest));
     assert!(published.epoch > before.epoch, "the sign-in started a new epoch");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_login_class_call_with_a_session_fails_without_a_request() {
+    let world = World::new();
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let (client, _life) = world.open(&db).await;
+    sign_in(&client).await;
+    let sent = world.server.seen().len();
+    let error = client.session_call_in_tests("first_login", json!({ "provider": "google", "idToken": "t" })).await.unwrap_err();
+    assert!(matches!(error, TransportError::Session { code: crate::transport::SessionCode::AlreadyAuthenticated, .. }), "{error:?}");
+    assert_eq!(world.server.seen().len(), sent);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -161,7 +192,7 @@ async fn a_pending_request_stored_before_the_close_is_sent_again_when_the_owners
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
         world.server.drop_next_request();
-        let waiter = life.mutate_wait(life.legacy_request(), None, OTP.into(), json!({}).to_string(), 0);
+        let waiter = life.mutate_wait(None, OTP.into(), json!({}).to_string(), 0);
         let started = std::time::Instant::now();
         let pending = loop {
             if let (_, Some(pending)) = rows(&db) { break pending; }
@@ -200,7 +231,7 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
     {
         let db = Db::open(&path, Vec::new(), None).unwrap();
         let digest = rows(&db).0.unwrap().credential_digest;
-        let pending = state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard };
+        let pending = state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 2 };
         let inner = db.shared.store.lock();
         state::store_pending(&inner.connection, &pending).unwrap();
     }
@@ -224,12 +255,75 @@ async fn an_unreadable_stored_request_fails_the_open_with_a_storage_error() {
     let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
     {
         let inner = db.shared.store.lock();
-        inner.connection.execute("INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose) VALUES (1, 'd', 'r', 'k', 1, '/p', 'not json', 0)", []).unwrap();
+        inner.connection.execute("INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'r', 'k', 1, '/p', 'not json', 0, 1)", []).unwrap();
     }
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
     let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), transfer: None, read_operations: None };
     let error = super::Life::start(ports).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "the read error reaches the caller: {error:?}");
+}
+
+async fn signed_in_file(world: &World, path: &std::path::Path) {
+    let db = Db::open(path, Vec::new(), None).unwrap();
+    let (client, life) = world.open(&db).await;
+    sign_in(&client).await;
+    let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pending_dropped_by_a_format_change_blocks_new_requests_until_the_reset() {
+    let world = World::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    signed_in_file(&world, &path).await;
+    let db = Db::open(&path, Vec::new(), None).unwrap();
+    db.shared.store.lock().connection.execute("INSERT INTO restore_failed (source_table, key, reason, columns) VALUES ('encrypted_pending', 'k', 'missing_column', '{}')", []).unwrap();
+    let sent = world.server.seen().len();
+    let (_client, life) = world.open(&db).await;
+    let reply = attempt(&life, 1 << 41, json!({}).to_string()).await;
+    assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Error { error: SessionError::StateLost, .. })), "{reply:?}");
+    assert_eq!(world.server.seen().len(), sent, "no request left");
+    let _ = answer(life.session_reset()).await;
+    let left: i64 = db.shared.store.lock().connection.query_row("SELECT COUNT(*) FROM restore_failed WHERE source_table = 'encrypted_pending'", [], |row| row.get(0)).unwrap();
+    assert_eq!(left, 0, "the reset ends the block");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_negative_stored_sequence_fails_the_open() {
+    let world = World::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    signed_in_file(&world, &path).await;
+    let db = Db::open(&path, Vec::new(), None).unwrap();
+    db.shared.store.lock().connection.execute("UPDATE encrypted_session SET sequence = -1", []).unwrap();
+    let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
+    let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
+    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), transfer: None };
+    let error = super::Life::start(ports).err().expect("the open fails");
+    assert!(matches!(error, super::LifeError::Storage(_)), "{error:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_pending_of_an_author_is_restored_with_its_request_id_and_owner() {
+    let world = World::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    let (req_id, owner) = (1 << 41, Some(crate::transport::RequestOwner::Operation { seq: 7 }));
+    {
+        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let (client, life) = world.open(&db).await;
+        sign_in(&client).await;
+        world.server.drop_next_request();
+        life.on_mutate_answer(1 << 32, |_, _| {});
+        life.mutate(1 << 32, owner.clone(), req_id, OTP.into(), json!({}).to_string(), 0);
+        until("the pending request was never stored", || rows(&db).1.is_some()).await;
+        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+    }
+    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let client = EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap();
+    let restored = super::session_runner::SessionRunner::stored(&client).unwrap();
+    let pending = restored.pending.expect("the pending is restored");
+    assert_eq!((pending.request_id, pending.owner), (req_id, owner));
 }
 
 use crate::owners::session::{AuthorOutcome, SessionError};
@@ -243,24 +337,24 @@ struct ProbeSlot {
     fail_get: std::sync::atomic::AtomicBool,
     db: std::sync::Mutex<Option<Db>>,
     session_at_clear: std::sync::Mutex<Vec<bool>>,
-    threads: std::sync::Mutex<Vec<Option<String>>>,
+    threads: std::sync::Mutex<Vec<(&'static str, Option<String>)>>,
 }
 
 impl CredentialSlot for ProbeSlot {
     fn get(&self) -> Result<Option<String>, TransportError> {
-        self.threads.lock().unwrap().push(std::thread::current().name().map(str::to_string));
+        self.threads.lock().unwrap().push(("get", std::thread::current().name().map(str::to_string)));
         if self.fail_get.load(std::sync::atomic::Ordering::SeqCst) { return Err(TransportError::Network("keychain locked".into())); }
         self.memory.get()
     }
 
     fn set(&self, credential: &str) -> Result<(), TransportError> {
-        self.threads.lock().unwrap().push(std::thread::current().name().map(str::to_string));
+        self.threads.lock().unwrap().push(("set", std::thread::current().name().map(str::to_string)));
         if self.fail_set.load(std::sync::atomic::Ordering::SeqCst) { return Err(TransportError::Network("keychain full".into())); }
         self.memory.set(credential)
     }
 
     fn clear(&self) -> Result<(), TransportError> {
-        self.threads.lock().unwrap().push(std::thread::current().name().map(str::to_string));
+        self.threads.lock().unwrap().push(("clear", std::thread::current().name().map(str::to_string)));
         if let Some(db) = self.db.lock().unwrap().as_ref() { self.session_at_clear.lock().unwrap().push(rows(db).0.is_some()); }
         self.memory.clear()
     }
@@ -294,7 +388,7 @@ async fn the_credential_store_is_called_off_the_threads_of_the_owners() {
     let threads = slot.threads.lock().unwrap().clone();
     assert!(threads.len() >= 3, "the open read, the store and the clear: {threads:?}");
     let owners = ["lifecycle", "store", "network", "calls", "session", "outbox", "transfer"];
-    assert!(threads.iter().all(|name| name.as_deref().is_none_or(|name| !owners.contains(&name))), "{threads:?}");
+    assert!(threads.iter().all(|(_, name)| name.as_deref().is_none_or(|name| !owners.contains(&name))), "{threads:?}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

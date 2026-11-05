@@ -362,7 +362,6 @@ pub struct Life {
     /// The database has a session client: the rule of the calls reads `Published`. A database without one hands the calls to the owners.
     with_session: bool,
     alive: Arc<std::sync::atomic::AtomicUsize>,
-    legacy_requests: std::sync::atomic::AtomicU64,
 }
 
 /// Installed owners that send `Started` and `RestoreClassified` to Lifecycle.
@@ -479,7 +478,7 @@ impl Life {
         drop(guard);
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
-        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), alive, legacy_requests: std::sync::atomic::AtomicU64::new(LEGACY_REQUESTS) })
+        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), alive })
     }
 
     /// Stops the owner threads and joins them. The caller is not an owner thread. A second call does nothing.
@@ -580,20 +579,17 @@ impl Life {
         self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, epoch: self.published().epoch, path, body, purpose });
     }
 
-    /// The request id of a caller of the old stack: it starts high, apart from the ids of Outbox and Transfer.
-    pub fn legacy_request(&self) -> RequestId { self.legacy_requests.fetch_add(1, Ordering::SeqCst) }
-
-    /// One attempt of a `Mutate` of the old stack: the outcome comes to the waiter. A repeat after `Dropped` or a temporary error is the same `req_id`.
-    pub fn mutate_wait(&self, req_id: RequestId, owner: Option<super::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
+    /// One `Mutate` of the old stack: the outcome comes to the waiter, a repeat is the business of its caller.
+    pub fn mutate_wait(&self, owner: Option<super::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        let author = LEGACY_AUTHORS + req_id;
+        let author = LEGACY_AUTHORS + waiter.id().raw();
         let (wiring, id) = (self.wiring.clone(), waiter.id());
         self.wiring.on_mutate_answer(author, move |_, outcome| {
             wiring.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).remove(&author);
             wiring.outcomes.settle(id, LifeReply::Mutated(outcome));
         });
-        self.mutate(author, owner, req_id, path, body, purpose);
+        self.mutate(author, owner, LEGACY_REQUESTS + waiter.id().raw(), path, body, purpose);
         waiter
     }
 

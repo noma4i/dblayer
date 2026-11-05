@@ -212,6 +212,11 @@ impl EncryptedClient {
         declared.chain(std::iter::once(crate::owners::session::SessionOperation { name: "logout".into(), path: self.config.endpoints.logout.clone(), class: OperationClass::Logout })).collect()
     }
 
+    /// A stored request could not be carried over a format change: Session stays blocked until `session_reset`.
+    pub(crate) fn dropped_pending(&self) -> Result<bool, TransportError> {
+        self.read_connection(|connection| connection.query_row("SELECT EXISTS (SELECT 1 FROM restore_failed WHERE source_table = 'encrypted_pending')", [], |row| row.get(0)))
+    }
+
     pub(crate) fn stored_answers(&self) -> Result<std::collections::BTreeMap<u64, state::StoredAnswer>, TransportError> { self.read_connection(state::answers) }
 
     pub(crate) fn stored_session(&self) -> Result<Option<state::Session>, TransportError> { self.read_connection(state::session) }
@@ -267,21 +272,14 @@ impl EncryptedClient {
         self.validate(admitted)?;
         check_path(path)?;
         let life = self.life.get().and_then(std::sync::Weak::upgrade).ok_or_else(|| TransportError::Interrupted("the database closed".into()))?;
-        let req_id = life.legacy_request();
-        let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
-        loop {
-            self.online.online().await;
-            let waiter = life.mutate_wait(req_id, owner.clone(), path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
-            let failure = match admitted.run(async { waiter.wait().await }).await? {
-                crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
-                    crate::owners::session::AuthorOutcome::Response(text) => return Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
-                    crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Permanent, error } => return Err(session_failure(error)),
-                    crate::owners::session::AuthorOutcome::Error { error, .. } => session_failure(error),
-                    crate::owners::session::AuthorOutcome::Dropped => TransportError::Network("the answer was not received".into()),
-                },
-                _ => return Err(TransportError::Interrupted("the session ended while its answer was pending".into())),
-            };
-            retry.failed(failure).await?;
+        let waiter = life.mutate_wait(owner, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
+        match admitted.run(async { waiter.wait().await }).await? {
+            crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
+                crate::owners::session::AuthorOutcome::Response(text) => Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
+                crate::owners::session::AuthorOutcome::Error { error, .. } => Err(session_failure(error)),
+                crate::owners::session::AuthorOutcome::Dropped => Err(TransportError::Network("the answer was not received".into())),
+            },
+            _ => Err(TransportError::Interrupted("the session ended while its answer was pending".into())),
         }
     }
 

@@ -304,10 +304,10 @@ fn store_prop_boot_any_layout() {
             0,
         ),
         (
-            "pending with an extra column and a row",
+            "pending with an extra column, a row and no req_id: the row is dropped",
             "DROP TABLE encrypted_pending; CREATE TABLE encrypted_pending (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, request_id TEXT NOT NULL, response_key TEXT NOT NULL, sequence INTEGER NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, owner_kind TEXT, owner_operation_id INTEGER, owner_item_id TEXT, owner_step TEXT, purpose INTEGER NOT NULL, upload INTEGER NOT NULL DEFAULT 0) STRICT; INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose) VALUES (1, 'd', 'r', 'k', 5, '/p', '{}', 0);",
             4,
-            1,
+            0,
         ),
         (
             "session with an extra column",
@@ -409,7 +409,7 @@ fn store_prop_boot_keys() {
     let path = directory.path().join("a.sqlite");
     {
         let (store, _) = reopen(&path, &[messages_spec()], None);
-        exec(&store, "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose) VALUES (1, 'd', 'req-1', 'k', 5, '/p', '{}', 0);\
+        exec(&store, "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'req-1', 'k', 5, '/p', '{}', 0, 3);\
                       INSERT INTO manifest (key, value) VALUES ('saved_epoch', '9'), ('saved_generation', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value;\
                       UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
     }

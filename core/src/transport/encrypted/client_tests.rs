@@ -57,7 +57,7 @@ fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
                 state::store_pending(&stored.connection, &state::Pending {
                     credential_digest: "digest".into(), request_id: "request".into(), response_key: "response".into(), sequence: 1,
                     path: "/graphql".into(), body: if case == "corrupt" { "{".into() } else { "{}".into() },
-                    owner: Some(crate::transport::RequestOwner::Transfer { operation_id: 7, item_id: "item".into(), step: crate::upload::UploadStage::Put }), purpose: crate::transport::NetworkPurpose::Transfer,
+                    owner: Some(crate::transport::RequestOwner::Transfer { operation_id: 7, item_id: "item".into(), step: crate::upload::UploadStage::Put }), purpose: crate::transport::NetworkPurpose::Transfer, req_id: 1,
                 }).unwrap();
                 if case == "partial_owner" { stored.connection.execute_batch("UPDATE encrypted_pending SET owner_step = NULL").unwrap(); }
             }

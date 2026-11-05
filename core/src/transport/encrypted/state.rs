@@ -16,6 +16,8 @@ pub struct Pending {
     pub body: String,
     pub owner: Option<crate::transport::RequestOwner>,
     pub purpose: crate::transport::NetworkPurpose,
+    /// The request id of the author (or of the call) that the owner Session keeps for the pair, restored as stored.
+    pub req_id: u64,
 }
 
 /// The terminal outcome of a `Mutate` that the server answered: it stays until its author took it.
@@ -60,7 +62,7 @@ pub(crate) fn restore_session(connection: &Connection, session: &Session) -> rus
 
 pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
     connection
-        .query_row("SELECT credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose FROM encrypted_pending WHERE id = 1", [], |row| {
+        .query_row("SELECT credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose, req_id FROM encrypted_pending WHERE id = 1", [], |row| {
             Ok(Pending {
                 credential_digest: row.get(0)?,
                 request_id: row.get(1)?,
@@ -80,6 +82,7 @@ pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
                     _ => return Err(rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Null, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "incomplete pending request owner")))),
                 },
                 purpose: match row.get::<_, i64>(10)? { 0 => crate::transport::NetworkPurpose::Standard, 1 => crate::transport::NetworkPurpose::Transfer, value => return Err(rusqlite::Error::IntegralValueOutOfRange(10, value)) },
+                req_id: u64::try_from(row.get::<_, i64>(11)?).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, -1))?,
             })
         })
         .optional()
@@ -93,8 +96,8 @@ pub fn store_pending(connection: &Connection, pending: &Pending) -> rusqlite::Re
         None => (None, None, None, None),
     };
     connection.execute(
-        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body, kind, operation_id, item_id, step, match pending.purpose { crate::transport::NetworkPurpose::Standard => 0, crate::transport::NetworkPurpose::Transfer => 1 }],
+        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose, req_id) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body, kind, operation_id, item_id, step, match pending.purpose { crate::transport::NetworkPurpose::Standard => 0, crate::transport::NetworkPurpose::Transfer => 1 }, i64::try_from(pending.req_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, i64::MAX))?],
     )?;
     Ok(())
 }

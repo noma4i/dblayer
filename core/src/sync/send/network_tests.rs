@@ -107,7 +107,7 @@ fn forty_unreached_attempts_keep_the_edit_failed_and_own_pending() { crate::test
     queue_update(&rig, "new");
     let seq = rig.db.outbox().unwrap()[0].operation.id.0;
     rig.db.shared.store.lock().connection.execute(
-        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, purpose) VALUES (1, 'digest', 'request', 'key', 1, '/graphql', '{}', 'operation', ?1, 0)",
+        "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, purpose, req_id) VALUES (1, 'digest', 'request', 'key', 1, '/graphql', '{}', 'operation', ?1, 0, 1)",
         [seq],
     ).unwrap();
     exhaust(&rig, "UpdateMoment").await;

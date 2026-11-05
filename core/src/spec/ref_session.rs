@@ -142,6 +142,7 @@ pub enum Input {
     Rejected(BatchId, Reason),
     Tick,
     Online(bool),
+    Snapshot { epoch: u64, online: bool },
     Published { epoch: u64, identity: Option<Digest>, state: PubState },
     EpochEnded { epoch: u64, cause: EndCause },
     Closing,
@@ -257,7 +258,8 @@ pub struct Session {
     next_batch: BatchId,
     next_attempt: AttemptId,
     next_secret: SecretOpId,
-    restore_ready: bool,
+    pub restore_ready: bool,
+    restore_floor: u64,
     adopt: bool,
     held: Option<State>,
     reported: (u64, RetryPhase),
@@ -287,7 +289,7 @@ fn is_ended(cause: EndCause) -> bool { cause != EndCause::Other }
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: Option<bool>) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     fn batch(&mut self) -> BatchId {
@@ -371,6 +373,7 @@ impl Session {
                 PubState::Ending | PubState::Closing => return,
                 _ => {}
             }
+            if self.after_publish.is_some() { return; }
             let Some(queued) = self.queue.pop_front() else { return };
             self.begin(queued, out);
         }
@@ -513,6 +516,8 @@ impl Session {
                 self.state = state;
             }
             Input::Online(online) => self.online_changed(state, online, out),
+            Input::Snapshot { epoch, online } if self.current(epoch) => self.online_changed(state, online, out),
+            Input::Snapshot { .. } => self.state = state,
             Input::Published { epoch, identity, state: published } => {
                 self.epoch = epoch;
                 self.pub_state = published;
@@ -524,16 +529,16 @@ impl Session {
             Input::Restored { epoch, pending } => {
                 self.state = state;
                 out.effects.push(Effect::RestoreClassified { epoch });
-                if let (State::Idle, Some(pending)) = (&self.state, pending) {
+                if let (State::Idle, Some(pending), true) = (&self.state, pending, self.current(epoch)) {
                     if pending.owner.is_none() { self.restored_direct = Some(Pending { epoch, ..pending }); }
                 }
                 if self.restore_ready && matches!(self.state, State::Idle) {
                     if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, out); }
                 }
             }
-            Input::RestoreReady { .. } => {
+            Input::RestoreReady { epoch } => {
                 self.state = state;
-                self.restore_ready = true;
+                self.restore_ready = self.restore_ready || self.current(epoch);
                 if matches!(self.state, State::Idle) {
                     if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, out); }
                 }
@@ -546,6 +551,8 @@ impl Session {
             }
             Input::EpochEnded { epoch, cause } => {
                 self.restored_direct = None;
+                self.restore_ready = false;
+                self.restore_floor = epoch + 1;
                 if is_ended(cause) {
                     if let Some((reply, _)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::Interrupted))); }
                     self.held = None;
@@ -689,6 +696,7 @@ impl Session {
         match self.pub_state {
             PubState::EndingFailed | PubState::StorageFailed => out.replies.push((reply, Err(Fail::Storage))),
             PubState::Ending => self.queue.push_back(Queued::Call { operation, body, reply }),
+            _ if self.after_publish.is_some() => self.queue.push_back(Queued::Call { operation, body, reply }),
             _ => self.begin(Queued::Call { operation, body, reply }, out),
         }
     }
@@ -718,6 +726,10 @@ impl Session {
             (State::Idle, Input::SessionCall { operation, body, reply }) => self.idle_call(operation, body, reply, out),
             (State::Idle, Input::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
                 self.state = State::Idle;
+                if self.after_publish.is_some() {
+                    self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
+                    return;
+                }
                 self.begin(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose }, out);
             }
             (State::SecretMismatch, Input::SessionCall { operation, body, reply }) => self.held_call(State::SecretMismatch, operation, body, reply, Fail::StateLost, out),
@@ -765,10 +777,15 @@ impl Session {
                 }
             },
             (State::ClearingSecret { call, reason, op, after }, Input::SecretCleared { op: seen, .. }) if seen == op => {
-                if let (Some(call), Some(reason)) = (call, reason) { Self::refuse(out, call, reason); }
                 match after {
-                    AfterClear::Idle => self.idle(out),
-                    AfterClear::Drain => self.drained(out),
+                    AfterClear::Idle => {
+                        if let (Some(call), Some(reason)) = (call, reason) { Self::refuse(out, call, reason); }
+                        self.idle(out);
+                    }
+                    AfterClear::Drain => {
+                        if let Some(call) = call { Self::refuse(out, call, Fail::Closed); }
+                        self.drained(out);
+                    }
                 }
             }
             (state @ (State::Generating { .. } | State::Storing { .. } | State::ClearingSecret { .. }), Input::SessionCall { operation, body, reply }) => {
@@ -851,6 +868,8 @@ impl Session {
             (state, _) => self.state = state,
         }
     }
+
+    fn current(&self, epoch: u64) -> bool { epoch >= self.epoch && epoch >= self.restore_floor }
 
     fn queue_mutate(&mut self, queued: Queued) {
         let Queued::Mutate { req_id, .. } = &queued else { return };

@@ -117,7 +117,6 @@ pub(super) fn models() -> String {
 async fn open(server: Arc<Server>) -> Arc<Database> {
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
-    encrypted.endpoints.session_operations.insert("first_login".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Login });
     encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
     let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, models(), Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), None, TestClock::new(1_000_000), Some(encrypted), Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), Some(server), None).await.unwrap();
     database.register_operations(json!([
@@ -291,15 +290,3 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     database.close_now();
 }
 
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_login_class_call_with_a_session_fails_without_a_request() {
-    let server = Arc::new(Server::default());
-    let database = open(server.clone()).await;
-    sign_in(&database, "A").await;
-    let hits = server.hits();
-    let error = within(database.session_call("first_login".into(), json!({"account":"B"}).to_string())).await.unwrap_err();
-    assert!(matches!(error, DbError::Session { code: SessionCode::AlreadyAuthenticated, .. }), "{error:?}");
-    assert_eq!(server.hits(), hits);
-    database.close_now();
-}

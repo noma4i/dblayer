@@ -273,6 +273,7 @@ impl Twin {
             Input::Rejected(batch, reason) => SessionInput::Rejected(Rejected { batch: resolve(batch), reason: reject(reason) }),
             Input::Tick => SessionInput::Tick(Time(0)),
             Input::Online(online) => SessionInput::Online(Online(online)),
+            Input::Snapshot { epoch, online } => SessionInput::Snapshot { epoch, online },
             Input::Published { epoch, identity, state } => SessionInput::Published(Published { epoch, identity, generation: 0, state: published_state(state), closed: false }),
             Input::EpochEnded { epoch, cause: c } => SessionInput::EpochEnded(EpochEnded { epoch, cause: cause(c) }),
             Input::Closing => SessionInput::Closing,
@@ -579,6 +580,7 @@ fn sess_secret_cleared_drain() {
     let op = twin.op();
     assert_eq!(twin.feed(Input::SecretCleared { op, ok: true }), vec![RefEffect::Drained]);
     assert!(matches!(twin.reference.state, RefState::Closed));
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Closed))], "the call hears Closed, not the reason of the clearing");
 }
 
 #[test]
@@ -1468,6 +1470,46 @@ fn sess_restored_direct_dropped() {
     let mut closing = Twin::new();
     closing.feed_all([Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) }, Input::Closing]);
     assert!(closing.reference.restored_direct.is_none());
+}
+
+#[test]
+fn sess_restored_late_epoch() {
+    let mut twin = Twin::new();
+    twin.feed_all([Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) }, Input::RestoreReady { epoch: EPOCH }]);
+    twin.feed(ended(EndCause::SessionReset));
+    twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::NoSession });
+    let late = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
+    assert_eq!(late, vec![RefEffect::RestoreClassified { epoch: EPOCH }], "the pending of the ended epoch starts no request");
+    assert!(twin.reference.restored_direct.is_none());
+    assert!(twin.feed(Input::RestoreReady { epoch: EPOCH }).is_empty());
+    assert!(!twin.reference.restore_ready, "the permission of the ended epoch is dropped");
+}
+
+#[test]
+fn sess_snapshot_late_epoch() {
+    let mut twin = Twin::offline();
+    twin.feed(ended(EndCause::SessionReset));
+    twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::NoSession });
+    assert!(twin.feed(Input::Snapshot { epoch: EPOCH, online: true }).is_empty());
+    assert_eq!(twin.reference.online, Some(false), "the snapshot of the ended epoch changes nothing");
+    twin.feed(Input::Snapshot { epoch: EPOCH + 1, online: true });
+    assert_eq!(twin.reference.online, Some(true));
+}
+
+#[test]
+fn sess_idle_call_awaiting_publication() {
+    let mut twin = generating();
+    let op = twin.op();
+    twin.feed(Input::CredentialGenerated { op, credential: 42 });
+    let op = twin.op();
+    twin.feed_all([Input::SecretStored { op, ok: true }, committed()]);
+    let input = twin.response(1);
+    twin.feed_all([input, committed()]);
+    assert!(twin.reference.after_publish.is_some());
+    assert!(twin.feed(call(2)).is_empty(), "a new call waits for the publication of the credential");
+    assert!(twin.feed(mutate(7, 11)).is_empty(), "so does a Mutate");
+    assert_eq!(twin.reference.queue.len(), 2);
+    assert_eq!(twin.history.iter().filter(|effect| matches!(effect, RefEffect::CommitPending { .. })).count(), 1);
 }
 
 #[test]
