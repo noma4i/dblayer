@@ -35,16 +35,12 @@ object DBlayer {
 
     /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
     suspend fun close() {
-        ForegroundEvents.stop()
-        PowerSaving.stop()
-        Reachability.disconnect()
-        val closing = opening.withLock {
-            opened.also {
-                opened = null
-                ready = CompletableDeferred()
-            }
+        opening.withLock {
+            ForegroundEvents.stop()
+            PowerSaving.stop()
+            Reachability.disconnect()
+            opened?.let { offCaller { it.closeDatabase() } }
         }
-        closing?.let { offCaller { it.closeDatabase() } }
     }
 
     fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
@@ -115,6 +111,7 @@ object DBlayer {
         PowerSaving.start(context, sink)
         made.setUploadAcceptedSink(UploadAcceptedStart(context.applicationContext, made))
         database = made
+        if (ready.isCompleted) ready = CompletableDeferred()
         ready.complete(made)
     }
 
